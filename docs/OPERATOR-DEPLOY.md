@@ -6,6 +6,7 @@ The portable channel is a transactional, per-user deployment utility embedded in
 
 - Installed releases: `%LOCALAPPDATA%\RevitOperator\releases\<releaseVersion>\`
 - Deployment state: `%LOCALAPPDATA%\RevitOperator\deployment\state.json`
+- Activation journal: `%LOCALAPPDATA%\RevitOperator\deployment\activation-journal.v1.json`
 - Deployment logs: `%LOCALAPPDATA%\RevitOperator\logs\deployment\`
 - Existing machine configuration: `%LOCALAPPDATA%\RevitOperator\config\` (preserved)
 - Existing user workspace and auth cache: `%LOCALAPPDATA%\RevitOperator\Workspace\` and `config\` (preserved)
@@ -35,7 +36,11 @@ Schema v2 declares generic `revitAddinProfiles` and makes each `revit-addin` com
 
 Profile IDs, manifest filenames, and AddInIds must be unique. Paths and basenames are traversal-safe, every represented Revit year must contain exactly one component for every declared profile, and `--revit-version <year>` selects that whole per-year set. Unknown or duplicate JSON properties are rejected.
 
-OperatorDeploy serializes operations through one named deployment mutex. State schema v2 records the exact installer-owned manifest path, assembly path, identity, and manifest hash. Activation snapshots the union of current and target controls, writes and validates the complete target set, proves an obsolete manifest still exactly matches its ownership receipt before removing it, validates its absence, and commits state last. Any failure restores the full snapshot. A foreign or modified control is never overwritten or removed. Schema-v1 state is migrated when the next successful operation establishes v2 ownership.
+OperatorDeploy serializes operations through one named deployment mutex. State schema v2 records the exact installer-owned manifest path, assembly path, identity, and manifest hash. Before the first live control mutation, activation validates ownership and rejects reparse points, writes a durable journal containing only the exact controls the transaction intends to change, and records their before/after fingerprints. Each write or deletion uses compare-and-swap semantics, the complete target set is validated, and state is committed last. A foreign control created or modified during activation is never overwritten or removed.
+
+On startup, an interrupted transaction is recovered before any command proceeds and only while Revit is closed. Recovery first verifies that every control still matches either its journaled before-image or the transaction's intended after-image, then restores transaction changes with state restored last. If any control has a third-party fingerprint, recovery alters nothing, moves the journal to `activation-journal.quarantine-*.json`, and blocks later deployment operations pending manual inspection. Once state and all controls match the committed after-images, the journal is retired. Schema-v1 state is migrated when the next successful operation establishes v2 ownership.
+
+Installed state has one global `currentRelease`. Consequently, `rollback --revit-version <year>` is rejected; rollback must switch the complete global release. The year filter remains available for install, update, repair, validation selection, and dry-run planning.
 
 This deployment schema does not replace the separate SafeRead proof, signature, package, or runtime-attestation gates. Adding a SafeRead profile describes transaction ownership only; it does not authorize a tool, trust an artifact, or expose a route.
 

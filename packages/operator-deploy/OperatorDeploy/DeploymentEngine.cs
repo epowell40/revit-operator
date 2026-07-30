@@ -32,6 +32,7 @@ public sealed class DeploymentEngine
         {
             using var deploymentLease = _context.TryAcquireDeploymentMutex()
                 ?? throw new DeploymentException(ExitCodes.InstallFailed, "Another OperatorDeploy operation is already in progress. Retry after it completes.");
+            RecoverPendingActivationJournal();
             Log($"Starting {_options.Operation} (dryRun={_options.DryRun}, scope={_options.InstallScope}).");
             var result = _options.Operation switch
             {
@@ -102,11 +103,12 @@ public sealed class DeploymentEngine
         };
         var finalReleaseRoot = Path.Combine(_context.ReleasesRoot, manifest.ReleaseVersion);
         var installedManifest = CopyManifestWithComponents(manifest, applicable);
-        var stateBefore = LoadState(required: false);
+        var stateSnapshot = LoadStateSnapshot(required: false);
+        var stateBefore = stateSnapshot.State;
         var currentOwnership = ResolveCurrentOwnership(stateBefore);
+        _ = PlanActivation(finalReleaseRoot, installedManifest, applicable, currentOwnership, requireAssembly: false);
         if (_options.DryRun)
         {
-            _ = PlanActivation(finalReleaseRoot, installedManifest, applicable, currentOwnership, requireAssembly: false);
             return result;
         }
 
@@ -114,7 +116,6 @@ public sealed class DeploymentEngine
         Directory.CreateDirectory(_context.DeploymentRoot);
         var stagingRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.staging-{Guid.NewGuid():N}");
         var displacedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.replaced-{_context.UtcNow():yyyyMMddHHmmss}");
-        var controlSnapshot = CaptureControlFiles(installedManifest, currentOwnership);
         var movedExisting = false;
 
         try
@@ -145,9 +146,12 @@ public sealed class DeploymentEngine
                 if (existingValidationFailure == null && hasEveryIncomingComponent && !forceReplace)
                 {
                     Directory.Delete(stagingRoot, recursive: true);
-                    var activation = ActivateRelease(finalReleaseRoot, existingManifest, applicable, currentOwnership);
+                    var plan = PlanActivation(finalReleaseRoot, existingManifest, applicable, currentOwnership, requireAssembly: true);
+                    var auxiliary = PrepareAuxiliaryControls(finalReleaseRoot, applicable);
+                    var journal = BeginActivationJournal(plan, auxiliary, stateSnapshot);
+                    var activation = ActivateRelease(finalReleaseRoot, existingManifest, applicable, plan, auxiliary, journal);
                     ValidateActivatedRelease(finalReleaseRoot, existingManifest, existingManifest.Components, activation);
-                    SaveSuccessfulState(manifest.ReleaseVersion, activation.Ownership);
+                    SaveSuccessfulState(manifest.ReleaseVersion, activation.Ownership, journal);
                     result.Message = "The requested release was already present and valid; activation was refreshed.";
                     return result;
                 }
@@ -171,15 +175,18 @@ public sealed class DeploymentEngine
             }
 
             Directory.Move(stagingRoot, finalReleaseRoot);
-            var completedActivation = ActivateRelease(finalReleaseRoot, installedManifest, applicable, currentOwnership);
+            var completedPlan = PlanActivation(finalReleaseRoot, installedManifest, applicable, currentOwnership, requireAssembly: true);
+            var completedAuxiliary = PrepareAuxiliaryControls(finalReleaseRoot, applicable);
+            var completedJournal = BeginActivationJournal(completedPlan, completedAuxiliary, stateSnapshot);
+            var completedActivation = ActivateRelease(finalReleaseRoot, installedManifest, applicable, completedPlan, completedAuxiliary, completedJournal);
             ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components, completedActivation);
-            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership);
+            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership, completedJournal);
             if (movedExisting) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
             return result;
         }
         catch (Exception original)
         {
-            var recoveryFailures = RestoreControlFiles(controlSnapshot);
+            var recoveryFailures = TryRecoverPendingActivationJournal();
             try
             {
                 if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true);
@@ -215,7 +222,8 @@ public sealed class DeploymentEngine
             return new OperationResult { Ok = true, Operation = "validate", ExitCode = 0, ReleaseVersion = manifest.ReleaseVersion, Message = "Release manifest and bundled payload hashes are valid." };
         }
 
-        var state = LoadState(required: true)!;
+        var stateSnapshot = LoadStateSnapshot(required: true);
+        var state = stateSnapshot.State!;
         var releaseRoot = Path.Combine(_context.ReleasesRoot, state.CurrentRelease);
         var manifestPathInstalled = Path.Combine(releaseRoot, "manifest.json");
         var manifestInstalled = ReleaseManifest.Load(manifestPathInstalled);
@@ -295,8 +303,11 @@ public sealed class DeploymentEngine
 
     private OperationResult Rollback()
     {
+        if (_options.RevitVersion != null)
+            throw new DeploymentException(ExitCodes.InvalidArguments, "--revit-version is not supported for rollback while installed state uses one global currentRelease. Run an unfiltered rollback.");
         if (_context.IsRevitRunning()) throw new DeploymentException(ExitCodes.BlockedProcess, "Revit is running. Close every Revit window before rollback.");
-        var state = LoadState(required: true)!;
+        var stateSnapshot = LoadStateSnapshot(required: true);
+        var state = stateSnapshot.State!;
         var target = state.SuccessfulReleases.LastOrDefault(x => !x.Equals(state.CurrentRelease, StringComparison.OrdinalIgnoreCase));
         if (target == null) throw new DeploymentException(ExitCodes.RollbackFailed, "No previous successful release is available for rollback.");
         var releaseRoot = Path.Combine(_context.ReleasesRoot, target);
@@ -305,24 +316,25 @@ public sealed class DeploymentEngine
         if (components.Any(component => component.Kind == "operator-desktop")) EnsureManagedDesktopLauncherOverride();
         VerifyInstalledTree(releaseRoot, manifest, components);
         var currentOwnership = ResolveCurrentOwnership(state);
-        _ = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
+        var plan = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
         if (_options.DryRun)
             return new OperationResult { Ok = true, Operation = "rollback", ExitCode = 0, ReleaseVersion = target, Message = $"Rollback target {target} is valid; no files were changed." };
 
-        var snapshot = CaptureControlFiles(manifest, currentOwnership);
         try
         {
-            var activation = ActivateRelease(releaseRoot, manifest, components, currentOwnership);
+            var auxiliary = PrepareAuxiliaryControls(releaseRoot, components);
+            var journal = BeginActivationJournal(plan, auxiliary, stateSnapshot);
+            var activation = ActivateRelease(releaseRoot, manifest, components, plan, auxiliary, journal);
             ValidateActivatedRelease(releaseRoot, manifest, components, activation);
             state.CurrentRelease = target;
             state.UpdatedAtUtc = _context.UtcNow().ToString("O");
             state.SchemaVersion = 2;
             state.OwnedAddinManifests = activation.Ownership;
-            SaveState(state);
+            SaveState(state, journal);
         }
         catch (Exception original)
         {
-            var restoreFailures = RestoreControlFiles(snapshot);
+            var restoreFailures = TryRecoverPendingActivationJournal();
             if (restoreFailures.Count == 0) throw;
             throw PreserveOriginalFailure(original, restoreFailures);
         }
@@ -495,35 +507,23 @@ public sealed class DeploymentEngine
         string releaseRoot,
         ReleaseManifest manifest,
         IReadOnlyCollection<ReleaseComponent> components,
-        IReadOnlyCollection<OwnedAddinManifest> currentOwnership)
+        PlannedActivation plan,
+        IReadOnlyCollection<PreparedAuxiliaryControl> auxiliary,
+        ActivationJournal journal)
     {
-        var plan = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
-
-        foreach (var target in plan.Targets) WriteAtomic(target.Ownership.ManifestPath, target.Xml);
+        foreach (var target in plan.Targets)
+        {
+            ApplyJournaledWrite(journal, target.Ownership.ManifestPath, new UTF8Encoding(false).GetBytes(target.Xml));
+            _context.ActivationCheckpoint($"after-target:{target.Ownership.RevitYear}:{target.Ownership.ProfileId}");
+        }
         foreach (var control in plan.Obsolete)
         {
-            AssertOwnedManifest(control);
-            File.Delete(control.ManifestPath);
+            ApplyJournaledDelete(journal, control.ManifestPath);
+            _context.ActivationCheckpoint($"after-obsolete:{control.RevitYear}:{control.ProfileId}");
         }
 
-        var desktop = components.FirstOrDefault(c => c.Kind == "operator-desktop");
-        if (desktop != null)
-        {
-            EnsureManagedDesktopLauncherOverride();
-            var script = Path.Combine(releaseRoot, desktop.Id, "scripts", "launch_operator_desktop.ps1");
-            var command = DesktopCommand(script);
-            WriteAtomic(_context.StableDesktopLauncherPath, command);
-            if (!string.IsNullOrWhiteSpace(_context.Desktop))
-            {
-                WriteAtomic(_context.DesktopCommandPath, command);
-                if (_context.DesktopShortcuts.IsSupported)
-                {
-                    _context.DesktopShortcuts.CreateOrUpdate(
-                        _context.DesktopShortcutPath,
-                        new DesktopShortcutInfo(_context.StableDesktopLauncherPath, "", _context.ProductRoot));
-                }
-            }
-        }
+        foreach (var control in auxiliary)
+            ApplyJournaledWrite(journal, control.Path, control.Contents);
 
         foreach (var config in components.Where(c => c.Kind == "config-default"))
         {
@@ -554,6 +554,8 @@ public sealed class DeploymentEngine
         var affectedYears = targets.Select(target => target.Ownership.RevitYear).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var obsolete = currentOwnership.Where(control => affectedYears.Contains(control.RevitYear) && !targetPaths.Contains(control.ManifestPath)).ToList();
         var retained = currentOwnership.Where(control => !affectedYears.Contains(control.RevitYear)).ToList();
+        var previousTargets = currentOwnership.Where(control => targetPaths.Contains(control.ManifestPath))
+            .ToDictionary(control => Path.GetFullPath(control.ManifestPath), CloneOwnership, StringComparer.OrdinalIgnoreCase);
 
         foreach (var control in obsolete) AssertOwnedManifest(control);
         foreach (var control in currentOwnership.Where(control => targetPaths.Contains(control.ManifestPath) && File.Exists(control.ManifestPath)))
@@ -566,7 +568,7 @@ public sealed class DeploymentEngine
             if (owned == null)
                 throw new DeploymentException(ExitCodes.ValidationFailed, $"Refusing to replace unowned Revit add-in manifest: {target.Ownership.ManifestPath}");
         }
-        return new PlannedActivation(targets, obsolete, retained);
+        return new PlannedActivation(targets, obsolete, retained, previousTargets);
     }
 
     private string AddinManifestPath(string year, string fileName)
@@ -595,19 +597,46 @@ public sealed class DeploymentEngine
         }
     }
 
-    private Dictionary<string, byte[]?> CaptureControlFiles(ReleaseManifest manifest, IReadOnlyCollection<OwnedAddinManifest> currentOwnership)
+    private List<PreparedAuxiliaryControl> PrepareAuxiliaryControls(
+        string releaseRoot,
+        IReadOnlyCollection<ReleaseComponent> components)
     {
-        var paths = manifest.Components.Where(c => c.Kind == "revit-addin" && c.RevitYear != null)
-            .Select(component => AddinManifestPath(component.RevitYear!, GetAddinProfile(manifest, component).ManifestFileName))
-            .Concat(currentOwnership.Select(control => control.ManifestPath)).ToList();
-        paths.Add(_context.StableDesktopLauncherPath);
+        var controls = new List<PreparedAuxiliaryControl>();
+        var desktop = components.FirstOrDefault(component => component.Kind == "operator-desktop");
+        if (desktop == null) return controls;
+        EnsureManagedDesktopLauncherOverride();
+        EnsurePathContainsNoReparsePoint(_context.LocalAppData, _context.StableDesktopLauncherPath, "Operator Desktop control");
+        var script = Path.Combine(releaseRoot, desktop.Id, "scripts", "launch_operator_desktop.ps1");
+        var command = new UTF8Encoding(false).GetBytes(DesktopCommand(script));
+        controls.Add(new PreparedAuxiliaryControl(_context.StableDesktopLauncherPath, command));
         if (!string.IsNullOrWhiteSpace(_context.Desktop))
         {
-            paths.Add(_context.DesktopCommandPath);
-            paths.Add(_context.DesktopShortcutPath);
+            EnsurePathContainsNoReparsePoint(_context.Desktop, _context.DesktopCommandPath, "Operator Desktop control");
+            EnsurePathContainsNoReparsePoint(_context.Desktop, _context.DesktopShortcutPath, "Operator Desktop control");
+            controls.Add(new PreparedAuxiliaryControl(_context.DesktopCommandPath, command));
+            if (_context.DesktopShortcuts.IsSupported)
+            {
+                var temporaryShortcut = _context.DesktopShortcutPath + $".prepare-{Guid.NewGuid():N}.lnk";
+                try
+                {
+                    _context.DesktopShortcuts.CreateOrUpdate(
+                        temporaryShortcut,
+                        new DesktopShortcutInfo(_context.StableDesktopLauncherPath, "", _context.ProductRoot));
+                    var prepared = _context.DesktopShortcuts.Read(temporaryShortcut)
+                        ?? throw new DeploymentException(ExitCodes.ValidationFailed, "Operator Desktop shortcut preparation did not create a readable shortcut.");
+                    if (!PathsEqual(prepared.TargetPath, _context.StableDesktopLauncherPath) ||
+                        !string.IsNullOrWhiteSpace(prepared.Arguments) ||
+                        !PathsEqual(prepared.WorkingDirectory, _context.ProductRoot))
+                        throw new DeploymentException(ExitCodes.ValidationFailed, "Operator Desktop shortcut preparation produced unmanaged shortcut fields.");
+                    controls.Add(new PreparedAuxiliaryControl(_context.DesktopShortcutPath, File.ReadAllBytes(temporaryShortcut)));
+                }
+                finally
+                {
+                    if (File.Exists(temporaryShortcut)) File.Delete(temporaryShortcut);
+                }
+            }
         }
-        paths.Add(_context.StatePath);
-        return paths.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(path => path, path => File.Exists(path) ? File.ReadAllBytes(path) : null, StringComparer.OrdinalIgnoreCase);
+        return controls;
     }
 
     private AddinControl BuildAddinControl(string releaseRoot, ReleaseManifest manifest, ReleaseComponent component, bool requireAssembly = true)
@@ -716,13 +745,26 @@ public sealed class DeploymentEngine
         var full = Path.GetFullPath(path);
         if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new DeploymentException(ExitCodes.ValidationFailed, "Revit add-in control path escapes the per-user application-data root.");
+        EnsurePathContainsNoReparsePoint(root, full, "Revit add-in control");
+    }
+
+    private void EnsurePathContainsNoReparsePoint(string allowedRoot, string path, string label)
+    {
+        var root = Path.GetFullPath(allowedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.GetFullPath(path);
+        if (!full.Equals(root, StringComparison.OrdinalIgnoreCase) &&
+            !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} path escapes its managed root.");
         var relative = Path.GetRelativePath(root, full);
         var current = root;
+        if (_context.IsReparsePoint(current))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} path contains a link or reparse point: {current}");
         foreach (var part in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
+            if (part == ".") continue;
             current = Path.Combine(current, part);
-            if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                throw new DeploymentException(ExitCodes.ValidationFailed, $"Revit add-in control path contains a link or reparse point: {current}");
+            if (_context.IsReparsePoint(current))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} path contains a link or reparse point: {current}");
         }
     }
 
@@ -759,26 +801,410 @@ public sealed class DeploymentEngine
             .Select(element => element.Value).ToList();
     }
 
-    private static List<Exception> RestoreControlFiles(Dictionary<string, byte[]?> snapshot)
+    private ActivationJournal BeginActivationJournal(
+        PlannedActivation plan,
+        IReadOnlyCollection<PreparedAuxiliaryControl> auxiliary,
+        StateSnapshot stateSnapshot)
     {
-        var failures = new List<Exception>();
-        foreach (var pair in snapshot)
+        EnsureNoQuarantinedActivationJournal();
+        if (File.Exists(_context.ActivationJournalPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "A pending activation journal must be recovered before starting another deployment.");
+        EnsurePathContainsNoReparsePoint(_context.LocalAppData, _context.ActivationJournalPath, "Activation journal");
+        EnsurePathContainsNoReparsePoint(_context.LocalAppData, _context.StatePath, "Deployment state");
+
+        var controls = new List<ActivationJournalControl>();
+        foreach (var target in plan.Targets)
         {
-            try
+            EnsureControlPathIsLocal(target.Ownership.ManifestPath);
+            plan.PreviousTargets.TryGetValue(Path.GetFullPath(target.Ownership.ManifestPath), out var previous);
+            if (File.Exists(target.Ownership.ManifestPath))
             {
-                if (pair.Value == null)
-                {
-                    if (File.Exists(pair.Key)) File.Delete(pair.Key);
-                    continue;
-                }
-                WriteAtomicBytes(pair.Key, pair.Value);
+                if (previous == null)
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Refusing to snapshot or replace unowned Revit add-in manifest: {target.Ownership.ManifestPath}");
+                AssertOwnedManifest(previous);
             }
-            catch (Exception ex)
+            var beforeExists = File.Exists(target.Ownership.ManifestPath);
+            if (beforeExists && previous == null)
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Refusing to snapshot or replace an unowned Revit add-in manifest that appeared during journal preparation: {target.Ownership.ManifestPath}");
+            controls.Add(CreateJournalControl("addin", target.Ownership.ManifestPath, true, target.Ownership.ManifestSha256,
+                beforeExists, beforeExists ? previous!.ManifestSha256 : null));
+        }
+        foreach (var obsolete in plan.Obsolete)
+        {
+            AssertOwnedManifest(obsolete);
+            controls.Add(CreateJournalControl("addin", obsolete.ManifestPath, false, null, true, obsolete.ManifestSha256));
+        }
+        foreach (var control in auxiliary)
+        {
+            var isDesktopControl = PathsEqual(control.Path, _context.DesktopCommandPath) || PathsEqual(control.Path, _context.DesktopShortcutPath);
+            EnsurePathContainsNoReparsePoint(
+                isDesktopControl ? _context.Desktop : _context.LocalAppData,
+                control.Path,
+                "Operator Desktop control");
+            controls.Add(CreateJournalControl("auxiliary", control.Path, true, FileIntegrity.Sha256(control.Contents)));
+        }
+        controls.Add(CreateJournalControl("state", _context.StatePath, stateSnapshot.State != null, stateSnapshot.Sha256,
+            stateSnapshot.State != null, stateSnapshot.Sha256));
+
+        var duplicate = controls.GroupBy(control => Path.GetFullPath(control.Path), StringComparer.OrdinalIgnoreCase).FirstOrDefault(group => group.Count() != 1);
+        if (duplicate != null)
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Activation journal repeats control path '{duplicate.Key}'.");
+        var journal = new ActivationJournal
+        {
+            TransactionId = Guid.NewGuid().ToString("D").ToLowerInvariant(),
+            Operation = _options.Operation,
+            CreatedAtUtc = _context.UtcNow().ToString("O"),
+            Controls = controls
+        };
+        PersistActivationJournal(journal);
+        _context.ActivationCheckpoint("journal-prepared");
+        return journal;
+    }
+
+    private static ActivationJournalControl CreateJournalControl(string kind, string path, bool afterExists, string? afterSha256)
+    {
+        var fullPath = Path.GetFullPath(path);
+        byte[]? before = File.Exists(fullPath) ? File.ReadAllBytes(fullPath) : null;
+        return new ActivationJournalControl
+        {
+            Kind = kind,
+            Path = fullPath,
+            BeforeExists = before != null,
+            BeforeSha256 = before == null ? null : FileIntegrity.Sha256(before),
+            BeforeBase64 = before == null ? null : Convert.ToBase64String(before),
+            AfterExists = afterExists,
+            AfterSha256 = afterSha256
+        };
+    }
+
+    private static ActivationJournalControl CreateJournalControl(
+        string kind,
+        string path,
+        bool afterExists,
+        string? afterSha256,
+        bool expectedBeforeExists,
+        string? expectedBeforeSha256)
+    {
+        var control = CreateJournalControl(kind, path, afterExists, afterSha256);
+        if (control.BeforeExists != expectedBeforeExists ||
+            (expectedBeforeExists && !control.BeforeSha256!.Equals(expectedBeforeSha256, StringComparison.OrdinalIgnoreCase)))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Control changed while activation journal was being prepared and remains untouched: {path}");
+        return control;
+    }
+
+    private void ApplyJournaledWrite(ActivationJournal journal, string path, byte[] contents)
+    {
+        var control = JournalControl(journal, path);
+        var intended = FileIntegrity.Sha256(contents);
+        if (!control.AfterExists || !intended.Equals(control.AfterSha256, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Activation journal does not authorize the intended write: {path}");
+        CasWrite(control.Path, contents, control.BeforeExists, control.BeforeSha256);
+    }
+
+    private void ApplyJournaledDelete(ActivationJournal journal, string path)
+    {
+        var control = JournalControl(journal, path);
+        if (control.AfterExists)
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Activation journal does not authorize deletion: {path}");
+        CasDelete(control.Path, control.BeforeExists, control.BeforeSha256);
+    }
+
+    private static ActivationJournalControl JournalControl(ActivationJournal journal, string path)
+    {
+        var full = Path.GetFullPath(path);
+        return journal.Controls.SingleOrDefault(control => PathsEqual(control.Path, full))
+            ?? throw new DeploymentException(ExitCodes.ValidationFailed, $"Activation journal does not contain control path '{full}'.");
+    }
+
+    private static void CasWrite(string path, byte[] contents, bool expectedExists, string? expectedSha256)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temp = path + $".tmp-{Guid.NewGuid():N}";
+        var displaced = path + $".displaced-{Guid.NewGuid():N}";
+        var preserveDisplaced = false;
+        try
+        {
+            WriteDurableFile(temp, contents);
+            if (!expectedExists)
             {
-                failures.Add(new IOException($"Failed to restore control file '{pair.Key}': {ex.Message}", ex));
+                if (File.Exists(path)) throw new IOException($"Control appeared after activation preflight and remains foreign: {path}");
+                File.Move(temp, path, overwrite: false);
+                return;
+            }
+            if (!File.Exists(path) || !FileIntegrity.Sha256(path).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new IOException($"Control changed after activation preflight and remains foreign: {path}");
+            File.Replace(temp, path, displaced, ignoreMetadataErrors: false);
+            if (!FileIntegrity.Sha256(displaced).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                if (File.Exists(path) && FileIntegrity.Sha256(path).Equals(FileIntegrity.Sha256(contents), StringComparison.OrdinalIgnoreCase))
+                {
+                    try { File.Replace(displaced, path, null, ignoreMetadataErrors: false); }
+                    catch { preserveDisplaced = true; throw; }
+                }
+                else
+                    preserveDisplaced = true;
+                throw new IOException($"Control changed during activation CAS and was not accepted: {path}");
             }
         }
-        return failures;
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+            if (!preserveDisplaced && File.Exists(displaced)) File.Delete(displaced);
+        }
+    }
+
+    private static void CasDelete(string path, bool expectedExists, string? expectedSha256)
+    {
+        if (!expectedExists)
+        {
+            if (File.Exists(path)) throw new IOException($"Foreign control appeared where absence was required: {path}");
+            return;
+        }
+        if (!File.Exists(path) || !FileIntegrity.Sha256(path).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new IOException($"Control changed before activation deletion and remains foreign: {path}");
+        var removed = path + $".removed-{Guid.NewGuid():N}";
+        var preserveRemoved = false;
+        File.Move(path, removed, overwrite: false);
+        try
+        {
+            if (!FileIntegrity.Sha256(removed).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!File.Exists(path))
+                {
+                    try { File.Move(removed, path, overwrite: false); }
+                    catch { preserveRemoved = true; throw; }
+                }
+                else preserveRemoved = true;
+                throw new IOException($"Control changed during activation deletion and was preserved: {path}");
+            }
+        }
+        finally
+        {
+            if (!preserveRemoved && File.Exists(removed)) File.Delete(removed);
+        }
+    }
+
+    private void PersistActivationJournal(ActivationJournal journal)
+    {
+        ValidateActivationJournal(journal);
+        var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(journal, ReleaseManifest.JsonOptions));
+        WriteDurableAtomic(_context.ActivationJournalPath, bytes);
+    }
+
+    private void RetireActivationJournal(string expectedSha256)
+    {
+        CasDelete(_context.ActivationJournalPath, expectedExists: true, expectedSha256: expectedSha256);
+    }
+
+    private List<Exception> TryRecoverPendingActivationJournal()
+    {
+        try
+        {
+            RecoverPendingActivationJournal();
+            return new List<Exception>();
+        }
+        catch (Exception ex)
+        {
+            return new List<Exception> { ex };
+        }
+    }
+
+    private void RecoverPendingActivationJournal()
+    {
+        EnsureNoQuarantinedActivationJournal();
+        if (!File.Exists(_context.ActivationJournalPath)) return;
+        EnsurePathContainsNoReparsePoint(_context.LocalAppData, _context.ActivationJournalPath, "Activation journal");
+        if (_context.IsRevitRunning())
+            throw new DeploymentException(ExitCodes.BlockedProcess, "An interrupted activation must be recovered before Revit can remain open. Close every Revit window and retry.");
+
+        ActivationJournal journal;
+        string journalSha256;
+        try
+        {
+            var rawBytes = File.ReadAllBytes(_context.ActivationJournalPath);
+            journalSha256 = FileIntegrity.Sha256(rawBytes);
+            var raw = new UTF8Encoding(false, true).GetString(rawBytes);
+            RejectDuplicateJsonProperties(raw);
+            journal = JsonSerializer.Deserialize<ActivationJournal>(raw, ReleaseManifest.JsonOptions)
+                ?? throw new InvalidDataException("Activation journal was empty.");
+            ValidateActivationJournal(journal);
+        }
+        catch (Exception ex)
+        {
+            QuarantineActivationJournal($"Activation journal is invalid: {ex.Message}");
+            throw new DeploymentException(ExitCodes.ValidationFailed, "The interrupted activation journal was quarantined because it is invalid.", ex);
+        }
+
+        var state = journal.Controls.Single(control => control.Kind == "state");
+        if (state.Note == "commit-state" && journal.Controls.All(CurrentMatchesAfter))
+        {
+            RetireActivationJournal(journalSha256);
+            Log($"Retired committed activation journal {journal.TransactionId}.");
+            return;
+        }
+
+        var foreign = journal.Controls.FirstOrDefault(control => !CurrentMatchesBefore(control) && !CurrentMatchesAfter(control));
+        if (foreign != null)
+        {
+            QuarantineActivationJournal($"Control no longer matches transaction before/after fingerprints: {foreign.Path}");
+            throw new DeploymentException(ExitCodes.ValidationFailed,
+                $"Interrupted activation was quarantined without altering a concurrently modified control: {foreign.Path}");
+        }
+
+        foreach (var control in journal.Controls.OrderBy(control => control.Kind == "state" ? 1 : 0))
+        {
+            if (CurrentMatchesBefore(control)) continue;
+            if (control.BeforeExists)
+            {
+                var before = Convert.FromBase64String(control.BeforeBase64!);
+                CasWrite(control.Path, before, control.AfterExists, control.AfterSha256);
+            }
+            else
+            {
+                CasDelete(control.Path, control.AfterExists, control.AfterSha256);
+            }
+        }
+        RetireActivationJournal(journalSha256);
+        Log($"Recovered interrupted activation journal {journal.TransactionId}; state was restored last.");
+    }
+
+    private void EnsureNoQuarantinedActivationJournal()
+    {
+        if (!Directory.Exists(_context.DeploymentRoot)) return;
+        var quarantined = Directory.GetFiles(_context.DeploymentRoot, "activation-journal.quarantine-*.json", SearchOption.TopDirectoryOnly);
+        if (quarantined.Length > 0)
+            throw new DeploymentException(ExitCodes.ValidationFailed,
+                $"A quarantined activation requires manual inspection before deployment can continue: {quarantined[0]}");
+    }
+
+    private void QuarantineActivationJournal(string reason)
+    {
+        Directory.CreateDirectory(_context.DeploymentRoot);
+        var destination = Path.Combine(_context.DeploymentRoot,
+            $"activation-journal.quarantine-{_context.UtcNow():yyyyMMddHHmmss}-{Guid.NewGuid():N}.json");
+        if (File.Exists(_context.ActivationJournalPath)) File.Move(_context.ActivationJournalPath, destination, overwrite: false);
+        Log($"QUARANTINED activation journal: {reason} ({destination})");
+    }
+
+    private void ValidateActivationJournal(ActivationJournal journal)
+    {
+        if (journal.Schema != "revit-operator.activation-journal.v1" || !Guid.TryParseExact(journal.TransactionId, "D", out _) ||
+            journal.Operation is not ("install" or "update" or "repair" or "rollback") ||
+            !DateTimeOffset.TryParse(journal.CreatedAtUtc, out _) || journal.Controls.Count is < 1 or > 64)
+            throw new InvalidDataException("Activation journal header is invalid.");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var control in journal.Controls)
+        {
+            if (!paths.Add(Path.GetFullPath(control.Path))) throw new InvalidDataException("Activation journal repeats a control path.");
+            ValidateJournalControlPath(control);
+            ValidateJournalFingerprint(control.BeforeExists, control.BeforeSha256, control.BeforeBase64, control.Path);
+            if (control.AfterExists && (control.AfterSha256 == null || !IsSha256(control.AfterSha256)))
+                throw new InvalidDataException($"Activation journal after fingerprint is invalid: {control.Path}");
+            if (!control.AfterExists && control.AfterSha256 != null)
+                throw new InvalidDataException($"Activation journal absent control has a hash: {control.Path}");
+        }
+        if (journal.Controls.Count(control => control.Kind == "state" && PathsEqual(control.Path, _context.StatePath)) != 1)
+            throw new InvalidDataException("Activation journal requires one exact state control.");
+    }
+
+    private void ValidateJournalControlPath(ActivationJournalControl control)
+    {
+        if (control.Kind == "state")
+        {
+            if (!PathsEqual(control.Path, _context.StatePath)) throw new InvalidDataException("Activation journal state path is invalid.");
+            EnsurePathContainsNoReparsePoint(_context.LocalAppData, control.Path, "Deployment state");
+            return;
+        }
+        if (control.Kind == "auxiliary")
+        {
+            var allowed = new[] { _context.StableDesktopLauncherPath, _context.DesktopCommandPath, _context.DesktopShortcutPath };
+            if (!allowed.Any(path => PathsEqual(path, control.Path))) throw new InvalidDataException("Activation journal auxiliary path is invalid.");
+            var isDesktopControl = PathsEqual(control.Path, _context.DesktopCommandPath) || PathsEqual(control.Path, _context.DesktopShortcutPath);
+            EnsurePathContainsNoReparsePoint(
+                isDesktopControl ? _context.Desktop : _context.LocalAppData,
+                control.Path,
+                "Operator Desktop control");
+            return;
+        }
+        if (control.Kind != "addin") throw new InvalidDataException("Activation journal control kind is invalid.");
+        EnsureControlPathIsLocal(control.Path);
+        var addinsRoot = Path.Combine(_context.AppData, "Autodesk", "Revit", "Addins");
+        var relative = Path.GetRelativePath(addinsRoot, control.Path).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (relative.Length != 2 || relative[0].Length != 4 || !int.TryParse(relative[0], out _) ||
+            !relative[1].EndsWith(".addin", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Activation journal add-in path is invalid.");
+        ReleaseManifest.EnsureSafeBaseName(relative[1], "activation journal add-in filename");
+    }
+
+    private static void ValidateJournalFingerprint(bool exists, string? sha256, string? base64, string path)
+    {
+        if (!exists)
+        {
+            if (sha256 != null || base64 != null) throw new InvalidDataException($"Activation journal absent snapshot is invalid: {path}");
+            return;
+        }
+        if (sha256 == null || !IsSha256(sha256) || base64 == null) throw new InvalidDataException($"Activation journal snapshot is incomplete: {path}");
+        var bytes = Convert.FromBase64String(base64);
+        if (bytes.Length > 1024 * 1024 || !FileIntegrity.Sha256(bytes).Equals(sha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"Activation journal snapshot hash is invalid: {path}");
+    }
+
+    private static bool IsSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
+
+    private static bool CurrentMatchesBefore(ActivationJournalControl control)
+        => CurrentMatches(control.Path, control.BeforeExists, control.BeforeSha256);
+
+    private static bool CurrentMatchesAfter(ActivationJournalControl control)
+        => CurrentMatches(control.Path, control.AfterExists, control.AfterSha256);
+
+    private static bool CurrentMatches(string path, bool exists, string? sha256)
+        => exists
+            ? File.Exists(path) && FileIntegrity.Sha256(path).Equals(sha256, StringComparison.OrdinalIgnoreCase)
+            : !File.Exists(path);
+
+    private static void RejectDuplicateJsonProperties(string json)
+    {
+        using var document = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 32 });
+        Inspect(document.RootElement);
+        static void Inspect(JsonElement element)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (!names.Add(property.Name)) throw new InvalidDataException($"Duplicate JSON property '{property.Name}'.");
+                    Inspect(property.Value);
+                }
+            }
+            else if (element.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in element.EnumerateArray()) Inspect(item);
+            }
+        }
+    }
+
+    private static void WriteDurableAtomic(string path, byte[] contents)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temp = path + $".tmp-{Guid.NewGuid():N}";
+        try
+        {
+            WriteDurableFile(temp, contents);
+            File.Move(temp, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+        }
+    }
+
+    private static void WriteDurableFile(string path, byte[] contents)
+    {
+        using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096,
+            FileOptions.WriteThrough | FileOptions.SequentialScan);
+        stream.Write(contents);
+        stream.Flush(flushToDisk: true);
     }
 
     private List<OwnedAddinManifest> ResolveCurrentOwnership(InstalledState? state)
@@ -823,7 +1249,7 @@ public sealed class DeploymentEngine
         ManifestSha256 = source.ManifestSha256
     };
 
-    private void SaveSuccessfulState(string releaseVersion, List<OwnedAddinManifest> ownership)
+    private void SaveSuccessfulState(string releaseVersion, List<OwnedAddinManifest> ownership, ActivationJournal journal)
     {
         var state = LoadState(required: false) ?? new InstalledState();
         state.SuccessfulReleases.RemoveAll(x => x.Equals(releaseVersion, StringComparison.OrdinalIgnoreCase));
@@ -832,19 +1258,22 @@ public sealed class DeploymentEngine
         state.UpdatedAtUtc = _context.UtcNow().ToString("O");
         state.SchemaVersion = 2;
         state.OwnedAddinManifests = ownership;
-        SaveState(state);
+        SaveState(state, journal);
     }
 
-    private InstalledState? LoadState(bool required)
+    private InstalledState? LoadState(bool required) => LoadStateSnapshot(required).State;
+
+    private StateSnapshot LoadStateSnapshot(bool required)
     {
         if (!File.Exists(_context.StatePath))
         {
             if (required) throw new DeploymentException(ExitCodes.NoInstalledRelease, "No OperatorDeploy installation state was found.");
-            return null;
+            return new StateSnapshot(null, null);
         }
         try
         {
-            var state = JsonSerializer.Deserialize<InstalledState>(File.ReadAllText(_context.StatePath), ReleaseManifest.JsonOptions)
+            var bytes = File.ReadAllBytes(_context.StatePath);
+            var state = JsonSerializer.Deserialize<InstalledState>(bytes, ReleaseManifest.JsonOptions)
                 ?? throw new InvalidDataException("State was empty.");
             if (state.SchemaVersion is not (1 or 2)) throw new InvalidDataException($"Unsupported state schemaVersion {state.SchemaVersion}.");
             if (string.IsNullOrWhiteSpace(state.CurrentRelease)) throw new InvalidDataException("State currentRelease is missing.");
@@ -857,13 +1286,25 @@ public sealed class DeploymentEngine
                 ReleaseManifest.EnsureSafeBaseName(release, "state successful release");
                 if (!releases.Add(release)) throw new InvalidDataException($"State repeats successful release '{release}'.");
             }
-            return state;
+            return new StateSnapshot(state, FileIntegrity.Sha256(bytes));
         }
         catch (Exception ex) { throw new DeploymentException(ExitCodes.ValidationFailed, $"Installed state is invalid: {ex.Message}", ex); }
     }
 
-    private void SaveState(InstalledState state)
-        => WriteAtomic(_context.StatePath, JsonSerializer.Serialize(state, ReleaseManifest.JsonOptions));
+    private void SaveState(InstalledState state, ActivationJournal journal)
+    {
+        var bytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(state, ReleaseManifest.JsonOptions));
+        var stateControl = JournalControl(journal, _context.StatePath);
+        stateControl.AfterExists = true;
+        stateControl.AfterSha256 = FileIntegrity.Sha256(bytes);
+        stateControl.Note = "commit-state";
+        PersistActivationJournal(journal);
+        _context.ActivationCheckpoint("before-state-commit");
+        ApplyJournaledWrite(journal, _context.StatePath, bytes);
+        _context.ActivationCheckpoint("after-state-commit");
+        var journalBytes = new UTF8Encoding(false).GetBytes(JsonSerializer.Serialize(journal, ReleaseManifest.JsonOptions));
+        RetireActivationJournal(FileIntegrity.Sha256(journalBytes));
+    }
 
     private static void WriteAtomic(string path, string contents)
         => WriteAtomicBytes(path, new UTF8Encoding(false).GetBytes(contents));
@@ -1073,6 +1514,12 @@ public sealed class DeploymentEngine
 
     private sealed record AddinControl(string Xml, OwnedAddinManifest Ownership);
     private sealed record AddinEntry(string Assembly, string FullClassName, string AddInId);
-    private sealed record PlannedActivation(List<AddinControl> Targets, List<OwnedAddinManifest> Obsolete, List<OwnedAddinManifest> Retained);
+    private sealed record PlannedActivation(
+        List<AddinControl> Targets,
+        List<OwnedAddinManifest> Obsolete,
+        List<OwnedAddinManifest> Retained,
+        Dictionary<string, OwnedAddinManifest> PreviousTargets);
     private sealed record ActivationResult(List<OwnedAddinManifest> Ownership, List<OwnedAddinManifest> Obsolete);
+    private sealed record PreparedAuxiliaryControl(string Path, byte[] Contents);
+    private sealed record StateSnapshot(InstalledState? State, string? Sha256);
 }
