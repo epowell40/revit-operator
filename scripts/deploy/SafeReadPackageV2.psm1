@@ -33,14 +33,86 @@ function Get-SafeReadSha256 {
 function ConvertTo-SafeReadObject {
   [CmdletBinding()]
   param([Parameter(Mandatory)][string]$Path)
-  $json=Get-Content -LiteralPath $Path -Raw
+  $bytes=[IO.File]::ReadAllBytes($Path)
+  $hasBom=($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) -or
+    ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) -or
+    ($bytes.Length -ge 4 -and (($bytes[0] -eq 0x00 -and $bytes[1] -eq 0x00 -and $bytes[2] -eq 0xFE -and $bytes[3] -eq 0xFF) -or ($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE -and $bytes[2] -eq 0x00 -and $bytes[3] -eq 0x00)))
+  if($hasBom){throw 'SafeRead JSON input is not exact canonical UTF-8 without BOM.'}
+  try{$json=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)}catch{throw 'SafeRead JSON input is not exact canonical UTF-8 without BOM.'}
   if((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')){$json|ConvertFrom-Json -DateKind String}else{$json|ConvertFrom-Json}
 }
 
 function ConvertTo-SafeReadCanonicalJson {
   [CmdletBinding()]
   param([Parameter(Mandatory)]$InputObject)
-  $InputObject | ConvertTo-Json -Depth 16 -Compress
+  $builder=[Text.StringBuilder]::new()
+  Write-SafeReadCanonicalJsonValue -Value $InputObject -Builder $builder -Depth 0
+  $builder.ToString()
+}
+
+function Write-SafeReadCanonicalJsonString {
+  param([Parameter(Mandatory)][AllowEmptyString()][string]$Value,[Parameter(Mandatory)][Text.StringBuilder]$Builder)
+  [void]$Builder.Append('"')
+  for($index=0;$index -lt $Value.Length;$index++){
+    $character=$Value[$index];$code=[int]$character
+    if($code -eq 8){[void]$Builder.Append('\b');continue}
+    if($code -eq 9){[void]$Builder.Append('\t');continue}
+    if($code -eq 10){[void]$Builder.Append('\n');continue}
+    if($code -eq 12){[void]$Builder.Append('\f');continue}
+    if($code -eq 13){[void]$Builder.Append('\r');continue}
+    if($code -eq 34){[void]$Builder.Append('\"');continue}
+    if($code -eq 92){[void]$Builder.Append('\\');continue}
+    if($code -lt 32){[void]$Builder.Append(('\u{0:x4}' -f $code));continue}
+    if($code -ge 0xD800 -and $code -le 0xDBFF){
+      if($index+1 -ge $Value.Length){throw 'SafeRead canonical JSON rejects an unpaired high surrogate.'}
+      $low=$Value[$index+1];$lowCode=[int]$low
+      if($lowCode -lt 0xDC00 -or $lowCode -gt 0xDFFF){throw 'SafeRead canonical JSON rejects an unpaired high surrogate.'}
+      [void]$Builder.Append($character);[void]$Builder.Append($low);$index++;continue
+    }
+    if($code -ge 0xDC00 -and $code -le 0xDFFF){throw 'SafeRead canonical JSON rejects an unpaired low surrogate.'}
+    [void]$Builder.Append($character)
+  }
+  [void]$Builder.Append('"')
+}
+
+function Write-SafeReadCanonicalJsonValue {
+  param([AllowNull()]$Value,[Parameter(Mandatory)][Text.StringBuilder]$Builder,[Parameter(Mandatory)][int]$Depth)
+  if($Depth -gt 32){throw 'SafeRead canonical JSON exceeds its maximum depth.'}
+  if($null -eq $Value){[void]$Builder.Append('null');return}
+  if($Value -is [string] -or $Value -is [char]){Write-SafeReadCanonicalJsonString ([string]$Value) $Builder;return}
+  if($Value -is [bool]){[void]$Builder.Append($(if($Value){'true'}else{'false'}));return}
+  $type=$Value.GetType()
+  if($type -in @([byte],[sbyte],[int16],[uint16],[int32],[uint32],[int64],[uint64],[decimal])){[void]$Builder.Append(([Convert]::ToString($Value,[Globalization.CultureInfo]::InvariantCulture)));return}
+  if($Value -is [double]){if([double]::IsNaN($Value)-or[double]::IsInfinity($Value)){throw 'SafeRead canonical JSON rejects non-finite numbers.'};[void]$Builder.Append($Value.ToString('R',[Globalization.CultureInfo]::InvariantCulture));return}
+  if($Value -is [single]){if([single]::IsNaN($Value)-or[single]::IsInfinity($Value)){throw 'SafeRead canonical JSON rejects non-finite numbers.'};[void]$Builder.Append($Value.ToString('R',[Globalization.CultureInfo]::InvariantCulture));return}
+  if($Value -is [Collections.IDictionary]){
+    [void]$Builder.Append('{');$names=[string[]]@($Value.Keys|ForEach-Object{if($_ -isnot [string]){throw 'SafeRead canonical JSON object keys must be strings.'};[string]$_})
+    if($Value -isnot [Collections.Specialized.OrderedDictionary]){[Array]::Sort($names,[StringComparer]::Ordinal)}
+    for($index=0;$index -lt $names.Length;$index++){
+      if($index){[void]$Builder.Append(',')};Write-SafeReadCanonicalJsonString $names[$index] $Builder;[void]$Builder.Append(':');Write-SafeReadCanonicalJsonValue $Value[$names[$index]] $Builder ($Depth+1)
+    }
+    [void]$Builder.Append('}');return
+  }
+  if($Value -is [Collections.IEnumerable]){
+    [void]$Builder.Append('[');$index=0
+    foreach($item in $Value){if($index){[void]$Builder.Append(',')};Write-SafeReadCanonicalJsonValue $item $Builder ($Depth+1);$index++}
+    [void]$Builder.Append(']');return
+  }
+  $properties=@($Value.PSObject.Properties|Where-Object{$_.MemberType -in @('NoteProperty','Property')})
+  if($properties.Count -eq 0){throw "SafeRead canonical JSON does not support value type $($type.FullName)."}
+  [void]$Builder.Append('{')
+  for($index=0;$index -lt $properties.Count;$index++){
+    if($index){[void]$Builder.Append(',')};$property=$properties[$index];Write-SafeReadCanonicalJsonString ([string]$property.Name) $Builder;[void]$Builder.Append(':');Write-SafeReadCanonicalJsonValue $property.Value $Builder ($Depth+1)
+  }
+  [void]$Builder.Append('}')
+}
+
+function Assert-SafeReadCanonicalJsonBytes {
+  param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)]$Value,[Parameter(Mandatory)][string]$Location)
+  $actual=[IO.File]::ReadAllBytes($Path);$expected=[Text.UTF8Encoding]::new($false,$true).GetBytes((ConvertTo-SafeReadCanonicalJson $Value))
+  $equal=$actual.Length -eq $expected.Length
+  if($equal){for($index=0;$index -lt $actual.Length;$index++){if($actual[$index] -ne $expected[$index]){$equal=$false;break}}}
+  if(-not $equal){throw "$Location is not exact canonical UTF-8 without BOM."}
 }
 
 function ConvertTo-SafeReadHashtable {
@@ -543,7 +615,7 @@ function Assert-SafeReadBundle {
   $sourceReceipt = ConvertTo-SafeReadObject $sourceReceiptPath
   Assert-SafeReadExactProperties $sourceReceipt @('schemaVersion','commit','proofTree','hostTree','archiveSha256') 'SafeRead source snapshot receipt'
   if ([int]$sourceReceipt.schemaVersion -ne 1 -or $sourceReceipt.commit -cnotmatch '^[0-9a-f]{40}$' -or $sourceReceipt.proofTree -cnotmatch '^[0-9a-f]{40}$' -or $sourceReceipt.hostTree -cnotmatch '^[0-9a-f]{40}$' -or $sourceReceipt.archiveSha256 -cnotmatch '^sha256:[0-9a-f]{64}$') { throw 'SafeRead source snapshot receipt identities are invalid or not lowercase.' }
-  if ([IO.File]::ReadAllText($sourceReceiptPath) -cne (ConvertTo-SafeReadCanonicalJson $sourceReceipt)) { throw 'SafeRead source snapshot receipt is not exact canonical JSON.' }
+  Assert-SafeReadCanonicalJsonBytes $sourceReceiptPath $sourceReceipt 'SafeRead source snapshot receipt'
   if ($source.commit -cne $sourceReceipt.commit -or $source.proofTree -cne $sourceReceipt.proofTree -or $source.hostTree -cne $sourceReceipt.hostTree -or $source.archiveSha256 -cne $sourceReceipt.archiveSha256) { throw 'SafeRead release source evidence does not match its snapshot receipt.' }
   $targetNames = @(Get-ChildItem -LiteralPath (Join-Path $root 'targets') -Force | ForEach-Object Name | Sort-Object)
   if (Compare-Object -ReferenceObject @('2023','2024','2025') -DifferenceObject $targetNames) { throw 'SafeRead bundle has missing or extra target directories.' }
@@ -647,7 +719,57 @@ function Get-SafeReadUtf8Sha256 {
   try{'sha256:'+([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant())}finally{$sha.Dispose()}
 }
 
-function New-SafeReadAdmissionReceipt {
+function Test-SafeReadPathWithin {
+  param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$Root)
+  $full=[IO.Path]::GetFullPath($Path).TrimEnd([char]92,[char]47)
+  $rootFull=[IO.Path]::GetFullPath($Root).TrimEnd([char]92,[char]47)
+  if($full.Equals($rootFull,[StringComparison]::OrdinalIgnoreCase)){return $true}
+  $full.StartsWith($rootFull+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-SafeReadAutodeskAddinsPath {
+  param([Parameter(Mandatory)][string]$Path)
+  $normalized=[IO.Path]::GetFullPath($Path).Replace([char]47,[char]92)
+  $normalized -match '(?i)(^|\\)Autodesk\\Revit\\Addins($|\\)'
+}
+
+function Resolve-SafeReadManifestAssemblyRoot {
+  [CmdletBinding()]
+  param([Parameter(Mandatory)][string]$Path)
+  if(-not[IO.Path]::IsPathRooted($Path)){throw 'SafeRead admission manifest assembly root must be an absolute path.'}
+  $full=[IO.Path]::GetFullPath($Path)
+  $volume=[IO.Path]::GetPathRoot($full)
+  if($full.TrimEnd([char]92,[char]47).Equals($volume.TrimEnd([char]92,[char]47),[StringComparison]::OrdinalIgnoreCase)){throw 'SafeRead admission manifest assembly root may not be a volume root.'}
+  $resolved=Resolve-SafeReadCanonicalPath $full -AllowMissingLeaf
+  if((Test-Path -LiteralPath $resolved) -and -not(Test-Path -LiteralPath $resolved -PathType Container)){throw 'SafeRead admission manifest assembly root must be a directory or a missing directory leaf.'}
+  $resolved.TrimEnd([char]92,[char]47)
+}
+
+function Resolve-SafeReadAdmissionOutputPath {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$OutputPath,
+    [Parameter(Mandatory)][string]$CoordinationRoot,
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$ManifestAssemblyRoot
+  )
+  $coordination=Resolve-SafeReadCanonicalPath $CoordinationRoot
+  if(-not(Test-Path -LiteralPath $coordination -PathType Container)){throw 'SafeRead admission coordination root must be an existing directory.'}
+  $coordinationVolume=[IO.Path]::GetPathRoot($coordination)
+  if($coordination.TrimEnd([char]92,[char]47).Equals($coordinationVolume.TrimEnd([char]92,[char]47),[StringComparison]::OrdinalIgnoreCase)){throw 'SafeRead admission coordination root may not be a volume root.'}
+  $bundle=Resolve-SafeReadCanonicalPath $BundleRoot
+  $manifestRoot=Resolve-SafeReadManifestAssemblyRoot $ManifestAssemblyRoot
+  $output=Resolve-SafeReadCanonicalPath $OutputPath -AllowMissingLeaf
+  if([IO.Path]::GetExtension($output) -cne '.json'){throw 'SafeRead admission output must have the exact .json extension.'}
+  if((Split-Path -Parent $output) -cne $coordination){throw 'SafeRead admission output must be a direct child of the canonical coordination root.'}
+  if(Test-Path -LiteralPath $output){throw "Refusing to overwrite an existing SafeRead admission receipt: $output"}
+  if((Test-SafeReadAutodeskAddinsPath $coordination) -or (Test-SafeReadAutodeskAddinsPath $output)){throw 'SafeRead admission output may not be written into an Autodesk Revit Addins tree.'}
+  if((Test-SafeReadPathWithin $coordination $bundle) -or (Test-SafeReadPathWithin $output $bundle)){throw 'SafeRead admission output may not be written into the package bundle.'}
+  if((Test-SafeReadPathWithin $coordination $manifestRoot) -or (Test-SafeReadPathWithin $output $manifestRoot)){throw 'SafeRead admission output may not be written into the manifest assembly root.'}
+  $output
+}
+
+function New-SafeReadAdmissionReceiptCore {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$BundleRoot,
@@ -656,9 +778,7 @@ function New-SafeReadAdmissionReceipt {
     [scriptblock]$SignatureVerifier,
     [scriptblock]$AssemblyInspector
   )
-  if(-not[IO.Path]::IsPathRooted($ManifestAssemblyRoot)){throw 'SafeRead admission manifest assembly root must be an absolute path.'}
-  $manifestAssemblyRoot=[IO.Path]::GetFullPath($ManifestAssemblyRoot).TrimEnd([char]92,[char]47)
-  if([string]::IsNullOrWhiteSpace($manifestAssemblyRoot)){throw 'SafeRead admission manifest assembly root is invalid.'}
+  $manifestAssemblyRoot=Resolve-SafeReadManifestAssemblyRoot $ManifestAssemblyRoot
   $verified=Assert-SafeReadBundle -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
   $root=(Resolve-Path -LiteralPath $BundleRoot).Path
   $releasePath=Join-Path $root 'release-manifest.json';$pinsPath=Join-Path $root 'package-pins.json'
@@ -707,7 +827,17 @@ function New-SafeReadAdmissionReceipt {
   }
 }
 
-function Assert-SafeReadAdmissionReceipt {
+function New-SafeReadAdmissionReceipt {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$AttestationPinSha256,
+    [Parameter(Mandatory)][string]$ManifestAssemblyRoot
+  )
+  New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ManifestAssemblyRoot
+}
+
+function Assert-SafeReadAdmissionReceiptCore {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$ReceiptPath,
@@ -722,10 +852,21 @@ function Assert-SafeReadAdmissionReceipt {
   Assert-SafeReadExactProperties $receipt @('schema','status','releaseId','releaseManifest','packagePins','source','proof','manifestAssemblyRoot','targets') 'SafeRead admission receipt'
   if($receipt.schema -cne $script:AdmissionReceiptSchema -or $receipt.status -cne 'verified'){throw 'SafeRead admission receipt schema/status is invalid.'}
   $canonical=ConvertTo-SafeReadCanonicalJson $receipt
-  if([IO.File]::ReadAllText($resolved) -cne $canonical){throw 'SafeRead admission receipt is not exact canonical JSON.'}
-  $expected=New-SafeReadAdmissionReceipt -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ExpectedManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
+  Assert-SafeReadCanonicalJsonBytes $resolved $receipt 'SafeRead admission receipt'
+  $expected=New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ExpectedManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector
   if($canonical -cne (ConvertTo-SafeReadCanonicalJson $expected)){throw 'SafeRead admission receipt does not match the externally verified package and preparation facts.'}
   $receipt
+}
+
+function Assert-SafeReadAdmissionReceipt {
+  [CmdletBinding()]
+  param(
+    [Parameter(Mandatory)][string]$ReceiptPath,
+    [Parameter(Mandatory)][string]$BundleRoot,
+    [Parameter(Mandatory)][string]$AttestationPinSha256,
+    [Parameter(Mandatory)][string]$ExpectedManifestAssemblyRoot
+  )
+  Assert-SafeReadAdmissionReceiptCore -ReceiptPath $ReceiptPath -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ExpectedManifestAssemblyRoot $ExpectedManifestAssemblyRoot
 }
 
 function Write-SafeReadAtomicFile {
@@ -737,4 +878,4 @@ function Write-SafeReadAtomicFile {
   if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary,$Path,("{0}.previous.{1}" -f $Path,[guid]::NewGuid().ToString('N'))) } else { Move-Item -LiteralPath $temporary -Destination $Path }
 }
 
-Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadAdmissionReceipt,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Get-SafeReadSignatureEvidence,Get-SafeReadUtf8Sha256,Invoke-SafeReadSignatureVerification,New-SafeReadAdmissionReceipt,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadCanonicalPath,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile
+Export-ModuleMember -Function Assert-SafeReadAclRecord,Assert-SafeReadStrictAclRecord,Assert-SafeReadAdmissionReceipt,Assert-SafeReadBundle,Assert-SafeReadExactProperties,Assert-SafeReadManifestXml,Assert-SafeReadReleaseId,Assert-SafeReadRelativePath,Assert-SafeReadDependencyClosure,Assert-SafeReadSecureTree,Assert-SafeReadStrictTree,ConvertTo-SafeReadCanonicalAssemblyReferences,ConvertTo-SafeReadCanonicalJson,ConvertTo-SafeReadHashtable,ConvertTo-SafeReadObject,Get-SafeReadAclRecord,Get-SafeReadAssemblyFacts,Get-SafeReadAssemblyIdentityKey,Get-SafeReadExpectedTarget,Get-SafeReadProofArtifact,Get-SafeReadRevitApiFacts,Get-SafeReadSha256,Get-SafeReadSignatureEvidence,Get-SafeReadUtf8Sha256,Invoke-SafeReadSignatureVerification,New-SafeReadAdmissionReceipt,New-SafeReadAssemblyIdentity,New-SafeReadInstalledManifest,Protect-SafeReadPathAcl,Protect-SafeReadTreeAcl,Resolve-SafeReadAdmissionOutputPath,Resolve-SafeReadCanonicalPath,Resolve-SafeReadManifestAssemblyRoot,Test-SafeReadDependencyAssemblyCompatibility,Test-SafeReadRuntimeProvidedAssembly,Write-SafeReadAtomicFile

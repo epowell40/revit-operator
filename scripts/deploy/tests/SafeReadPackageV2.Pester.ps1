@@ -2,7 +2,7 @@ BeforeAll {
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $deployRoot=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$module=Join-Path $deployRoot 'SafeReadPackageV2.psm1';Import-Module $module -Force
+$module=Join-Path $deployRoot 'SafeReadPackageV2.psm1';Import-Module $module -Force;$safeReadModule=Get-Module SafeReadPackageV2
 $builder=Join-Path $deployRoot 'build_saferead_package_v2.ps1'
 $installer=Join-Path $deployRoot 'install_saferead_package_v2.ps1'
 $verifier=Join-Path $deployRoot 'verify_saferead_microhost_bundle.ps1'
@@ -22,6 +22,12 @@ function ConvertTo-TestCanonicalValue($Value){
 }
 function Get-TestCanonicalHash($Value){$json=(ConvertTo-TestCanonicalValue $Value)|ConvertTo-Json -Depth 16 -Compress;$bytes=[Text.UTF8Encoding]::new($false).GetBytes($json);$sha=[Security.Cryptography.SHA256]::Create();try{'sha256:'+([BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-','').ToLowerInvariant())}finally{$sha.Dispose()}}
 function Assert-ThrowsLike([scriptblock]$Action,[string]$Pattern){$message=$null;try{&$Action}catch{$message=$_.Exception.Message};if($null -eq $message -or $message -notlike $Pattern){throw "Expected failure '$Pattern'; actual '$message'."}}
+function New-SafeReadAdmissionReceiptForTesting([string]$BundleRoot,[string]$AttestationPinSha256,[string]$ManifestAssemblyRoot,[scriptblock]$SignatureVerifier,[scriptblock]$AssemblyInspector){
+  &$safeReadModule {param($BundleRoot,$AttestationPinSha256,$ManifestAssemblyRoot,$SignatureVerifier,$AssemblyInspector)New-SafeReadAdmissionReceiptCore -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ManifestAssemblyRoot $ManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector} $BundleRoot $AttestationPinSha256 $ManifestAssemblyRoot $SignatureVerifier $AssemblyInspector
+}
+function Assert-SafeReadAdmissionReceiptForTesting([string]$ReceiptPath,[string]$BundleRoot,[string]$AttestationPinSha256,[string]$ExpectedManifestAssemblyRoot,[scriptblock]$SignatureVerifier,[scriptblock]$AssemblyInspector){
+  &$safeReadModule {param($ReceiptPath,$BundleRoot,$AttestationPinSha256,$ExpectedManifestAssemblyRoot,$SignatureVerifier,$AssemblyInspector)Assert-SafeReadAdmissionReceiptCore -ReceiptPath $ReceiptPath -BundleRoot $BundleRoot -AttestationPinSha256 $AttestationPinSha256 -ExpectedManifestAssemblyRoot $ExpectedManifestAssemblyRoot -SignatureVerifier $SignatureVerifier -AssemblyInspector $AssemblyInspector} $ReceiptPath $BundleRoot $AttestationPinSha256 $ExpectedManifestAssemblyRoot $SignatureVerifier $AssemblyInspector
+}
 function New-Identity([string]$Name,[string]$Version='1.0.0.0',[string]$Token='null'){[pscustomobject][ordered]@{name=$Name;version=$Version;culture='neutral';publicKeyToken=$Token}}
 function Get-YearMajor([string]$Year){switch($Year){'2023'{23}'2024'{24}'2025'{25}}}
 function Get-FakeFacts([string]$Year,[string]$Name){
@@ -83,12 +89,14 @@ Describe 'SafeRead package v3 security contract' {
     if($receipt.Source.commit -cne ('a'*40) -or $receipt.SourceReceipt.archiveSha256 -cne ('sha256:'+('d'*64))){throw 'Expected exact source snapshot evidence.'}
   }
 
-  It 'creates and externally verifies one canonical admission receipt without writing live manifests' {
-    $assemblyRoot=Join-Path $TestDrive 'future-release-root';$receiptPath=Join-Path $TestDrive 'admission.receipt.json'
-    $result=&$admissionPreparer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -OutputPath $receiptPath -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+  It 'creates and externally verifies one canonical admission receipt through the explicit test seam without writing live manifests' {
+    $assemblyRoot=Join-Path $TestDrive ('future '+[char]0x00DC+' & release');$receiptPath=Join-Path $TestDrive 'admission.receipt.json'
+    $outputFull=Resolve-SafeReadAdmissionOutputPath -OutputPath $receiptPath -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot
+    $created=New-SafeReadAdmissionReceiptForTesting -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    [IO.File]::WriteAllText($outputFull,(ConvertTo-SafeReadCanonicalJson $created),[Text.UTF8Encoding]::new($false))
     if(Test-Path -LiteralPath $assemblyRoot){throw 'Admission preparation wrote the future release or live manifest root.'}
-    $receipt=Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
-    if($result.receiptSha256 -cne (Get-SafeReadSha256 $receiptPath) -or $receipt.releaseManifest.sha256 -cne (Get-SafeReadSha256 (Join-Path $bundle.Root 'release-manifest.json')) -or $receipt.packagePins.externalSha256 -cne $bundle.Pin){throw 'Admission receipt omits its external release/package binding.'}
+    $receipt=Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    if($receipt.releaseManifest.sha256 -cne (Get-SafeReadSha256 (Join-Path $bundle.Root 'release-manifest.json')) -or $receipt.packagePins.externalSha256 -cne $bundle.Pin){throw 'Admission receipt omits its external release/package binding.'}
     if($receipt.source.commit -cne ('a'*40) -or $receipt.proof.targetPaths.Count -ne 3 -or $receipt.targets.Count -ne 3){throw 'Admission receipt omits source, common proof, or three-year evidence.'}
     foreach($target in @($receipt.targets)){
       if($target.host.signerThumbprint -cne $testThumbprint -or $target.executor.signerThumbprint -cne $testThumbprint -or $target.executor.equivalence.candidateSha256 -cne $target.executor.sha256){throw "Admission receipt omits signed/equivalent payload facts for $($target.revitYear)."}
@@ -98,18 +106,62 @@ Describe 'SafeRead package v3 security contract' {
 
   It 'rejects canonical fabricated admission facts even when the receipt file is rewritten' {
     $assemblyRoot=Join-Path $TestDrive 'fabrication-root';$receiptPath=Join-Path $TestDrive 'fabricated.receipt.json'
-    $receipt=New-SafeReadAdmissionReceipt -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
+    $receipt=New-SafeReadAdmissionReceiptForTesting -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector
     $receipt.targets[1].host.sha256='sha256:'+('f'*64);Write-JsonFile $receiptPath $receipt
-    Assert-ThrowsLike {Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match the externally verified package*'
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match the externally verified package*'
   }
 
-  It 'rejects non-canonical admission bytes and a caller-selected manifest root mismatch' {
+  It 'rejects non-canonical, BOM, UTF-16 admission bytes and a caller-selected manifest root mismatch' {
     $assemblyRoot=Join-Path $TestDrive 'canonical-root';$receiptPath=Join-Path $TestDrive 'noncanonical.receipt.json'
-    $receipt=New-SafeReadAdmissionReceipt -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector;Write-JsonFile $receiptPath $receipt
+    $receipt=New-SafeReadAdmissionReceiptForTesting -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector;Write-JsonFile $receiptPath $receipt
     [IO.File]::AppendAllText($receiptPath,"`n",[Text.UTF8Encoding]::new($false))
-    Assert-ThrowsLike {Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*not exact canonical JSON*'
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*exact canonical UTF-8 without BOM*'
+    $json=ConvertTo-SafeReadCanonicalJson $receipt;$utf8Bom=[Text.UTF8Encoding]::new($true);[IO.File]::WriteAllBytes($receiptPath,[byte[]]($utf8Bom.GetPreamble()+$utf8Bom.GetBytes($json)))
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*exact canonical UTF-8 without BOM*'
+    $utf16=[Text.UnicodeEncoding]::new($false,$true);[IO.File]::WriteAllBytes($receiptPath,[byte[]]($utf16.GetPreamble()+$utf16.GetBytes($json)))
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*exact canonical UTF-8 without BOM*'
     Write-JsonFile $receiptPath $receipt
-    Assert-ThrowsLike {Assert-SafeReadAdmissionReceipt -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot (Join-Path $TestDrive 'other-root') -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match the externally verified package*'
+    Assert-ThrowsLike {Assert-SafeReadAdmissionReceiptForTesting -ReceiptPath $receiptPath -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ExpectedManifestAssemblyRoot (Join-Path $TestDrive 'other-root') -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*does not match the externally verified package*'
+  }
+
+  It 'uses one deterministic canonical JSON byte contract in both PowerShell editions' {
+    $value=[ordered]@{path=('C:\'+[char]0x00DC+'ser\BIM & Tools');quote='"';slash='\';control="line`nfeed";emoji=[char]::ConvertFromUtf32(0x1F642)}
+    $expected='{"path":"C:\\'+[char]0x00DC+'ser\\BIM & Tools","quote":"\"","slash":"\\","control":"line\nfeed","emoji":"'+[char]::ConvertFromUtf32(0x1F642)+'"}'
+    if((ConvertTo-SafeReadCanonicalJson $value) -cne $expected){throw 'SafeRead canonical JSON escaping or Unicode preservation drifted.'}
+    Assert-ThrowsLike {ConvertTo-SafeReadCanonicalJson ([ordered]@{bad=[string][char]0xD800})} '*unpaired high surrogate*'
+  }
+
+  It 'keeps verifier injection out of production entrypoints' {
+    foreach($commandPath in $admissionPreparer,$verifier){
+      $parameters=(Get-Command $commandPath).Parameters.Keys
+      foreach($forbidden in 'SignatureVerifier','AssemblyInspector'){if($parameters -contains $forbidden){throw "$commandPath exposes production verifier injection: $forbidden"}}
+    }
+    foreach($commandName in 'New-SafeReadAdmissionReceipt','Assert-SafeReadAdmissionReceipt'){
+      $parameters=(Get-Command $commandName).Parameters.Keys
+      foreach($forbidden in 'SignatureVerifier','AssemblyInspector'){if($parameters -contains $forbidden){throw "$commandName exposes production verifier injection: $forbidden"}}
+    }
+    $forgedPath=Join-Path $TestDrive 'forged-verifier.json';$assemblyRoot=Join-Path $TestDrive 'forged-verifier-root'
+    Assert-ThrowsLike {&$admissionPreparer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -CoordinationRoot $TestDrive -OutputPath $forgedPath -SignatureVerifier $signatureVerifier} '*parameter*SignatureVerifier*'
+    Assert-ThrowsLike {New-SafeReadAdmissionReceipt -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -SignatureVerifier $signatureVerifier} '*parameter*SignatureVerifier*'
+    if(Test-Path -LiteralPath $forgedPath){throw 'A fabricated verifier reached the production admission output path.'}
+  }
+
+  It 'rejects unsafe receipt outputs, volume roots, Autodesk Addins, and reparse roots before writing' {
+    $assemblyRoot=Join-Path $TestDrive 'future-release-root';$outside=Join-Path (Split-Path -Parent $TestDrive) 'outside.receipt.json'
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath $outside -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*direct child*'
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath (Join-Path $TestDrive 'receipt.addin') -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*exact .json extension*'
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath (Join-Path $bundle.Root 'receipt.json') -CoordinationRoot $bundle.Root -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*package bundle*'
+    [IO.Directory]::CreateDirectory($assemblyRoot)|Out-Null
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath (Join-Path $assemblyRoot 'receipt.json') -CoordinationRoot $assemblyRoot -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*manifest assembly root*'
+    $autodesk=Join-Path $TestDrive 'Autodesk\Revit\Addins\2025';[IO.Directory]::CreateDirectory($autodesk)|Out-Null
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath (Join-Path $autodesk 'receipt.json') -CoordinationRoot $autodesk -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*Autodesk Revit Addins tree*'
+    $existing=Join-Path $TestDrive 'existing.json';[IO.File]::WriteAllText($existing,'x')
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath $existing -CoordinationRoot $TestDrive -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*Refusing to overwrite*'
+    Assert-ThrowsLike {Resolve-SafeReadManifestAssemblyRoot ([IO.Path]::GetPathRoot($TestDrive))} '*volume root*'
+    $target=Join-Path $TestDrive 'canonical-coordination';[IO.Directory]::CreateDirectory($target)|Out-Null;$junction=Join-Path $TestDrive 'coordination-link';New-Item -ItemType Junction -Path $junction -Target $target|Out-Null
+    Assert-ThrowsLike {Resolve-SafeReadAdmissionOutputPath -OutputPath (Join-Path $junction 'receipt.json') -CoordinationRoot $junction -BundleRoot $bundle.Root -ManifestAssemblyRoot $assemblyRoot} '*links or reparse points*'
+    Assert-ThrowsLike {&$admissionPreparer -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -ManifestAssemblyRoot $assemblyRoot -CoordinationRoot $TestDrive -OutputPath (Join-Path $TestDrive 'never-written.addin')} '*exact .json extension*'
+    if(Test-Path -LiteralPath (Join-Path $TestDrive 'never-written.addin')){throw 'Unsafe admission preparation wrote a live-style addin file.'}
   }
 
   It 'rejects a missing source snapshot receipt' {
@@ -124,7 +176,7 @@ Describe 'SafeRead package v3 security contract' {
 
   It 'rejects non-canonical source receipt bytes after every package hash is rebound' {
     $path=Join-Path $bundle.Root 'source.snapshot.receipt.json';[IO.File]::AppendAllText($path,"`n",[Text.UTF8Encoding]::new($false));Refresh-SourceEvidence $bundle
-    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*not exact canonical JSON*'
+    Assert-ThrowsLike {Assert-SafeReadBundle -BundleRoot $bundle.Root -AttestationPinSha256 $bundle.Pin -SignatureVerifier $signatureVerifier -AssemblyInspector $assemblyInspector} '*exact canonical UTF-8 without BOM*'
   }
 
   It 'rejects a rebound source receipt that disagrees with duplicated release identity' {
