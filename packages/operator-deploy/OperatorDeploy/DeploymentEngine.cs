@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Security;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -114,9 +115,12 @@ public sealed class DeploymentEngine
 
         Directory.CreateDirectory(_context.ReleasesRoot);
         Directory.CreateDirectory(_context.DeploymentRoot);
-        var stagingRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.staging-{Guid.NewGuid():N}");
-        var displacedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.replaced-{_context.UtcNow():yyyyMMddHHmmss}");
-        var movedExisting = false;
+        var transactionId = Guid.NewGuid().ToString("D").ToLowerInvariant();
+        var transactionSuffix = transactionId.Replace("-", "", StringComparison.Ordinal);
+        var stagingRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.staging-{transactionSuffix}");
+        var displacedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.replaced-{transactionSuffix}");
+        var failedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.failed-{transactionSuffix}");
+        ActivationJournal? activationJournal = null;
 
         try
         {
@@ -170,38 +174,41 @@ public sealed class DeploymentEngine
                 File.WriteAllText(Path.Combine(stagingRoot, "manifest.json"), JsonSerializer.Serialize(installedManifest, ReleaseManifest.JsonOptions));
                 VerifyInstalledTree(stagingRoot, installedManifest, installedManifest.Components);
 
-                Directory.Move(finalReleaseRoot, displacedRoot);
-                movedExisting = true;
             }
 
-            Directory.Move(stagingRoot, finalReleaseRoot);
-            var completedPlan = PlanActivation(finalReleaseRoot, installedManifest, applicable, currentOwnership, requireAssembly: true);
+            var completedPlan = PlanActivation(finalReleaseRoot, installedManifest, applicable, currentOwnership, requireAssembly: false);
             var completedAuxiliary = PrepareAuxiliaryControls(finalReleaseRoot, applicable);
-            var completedJournal = BeginActivationJournal(completedPlan, completedAuxiliary, stateSnapshot);
-            var completedActivation = ActivateRelease(finalReleaseRoot, installedManifest, applicable, completedPlan, completedAuxiliary, completedJournal);
+            var releaseRootSwap = PrepareReleaseRootSwap(finalReleaseRoot, stagingRoot, displacedRoot, failedRoot);
+            activationJournal = BeginActivationJournal(
+                completedPlan,
+                completedAuxiliary,
+                stateSnapshot,
+                releaseRootSwap,
+                transactionId);
+            _context.ActivationCheckpoint("before-release-root-displacement");
+            if (Directory.Exists(finalReleaseRoot))
+            {
+                Directory.Move(finalReleaseRoot, displacedRoot);
+            }
+            _context.ActivationCheckpoint("after-release-root-displacement");
+            Directory.Move(stagingRoot, finalReleaseRoot);
+            _context.ActivationCheckpoint("after-release-root-placement");
+            _context.ActivationCheckpoint("before-legacy-activation-journal-boundary");
+            AssertReleaseRootMatches(finalReleaseRoot, releaseRootSwap.AfterTreeSha256, "promoted release root");
+            var completedActivation = ActivateRelease(finalReleaseRoot, installedManifest, applicable, completedPlan, completedAuxiliary, activationJournal);
             ValidateActivatedRelease(finalReleaseRoot, installedManifest, installedManifest.Components, completedActivation);
-            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership, completedJournal);
-            if (movedExisting) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
+            SaveSuccessfulState(manifest.ReleaseVersion, completedActivation.Ownership, activationJournal);
+            if (releaseRootSwap.BeforeExists) result.Warnings.Add($"The replaced release was retained for recovery at {displacedRoot}.");
             return result;
         }
         catch (Exception original)
         {
             var recoveryFailures = TryRecoverPendingActivationJournal();
-            try
-            {
-                if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true);
-            }
-            catch (Exception ex) { recoveryFailures.Add(ex); }
-            if (movedExisting && Directory.Exists(displacedRoot))
+            if (activationJournal == null)
             {
                 try
                 {
-                    if (Directory.Exists(finalReleaseRoot))
-                    {
-                        var failedRoot = Path.Combine(_context.ReleasesRoot, $".{manifest.ReleaseVersion}.failed-{_context.UtcNow():yyyyMMddHHmmss}");
-                        Directory.Move(finalReleaseRoot, failedRoot);
-                    }
-                    Directory.Move(displacedRoot, finalReleaseRoot);
+                    if (Directory.Exists(stagingRoot)) Directory.Delete(stagingRoot, recursive: true);
                 }
                 catch (Exception ex) { recoveryFailures.Add(ex); }
             }
@@ -768,6 +775,66 @@ public sealed class DeploymentEngine
         }
     }
 
+    private void EnsureReleaseTransactionPath(string path, string label)
+    {
+        var releasesRoot = Path.GetFullPath(_context.ReleasesRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var relative = Path.GetRelativePath(releasesRoot, full);
+        if (relative == "." || relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length != 1)
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} must be one direct child of the managed releases root.");
+        EnsurePathContainsNoReparsePoint(releasesRoot, full, label);
+    }
+
+    private string ReleaseTreeSha256(string root)
+    {
+        EnsureReleaseTransactionPath(root, "release root");
+        if (!Directory.Exists(root))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"Release root is missing: {root}");
+
+        var rootFull = Path.GetFullPath(root);
+        var pending = new Stack<string>();
+        var files = new List<string>();
+        pending.Push(rootFull);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            if (_context.IsReparsePoint(directory))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"Release root contains a link or reparse point: {directory}");
+            foreach (var child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (_context.IsReparsePoint(child))
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Release root contains a link or reparse point: {child}");
+                pending.Push(child);
+            }
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (_context.IsReparsePoint(file))
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"Release root contains a link or reparse point: {file}");
+                files.Add(file);
+                if (files.Count > 100_000)
+                    throw new DeploymentException(ExitCodes.ValidationFailed, "Release root contains too many files to fingerprint safely.");
+            }
+        }
+
+        using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var file in files.OrderBy(path => Path.GetRelativePath(rootFull, path), StringComparer.Ordinal))
+        {
+            var relative = Path.GetRelativePath(rootFull, file).Replace(Path.DirectorySeparatorChar, '/');
+            if (relative.Length > 4096)
+                throw new DeploymentException(ExitCodes.ValidationFailed, "Release root contains an excessively long relative path.");
+            var record = $"{relative}\0{new FileInfo(file).Length}\0{FileIntegrity.Sha256(file)}\n";
+            digest.AppendData(Encoding.UTF8.GetBytes(record));
+        }
+        return Convert.ToHexString(digest.GetHashAndReset());
+    }
+
+    private void AssertReleaseRootMatches(string path, string expectedSha256, string label)
+    {
+        if (!Directory.Exists(path) ||
+            !ReleaseTreeSha256(path).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} does not match its durable release-tree fingerprint.");
+    }
+
     private static bool EntryMatches(AddinEntry entry, OwnedAddinManifest control)
         => entry.AddInId.Equals(Guid.Parse(control.AddInId).ToString("D"), StringComparison.OrdinalIgnoreCase)
            && entry.FullClassName.Equals(control.FullClassName, StringComparison.Ordinal)
@@ -801,10 +868,41 @@ public sealed class DeploymentEngine
             .Select(element => element.Value).ToList();
     }
 
+    private ActivationJournalReleaseRootSwap PrepareReleaseRootSwap(
+        string finalPath,
+        string stagingPath,
+        string displacedPath,
+        string failedPath)
+    {
+        EnsureReleaseTransactionPath(finalPath, "final release root");
+        EnsureReleaseTransactionPath(stagingPath, "staging release root");
+        EnsureReleaseTransactionPath(displacedPath, "displaced release root");
+        EnsureReleaseTransactionPath(failedPath, "failed release root");
+        if (File.Exists(finalPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "The final release-root slot contains a foreign file and remains untouched.");
+        if (!Directory.Exists(stagingPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "The staged release root disappeared before durable activation preparation.");
+        if (Directory.Exists(displacedPath) || File.Exists(displacedPath) ||
+            Directory.Exists(failedPath) || File.Exists(failedPath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "A release-root transaction path already exists and remains untouched.");
+        return new ActivationJournalReleaseRootSwap
+        {
+            FinalPath = Path.GetFullPath(finalPath),
+            StagingPath = Path.GetFullPath(stagingPath),
+            DisplacedPath = Path.GetFullPath(displacedPath),
+            FailedPath = Path.GetFullPath(failedPath),
+            BeforeExists = Directory.Exists(finalPath),
+            BeforeTreeSha256 = Directory.Exists(finalPath) ? ReleaseTreeSha256(finalPath) : null,
+            AfterTreeSha256 = ReleaseTreeSha256(stagingPath)
+        };
+    }
+
     private ActivationJournal BeginActivationJournal(
         PlannedActivation plan,
         IReadOnlyCollection<PreparedAuxiliaryControl> auxiliary,
-        StateSnapshot stateSnapshot)
+        StateSnapshot stateSnapshot,
+        ActivationJournalReleaseRootSwap? releaseRootSwap = null,
+        string? transactionId = null)
     {
         EnsureNoQuarantinedActivationJournal();
         if (File.Exists(_context.ActivationJournalPath))
@@ -851,10 +949,11 @@ public sealed class DeploymentEngine
             throw new DeploymentException(ExitCodes.ValidationFailed, $"Activation journal repeats control path '{duplicate.Key}'.");
         var journal = new ActivationJournal
         {
-            TransactionId = Guid.NewGuid().ToString("D").ToLowerInvariant(),
+            TransactionId = transactionId ?? Guid.NewGuid().ToString("D").ToLowerInvariant(),
             Operation = _options.Operation,
             CreatedAtUtc = _context.UtcNow().ToString("O"),
-            Controls = controls
+            Controls = controls,
+            ReleaseRootSwap = releaseRootSwap
         };
         PersistActivationJournal(journal);
         _context.ActivationCheckpoint("journal-prepared");
@@ -1036,12 +1135,16 @@ public sealed class DeploymentEngine
         }
 
         var state = journal.Controls.Single(control => control.Kind == "state");
-        if (state.Note == "commit-state" && journal.Controls.All(CurrentMatchesAfter))
+        var releaseRootCommitted = journal.ReleaseRootSwap == null ||
+            DirectoryMatchesTree(journal.ReleaseRootSwap.FinalPath, journal.ReleaseRootSwap.AfterTreeSha256);
+        if (state.Note == "commit-state" && journal.Controls.All(CurrentMatchesAfter) && releaseRootCommitted)
         {
             RetireActivationJournal(journalSha256);
             Log($"Retired committed activation journal {journal.TransactionId}.");
             return;
         }
+
+        if (journal.ReleaseRootSwap != null) RecoverReleaseRootSwap(journal.ReleaseRootSwap);
 
         var foreign = journal.Controls.FirstOrDefault(control => !CurrentMatchesBefore(control) && !CurrentMatchesAfter(control));
         if (foreign != null)
@@ -1067,6 +1170,96 @@ public sealed class DeploymentEngine
         RetireActivationJournal(journalSha256);
         Log($"Recovered interrupted activation journal {journal.TransactionId}; state was restored last.");
     }
+
+    private void RecoverReleaseRootSwap(ActivationJournalReleaseRootSwap swap)
+    {
+        var beforeHash = swap.BeforeTreeSha256;
+        var finalHash = ReleaseRootSlotHash(swap.FinalPath, "final");
+        var stagingHash = ReleaseRootSlotHash(swap.StagingPath, "staging");
+        var displacedHash = ReleaseRootSlotHash(swap.DisplacedPath, "displaced");
+        var failedHash = ReleaseRootSlotHash(swap.FailedPath, "failed");
+        RequireReleaseRootSlot("final", swap.FinalPath, finalHash, beforeHash, swap.AfterTreeSha256);
+        RequireReleaseRootSlot("staging", swap.StagingPath, stagingHash, swap.AfterTreeSha256);
+        RequireReleaseRootSlot("displaced", swap.DisplacedPath, displacedHash, beforeHash);
+        RequireReleaseRootSlot("failed", swap.FailedPath, failedHash, swap.AfterTreeSha256);
+
+        var identicalTrees = swap.BeforeExists &&
+            beforeHash!.Equals(swap.AfterTreeSha256, StringComparison.OrdinalIgnoreCase);
+        var finalIsBefore = swap.BeforeExists && HashesEqual(finalHash, beforeHash);
+        var finalIsAfter = HashesEqual(finalHash, swap.AfterTreeSha256);
+
+        if (!finalIsBefore && finalIsAfter && !identicalTrees)
+        {
+            if (failedHash != null)
+            {
+                QuarantineReleaseRootSwap("both final and failed roots contain the replacement tree");
+            }
+            Directory.Move(swap.FinalPath, swap.FailedPath);
+            finalHash = null;
+        }
+
+        if (swap.BeforeExists && !HashesEqual(finalHash, beforeHash))
+        {
+            if (!HashesEqual(displacedHash, beforeHash))
+                QuarantineReleaseRootSwap("the previous release tree is not available in its final or displaced root");
+            if (Directory.Exists(swap.FinalPath) || File.Exists(swap.FinalPath))
+                QuarantineReleaseRootSwap("the final release path could not be cleared without touching a foreign entry");
+            Directory.Move(swap.DisplacedPath, swap.FinalPath);
+            finalHash = ReleaseRootSlotHash(swap.FinalPath, "restored final");
+        }
+        else if (!swap.BeforeExists && finalHash != null)
+        {
+            if (!finalIsAfter)
+                QuarantineReleaseRootSwap("the previously absent final release path contains a foreign tree");
+            if (failedHash != null)
+                QuarantineReleaseRootSwap("both final and failed roots contain the replacement tree");
+            Directory.Move(swap.FinalPath, swap.FailedPath);
+            finalHash = null;
+        }
+
+        if (swap.BeforeExists)
+        {
+            if (!HashesEqual(finalHash, beforeHash))
+                throw new IOException("Interrupted release-root recovery did not restore the previous tree exactly.");
+        }
+        else if (Directory.Exists(swap.FinalPath) || File.Exists(swap.FinalPath))
+        {
+            throw new IOException("Interrupted release-root recovery did not restore the previous absent final path.");
+        }
+
+        if (Directory.Exists(swap.StagingPath))
+        {
+            if (Directory.Exists(swap.FailedPath) || File.Exists(swap.FailedPath))
+                QuarantineReleaseRootSwap("both staging and failed roots contain the replacement tree");
+            Directory.Move(swap.StagingPath, swap.FailedPath);
+        }
+    }
+
+    private string? ReleaseRootSlotHash(string path, string slot)
+    {
+        if (File.Exists(path))
+            QuarantineReleaseRootSwap($"the {slot} release-root slot contains a file instead of a directory");
+        return Directory.Exists(path) ? ReleaseTreeSha256(path) : null;
+    }
+
+    private void RequireReleaseRootSlot(string slot, string path, string? actual, params string?[] allowed)
+    {
+        if (actual == null || allowed.Any(expected => HashesEqual(actual, expected))) return;
+        QuarantineReleaseRootSwap($"the {slot} release-root slot no longer matches its transaction fingerprint: {path}");
+    }
+
+    private void QuarantineReleaseRootSwap(string reason)
+    {
+        QuarantineActivationJournal($"Release-root transaction is unsafe to recover: {reason}.");
+        throw new DeploymentException(ExitCodes.ValidationFailed,
+            $"Interrupted activation was quarantined without moving a foreign release root: {reason}.");
+    }
+
+    private bool DirectoryMatchesTree(string path, string expectedSha256)
+        => Directory.Exists(path) && ReleaseTreeSha256(path).Equals(expectedSha256, StringComparison.OrdinalIgnoreCase);
+
+    private static bool HashesEqual(string? left, string? right)
+        => left != null && right != null && left.Equals(right, StringComparison.OrdinalIgnoreCase);
 
     private void EnsureNoQuarantinedActivationJournal()
     {
@@ -1105,6 +1298,31 @@ public sealed class DeploymentEngine
         }
         if (journal.Controls.Count(control => control.Kind == "state" && PathsEqual(control.Path, _context.StatePath)) != 1)
             throw new InvalidDataException("Activation journal requires one exact state control.");
+        if (journal.ReleaseRootSwap != null) ValidateReleaseRootSwap(journal);
+    }
+
+    private void ValidateReleaseRootSwap(ActivationJournal journal)
+    {
+        var swap = journal.ReleaseRootSwap!;
+        EnsureReleaseTransactionPath(swap.FinalPath, "activation journal final release root");
+        EnsureReleaseTransactionPath(swap.StagingPath, "activation journal staging release root");
+        EnsureReleaseTransactionPath(swap.DisplacedPath, "activation journal displaced release root");
+        EnsureReleaseTransactionPath(swap.FailedPath, "activation journal failed release root");
+        var paths = new[] { swap.FinalPath, swap.StagingPath, swap.DisplacedPath, swap.FailedPath };
+        if (paths.Distinct(StringComparer.OrdinalIgnoreCase).Count() != paths.Length)
+            throw new InvalidDataException("Activation journal release-root paths must be distinct.");
+
+        var finalName = Path.GetFileName(swap.FinalPath);
+        ReleaseManifest.EnsureSafeBaseName(finalName, "activation journal release root");
+        var suffix = Guid.Parse(journal.TransactionId).ToString("N");
+        if (!PathsEqual(swap.StagingPath, Path.Combine(_context.ReleasesRoot, $".{finalName}.staging-{suffix}")) ||
+            !PathsEqual(swap.DisplacedPath, Path.Combine(_context.ReleasesRoot, $".{finalName}.replaced-{suffix}")) ||
+            !PathsEqual(swap.FailedPath, Path.Combine(_context.ReleasesRoot, $".{finalName}.failed-{suffix}")))
+            throw new InvalidDataException("Activation journal release-root transaction paths are not bound to its transaction identity.");
+        if (swap.BeforeExists != (swap.BeforeTreeSha256 != null) ||
+            (swap.BeforeTreeSha256 != null && !IsSha256(swap.BeforeTreeSha256)) ||
+            !IsSha256(swap.AfterTreeSha256))
+            throw new InvalidDataException("Activation journal release-root fingerprints are invalid.");
     }
 
     private void ValidateJournalControlPath(ActivationJournalControl control)
