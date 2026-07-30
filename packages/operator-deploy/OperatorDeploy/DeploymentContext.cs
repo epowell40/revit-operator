@@ -85,4 +85,11 @@ public sealed class DeploymentOptions
     public string? LogPath { get; init; }
     public string InstallScope { get; init; } = "user";
     public string? RevitVersion { get; init; }
+    public string? SafeReadAdmissionReceiptPath { get; init; }
+    public string? SafeReadAdmissionReceiptSha256 { get; init; }
+    public string? SafeReadPackagePinSha256 { get; init; }
+    public bool HasAnySafeReadAdmissionInput =>
+        !string.IsNullOrWhiteSpace(SafeReadAdmissionReceiptPath) ||
+        !string.IsNullOrWhiteSpace(SafeReadAdmissionReceiptSha256) ||
+        !string.IsNullOrWhiteSpace(SafeReadPackagePinSha256);
 }

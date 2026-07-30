@@ -36,7 +36,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         var bundle = CreateBundle("1.0.0", new[] { "2023" });
         var path = Path.Combine(bundle, "manifest.json");
         var manifest = ReleaseManifest.Load(path);
-        manifest.Components.RemoveAll(component => component.RevitAddinProfileId == "safe-read");
+        manifest.Components.RemoveAll(component => component.RevitAddinProfileId == "secondary");
         Assert.Equal(ExitCodes.ManifestInvalid, Assert.Throws<DeploymentException>(() => manifest.Validate()).ExitCode);
 
         var json = File.ReadAllText(path);
@@ -48,18 +48,18 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     }
 
     [Fact]
-    public void Install_activates_primary_and_safe_read_as_complete_sets_for_all_supported_years()
+    public void Install_activates_primary_and_generic_secondary_profiles_as_complete_sets_for_all_supported_years()
     {
         var result = Run("update", CreateBundle("1.0.0", Years));
         Assert.True(result.Ok, result.Message);
 
         var state = State();
-        Assert.Equal(2, state.SchemaVersion);
+        Assert.Equal(3, state.SchemaVersion);
         Assert.Equal(6, state.OwnedAddinManifests.Count);
         foreach (var year in Years)
         {
             AssertManifest(year, "RevitBridge.addin", "B2883307-2852-4740-9833-281048674F77", "RevitBridge.App", "RevitBridge.dll");
-            AssertManifest(year, "RevitOperator.SafeReadHost.addin", "AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E", "RevitOperator.SafeReadHost.App", "RevitOperator.SafeReadHost.dll");
+            AssertManifest(year, "RevitOperator.SecondaryHost.addin", "C765B624-ABCD-4D4D-9D3E-5AE00879DA10", "RevitOperator.SecondaryHost.App", "RevitOperator.SecondaryHost.dll");
         }
         Assert.True(Run("validate").Ok);
     }
@@ -71,9 +71,9 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         Assert.True(result.Ok, result.Message);
         Assert.Equal(2, State().OwnedAddinManifests.Count);
         Assert.True(File.Exists(AddinPath("2024", "RevitBridge.addin")));
-        Assert.True(File.Exists(AddinPath("2024", "RevitOperator.SafeReadHost.addin")));
+        Assert.True(File.Exists(AddinPath("2024", "RevitOperator.SecondaryHost.addin")));
         Assert.False(File.Exists(AddinPath("2023", "RevitBridge.addin")));
-        Assert.False(File.Exists(AddinPath("2025", "RevitOperator.SafeReadHost.addin")));
+        Assert.False(File.Exists(AddinPath("2025", "RevitOperator.SecondaryHost.addin")));
     }
 
     [Fact]
@@ -81,15 +81,15 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     {
         Assert.True(Run("update", CreateBundle("1.0.0", Years)).Ok);
         var old2023 = File.ReadAllText(AddinPath("2023", "RevitBridge.addin"));
-        var old2025 = File.ReadAllText(AddinPath("2025", "RevitOperator.SafeReadHost.addin"));
+        var old2025 = File.ReadAllText(AddinPath("2025", "RevitOperator.SecondaryHost.addin"));
 
         var result = Run("update", CreateBundle("2.0.0", Years), revitVersion: "2024");
         Assert.True(result.Ok, result.Message);
         Assert.Equal(6, State().OwnedAddinManifests.Count);
         Assert.Equal(old2023, File.ReadAllText(AddinPath("2023", "RevitBridge.addin")));
-        Assert.Equal(old2025, File.ReadAllText(AddinPath("2025", "RevitOperator.SafeReadHost.addin")));
+        Assert.Equal(old2025, File.ReadAllText(AddinPath("2025", "RevitOperator.SecondaryHost.addin")));
         Assert.Contains(Path.Combine("2.0.0", "primary-2024"), File.ReadAllText(AddinPath("2024", "RevitBridge.addin")), StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(Path.Combine("2.0.0", "safe-read-2024"), File.ReadAllText(AddinPath("2024", "RevitOperator.SafeReadHost.addin")), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Path.Combine("2.0.0", "secondary-2024"), File.ReadAllText(AddinPath("2024", "RevitOperator.SecondaryHost.addin")), StringComparison.OrdinalIgnoreCase);
         Assert.True(Run("validate").Ok);
     }
 
@@ -103,7 +103,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     }
 
     [Fact]
-    public void Schema_v1_state_migrates_to_v2_ownership_without_displacing_primary()
+    public void Schema_v1_state_migrates_to_v3_ownership_without_displacing_primary()
     {
         Assert.True(Run("update", CreateLegacyBundle("1.0.0", "2024")).Ok);
         var oldState = State();
@@ -114,10 +114,10 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         var result = Run("update", CreateBundle("2.0.0", new[] { "2024" }));
         Assert.True(result.Ok, result.Message);
         var migrated = State();
-        Assert.Equal(2, migrated.SchemaVersion);
+        Assert.Equal(3, migrated.SchemaVersion);
         Assert.Equal(2, migrated.OwnedAddinManifests.Count);
         AssertManifest("2024", "RevitBridge.addin", "B2883307-2852-4740-9833-281048674F77", "RevitBridge.App", "RevitBridge.dll");
-        AssertManifest("2024", "RevitOperator.SafeReadHost.addin", "AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E", "RevitOperator.SafeReadHost.App", "RevitOperator.SafeReadHost.dll");
+        AssertManifest("2024", "RevitOperator.SecondaryHost.addin", "C765B624-ABCD-4D4D-9D3E-5AE00879DA10", "RevitOperator.SecondaryHost.App", "RevitOperator.SecondaryHost.dll");
     }
 
     [Fact]
@@ -130,7 +130,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         foreach (var year in Years)
         {
             Assert.True(File.Exists(AddinPath(year, "RevitBridge.addin")));
-            Assert.False(File.Exists(AddinPath(year, "RevitOperator.SafeReadHost.addin")));
+            Assert.False(File.Exists(AddinPath(year, "RevitOperator.SecondaryHost.addin")));
         }
     }
 
@@ -140,7 +140,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         Assert.True(Run("update", CreateBundle("1.0.0", Years)).Ok);
         var stateBytes = File.ReadAllBytes(Context().StatePath);
         var primaryBytes = Years.ToDictionary(year => year, year => File.ReadAllBytes(AddinPath(year, "RevitBridge.addin")));
-        var foreign = AddinPath("2024", "RevitOperator.SafeReadHost.addin");
+        var foreign = AddinPath("2024", "RevitOperator.SecondaryHost.addin");
         File.AppendAllText(foreign, "<!-- foreign modification -->");
 
         var result = Run("update", CreateBundle("2.0.0", Years, primaryOnly: true));
@@ -156,22 +156,22 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     {
         var bundle = CreateBundle("1.0.0", new[] { "2023" });
         Assert.True(Run("update", bundle).Ok);
-        var safeRead = AddinPath("2023", "RevitOperator.SafeReadHost.addin");
-        File.Delete(safeRead);
+        var secondary = AddinPath("2023", "RevitOperator.SecondaryHost.addin");
+        File.Delete(secondary);
         Assert.True(Run("repair", bundle).Ok);
-        Assert.True(File.Exists(safeRead));
+        Assert.True(File.Exists(secondary));
 
-        File.AppendAllText(safeRead, "<!-- modified -->");
-        var before = File.ReadAllBytes(safeRead);
+        File.AppendAllText(secondary, "<!-- modified -->");
+        var before = File.ReadAllBytes(secondary);
         var blocked = Run("repair", bundle);
         Assert.False(blocked.Ok);
-        Assert.Equal(before, File.ReadAllBytes(safeRead));
+        Assert.Equal(before, File.ReadAllBytes(secondary));
     }
 
     [Fact]
     public void Unowned_target_manifest_is_never_overwritten()
     {
-        var foreign = AddinPath("2023", "RevitOperator.SafeReadHost.addin");
+        var foreign = AddinPath("2023", "RevitOperator.SecondaryHost.addin");
         Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
         File.WriteAllText(foreign, "<foreign>keep me</foreign>");
         var before = File.ReadAllBytes(foreign);
@@ -201,17 +201,17 @@ public sealed class MultiAddinDeploymentTests : IDisposable
     }
 
     [Fact]
-    public void Rollback_snapshots_union_and_restores_removed_safe_read_set()
+    public void Rollback_snapshots_union_and_restores_removed_secondary_set()
     {
         Assert.True(Run("update", CreateBundle("1.0.0", Years)).Ok);
         Assert.True(Run("update", CreateBundle("2.0.0", Years, primaryOnly: true)).Ok);
-        foreach (var year in Years) Assert.False(File.Exists(AddinPath(year, "RevitOperator.SafeReadHost.addin")));
+        foreach (var year in Years) Assert.False(File.Exists(AddinPath(year, "RevitOperator.SecondaryHost.addin")));
 
         var rollback = Run("rollback");
         Assert.True(rollback.Ok, rollback.Message);
         Assert.Equal("1.0.0", State().CurrentRelease);
         Assert.Equal(6, State().OwnedAddinManifests.Count);
-        foreach (var year in Years) Assert.True(File.Exists(AddinPath(year, "RevitOperator.SafeReadHost.addin")));
+        foreach (var year in Years) Assert.True(File.Exists(AddinPath(year, "RevitOperator.SecondaryHost.addin")));
     }
 
     [Fact]
@@ -295,7 +295,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
 
     [Theory]
     [InlineData("after-target:2024:primary")]
-    [InlineData("after-target:2024:safe-read")]
+    [InlineData("after-target:2024:secondary")]
     public void Separate_process_crash_after_each_target_write_recovers_exact_previous_controls(string killPoint)
     {
         Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2024" })).Ok);
@@ -423,7 +423,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         var before = OwnedControlBytes();
 
         var bundle = CreateBundle("2.0.0", new[] { "2024" }, primaryOnly: true);
-        Assert.Equal(137, RunCrash("update", bundle, "after-obsolete:2024:safe-read"));
+        Assert.Equal(137, RunCrash("update", bundle, "after-obsolete:2024:secondary"));
         Assert.True(File.Exists(Context().ActivationJournalPath));
         Assert.Equal(0, RunCrash("status", bundle, "no-kill"));
 
@@ -475,7 +475,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         Assert.False(File.Exists(Context().StatePath));
         foreach (var year in Years) Assert.False(File.Exists(AddinPath(year, "RevitBridge.addin")));
 
-        var foreign = AddinPath("2025", "RevitOperator.SafeReadHost.addin");
+        var foreign = AddinPath("2025", "RevitOperator.SecondaryHost.addin");
         Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
         File.WriteAllText(foreign, "foreign");
         var blockedPlan = Run("update", bundle, dryRun: true);
@@ -495,7 +495,7 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         Assert.True(Run("update", CreateBundle("1.0.0", new[] { "2025" })).Ok);
         var foreign = Path.Combine(Context().CommonAppData, "Autodesk", "Revit", "Addins", "2025", "Foreign.addin");
         Directory.CreateDirectory(Path.GetDirectoryName(foreign)!);
-        File.WriteAllText(foreign, "<RevitAddIns><AddIn><AddInId>AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E</AddInId></AddIn></RevitAddIns>");
+        File.WriteAllText(foreign, "<RevitAddIns><AddIn><AddInId>C765B624-ABCD-4D4D-9D3E-5AE00879DA10</AddInId></AddIn></RevitAddIns>");
         var before = File.ReadAllBytes(foreign);
 
         var validation = Run("validate");
@@ -610,11 +610,11 @@ public sealed class MultiAddinDeploymentTests : IDisposable
             SourceRevision = "test"
         };
         manifest.RevitAddinProfiles.Add(PrimaryProfile());
-        if (!primaryOnly) manifest.RevitAddinProfiles.Add(SafeReadProfile());
+        if (!primaryOnly) manifest.RevitAddinProfiles.Add(SecondaryProfile());
         foreach (var year in years)
         {
             manifest.Components.Add(AddinComponent(bundle, version, year, PrimaryProfile()));
-            if (!primaryOnly) manifest.Components.Add(AddinComponent(bundle, version, year, SafeReadProfile()));
+            if (!primaryOnly) manifest.Components.Add(AddinComponent(bundle, version, year, SecondaryProfile()));
         }
         if (includeDesktop) manifest.Components.Add(DesktopComponent(bundle, version));
         manifest.Validate();
@@ -652,16 +652,16 @@ public sealed class MultiAddinDeploymentTests : IDisposable
         VendorDescription = "Revit Operator"
     };
 
-    private static RevitAddinProfile SafeReadProfile() => new()
+    private static RevitAddinProfile SecondaryProfile() => new()
     {
-        Id = "safe-read",
-        ManifestFileName = "RevitOperator.SafeReadHost.addin",
-        AssemblyPath = "RevitOperator.SafeReadHost.dll",
-        Name = "Revit Operator Safe Read Host",
-        FullClassName = "RevitOperator.SafeReadHost.App",
-        AddInId = "AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E",
+        Id = "secondary",
+        ManifestFileName = "RevitOperator.SecondaryHost.addin",
+        AssemblyPath = "RevitOperator.SecondaryHost.dll",
+        Name = "Revit Operator Secondary Host",
+        FullClassName = "RevitOperator.SecondaryHost.App",
+        AddInId = "C765B624-ABCD-4D4D-9D3E-5AE00879DA10",
         VendorId = "BIMT",
-        VendorDescription = "BIMTools Revit Operator Safe Read Host"
+        VendorDescription = "BIMTools Revit Operator Secondary Host"
     };
 
     private static ReleaseComponent AddinComponent(string bundle, string version, string year, RevitAddinProfile profile)

@@ -34,6 +34,28 @@ A releasable package must also retain durable source provenance that binds it to
 
 The installer protects every release parent and file, including the runtime-attestation JSON and pin, with protected ACLs granting only the current owner, LocalSystem, and Administrators. The host applies the same contract to its discovery parent and atomic publication file, and rejects inherited, broad-principal, or reparse-point state.
 
+### OperatorDeploy admission
+
+OperatorDeploy schema v3 provides the transactional activation path for this production identity. The release manifest reconciles the package layout explicitly: one evidence component maps the package root, and three Revit components map `targets/2023`, `targets/2024`, and `targets/2025`. The final assembly in each component is `payload/RevitOperator.SafeReadHost.dll`.
+
+Create the admission receipt only after the exact OperatorDeploy manifest and final versioned release root are known:
+
+```powershell
+.\scripts\deploy\prepare_saferead_admission_receipt.ps1 `
+  -BundleRoot <SAFE_READ_PACKAGE_ROOT> `
+  -AttestationPinSha256 <EXTERNALLY_DELIVERED_PACKAGE_PIN> `
+  -ManifestAssemblyRoot <FINAL_OPERATORDEPLOY_RELEASE_ROOT> `
+  -CoordinationRoot <EXTERNAL_COORDINATION_ROOT> `
+  -ReceiptPath <EXTERNAL_RECEIPT_PATH> `
+  -OperatorDeployManifestPath <SCHEMA_V3_OPERATORDEPLOY_MANIFEST>
+```
+
+Supplying `-OperatorDeployManifestPath` emits `revit-operator.safe-read-admission-receipt.v2`. The receipt pins the exact manifest bytes and final layout. Receipt serialization and `.addin` rendering are canonical UTF-8 without a byte-order mark; the XML declaration also says `utf-8`, so PowerShell 7 and Windows PowerShell 5.1 produce the same bytes.
+
+The deployment coordinator must deliver the receipt's SHA-256 and the package pin independently of the package and manifest. OperatorDeploy requires those external values on install, update, repair, and bundle-only validation, copies the admitted receipt into the release, and persists its identity in state and the activation journal. It then independently recomputes package, proof, PE, runtime-attestation, manifest, and final-layout facts immediately before activation and rechecks them during installed validation, repair, rollback, and crash recovery.
+
+The legacy receipt-v1 standalone installer path remains available. Receipt v2 is the required contract for production SafeRead activation through OperatorDeploy.
+
 ## CI and remaining release boundary
 
 The Windows pull-request lane is hermetic: it runs the 168 production-host tests, executes the strict JSON parser vectors under both .NET Framework 4.8 and .NET 8, runs generated-reference proof positives and falsifiers, and runs package security tests with Pester installed independently under PowerShell 7 and Windows PowerShell 5.1. Its result explicitly marks the installed-Revit inventory and eight real-API regenerated adversaries as outside that lane.
