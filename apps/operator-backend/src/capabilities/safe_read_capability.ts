@@ -38,6 +38,8 @@ const TOKEN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,30}[A-Za-z0-9])?$/;
 const CAPABILITY_ID = /^src1_[A-Za-z0-9_-]{43}$/;
 const RECEIPT_ID = /^srr1_[A-Za-z0-9_-]{43}$/;
 const NONCE = /^[A-Za-z0-9_-]{43}$/;
+const SIGNER_KEY_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$/;
+const SIGNER_IDENTITY_SNAPSHOT_SCHEMA = "revit-operator.safe-read-signer-identity-snapshot.v1";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ATTESTATION_FILENAME = "safe_read_runtime_attestation.v1.json";
 
@@ -253,6 +255,14 @@ type LoadedAttestation = {
   hosted?: HostedAttestationSelection;
 };
 
+type HostedSignerIdentityRow = {
+  key_id: string;
+  public_key_sha256: string;
+  state: "active" | "revoked";
+  first_seen_ring_sequence: number;
+  last_seen_ring_sequence: number;
+};
+
 function fail(
   code: string,
   message: string,
@@ -428,6 +438,44 @@ function rawSha256(value: string | Buffer): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function signerIdentitySnapshotSha256(
+  authorityId: string,
+  signerRingEpoch: string,
+  signerRingSequence: number,
+  identities: HostedSignerIdentityRow[]
+): string {
+  const normalized = identities.map(identity => {
+    if (!SIGNER_KEY_ID.test(identity.key_id)
+        || !HASH.test(identity.public_key_sha256)
+        || (identity.state !== "active" && identity.state !== "revoked")
+        || !Number.isSafeInteger(identity.first_seen_ring_sequence)
+        || identity.first_seen_ring_sequence < 1
+        || !Number.isSafeInteger(identity.last_seen_ring_sequence)
+        || identity.last_seen_ring_sequence < identity.first_seen_ring_sequence
+        || identity.last_seen_ring_sequence > signerRingSequence) {
+      fail(
+        "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_INVALID",
+        "Hosted signer-ring predecessor identity history is malformed.",
+        503
+      );
+    }
+    return {
+      key_id: identity.key_id,
+      public_key_sha256: identity.public_key_sha256,
+      state: identity.state,
+      first_seen_ring_sequence: identity.first_seen_ring_sequence,
+      last_seen_ring_sequence: identity.last_seen_ring_sequence
+    };
+  }).sort((left, right) => left.key_id < right.key_id ? -1 : left.key_id > right.key_id ? 1 : 0);
+  return rawSha256(canonicalJson({
+    schema: SIGNER_IDENTITY_SNAPSHOT_SCHEMA,
+    authority_id: authorityId,
+    signer_ring_epoch: signerRingEpoch,
+    signer_ring_sequence: signerRingSequence,
+    identities: normalized
+  } as unknown as JsonValue));
+}
+
 function equalSecret(left: string, right: string): boolean {
   const a = Buffer.from(left, "utf8");
   const b = Buffer.from(right, "utf8");
@@ -544,6 +592,8 @@ export class SafeReadCapabilityService {
         signer_ring_sequence INTEGER NOT NULL,
         signer_ring_sha256 TEXT NOT NULL,
         signer_ring_identity_count INTEGER NOT NULL,
+        signer_identity_snapshot_count INTEGER NOT NULL,
+        signer_identity_snapshot_sha256 TEXT NOT NULL,
         accepted_at_ms INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS safe_read_attestation_signer_identities (
@@ -573,6 +623,12 @@ export class SafeReadCapabilityService {
     if (!highWaterColumns.has("signer_ring_sha256")) this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_ring_sha256 TEXT");
     if (!highWaterColumns.has("signer_ring_identity_count")) {
       this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_ring_identity_count INTEGER");
+    }
+    if (!highWaterColumns.has("signer_identity_snapshot_count")) {
+      this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_identity_snapshot_count INTEGER");
+    }
+    if (!highWaterColumns.has("signer_identity_snapshot_sha256")) {
+      this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_identity_snapshot_sha256 TEXT");
     }
   }
 
@@ -650,7 +706,7 @@ export class SafeReadCapabilityService {
     } = attested.hosted;
     const current = this.db.prepare(`
       SELECT set_sequence, set_sha256, signer_ring_epoch, signer_ring_sequence, signer_ring_sha256,
-             signer_ring_identity_count
+             signer_ring_identity_count, signer_identity_snapshot_count, signer_identity_snapshot_sha256
       FROM safe_read_attestation_high_water WHERE authority_id=?
     `).get(authorityId) as {
       set_sequence: number;
@@ -659,6 +715,8 @@ export class SafeReadCapabilityService {
       signer_ring_sequence: number | null;
       signer_ring_sha256: string | null;
       signer_ring_identity_count: number | null;
+      signer_identity_snapshot_count: number | null;
+      signer_identity_snapshot_sha256: string | null;
     } | undefined;
     if (current && setSequence < current.set_sequence) {
       fail("SAFE_READ_ATTESTATION_SET_ROLLBACK", "Hosted attestation set sequence is below the durable high-water mark.", 503);
@@ -683,18 +741,35 @@ export class SafeReadCapabilityService {
       SELECT key_id, public_key_sha256, state, first_seen_ring_sequence, last_seen_ring_sequence
       FROM safe_read_attestation_signer_identities
       WHERE authority_id=? AND signer_ring_epoch=?
-    `).all(authorityId, signerRingEpoch) as Array<{
-      key_id: string;
-      public_key_sha256: string;
-      state: "active" | "revoked";
-      first_seen_ring_sequence: number;
-      last_seen_ring_sequence: number;
-    }>;
+    `).all(authorityId, signerRingEpoch) as HostedSignerIdentityRow[];
     if (current && hasRingHighWater) {
-      if (current.signer_ring_identity_count == null) {
+      if (current.signer_ring_identity_count == null
+          || current.signer_identity_snapshot_count == null
+          || current.signer_identity_snapshot_sha256 == null) {
         fail(
           "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_MISSING",
           "Hosted signer-ring predecessor identities are not durably available.",
+          503
+        );
+      }
+      if (!HASH.test(current.signer_identity_snapshot_sha256)
+          || accepted.length !== current.signer_identity_snapshot_count) {
+        fail(
+          "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_INVALID",
+          "Hosted signer-ring predecessor identity snapshot metadata is invalid.",
+          503
+        );
+      }
+      const predecessorSnapshotSha256 = signerIdentitySnapshotSha256(
+        authorityId,
+        current.signer_ring_epoch!,
+        current.signer_ring_sequence!,
+        accepted
+      );
+      if (!equalSecret(predecessorSnapshotSha256, current.signer_identity_snapshot_sha256)) {
+        fail(
+          "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_INVALID",
+          "Hosted signer-ring predecessor identity snapshot does not match its durable digest.",
           503
         );
       }
@@ -780,12 +855,24 @@ export class SafeReadCapabilityService {
         signerRingSequence
       );
     }
+    const nextIdentitySnapshot = this.db.prepare(`
+      SELECT key_id, public_key_sha256, state, first_seen_ring_sequence, last_seen_ring_sequence
+      FROM safe_read_attestation_signer_identities
+      WHERE authority_id=? AND signer_ring_epoch=?
+    `).all(authorityId, signerRingEpoch) as HostedSignerIdentityRow[];
+    const nextIdentitySnapshotSha256 = signerIdentitySnapshotSha256(
+      authorityId,
+      signerRingEpoch,
+      signerRingSequence,
+      nextIdentitySnapshot
+    );
     if (!current) {
       this.db.prepare(`
         INSERT INTO safe_read_attestation_high_water(
           authority_id, set_sequence, set_sha256, signer_ring_epoch, signer_ring_sequence,
-          signer_ring_sha256, signer_ring_identity_count, accepted_at_ms
-        ) VALUES(?,?,?,?,?,?,?,?)
+          signer_ring_sha256, signer_ring_identity_count, signer_identity_snapshot_count,
+          signer_identity_snapshot_sha256, accepted_at_ms
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)
       `).run(
         authorityId,
         setSequence,
@@ -794,13 +881,16 @@ export class SafeReadCapabilityService {
         signerRingSequence,
         signerRingSha256,
         signerIdentities.length,
+        nextIdentitySnapshot.length,
+        nextIdentitySnapshotSha256,
         now
       );
     } else if (!hasRingHighWater || setSequence > current.set_sequence || signerRingSequence > current.signer_ring_sequence!) {
       this.db.prepare(`
         UPDATE safe_read_attestation_high_water
         SET set_sequence=?, set_sha256=?, signer_ring_epoch=?, signer_ring_sequence=?,
-            signer_ring_sha256=?, signer_ring_identity_count=?, accepted_at_ms=?
+            signer_ring_sha256=?, signer_ring_identity_count=?, signer_identity_snapshot_count=?,
+            signer_identity_snapshot_sha256=?, accepted_at_ms=?
         WHERE authority_id=?
       `).run(
         setSequence,
@@ -809,6 +899,8 @@ export class SafeReadCapabilityService {
         signerRingSequence,
         signerRingSha256,
         signerIdentities.length,
+        nextIdentitySnapshot.length,
+        nextIdentitySnapshotSha256,
         now,
         authorityId
       );

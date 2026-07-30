@@ -700,7 +700,108 @@ test("hosted capability fails closed when durable signer-ring predecessor histor
           sha(Buffer.alloc(32, index + 3))
         )
       ),
-      "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_MISSING"
+      missingEvidence === "legacy-ledger"
+        ? "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_MISSING"
+        : "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_INVALID"
+    );
+    service.close();
+  }
+});
+
+test("hosted capability rejects same-count signer snapshot corruption after restart", () => {
+  const require = createRequire(import.meta.url);
+  const Database = require("better-sqlite3") as new (name: string) => {
+    prepare: (sql: string) => { run: (...args: unknown[]) => unknown };
+    close: () => void;
+  };
+  const corruptions = [
+    {
+      name: "state",
+      needsRevokedHistory: false,
+      sql: "UPDATE safe_read_attestation_signer_identities SET state='revoked' WHERE key_id='release-2026-a'"
+    },
+    {
+      name: "key",
+      needsRevokedHistory: true,
+      sql: "UPDATE safe_read_attestation_signer_identities SET key_id='release-2026-z' WHERE key_id='release-2026-a'"
+    },
+    {
+      name: "material",
+      needsRevokedHistory: true,
+      sql: `UPDATE safe_read_attestation_signer_identities SET public_key_sha256='sha256:${"6".repeat(64)}' WHERE key_id='release-2026-a'`
+    },
+    {
+      name: "malformed-digest",
+      needsRevokedHistory: false,
+      sql: "UPDATE safe_read_attestation_high_water SET signer_identity_snapshot_sha256='malformed'"
+    },
+    {
+      name: "stale-digest",
+      needsRevokedHistory: false,
+      sql: `UPDATE safe_read_attestation_high_water SET signer_identity_snapshot_sha256='sha256:${"0".repeat(64)}'`
+    }
+  ];
+  for (const [index, corruption] of corruptions.entries()) {
+    const f = fixture({ attestationValue: validServiceAttestation(), ringSequence: 1 });
+    const signerA = structuredClone(f.signerRing.signers[0]!);
+    const { publicKey: publicKeyB, privateKey: privateKeyB } = generateKeyPairSync("ed25519");
+    const signerB = {
+      key_id: "release-2026-b",
+      algorithm: "ed25519",
+      state: "active" as const,
+      public_key_spki_base64: publicKeyB.export({ format: "der", type: "spki" }).toString("base64")
+    };
+    const databasePath = path.join(path.dirname(f.setPath), `snapshot-corruption-${corruption.name}.sqlite`);
+    const principal = `sha256:${"7".repeat(64)}`;
+    const publish = (): void => {
+      f.bindRing();
+      f.resign(privateKeyB, "release-2026-b");
+      const raw = f.write();
+      f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+      f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+    };
+    let service = new SafeReadCapabilityService({
+      databasePath,
+      env: f.env,
+      now: () => new Date("2026-07-29T20:00:00.000Z")
+    });
+    service.preauthorize(
+      principal,
+      serviceRequest(f.attestationSha, `f0000000-0000-0000-0000-0000000000${index}1`, sha(Buffer.alloc(32, index + 1)))
+    );
+    if (corruption.needsRevokedHistory) {
+      f.signerRing.sequence = 2;
+      f.signerRing.signers = [{ ...signerA, state: "revoked" }, signerB];
+      f.set.sequence = 8;
+      publish();
+      service.preauthorize(
+        principal,
+        serviceRequest(f.attestationSha, `f0000000-0000-0000-0000-0000000000${index}2`, sha(Buffer.alloc(32, index + 11)))
+      );
+    }
+    service.close();
+
+    const db = new Database(databasePath);
+    db.prepare(corruption.sql).run();
+    db.close();
+
+    f.signerRing.sequence = corruption.needsRevokedHistory ? 3 : 2;
+    f.signerRing.signers = corruption.name === "state" ? [signerB] : (
+      corruption.needsRevokedHistory ? [signerB] : [{ ...signerA, state: "revoked" }, signerB]
+    );
+    f.set.sequence = corruption.needsRevokedHistory ? 9 : 8;
+    publish();
+    service = new SafeReadCapabilityService({
+      databasePath,
+      env: f.env,
+      now: () => new Date("2026-07-29T20:00:00.000Z")
+    });
+    expectCapabilityError(
+      () => service.preauthorize(
+        principal,
+        serviceRequest(f.attestationSha, `f0000000-0000-0000-0000-0000000000${index}3`, sha(Buffer.alloc(32, index + 21)))
+      ),
+      "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_INVALID"
     );
     service.close();
   }
