@@ -13,15 +13,7 @@ $output=[IO.Path]::GetFullPath($OutputRoot)
 $modulePath=Join-Path $repository 'scripts\deploy\SafeReadPackageV2.psm1'
 Import-Module $modulePath -Force
 
-function Write-Utf8Json([string]$Path,$Value){
-  [IO.Directory]::CreateDirectory((Split-Path -Parent $Path))|Out-Null
-  [IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 32),[Text.UTF8Encoding]::new($false))
-}
-function New-FileRecord([string]$Root,[string]$Path){
-  $full=Join-Path $Root ($Path.Replace('/',[IO.Path]::DirectorySeparatorChar))
-  [ordered]@{path=$Path;size=(Get-Item -LiteralPath $full).Length;sha256=(Get-SafeReadSha256 $full).Substring(7)}
-}
-function Invoke-Harness([string]$Operation,[string]$ManifestPath,[string]$ReceiptPath,[string]$ReceiptSha256,[string]$PackagePinSha256,[string]$KillPoint='no-kill'){
+function Invoke-Harness([string]$Operation,[string]$ManifestPath,[string]$ReceiptPath,[string]$ReceiptSha256,[string]$PackagePinSha256,[string]$KillPoint='no-kill',[bool]$BundleOnly=$false){
   $input=[ordered]@{
     LocalAppData=$profileLocal
     AppData=$profileRoaming
@@ -33,6 +25,7 @@ function Invoke-Harness([string]$Operation,[string]$ManifestPath,[string]$Receip
     SafeReadAdmissionReceiptPath=if([string]::IsNullOrWhiteSpace($ReceiptPath)){$null}else{$ReceiptPath}
     SafeReadAdmissionReceiptSha256=if([string]::IsNullOrWhiteSpace($ReceiptSha256)){$null}else{$ReceiptSha256}
     SafeReadPackagePinSha256=if([string]::IsNullOrWhiteSpace($PackagePinSha256)){$null}else{$PackagePinSha256}
+    BundleOnly=$BundleOnly
     KillPoint=$KillPoint
   }
   $encoded=[Convert]::ToBase64String([Text.UTF8Encoding]::new($false).GetBytes(($input|ConvertTo-Json -Compress)))
@@ -58,27 +51,12 @@ $finalReleaseRoot=Join-Path $profileLocal "RevitOperator\releases\$releaseVersio
 [IO.Directory]::CreateDirectory($profileRoaming)|Out-Null
 [IO.Directory]::CreateDirectory($profileDesktop)|Out-Null
 
-$evidenceFiles=@(@('package-pins.json','release-manifest.json','source.snapshot.receipt.json')|Sort-Object|ForEach-Object{New-FileRecord $bundleRoot $_})
-$components=@([ordered]@{id='safe-read-evidence';kind='safe-read-evidence';version='real-fixture';required=$true;installScope='user';payloadPath=$packageRoot;installWhenRevitMissing=$true;preserveExisting=$false;files=$evidenceFiles})
-$targetMappings=@()
-foreach($year in '2023','2024','2025'){
-  $componentId="safe-read-$year";$targetRoot=Join-Path $bundleRoot "targets\$year";$prefix=$targetRoot.TrimEnd([char]92,[char]47)+[IO.Path]::DirectorySeparatorChar
-  $files=@(Get-ChildItem -LiteralPath $targetRoot -File -Recurse|ForEach-Object{$relative=$_.FullName.Substring($prefix.Length).Replace('\','/');New-FileRecord $targetRoot $relative}|Sort-Object path)
-  $components += [ordered]@{id=$componentId;kind='revit-addin';version='real-fixture';required=$true;installScope='user';payloadPath="$packageRoot/targets/$year";revitYear=$year;revitAddinProfileId='safe-read';installWhenRevitMissing=$true;preserveExisting=$false;files=$files}
-  $targetMappings += [ordered]@{revitYear=$year;componentId=$componentId}
-}
-$operatorManifest=[ordered]@{
-  schemaVersion=3
-  releaseVersion=$releaseVersion
-  generatedAtUtc='2026-07-29T12:00:00Z'
-  sourceRevision='real-package-fixture'
-  minimumWindowsVersion='10.0.17763'
-  revitAddinProfiles=@([ordered]@{id='safe-read';manifestFileName='RevitOperator.SafeReadHost.addin';assemblyPath='payload/RevitOperator.SafeReadHost.dll';type='Application';name='Revit Operator Safe Read Host';fullClassName='RevitOperator.SafeReadHost.App';addInId='AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E';vendorId='BIMT';vendorDescription='BIMTools Revit Operator Safe Read Host'})
-  safeReadAdmission=[ordered]@{schema='revit-operator.operator-deploy-safe-read.v1';profileId='safe-read';packageRoot=$packageRoot;evidenceComponentId='safe-read-evidence';targets=$targetMappings}
-  components=$components
-}
 $operatorManifestPath=Join-Path $operatorRoot "$releaseVersion.manifest.json"
-Write-Utf8Json $operatorManifestPath $operatorManifest
+& (Join-Path $repository 'scripts\deploy\tests\New-OperatorDeploySafeReadFixtureManifest.ps1') `
+  -RepositoryRoot $repository `
+  -BundleRoot $bundleRoot `
+  -ManifestPath $operatorManifestPath `
+  -ReleaseVersion $releaseVersion|Out-Host
 
 $coordination=Join-Path $output 'coordination'
 [IO.Directory]::CreateDirectory($coordination)|Out-Null

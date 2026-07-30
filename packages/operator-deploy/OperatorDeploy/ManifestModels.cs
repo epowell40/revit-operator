@@ -152,7 +152,12 @@ public sealed class ReleaseManifest
 
     private void ValidateSafeReadAdmission()
     {
-        var protectedProfiles = RevitAddinProfiles.Where(SafeReadAdmissionContracts.IsProtectedProfile).ToList();
+        var reservedProfiles = RevitAddinProfiles.Where(SafeReadAdmissionContracts.CollidesWithReservedProfile).ToList();
+        var protectedProfiles = reservedProfiles.Where(SafeReadAdmissionContracts.IsCanonicalProtectedProfile).ToList();
+        if (reservedProfiles.Count != protectedProfiles.Count)
+            throw new DeploymentException(
+                ExitCodes.ManifestInvalid,
+                "A Revit add-in profile collides with the reserved production SafeRead identity but is not the exact canonical schema-v3 profile.");
         if (SchemaVersion is 1 or 2)
         {
             if (SafeReadAdmission != null)

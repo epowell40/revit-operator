@@ -1223,11 +1223,15 @@ public sealed class DeploymentEngine
         }
         catch (Exception ex)
         {
-            QuarantineActivationJournal($"Activation journal SafeRead admission is invalid: {ex.Message}");
+            var recoveryFailures = RecoverRejectedAdmissionControls(journal);
+            var recoveryDetail = recoveryFailures.Count == 0
+                ? "transaction-owned controls were restored or disabled before quarantine"
+                : $"control recovery reported {recoveryFailures.Count} failure(s): {string.Join(" | ", recoveryFailures.Select(failure => failure.Message))}";
+            QuarantineActivationJournal($"Activation journal SafeRead admission is invalid: {ex.Message}; {recoveryDetail}.");
             throw new DeploymentException(
                 ExitCodes.ValidationFailed,
-                "The interrupted activation journal was quarantined because its SafeRead admission no longer binds the exact candidate release.",
-                ex);
+                $"The interrupted activation journal was quarantined because its SafeRead admission no longer binds the exact candidate release; {recoveryDetail}.",
+                recoveryFailures.Count == 0 ? ex : new AggregateException(new[] { ex }.Concat(recoveryFailures)));
         }
 
         var state = journal.Controls.Single(control => control.Kind == "state");
@@ -1265,6 +1269,164 @@ public sealed class DeploymentEngine
         }
         RetireActivationJournal(journalSha256);
         Log($"Recovered interrupted activation journal {journal.TransactionId}; state was restored last.");
+    }
+
+    private List<Exception> RecoverRejectedAdmissionControls(ActivationJournal journal)
+    {
+        var failures = new List<Exception>();
+        var disabled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var unsafeReleaseRoot = journal.SafeReadAdmission == null
+            ? null
+            : Path.Combine(_context.ReleasesRoot, journal.SafeReadAdmission.ReleaseVersion);
+        var previousRootStillExact = RejectedAdmissionPreviousRootStillExact(journal);
+
+        // Revit-facing and auxiliary controls are handled before state. An exact after-image is
+        // transaction-owned and may be removed with CAS. A third-party image is never changed.
+        foreach (var control in journal.Controls.Where(control => control.Kind != "state"))
+        {
+            try
+            {
+                if (control.AfterExists && CurrentMatchesAfter(control))
+                {
+                    CasDelete(control.Path, expectedExists: true, expectedSha256: control.AfterSha256);
+                    disabled.Add(control.Path);
+                }
+            }
+            catch (Exception failure)
+            {
+                failures.Add(new IOException($"Failed to disable rejected admission control '{control.Path}'.", failure));
+            }
+        }
+
+        // The unadmitted release tree is evidence. Leave final, staging, displaced, and failed
+        // roots byte-for-byte in place; in particular, never move a tampered/foreign final root.
+        // Restore only control preimages that do not resolve into that unsafe final root.
+        foreach (var control in journal.Controls.Where(control => control.Kind != "state"))
+        {
+            try
+            {
+                var beforeIsUnsafe = unsafeReleaseRoot != null &&
+                    !previousRootStillExact &&
+                    control.Kind == "addin" &&
+                    AddinSnapshotReferencesRoot(control, unsafeReleaseRoot);
+                if (beforeIsUnsafe) continue;
+                RestoreRejectedControlPreimage(control, disabled.Contains(control.Path));
+            }
+            catch (Exception failure)
+            {
+                failures.Add(new IOException($"Failed to restore rejected admission control '{control.Path}'.", failure));
+            }
+        }
+
+        var state = journal.Controls.Single(control => control.Kind == "state");
+        try
+        {
+            var beforeStateIsUnsafe = journal.SafeReadAdmission != null &&
+                !previousRootStillExact &&
+                StateSnapshotReferencesRelease(state, journal.SafeReadAdmission.ReleaseVersion);
+            var stateDisabled = false;
+            if (state.AfterExists && CurrentMatchesAfter(state))
+            {
+                CasDelete(state.Path, expectedExists: true, expectedSha256: state.AfterSha256);
+                stateDisabled = true;
+            }
+            else if (beforeStateIsUnsafe && state.BeforeExists && CurrentMatchesBefore(state))
+            {
+                CasDelete(state.Path, expectedExists: true, expectedSha256: state.BeforeSha256);
+                stateDisabled = true;
+            }
+
+            if (!beforeStateIsUnsafe)
+                RestoreRejectedControlPreimage(state, stateDisabled);
+        }
+        catch (Exception failure)
+        {
+            failures.Add(new IOException($"Failed to restore or disable rejected admission state '{state.Path}'.", failure));
+        }
+
+        return failures;
+    }
+
+    private bool RejectedAdmissionPreviousRootStillExact(ActivationJournal journal)
+    {
+        var swap = journal.ReleaseRootSwap;
+        if (swap == null || !swap.BeforeExists || swap.BeforeTreeSha256 == null) return false;
+        try
+        {
+            return DirectoryMatchesTree(swap.FinalPath, swap.BeforeTreeSha256);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void RestoreRejectedControlPreimage(ActivationJournalControl control, bool wasDisabled)
+    {
+        if (control.BeforeExists)
+        {
+            if (CurrentMatchesBefore(control)) return;
+            var before = Convert.FromBase64String(control.BeforeBase64!);
+            if (wasDisabled || (!File.Exists(control.Path) && CurrentMatchesAfter(control)))
+            {
+                CasWrite(control.Path, before, expectedExists: false, expectedSha256: null);
+                return;
+            }
+            if (CurrentMatchesAfter(control))
+                CasWrite(control.Path, before, control.AfterExists, control.AfterSha256);
+            return;
+        }
+
+        if (CurrentMatchesBefore(control)) return;
+        if (CurrentMatchesAfter(control))
+            CasDelete(control.Path, control.AfterExists, control.AfterSha256);
+    }
+
+    private static bool AddinSnapshotReferencesRoot(ActivationJournalControl control, string unsafeReleaseRoot)
+    {
+        if (!control.BeforeExists || control.BeforeBase64 == null) return false;
+        try
+        {
+            var document = XDocument.Parse(new UTF8Encoding(false, true).GetString(Convert.FromBase64String(control.BeforeBase64)), LoadOptions.None);
+            return document.Descendants()
+                .Where(element => element.Name.LocalName == "Assembly")
+                .Any(element => IsPathAtOrUnder(element.Value, unsafeReleaseRoot));
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static bool StateSnapshotReferencesRelease(ActivationJournalControl control, string unsafeReleaseVersion)
+    {
+        if (!control.BeforeExists || control.BeforeBase64 == null) return false;
+        try
+        {
+            var state = JsonSerializer.Deserialize<InstalledState>(
+                Convert.FromBase64String(control.BeforeBase64),
+                ReleaseManifest.JsonOptions);
+            return state == null || state.CurrentRelease.Equals(unsafeReleaseVersion, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static bool IsPathAtOrUnder(string candidate, string root)
+    {
+        try
+        {
+            var candidateFull = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return candidateFull.Equals(rootFull, StringComparison.OrdinalIgnoreCase) ||
+                   candidateFull.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private void VerifyJournalAdmissionCandidates(ActivationJournal journal)

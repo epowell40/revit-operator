@@ -24,7 +24,7 @@ Schema v2 declares generic `revitAddinProfiles` and makes each `revit-addin` com
 {
   "id": "safe-read",
   "manifestFileName": "RevitOperator.SafeReadHost.addin",
-  "assemblyPath": "RevitOperator.SafeReadHost.dll",
+  "assemblyPath": "payload/RevitOperator.SafeReadHost.dll",
   "type": "Application",
   "name": "Revit Operator Safe Read Host",
   "fullClassName": "RevitOperator.SafeReadHost.App",
@@ -34,7 +34,7 @@ Schema v2 declares generic `revitAddinProfiles` and makes each `revit-addin` com
 }
 ```
 
-Profile IDs, manifest filenames, and AddInIds must be unique. Paths and basenames are traversal-safe, every represented Revit year must contain exactly one component for every declared profile, and `--revit-version <year>` selects that whole per-year set. Unknown or duplicate JSON properties are rejected.
+Profile IDs, manifest filenames, and AddInIds must be unique. Paths and basenames are traversal-safe, every represented Revit year must contain exactly one component for every declared profile, and `--revit-version <year>` selects that whole per-year set. Unknown or duplicate JSON properties are rejected. The SafeRead manifest filename, AddInId, class, assembly path, and assembly basename are reserved case-insensitively. Any profile that collides with one of those markers must match every canonical field above exactly and use schema v3 with external admission; cosmetic or case-only drift is rejected.
 
 Schema v3 is required for the exact production SafeRead identity shown above. A schema-v3 SafeRead release must also declare one `safe-read-evidence` component, three `revit-addin` components for Revit 2023/2024/2025, and this admission mapping:
 
@@ -76,7 +76,7 @@ The receipt and both trust pins must come from deployment coordination outside t
 
 The receipt schema is `revit-operator.safe-read-admission-receipt.v2`. It binds the exact OperatorDeploy manifest bytes, package root, three target mappings, source/proof/runtime facts, final rendered manifest facts, and the exact final layout hash. Immediately before activation, OperatorDeploy independently re-hashes the final staged tree, checks exact file sets and proof/package records, re-inspects host and executor PE facts, revalidates runtime-attestation bindings, regenerates all three `.addin` manifests, and compares the receipt's final-layout hash.
 
-The admitted receipt bytes are copied to `<release>\.operator-deploy\safe-read-admission.receipt.v2.json`. Their external hash, package pin, manifest hash, layout hash, and per-year identities are persisted in both deployment state and the activation journal. Installed validation, repair, rollback, and crash recovery reverify that binding. A missing external pin, stale or detached receipt, wrong release root/year, copied tree, extra/missing file, manifest drift, payload tamper, or replayed journal fails closed before activation. An interrupted candidate whose admitted tree no longer verifies is quarantined rather than replayed.
+The admitted receipt bytes are copied to `<release>\.operator-deploy\safe-read-admission.receipt.v2.json`. Their external hash, package pin, manifest hash, layout hash, and per-year identities are persisted in both deployment state and the activation journal. Installed validation, repair, rollback, and crash recovery reverify that binding. A missing external pin, stale or detached receipt, wrong release root/year, copied tree, extra/missing file, manifest drift, payload tamper, or replayed journal fails closed before activation. If an interrupted candidate no longer verifies after one or more live controls were written, recovery first CAS-restores or disables transaction-owned controls, preserves foreign controls and every candidate-root slot for inspection, handles state last, and only then quarantines the journal.
 
 This gate consumes the independently produced SafeRead proof and admission receipt. It does not itself authorize a tool, expose a route, or establish publisher authenticity from SHA-256 alone.
 

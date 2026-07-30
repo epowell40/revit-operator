@@ -46,7 +46,7 @@ Create the admission receipt only after the exact OperatorDeploy manifest and fi
   -AttestationPinSha256 <EXTERNALLY_DELIVERED_PACKAGE_PIN> `
   -ManifestAssemblyRoot <FINAL_OPERATORDEPLOY_RELEASE_ROOT> `
   -CoordinationRoot <EXTERNAL_COORDINATION_ROOT> `
-  -ReceiptPath <EXTERNAL_RECEIPT_PATH> `
+  -OutputPath <EXTERNAL_RECEIPT_PATH> `
   -OperatorDeployManifestPath <SCHEMA_V3_OPERATORDEPLOY_MANIFEST>
 ```
 

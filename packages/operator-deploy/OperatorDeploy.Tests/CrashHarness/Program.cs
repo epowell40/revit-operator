@@ -13,6 +13,7 @@ var context = new DeploymentContext
     WindowsVersion = new Version(10, 0, 19045),
     IsRevitRunning = () => false,
     GetEnvironmentVariable = _ => null,
+    TryAcquireDeploymentMutex = () => DeploymentMutex.TryAcquireForTestRoot(input.LocalAppData),
     ActivationCheckpoint = point =>
     {
         if (point == input.KillPoint) Environment.Exit(137);
@@ -25,6 +26,7 @@ var result = new DeploymentEngine(context, new DeploymentOptions
     SafeReadAdmissionReceiptPath = input.SafeReadAdmissionReceiptPath,
     SafeReadAdmissionReceiptSha256 = input.SafeReadAdmissionReceiptSha256,
     SafeReadPackagePinSha256 = input.SafeReadPackagePinSha256,
+    BundleOnly = input.BundleOnly,
     Quiet = true
 }, TextWriter.Null).Execute();
 return result.ExitCode;
@@ -40,4 +42,5 @@ internal sealed record HarnessInput(
     string? SafeReadAdmissionReceiptPath,
     string? SafeReadAdmissionReceiptSha256,
     string? SafeReadPackagePinSha256,
+    bool BundleOnly,
     string KillPoint);

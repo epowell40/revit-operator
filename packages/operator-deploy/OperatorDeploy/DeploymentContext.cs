@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace RevitOperator.Deployment;
 
@@ -39,9 +41,20 @@ internal static class DeploymentMutex
 {
     private const string Name = @"Global\BIMTools.RevitOperator.OperatorDeploy.v1";
 
-    public static IDisposable? TryAcquire()
+    public static IDisposable? TryAcquire() => TryAcquireNamed(Name);
+
+    internal static IDisposable? TryAcquireForTestRoot(string root)
     {
-        var mutex = new Mutex(initiallyOwned: false, Name);
+        var normalized = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .ToUpperInvariant();
+        var suffix = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)));
+        return TryAcquireNamed($@"Local\BIMTools.RevitOperator.OperatorDeploy.Tests.{suffix}");
+    }
+
+    private static IDisposable? TryAcquireNamed(string name)
+    {
+        var mutex = new Mutex(initiallyOwned: false, name);
         try
         {
             var acquired = false;
