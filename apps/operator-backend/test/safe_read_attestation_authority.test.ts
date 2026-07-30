@@ -59,11 +59,19 @@ function expectAuthorityError(fn: () => unknown, code: string): void {
   assert.equal(received.code, code);
 }
 
-function fixture(options: { sequence?: number; signerState?: "active" | "revoked"; attestationValue?: unknown } = {}) {
+function fixture(options: {
+  sequence?: number;
+  ringSequence?: number;
+  ringEpoch?: string;
+  signerState?: "active" | "revoked";
+  attestationValue?: unknown;
+} = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "safe-read-attestation-authority-"));
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   const signerRing = {
     schema: SAFE_READ_ATTESTATION_SIGNER_RING_SCHEMA,
+    epoch: options.ringEpoch ?? "test-authority-2026",
+    sequence: options.ringSequence ?? 3,
     signers: [{
       key_id: "release-2026-a",
       algorithm: "ed25519",
@@ -79,6 +87,11 @@ function fixture(options: { sequence?: number; signerState?: "active" | "revoked
     schema: SAFE_READ_ATTESTATION_SET_SCHEMA,
     sequence: options.sequence ?? 7,
     issued_at_utc: "2026-07-29T19:50:00.000Z",
+    signer_ring: {
+      epoch: signerRing.epoch,
+      sequence: signerRing.sequence,
+      sha256: ""
+    },
     entries
   };
   const set = {
@@ -86,19 +99,31 @@ function fixture(options: { sequence?: number; signerState?: "active" | "revoked
     signatures: [{
       key_id: "release-2026-a",
       algorithm: "ed25519",
-      signature_base64url: sign(null, Buffer.from(canonicalJson(payload as unknown as JsonValue)), privateKey).toString("base64url")
+      signature_base64url: ""
     }]
   };
   const ringPath = path.join(root, "signers.json");
   const setPath = path.join(root, "set.json");
-  const resign = () => {
+  const bindRing = () => {
+    set.signer_ring = {
+      epoch: signerRing.epoch,
+      sequence: signerRing.sequence,
+      sha256: sha(`${JSON.stringify(signerRing)}\n`)
+    };
+  };
+  const resign = (key = privateKey, keyId = "release-2026-a") => {
     const signedPayload = {
       schema: set.schema,
       sequence: set.sequence,
       issued_at_utc: set.issued_at_utc,
+      signer_ring: set.signer_ring,
       entries: set.entries
     };
-    set.signatures[0]!.signature_base64url = sign(null, Buffer.from(canonicalJson(signedPayload as unknown as JsonValue)), privateKey).toString("base64url");
+    set.signatures = [{
+      key_id: keyId,
+      algorithm: "ed25519",
+      signature_base64url: sign(null, Buffer.from(canonicalJson(signedPayload as unknown as JsonValue)), key).toString("base64url")
+    }];
   };
   const write = () => {
     const ringRaw = `${JSON.stringify(signerRing)}\n`;
@@ -107,6 +132,8 @@ function fixture(options: { sequence?: number; signerState?: "active" | "revoked
     fs.writeFileSync(setPath, setRaw);
     return { ringRaw, setRaw };
   };
+  bindRing();
+  resign();
   const raw = write();
   const env: NodeJS.ProcessEnv = {
     REVIT_OPERATOR_MODE: "hosted",
@@ -115,7 +142,7 @@ function fixture(options: { sequence?: number; signerState?: "active" | "revoked
     OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_PATH: setPath,
     OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(raw.setRaw)
   };
-  return { env, set, signerRing, setPath, ringPath, attestationSha, write, resign };
+  return { env, set, signerRing, setPath, ringPath, attestationSha, write, resign, bindRing };
 }
 
 test("hosted authority verifies separately pinned signer ring and set, then selects exact hash and tuple", () => {
@@ -153,18 +180,15 @@ test("hosted authority permits signer rotation while a revoked predecessor canno
   const f = fixture();
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   f.signerRing.signers[0]!.state = "revoked";
+  f.signerRing.sequence++;
   (f.signerRing.signers as Array<Record<string, unknown>>).push({
     key_id: "release-2026-b",
     algorithm: "ed25519",
     state: "active",
     public_key_spki_base64: publicKey.export({ format: "der", type: "spki" }).toString("base64")
   });
-  const payload = { schema: f.set.schema, sequence: f.set.sequence, issued_at_utc: f.set.issued_at_utc, entries: f.set.entries };
-  f.set.signatures = [{
-    key_id: "release-2026-b",
-    algorithm: "ed25519",
-    signature_base64url: sign(null, Buffer.from(canonicalJson(payload as unknown as JsonValue)), privateKey).toString("base64url")
-  }];
+  f.bindRing();
+  f.resign(privateKey, "release-2026-b");
   const raw = f.write();
   const env = {
     ...f.env,
@@ -189,6 +213,104 @@ test("hosted authority rejects oversized, duplicate, and attestation-content-mis
   mismatch.set.entries[0]!.runtime_attestation_sha256 = HASH_A;
   const mismatchRaw = mismatch.write();
   expectAuthorityError(() => loadHostedSafeReadAttestation({ ...mismatch.env, OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(mismatchRaw.setRaw) }, HASH_A, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+});
+
+test("hosted authority rejects duplicate JSON properties at every signed boundary", () => {
+  const duplicateSet = fixture();
+  const validSetRaw = fs.readFileSync(duplicateSet.setPath, "utf8");
+  const setRaw = validSetRaw.replace('"sequence":7', '"sequence":1,"sequence":7');
+  fs.writeFileSync(duplicateSet.setPath, setRaw);
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...duplicateSet.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(setRaw)
+  }, duplicateSet.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+
+  const duplicateRing = fixture();
+  const validRingRaw = fs.readFileSync(duplicateRing.ringPath, "utf8");
+  const ringRaw = validRingRaw.replace('"state":"active"', '"state":"revoked","state":"active"');
+  fs.writeFileSync(duplicateRing.ringPath, ringRaw);
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...duplicateRing.env,
+    OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256: sha(ringRaw)
+  }, duplicateRing.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+
+  const duplicateEmbedded = fixture();
+  const embeddedRaw = JSON.stringify(attestation()).replace('"state":"active"', '"state":"revoked","state":"active"');
+  duplicateEmbedded.set.entries[0]!.attestation_json = embeddedRaw;
+  duplicateEmbedded.set.entries[0]!.runtime_attestation_sha256 = sha(embeddedRaw);
+  duplicateEmbedded.resign();
+  const duplicateEmbeddedRaw = duplicateEmbedded.write();
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...duplicateEmbedded.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(duplicateEmbeddedRaw.setRaw)
+  }, sha(embeddedRaw), TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+});
+
+test("hosted authority rejects BOM, malformed UTF-8, relative paths, and non-regular files", () => {
+  const bom = fixture();
+  const bomRaw = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), fs.readFileSync(bom.setPath)]);
+  fs.writeFileSync(bom.setPath, bomRaw);
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...bom.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(bomRaw)
+  }, bom.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+
+  const utf8 = fixture();
+  const invalidUtf8 = Buffer.concat([Buffer.from('{"schema":"'), Buffer.from([0xff]), Buffer.from('"}')]);
+  fs.writeFileSync(utf8.setPath, invalidUtf8);
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...utf8.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(invalidUtf8)
+  }, utf8.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+
+  const relative = fixture();
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...relative.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_PATH: path.relative(process.cwd(), relative.setPath)
+  }, relative.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_UNAVAILABLE");
+
+  const nonRegular = fixture();
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...nonRegular.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_PATH: path.dirname(nonRegular.setPath)
+  }, nonRegular.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+});
+
+test("hosted authority rejects oversized files before parsing and rejects linked paths", t => {
+  const oversized = fixture();
+  const oversizedRaw = Buffer.alloc((2 * 1024 * 1024) + 1, 0x20);
+  fs.writeFileSync(oversized.setPath, oversizedRaw);
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...oversized.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(oversizedRaw)
+  }, oversized.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+
+  const linked = fixture();
+  const linkPath = path.join(path.dirname(linked.setPath), "linked-set.json");
+  try {
+    fs.symlinkSync(linked.setPath, linkPath, "file");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM") {
+      t.diagnostic("symlink creation is not permitted on this Windows host");
+      return;
+    }
+    throw error;
+  }
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...linked.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_PATH: linkPath
+  }, linked.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SET_INVALID");
+});
+
+test("hosted authority binds the signed set to the exact signer-ring epoch, sequence, and bytes", () => {
+  const f = fixture();
+  f.set.signer_ring.sha256 = HASH_A;
+  f.resign();
+  const raw = f.write();
+  expectAuthorityError(() => loadHostedSafeReadAttestation({
+    ...f.env,
+    OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256: sha(raw.setRaw)
+  }, f.attestationSha, TUPLE), "SAFE_READ_ATTESTATION_SIGNER_RING_MISMATCH");
 });
 
 test("checked-in hosted examples are internally signed but inert because signer and attestation are revoked", () => {
@@ -290,6 +412,95 @@ test("hosted capability persists sequence high-water, permits signed rotation, a
     "SAFE_READ_ATTESTATION_SET_EQUIVOCATION"
   );
   reopened.close();
+});
+
+test("hosted capability durably rejects signer-ring rollback, equivocation, and revoked-key reactivation", () => {
+  const f = fixture({ attestationValue: validServiceAttestation(), ringSequence: 1 });
+  const originalRing = structuredClone(f.signerRing);
+  const databasePath = path.join(path.dirname(f.setPath), "signer-ring-high-water.sqlite");
+  const principal = `sha256:${"3".repeat(64)}`;
+  let service = new SafeReadCapabilityService({ databasePath, env: f.env, now: () => new Date("2026-07-29T20:00:00.000Z") });
+  service.preauthorize(principal, serviceRequest(f.attestationSha, "c0000000-0000-0000-0000-000000000001", sha(Buffer.alloc(32, 1))));
+
+  const { publicKey: publicKeyB, privateKey: privateKeyB } = generateKeyPairSync("ed25519");
+  f.signerRing.sequence = 2;
+  f.signerRing.signers[0]!.state = "revoked";
+  (f.signerRing.signers as Array<Record<string, unknown>>).push({
+    key_id: "release-2026-b",
+    algorithm: "ed25519",
+    state: "active",
+    public_key_spki_base64: publicKeyB.export({ format: "der", type: "spki" }).toString("base64")
+  });
+  f.set.sequence = 8;
+  f.bindRing();
+  f.resign(privateKeyB, "release-2026-b");
+  let raw = f.write();
+  f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+  f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+  service.preauthorize(principal, serviceRequest(f.attestationSha, "c0000000-0000-0000-0000-000000000002", sha(Buffer.alloc(32, 2))));
+  service.close();
+
+  service = new SafeReadCapabilityService({ databasePath, env: f.env, now: () => new Date("2026-07-29T20:00:00.000Z") });
+  f.signerRing.sequence = originalRing.sequence;
+  f.signerRing.signers = originalRing.signers;
+  f.set.sequence = 9;
+  f.bindRing();
+  f.resign();
+  raw = f.write();
+  f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+  f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+  expectCapabilityError(
+    () => service.preauthorize(principal, serviceRequest(f.attestationSha, "c0000000-0000-0000-0000-000000000003", sha(Buffer.alloc(32, 3)))),
+    "SAFE_READ_ATTESTATION_SIGNER_RING_ROLLBACK"
+  );
+
+  const { publicKey: publicKeyC } = generateKeyPairSync("ed25519");
+  f.signerRing.sequence = 2;
+  f.signerRing.signers = [
+    { ...originalRing.signers[0]!, state: "revoked" },
+    {
+      key_id: "release-2026-b",
+      algorithm: "ed25519",
+      state: "active",
+      public_key_spki_base64: publicKeyB.export({ format: "der", type: "spki" }).toString("base64")
+    },
+    {
+      key_id: "release-2026-c",
+      algorithm: "ed25519",
+      state: "active",
+      public_key_spki_base64: publicKeyC.export({ format: "der", type: "spki" }).toString("base64")
+    }
+  ];
+  f.bindRing();
+  f.resign(privateKeyB, "release-2026-b");
+  raw = f.write();
+  f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+  f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+  expectCapabilityError(
+    () => service.preauthorize(principal, serviceRequest(f.attestationSha, "c0000000-0000-0000-0000-000000000004", sha(Buffer.alloc(32, 4)))),
+    "SAFE_READ_ATTESTATION_SIGNER_RING_EQUIVOCATION"
+  );
+
+  f.signerRing.sequence = 3;
+  f.signerRing.signers = [
+    { ...originalRing.signers[0]!, state: "active" },
+    {
+      key_id: "release-2026-b",
+      algorithm: "ed25519",
+      state: "active",
+      public_key_spki_base64: publicKeyB.export({ format: "der", type: "spki" }).toString("base64")
+    }
+  ];
+  f.bindRing();
+  f.resign(privateKeyB, "release-2026-b");
+  raw = f.write();
+  f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+  f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+  expectCapabilityError(
+    () => service.preauthorize(principal, serviceRequest(f.attestationSha, "c0000000-0000-0000-0000-000000000005", sha(Buffer.alloc(32, 5)))),
+    "SAFE_READ_ATTESTATION_SIGNER_REACTIVATION"
+  );
+  service.close();
 });
 
 test("hosted final authorization reloads and re-verifies the signed set before capability CAS", () => {

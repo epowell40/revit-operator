@@ -204,6 +204,7 @@ export class SafeReadCapabilityError extends Error {
 type SqliteStatement = {
   run: (...args: unknown[]) => { changes: number | bigint };
   get: (...args: unknown[]) => Record<string, unknown> | undefined;
+  all: (...args: unknown[]) => Record<string, unknown>[];
 };
 type SqliteDb = {
   pragma: (value: string) => unknown;
@@ -539,9 +540,25 @@ export class SafeReadCapabilityService {
         authority_id TEXT PRIMARY KEY,
         set_sequence INTEGER NOT NULL,
         set_sha256 TEXT NOT NULL,
+        signer_ring_epoch TEXT NOT NULL,
+        signer_ring_sequence INTEGER NOT NULL,
+        signer_ring_sha256 TEXT NOT NULL,
         accepted_at_ms INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS safe_read_attestation_revoked_signers (
+        authority_id TEXT NOT NULL,
+        signer_ring_epoch TEXT NOT NULL,
+        key_id TEXT NOT NULL,
+        public_key_sha256 TEXT NOT NULL,
+        revoked_at_ring_sequence INTEGER NOT NULL,
+        PRIMARY KEY(authority_id, signer_ring_epoch, key_id)
+      );
     `);
+    const highWaterColumns = new Set(this.db.prepare("PRAGMA table_info(safe_read_attestation_high_water)")
+      .all().map(column => String(column.name)));
+    if (!highWaterColumns.has("signer_ring_epoch")) this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_ring_epoch TEXT");
+    if (!highWaterColumns.has("signer_ring_sequence")) this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_ring_sequence INTEGER");
+    if (!highWaterColumns.has("signer_ring_sha256")) this.db.exec("ALTER TABLE safe_read_attestation_high_water ADD COLUMN signer_ring_sha256 TEXT");
   }
 
   close(): void {
@@ -607,25 +624,82 @@ export class SafeReadCapabilityService {
 
   private acceptHostedHighWater(attested: LoadedAttestation, now: number): void {
     if (!attested.hosted) return;
-    const { authorityId, setSequence, setSha256 } = attested.hosted;
+    const {
+      authorityId,
+      setSequence,
+      setSha256,
+      signerRingEpoch,
+      signerRingSequence,
+      signerRingSha256,
+      signerIdentities
+    } = attested.hosted;
     const current = this.db.prepare(`
-      SELECT set_sequence, set_sha256 FROM safe_read_attestation_high_water WHERE authority_id=?
-    `).get(authorityId) as { set_sequence: number; set_sha256: string } | undefined;
+      SELECT set_sequence, set_sha256, signer_ring_epoch, signer_ring_sequence, signer_ring_sha256
+      FROM safe_read_attestation_high_water WHERE authority_id=?
+    `).get(authorityId) as {
+      set_sequence: number;
+      set_sha256: string;
+      signer_ring_epoch: string | null;
+      signer_ring_sequence: number | null;
+      signer_ring_sha256: string | null;
+    } | undefined;
     if (current && setSequence < current.set_sequence) {
       fail("SAFE_READ_ATTESTATION_SET_ROLLBACK", "Hosted attestation set sequence is below the durable high-water mark.", 503);
     }
     if (current && setSequence === current.set_sequence && !equalSecret(setSha256, current.set_sha256)) {
       fail("SAFE_READ_ATTESTATION_SET_EQUIVOCATION", "Hosted attestation set reuses a sequence with different content.", 503);
     }
+    const hasRingHighWater = current?.signer_ring_epoch != null
+      && current.signer_ring_sequence != null
+      && current.signer_ring_sha256 != null;
+    if (current && hasRingHighWater && signerRingEpoch !== current.signer_ring_epoch) {
+      fail("SAFE_READ_ATTESTATION_SIGNER_RING_EPOCH_MISMATCH", "Hosted signer-ring epoch differs from the durable authority epoch.", 503);
+    }
+    if (current && hasRingHighWater && signerRingSequence < current.signer_ring_sequence!) {
+      fail("SAFE_READ_ATTESTATION_SIGNER_RING_ROLLBACK", "Hosted signer-ring sequence is below the durable high-water mark.", 503);
+    }
+    if (current && hasRingHighWater && signerRingSequence === current.signer_ring_sequence
+        && !equalSecret(signerRingSha256, current.signer_ring_sha256!)) {
+      fail("SAFE_READ_ATTESTATION_SIGNER_RING_EQUIVOCATION", "Hosted signer ring reuses a sequence with different content.", 503);
+    }
+    const revoked = this.db.prepare(`
+      SELECT key_id, public_key_sha256
+      FROM safe_read_attestation_revoked_signers
+      WHERE authority_id=? AND signer_ring_epoch=?
+    `).all(authorityId, signerRingEpoch) as Array<{ key_id: string; public_key_sha256: string }>;
+    const revokedById = new Map(revoked.map(identity => [identity.key_id, identity.public_key_sha256]));
+    const revokedByMaterial = new Set(revoked.map(identity => identity.public_key_sha256));
+    for (const identity of signerIdentities) {
+      const priorMaterial = revokedById.get(identity.keyId);
+      if (priorMaterial && !equalSecret(priorMaterial, identity.publicKeySha256)) {
+        fail("SAFE_READ_ATTESTATION_SIGNER_IDENTITY_REUSE", "Hosted signer key identifier was rebound after revocation.", 503);
+      }
+      if (identity.state === "active" && (priorMaterial || revokedByMaterial.has(identity.publicKeySha256))) {
+        fail("SAFE_READ_ATTESTATION_SIGNER_REACTIVATION", "A durably revoked hosted signer was reactivated.", 503);
+      }
+    }
+    const rememberRevocation = this.db.prepare(`
+      INSERT OR IGNORE INTO safe_read_attestation_revoked_signers(
+        authority_id, signer_ring_epoch, key_id, public_key_sha256, revoked_at_ring_sequence
+      ) VALUES(?,?,?,?,?)
+    `);
+    for (const identity of signerIdentities) {
+      if (identity.state === "revoked") {
+        rememberRevocation.run(authorityId, signerRingEpoch, identity.keyId, identity.publicKeySha256, signerRingSequence);
+      }
+    }
     if (!current) {
       this.db.prepare(`
-        INSERT INTO safe_read_attestation_high_water(authority_id, set_sequence, set_sha256, accepted_at_ms)
-        VALUES(?,?,?,?)
-      `).run(authorityId, setSequence, setSha256, now);
-    } else if (setSequence > current.set_sequence) {
+        INSERT INTO safe_read_attestation_high_water(
+          authority_id, set_sequence, set_sha256, signer_ring_epoch, signer_ring_sequence, signer_ring_sha256, accepted_at_ms
+        ) VALUES(?,?,?,?,?,?,?)
+      `).run(authorityId, setSequence, setSha256, signerRingEpoch, signerRingSequence, signerRingSha256, now);
+    } else if (!hasRingHighWater || setSequence > current.set_sequence || signerRingSequence > current.signer_ring_sequence!) {
       this.db.prepare(`
-        UPDATE safe_read_attestation_high_water SET set_sequence=?, set_sha256=?, accepted_at_ms=? WHERE authority_id=?
-      `).run(setSequence, setSha256, now, authorityId);
+        UPDATE safe_read_attestation_high_water
+        SET set_sequence=?, set_sha256=?, signer_ring_epoch=?, signer_ring_sequence=?, signer_ring_sha256=?, accepted_at_ms=?
+        WHERE authority_id=?
+      `).run(setSequence, setSha256, signerRingEpoch, signerRingSequence, signerRingSha256, now, authorityId);
     }
   }
 

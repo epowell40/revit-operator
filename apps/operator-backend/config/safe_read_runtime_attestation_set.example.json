@@ -2,6 +2,11 @@
   "schema": "revit-operator.safe-read-runtime-attestation-set.v1",
   "sequence": 1,
   "issued_at_utc": "2030-01-01T00:00:00.000Z",
+  "signer_ring": {
+    "epoch": "example-authority-v1",
+    "sequence": 1,
+    "sha256": "sha256:4552ed5887465af7350d42f9e102992d9bd774ad04a0aa3decfce73e12beb3db"
+  },
   "entries": [
     {
       "runtime_attestation_sha256": "sha256:a34389d7eba7e6750c2b9e9e45cc3149e1f9a4e9ae111aea41f452f26a6da00c",
@@ -19,7 +24,7 @@
     {
       "key_id": "example-public-test-key",
       "algorithm": "ed25519",
-      "signature_base64url": "SOdbSPqTv7nqFfkEGEOvOkPEmOEBFgNXA6mDGBVnLasPedHcO_guneEUwS5lf5CvT-0XE3BZhxh8-ksS40dUBw"
+      "signature_base64url": "QSGsgw20Dy_awKRLPRuwfkoEY-4ZY_AqFqQsvkF4I5BgqF7Es8ng0pDb_wnB8Xb-9vrTzkuFxCRQGdgdqVTICQ"
     }
   ]
 }
