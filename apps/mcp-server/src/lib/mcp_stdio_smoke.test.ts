@@ -4,9 +4,15 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  NATIVE_TRANSPORT_ALGORITHM,
+  NATIVE_TRANSPORT_CONTENT_TYPE,
+  NATIVE_TRANSPORT_PATH,
+  NATIVE_TRANSPORT_VERSION
+} from "./nativeTransport.js";
 
 const certifiedPolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -44,6 +50,68 @@ function smokeCanonical(value: unknown): unknown {
 
 function smokeDigest(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(smokeCanonical(value)), "utf8").digest("hex")}`;
+}
+
+function nativeKeys(token: string, epoch: string, direction: "request" | "response") {
+  const epochBytes = Buffer.from(epoch, "base64url");
+  const prk = createHmac("sha512", epochBytes).update(token, "utf8").digest();
+  const info = Buffer.from(`${NATIVE_TRANSPORT_VERSION}\0${direction}\0${NATIVE_TRANSPORT_ALGORITHM}`, "utf8");
+  const okm = createHmac("sha512", prk).update(Buffer.concat([info, Buffer.from([1])])).digest();
+  return { mac: okm.subarray(0, 32), enc: okm.subarray(32, 64) };
+}
+
+function nativeTag(key: Buffer, epoch: string, direction: "request" | "response", iv: Buffer, ciphertext: Buffer): Buffer {
+  const aad = Buffer.from(`${NATIVE_TRANSPORT_VERSION}\n${NATIVE_TRANSPORT_ALGORITHM}\n${epoch}\n${direction}\nPOST\n${NATIVE_TRANSPORT_PATH}`, "utf8");
+  const bits = Buffer.alloc(8);
+  bits.writeBigUInt64BE(BigInt(aad.length) * 8n);
+  return createHmac("sha512", key).update(Buffer.concat([aad, iv, ciphertext, bits])).digest().subarray(0, 32);
+}
+
+function protectedSmokeResponse(requestEnvelopeJson: string, token: string, statusCode: number, bodyJson: string): string {
+  const envelope = JSON.parse(requestEnvelopeJson);
+  assert.equal(envelope.v, NATIVE_TRANSPORT_VERSION);
+  assert.equal(envelope.alg, NATIVE_TRANSPORT_ALGORITHM);
+  assert.equal(envelope.dir, "request");
+  const requestIv = Buffer.from(envelope.iv, "base64url");
+  const requestCiphertext = Buffer.from(envelope.ciphertext, "base64url");
+  const requestKeys = nativeKeys(token, envelope.epoch, "request");
+  const requestTag = Buffer.from(envelope.tag, "base64url");
+  assert.equal(timingSafeEqual(requestTag, nativeTag(requestKeys.mac, envelope.epoch, "request", requestIv, requestCiphertext)), true);
+  const decipher = createDecipheriv("aes-256-cbc", requestKeys.enc, requestIv);
+  const request = JSON.parse(Buffer.concat([decipher.update(requestCiphertext), decipher.final()]).toString("utf8"));
+
+  const responseInner = Buffer.from(JSON.stringify({
+    request_id: request.request_id,
+    request_nonce: request.request_nonce,
+    issued_at_unix_ms: Date.now(),
+    status_code: statusCode,
+    body_json: bodyJson
+  }), "utf8");
+  const responseIv = randomBytes(16);
+  const responseKeys = nativeKeys(token, envelope.epoch, "response");
+  const cipher = createCipheriv("aes-256-cbc", responseKeys.enc, responseIv);
+  const responseCiphertext = Buffer.concat([cipher.update(responseInner), cipher.final()]);
+  return JSON.stringify({
+    v: NATIVE_TRANSPORT_VERSION,
+    alg: NATIVE_TRANSPORT_ALGORITHM,
+    epoch: envelope.epoch,
+    dir: "response",
+    iv: responseIv.toString("base64url"),
+    ciphertext: responseCiphertext.toString("base64url"),
+    tag: nativeTag(responseKeys.mac, envelope.epoch, "response", responseIv, responseCiphertext).toString("base64url")
+  });
+}
+
+function writeNativeReceipt(localAppData: string, url: string, epoch: string): void {
+  const directory = path.join(localAppData, "RevitOperator");
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "bridge_transport.v1.json"), JSON.stringify({
+    version: NATIVE_TRANSPORT_VERSION,
+    algorithm: NATIVE_TRANSPORT_ALGORITHM,
+    transport_path: NATIVE_TRANSPORT_PATH,
+    url,
+    server_epoch: epoch
+  }), "utf8");
 }
 
 function writeSmokePolicyVariant(mutate: (policy: any) => void): { policyPath: string; policyHash: string; root: string } {
@@ -511,6 +579,8 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
 });
 
 test("MCP stdio tools/list follows trusted aliases and cached registry data is re-filtered after revocation", async (t) => {
+  const operatorToken = "mcp-cache-token-0123456789abcdef0";
+  const serverEpoch = Buffer.alloc(32, 11).toString("base64url");
   const policyVariant = writeSmokePolicyVariant(policy => {
     const registry = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/tool-registry");
     registry.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
@@ -519,19 +589,32 @@ test("MCP stdio tools/list follows trusted aliases and cached registry data is r
     context.channels.search = { exposed: true, required_level: "L3", reason_codes: ["CERTIFIED"] };
   });
   let bridgeRequests = 0;
-  const bridge = http.createServer((_req, res) => {
+  const bridge = http.createServer(async (req, res) => {
     bridgeRequests += 1;
-    res.setHeader("content-type", "application/json");
-    res.end(JSON.stringify({
+    const requestBody = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on("data", chunk => chunks.push(Buffer.from(chunk)));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      req.on("error", reject);
+    });
+    assert.equal(req.method, "POST");
+    assert.equal(req.url, NATIVE_TRANSPORT_PATH);
+    assert.equal(req.headers["x-operator-token"], undefined);
+    assert.equal(req.headers["x-operator-write-grant"], undefined);
+    const responseBody = JSON.stringify({
       version: "operator.tool_registry.v1",
       tools: [
         { method: "GET", path: "/revit/context", title: "Context" },
         { method: "GET", path: "/revit/uncertified", title: "Must stay hidden" }
       ]
-    }));
+    });
+    res.setHeader("content-type", NATIVE_TRANSPORT_CONTENT_TYPE);
+    res.end(protectedSmokeResponse(requestBody, operatorToken, 200, responseBody));
   });
   const bridgePort = await listen(bridge);
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-cache-"));
+  const localAppData = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-cache-localappdata-"));
+  writeNativeReceipt(localAppData, `http://127.0.0.1:${bridgePort}`, serverEpoch);
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -540,8 +623,9 @@ test("MCP stdio tools/list follows trusted aliases and cached registry data is r
     env: {
       ...env,
       REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
-      OPERATOR_TOKEN: "mcp-cache-token",
+      OPERATOR_TOKEN: operatorToken,
       OPERATOR_WORKSPACE_ROOT: workspace,
+      LOCALAPPDATA: localAppData,
       REVIT_OPERATOR_MODE: "hosted",
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyVariant.policyPath,
       OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: policyVariant.policyHash

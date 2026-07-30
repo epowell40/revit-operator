@@ -31,8 +31,10 @@ namespace RevitBridge.Server
         private HttpListener _listener;
         private readonly RevitEventService _eventService;
         private readonly IOperatorNativeHttpAuthorizer _nativeHttpAuthorizer;
+        private readonly OperatorNativeTransportReplayCache _nativeTransportReplayCache = new OperatorNativeTransportReplayCache();
         private bool _isRunning;
         private string _activeUrl = "";
+        private string _nativeTransportEpoch = "";
         private const string DefaultUrl = "http://127.0.0.1:5000/";
         private readonly Dictionary<string, HandlerRequest> _handlers;
 
@@ -270,6 +272,7 @@ namespace RevitBridge.Server
         {
             if (_isRunning) return;
             WriteStartupLog("HTTP server Start begin.");
+            _nativeTransportEpoch = OperatorNativeTransportCodec.CreateServerEpoch();
 
             foreach (var candidateUrl in ResolveCandidateUrls())
             {
@@ -283,6 +286,7 @@ namespace RevitBridge.Server
                     _activeUrl = candidateUrl;
                     _isRunning = true;
                     WriteActiveUrlFile(candidateUrl);
+                    WriteActiveTransportReceipt(candidateUrl, _nativeTransportEpoch);
                     WriteStartupLog($"HTTP listener started at {candidateUrl}");
                     Task.Run(() => HandleIncomingConnections());
                     return;
@@ -295,6 +299,7 @@ namespace RevitBridge.Server
             }
 
             WriteActiveUrlFile("");
+            WriteActiveTransportReceipt("", "");
             WriteStartupLog("HTTP listener failed for every candidate URL; wrote empty bridge_url.txt.");
         }
 
@@ -303,6 +308,8 @@ namespace RevitBridge.Server
             _isRunning = false;
             try { _listener?.Stop(); } catch { }
             try { _listener?.Close(); } catch { }
+            _nativeTransportEpoch = "";
+            WriteActiveTransportReceipt("", "");
         }
 
         private static IEnumerable<string> ResolveCandidateUrls()
@@ -355,6 +362,37 @@ namespace RevitBridge.Server
             catch { }
         }
 
+        private static void WriteActiveTransportReceipt(string url, string serverEpoch)
+        {
+            try
+            {
+                var root = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "RevitOperator");
+                Directory.CreateDirectory(root);
+                var receipt = JsonSerializer.Serialize(new
+                {
+                    version = OperatorNativeTransportProtocol.Version,
+                    algorithm = OperatorNativeTransportProtocol.Algorithm,
+                    transport_path = OperatorNativeTransportProtocol.TransportPath,
+                    url = (url ?? "").TrimEnd('/'),
+                    server_epoch = serverEpoch ?? ""
+                });
+                var receiptPath = Path.Combine(root, "bridge_transport.v1.json");
+                var pendingPath = receiptPath + ".pending";
+                File.WriteAllText(pendingPath, receipt + Environment.NewLine);
+                if (File.Exists(receiptPath))
+                {
+                    File.Replace(pendingPath, receiptPath, null);
+                }
+                else
+                {
+                    File.Move(pendingPath, receiptPath);
+                }
+            }
+            catch { }
+        }
+
         private static void WriteStartupLog(string message)
         {
             try
@@ -392,9 +430,12 @@ namespace RevitBridge.Server
             string responseText = "{}";
             int statusCode = 200;
             var correlationId = Guid.NewGuid().ToString("N");
+            OperatorNativeTransportRequestContext? protectedTransportRequest = null;
+            var operatorToken = "";
 
             try
             {
+                operatorToken = OperatorSecurity.GetOrCreateOperatorToken();
                 if (!OperatorNativeHttpRequestFence.IsLoopbackEndpoint(req.RemoteEndPoint))
                 {
                     throw new OperatorNativeHttpAdmissionException(
@@ -404,21 +445,6 @@ namespace RevitBridge.Server
                         false,
                         "healthy");
                 }
-                correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
-                resp.Headers["X-Operator-Correlation-Id"] = correlationId;
-                var token = req.Headers["X-Operator-Token"];
-                if (!OperatorSecurity.TokenMatches(token))
-                {
-                    statusCode = 401;
-                    responseText = JsonSerializer.Serialize(new { error = "Unauthorized (missing/invalid X-Operator-Token)." });
-                    byte[] denied = Encoding.UTF8.GetBytes(responseText);
-                    resp.ContentType = "application/json";
-                    resp.StatusCode = statusCode;
-                    await resp.OutputStream.WriteAsync(denied, 0, denied.Length);
-                    resp.Close();
-                    return;
-                }
-
                 var laboratoryBypass = OperatorNativeHttpRuntimeProfile.IsExactDevelopmentLaboratory(
                     Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),
                     Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE"));
@@ -426,13 +452,28 @@ namespace RevitBridge.Server
                 var queryIndex = rawUrl.IndexOf('?');
                 var rawPath = queryIndex >= 0 ? rawUrl.Substring(0, queryIndex) : rawUrl;
                 var hasQuery = queryIndex >= 0;
-                var bodyBytes = await ReadRequestBodyBytesAsync(req, OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes);
 
                 OperatorNativeHttpRequest? effectiveRequest = null;
                 string path;
                 string requestBody;
                 if (laboratoryBypass)
                 {
+                    correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
+                    resp.Headers["X-Operator-Correlation-Id"] = correlationId;
+                    var token = req.Headers["X-Operator-Token"];
+                    if (!OperatorSecurity.TokenMatches(token))
+                    {
+                        statusCode = 401;
+                        responseText = JsonSerializer.Serialize(new { error = "Unauthorized (missing/invalid X-Operator-Token)." });
+                        byte[] denied = Encoding.UTF8.GetBytes(responseText);
+                        resp.ContentType = "application/json";
+                        resp.StatusCode = statusCode;
+                        await resp.OutputStream.WriteAsync(denied, 0, denied.Length);
+                        resp.Close();
+                        return;
+                    }
+
+                    var bodyBytes = await ReadRequestBodyBytesAsync(req, OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes);
                     path = req.Url.AbsolutePath;
                     requestBody = req.HasEntityBody ? Encoding.UTF8.GetString(bodyBytes) : "";
                 }
@@ -441,12 +482,25 @@ namespace RevitBridge.Server
                     if (!string.Equals(rawPath, req.Url.AbsolutePath, StringComparison.Ordinal))
                         throw OperatorNativeHttpAdmissionException.InvalidRequest(
                             "Certified native Revit requests cannot use encoded or normalized paths.");
-                    var sourceRequest = OperatorNativeHttpRequestFence.Prepare(
+                    OperatorNativeTransportHttpAdapter.ValidateCertifiedOuterRequest(
+                        req.ContentType,
+                        req.Headers.AllKeys);
+                    var envelopeBytes = await ReadRequestBodyBytesAsync(
+                        req,
+                        OperatorNativeTransportProtocol.MaximumRequestEnvelopeUtf8Bytes);
+                    protectedTransportRequest = OperatorNativeTransportHttpAdapter.OpenCertifiedRequest(
+                        operatorToken,
+                        _nativeTransportEpoch,
+                        envelopeBytes,
                         req.HttpMethod,
                         rawPath,
                         hasQuery,
-                        req.HasEntityBody,
-                        bodyBytes);
+                        req.ContentType,
+                        req.Headers.AllKeys,
+                        DateTimeOffset.UtcNow,
+                        _nativeTransportReplayCache);
+                    correlationId = protectedTransportRequest.Request.RequestId;
+                    var sourceRequest = protectedTransportRequest.Request;
                     var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None);
                     var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
                         earlyReceipt,
@@ -472,9 +526,16 @@ namespace RevitBridge.Server
                         var requiresGrant = risk >= OperatorActionRisk.Medium;
                         if (requiresGrant)
                         {
-                            var grant = req.Headers["X-Operator-Write-Grant"];
+                            var grant = protectedTransportRequest?.WriteGrant ?? req.Headers["X-Operator-Write-Grant"];
                             if (!OperatorWriteGrant.ValidateAndConsumeIfNeeded(grant, out var err))
                             {
+                                if (protectedTransportRequest != null)
+                                    throw new OperatorNativeHttpAdmissionException(
+                                        "CERTIFICATION_DIRECT_WRITE_GRANT_REQUIRED",
+                                        "Write requires approval (missing/invalid protected write grant): " + err,
+                                        403,
+                                        false,
+                                        "healthy");
                                 statusCode = 403;
                                 responseText = JsonSerializer.Serialize(new
                                 {
@@ -494,6 +555,7 @@ namespace RevitBridge.Server
                     }
                     catch (Exception ex)
                     {
+                        if (protectedTransportRequest != null) throw;
                         statusCode = 403;
                         responseText = JsonSerializer.Serialize(new
                         {
@@ -724,9 +786,27 @@ namespace RevitBridge.Server
                 }
             }
 
-            byte[] data = Encoding.UTF8.GetBytes(responseText);
-            resp.ContentType = "application/json";
-            resp.StatusCode = statusCode;
+            byte[] data;
+            if (protectedTransportRequest != null)
+            {
+                var protectedResponse = OperatorNativeTransportHttpAdapter.CreateCertifiedResponse(
+                    operatorToken,
+                    protectedTransportRequest,
+                    statusCode,
+                    responseText,
+                    DateTimeOffset.UtcNow);
+                data = protectedResponse.BodyUtf8;
+                resp.ContentType = protectedResponse.ContentType;
+                // The application status is confidential and authenticated inside
+                // the envelope. A caller must never trust this outer HTTP status.
+                resp.StatusCode = protectedResponse.OuterStatusCode;
+            }
+            else
+            {
+                data = Encoding.UTF8.GetBytes(responseText);
+                resp.ContentType = "application/json";
+                resp.StatusCode = statusCode;
+            }
             await resp.OutputStream.WriteAsync(data, 0, data.Length);
             resp.Close();
         }

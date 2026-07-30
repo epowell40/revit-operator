@@ -6,6 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { renderClaudeAddCommand, renderClaudeMcpConfig, renderCodexMcpConfig } from "../lib/externalAgentConfig.js";
 import { createExternalWriteGrant, type ExternalWriteGrantMode, writeExternalWriteGrant } from "../lib/externalWriteGrant.js";
 import { getOperatorToken, getWorkspaceRoot } from "../lib/workspace.js";
+import { callNativeTransport, isExactDevelopmentLaboratory, readNativeTransportReceipt } from "../lib/nativeTransport.js";
 
 type ParsedArgs = Record<string, string | boolean | string[]> & { _: string[] };
 
@@ -114,21 +115,42 @@ async function doctor(): Promise<void> {
   const entry = serverEntryPath();
   const workspaceRoot = getWorkspaceRoot();
   const operatorToken = getOperatorToken();
-  const bridgeUrl = (process.env.REVIT_BRIDGE_URL || "http://localhost:5000").replace(/\/+$/, "");
+  let bridgeUrl = (process.env.REVIT_BRIDGE_URL || "http://localhost:5000").replace(/\/+$/, "");
   let ping: unknown = null;
   let writeGrantStatus: unknown = null;
   let bridgeError = "";
   if (operatorToken) {
     try {
-      const headers = { "X-Operator-Token": operatorToken };
-      const pingResponse = await fetch(`${bridgeUrl}/revit/ping`, { headers });
-      if (!pingResponse.ok) {
-        const details = (await pingResponse.text()).trim();
-        throw new Error(`ping returned HTTP ${pingResponse.status}${details ? `: ${details}` : ""}`);
+      if (isExactDevelopmentLaboratory()) {
+        const headers = { "X-Operator-Token": operatorToken };
+        const pingResponse = await fetch(`${bridgeUrl}/revit/ping`, { headers });
+        if (!pingResponse.ok) {
+          const details = (await pingResponse.text()).trim();
+          throw new Error(`ping returned HTTP ${pingResponse.status}${details ? `: ${details}` : ""}`);
+        }
+        ping = await pingResponse.json();
+        const grantResponse = await fetch(`${bridgeUrl}/revit/write-grant-status`, { headers });
+        if (grantResponse.ok) writeGrantStatus = await grantResponse.json();
+      } else {
+        bridgeUrl = readNativeTransportReceipt().url;
+        const pingResponse = await callNativeTransport({
+          operatorToken,
+          method: "GET",
+          path: "/revit/ping"
+        });
+        if (pingResponse.statusCode < 200 || pingResponse.statusCode > 299) {
+          throw new Error(`ping returned authenticated inner HTTP ${pingResponse.statusCode}`);
+        }
+        ping = JSON.parse(pingResponse.bodyJson);
+        const grantResponse = await callNativeTransport({
+          operatorToken,
+          method: "GET",
+          path: "/revit/write-grant-status"
+        });
+        if (grantResponse.statusCode >= 200 && grantResponse.statusCode <= 299) {
+          writeGrantStatus = JSON.parse(grantResponse.bodyJson);
+        }
       }
-      ping = await pingResponse.json();
-      const grantResponse = await fetch(`${bridgeUrl}/revit/write-grant-status`, { headers });
-      if (grantResponse.ok) writeGrantStatus = await grantResponse.json();
     } catch (error) {
       bridgeError = String(error);
     }

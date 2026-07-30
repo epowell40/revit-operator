@@ -3,6 +3,11 @@ import { callRevitViaCourier } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import {
+  callNativeTransport,
+  isExactDevelopmentLaboratory,
+  NativeTransportProtocolError
+} from "./nativeTransport.js";
+import {
   assertToolExposure,
   createCertifiedCourierAdmission,
   type ToolExposureChannel
@@ -212,26 +217,42 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         : JSON.stringify(body);
   const requestEffect = revitRouteEffect(path, upperMethod, body);
   const mutating = requestEffect === "apply";
+  const laboratoryBypass = isExactDevelopmentLaboratory();
 
-  const doFetch = async (): Promise<Response> => {
-    const url = `${bridgeUrl()}${path}`;
+  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string> }> => {
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
-    const options: RequestInit = {
-      method: upperMethod,
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { "X-Operator-Token": token } : {}),
-        ...(writeGrant ? { "X-Operator-Write-Grant": writeGrant } : {}),
-      },
-      ...(serializedBody === undefined ? {} : { body: serializedBody }),
-    };
 
     try {
-      return await fetch(url, options);
+      if (!laboratoryBypass) {
+        const result = await callNativeTransport({
+          operatorToken: token,
+          method: upperMethod,
+          path,
+          bodyJson: serializedBody,
+          writeGrant,
+          signal: controller.signal
+        });
+        return {
+          ok: result.statusCode >= 200 && result.statusCode <= 299,
+          status: result.statusCode,
+          async text() { return result.bodyJson; }
+        };
+      }
+
+      const response = await fetch(`${bridgeUrl()}${path}`, {
+        method: upperMethod,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "X-Operator-Token": token } : {}),
+          ...(writeGrant ? { "X-Operator-Write-Grant": writeGrant } : {}),
+        },
+        ...(serializedBody === undefined ? {} : { body: serializedBody }),
+      });
+      return response;
     } catch (error) {
       if (controller.signal.aborted) {
         const outcomeUnknown = mutating;
@@ -240,6 +261,29 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           message: `${upperMethod} ${path} exceeded ${timeoutMs} ms while waiting for the Revit bridge. ${outcomeUnknown ? "The request may already have started; reconcile its outcome in Revit before any retry." : "Revit may be busy; inspect its UI before retrying."}`,
           retryable: !outcomeUnknown,
           outcomeUnknown,
+          method: upperMethod,
+          path,
+          cause: error,
+        });
+      }
+      if (error instanceof NativeTransportProtocolError && error.phase === "response") {
+        const outcomeUnknown = mutating;
+        throw new RevitBridgeCallError({
+          code: "revit_bridge_invalid_response",
+          message: `${upperMethod} ${path} returned an unauthenticated, invalid, or incomplete protected response.${outcomeUnknown ? " The request may already have completed; reconcile its outcome in Revit before any retry." : ""}`,
+          retryable: !outcomeUnknown,
+          outcomeUnknown,
+          method: upperMethod,
+          path,
+          cause: error,
+        });
+      }
+      if (error instanceof NativeTransportProtocolError && error.phase === "pre_dispatch") {
+        throw new RevitBridgeCallError({
+          code: "revit_bridge_unavailable",
+          message: `${upperMethod} ${path} was not dispatched because certified native Revit transport discovery or request protection failed. Cause: ${errorDetail(error)}`,
+          retryable: true,
+          outcomeUnknown: false,
           method: upperMethod,
           path,
           cause: error,
@@ -294,7 +338,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     });
   }
   try {
-    return (await response.json()) as T;
+    return JSON.parse(await response.text()) as T;
   } catch (error) {
     const outcomeUnknown = mutating;
     throw new RevitBridgeCallError({

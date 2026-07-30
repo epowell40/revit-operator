@@ -7,6 +7,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { callRevit, RevitBridgeCallError } from "./revitClient.js";
 import { runWithRevitToolAlias, ToolExposurePolicyError } from "./toolExposurePolicy.js";
+import {
+  NATIVE_TRANSPORT_ALGORITHM,
+  NATIVE_TRANSPORT_PATH,
+  NATIVE_TRANSPORT_VERSION
+} from "./nativeTransport.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -68,13 +73,15 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
     transport: process.env.OPERATOR_REVIT_TRANSPORT,
     runtimeMode: process.env.REVIT_OPERATOR_MODE,
     exposureProfile: process.env.OPERATOR_TOOL_EXPOSURE_PROFILE,
+    localAppData: process.env.LOCALAPPDATA,
     exposurePolicyPath: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH,
     exposurePolicyHash: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256,
   };
   process.env.REVIT_BRIDGE_URL = url;
   process.env.OPERATOR_REVIT_REQUEST_TIMEOUT_MS = String(timeoutMs);
   process.env.OPERATOR_WORKSPACE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "revit-client-test-"));
-  process.env.OPERATOR_TOKEN = "revit-client-test-token";
+  process.env.OPERATOR_TOKEN = "r".repeat(32);
+  process.env.LOCALAPPDATA = fs.mkdtempSync(path.join(os.tmpdir(), "revit-client-localappdata-"));
   process.env.OPERATOR_REVIT_TRANSPORT = "direct";
   process.env.REVIT_OPERATOR_MODE = "development";
   process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
@@ -88,6 +95,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
       OPERATOR_REVIT_TRANSPORT: previous.transport,
       REVIT_OPERATOR_MODE: previous.runtimeMode,
       OPERATOR_TOOL_EXPOSURE_PROFILE: previous.exposureProfile,
+      LOCALAPPDATA: previous.localAppData,
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: previous.exposurePolicyPath,
       OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: previous.exposurePolicyHash,
     })) {
@@ -95,6 +103,18 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
       else process.env[name] = value;
     }
   };
+}
+
+function writeNativeTransportReceipt(url: string): void {
+  const directory = path.join(process.env.LOCALAPPDATA!, "RevitOperator");
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "bridge_transport.v1.json"), JSON.stringify({
+    version: NATIVE_TRANSPORT_VERSION,
+    algorithm: NATIVE_TRANSPORT_ALGORITHM,
+    transport_path: NATIVE_TRANSPORT_PATH,
+    url,
+    server_epoch: Buffer.from(Array.from({ length: 32 }, (_, index) => index)).toString("base64url")
+  }), "utf8");
 }
 
 test("generic Revit dispatch hard-rejects the reserved certified namespace for direct and courier transport", async () => {
@@ -193,8 +213,10 @@ test("certified admission denies unknown, uncertified, generic schedule, and gra
 
 test("callRevit admits only the actual bound typed alias before direct dispatch", async () => {
   let requests = 0;
-  const server = http.createServer((_request, response) => {
+  let observed: http.IncomingMessage | undefined;
+  const server = http.createServer((request, response) => {
     requests += 1;
+    observed = request;
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify({ status: "ok" }));
   });
@@ -205,6 +227,7 @@ test("callRevit admits only the actual bound typed alias before direct dispatch"
   delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = variant.policyPath;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = variant.policyHash;
+  writeNativeTransportReceipt(`http://127.0.0.1:${port}`);
   try {
     await assert.rejects(
       runWithRevitToolAlias("revit_get_context", async () => await callRevit("/revit/ping")),
@@ -212,11 +235,18 @@ test("callRevit admits only the actual bound typed alias before direct dispatch"
         && error.code === "CERT_TYPED_ALIAS_MISMATCH"
     );
     assert.equal(requests, 0);
-    assert.deepEqual(
-      await runWithRevitToolAlias("revit_ping", async () => await callRevit("/revit/ping")),
-      { status: "ok" }
+    await assert.rejects(
+      runWithRevitToolAlias("revit_ping", async () => await callRevit("/revit/ping")),
+      (error: unknown) => error instanceof RevitBridgeCallError
+        && error.code === "revit_bridge_invalid_response"
+        && error.retryable === true
     );
     assert.equal(requests, 1);
+    assert.equal(observed?.method, "POST");
+    assert.equal(observed?.url, NATIVE_TRANSPORT_PATH);
+    assert.equal(observed?.headers["x-operator-token"], undefined);
+    assert.equal(observed?.headers["x-operator-correlation-id"], undefined);
+    assert.equal(observed?.headers["x-operator-write-grant"], undefined);
   } finally {
     restore();
     await close(server);
@@ -233,6 +263,29 @@ test("callRevit returns JSON from a responsive bridge", async () => {
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   try {
     assert.deepEqual(await callRevit("/revit/ping"), { ok: true });
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("exact development and laboratory direct transport preserves the legacy raw credential contract", async () => {
+  let headers: http.IncomingHttpHeaders | undefined;
+  const server = http.createServer((request, response) => {
+    headers = request.headers;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify({ ok: true }));
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "write_grant.json"), JSON.stringify({
+    token: "legacy-grant",
+    expires_at_utc: new Date(Date.now() + 60_000).toISOString()
+  }), "utf8");
+  try {
+    assert.deepEqual(await callRevit("/revit/ping"), { ok: true });
+    assert.equal(headers?.["x-operator-token"], "r".repeat(32));
+    assert.equal(headers?.["x-operator-write-grant"], "legacy-grant");
   } finally {
     restore();
     await close(server);

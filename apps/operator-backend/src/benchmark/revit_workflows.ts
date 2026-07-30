@@ -4,6 +4,7 @@ import { performance } from "node:perf_hooks";
 import { execFileSync } from "node:child_process";
 import { getOrCreateOperatorToken } from "../operator_token.js";
 import { getWriteGrantToken } from "../operator_write_grant.js";
+import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
 import { ensureDir, writeJsonFile } from "./files.js";
 import { positiveInteger } from "./filter_rule_types.js";
 import { runAecMepEval } from "./aec_mep_eval.js";
@@ -258,6 +259,7 @@ function readDiscoveredBridgeUrl(): string {
 }
 
 export function buildRevitBridgeHeaders(): Record<string, string> {
+  assertExactDevelopmentLaboratoryNativeTransport(process.env, "Benchmark raw Revit transport");
   const token = getOrCreateOperatorToken();
   const writeGrant = getWriteGrantToken();
   return {

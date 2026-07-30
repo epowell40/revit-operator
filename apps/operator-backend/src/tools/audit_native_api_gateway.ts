@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findRepoRoot } from "./audit_tool_registry.js";
+import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
 
 type NativeApiItem = {
   member_id?: string;
@@ -136,6 +137,7 @@ async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
 }
 
 async function loadLiveCatalog(): Promise<{ source: string; policy: unknown; items: NativeApiItem[] }> {
+  assertExactDevelopmentLaboratoryNativeTransport(process.env, "Native API gateway audit raw Revit transport");
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) throw new Error("LOCALAPPDATA is unavailable; cannot discover the live bridge.");
   const bridgeUrl = fs.readFileSync(path.join(localAppData, "RevitOperator", "bridge_url.txt"), "utf8").trim().replace(/\/+$/, "");
