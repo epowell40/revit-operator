@@ -24,6 +24,9 @@ const STANDALONE_EXECUTOR_ATTRIBUTIONS = new Map([
   ]
 ] as const);
 
+const COMPILED_POLICY_HASH_PATTERN =
+  /public\s+const\s+string\s+CompiledPolicyHash\s*=\s*"(sha256:[0-9a-f]{64})"\s*;/g;
+
 function parseJsonDocument(raw: string): unknown {
   const normalized = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
   return JSON.parse(normalized) as unknown;
@@ -85,6 +88,52 @@ export function generatePolicyBytes(rawEvidence: string, rawCandidates: string, 
   return renderCanonicalDocument(generateToolExposurePolicy(evidence) as unknown as import("../capabilities/tool_certification.js").JsonValue);
 }
 
+export function extractCompiledPolicyHash(csharpSource: string): string {
+  const matches = [...csharpSource.matchAll(COMPILED_POLICY_HASH_PATTERN)];
+  if (matches.length !== 1 || !matches[0]?.[1]) {
+    throw new Error("C# native policy authority must contain exactly one literal CompiledPolicyHash trust anchor");
+  }
+  return matches[0][1];
+}
+
+export function verifyGeneratedPolicyMatchesCompiledAnchor(
+  generatedPolicy: string,
+  csharpAuthoritySource: string
+): void {
+  const parsed = parseJsonDocument(generatedPolicy);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Generated tool exposure policy must be a JSON object");
+  }
+  const policyHash = (parsed as Record<string, unknown>).policy_hash;
+  if (typeof policyHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(policyHash)) {
+    throw new Error("Generated tool exposure policy hash is invalid");
+  }
+  const compiledPolicyHash = extractCompiledPolicyHash(csharpAuthoritySource);
+  if (policyHash !== compiledPolicyHash) {
+    throw new Error(
+      `C# native policy trust anchor is stale: generated ${policyHash}, compiled ${compiledPolicyHash}`
+    );
+  }
+}
+
+function csharpAuthorityPath(repoRoot: string): string {
+  const appsLayout = path.join(
+    repoRoot,
+    "apps",
+    "revit-bridge-addin",
+    "RevitBridge.Common",
+    "OperatorNativeToolExposureAuthority.cs"
+  );
+  return fs.existsSync(appsLayout)
+    ? appsLayout
+    : path.join(
+        repoRoot,
+        "revit-bridge-addin",
+        "RevitBridge.Common",
+        "OperatorNativeToolExposureAuthority.cs"
+      );
+}
+
 function argument(name: string): string | undefined {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -104,6 +153,11 @@ function runCli(): void {
   const generated = generatePolicyBytes(rawEvidence, fs.readFileSync(candidatePath, "utf8"), findRepoRoot(backendRoot));
 
   if (process.argv.includes("--check")) {
+    const repoRoot = findRepoRoot(backendRoot);
+    verifyGeneratedPolicyMatchesCompiledAnchor(
+      generated,
+      fs.readFileSync(csharpAuthorityPath(repoRoot), "utf8")
+    );
     const current = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8").replace(/\r\n?/g, "\n") : "";
     if (current !== generated) {
       console.error(`Tool exposure policy is stale: ${outputPath}`);

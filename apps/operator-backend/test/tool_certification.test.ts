@@ -21,7 +21,9 @@ import {
   type ToolCertificationRecord
 } from "../src/capabilities/tool_certification.js";
 import {
+  extractCompiledPolicyHash,
   generatePolicyBytes,
+  verifyGeneratedPolicyMatchesCompiledAnchor,
   verifyTypedMcpAliasesAgainstRegistry
 } from "../src/tools/generate_tool_exposure_policy.js";
 import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
@@ -30,6 +32,12 @@ const backendRoot = process.cwd();
 const evidencePath = path.join(backendRoot, "config", "tool_certification_evidence.v1.json");
 const candidatesPath = path.join(backendRoot, "config", "tool_certification_candidates.v1.json");
 const policyPath = path.join(backendRoot, "config", "tool_exposure_policy.v1.json");
+const csharpAuthorityPath = path.join(
+  path.dirname(backendRoot),
+  "revit-bridge-addin",
+  "RevitBridge.Common",
+  "OperatorNativeToolExposureAuthority.cs"
+);
 
 type AliasFixtureReceipt = {
   route: string;
@@ -456,6 +464,39 @@ test("candidate aliases match their reviewed bridge registry or standalone execu
 
   const candidateHash = sha256NormalizedText(rawCandidates);
   assert.match(candidateHash, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("generated policy matches the reviewed literal C# native trust anchor", () => {
+  const generated = generatePolicyBytes(
+    fs.readFileSync(evidencePath, "utf8"),
+    fs.readFileSync(candidatesPath, "utf8")
+  );
+  const authoritySource = fs.readFileSync(csharpAuthorityPath, "utf8");
+
+  assert.equal(
+    extractCompiledPolicyHash(authoritySource),
+    JSON.parse(generated).policy_hash
+  );
+  assert.doesNotThrow(() =>
+    verifyGeneratedPolicyMatchesCompiledAnchor(generated, authoritySource)
+  );
+});
+
+test("generated policy check rejects a stale literal C# native trust anchor", () => {
+  const generated = generatePolicyBytes(
+    fs.readFileSync(evidencePath, "utf8"),
+    fs.readFileSync(candidatesPath, "utf8")
+  );
+  const authoritySource = fs.readFileSync(csharpAuthorityPath, "utf8");
+  const staleAuthoritySource = authoritySource.replace(
+    extractCompiledPolicyHash(authoritySource),
+    `sha256:${"0".repeat(64)}`
+  );
+
+  assert.throws(
+    () => verifyGeneratedPolicyMatchesCompiledAnchor(generated, staleAuthoritySource),
+    /C# native policy trust anchor is stale/
+  );
 });
 
 test("standalone executor attribution rejects bridge substitution and false promotion", () => {

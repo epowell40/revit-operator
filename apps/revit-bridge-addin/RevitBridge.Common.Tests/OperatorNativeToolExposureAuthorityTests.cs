@@ -23,8 +23,8 @@ namespace RevitBridge.Common.Tests
             var authority = OperatorNativeToolExposureEmbeddedAuthority.Instance;
 
             Assert.Equal(OperatorNativeToolExposureEmbeddedAuthority.CompiledPolicyHash, authority.PolicyHash);
-            Assert.Equal("sha256:170fabfb884c2183cff015b58d67b0e8a8f6ea4b3d0af20694ecbdfcaca86e63", authority.EvidenceSourceHash);
-            Assert.Equal(24, authority.RecordCount);
+            Assert.Equal("sha256:e46f5e2b4409bc1ab5d74886930d3ef711bb3d3d14136350b38ed4f36a6b58b8", authority.EvidenceSourceHash);
+            Assert.Equal(25, authority.RecordCount);
             Assert.Equal(0, authority.GenericCallExposedCount);
             Assert.Contains(
                 OperatorNativeToolExposureEmbeddedAuthority.ResourceName,
