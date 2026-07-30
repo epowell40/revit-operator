@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -501,6 +502,208 @@ test("hosted capability durably rejects signer-ring rollback, equivocation, and 
     "SAFE_READ_ATTESTATION_SIGNER_REACTIVATION"
   );
   service.close();
+});
+
+test("hosted capability rejects active-signer omission across restart and accepts only an explicit rotation chain", () => {
+  const f = fixture({ attestationValue: validServiceAttestation(), ringSequence: 1 });
+  const signerA = structuredClone(f.signerRing.signers[0]!);
+  const { publicKey: publicKeyB, privateKey: privateKeyB } = generateKeyPairSync("ed25519");
+  const signerB = {
+    key_id: "release-2026-b",
+    algorithm: "ed25519",
+    state: "active" as const,
+    public_key_spki_base64: publicKeyB.export({ format: "der", type: "spki" }).toString("base64")
+  };
+  const databasePath = path.join(path.dirname(f.setPath), "signer-ring-omission.sqlite");
+  const principal = `sha256:${"4".repeat(64)}`;
+  const publish = (): void => {
+    f.bindRing();
+    f.resign(privateKeyB, "release-2026-b");
+    const raw = f.write();
+    f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+    f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+  };
+  let service = new SafeReadCapabilityService({
+    databasePath,
+    env: f.env,
+    now: () => new Date("2026-07-29T20:00:00.000Z")
+  });
+  service.preauthorize(
+    principal,
+    serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000001", sha(Buffer.alloc(32, 1)))
+  );
+
+  f.signerRing.sequence = 2;
+  f.signerRing.signers = [signerB];
+  f.set.sequence = 8;
+  publish();
+  expectCapabilityError(
+    () => service.preauthorize(
+      principal,
+      serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000002", sha(Buffer.alloc(32, 2)))
+    ),
+    "SAFE_READ_ATTESTATION_SIGNER_OMISSION"
+  );
+  service.close();
+
+  service = new SafeReadCapabilityService({
+    databasePath,
+    env: f.env,
+    now: () => new Date("2026-07-29T20:00:00.000Z")
+  });
+  expectCapabilityError(
+    () => service.preauthorize(
+      principal,
+      serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000003", sha(Buffer.alloc(32, 3)))
+    ),
+    "SAFE_READ_ATTESTATION_SIGNER_OMISSION"
+  );
+
+  f.signerRing.signers = [{ ...signerA, state: "revoked" }, signerB];
+  publish();
+  service.preauthorize(
+    principal,
+    serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000004", sha(Buffer.alloc(32, 4)))
+  );
+  service.close();
+
+  service = new SafeReadCapabilityService({
+    databasePath,
+    env: f.env,
+    now: () => new Date("2026-07-29T20:00:00.000Z")
+  });
+  f.signerRing.sequence = 3;
+  f.signerRing.signers = [signerB];
+  f.set.sequence = 9;
+  publish();
+  service.preauthorize(
+    principal,
+    serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000005", sha(Buffer.alloc(32, 5)))
+  );
+  service.close();
+
+  service = new SafeReadCapabilityService({
+    databasePath,
+    env: f.env,
+    now: () => new Date("2026-07-29T20:00:00.000Z")
+  });
+  f.signerRing.sequence = 4;
+  f.signerRing.signers = [{ ...signerA, state: "active" }, signerB];
+  f.set.sequence = 10;
+  publish();
+  expectCapabilityError(
+    () => service.preauthorize(
+      principal,
+      serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000006", sha(Buffer.alloc(32, 6)))
+    ),
+    "SAFE_READ_ATTESTATION_SIGNER_REACTIVATION"
+  );
+
+  const { publicKey: substitutedKey } = generateKeyPairSync("ed25519");
+  f.signerRing.signers = [{
+    ...signerA,
+    state: "revoked",
+    public_key_spki_base64: substitutedKey.export({ format: "der", type: "spki" }).toString("base64")
+  }, signerB];
+  publish();
+  expectCapabilityError(
+    () => service.preauthorize(
+      principal,
+      serviceRequest(f.attestationSha, "d0000000-0000-0000-0000-000000000007", sha(Buffer.alloc(32, 7)))
+    ),
+    "SAFE_READ_ATTESTATION_SIGNER_IDENTITY_REUSE"
+  );
+  service.close();
+});
+
+test("hosted capability fails closed when durable signer-ring predecessor history is missing", () => {
+  const require = createRequire(import.meta.url);
+  const Database = require("better-sqlite3") as new (name: string) => {
+    exec: (sql: string) => unknown;
+    prepare: (sql: string) => { run: (...args: unknown[]) => unknown };
+    close: () => void;
+  };
+  for (const [index, missingEvidence] of ["legacy-ledger", "identity-row"].entries()) {
+    const f = fixture({ attestationValue: validServiceAttestation(), ringSequence: 1 });
+    const databasePath = path.join(path.dirname(f.setPath), `missing-predecessor-${index}.sqlite`);
+    const principal = `sha256:${"5".repeat(64)}`;
+    if (missingEvidence === "legacy-ledger") {
+      const db = new Database(databasePath);
+      db.exec(`
+        CREATE TABLE safe_read_attestation_high_water (
+          authority_id TEXT PRIMARY KEY,
+          set_sequence INTEGER NOT NULL,
+          set_sha256 TEXT NOT NULL,
+          signer_ring_epoch TEXT NOT NULL,
+          signer_ring_sequence INTEGER NOT NULL,
+          signer_ring_sha256 TEXT NOT NULL,
+          accepted_at_ms INTEGER NOT NULL
+        )
+      `);
+      db.prepare(`
+        INSERT INTO safe_read_attestation_high_water(
+          authority_id, set_sequence, set_sha256, signer_ring_epoch,
+          signer_ring_sequence, signer_ring_sha256, accepted_at_ms
+        ) VALUES(?,?,?,?,?,?,?)
+      `).run(
+        "safe-read.hosted-attestation-set.v1",
+        f.set.sequence,
+        f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256!,
+        f.signerRing.epoch,
+        f.signerRing.sequence,
+        f.set.signer_ring.sha256,
+        Date.parse("2026-07-29T20:00:00.000Z")
+      );
+      db.close();
+    } else {
+      const initial = new SafeReadCapabilityService({
+        databasePath,
+        env: f.env,
+        now: () => new Date("2026-07-29T20:00:00.000Z")
+      });
+      initial.preauthorize(
+        principal,
+        serviceRequest(f.attestationSha, "e0000000-0000-0000-0000-000000000001", sha(Buffer.alloc(32, 1)))
+      );
+      initial.close();
+      const db = new Database(databasePath);
+      db.prepare("DELETE FROM safe_read_attestation_signer_identities").run();
+      db.close();
+    }
+
+    const { publicKey: publicKeyB, privateKey: privateKeyB } = generateKeyPairSync("ed25519");
+    f.signerRing.sequence = 2;
+    f.signerRing.signers[0]!.state = "revoked";
+    (f.signerRing.signers as Array<Record<string, unknown>>).push({
+      key_id: "release-2026-b",
+      algorithm: "ed25519",
+      state: "active",
+      public_key_spki_base64: publicKeyB.export({ format: "der", type: "spki" }).toString("base64")
+    });
+    f.set.sequence = 8;
+    f.bindRing();
+    f.resign(privateKeyB, "release-2026-b");
+    const raw = f.write();
+    f.env.OPERATOR_SAFE_READ_ATTESTATION_TRUSTED_SIGNERS_SHA256 = sha(raw.ringRaw);
+    f.env.OPERATOR_SAFE_READ_RUNTIME_ATTESTATION_SET_SHA256 = sha(raw.setRaw);
+    const service = new SafeReadCapabilityService({
+      databasePath,
+      env: f.env,
+      now: () => new Date("2026-07-29T20:00:00.000Z")
+    });
+    expectCapabilityError(
+      () => service.preauthorize(
+        principal,
+        serviceRequest(
+          f.attestationSha,
+          `e0000000-0000-0000-0000-00000000001${index + 1}`,
+          sha(Buffer.alloc(32, index + 3))
+        )
+      ),
+      "SAFE_READ_ATTESTATION_SIGNER_PREDECESSOR_MISSING"
+    );
+    service.close();
+  }
 });
 
 test("hosted final authorization reloads and re-verifies the signed set before capability CAS", () => {
