@@ -8,6 +8,14 @@ namespace RevitOperator.Deployment;
 
 internal static class SafeReadAdmissionContracts
 {
+    internal const string ProfileId = "safe-read";
+    internal const string ManifestFileName = "RevitOperator.SafeReadHost.addin";
+    internal const string AddinType = "Application";
+    internal const string AddinName = "Revit Operator Safe Read Host";
+    internal const string FullClassName = "RevitOperator.SafeReadHost.App";
+    internal const string AddInId = "AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E";
+    internal const string VendorId = "BIMT";
+    internal const string VendorDescription = "BIMTools Revit Operator Safe Read Host";
     internal const string MetadataSchema = "revit-operator.operator-deploy-safe-read.v1";
     internal const string ReceiptSchema = "revit-operator.safe-read-admission-receipt.v2";
     internal const string LayoutSchema = "revit-operator.operator-deploy-safe-read-layout.v1";
@@ -21,14 +29,26 @@ internal static class SafeReadAdmissionContracts
     internal const string ProofReceiptRelativePath = "proof/proof.receipt.json";
     internal const string EquivalenceReceiptRelativePath = "proof/artifact.equivalence.json";
 
-    internal static bool IsProtectedProfile(RevitAddinProfile profile)
-        => profile.ManifestFileName.Equals("RevitOperator.SafeReadHost.addin", StringComparison.Ordinal) &&
-           profile.Type.Equals("Application", StringComparison.Ordinal) &&
-           profile.Name.Equals("Revit Operator Safe Read Host", StringComparison.Ordinal) &&
-           profile.FullClassName.Equals("RevitOperator.SafeReadHost.App", StringComparison.Ordinal) &&
-           profile.AddInId.Equals("AAFAA2C0-43F1-42A0-A6B4-D9A0C5F5CE0E", StringComparison.OrdinalIgnoreCase) &&
-           profile.VendorId.Equals("BIMT", StringComparison.Ordinal) &&
-           profile.VendorDescription.Equals("BIMTools Revit Operator Safe Read Host", StringComparison.Ordinal);
+    internal static bool CollidesWithReservedProfile(RevitAddinProfile profile)
+    {
+        var assemblyPath = profile.AssemblyPath.Replace('\\', '/');
+        return profile.ManifestFileName.Equals(ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
+               profile.FullClassName.Equals(FullClassName, StringComparison.OrdinalIgnoreCase) ||
+               profile.AddInId.Equals(AddInId, StringComparison.OrdinalIgnoreCase) ||
+               assemblyPath.Equals(HostRelativePath, StringComparison.OrdinalIgnoreCase) ||
+               Path.GetFileName(assemblyPath).Equals(Path.GetFileName(HostRelativePath), StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsCanonicalProtectedProfile(RevitAddinProfile profile)
+        => profile.Id.Equals(ProfileId, StringComparison.Ordinal) &&
+           profile.ManifestFileName.Equals(ManifestFileName, StringComparison.Ordinal) &&
+           profile.AssemblyPath.Equals(HostRelativePath, StringComparison.Ordinal) &&
+           profile.Type.Equals(AddinType, StringComparison.Ordinal) &&
+           profile.Name.Equals(AddinName, StringComparison.Ordinal) &&
+           profile.FullClassName.Equals(FullClassName, StringComparison.Ordinal) &&
+           profile.AddInId.Equals(AddInId, StringComparison.Ordinal) &&
+           profile.VendorId.Equals(VendorId, StringComparison.Ordinal) &&
+           profile.VendorDescription.Equals(VendorDescription, StringComparison.Ordinal);
 }
 
 internal sealed record PreparedSafeReadAdmission(InstalledSafeReadAdmission Binding, byte[] ReceiptBytes);
@@ -222,7 +242,7 @@ internal static class SafeReadAdmissionVerifier
         var evidenceTargets = Array(receipt, "targets").EnumerateArray().ToList();
         if (receiptTargets.Count != 3 || evidenceTargets.Count != 3)
             throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt does not contain exactly three target bindings.");
-        var profile = manifest.RevitAddinProfiles.Single(SafeReadAdmissionContracts.IsProtectedProfile);
+        var profile = manifest.RevitAddinProfiles.Single(SafeReadAdmissionContracts.IsCanonicalProtectedProfile);
         var installedTargets = new List<InstalledSafeReadTarget>();
         foreach (var targetMetadata in admission.Targets.OrderBy(target => target.RevitYear, StringComparer.Ordinal))
         {

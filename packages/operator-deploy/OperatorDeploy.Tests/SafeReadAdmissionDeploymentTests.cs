@@ -37,6 +37,98 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         Assert.False(File.Exists(Context().StatePath));
     }
 
+    [Theory]
+    [InlineData("id")]
+    [InlineData("manifestFileName")]
+    [InlineData("assemblyPath")]
+    [InlineData("type")]
+    [InlineData("name")]
+    [InlineData("fullClassName")]
+    [InlineData("addInId")]
+    [InlineData("vendorId")]
+    [InlineData("vendorDescription")]
+    public void Every_one_field_or_case_only_SafeRead_profile_variation_is_rejected(string field)
+    {
+        var manifest = DowngradedManifestWithoutAdmission(CreateAdmittedBundle($"identity-drift-{field}"));
+        var profile = Assert.Single(manifest.RevitAddinProfiles);
+        switch (field)
+        {
+            case "id":
+                profile.Id = "Safe-Read";
+                foreach (var component in manifest.Components.Where(component => component.Kind == "revit-addin"))
+                    component.RevitAddinProfileId = profile.Id;
+                break;
+            case "manifestFileName": profile.ManifestFileName = "revitoperator.safereadhost.addin"; break;
+            case "assemblyPath": profile.AssemblyPath = "Payload/RevitOperator.SafeReadHost.dll"; break;
+            case "type": profile.Type = "application"; break;
+            case "name": profile.Name = "Revit operator Safe Read Host"; break;
+            case "fullClassName": profile.FullClassName = "revitoperator.safereadhost.app"; break;
+            case "addInId": profile.AddInId = SafeReadAdmissionContracts.AddInId.ToLowerInvariant(); break;
+            case "vendorId": profile.VendorId = "bimt"; break;
+            case "vendorDescription": profile.VendorDescription = "BIMTools Revit operator Safe Read Host"; break;
+            default: throw new InvalidOperationException($"Unknown profile field: {field}");
+        }
+
+        var failure = Assert.Throws<DeploymentException>(() => manifest.Validate());
+        Assert.Equal(ExitCodes.ManifestInvalid, failure.ExitCode);
+    }
+
+    [Theory]
+    [InlineData("manifestFileName")]
+    [InlineData("addInId")]
+    [InlineData("fullClassName")]
+    [InlineData("assemblyPath")]
+    [InlineData("assemblyBaseName")]
+    public void Every_reserved_SafeRead_marker_independently_requires_the_canonical_profile(string marker)
+    {
+        var manifest = DowngradedManifestWithoutAdmission(CreateAdmittedBundle($"identity-marker-{marker}"));
+        var profile = Assert.Single(manifest.RevitAddinProfiles);
+        profile.Id = "generic-profile";
+        profile.ManifestFileName = "Generic.addin";
+        profile.AssemblyPath = "payload/Generic.dll";
+        profile.Type = "Application";
+        profile.Name = "Generic add-in";
+        profile.FullClassName = "Example.Generic.App";
+        profile.AddInId = "11111111-2222-3333-4444-555555555555";
+        profile.VendorId = "TEST";
+        profile.VendorDescription = "Generic test add-in";
+        foreach (var component in manifest.Components.Where(component => component.Kind == "revit-addin"))
+            component.RevitAddinProfileId = profile.Id;
+
+        switch (marker)
+        {
+            case "manifestFileName": profile.ManifestFileName = SafeReadAdmissionContracts.ManifestFileName.ToLowerInvariant(); break;
+            case "addInId": profile.AddInId = SafeReadAdmissionContracts.AddInId.ToLowerInvariant(); break;
+            case "fullClassName": profile.FullClassName = SafeReadAdmissionContracts.FullClassName.ToLowerInvariant(); break;
+            case "assemblyPath": profile.AssemblyPath = SafeReadAdmissionContracts.HostRelativePath.ToUpperInvariant(); break;
+            case "assemblyBaseName": profile.AssemblyPath = $"other/{Path.GetFileName(SafeReadAdmissionContracts.HostRelativePath)}"; break;
+            default: throw new InvalidOperationException($"Unknown reserved marker: {marker}");
+        }
+
+        var failure = Assert.Throws<DeploymentException>(() => manifest.Validate());
+        Assert.Equal(ExitCodes.ManifestInvalid, failure.ExitCode);
+        Assert.Contains("reserved production SafeRead identity", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Generic_schema_v2_profile_without_a_reserved_marker_remains_compatible()
+    {
+        var manifest = DowngradedManifestWithoutAdmission(CreateAdmittedBundle("generic-schema-v2"));
+        var profile = Assert.Single(manifest.RevitAddinProfiles);
+        profile.Id = "generic-profile";
+        profile.ManifestFileName = "Generic.addin";
+        profile.AssemblyPath = "payload/Generic.dll";
+        profile.Name = "Generic add-in";
+        profile.FullClassName = "Example.Generic.App";
+        profile.AddInId = "11111111-2222-3333-4444-555555555555";
+        profile.VendorId = "TEST";
+        profile.VendorDescription = "Generic test add-in";
+        foreach (var component in manifest.Components.Where(component => component.Kind == "revit-addin"))
+            component.RevitAddinProfileId = profile.Id;
+
+        manifest.Validate();
+    }
+
     [Fact]
     public void Exact_three_year_package_installs_persists_and_revalidates_admission()
     {
@@ -183,17 +275,56 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         Assert.False(File.Exists(Context().ActivationJournalPath));
     }
 
-    [Fact]
-    public void Tampered_crash_candidate_is_quarantined_without_replaying_activation()
+    public static IEnumerable<object[]> RejectedAdmissionCrashCases()
+    {
+        foreach (var scenario in new[] { "first-install", "version-update", "same-version-repair" })
+        {
+            foreach (var checkpoint in new[]
+                     {
+                         "after-target:2023:safe-read",
+                         "after-target:2024:safe-read",
+                         "after-target:2025:safe-read",
+                         "before-state-commit",
+                         "after-state-commit"
+                     })
+                yield return new object[] { scenario, checkpoint };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(RejectedAdmissionCrashCases))]
+    public void Tampered_crash_candidate_disables_live_controls_before_quarantine(string scenario, string killPoint)
     {
         var first = CreateAdmittedBundle("1.0.0");
-        var second = CreateAdmittedBundle("2.0.0");
-        Assert.True(Run("update", first).Ok);
-        var beforeState = File.ReadAllBytes(Context().StatePath);
-        Assert.Equal(137, RunCrash("update", second, "after-release-root-placement"));
+        AdmissionFixture candidate;
+        string operation;
+        if (scenario == "first-install")
+        {
+            candidate = first;
+            operation = "update";
+        }
+        else
+        {
+            Assert.True(Run("update", first).Ok);
+            candidate = scenario == "version-update" ? CreateAdmittedBundle("2.0.0") : first;
+            operation = scenario == "same-version-repair" ? "repair" : "update";
+        }
+
+        var beforeState = File.Exists(Context().StatePath) ? File.ReadAllBytes(Context().StatePath) : null;
+        var beforeManifests = new[] { "2023", "2024", "2025" }
+            .ToDictionary(
+                year => year,
+                year => File.Exists(AddinPath(year)) ? File.ReadAllBytes(AddinPath(year)) : null);
+        var originalHost = File.ReadAllBytes(Path.Combine(
+            candidate.PackageRoot,
+            "targets",
+            "2024",
+            SafeReadAdmissionContracts.HostRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+
+        Assert.Equal(137, RunCrash(operation, candidate, killPoint));
         var candidateHost = Path.Combine(
             Context().ReleasesRoot,
-            "2.0.0",
+            candidate.ReleaseVersion,
             "safe-read-2024",
             SafeReadAdmissionContracts.HostRelativePath.Replace('/', Path.DirectorySeparatorChar));
         File.AppendAllText(candidateHost, "concurrent tamper");
@@ -201,9 +332,67 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
 
         Assert.NotEqual(0, RunCrash("status", null, "no-kill"));
         Assert.Equal(tampered, File.ReadAllBytes(candidateHost));
-        Assert.Equal(beforeState, File.ReadAllBytes(Context().StatePath));
         Assert.False(File.Exists(Context().ActivationJournalPath));
         Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
+
+        if (scenario == "same-version-repair")
+        {
+            Assert.False(File.Exists(Context().StatePath));
+            foreach (var year in beforeManifests.Keys) Assert.False(File.Exists(AddinPath(year)));
+            var displaced = Assert.Single(Directory.GetDirectories(Context().ReleasesRoot, ".1.0.0.replaced-*"));
+            Assert.Equal(originalHost, File.ReadAllBytes(Path.Combine(
+                displaced,
+                "safe-read-2024",
+                SafeReadAdmissionContracts.HostRelativePath.Replace('/', Path.DirectorySeparatorChar))));
+        }
+        else
+        {
+            if (beforeState == null) Assert.False(File.Exists(Context().StatePath));
+            else Assert.Equal(beforeState, File.ReadAllBytes(Context().StatePath));
+            foreach (var pair in beforeManifests)
+            {
+                if (pair.Value == null) Assert.False(File.Exists(AddinPath(pair.Key)));
+                else Assert.Equal(pair.Value, File.ReadAllBytes(AddinPath(pair.Key)));
+            }
+        }
+    }
+
+    [Fact]
+    public void Rejected_admission_preserves_a_foreign_live_control_while_restoring_other_owned_controls()
+    {
+        var first = CreateAdmittedBundle("1.0.0");
+        var second = CreateAdmittedBundle("2.0.0");
+        Assert.True(Run("update", first).Ok);
+        var beforeState = File.ReadAllBytes(Context().StatePath);
+        var before2025 = File.ReadAllBytes(AddinPath("2025"));
+
+        Assert.Equal(137, RunCrash("update", second, "after-target:2024:safe-read"));
+        var candidateHost = Path.Combine(
+            Context().ReleasesRoot,
+            "2.0.0",
+            "safe-read-2024",
+            SafeReadAdmissionContracts.HostRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.AppendAllText(candidateHost, "concurrent tamper");
+        var foreignControl = new UTF8Encoding(false).GetBytes("<foreign-control />");
+        File.WriteAllBytes(AddinPath("2023"), foreignControl);
+
+        Assert.NotEqual(0, RunCrash("status", null, "no-kill"));
+        Assert.Equal(foreignControl, File.ReadAllBytes(AddinPath("2023")));
+        Assert.Equal(before2025, File.ReadAllBytes(AddinPath("2025")));
+        Assert.Equal(beforeState, File.ReadAllBytes(Context().StatePath));
+        Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
+    }
+
+    [Fact]
+    public void Test_root_mutex_is_shared_cross_process_without_contending_on_the_production_mutex()
+    {
+        using (var lease = DeploymentMutex.TryAcquireForTestRoot(Context().LocalAppData))
+        {
+            Assert.NotNull(lease);
+            Assert.Equal(ExitCodes.InstallFailed, RunCrash("status", null, "no-kill"));
+        }
+
+        Assert.Equal(ExitCodes.NoInstalledRelease, RunCrash("status", null, "no-kill"));
     }
 
     private AdmissionFixture CreateAdmittedBundle(string version)
@@ -531,6 +720,15 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
             packagePin);
     }
 
+    private static ReleaseManifest DowngradedManifestWithoutAdmission(AdmissionFixture fixture)
+    {
+        var manifest = ReleaseManifest.Load(fixture.ManifestPath);
+        manifest.SchemaVersion = 2;
+        manifest.SafeReadAdmission = null;
+        manifest.Components.RemoveAll(component => component.Kind == "safe-read-evidence");
+        return manifest;
+    }
+
     private OperationResult Run(
         string operation,
         AdmissionFixture? fixture = null,
@@ -580,6 +778,7 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
             SafeReadAdmissionReceiptPath = fixture?.ReceiptPath,
             SafeReadAdmissionReceiptSha256 = fixture?.ReceiptSha256,
             SafeReadPackagePinSha256 = fixture?.PackagePinSha256,
+            BundleOnly = false,
             KillPoint = killPoint
         };
         var encoded = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(input));
@@ -609,6 +808,7 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
             IsRevitRunning = () => false,
             UtcNow = () => new DateTimeOffset(2026, 7, 29, 12, 0, 0, TimeSpan.Zero),
             GetEnvironmentVariable = _ => null,
+            TryAcquireDeploymentMutex = () => DeploymentMutex.TryAcquireForTestRoot(Path.Combine(_root, "profile", "local")),
             ActivationCheckpoint = point => _checkpoint(point),
             DesktopShortcuts = new NoopDesktopShortcutManager()
         };
@@ -696,6 +896,7 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         string InitialReceiptSha256,
         string PackagePinSha256)
     {
+        public string ReleaseVersion => Path.GetFileName(BundleRoot);
         public string ReceiptSha256 { get; set; } = InitialReceiptSha256;
     }
 
