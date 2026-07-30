@@ -128,13 +128,28 @@ test("courier publication rejects the reserved certified namespace before readin
     "/REVIT/CERTIFIED/sheets/count",
     "/revit/certified/sheets/count?attempt=2",
     "/revit/certified%2fsheets/count",
+    "/revit/certified%252fsheets/count",
+    "/revit/certified%25252fsheets/count",
     "/revit/%63ertified/sheets/count",
     "/revit/certified\\sheets\\count",
+    "//revit/certified/sheets/count",
+    "/revit//certified///sheets/count",
+    "/revit/x/../certified/sheets/count",
+    "/revit/x/%2e%2e/certified/sheets/count",
     "/revit/certified"
   ]) {
     await assert.rejects(
       callRevitViaCourier(reservedPath, "POST", { schema: "bypass" }),
       /cannot be published through the Revit courier/
+    );
+  }
+  for (const invalidPath of [
+    "/revit/certified%2fsheets/count%zz",
+    "/revit/certified%25252525252525252fsheets/count"
+  ]) {
+    await assert.rejects(
+      callRevitViaCourier(invalidPath, "POST", { schema: "bypass" }),
+      /malformed percent encoding|did not converge within the safety bound/
     );
   }
 });

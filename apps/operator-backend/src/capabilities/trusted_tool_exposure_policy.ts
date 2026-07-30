@@ -114,6 +114,14 @@ export function parseTrustedToolExposurePolicy(value: unknown): ToolExposurePoli
     if (record.typed_mcp_aliases.includes("revit_call_tool")) {
       throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_INVALID", "Certification policy cannot bind revit_call_tool as a typed alias.");
     }
+    const referencesSafeRead = record.path === SAFE_READ_STANDALONE_BINDING.path
+      || aliases.includes(SAFE_READ_STANDALONE_BINDING.alias);
+    if (referencesSafeRead !== hasExecutionSurface) {
+      throw new TrustedToolExposurePolicyError(
+        "CERTIFICATION_POLICY_INVALID",
+        "Certification policy SafeRead path and alias require the exact standalone execution_surface."
+      );
+    }
     const observedLevels = record.observed_levels;
     if ((record.highest_cumulative_level !== null && !(LEVELS as readonly unknown[]).includes(record.highest_cumulative_level))
       || !Array.isArray(observedLevels)

@@ -166,6 +166,24 @@ test("standalone policy records cannot be promoted onto bridge, search, or couri
         && error.message.includes(`cannot expose the ${channel} channel`)
     );
   }
+
+  const stripped = writePolicyVariant(policy => {
+    const safeRead = policy.records.find((record: any) => record.path === "/revit/certified/sheets/count");
+    delete safeRead.execution_surface;
+    for (const channel of ["search", "generic_call", "deterministic_workflow"] as const) {
+      safeRead.channels[channel] = {
+        exposed: true,
+        required_level: channel === "search" ? "L3" : "L4",
+        reason_codes: ["CERTIFIED"]
+      };
+    }
+  });
+  assert.throws(
+    () => loadToolExposurePolicy(policyVariantEnv(stripped)),
+    (error: unknown) => error instanceof ToolExposurePolicyError
+      && error.code === "TOOL_EXPOSURE_POLICY_INVALID"
+      && error.message.includes("require the exact standalone execution_surface")
+  );
 });
 
 test("exact body-aware policy decisions distinguish known uncertified, request mismatch, effect mismatch, and workflow-only raw access", () => {
