@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -305,6 +306,126 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
     }
 
     [Theory]
+    [InlineData("extended-dos")]
+    [InlineData("device-dos")]
+    [InlineData("nt-object-manager")]
+    [InlineData("extended-unc")]
+    public void Admission_receipt_rejects_unsupported_Windows_namespaces_before_open(string form)
+    {
+        var fixture = CreateAdmittedBundle("receipt-namespace-" + form);
+        var namespacedPath = form switch
+        {
+            "extended-dos" => @"\\?\" + fixture.ReceiptPath,
+            "device-dos" => @"\\.\" + fixture.ReceiptPath,
+            "nt-object-manager" => @"\??\" + fixture.ReceiptPath,
+            "extended-unc" => @"\\?\UNC\localhost\C$\receipt.json",
+            _ => throw new InvalidOperationException($"Unknown namespace form: {form}")
+        };
+        var namespacedFixture = fixture with { ReceiptPath = namespacedPath };
+
+        AssertFailure(Run("update", namespacedFixture), ExitCodes.InvalidArguments, "device or NT object-manager namespace");
+    }
+
+    [Fact]
+    public void Admission_receipt_rejects_an_external_path_when_the_opened_file_has_a_managed_hard_link()
+    {
+        var fixture = CreateAdmittedBundle("receipt-hard-link");
+        var managedLink = Path.Combine(Context().ProductRoot, "receipt-hard-link.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(managedLink)!);
+        Assert.True(CreateHardLinkW(managedLink, fixture.ReceiptPath, IntPtr.Zero), $"CreateHardLinkW failed with Win32 {Marshal.GetLastWin32Error()}.");
+
+        AssertFailure(Run("update", fixture), ExitCodes.ValidationFailed, "exactly one filesystem link");
+    }
+
+    [Fact]
+    public void Admission_receipt_final_identity_rejects_a_managed_file_opened_through_a_UNC_alias()
+    {
+        var fixture = CreateAdmittedBundle("receipt-managed-unc-alias");
+        var managedPath = Path.Combine(Context().ProductRoot, "receipt-managed-unc-alias.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(managedPath)!);
+        File.Copy(fixture.ReceiptPath, managedPath);
+        var uncPath = ToLocalAdminUnc(managedPath);
+        if (uncPath == null || !File.Exists(uncPath)) return;
+        var aliasedFixture = fixture with { ReceiptPath = uncPath };
+
+        AssertFailure(Run("update", aliasedFixture), ExitCodes.InvalidArguments, "after final-path identity resolution");
+    }
+
+    [Fact]
+    public void Admission_receipt_accepts_an_external_UNC_path_when_Windows_identity_is_available()
+    {
+        var fixture = CreateAdmittedBundle("receipt-external-unc");
+        var uncPath = ToLocalAdminUnc(fixture.ReceiptPath);
+        if (uncPath == null || !File.Exists(uncPath)) return;
+        var uncFixture = fixture with { ReceiptPath = uncPath };
+
+        var install = Run("update", uncFixture);
+        Assert.True(install.Ok, install.Message);
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
+    public void Admission_receipt_rejects_an_8dot3_alias_before_admission()
+    {
+        var fixture = CreateAdmittedBundle("receipt-short-path-alias");
+        var shortPath = TryGetShortPath(fixture.ReceiptPath);
+        if (shortPath == null || shortPath.Equals(fixture.ReceiptPath, StringComparison.OrdinalIgnoreCase)) return;
+        var aliasedFixture = fixture with { ReceiptPath = shortPath };
+
+        var failure = Run("update", aliasedFixture);
+        Assert.False(failure.Ok);
+        Assert.Contains(failure.ExitCode, new[] { ExitCodes.InvalidArguments, ExitCodes.ValidationFailed });
+        Assert.Contains("alias", failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("directory")]
+    [InlineData("file")]
+    public void Source_package_enumeration_rejects_every_descendant_reparse_point_before_reading(string target)
+    {
+        var fixture = CreateAdmittedBundle("source-descendant-reparse-" + target);
+        var markedPath = target == "directory"
+            ? Path.Combine(fixture.PackageRoot, "targets", "2024", "payload")
+            : Path.Combine(fixture.PackageRoot, "targets", "2024", SafeReadAdmissionContracts.HostRelativePath.Replace('/', Path.DirectorySeparatorChar));
+        _reparsePaths.Add(Path.GetFullPath(markedPath));
+
+        AssertFailure(Run("update", fixture), ExitCodes.ValidationFailed, "source package contains a reparse point");
+    }
+
+    [Fact]
+    public void Optional_zero_file_component_is_a_directoryless_noop_across_stage_validate_and_repair()
+    {
+        var fixture = CreateAdmittedBundle("optional-empty", includeOptionalEmptyComponent: true);
+        var install = Run("update", fixture);
+        Assert.True(install.Ok, install.Message);
+        var componentRoot = Path.Combine(Context().ReleasesRoot, fixture.ReleaseVersion, "optional-empty");
+        Assert.False(Directory.Exists(componentRoot));
+        Assert.True(Run("validate").Ok);
+
+        var repair = Run("repair", fixture);
+        Assert.True(repair.Ok, repair.Message);
+        Assert.False(Directory.Exists(componentRoot));
+        Assert.True(Run("validate").Ok);
+    }
+
+    [Fact]
+    public void Required_zero_file_component_remains_manifest_invalid()
+    {
+        var manifest = ReleaseManifest.Load(CreateAdmittedBundle("required-empty").ManifestPath);
+        manifest.Components.Add(new ReleaseComponent
+        {
+            Id = "required-empty",
+            Kind = "config-default",
+            Required = true,
+            PayloadPath = "required-empty"
+        });
+
+        var failure = Assert.Throws<DeploymentException>(() => manifest.Validate());
+        Assert.Equal(ExitCodes.ManifestInvalid, failure.ExitCode);
+        Assert.Contains("has no files", failure.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("root-file")]
     [InlineData("sibling-component")]
     [InlineData("declared-component")]
@@ -384,6 +505,29 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
 
         AssertFailure(Run("rollback"), ExitCodes.ValidationFailed, "whole-release layout is not exact");
         Assert.Equal("2.0.0", State().CurrentRelease);
+    }
+
+    [Fact]
+    public void Interrupted_rollback_with_a_tampered_target_restores_the_current_release_before_quarantine()
+    {
+        var first = CreateAdmittedBundle("1.0.0");
+        var second = CreateAdmittedBundle("2.0.0");
+        Assert.True(Run("update", first).Ok);
+        Assert.True(Run("update", second).Ok);
+        var beforeState = File.ReadAllBytes(Context().StatePath);
+        var beforeManifests = new[] { "2023", "2024", "2025" }
+            .ToDictionary(year => year, year => File.ReadAllBytes(AddinPath(year)));
+
+        Assert.Equal(137, RunCrash("rollback", null, "after-target:2024:safe-read"));
+        Assert.True(File.Exists(Context().ActivationJournalPath));
+        var extra = AddUndeclaredReleaseEntry(Path.Combine(Context().ReleasesRoot, "1.0.0"), "sibling-component");
+
+        Assert.NotEqual(0, RunCrash("status", null, "no-kill"));
+        Assert.Equal(beforeState, File.ReadAllBytes(Context().StatePath));
+        foreach (var pair in beforeManifests) Assert.Equal(pair.Value, File.ReadAllBytes(AddinPath(pair.Key)));
+        Assert.True(File.Exists(extra));
+        Assert.False(File.Exists(Context().ActivationJournalPath));
+        Assert.Single(Directory.GetFiles(Context().DeploymentRoot, "activation-journal.quarantine-*.json"));
     }
 
     [Theory]
@@ -626,7 +770,7 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
         Assert.Equal(ExitCodes.NoInstalledRelease, RunCrash("status", null, "no-kill"));
     }
 
-    private AdmissionFixture CreateAdmittedBundle(string version)
+    private AdmissionFixture CreateAdmittedBundle(string version, bool includeOptionalEmptyComponent = false)
     {
         var bundleRoot = Path.Combine(_root, "bundles", version);
         var packageRoot = Path.Combine(bundleRoot, "safe-read-package");
@@ -790,6 +934,16 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
                 year,
                 profile.Id,
                 Directory.GetFiles(targetRoot, "*", SearchOption.AllDirectories)));
+        }
+        if (includeOptionalEmptyComponent)
+        {
+            manifest.Components.Add(new ReleaseComponent
+            {
+                Id = "optional-empty",
+                Kind = "config-default",
+                Required = false,
+                PayloadPath = "optional-empty"
+            });
         }
         manifest.Validate();
         var manifestPath = Path.Combine(bundleRoot, "manifest.json");
@@ -1139,6 +1293,29 @@ public sealed class SafeReadAdmissionDeploymentTests : IDisposable
     private static string HashFile(string path) => Hash(File.ReadAllBytes(path));
     private static string Hash(string value) => Hash(Encoding.UTF8.GetBytes(value));
     private static string Hash(byte[] value) => "sha256:" + Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
+
+    private static string? TryGetShortPath(string path)
+    {
+        var buffer = new StringBuilder(1024);
+        var length = GetShortPathNameW(path, buffer, (uint)buffer.Capacity);
+        if (length == 0 || length >= buffer.Capacity) return null;
+        return buffer.ToString(0, checked((int)length));
+    }
+
+    private static string? ToLocalAdminUnc(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(full);
+        if (root == null || root.Length < 2 || root[1] != ':') return null;
+        return $@"\\localhost\{char.ToUpperInvariant(root[0])}$\{full[root.Length..]}";
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string fileName, string existingFileName, IntPtr securityAttributes);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathNameW(string longPath, StringBuilder shortPath, uint bufferLength);
 
     public void Dispose()
     {
