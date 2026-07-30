@@ -137,6 +137,7 @@ public sealed class DeploymentEngine
             StageRelease(bundleRoot, manifestPath, stagingRoot, installedManifest, applicable, safeReadAdmission);
             VerifyInstalledTree(stagingRoot, installedManifest, applicable);
             SafeReadAdmissionVerifier.VerifyCandidate(
+                _context,
                 stagingRoot,
                 finalReleaseRoot,
                 installedManifest,
@@ -167,6 +168,7 @@ public sealed class DeploymentEngine
                 {
                     Directory.Delete(stagingRoot, recursive: true);
                     SafeReadAdmissionVerifier.VerifyCandidate(
+                        _context,
                         finalReleaseRoot,
                         finalReleaseRoot,
                         existingManifest,
@@ -196,6 +198,7 @@ public sealed class DeploymentEngine
                 WriteStagedManifest(Path.Combine(stagingRoot, "manifest.json"), manifestPath, installedManifest);
                 VerifyInstalledTree(stagingRoot, installedManifest, installedManifest.Components);
                 SafeReadAdmissionVerifier.VerifyCandidate(
+                    _context,
                     stagingRoot,
                     finalReleaseRoot,
                     installedManifest,
@@ -225,6 +228,7 @@ public sealed class DeploymentEngine
             _context.ActivationCheckpoint("before-legacy-activation-journal-boundary");
             AssertReleaseRootMatches(finalReleaseRoot, releaseRootSwap.AfterTreeSha256, "promoted release root");
             SafeReadAdmissionVerifier.VerifyCandidate(
+                _context,
                 finalReleaseRoot,
                 finalReleaseRoot,
                 installedManifest,
@@ -274,7 +278,7 @@ public sealed class DeploymentEngine
         var manifestPathInstalled = Path.Combine(releaseRoot, "manifest.json");
         var manifestInstalled = ReleaseManifest.Load(manifestPathInstalled);
         var safeReadAdmission = AdmissionForRelease(state, state.CurrentRelease, manifestInstalled);
-        SafeReadAdmissionVerifier.VerifyCandidate(releaseRoot, releaseRoot, manifestInstalled, safeReadAdmission);
+        SafeReadAdmissionVerifier.VerifyCandidate(_context, releaseRoot, releaseRoot, manifestInstalled, safeReadAdmission);
         var result = ValidateInstalledRelease(releaseRoot, manifestInstalled, ApplicableComponents(manifestInstalled).ToList(), includeNetwork: true);
         if (result.Ok)
         {
@@ -364,7 +368,7 @@ public sealed class DeploymentEngine
         var safeReadAdmission = AdmissionForRelease(state, target, manifest);
         if (components.Any(component => component.Kind == "operator-desktop")) EnsureManagedDesktopLauncherOverride();
         VerifyInstalledTree(releaseRoot, manifest, components);
-        SafeReadAdmissionVerifier.VerifyCandidate(releaseRoot, releaseRoot, manifest, safeReadAdmission);
+        SafeReadAdmissionVerifier.VerifyCandidate(_context, releaseRoot, releaseRoot, manifest, safeReadAdmission);
         var currentOwnership = ResolveCurrentOwnership(state);
         var plan = PlanActivation(releaseRoot, manifest, components, currentOwnership, requireAssembly: true);
         if (_options.DryRun)
@@ -1460,6 +1464,7 @@ public sealed class DeploymentEngine
             if (requiresAdmission != (journal.SafeReadAdmission != null))
                 throw new InvalidDataException("The activation journal admission presence is detached from the candidate manifest.");
             SafeReadAdmissionVerifier.VerifyCandidate(
+                _context,
                 candidateRoot,
                 journal.ReleaseRootSwap?.FinalPath ?? candidateRoot,
                 manifest,
@@ -1875,7 +1880,7 @@ public sealed class DeploymentEngine
         ActivationResult activation,
         InstalledSafeReadAdmission? safeReadAdmission)
     {
-        SafeReadAdmissionVerifier.VerifyCandidate(releaseRoot, releaseRoot, manifest, safeReadAdmission);
+        SafeReadAdmissionVerifier.VerifyCandidate(_context, releaseRoot, releaseRoot, manifest, safeReadAdmission);
         var validation = ValidateInstalledRelease(releaseRoot, manifest, components, includeNetwork: false);
         if (!validation.Ok) throw new DeploymentException(ExitCodes.ValidationFailed, validation.Message);
         foreach (var control in activation.Ownership) AssertOwnedManifest(control);

@@ -32,9 +32,11 @@ internal static class SafeReadAdmissionContracts
     internal static bool CollidesWithReservedProfile(RevitAddinProfile profile)
     {
         var assemblyPath = profile.AssemblyPath.Replace('\\', '/');
+        var collidesWithAddInId = Guid.TryParse(profile.AddInId, out var parsedAddInId) &&
+                                  parsedAddInId == Guid.Parse(AddInId);
         return profile.ManifestFileName.Equals(ManifestFileName, StringComparison.OrdinalIgnoreCase) ||
                profile.FullClassName.Equals(FullClassName, StringComparison.OrdinalIgnoreCase) ||
-               profile.AddInId.Equals(AddInId, StringComparison.OrdinalIgnoreCase) ||
+               collidesWithAddInId ||
                assemblyPath.Equals(HostRelativePath, StringComparison.OrdinalIgnoreCase) ||
                Path.GetFileName(assemblyPath).Equals(Path.GetFileName(HostRelativePath), StringComparison.OrdinalIgnoreCase);
     }
@@ -84,7 +86,7 @@ internal static class SafeReadAdmissionVerifier
         var receiptPin = RequireSha256(options.SafeReadAdmissionReceiptSha256, "--safe-read-admission-receipt-sha256");
         var packagePin = RequireSha256(options.SafeReadPackagePinSha256, "--safe-read-package-pin-sha256");
         var receiptPath = RequireExternalReceiptPath(context, options.SafeReadAdmissionReceiptPath, manifestPath, finalReleaseRoot);
-        var receiptBytes = ReadExactUtf8(receiptPath, "SafeRead admission receipt");
+        var receiptBytes = ReadStableExternalReceipt(context, receiptPath);
         if (!Sha256(receiptBytes).Equals(receiptPin, StringComparison.Ordinal))
             throw new DeploymentException(ExitCodes.HashMismatch, "SafeRead admission receipt does not match the externally supplied receipt hash.");
         using var receipt = ParseStrictJson(receiptBytes, "SafeRead admission receipt");
@@ -113,6 +115,7 @@ internal static class SafeReadAdmissionVerifier
     }
 
     internal static void VerifyCandidate(
+        DeploymentContext context,
         string candidateRoot,
         string finalReleaseRoot,
         ReleaseManifest manifest,
@@ -128,6 +131,7 @@ internal static class SafeReadAdmissionVerifier
         if (binding == null)
             throw new DeploymentException(ExitCodes.ValidationFailed, "The production SafeRead release has no durable admission binding.");
         ValidateBinding(binding, manifest.ReleaseVersion);
+        AssertManagedCandidateLayout(context, candidateRoot, finalReleaseRoot, manifest);
 
         var receiptPath = FileIntegrity.ResolveUnder(candidateRoot, binding.ReceiptRelativePath, ExitCodes.ValidationFailed);
         if (!File.Exists(receiptPath))
@@ -152,6 +156,7 @@ internal static class SafeReadAdmissionVerifier
         AssertBindingsEqual(binding, expected);
         AssertCandidateComponentSets(candidateRoot, manifest);
         VerifyCandidateFacts(candidateRoot, manifest, binding, receipt.RootElement, sourcePackage: false);
+        AssertManagedCandidateLayout(context, candidateRoot, finalReleaseRoot, manifest);
     }
 
     internal static void ValidateBinding(InstalledSafeReadAdmission binding, string expectedRelease)
@@ -261,6 +266,7 @@ internal static class SafeReadAdmissionVerifier
             AssertExactProperties(rendered, "fileName", "sha256", "sizeBytes", "encoding", "fields");
             var manifestBytes = DeploymentEngine.BuildAddinXmlBytes(profile, assemblyPath);
             var manifestPin = Sha256(manifestBytes);
+            var renderedAddInId = Guid.Parse(profile.AddInId).ToString("D").ToUpperInvariant();
             if (String(rendered, "fileName") != profile.ManifestFileName ||
                 String(rendered, "sha256") != manifestPin ||
                 Int64(rendered, "sizeBytes") != manifestBytes.LongLength ||
@@ -271,7 +277,7 @@ internal static class SafeReadAdmissionVerifier
             if (String(fields, "name") != profile.Name ||
                 !PathsEqual(String(fields, "assembly"), assemblyPath) ||
                 String(fields, "fullClassName") != profile.FullClassName ||
-                !String(fields, "addInId").Equals(profile.AddInId, StringComparison.OrdinalIgnoreCase) ||
+                String(fields, "addInId") != renderedAddInId ||
                 String(fields, "vendorId") != profile.VendorId ||
                 String(fields, "vendorDescription") != profile.VendorDescription)
                 throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead rendered manifest fields drifted for Revit {targetMetadata.RevitYear}.");
@@ -497,6 +503,96 @@ internal static class SafeReadAdmissionVerifier
         }
     }
 
+    private static void AssertManagedCandidateLayout(
+        DeploymentContext context,
+        string candidateRoot,
+        string finalReleaseRoot,
+        ReleaseManifest manifest)
+    {
+        var expectedFinalRoot = Path.Combine(context.ReleasesRoot, manifest.ReleaseVersion);
+        if (!PathsEqual(finalReleaseRoot, expectedFinalRoot))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead final release root is detached from the managed release identity.");
+
+        var candidateFull = Path.GetFullPath(candidateRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var releasesFull = Path.GetFullPath(context.ReleasesRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!Path.GetDirectoryName(candidateFull)!.Equals(releasesFull, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead candidate release must be one direct child of the managed releases root.");
+        if (!Directory.Exists(candidateFull))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead candidate release root is missing.");
+
+        EnsureNoReparsePoints(context, context.ProductRoot, candidateFull, "SafeRead candidate release root");
+        EnsureNoReparsePoints(context, context.ProductRoot, expectedFinalRoot, "SafeRead final release root");
+
+        var expectedFiles = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "manifest.json",
+            SafeReadAdmissionContracts.PersistedReceiptRelativePath
+        };
+        var expectedDirectories = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var component in manifest.Components)
+        {
+            expectedDirectories.Add(component.Id);
+            foreach (var file in component.Files)
+                expectedFiles.Add($"{component.Id}/{file.Path.Replace('\\', '/')}");
+        }
+        foreach (var file in expectedFiles)
+        {
+            var parts = file.Split('/');
+            for (var length = 1; length < parts.Length; length++)
+                expectedDirectories.Add(string.Join("/", parts.Take(length)));
+        }
+
+        var (actualFiles, actualDirectories) = EnumerateManagedCandidateTree(context, candidateFull);
+        if (!actualFiles.SetEquals(expectedFiles) || !actualDirectories.SetEquals(expectedDirectories))
+        {
+            var extraFiles = actualFiles.Except(expectedFiles, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal);
+            var missingFiles = expectedFiles.Except(actualFiles, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal);
+            var extraDirectories = actualDirectories.Except(expectedDirectories, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal);
+            var missingDirectories = expectedDirectories.Except(actualDirectories, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal);
+            throw new DeploymentException(
+                ExitCodes.ValidationFailed,
+                $"SafeRead candidate whole-release layout is not exact. Extra files [{string.Join(", ", extraFiles)}]; missing files [{string.Join(", ", missingFiles)}]; extra directories [{string.Join(", ", extraDirectories)}]; missing directories [{string.Join(", ", missingDirectories)}].");
+        }
+    }
+
+    private static (HashSet<string> Files, HashSet<string> Directories) EnumerateManagedCandidateTree(
+        DeploymentContext context,
+        string candidateRoot)
+    {
+        var files = new HashSet<string>(StringComparer.Ordinal);
+        var directories = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Stack<string>();
+        pending.Push(candidateRoot);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            if (context.IsReparsePoint(directory))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate release contains a reparse point: {directory}");
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            {
+                if (context.IsReparsePoint(entry))
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate release contains a reparse point: {entry}");
+                var attributes = File.GetAttributes(entry);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate release contains a reparse point: {entry}");
+                var relative = Relative(candidateRoot, entry);
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    if (!directories.Add(relative))
+                        throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate repeats directory '{relative}'.");
+                    pending.Push(entry);
+                }
+                else if (!files.Add(relative))
+                {
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate repeats file '{relative}'.");
+                }
+                if (files.Count + directories.Count > 100_000)
+                    throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead candidate release contains too many entries to verify safely.");
+            }
+        }
+        return (files, directories);
+    }
+
     private static IEnumerable<ReleaseComponent> SafeReadComponents(ReleaseManifest manifest)
     {
         var admission = manifest.SafeReadAdmission!;
@@ -594,22 +690,45 @@ internal static class SafeReadAdmissionVerifier
         if (!Path.IsPathRooted(value))
             throw new DeploymentException(ExitCodes.InvalidArguments, "--safe-read-admission-receipt must be an absolute external path.");
         var full = Path.GetFullPath(value);
+        if (!value.Equals(full, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.InvalidArguments, "--safe-read-admission-receipt must use one canonical absolute path without dot segments or aliases.");
         if (!File.Exists(full))
             throw new DeploymentException(ExitCodes.InvalidArguments, $"SafeRead admission receipt not found: {full}");
         var bundleRoot = Path.GetDirectoryName(Path.GetFullPath(manifestPath))!;
         var addinsRoot = Path.Combine(context.AppData, "Autodesk", "Revit", "Addins");
-        if (PathWithin(full, bundleRoot) || PathWithin(full, finalReleaseRoot) || PathWithin(full, addinsRoot))
-            throw new DeploymentException(ExitCodes.InvalidArguments, "SafeRead admission receipt must be external to the package, installed release, and Revit Addins trees.");
+        if (PathWithin(full, bundleRoot) || PathWithin(full, context.ProductRoot) || PathWithin(full, finalReleaseRoot) || PathWithin(full, addinsRoot))
+            throw new DeploymentException(ExitCodes.InvalidArguments, "SafeRead admission receipt must be external to the package, complete managed product/install tree, and Revit Addins tree.");
         EnsureNoReparsePoints(context, Path.GetPathRoot(full)!, full, "SafeRead admission receipt");
         return full;
     }
 
+    private static byte[] ReadStableExternalReceipt(DeploymentContext context, string path)
+    {
+        EnsureNoReparsePoints(context, Path.GetPathRoot(path)!, path, "SafeRead admission receipt");
+        byte[] bytes;
+        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan))
+        {
+            if (stream.Length > 16 * 1024 * 1024)
+                throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt is too large to verify safely.");
+            bytes = new byte[checked((int)stream.Length)];
+            stream.ReadExactly(bytes);
+            EnsureNoReparsePoints(context, Path.GetPathRoot(path)!, path, "SafeRead admission receipt");
+        }
+        return ValidateExactUtf8(bytes, "SafeRead admission receipt");
+    }
+
     private static void EnsureNoReparsePoints(DeploymentContext context, string allowedRoot, string path, string label)
     {
-        var root = Path.GetFullPath(allowedRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var root = Path.GetFullPath(allowedRoot);
+        var pathRoot = Path.GetPathRoot(root)!;
+        if (!root.Equals(pathRoot, StringComparison.OrdinalIgnoreCase))
+            root = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var full = Path.GetFullPath(path);
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar) || root.EndsWith(Path.AltDirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
         if (!full.Equals(root, StringComparison.OrdinalIgnoreCase) &&
-            !full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            !full.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
             throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} escapes its allowed root.");
         var current = root;
         if (context.IsReparsePoint(current))
@@ -646,7 +765,11 @@ internal static class SafeReadAdmissionVerifier
 
     private static byte[] ReadExactUtf8(string path, string label)
     {
-        var bytes = File.ReadAllBytes(path);
+        return ValidateExactUtf8(File.ReadAllBytes(path), label);
+    }
+
+    private static byte[] ValidateExactUtf8(byte[] bytes, string label)
+    {
         if (bytes.Length >= 2 &&
             ((bytes[0] == 0xff && bytes[1] == 0xfe) || (bytes[0] == 0xfe && bytes[1] == 0xff)) ||
             bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ||
