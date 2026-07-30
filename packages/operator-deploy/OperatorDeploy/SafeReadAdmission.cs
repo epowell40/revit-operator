@@ -1,8 +1,11 @@
+using System.ComponentModel;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 
 namespace RevitOperator.Deployment;
 
@@ -86,7 +89,7 @@ internal static class SafeReadAdmissionVerifier
         var receiptPin = RequireSha256(options.SafeReadAdmissionReceiptSha256, "--safe-read-admission-receipt-sha256");
         var packagePin = RequireSha256(options.SafeReadPackagePinSha256, "--safe-read-package-pin-sha256");
         var receiptPath = RequireExternalReceiptPath(context, options.SafeReadAdmissionReceiptPath, manifestPath, finalReleaseRoot);
-        var receiptBytes = ReadStableExternalReceipt(context, receiptPath);
+        var receiptBytes = ReadStableExternalReceipt(context, receiptPath, manifestPath, finalReleaseRoot);
         if (!Sha256(receiptBytes).Equals(receiptPin, StringComparison.Ordinal))
             throw new DeploymentException(ExitCodes.HashMismatch, "SafeRead admission receipt does not match the externally supplied receipt hash.");
         using var receipt = ParseStrictJson(receiptBytes, "SafeRead admission receipt");
@@ -94,7 +97,7 @@ internal static class SafeReadAdmissionVerifier
         var bundleRoot = Path.GetDirectoryName(Path.GetFullPath(manifestPath))!;
         var packageRoot = FileIntegrity.ResolveUnder(bundleRoot, manifest.SafeReadAdmission.PackageRoot);
         EnsureNoReparsePoints(context, bundleRoot, packageRoot, "SafeRead package root");
-        AssertSourcePackageLayout(packageRoot, manifest);
+        AssertSourcePackageLayout(context, packageRoot, manifest);
         foreach (var component in SafeReadComponents(manifest))
             FileIntegrity.VerifyComponent(bundleRoot, component);
 
@@ -111,6 +114,7 @@ internal static class SafeReadAdmissionVerifier
             packagePin,
             operatorManifestPin);
         VerifyCandidateFacts(packageRoot, manifest, binding, receipt.RootElement, sourcePackage: true);
+        AssertSourcePackageLayout(context, packageRoot, manifest);
         return new PreparedSafeReadAdmission(binding, receiptBytes);
     }
 
@@ -462,29 +466,33 @@ internal static class SafeReadAdmissionVerifier
             throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead runtime tuple is bound to the wrong Revit year {year}.");
     }
 
-    private static void AssertSourcePackageLayout(string packageRoot, ReleaseManifest manifest)
+    private static void AssertSourcePackageLayout(DeploymentContext context, string packageRoot, ReleaseManifest manifest)
     {
+        var (sourceFiles, sourceDirectories) = EnumerateLinkSafeTree(context, packageRoot, "SafeRead source package");
         var admission = manifest.SafeReadAdmission!;
         var evidence = manifest.Components.Single(component => component.Id == admission.EvidenceComponentId);
         AssertRelativeFileSet(
-            Directory.GetFiles(packageRoot, "*", SearchOption.AllDirectories)
-                .Select(path => Relative(packageRoot, path))
-                .Where(path => !path.StartsWith("targets/", StringComparison.Ordinal)),
+            sourceFiles.Where(path => !path.StartsWith("targets/", StringComparison.Ordinal)),
             evidence.Files.Select(file => file.Path),
             "SafeRead evidence package");
         foreach (var target in admission.Targets)
         {
-            var targetRoot = Path.Combine(packageRoot, "targets", target.RevitYear);
-            if (!Directory.Exists(targetRoot))
+            var targetPrefix = $"targets/{target.RevitYear}/";
+            if (!sourceDirectories.Contains($"targets/{target.RevitYear}"))
                 throw new DeploymentException(ExitCodes.ManifestInvalid, $"SafeRead package target {target.RevitYear} is missing.");
             var component = manifest.Components.Single(candidate => candidate.Id == target.ComponentId);
             AssertRelativeFileSet(
-                Directory.GetFiles(targetRoot, "*", SearchOption.AllDirectories).Select(path => Relative(targetRoot, path)),
+                sourceFiles.Where(path => path.StartsWith(targetPrefix, StringComparison.Ordinal))
+                    .Select(path => path[targetPrefix.Length..]),
                 component.Files.Select(file => file.Path),
                 $"SafeRead Revit {target.RevitYear} package target");
         }
-        var targetDirectories = Directory.GetDirectories(Path.Combine(packageRoot, "targets"), "*", SearchOption.TopDirectoryOnly)
-            .Select(Path.GetFileName).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        var targetDirectories = sourceDirectories
+            .Where(path => path.StartsWith("targets/", StringComparison.Ordinal) &&
+                           !path["targets/".Length..].Contains('/'))
+            .Select(path => path["targets/".Length..])
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
         if (!targetDirectories.SequenceEqual(new[] { "2023", "2024", "2025" }, StringComparer.Ordinal))
             throw new DeploymentException(ExitCodes.ManifestInvalid, "SafeRead package target tree is not the exact 2023/2024/2025 set.");
     }
@@ -531,7 +539,6 @@ internal static class SafeReadAdmissionVerifier
         var expectedDirectories = new HashSet<string>(StringComparer.Ordinal);
         foreach (var component in manifest.Components)
         {
-            expectedDirectories.Add(component.Id);
             foreach (var file in component.Files)
                 expectedFiles.Add($"{component.Id}/{file.Path.Replace('\\', '/')}");
         }
@@ -542,7 +549,7 @@ internal static class SafeReadAdmissionVerifier
                 expectedDirectories.Add(string.Join("/", parts.Take(length)));
         }
 
-        var (actualFiles, actualDirectories) = EnumerateManagedCandidateTree(context, candidateFull);
+        var (actualFiles, actualDirectories) = EnumerateLinkSafeTree(context, candidateFull, "SafeRead candidate release");
         if (!actualFiles.SetEquals(expectedFiles) || !actualDirectories.SetEquals(expectedDirectories))
         {
             var extraFiles = actualFiles.Except(expectedFiles, StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal);
@@ -555,40 +562,48 @@ internal static class SafeReadAdmissionVerifier
         }
     }
 
-    private static (HashSet<string> Files, HashSet<string> Directories) EnumerateManagedCandidateTree(
+    private static (HashSet<string> Files, HashSet<string> Directories) EnumerateLinkSafeTree(
         DeploymentContext context,
-        string candidateRoot)
+        string root,
+        string label)
     {
         var files = new HashSet<string>(StringComparer.Ordinal);
         var directories = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Stack<string>();
-        pending.Push(candidateRoot);
-        while (pending.Count > 0)
+        pending.Push(root);
+        try
         {
-            var directory = pending.Pop();
-            if (context.IsReparsePoint(directory))
-                throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate release contains a reparse point: {directory}");
-            foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
+            while (pending.Count > 0)
             {
-                if (context.IsReparsePoint(entry))
-                    throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate release contains a reparse point: {entry}");
-                var attributes = File.GetAttributes(entry);
-                if ((attributes & FileAttributes.ReparsePoint) != 0)
-                    throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate release contains a reparse point: {entry}");
-                var relative = Relative(candidateRoot, entry);
-                if ((attributes & FileAttributes.Directory) != 0)
+                var directory = pending.Pop();
+                var directoryAttributes = File.GetAttributes(directory);
+                if (context.IsReparsePoint(directory) || (directoryAttributes & FileAttributes.ReparsePoint) != 0)
+                    throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} contains a reparse point: {directory}");
+                foreach (var entry in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly))
                 {
-                    if (!directories.Add(relative))
-                        throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate repeats directory '{relative}'.");
-                    pending.Push(entry);
+                    var attributes = File.GetAttributes(entry);
+                    if (context.IsReparsePoint(entry) || (attributes & FileAttributes.ReparsePoint) != 0)
+                        throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} contains a reparse point: {entry}");
+                    var relative = Relative(root, entry);
+                    if ((attributes & FileAttributes.Directory) != 0)
+                    {
+                        if (!directories.Add(relative))
+                            throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} repeats directory '{relative}'.");
+                        pending.Push(entry);
+                    }
+                    else if (!files.Add(relative))
+                    {
+                        throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} repeats file '{relative}'.");
+                    }
+                    if (files.Count + directories.Count > 100_000)
+                        throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} contains too many entries to verify safely.");
                 }
-                else if (!files.Add(relative))
-                {
-                    throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead candidate repeats file '{relative}'.");
-                }
-                if (files.Count + directories.Count > 100_000)
-                    throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead candidate release contains too many entries to verify safely.");
             }
+        }
+        catch (DeploymentException) { throw; }
+        catch (Exception ex)
+        {
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"{label} could not be enumerated safely: {ex.Message}", ex);
         }
         return (files, directories);
     }
@@ -687,34 +702,221 @@ internal static class SafeReadAdmissionVerifier
         string manifestPath,
         string finalReleaseRoot)
     {
-        if (!Path.IsPathRooted(value))
+        if (HasUnsupportedWindowsNamespace(value))
+            throw new DeploymentException(ExitCodes.InvalidArguments, "--safe-read-admission-receipt may not use a Windows device or NT object-manager namespace.");
+        if (!Path.IsPathFullyQualified(value))
             throw new DeploymentException(ExitCodes.InvalidArguments, "--safe-read-admission-receipt must be an absolute external path.");
         var full = Path.GetFullPath(value);
         if (!value.Equals(full, StringComparison.OrdinalIgnoreCase))
             throw new DeploymentException(ExitCodes.InvalidArguments, "--safe-read-admission-receipt must use one canonical absolute path without dot segments or aliases.");
         if (!File.Exists(full))
             throw new DeploymentException(ExitCodes.InvalidArguments, $"SafeRead admission receipt not found: {full}");
-        var bundleRoot = Path.GetDirectoryName(Path.GetFullPath(manifestPath))!;
-        var addinsRoot = Path.Combine(context.AppData, "Autodesk", "Revit", "Addins");
-        if (PathWithin(full, bundleRoot) || PathWithin(full, context.ProductRoot) || PathWithin(full, finalReleaseRoot) || PathWithin(full, addinsRoot))
-            throw new DeploymentException(ExitCodes.InvalidArguments, "SafeRead admission receipt must be external to the package, complete managed product/install tree, and Revit Addins tree.");
         EnsureNoReparsePoints(context, Path.GetPathRoot(full)!, full, "SafeRead admission receipt");
         return full;
     }
 
-    private static byte[] ReadStableExternalReceipt(DeploymentContext context, string path)
+    private static byte[] ReadStableExternalReceipt(
+        DeploymentContext context,
+        string path,
+        string manifestPath,
+        string finalReleaseRoot)
     {
         EnsureNoReparsePoints(context, Path.GetPathRoot(path)!, path, "SafeRead admission receipt");
-        byte[] bytes;
-        using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan))
+        try
         {
-            if (stream.Length > 16 * 1024 * 1024)
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+            var before = BindExternalReceiptHandle(context, stream.SafeFileHandle, path, manifestPath, finalReleaseRoot);
+            if (before.Size > 16 * 1024 * 1024)
                 throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt is too large to verify safely.");
-            bytes = new byte[checked((int)stream.Length)];
+            if (stream.Length != before.Size)
+                throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt handle length differs from its bound file identity.");
+            var bytes = new byte[checked((int)before.Size)];
             stream.ReadExactly(bytes);
-            EnsureNoReparsePoints(context, Path.GetPathRoot(path)!, path, "SafeRead admission receipt");
+            var after = BindExternalReceiptHandle(context, stream.SafeFileHandle, path, manifestPath, finalReleaseRoot);
+            if (before != after || stream.Position != before.Size)
+                throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt changed identity or metadata while it was read.");
+            return ValidateExactUtf8(bytes, "SafeRead admission receipt");
         }
-        return ValidateExactUtf8(bytes, "SafeRead admission receipt");
+        catch (DeploymentException) { throw; }
+        catch (Exception ex)
+        {
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead admission receipt could not be opened and bound safely: {ex.Message}", ex);
+        }
+    }
+
+    private static ExternalReceiptIdentity BindExternalReceiptHandle(
+        DeploymentContext context,
+        SafeFileHandle handle,
+        string requestedPath,
+        string manifestPath,
+        string finalReleaseRoot)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new DeploymentException(ExitCodes.Unsupported, "SafeRead external receipt identity binding requires Windows file identity APIs.");
+        if (!GetFileInformationByHandle(handle, out var information))
+            throw NativeIdentityFailure("reading the external receipt file identity");
+        if ((information.FileAttributes & FileAttributeDirectory) != 0)
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt handle resolved to a directory.");
+        if ((information.FileAttributes & FileAttributeReparsePoint) != 0)
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt handle resolved to a reparse point.");
+        if (information.NumberOfLinks != 1)
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt must have exactly one filesystem link; hard-linked receipts are not admissible.");
+
+        var finalPath = GetFinalLongPath(handle);
+        var requestedFull = Path.GetFullPath(requestedPath);
+        if (!finalPath.Equals(requestedFull, StringComparison.OrdinalIgnoreCase))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt opened through an alias; its final long path differs from the requested canonical path.");
+        EnsureNoReparsePoints(context, Path.GetPathRoot(finalPath)!, finalPath, "SafeRead admission receipt final path");
+        AssertExternalReceiptBoundary(context, finalPath, manifestPath, finalReleaseRoot);
+
+        return new ExternalReceiptIdentity(
+            information.VolumeSerialNumber,
+            ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow,
+            information.NumberOfLinks,
+            ((long)information.FileSizeHigh << 32) | information.FileSizeLow,
+            ((long)information.LastWriteTime.dwHighDateTime << 32) | (uint)information.LastWriteTime.dwLowDateTime,
+            finalPath);
+    }
+
+    private static void AssertExternalReceiptBoundary(
+        DeploymentContext context,
+        string finalPath,
+        string manifestPath,
+        string finalReleaseRoot)
+    {
+        var bundleRoot = NormalizeBoundaryPath(Path.GetDirectoryName(Path.GetFullPath(manifestPath))!);
+        var productRoot = NormalizeBoundaryPath(context.ProductRoot);
+        var releaseRoot = NormalizeBoundaryPath(finalReleaseRoot);
+        var addinsRoot = NormalizeBoundaryPath(Path.Combine(context.AppData, "Autodesk", "Revit", "Addins"));
+        var forbiddenRoots = new[] { bundleRoot, productRoot, releaseRoot, addinsRoot };
+        var finalAncestorIdentities = ReadAncestorDirectoryIdentities(finalPath);
+        var matchesForbiddenIdentity = forbiddenRoots
+            .Where(Directory.Exists)
+            .Select(ReadDirectoryIdentity)
+            .Any(finalAncestorIdentities.Contains);
+        if (forbiddenRoots.Any(root => PathWithin(finalPath, root)) || matchesForbiddenIdentity)
+        {
+            throw new DeploymentException(
+                ExitCodes.InvalidArguments,
+                "SafeRead admission receipt must be external to the package, complete managed product/install tree, and Revit Addins tree after final-path identity resolution.");
+        }
+    }
+
+    private static HashSet<FileObjectIdentity> ReadAncestorDirectoryIdentities(string finalPath)
+    {
+        var identities = new HashSet<FileObjectIdentity>();
+        var root = Path.GetPathRoot(finalPath)
+            ?? throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt final path has no Windows root.");
+        var current = Path.GetDirectoryName(finalPath);
+        while (!string.IsNullOrEmpty(current))
+        {
+            identities.Add(ReadDirectoryIdentity(current));
+            if (PathsEqual(current, root)) break;
+            var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(current));
+            if (string.IsNullOrEmpty(parent) || parent.Equals(current, StringComparison.OrdinalIgnoreCase))
+                throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt ancestor identity walk did not reach its Windows root.");
+            current = parent;
+        }
+        if (identities.Count == 0 || string.IsNullOrEmpty(current))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt ancestor identity could not be established.");
+        return identities;
+    }
+
+    private static FileObjectIdentity ReadDirectoryIdentity(string path)
+    {
+        using var handle = CreateFileW(
+            path,
+            FileReadAttributes,
+            FileShareRead | FileShareWrite | FileShareDelete,
+            IntPtr.Zero,
+            OpenExisting,
+            FileFlagBackupSemantics,
+            IntPtr.Zero);
+        if (handle.IsInvalid) throw NativeIdentityFailure($"opening boundary directory '{path}'");
+        if (!GetFileInformationByHandle(handle, out var information))
+            throw NativeIdentityFailure($"reading boundary directory identity '{path}'");
+        if ((information.FileAttributes & FileAttributeDirectory) == 0)
+            throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead boundary identity is not a directory: {path}");
+        return new FileObjectIdentity(
+            information.VolumeSerialNumber,
+            ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow);
+    }
+
+    private static string NormalizeBoundaryPath(string path)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var missingSegments = new Stack<string>();
+        var existing = full;
+        while (!File.Exists(existing) && !Directory.Exists(existing))
+        {
+            var parent = Path.GetDirectoryName(existing);
+            if (string.IsNullOrEmpty(parent) || parent.Equals(existing, StringComparison.OrdinalIgnoreCase))
+                throw new DeploymentException(ExitCodes.ValidationFailed, $"SafeRead boundary path has no resolvable Windows ancestor: {path}");
+            missingSegments.Push(Path.GetFileName(existing));
+            existing = Path.TrimEndingDirectorySeparator(parent);
+        }
+        var normalized = GetLongPath(existing);
+        while (missingSegments.Count > 0) normalized = Path.Combine(normalized, missingSegments.Pop());
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(normalized));
+    }
+
+    private static string GetFinalLongPath(SafeFileHandle handle)
+    {
+        var buffer = new StringBuilder(512);
+        var length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0) throw NativeIdentityFailure("resolving the external receipt final path");
+        if (length >= buffer.Capacity)
+        {
+            buffer = new StringBuilder(checked((int)length + 1));
+            length = GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+            if (length == 0 || length >= buffer.Capacity)
+                throw NativeIdentityFailure("resolving the external receipt final path");
+        }
+        var nativePath = buffer.ToString(0, checked((int)length));
+        string dosPath;
+        if (nativePath.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            dosPath = @"\\" + nativePath[8..];
+        else if (nativePath.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) &&
+                 nativePath.Length >= 7 && char.IsAsciiLetter(nativePath[4]) && nativePath[5] == ':' && nativePath[6] == '\\')
+            dosPath = nativePath[4..];
+        else if (HasUnsupportedWindowsNamespace(nativePath))
+            throw new DeploymentException(ExitCodes.ValidationFailed, "SafeRead admission receipt final handle path uses an unsupported Windows device namespace.");
+        else
+            dosPath = nativePath;
+        return Path.TrimEndingDirectorySeparator(GetLongPath(Path.GetFullPath(dosPath)));
+    }
+
+    private static string GetLongPath(string path)
+    {
+        var buffer = new StringBuilder(512);
+        var length = GetLongPathNameW(path, buffer, (uint)buffer.Capacity);
+        if (length == 0) throw NativeIdentityFailure($"resolving the canonical long path '{path}'");
+        if (length >= buffer.Capacity)
+        {
+            buffer = new StringBuilder(checked((int)length + 1));
+            length = GetLongPathNameW(path, buffer, (uint)buffer.Capacity);
+            if (length == 0 || length >= buffer.Capacity)
+                throw NativeIdentityFailure($"resolving the canonical long path '{path}'");
+        }
+        return Path.GetFullPath(buffer.ToString(0, checked((int)length)));
+    }
+
+    private static bool HasUnsupportedWindowsNamespace(string path)
+    {
+        var normalized = path.Replace('/', '\\');
+        return normalized.StartsWith(@"\\?\", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith(@"\\.\", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith(@"\??\", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith(@"\\??\", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith(@"\Device\", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DeploymentException NativeIdentityFailure(string action)
+    {
+        var code = Marshal.GetLastWin32Error();
+        return new DeploymentException(
+            ExitCodes.ValidationFailed,
+            $"SafeRead admission failed while {action}: {new Win32Exception(code).Message} (Win32 {code}).");
     }
 
     private static void EnsureNoReparsePoints(DeploymentContext context, string allowedRoot, string path, string label)
@@ -871,9 +1073,75 @@ internal static class SafeReadAdmissionVerifier
 
     private static bool PathWithin(string path, string root)
     {
-        var full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var rootPrefix = fullRoot.EndsWith(Path.DirectorySeparatorChar) || fullRoot.EndsWith(Path.AltDirectorySeparatorChar)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
         return full.Equals(fullRoot, StringComparison.OrdinalIgnoreCase) ||
-               full.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+               full.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase);
     }
+
+    private const uint FileAttributeDirectory = 0x10;
+    private const uint FileAttributeReparsePoint = 0x400;
+    private const uint FileReadAttributes = 0x80;
+    private const uint FileShareRead = 0x1;
+    private const uint FileShareWrite = 0x2;
+    private const uint FileShareDelete = 0x4;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+
+    private readonly record struct FileObjectIdentity(uint VolumeSerialNumber, ulong FileIndex);
+
+    private readonly record struct ExternalReceiptIdentity(
+        uint VolumeSerialNumber,
+        ulong FileIndex,
+        uint NumberOfLinks,
+        long Size,
+        long LastWriteTime,
+        string FinalPath);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle handle,
+        out ByHandleFileInformation information);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandleW(
+        SafeFileHandle handle,
+        StringBuilder path,
+        uint pathLength,
+        uint flags);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetLongPathNameW(
+        string shortPath,
+        StringBuilder longPath,
+        uint bufferLength);
 }
