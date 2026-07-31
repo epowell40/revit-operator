@@ -1,7 +1,4 @@
 using System;
-using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
@@ -36,14 +33,26 @@ namespace RevitBridge.Operator
             return Result.Succeeded;
         }
 
-        private static Func<string, Action, bool>? GetDelayedFailureReporter()
+        internal static void ShutdownDesktopFailureNotifications()
+        {
+            OperatorDesktopLauncher.BeginShutdown();
+            lock (DelayedFailureReporterSync)
+            {
+                DelayedFailureDialog?.Shutdown();
+                DelayedFailureDialog = null;
+            }
+        }
+
+        private static Func<OperatorDesktopPersistedFailure, bool>? GetDelayedFailureReporter()
         {
             lock (DelayedFailureReporterSync)
             {
                 if (DelayedFailureDialog != null) return DelayedFailureDialog.TryReport;
                 try
                 {
-                    var handler = new OperatorDesktopDelayedFailureDialog();
+                    var handler = new OperatorDesktopDelayedFailureDialog(
+                        new OperatorDesktopDelayedFailureBuffer(
+                            OperatorDesktopLauncher.SharedFailureReceipts));
                     handler.Attach(ExternalEvent.Create(handler));
                     DelayedFailureDialog = handler;
                     return handler.TryReport;
@@ -60,124 +69,69 @@ namespace RevitBridge.Operator
 
     internal sealed class OperatorDesktopDelayedFailureDialog : IExternalEventHandler
     {
-        private readonly ConcurrentQueue<Notification> _notifications = new ConcurrentQueue<Notification>();
-        private ExternalEvent? _externalEvent;
+        private readonly OperatorDesktopDelayedFailureBuffer _buffer;
+        private OperatorDesktopDelayedFailureDelivery? _delivery;
+
+        public OperatorDesktopDelayedFailureDialog(OperatorDesktopDelayedFailureBuffer buffer)
+        {
+            _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
+        }
 
         public void Attach(ExternalEvent externalEvent)
         {
-            _externalEvent = externalEvent ?? throw new ArgumentNullException(nameof(externalEvent));
+            if (_delivery != null) throw new InvalidOperationException("The Operator Desktop failure event is already attached.");
+            if (externalEvent == null) throw new ArgumentNullException(nameof(externalEvent));
+            _delivery = new OperatorDesktopDelayedFailureDelivery(
+                _buffer,
+                () => MapRaiseResult(externalEvent.Raise()),
+                externalEvent.Dispose);
         }
 
-        public bool TryReport(string failure, Action persistFallback)
+        public bool TryReport(OperatorDesktopPersistedFailure failure)
         {
-            var externalEvent = _externalEvent;
-            if (externalEvent == null) return false;
-            var notification = new Notification(failure, persistFallback);
-            _notifications.Enqueue(notification);
-            try
-            {
-                var request = externalEvent.Raise();
-                if (request == ExternalEventRequest.Accepted) return true;
-                if (request == ExternalEventRequest.Pending)
-                {
-                    _ = RetryPendingRaiseAsync(notification);
-                    return true;
-                }
-            }
-            catch
-            {
-                // The launcher persists the receipt when this reporter returns false.
-            }
-
-            notification.CancelWithoutFallback();
-            return false;
-        }
-
-        private async Task RetryPendingRaiseAsync(Notification notification)
-        {
-            var externalEvent = _externalEvent;
-            if (externalEvent == null)
-            {
-                notification.CancelAndPersistFallback();
-                return;
-            }
-
-            for (var attempt = 0; attempt < 4 && notification.IsPending; attempt++)
-            {
-                await Task.Delay(25 * (attempt + 1)).ConfigureAwait(false);
-                if (!notification.IsPending) return;
-                try
-                {
-                    var request = externalEvent.Raise();
-                    if (request == ExternalEventRequest.Accepted) return;
-                    if (request == ExternalEventRequest.Denied) break;
-                    if (request == ExternalEventRequest.TimedOut && attempt == 3) break;
-                }
-                catch
-                {
-                    break;
-                }
-            }
-
-            notification.CancelAndPersistFallback();
+            var delivery = _delivery;
+            if (delivery != null) return delivery.TryReport(failure);
+            _buffer.TryEnqueue(failure);
+            _buffer.FailPendingDelivery();
+            return true;
         }
 
         public void Execute(UIApplication app)
         {
-            while (_notifications.TryDequeue(out var notification))
+            _delivery?.Execute(message =>
             {
-                if (!notification.TryBeginDisplay()) continue;
-                try
-                {
-                    TaskDialog.Show(
-                        "Revit Operator",
-                        "Operator Desktop could not finish launching.\n\n"
-                        + notification.Failure
-                        + "\n\nStart Operator Desktop from the Windows desktop or workstation package. If that also fails, reinstall the workstation package or set OPERATOR_DESKTOP_LAUNCHER_PATH and restart Revit.");
-                }
-                catch
-                {
-                    notification.PersistFallback();
-                }
-            }
+                TaskDialog.Show(
+                    "Revit Operator",
+                    "Operator Desktop could not finish launching.\n\n"
+                    + message
+                    + "\n\nStart Operator Desktop from the Windows desktop or workstation package. If that also fails, reinstall the workstation package or set OPERATOR_DESKTOP_LAUNCHER_PATH and restart Revit.");
+                return true;
+            });
         }
 
         public string GetName() => "Revit Operator Desktop launch failure notification";
 
-        private sealed class Notification
+        public void Shutdown()
         {
-            private const int Pending = 0;
-            private const int Displaying = 1;
-            private const int Cancelled = 2;
-            private readonly Action _persistFallback;
-            private int _state;
+            var delivery = _delivery;
+            _delivery = null;
+            if (delivery != null) delivery.Dispose();
+            else _buffer.Dispose();
+        }
 
-            public Notification(string failure, Action persistFallback)
+        private static OperatorDesktopDelayedFailureRaiseResult MapRaiseResult(ExternalEventRequest request)
+        {
+            switch (request)
             {
-                Failure = string.IsNullOrWhiteSpace(failure)
-                    ? "The launcher failed without an error message."
-                    : failure.Trim();
-                _persistFallback = persistFallback ?? throw new ArgumentNullException(nameof(persistFallback));
+                case ExternalEventRequest.Accepted:
+                    return OperatorDesktopDelayedFailureRaiseResult.Accepted;
+                case ExternalEventRequest.Pending:
+                    return OperatorDesktopDelayedFailureRaiseResult.Pending;
+                case ExternalEventRequest.TimedOut:
+                    return OperatorDesktopDelayedFailureRaiseResult.TimedOut;
+                default:
+                    return OperatorDesktopDelayedFailureRaiseResult.Denied;
             }
-
-            public string Failure { get; }
-            public bool IsPending => Volatile.Read(ref _state) == Pending;
-
-            public bool TryBeginDisplay()
-                => Interlocked.CompareExchange(ref _state, Displaying, Pending) == Pending;
-
-            public void CancelWithoutFallback()
-                => Interlocked.CompareExchange(ref _state, Cancelled, Pending);
-
-            public void CancelAndPersistFallback()
-            {
-                if (Interlocked.CompareExchange(ref _state, Cancelled, Pending) == Pending)
-                {
-                    PersistFallback();
-                }
-            }
-
-            public void PersistFallback() => _persistFallback();
         }
     }
 }

@@ -21,11 +21,13 @@ namespace RevitBridge.Operator
         private const int RuntimeIdentityDeadlineMilliseconds = 1500;
         private const int RuntimeIdentityMaxBytes = 4096;
         private static readonly OperatorDesktopLaunchFailureReceiptStore FailureReceipts = CreateFailureReceiptStore();
+        private static readonly OperatorDesktopInFlightLaunchGate LaunchGate = new OperatorDesktopInFlightLaunchGate();
         private static readonly object LauncherPathSnapshotSync = new object();
         private static string? CachedLauncherPath;
         private static string LauncherPathDiscoveryError = "";
         private static bool LauncherPathPreloadComplete;
         private static int LauncherPathRefreshQueued;
+        private static int ShuttingDown;
         private static readonly ManualResetEventSlim LauncherPathInitialRefreshCompleted = new ManualResetEventSlim(false);
 
         static OperatorDesktopLauncher()
@@ -71,9 +73,15 @@ namespace RevitBridge.Operator
             => TryLaunch(null, out detail);
 
         public static bool TryLaunch(
-            Func<string, Action, bool>? reportDelayedFailure,
+            Func<OperatorDesktopPersistedFailure, bool>? reportDelayedFailure,
             out string detail)
         {
+            if (Volatile.Read(ref ShuttingDown) != 0)
+            {
+                detail = "Operator Desktop launch was not started because Revit is shutting down. Start Operator Desktop after Revit has closed if you still need it.";
+                return false;
+            }
+
             var preloadStopwatch = Stopwatch.StartNew();
             RequestLauncherPathRefresh();
             if (!WaitForLauncherPathInitialRefresh(RemainingPreloadBudget(preloadStopwatch)))
@@ -102,6 +110,15 @@ namespace RevitBridge.Operator
                 RemainingPreloadBudget(preloadStopwatch),
                 out detail);
         }
+
+        internal static void BeginShutdown()
+        {
+            Interlocked.Exchange(ref ShuttingDown, 1);
+            LaunchGate.Shutdown();
+            FailureReceipts.ReleaseAllClaimsForInstance();
+        }
+
+        internal static OperatorDesktopLaunchFailureReceiptStore SharedFailureReceipts => FailureReceipts;
 
         private static TimeSpan RemainingPreloadBudget(Stopwatch stopwatch)
         {
@@ -204,7 +221,9 @@ namespace RevitBridge.Operator
                         return false;
                     }
 
-                    detail = $"Launcher dispatch accepted ({dispatch.LaunchId}): {selectedLauncherPath}. Sidecar readiness is not yet claimed; an observed late failure will be surfaced in Revit, with the durable receipt retained as a fallback when Revit cannot accept the notification.";
+                    detail = dispatch.ReusedInFlight
+                        ? $"Operator Desktop launch ({dispatch.LaunchId}) is already in progress; no duplicate launcher was started."
+                        : $"Launcher dispatch accepted ({dispatch.LaunchId}): {selectedLauncherPath}. Sidecar readiness is not yet claimed; an observed late failure will be persisted before it is surfaced in Revit.";
                     return true;
                 }
 
@@ -221,26 +240,35 @@ namespace RevitBridge.Operator
 
         private static OperatorDesktopDispatchResult DispatchLauncher(
             string launcherPath,
-            Func<string, Action, bool>? reportDelayedFailure)
+            Func<OperatorDesktopPersistedFailure, bool>? reportDelayedFailure)
         {
+            if (!LaunchGate.TryEnter(out var lease))
+            {
+                return lease == null
+                    ? OperatorDesktopDispatchResult.Rejected("Revit is shutting down; no Operator Desktop launch was dispatched.")
+                    : OperatorDesktopDispatchResult.DispatchAccepted(lease.LaunchId, reusedInFlight: true);
+            }
+            var ownedLease = lease!;
+
             try
             {
-                var launchId = Guid.NewGuid().ToString("N");
                 var process = Process.Start(BuildLauncherStartInfo(launcherPath));
                 if (process == null)
                 {
+                    ownedLease.Dispose();
                     return OperatorDesktopDispatchResult.Rejected("Windows did not return a launcher process handle.");
                 }
 
                 _ = Task.Run(() => ObserveLauncherProcess(
                     process,
                     launcherPath,
-                    launchId,
+                    ownedLease,
                     reportDelayedFailure));
-                return OperatorDesktopDispatchResult.DispatchAccepted(launchId);
+                return OperatorDesktopDispatchResult.DispatchAccepted(ownedLease.LaunchId);
             }
             catch (Exception ex)
             {
+                ownedLease.Dispose();
                 return OperatorDesktopDispatchResult.Rejected($"{ex.GetType().Name}: {ex.Message}");
             }
         }
@@ -322,8 +350,8 @@ namespace RevitBridge.Operator
         private static void ObserveLauncherProcess(
             Process process,
             string launcherPath,
-            string launchId,
-            Func<string, Action, bool>? reportDelayedFailure)
+            OperatorDesktopInFlightLaunchLease launchLease,
+            Func<OperatorDesktopPersistedFailure, bool>? reportDelayedFailure)
         {
             try
             {
@@ -337,7 +365,7 @@ namespace RevitBridge.Operator
                 {
                     ReportOrPersistObservedFailure(
                         failure,
-                        launchId,
+                        launchLease.LaunchId,
                         FailureReceipts,
                         reportDelayedFailure);
                 }
@@ -346,13 +374,14 @@ namespace RevitBridge.Operator
             {
                 ReportOrPersistObservedFailure(
                     $"Launcher observation failed for {launcherPath}: {ex.GetType().Name}: {ex.Message}",
-                    launchId,
+                    launchLease.LaunchId,
                     FailureReceipts,
                     reportDelayedFailure);
             }
             finally
             {
                 process.Dispose();
+                launchLease.Dispose();
             }
         }
 
@@ -360,22 +389,31 @@ namespace RevitBridge.Operator
             string failure,
             string launchId,
             OperatorDesktopLaunchFailureReceiptStore failureReceipts,
-            Func<string, Action, bool>? reportDelayedFailure)
+            Func<OperatorDesktopPersistedFailure, bool>? reportDelayedFailure)
         {
-            var persisted = 0;
-            Action persistFallback = () =>
+            OperatorDesktopPersistedFailure persistedFailure;
+            try
             {
-                if (Interlocked.Exchange(ref persisted, 1) == 0)
-                {
-                    failureReceipts.Record(failure, launchId);
-                }
-            };
+                persistedFailure = failureReceipts.PersistForNotification(failure, launchId);
+            }
+            catch
+            {
+                failureReceipts.Record(failure, launchId);
+                return;
+            }
+
+            if (Volatile.Read(ref ShuttingDown) != 0)
+            {
+                failureReceipts.ReleasePersistedFailures(new[] { persistedFailure.ReceiptId });
+                return;
+            }
+
             var reported = false;
             if (reportDelayedFailure != null)
             {
                 try
                 {
-                    reported = reportDelayedFailure(failure, persistFallback);
+                    reported = reportDelayedFailure(persistedFailure);
                 }
                 catch
                 {
@@ -383,7 +421,7 @@ namespace RevitBridge.Operator
                 }
             }
 
-            if (!reported) persistFallback();
+            if (!reported) failureReceipts.SurfacePersistedFailures(new[] { persistedFailure });
         }
 
         private static bool WaitForSidecarLiveness(int timeoutMilliseconds)
@@ -595,22 +633,407 @@ namespace RevitBridge.Operator
 
     internal readonly struct OperatorDesktopDispatchResult
     {
-        private OperatorDesktopDispatchResult(bool accepted, string error, string launchId)
+        private OperatorDesktopDispatchResult(bool accepted, string error, string launchId, bool reusedInFlight)
         {
             Accepted = accepted;
             Error = error;
             LaunchId = launchId;
+            ReusedInFlight = reusedInFlight;
         }
 
         public bool Accepted { get; }
         public string Error { get; }
         public string LaunchId { get; }
+        public bool ReusedInFlight { get; }
 
-        public static OperatorDesktopDispatchResult DispatchAccepted(string launchId)
-            => new OperatorDesktopDispatchResult(true, "", launchId ?? "");
+        public static OperatorDesktopDispatchResult DispatchAccepted(string launchId, bool reusedInFlight = false)
+            => new OperatorDesktopDispatchResult(true, "", launchId ?? "", reusedInFlight);
 
         public static OperatorDesktopDispatchResult Rejected(string error)
-            => new OperatorDesktopDispatchResult(false, error ?? "", "");
+            => new OperatorDesktopDispatchResult(false, error ?? "", "", false);
+    }
+
+    internal sealed class OperatorDesktopInFlightLaunchGate
+    {
+        private readonly object _sync = new object();
+        private string? _launchId;
+        private bool _shuttingDown;
+
+        public bool TryEnter(out OperatorDesktopInFlightLaunchLease? lease)
+        {
+            lock (_sync)
+            {
+                if (_shuttingDown)
+                {
+                    lease = null;
+                    return false;
+                }
+                if (_launchId != null)
+                {
+                    lease = new OperatorDesktopInFlightLaunchLease(this, _launchId, ownsGate: false);
+                    return false;
+                }
+
+                _launchId = Guid.NewGuid().ToString("N");
+                lease = new OperatorDesktopInFlightLaunchLease(this, _launchId, ownsGate: true);
+                return true;
+            }
+        }
+
+        public void Shutdown()
+        {
+            lock (_sync) _shuttingDown = true;
+        }
+
+        internal void Exit(string launchId)
+        {
+            lock (_sync)
+            {
+                if (string.Equals(_launchId, launchId, StringComparison.Ordinal)) _launchId = null;
+            }
+        }
+    }
+
+    internal sealed class OperatorDesktopInFlightLaunchLease : IDisposable
+    {
+        private OperatorDesktopInFlightLaunchGate? _owner;
+        private readonly bool _ownsGate;
+
+        public OperatorDesktopInFlightLaunchLease(
+            OperatorDesktopInFlightLaunchGate owner,
+            string launchId,
+            bool ownsGate)
+        {
+            _owner = owner;
+            LaunchId = launchId;
+            _ownsGate = ownsGate;
+        }
+
+        public string LaunchId { get; }
+
+        public void Dispose()
+        {
+            var owner = Interlocked.Exchange(ref _owner, null);
+            if (_ownsGate) owner?.Exit(LaunchId);
+        }
+    }
+
+    internal sealed class OperatorDesktopPersistedFailure
+    {
+        public OperatorDesktopPersistedFailure(
+            string receiptId,
+            string launchId,
+            string message,
+            string observedAtUtc)
+        {
+            ReceiptId = receiptId;
+            LaunchId = launchId;
+            Message = message;
+            ObservedAtUtc = observedAtUtc;
+        }
+
+        public string ReceiptId { get; }
+        public string LaunchId { get; }
+        public string Message { get; }
+        public string ObservedAtUtc { get; }
+    }
+
+    internal sealed class OperatorDesktopDelayedFailureBatch
+    {
+        public OperatorDesktopDelayedFailureBatch(
+            long token,
+            IReadOnlyList<OperatorDesktopPersistedFailure> failures,
+            int reportCount,
+            string message)
+        {
+            Token = token;
+            Failures = failures;
+            ReportCount = reportCount;
+            Message = message;
+        }
+
+        public long Token { get; }
+        public IReadOnlyList<OperatorDesktopPersistedFailure> Failures { get; }
+        public int ReportCount { get; }
+        public string Message { get; }
+    }
+
+    internal sealed class OperatorDesktopDelayedFailureBuffer : IDisposable
+    {
+        internal const int MaximumTrackedReceipts = OperatorDesktopLaunchFailureReceiptStore.MaximumEnvelopeEntries;
+        internal const int MaximumDetailedFailures = 4;
+        private readonly OperatorDesktopLaunchFailureReceiptStore _failureReceipts;
+        private readonly object _sync = new object();
+        private PendingAggregate _pending = new PendingAggregate();
+        private OperatorDesktopDelayedFailureBatch? _activeBatch;
+        private long _nextToken;
+        private bool _shuttingDown;
+
+        public OperatorDesktopDelayedFailureBuffer(OperatorDesktopLaunchFailureReceiptStore failureReceipts)
+        {
+            _failureReceipts = failureReceipts ?? throw new ArgumentNullException(nameof(failureReceipts));
+        }
+
+        public bool TryEnqueue(OperatorDesktopPersistedFailure failure)
+        {
+            var release = false;
+            lock (_sync)
+            {
+                if (_shuttingDown) release = true;
+                else
+                {
+                    var activeIds = _activeBatch == null
+                        ? new HashSet<string>(StringComparer.Ordinal)
+                        : new HashSet<string>(
+                            _activeBatch.Failures.Select(item => item.ReceiptId),
+                            StringComparer.Ordinal);
+                    var current = _failureReceipts.ReadClaimedFailuresForInstance()
+                        .Where(item => !activeIds.Contains(item.ReceiptId))
+                        .ToList();
+                    _pending.AddReport(current);
+                }
+            }
+
+            if (release) _failureReceipts.ReleasePersistedFailures(new[] { failure.ReceiptId });
+            return true;
+        }
+
+        public OperatorDesktopDelayedFailureBatch? TryBeginDisplay()
+        {
+            lock (_sync)
+            {
+                if (_shuttingDown || _activeBatch != null || _pending.ReportCount == 0) return null;
+                var aggregate = _pending;
+                _pending = new PendingAggregate();
+                var batch = aggregate.ToBatch(++_nextToken);
+                _activeBatch = batch;
+                return batch;
+            }
+        }
+
+        public bool HasPending
+        {
+            get
+            {
+                lock (_sync) return !_shuttingDown && _pending.ReportCount > 0;
+            }
+        }
+
+        public void CompleteDisplay(OperatorDesktopDelayedFailureBatch batch, bool displayed)
+        {
+            if (batch == null) throw new ArgumentNullException(nameof(batch));
+            lock (_sync)
+            {
+                if (_activeBatch == null || _activeBatch.Token != batch.Token) return;
+                if (displayed)
+                {
+                    _failureReceipts.AcknowledgePersistedFailures(
+                        batch.Failures.Select(failure => failure.ReceiptId).ToList());
+                }
+                else
+                {
+                    _failureReceipts.SurfacePersistedFailures(batch.Failures);
+                }
+                _activeBatch = null;
+            }
+        }
+
+        public void FailPendingDelivery()
+        {
+            OperatorDesktopDelayedFailureBatch? batch;
+            lock (_sync)
+            {
+                if (_pending.ReportCount == 0) return;
+                var aggregate = _pending;
+                _pending = new PendingAggregate();
+                batch = aggregate.ToBatch(++_nextToken);
+            }
+            _failureReceipts.SurfacePersistedFailures(batch.Failures);
+        }
+
+        public void Dispose()
+        {
+            List<string> receiptIds;
+            lock (_sync)
+            {
+                if (_shuttingDown) return;
+                _shuttingDown = true;
+                receiptIds = _pending.Failures
+                    .Concat(_activeBatch?.Failures ?? Array.Empty<OperatorDesktopPersistedFailure>())
+                    .Select(failure => failure.ReceiptId)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                _pending = new PendingAggregate();
+                _activeBatch = null;
+            }
+            if (receiptIds.Count > 0) _failureReceipts.ReleasePersistedFailures(receiptIds);
+        }
+
+        private sealed class PendingAggregate
+        {
+            private readonly List<OperatorDesktopPersistedFailure> _failures = new List<OperatorDesktopPersistedFailure>();
+
+            public IReadOnlyList<OperatorDesktopPersistedFailure> Failures => _failures;
+            public int ReportCount { get; private set; }
+
+            public void AddReport(IReadOnlyList<OperatorDesktopPersistedFailure> currentFailures)
+            {
+                if (ReportCount < int.MaxValue) ReportCount++;
+                _failures.Clear();
+                _failures.AddRange(currentFailures.Skip(
+                    Math.Max(0, currentFailures.Count - MaximumTrackedReceipts)));
+            }
+
+            public OperatorDesktopDelayedFailureBatch ToBatch(long token)
+            {
+                var details = _failures.Take(MaximumDetailedFailures)
+                    .Select(failure => $"[{failure.LaunchId}] {failure.Message}")
+                    .ToList();
+                var omitted = Math.Max(0, ReportCount - details.Count);
+                var message = string.Join(Environment.NewLine, details);
+                if (omitted > 0)
+                {
+                    message += Environment.NewLine + $"... and {omitted} additional launch failure{(omitted == 1 ? "" : "s")} were coalesced.";
+                }
+                if (message.Length > 4096) message = message.Substring(0, 4096);
+                return new OperatorDesktopDelayedFailureBatch(
+                    token,
+                    _failures.ToList(),
+                    ReportCount,
+                    message);
+            }
+        }
+    }
+
+    internal enum OperatorDesktopDelayedFailureRaiseResult
+    {
+        Accepted,
+        Pending,
+        Denied,
+        TimedOut
+    }
+
+    internal sealed class OperatorDesktopDelayedFailureDelivery : IDisposable
+    {
+        private readonly OperatorDesktopDelayedFailureBuffer _buffer;
+        private readonly Func<OperatorDesktopDelayedFailureRaiseResult> _raise;
+        private readonly Action _disposeRaiseTarget;
+        private readonly Func<int, Task> _delay;
+        private readonly object _retrySync = new object();
+        private Task _retryTask = Task.CompletedTask;
+        private int _raiseOutstanding;
+        private int _shuttingDown;
+        private int _disposed;
+
+        public OperatorDesktopDelayedFailureDelivery(
+            OperatorDesktopDelayedFailureBuffer buffer,
+            Func<OperatorDesktopDelayedFailureRaiseResult> raise,
+            Action disposeRaiseTarget,
+            Func<int, Task>? delay = null)
+        {
+            _buffer = buffer ?? throw new ArgumentNullException(nameof(buffer));
+            _raise = raise ?? throw new ArgumentNullException(nameof(raise));
+            _disposeRaiseTarget = disposeRaiseTarget ?? throw new ArgumentNullException(nameof(disposeRaiseTarget));
+            _delay = delay ?? (milliseconds => Task.Delay(milliseconds));
+        }
+
+        public bool TryReport(OperatorDesktopPersistedFailure failure)
+        {
+            _buffer.TryEnqueue(failure);
+            if (Volatile.Read(ref _shuttingDown) != 0) return true;
+            EnsureRaise();
+            return true;
+        }
+
+        public void Execute(Func<string, bool> display)
+        {
+            if (display == null) throw new ArgumentNullException(nameof(display));
+            if (Volatile.Read(ref _shuttingDown) != 0) return;
+            var batch = _buffer.TryBeginDisplay();
+            if (batch == null)
+            {
+                Interlocked.Exchange(ref _raiseOutstanding, 0);
+                return;
+            }
+
+            var displayed = false;
+            try
+            {
+                displayed = display(batch.Message);
+            }
+            finally
+            {
+                _buffer.CompleteDisplay(batch, displayed);
+                Interlocked.Exchange(ref _raiseOutstanding, 0);
+                if (_buffer.HasPending && Volatile.Read(ref _shuttingDown) == 0) EnsureRaise();
+            }
+        }
+
+        internal Task WaitForRetryIdleAsync()
+        {
+            lock (_retrySync) return _retryTask;
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            Interlocked.Exchange(ref _shuttingDown, 1);
+            _buffer.Dispose();
+            try { _disposeRaiseTarget(); } catch { }
+        }
+
+        private void EnsureRaise()
+        {
+            if (Volatile.Read(ref _shuttingDown) != 0
+                || Interlocked.CompareExchange(ref _raiseOutstanding, 1, 0) != 0)
+            {
+                return;
+            }
+
+            var result = TryRaise();
+            if (result == OperatorDesktopDelayedFailureRaiseResult.Accepted) return;
+            if (result == OperatorDesktopDelayedFailureRaiseResult.Pending)
+            {
+                QueuePendingRetry();
+                return;
+            }
+            _buffer.FailPendingDelivery();
+            Interlocked.Exchange(ref _raiseOutstanding, 0);
+            if (_buffer.HasPending && Volatile.Read(ref _shuttingDown) == 0) EnsureRaise();
+        }
+
+        private void QueuePendingRetry()
+        {
+            lock (_retrySync)
+            {
+                if (!_retryTask.IsCompleted) return;
+                _retryTask = RetryPendingRaiseAsync();
+            }
+        }
+
+        private async Task RetryPendingRaiseAsync()
+        {
+            for (var attempt = 0; attempt < 4 && Volatile.Read(ref _shuttingDown) == 0; attempt++)
+            {
+                await _delay(25 * (attempt + 1)).ConfigureAwait(false);
+                if (Volatile.Read(ref _shuttingDown) != 0) return;
+                var result = TryRaise();
+                if (result == OperatorDesktopDelayedFailureRaiseResult.Accepted) return;
+                if (result == OperatorDesktopDelayedFailureRaiseResult.Denied) break;
+                if (result == OperatorDesktopDelayedFailureRaiseResult.TimedOut && attempt == 3) break;
+            }
+
+            if (Volatile.Read(ref _shuttingDown) != 0) return;
+            _buffer.FailPendingDelivery();
+            Interlocked.Exchange(ref _raiseOutstanding, 0);
+            if (_buffer.HasPending && Volatile.Read(ref _shuttingDown) == 0) EnsureRaise();
+        }
+
+        private OperatorDesktopDelayedFailureRaiseResult TryRaise()
+        {
+            try { return _raise(); }
+            catch { return OperatorDesktopDelayedFailureRaiseResult.Denied; }
+        }
     }
 
     internal sealed class OperatorDesktopLaunchFailureReceiptStore
@@ -666,6 +1089,21 @@ namespace RevitBridge.Operator
 
         public void Record(string message, string? launchId = null)
         {
+            QueueBackground(() =>
+            {
+                var persisted = Persist(message, launchId, surfacePrune: true);
+                SurfacePersistedFailures(new[] { persisted });
+            });
+        }
+
+        internal OperatorDesktopPersistedFailure PersistForNotification(string message, string? launchId)
+            => Persist(message, launchId, surfacePrune: false);
+
+        private OperatorDesktopPersistedFailure Persist(
+            string message,
+            string? launchId,
+            bool surfacePrune)
+        {
             var now = _utcNow();
             var receipt = new OperatorDesktopLaunchFailureReceipt
             {
@@ -677,19 +1115,105 @@ namespace RevitBridge.Operator
                 ClaimedByInstanceId = _instanceId,
                 ClaimedAtUtc = now.ToString("O")
             };
-            QueueBackground(() =>
+            WithMutex(() =>
             {
-                WithMutex(() =>
+                var envelope = ReadEnvelope();
+                RemoveExpired(envelope, now);
+                envelope.Receipts.Add(receipt);
+                Sort(envelope);
+                WriteBounded(envelope, surfacePrune);
+                return true;
+            }, TimeSpan.FromSeconds(5));
+            return new OperatorDesktopPersistedFailure(
+                receipt.ReceiptId,
+                receipt.LaunchId,
+                receipt.Message,
+                receipt.ObservedAtUtc);
+        }
+
+        internal void SurfacePersistedFailures(IEnumerable<OperatorDesktopPersistedFailure> failures)
+        {
+            AddSnapshot(failures.Select(failure => new OperatorDesktopLaunchFailureReceipt
+            {
+                ReceiptId = failure.ReceiptId,
+                InstanceId = _instanceId,
+                LaunchId = failure.LaunchId,
+                Message = failure.Message,
+                ObservedAtUtc = failure.ObservedAtUtc,
+                ClaimedByInstanceId = _instanceId,
+                ClaimedAtUtc = _utcNow().ToString("O")
+            }));
+        }
+
+        internal void AcknowledgePersistedFailures(IReadOnlyCollection<string> receiptIds)
+            => RemoveOrReleasePersistedFailures(receiptIds, remove: true);
+
+        internal void ReleasePersistedFailures(IReadOnlyCollection<string> receiptIds)
+            => RemoveOrReleasePersistedFailures(receiptIds, remove: false);
+
+        internal void ReleaseAllClaimsForInstance()
+            => RemoveOrReleasePersistedFailures(null, remove: false);
+
+        internal IReadOnlyList<OperatorDesktopPersistedFailure> ReadClaimedFailuresForInstance()
+        {
+            HashSet<string> alreadySurfaced;
+            lock (_memorySync)
+            {
+                alreadySurfaced = new HashSet<string>(_knownReceiptIds, StringComparer.Ordinal);
+            }
+            return WithMutex(() =>
+            {
+                var envelope = ReadEnvelope();
+                return (IReadOnlyList<OperatorDesktopPersistedFailure>)envelope.Receipts
+                    .Where(receipt => string.Equals(
+                        receipt.ClaimedByInstanceId,
+                        _instanceId,
+                        StringComparison.Ordinal)
+                        && !alreadySurfaced.Contains(receipt.ReceiptId))
+                    .Select(receipt => new OperatorDesktopPersistedFailure(
+                        receipt.ReceiptId,
+                        receipt.LaunchId,
+                        receipt.Message,
+                        receipt.ObservedAtUtc))
+                    .ToList();
+            }, TimeSpan.FromSeconds(5));
+        }
+
+        private void RemoveOrReleasePersistedFailures(
+            IReadOnlyCollection<string>? receiptIds,
+            bool remove)
+        {
+            var ids = receiptIds == null
+                ? null
+                : new HashSet<string>(receiptIds, StringComparer.Ordinal);
+            WithMutex(() =>
+            {
+                var envelope = ReadEnvelope();
+                var changed = false;
+                if (remove)
                 {
-                    var envelope = ReadEnvelope();
-                    RemoveExpired(envelope, _utcNow());
-                    envelope.Receipts.Add(receipt);
-                    Sort(envelope);
-                    WriteBounded(envelope);
-                    AddSnapshot(new[] { receipt });
-                    return true;
-                }, TimeSpan.FromSeconds(5));
-            });
+                    changed = envelope.Receipts.RemoveAll(receipt =>
+                        string.Equals(receipt.ClaimedByInstanceId, _instanceId, StringComparison.Ordinal)
+                        && ids != null
+                        && ids.Contains(receipt.ReceiptId)) > 0;
+                }
+                else
+                {
+                    foreach (var receipt in envelope.Receipts)
+                    {
+                        if (!string.Equals(receipt.ClaimedByInstanceId, _instanceId, StringComparison.Ordinal)
+                            || ids != null && !ids.Contains(receipt.ReceiptId))
+                        {
+                            continue;
+                        }
+                        receipt.ClaimedByInstanceId = "";
+                        receipt.ClaimedAtUtc = "";
+                        changed = true;
+                    }
+                }
+                if (changed) WriteBounded(envelope);
+                return true;
+            }, TimeSpan.FromSeconds(5));
         }
 
         public bool TryTake(out string message)
@@ -891,7 +1415,9 @@ namespace RevitBridge.Operator
             }
         }
 
-        private void WriteBounded(OperatorDesktopLaunchFailureReceiptEnvelope envelope)
+        private void WriteBounded(
+            OperatorDesktopLaunchFailureReceiptEnvelope envelope,
+            bool surfacePrune = true)
         {
             Sort(envelope);
             var pruned = 0;
@@ -912,7 +1438,7 @@ namespace RevitBridge.Operator
                 throw new InvalidDataException("The empty Operator Desktop receipt envelope exceeds its byte limit.");
             }
             _write(json);
-            if (pruned > 0)
+            if (pruned > 0 && surfacePrune)
             {
                 AddSyntheticFailure($"The Operator Desktop failure receipt envelope deterministically pruned {pruned} oldest entr{(pruned == 1 ? "y" : "ies")} to remain within {MaximumEnvelopeEntries} entries and {MaximumEnvelopeBytes} bytes.");
             }

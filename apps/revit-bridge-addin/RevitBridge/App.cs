@@ -149,6 +149,16 @@ namespace RevitBridge
             WriteStartupLog("OnShutdown begin.");
             try
             {
+                WriteStartupLog("Operator Desktop launch notification shutdown begin.");
+                ShowOperatorPaneCommand.ShutdownDesktopFailureNotifications();
+                WriteStartupLog("Operator Desktop launch notification shutdown complete.");
+            }
+            catch (Exception ex)
+            {
+                WriteStartupLog($"Operator Desktop launch notification shutdown failed: {ex.GetType().FullName}: {ex.Message}");
+            }
+            try
+            {
                 WriteStartupLog("Application-lifetime Revit courier worker dispose begin.");
                 _revitCourierWorker?.Dispose();
                 _revitCourierWorker = null;

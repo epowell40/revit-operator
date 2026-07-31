@@ -109,27 +109,31 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public async Task ObservedFailure_IsReportedImmediatelyWithoutLeavingANextClickReceipt()
+        public async Task ObservedFailure_IsDurableBeforeAcceptedReporterAndAwaitsAcknowledgement()
         {
             var memory = new SharedReceipt();
             var store = memory.CreateStore("instance-a", () => memory.Now);
             await store.WaitForBackgroundIdleAsync();
-            var reports = new List<string>();
+            OperatorDesktopPersistedFailure? reported = null;
 
             OperatorDesktopLauncher.ReportOrPersistObservedFailure(
                 "launcher exited with code 7",
                 "launch-a",
                 store,
-                (failure, _) =>
+                failure =>
                 {
-                    reports.Add(failure);
+                    reported = failure;
+                    Assert.Contains("launcher exited with code 7", memory.RawJson ?? "", StringComparison.OrdinalIgnoreCase);
                     return true;
                 });
             await store.WaitForBackgroundIdleAsync();
 
-            Assert.Equal(new[] { "launcher exited with code 7" }, reports);
+            Assert.NotNull(reported);
+            Assert.Equal("launch-a", reported!.LaunchId);
             Assert.False(store.TryTake(out _));
-            Assert.DoesNotContain("launcher exited with code 7", memory.RawJson ?? "", StringComparison.OrdinalIgnoreCase);
+            var envelope = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
+            Assert.Single(envelope!.Receipts);
+            Assert.Equal(reported.ReceiptId, envelope.Receipts[0].ReceiptId);
         }
 
         [Theory]
@@ -145,7 +149,7 @@ namespace RevitBridge.Common.Tests
                 "launcher failed after dispatch",
                 "launch-a",
                 store,
-                (_, _) => reporterThrows
+                _ => reporterThrows
                     ? throw new InvalidOperationException("Revit is closing")
                     : false);
             await store.WaitForBackgroundIdleAsync();
@@ -156,29 +160,190 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public async Task ObservedFailure_LiveReporterCanPersistItsOwnedFallbackExactlyOnce()
+        public async Task DelayedFailureBuffer_AcceptedButNeverExecutedRemainsDurableAcrossShutdown()
         {
             var memory = new SharedReceipt();
             var store = memory.CreateStore("instance-a", () => memory.Now);
             await store.WaitForBackgroundIdleAsync();
-
-            OperatorDesktopLauncher.ReportOrPersistObservedFailure(
-                "external event stayed pending",
-                "launch-a",
-                store,
-                (_, persistFallback) =>
+            var buffer = new OperatorDesktopDelayedFailureBuffer(store);
+            var raises = 0;
+            var disposals = 0;
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () =>
                 {
-                    persistFallback();
-                    persistFallback();
-                    return true;
-                });
-            await store.WaitForBackgroundIdleAsync();
+                    raises++;
+                    return OperatorDesktopDelayedFailureRaiseResult.Accepted;
+                },
+                () => disposals++);
+            var persisted = store.PersistForNotification("accepted but never executed", "launch-a");
 
-            var envelope = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
-            Assert.Single(envelope!.Receipts);
-            Assert.True(store.TryTake(out var failure));
-            Assert.Contains("external event stayed pending", failure, StringComparison.OrdinalIgnoreCase);
+            Assert.True(delivery.TryReport(persisted));
+            Assert.Equal(1, raises);
             Assert.False(store.TryTake(out _));
+            delivery.Dispose();
+            delivery.Dispose();
+            Assert.Equal(1, disposals);
+
+            var nextInstance = memory.CreateStore("instance-b", () => memory.Now);
+            await nextInstance.WaitForBackgroundIdleAsync();
+            Assert.True(nextInstance.TryTake(out var failure));
+            Assert.Contains("accepted but never executed", failure, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_PendingThenDeniedSurfacesOneCoalescedFallback()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var buffer = new OperatorDesktopDelayedFailureBuffer(store);
+            var raiseResults = new Queue<OperatorDesktopDelayedFailureRaiseResult>(new[]
+            {
+                OperatorDesktopDelayedFailureRaiseResult.Pending,
+                OperatorDesktopDelayedFailureRaiseResult.Denied
+            });
+            var retryGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () => raiseResults.Dequeue(),
+                () => { },
+                _ => retryGate.Task);
+            Assert.True(delivery.TryReport(store.PersistForNotification("denied-a", "launch-a")));
+            Assert.True(delivery.TryReport(store.PersistForNotification("denied-b", "launch-b")));
+
+            retryGate.TrySetResult(true);
+            await delivery.WaitForRetryIdleAsync();
+
+            Assert.Empty(raiseResults);
+            Assert.True(store.TryTake(out var failure));
+            Assert.Contains("denied-a", failure);
+            Assert.Contains("denied-b", failure);
+            Assert.False(store.TryTake(out _));
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_ShutdownDisposesOnceAndReleasesNewReportsForNextInstance()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var buffer = new OperatorDesktopDelayedFailureBuffer(store);
+            var disposals = 0;
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () => OperatorDesktopDelayedFailureRaiseResult.Accepted,
+                () => disposals++);
+            delivery.Dispose();
+            delivery.Dispose();
+            var afterShutdown = store.PersistForNotification("arrived during shutdown", "launch-shutdown");
+
+            Assert.True(delivery.TryReport(afterShutdown));
+            Assert.Equal(1, disposals);
+            Assert.False(store.TryTake(out _));
+
+            var nextInstance = memory.CreateStore("instance-b", () => memory.Now);
+            await nextInstance.WaitForBackgroundIdleAsync();
+            Assert.True(nextInstance.TryTake(out var failure));
+            Assert.Contains("arrived during shutdown", failure);
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_ConcurrentReportsRemainBoundedAndAggregateOneDialog()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var buffer = new OperatorDesktopDelayedFailureBuffer(store);
+            var raises = 0;
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () =>
+                {
+                    Interlocked.Increment(ref raises);
+                    return OperatorDesktopDelayedFailureRaiseResult.Accepted;
+                },
+                () => { });
+
+            await Task.WhenAll(Enumerable.Range(0, 64).Select(index => Task.Run(() =>
+            {
+                var persisted = store.PersistForNotification($"failure-{index:D2}", $"launch-{index:D2}");
+                Assert.True(delivery.TryReport(persisted));
+            })));
+
+            var displays = 0;
+            var displayMessage = "";
+            delivery.Execute(message =>
+            {
+                displays++;
+                displayMessage = message;
+                return true;
+            });
+
+            Assert.Equal(1, raises);
+            Assert.Equal(1, displays);
+            Assert.Contains("additional launch failures were coalesced", displayMessage, StringComparison.OrdinalIgnoreCase);
+            Assert.InRange(displayMessage.Length, 1, 4096);
+            var envelope = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
+            Assert.Empty(envelope!.Receipts);
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_AcknowledgesReceiptExactlyOnceAfterSuccessfulDisplay()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var buffer = new OperatorDesktopDelayedFailureBuffer(store);
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () => OperatorDesktopDelayedFailureRaiseResult.Accepted,
+                () => { });
+            var persisted = store.PersistForNotification("display exactly once", "launch-a");
+            Assert.True(delivery.TryReport(persisted));
+            var before = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
+            Assert.Single(before!.Receipts);
+
+            var displays = 0;
+            delivery.Execute(_ =>
+            {
+                displays++;
+                return true;
+            });
+            delivery.Execute(_ =>
+            {
+                displays++;
+                return true;
+            });
+
+            Assert.Equal(1, displays);
+            var after = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
+            Assert.Empty(after!.Receipts);
+            Assert.False(store.TryTake(out _));
+        }
+
+        [Fact]
+        public void InFlightLaunchGate_CoalescesConcurrentEntriesAndFencesShutdown()
+        {
+            var gate = new OperatorDesktopInFlightLaunchGate();
+            var leases = new OperatorDesktopInFlightLaunchLease?[24];
+            var owners = 0;
+            Parallel.For(0, leases.Length, index =>
+            {
+                if (gate.TryEnter(out var lease)) Interlocked.Increment(ref owners);
+                leases[index] = lease;
+            });
+
+            Assert.Equal(1, owners);
+            var launchIds = leases.Where(lease => lease != null).Select(lease => lease!.LaunchId).Distinct().ToList();
+            Assert.Single(launchIds);
+            foreach (var lease in leases) lease?.Dispose();
+
+            Assert.True(gate.TryEnter(out var finalLease));
+            gate.Shutdown();
+            finalLease!.Dispose();
+            Assert.False(gate.TryEnter(out var shutdownLease));
+            Assert.Null(shutdownLease);
         }
 
         [Fact]
