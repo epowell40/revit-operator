@@ -249,6 +249,60 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public async Task DelayedFailureDelivery_ShutdownDisposesRaiseTargetWhenReceiptReleaseThrows()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var buffer = new OperatorDesktopDelayedFailureBuffer(
+                store,
+                release: _ => throw new IOException("receipt file is locked"));
+            var disposals = 0;
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () => OperatorDesktopDelayedFailureRaiseResult.Accepted,
+                () => disposals++);
+            Assert.True(delivery.TryReport(store.PersistForNotification("pending at shutdown", "launch-a")));
+
+            delivery.Dispose();
+            delivery.Dispose();
+
+            Assert.Equal(1, disposals);
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_BlockedRaiseIsSerializedBeforeShutdownDispose()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var buffer = new OperatorDesktopDelayedFailureBuffer(store);
+            var raiseEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseRaise = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var disposed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () =>
+                {
+                    raiseEntered.TrySetResult(true);
+                    releaseRaise.Task.GetAwaiter().GetResult();
+                    return OperatorDesktopDelayedFailureRaiseResult.Accepted;
+                },
+                () => disposed.TrySetResult(true));
+            var persisted = store.PersistForNotification("blocked raise", "launch-a");
+
+            var reportTask = Task.Run(() => delivery.TryReport(persisted));
+            await raiseEntered.Task;
+            var disposeTask = Task.Run(delivery.Dispose);
+            await Task.Delay(25);
+            Assert.False(disposed.Task.IsCompleted);
+
+            releaseRaise.TrySetResult(true);
+            await Task.WhenAll(reportTask, disposeTask);
+            Assert.True(disposed.Task.IsCompleted);
+        }
+
+        [Fact]
         public async Task DelayedFailureDelivery_ConcurrentReportsRemainBoundedAndAggregateOneDialog()
         {
             var memory = new SharedReceipt();
@@ -279,6 +333,7 @@ namespace RevitBridge.Common.Tests
                 displayMessage = message;
                 return true;
             });
+            await buffer.WaitForCompletionIdleAsync();
 
             Assert.Equal(1, raises);
             Assert.Equal(1, displays);
@@ -310,6 +365,7 @@ namespace RevitBridge.Common.Tests
                 displays++;
                 return true;
             });
+            await buffer.WaitForCompletionIdleAsync();
             delivery.Execute(_ =>
             {
                 displays++;
@@ -320,6 +376,88 @@ namespace RevitBridge.Common.Tests
             var after = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
             Assert.Empty(after!.Receipts);
             Assert.False(store.TryTake(out _));
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_AcknowledgementFailureDoesNotWedgeAndSurfacesReceipt()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var acknowledgementAttempts = 0;
+            var raises = 0;
+            var buffer = new OperatorDesktopDelayedFailureBuffer(
+                store,
+                acknowledge: _ =>
+                {
+                    acknowledgementAttempts++;
+                    throw new IOException("receipt acknowledgement locked");
+                });
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () =>
+                {
+                    raises++;
+                    return OperatorDesktopDelayedFailureRaiseResult.Accepted;
+                },
+                () => { });
+            Assert.True(delivery.TryReport(store.PersistForNotification("ack failure", "launch-a")));
+
+            delivery.Execute(_ => true);
+            await buffer.WaitForCompletionIdleAsync();
+
+            Assert.Equal(1, acknowledgementAttempts);
+            Assert.True(store.TryTake(out var surfaced));
+            Assert.Contains("ack failure", surfaced);
+            Assert.True(delivery.TryReport(store.PersistForNotification("second failure", "launch-b")));
+            delivery.Execute(_ => true);
+            await buffer.WaitForCompletionIdleAsync();
+            Assert.Equal(2, raises);
+        }
+
+        [Fact]
+        public async Task DelayedFailureDelivery_AcknowledgementDoesNotBlockExecuteThread()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var acknowledgementEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseAcknowledgement = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var buffer = new OperatorDesktopDelayedFailureBuffer(
+                store,
+                acknowledge: _ =>
+                {
+                    acknowledgementEntered.TrySetResult(true);
+                    releaseAcknowledgement.Task.GetAwaiter().GetResult();
+                });
+            var delivery = new OperatorDesktopDelayedFailureDelivery(
+                buffer,
+                () => OperatorDesktopDelayedFailureRaiseResult.Accepted,
+                () => { });
+            Assert.True(delivery.TryReport(store.PersistForNotification("slow acknowledgement", "launch-a")));
+
+            delivery.Execute(_ => true);
+            await acknowledgementEntered.Task;
+
+            releaseAcknowledgement.TrySetResult(true);
+            await buffer.WaitForCompletionIdleAsync();
+        }
+
+        [Theory]
+        [InlineData("{ malformed")]
+        [InlineData(null)]
+        public async Task ReceiptStore_ShutdownCleanupFailureIsContainedAndSurfaced(string? malformedJson)
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            memory.ReadOverride = malformedJson == null
+                ? () => throw new IOException("receipt file is locked")
+                : () => malformedJson;
+
+            Assert.False(store.TryReleaseAllClaimsForInstance());
+            Assert.True(store.TryTake(out var failure));
+            Assert.Contains("shutdown cleanup failed", failure, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]

@@ -35,11 +35,18 @@ namespace RevitBridge.Operator
 
         internal static void ShutdownDesktopFailureNotifications()
         {
-            OperatorDesktopLauncher.BeginShutdown();
-            lock (DelayedFailureReporterSync)
+            try
             {
-                DelayedFailureDialog?.Shutdown();
-                DelayedFailureDialog = null;
+                OperatorDesktopLauncher.BeginShutdown();
+            }
+            finally
+            {
+                lock (DelayedFailureReporterSync)
+                {
+                    var dialog = DelayedFailureDialog;
+                    DelayedFailureDialog = null;
+                    try { dialog?.Shutdown(); } catch { }
+                }
             }
         }
 
