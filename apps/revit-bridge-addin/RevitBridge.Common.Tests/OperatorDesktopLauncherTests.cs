@@ -105,6 +105,80 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("dispatch accepted", detail, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("readiness is not yet claimed", detail, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("launch-123", detail);
+            Assert.Contains("surfaced in Revit", detail, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task ObservedFailure_IsReportedImmediatelyWithoutLeavingANextClickReceipt()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+            var reports = new List<string>();
+
+            OperatorDesktopLauncher.ReportOrPersistObservedFailure(
+                "launcher exited with code 7",
+                "launch-a",
+                store,
+                (failure, _) =>
+                {
+                    reports.Add(failure);
+                    return true;
+                });
+            await store.WaitForBackgroundIdleAsync();
+
+            Assert.Equal(new[] { "launcher exited with code 7" }, reports);
+            Assert.False(store.TryTake(out _));
+            Assert.DoesNotContain("launcher exited with code 7", memory.RawJson ?? "", StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task ObservedFailure_PersistsForNextClickWhenLiveReporterCannotAcceptIt(bool reporterThrows)
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+
+            OperatorDesktopLauncher.ReportOrPersistObservedFailure(
+                "launcher failed after dispatch",
+                "launch-a",
+                store,
+                (_, _) => reporterThrows
+                    ? throw new InvalidOperationException("Revit is closing")
+                    : false);
+            await store.WaitForBackgroundIdleAsync();
+
+            Assert.True(store.TryTake(out var failure));
+            Assert.Contains("launcher failed after dispatch", failure, StringComparison.OrdinalIgnoreCase);
+            Assert.False(store.TryTake(out _));
+        }
+
+        [Fact]
+        public async Task ObservedFailure_LiveReporterCanPersistItsOwnedFallbackExactlyOnce()
+        {
+            var memory = new SharedReceipt();
+            var store = memory.CreateStore("instance-a", () => memory.Now);
+            await store.WaitForBackgroundIdleAsync();
+
+            OperatorDesktopLauncher.ReportOrPersistObservedFailure(
+                "external event stayed pending",
+                "launch-a",
+                store,
+                (_, persistFallback) =>
+                {
+                    persistFallback();
+                    persistFallback();
+                    return true;
+                });
+            await store.WaitForBackgroundIdleAsync();
+
+            var envelope = JsonSerializer.Deserialize<OperatorDesktopLaunchFailureReceiptEnvelope>(memory.RawJson!);
+            Assert.Single(envelope!.Receipts);
+            Assert.True(store.TryTake(out var failure));
+            Assert.Contains("external event stayed pending", failure, StringComparison.OrdinalIgnoreCase);
+            Assert.False(store.TryTake(out _));
         }
 
         [Fact]
@@ -284,7 +358,7 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public async Task TryLaunch_BlockedReceiptPreloadReturnsPromptlyWithoutDispatchThenSurfacesReceiptExactlyOnce()
+        public async Task TryLaunch_BlockedReceiptPreloadWaitsOnceThenReturnsActionableFailureWithoutDispatch()
         {
             var memory = new SharedReceipt();
             memory.RawJson = JsonSerializer.Serialize(new OperatorDesktopLaunchFailureReceiptEnvelope
@@ -326,9 +400,15 @@ namespace RevitBridge.Common.Tests
                 var launched = OperatorDesktopLauncher.TryLaunch(@"C:\Launcher.cmd", runtime, out var detail);
 
                 Assert.False(launched);
-                Assert.InRange(stopwatch.ElapsedMilliseconds, 0, 250);
+                Assert.InRange(
+                    stopwatch.ElapsedMilliseconds,
+                    OperatorDesktopLauncher.FirstClickPreloadWaitMilliseconds - 150,
+                    OperatorDesktopLauncher.FirstClickPreloadWaitMilliseconds + 1000);
                 Assert.Equal(0, dispatches);
-                Assert.Contains("preload is still loading", detail, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("bounded", detail, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("Start 'Operator Desktop'", detail, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("reinstall", detail, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("Retry the command", detail, StringComparison.OrdinalIgnoreCase);
             }
             finally
             {
