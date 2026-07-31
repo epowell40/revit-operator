@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { canonicalJson, sha256, type JsonValue } from "../capabilities/tool_certification.js";
 
 export const EXECUTION_TRUTH_RECEIPT_SCHEMA = "revit-operator.execution-truth-receipt.v1" as const;
@@ -175,8 +177,13 @@ function assertExactKeys(
 }
 
 function assertCanonicalString(value: unknown, location: string, maxChars: number): asserts value is string {
-  if (typeof value !== "string" || value.length === 0 || value.length > maxChars) {
-    fail(location, `must be a nonempty string no longer than ${maxChars} characters`);
+  if (typeof value !== "string") {
+    fail(location, `must be a nonempty string no longer than ${maxChars} Unicode scalar values`);
+  }
+  assertNoUnpairedSurrogatesInString(value, location);
+  const scalarLength = [...value].length;
+  if (scalarLength === 0 || scalarLength > maxChars) {
+    fail(location, `must be a nonempty string no longer than ${maxChars} Unicode scalar values`);
   }
   if (value !== value.normalize("NFC") || /[\u0000-\u001f\u007f]/.test(value)) {
     fail(location, "must be NFC text without control characters");
@@ -254,6 +261,14 @@ function assertCanonicalUtc(value: unknown, location: string): asserts value is 
 function assertWorkspaceRelativePath(value: unknown, location: string): asserts value is string {
   assertCanonicalString(value, location, MAX_PATH_CHARS);
   assertNotObviousSecret(value, location);
+  const segments = value.split("/");
+  for (const segment of segments) {
+    if (/[. ]$/.test(segment)) fail(location, "must not contain a segment ending in a dot or space");
+    const deviceStem = segment.split(".", 1)[0]?.toUpperCase() ?? "";
+    if (/^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/.test(deviceStem)) {
+      fail(location, `must not contain reserved Windows device segment: ${segment}`);
+    }
+  }
   if (
     value.includes("\\")
     || value.startsWith("/")
@@ -460,6 +475,9 @@ function parseTransactions(value: unknown, outcome: ExecutionTruthReceiptPayload
     if (outcome.effect === "rolled_back" && item.impact_state !== "rolledBack") {
       fail(`${itemLocation}.impact_state`, "must be rolledBack when the observed effect is rolled_back");
     }
+    if (outcome.effect === "no_change" && item.impact_state === "committed") {
+      fail(`${itemLocation}.impact_state`, "cannot be committed when the observed effect is no_change");
+    }
   });
 }
 
@@ -503,6 +521,12 @@ function parseChanges(value: unknown, outcome: ExecutionTruthReceiptPayload["out
   }
   if (outcome.effect === "read_only" || outcome.effect === "not_started") {
     if (value.coverage !== "not_applicable") fail(location, `${outcome.effect} effects require not_applicable coverage`);
+  }
+  if (outcome.effect === "no_change") {
+    if (value.coverage !== "complete") fail(location, "no_change effects require complete final-effect coverage");
+    for (const key of ["created_count", "modified_count", "deleted_count"] as const) {
+      if (value[key] !== 0) fail(`${location}.${key}`, "must be present and zero when the observed effect is no_change");
+    }
   }
   if (["committed", "partial", "unknown"].includes(outcome.effect) && value.coverage === "not_applicable") {
     fail(location, `${outcome.effect} effects cannot use not_applicable coverage`);
@@ -553,12 +577,53 @@ function validatePayload(value: Record<string, unknown>): asserts value is Execu
   const outcome = parseOutcome(value.outcome);
   parseTransactions(value.transactions, outcome);
   parseChanges(value.changes, outcome);
+  if (outcome.effect === "no_change") {
+    const document = value.document as Record<string, unknown>;
+    if (document.state_before_sha256 !== undefined
+      && document.state_after_sha256 !== undefined
+      && document.state_before_sha256 !== document.state_after_sha256) {
+      fail("receipt.document", "before and after state hashes must match when the observed effect is no_change");
+    }
+  }
   assertArtifactRefs(value.evidence_refs, "receipt.evidence_refs");
   parseVerifierRefs(value.verifier_refs);
   assertSha256(value.result_sha256, "receipt.result_sha256");
 }
 
+function assertNoUnpairedSurrogatesInString(value: string, location: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) fail(location, "must not contain an unpaired Unicode surrogate");
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      fail(location, "must not contain an unpaired Unicode surrogate");
+    }
+  }
+}
+
+function assertNoUnpairedSurrogates(value: unknown, location: string, seen = new WeakSet<object>()): void {
+  if (typeof value === "string") {
+    assertNoUnpairedSurrogatesInString(value, location);
+    return;
+  }
+  if (value === null || typeof value !== "object") return;
+  if (seen.has(value)) fail(location, "must not contain an object cycle");
+  seen.add(value);
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => assertNoUnpairedSurrogates(item, `${location}[${index}]`, seen));
+  } else {
+    for (const [key, item] of Object.entries(value)) {
+      assertNoUnpairedSurrogatesInString(key, `${location} key`);
+      assertNoUnpairedSurrogates(item, `${location}.${key}`, seen);
+    }
+  }
+  seen.delete(value);
+}
+
 function canonicalClone(value: unknown): Record<string, unknown> {
+  assertNoUnpairedSurrogates(value, "receipt");
   const json = canonicalJson(value as JsonValue);
   if (Buffer.byteLength(json, "utf8") > EXECUTION_TRUTH_RECEIPT_MAX_BYTES) {
     fail("receipt", `must not exceed ${EXECUTION_TRUTH_RECEIPT_MAX_BYTES} canonical UTF-8 bytes`);
@@ -628,4 +693,35 @@ export function parseExecutionTruthReceipt(value: unknown): Readonly<ExecutionTr
   const expectedHash = sha256(payload as unknown as JsonValue);
   if (declaredHash !== expectedHash) fail("receipt.receipt_sha256", "does not match the canonical receipt payload");
   return deepFreeze(receipt as unknown as ExecutionTruthReceipt);
+}
+
+export type ExecutionTruthRealpathResolver = (candidatePath: string) => string;
+
+function isContainedPath(resolvedRoot: string, resolvedCandidate: string): boolean {
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
+}
+
+/**
+ * Resolves a receipt document path through the filesystem and fails closed if a
+ * symlink, junction, or other reparse point escapes the resolved workspace root.
+ * Consumers must use this (or an equivalent realpath containment check) before IO.
+ */
+export function resolveExecutionTruthDocumentPath(
+  workspaceRoot: string,
+  documentPath: string,
+  realpath: ExecutionTruthRealpathResolver = fs.realpathSync.native
+): string {
+  if (!path.isAbsolute(workspaceRoot)) fail("workspaceRoot", "must be an absolute path");
+  assertWorkspaceRelativePath(documentPath, "document.path");
+  const lexicalCandidate = path.resolve(workspaceRoot, ...documentPath.split("/"));
+  if (!isContainedPath(path.resolve(workspaceRoot), lexicalCandidate)) {
+    fail("document.path", "must remain lexically contained by workspaceRoot");
+  }
+  const resolvedRoot = path.resolve(realpath(workspaceRoot));
+  const resolvedCandidate = path.resolve(realpath(lexicalCandidate));
+  if (!isContainedPath(resolvedRoot, resolvedCandidate)) {
+    fail("document.path", "resolved through a symlink or reparse point outside workspaceRoot");
+  }
+  return resolvedCandidate;
 }

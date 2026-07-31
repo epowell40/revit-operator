@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.bimtools.com/revit-operator/execution-truth/receipt.v1.schema.json",
   "title": "Revit Operator Execution Truth Receipt v1",
-  "description": "A bounded, immutable post-execution observation. The receipt records evidence; it is not an instruction to execute or retry work.",
+  "description": "Structural schema for a bounded post-execution observation. Normative semantic validation, canonical hash verification, Unicode checks, ordering, secret screening, and filesystem containment are defined by the v1 conformance corpus and parser contract.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -289,6 +289,43 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "effect": { "const": "no_change" } },
+            "required": ["effect"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/transaction" },
+                { "type": "object", "properties": { "impact_state": { "enum": ["rolledBack", "notCommittedOrUnknown"] } } }
+              ]
+            }
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "coverage": { "const": "complete" },
+              "created_count": { "const": 0 },
+              "modified_count": { "const": 0 },
+              "deleted_count": { "const": 0 }
+            },
+            "required": ["coverage", "created_count", "modified_count", "deleted_count"]
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -380,6 +417,7 @@
       }
     },
     "changeCount": {
+      "description": "Count of final durable effects attributable to this execution; excludes transient work that was rolled back.",
       "type": "integer",
       "minimum": 0,
       "maximum": 1000000000

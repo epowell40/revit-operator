@@ -1,0 +1,336 @@
+{
+  "schema": "revit-operator.execution-truth-receipt-conformance.v1",
+  "canonicalization": "revit-operator.canonical-json.nfc.v1",
+  "receipt_schema": "revit-operator.execution-truth-receipt.v1",
+  "base_payload": {
+    "schema": "revit-operator.execution-truth-receipt.v1",
+    "version": 1,
+    "canonicalization": "revit-operator.canonical-json.nfc.v1",
+    "observed_at_utc": "2026-07-31T17:00:00.000Z",
+    "execution": {
+      "execution_id": "exec-conformance-001",
+      "attempt": 1,
+      "executor_id": "revit-operator.conformance.v1"
+    },
+    "request": {
+      "request_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "document": {
+      "project_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "fence": {
+      "kind": "none"
+    },
+    "outcome": {
+      "status": "succeeded",
+      "effect": "read_only",
+      "retryable": false,
+      "reconciliation_required": false
+    },
+    "transactions": [],
+    "changes": {
+      "coverage": "not_applicable"
+    },
+    "evidence_refs": [],
+    "verifier_refs": [],
+    "result_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "canonicalization_vectors": [
+    {
+      "id": "nfd_keys_values_and_crlf",
+      "input": {
+        "Café": "résumé\r\nline"
+      },
+      "expected_canonical_json": "{\"Café\":\"résumé\\nline\"}",
+      "expected_sha256": "sha256:d52e8dc5deeb3a12098750a2fce1b9ab238fb54ad6006c13ff1d39e610c6b8d8"
+    },
+    {
+      "id": "non_ascii_ordinal_keys",
+      "input": {
+        "ä": "Å",
+        "z": "雪",
+        "A": "é"
+      },
+      "expected_canonical_json": "{\"A\":\"é\",\"z\":\"雪\",\"ä\":\"Å\"}",
+      "expected_sha256": "sha256:39a987fd223be01d3e64c39b1507b773d820142db78bfc432de5ec1fd805a129"
+    },
+    {
+      "id": "astral_before_bmp_private_use_in_utf16_order",
+      "input": {
+        "": "bmp-private-use",
+        "𐀀": "astral"
+      },
+      "expected_canonical_json": "{\"𐀀\":\"astral\",\"\":\"bmp-private-use\"}",
+      "expected_sha256": "sha256:0069427df710e7c01dede41ac4ab4b29a933ac7d5ca0fa7047c2bdd17e5f5e43"
+    },
+    {
+      "id": "nfc_normalized_key_collision",
+      "input": {
+        "é": 1,
+        "é": 2
+      },
+      "expected_error_contains": "NFC-normalized key collision"
+    }
+  ],
+  "composite_sort_vectors": [
+    {
+      "id": "artifact_ref_kind_path_hash",
+      "delimiter": "U+0000",
+      "ordering": "ordinal_utf16_code_units",
+      "entries": [
+        {
+          "id": "result_a",
+          "parts": ["result", "artifacts/a.json", "sha256:1111111111111111111111111111111111111111111111111111111111111111"]
+        },
+        {
+          "id": "evidence_z",
+          "parts": ["evidence", "artifacts/z.json", "sha256:2222222222222222222222222222222222222222222222222222222222222222"]
+        },
+        {
+          "id": "evidence_a_high_hash",
+          "parts": ["evidence", "artifacts/a.json", "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]
+        },
+        {
+          "id": "evidence_a_low_hash",
+          "parts": ["evidence", "artifacts/a.json", "sha256:0000000000000000000000000000000000000000000000000000000000000000"]
+        }
+      ],
+      "expected_ids": ["evidence_a_low_hash", "evidence_a_high_hash", "evidence_z", "result_a"]
+    }
+  ],
+  "receipt_cases": [
+    {
+      "id": "valid_minimal_read",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "mutations": []
+    },
+    {
+      "id": "invalid_calendar_timestamp",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/observed_at_utc", "value": "2026-02-30T17:00:00.000Z" }
+      ]
+    },
+    {
+      "id": "valid_sorted_hashes",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/request/effect_hashes",
+          "value": [
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "invalid_unsorted_hashes",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/request/effect_hashes",
+          "value": [
+            "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "invalid_duplicate_hashes",
+      "schema_valid": false,
+      "semantic_valid": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/request/effect_hashes",
+          "value": [
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "invalid_secret_label",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/document/title", "value": "Bearer abcdefghijklmnop" }
+      ]
+    },
+    {
+      "id": "valid_256_astral_scalar_label",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "mutations": [
+        { "op": "repeat_string", "pointer": "/document/title", "value": "😀", "count": 256 }
+      ]
+    },
+    {
+      "id": "invalid_257_astral_scalar_label",
+      "schema_valid": false,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "repeat_string", "pointer": "/document/title", "value": "😀", "count": 257 }
+      ]
+    },
+    {
+      "id": "invalid_unpaired_high_surrogate",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/document/title", "value": "\ud800" }
+      ]
+    },
+    {
+      "id": "invalid_windows_device_name_with_extension",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/document/path", "value": "models/CON.rvt" }
+      ]
+    },
+    {
+      "id": "invalid_windows_trailing_dot",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/document/path", "value": "models/model.rvt." }
+      ]
+    },
+    {
+      "id": "invalid_windows_trailing_space",
+      "schema_valid": false,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/document/path", "value": "models/model.rvt " }
+      ]
+    },
+    {
+      "id": "invalid_windows_ads",
+      "schema_valid": false,
+      "semantic_valid": false,
+      "mutations": [
+        { "op": "replace", "pointer": "/document/path", "value": "models/model.rvt:secret" }
+      ]
+    },
+    {
+      "id": "valid_no_change_final_effects",
+      "schema_valid": true,
+      "semantic_valid": true,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/outcome",
+          "value": {
+            "status": "succeeded",
+            "effect": "no_change",
+            "retryable": false,
+            "reconciliation_required": false
+          }
+        },
+        {
+          "op": "replace",
+          "pointer": "/changes",
+          "value": { "coverage": "complete", "created_count": 0, "modified_count": 0, "deleted_count": 0 }
+        },
+        { "op": "replace", "pointer": "/document/state_before_sha256", "value": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+        { "op": "replace", "pointer": "/document/state_after_sha256", "value": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+      ]
+    },
+    {
+      "id": "invalid_no_change_nonzero_final_count",
+      "schema_valid": false,
+      "semantic_valid": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/outcome",
+          "value": {
+            "status": "succeeded",
+            "effect": "no_change",
+            "retryable": false,
+            "reconciliation_required": false
+          }
+        },
+        {
+          "op": "replace",
+          "pointer": "/changes",
+          "value": { "coverage": "complete", "created_count": 0, "modified_count": 1, "deleted_count": 0 }
+        }
+      ]
+    },
+    {
+      "id": "invalid_no_change_committed_transaction",
+      "schema_valid": false,
+      "semantic_valid": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/outcome",
+          "value": {
+            "status": "succeeded",
+            "effect": "no_change",
+            "retryable": false,
+            "reconciliation_required": false
+          }
+        },
+        {
+          "op": "replace",
+          "pointer": "/changes",
+          "value": { "coverage": "complete", "created_count": 0, "modified_count": 0, "deleted_count": 0 }
+        },
+        {
+          "op": "replace",
+          "pointer": "/transactions",
+          "value": [{ "transaction_id": "tx-invalid-committed", "impact_state": "committed" }]
+        }
+      ]
+    },
+    {
+      "id": "invalid_no_change_mismatched_state_hashes",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "mutations": [
+        {
+          "op": "replace",
+          "pointer": "/outcome",
+          "value": {
+            "status": "succeeded",
+            "effect": "no_change",
+            "retryable": false,
+            "reconciliation_required": false
+          }
+        },
+        {
+          "op": "replace",
+          "pointer": "/changes",
+          "value": { "coverage": "complete", "created_count": 0, "modified_count": 0, "deleted_count": 0 }
+        },
+        { "op": "replace", "pointer": "/document/state_before_sha256", "value": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" },
+        { "op": "replace", "pointer": "/document/state_after_sha256", "value": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+      ]
+    },
+    {
+      "id": "invalid_total_canonical_bytes",
+      "schema_valid": true,
+      "semantic_valid": false,
+      "generator": {
+        "kind": "max_bounded_transactions",
+        "transaction_count": 64,
+        "transaction_id_scalar_length": 128,
+        "undo_label_scalar_length": 256,
+        "receipt_path_scalar_length": 1024
+      },
+      "mutations": []
+    }
+  ]
+}
