@@ -1,0 +1,106 @@
+{
+  "schema": "revit-operator.execution-truth-receipt.v1",
+  "version": 1,
+  "canonicalization": "revit-operator.canonical-json.nfc.v1",
+  "observed_at_utc": "2026-07-31T16:00:00.000Z",
+  "execution": {
+    "execution_id": "exec-golden-001",
+    "attempt": 1,
+    "executor_id": "revit-operator.native-pane.v1",
+    "session_id": "session-golden-001",
+    "job_id": "job-golden-001",
+    "item_id": "item-golden-001",
+    "task_id": "task-golden-001",
+    "action_id": "action-golden-001",
+    "correlation_id": "correlation-golden-001"
+  },
+  "request": {
+    "request_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "method": "POST",
+    "path": "/revit/set-parameter",
+    "effect_hashes": [
+      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "policy_hashes": [
+      "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    ],
+    "authorization_hashes": [
+      "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    ]
+  },
+  "document": {
+    "project_fingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "document_session_id": "document-golden-001",
+    "title": "GOLDEN MODEL",
+    "path": "models/golden-model.rvt",
+    "state_before_sha256": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "state_after_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "fence": {
+    "kind": "batch_claim",
+    "token_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "outcome": {
+    "status": "succeeded",
+    "effect": "committed",
+    "code": "OK",
+    "phase": "post_execution_observation",
+    "retryable": false,
+    "reconciliation_required": false
+  },
+  "transactions": [
+    {
+      "transaction_id": "tx-golden-001",
+      "undo_label": "Revit Operator: Golden Receipt",
+      "impact_state": "committed",
+      "receipt_ref": {
+        "kind": "transaction_receipt",
+        "workspace_relative_path": "artifacts/execution-truth/golden-transaction.json",
+        "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "media_type": "application/json"
+      }
+    }
+  ],
+  "changes": {
+    "coverage": "complete",
+    "manifest_ref": {
+      "kind": "change_manifest",
+      "workspace_relative_path": "artifacts/execution-truth/golden-change-manifest.json",
+      "sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "media_type": "application/json"
+    },
+    "created_count": 0,
+    "modified_count": 1,
+    "deleted_count": 0,
+    "truncated": false
+  },
+  "evidence_refs": [
+    {
+      "kind": "evidence",
+      "workspace_relative_path": "artifacts/execution-truth/golden-native-readback.json",
+      "sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "media_type": "application/json"
+    },
+    {
+      "kind": "result",
+      "workspace_relative_path": "artifacts/execution-truth/golden-result.json",
+      "sha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "media_type": "application/json"
+    }
+  ],
+  "verifier_refs": [
+    {
+      "verifier_id": "native-readback",
+      "verifier_version": "1.0.0",
+      "status": "passed",
+      "receipt_ref": {
+        "kind": "verifier_receipt",
+        "workspace_relative_path": "artifacts/execution-truth/golden-verifier.json",
+        "sha256": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+        "media_type": "application/json"
+      }
+    }
+  ],
+  "result_sha256": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+  "receipt_sha256": "sha256:dbb02f0b8559428cac057b56551451abe90de64317206995f0af2c7be554002d"
+}
