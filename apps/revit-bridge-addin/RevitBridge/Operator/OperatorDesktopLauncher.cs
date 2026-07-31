@@ -15,6 +15,7 @@ namespace RevitBridge.Operator
 {
     internal static class OperatorDesktopLauncher
     {
+        internal const int FirstClickPreloadWaitMilliseconds = 750;
         private const int LauncherObservationTimeoutMilliseconds = 30000;
         private const int PostExitLivenessTimeoutMilliseconds = 5000;
         private const int RuntimeIdentityDeadlineMilliseconds = 1500;
@@ -25,6 +26,7 @@ namespace RevitBridge.Operator
         private static string LauncherPathDiscoveryError = "";
         private static bool LauncherPathPreloadComplete;
         private static int LauncherPathRefreshQueued;
+        private static readonly ManualResetEventSlim LauncherPathInitialRefreshCompleted = new ManualResetEventSlim(false);
 
         static OperatorDesktopLauncher()
         {
@@ -66,21 +68,26 @@ namespace RevitBridge.Operator
         }
 
         public static bool TryLaunch(out string detail)
+            => TryLaunch(null, out detail);
+
+        public static bool TryLaunch(
+            Func<string, Action, bool>? reportDelayedFailure,
+            out string detail)
         {
+            var preloadStopwatch = Stopwatch.StartNew();
             RequestLauncherPathRefresh();
+            if (!WaitForLauncherPathInitialRefresh(RemainingPreloadBudget(preloadStopwatch)))
+            {
+                detail = BuildPreloadTimeoutDetail("launcher discovery");
+                return false;
+            }
+
             string? launcherPath;
             string discoveryError;
-            bool preloadComplete;
             lock (LauncherPathSnapshotSync)
             {
                 launcherPath = CachedLauncherPath;
                 discoveryError = LauncherPathDiscoveryError;
-                preloadComplete = LauncherPathPreloadComplete;
-            }
-            if (!preloadComplete)
-            {
-                detail = "Operator Desktop launcher discovery is still loading in the background. Retry the command.";
-                return false;
             }
             if (!string.IsNullOrWhiteSpace(discoveryError))
             {
@@ -90,10 +97,34 @@ namespace RevitBridge.Operator
             return TryLaunch(
                 launcherPath,
                 new OperatorDesktopLaunchRuntime(
-                    DispatchLauncher,
+                    path => DispatchLauncher(path, reportDelayedFailure),
                     FailureReceipts),
+                RemainingPreloadBudget(preloadStopwatch),
                 out detail);
         }
+
+        private static TimeSpan RemainingPreloadBudget(Stopwatch stopwatch)
+        {
+            var remaining = FirstClickPreloadWaitMilliseconds - (int)stopwatch.ElapsedMilliseconds;
+            return TimeSpan.FromMilliseconds(Math.Max(0, remaining));
+        }
+
+        private static bool WaitForLauncherPathInitialRefresh(TimeSpan timeout)
+        {
+            lock (LauncherPathSnapshotSync)
+            {
+                if (LauncherPathPreloadComplete) return true;
+            }
+
+            if (timeout <= TimeSpan.Zero) return false;
+            LauncherPathInitialRefreshCompleted.Wait(timeout);
+            lock (LauncherPathSnapshotSync) return LauncherPathPreloadComplete;
+        }
+
+        private static string BuildPreloadTimeoutDetail(string preloadName)
+            => $"Operator Desktop {preloadName} did not complete within the bounded "
+                + $"{FirstClickPreloadWaitMilliseconds}-millisecond first-click wait, so no launch was attempted and Revit was not blocked further. "
+                + "Start 'Operator Desktop' from the Windows desktop or workstation package. If it is missing or also fails, reinstall the workstation package or set OPERATOR_DESKTOP_LAUNCHER_PATH and restart Revit.";
 
         private static void RequestLauncherPathRefresh()
         {
@@ -126,6 +157,7 @@ namespace RevitBridge.Operator
                 }
                 finally
                 {
+                    LauncherPathInitialRefreshCompleted.Set();
                     Interlocked.Exchange(ref LauncherPathRefreshQueued, 0);
                 }
             });
@@ -135,12 +167,23 @@ namespace RevitBridge.Operator
             string? launcherPath,
             OperatorDesktopLaunchRuntime runtime,
             out string detail)
+            => TryLaunch(
+                launcherPath,
+                runtime,
+                TimeSpan.FromMilliseconds(FirstClickPreloadWaitMilliseconds),
+                out detail);
+
+        internal static bool TryLaunch(
+            string? launcherPath,
+            OperatorDesktopLaunchRuntime runtime,
+            TimeSpan preloadWait,
+            out string detail)
         {
             try
             {
-                if (!runtime.FailureReceipts.InitialRefreshComplete)
+                if (!runtime.FailureReceipts.WaitForInitialRefresh(preloadWait))
                 {
-                    detail = "Operator Desktop failure receipt preload is still loading in the background. Retry the command.";
+                    detail = BuildPreloadTimeoutDetail("failure receipt check");
                     return false;
                 }
 
@@ -161,7 +204,7 @@ namespace RevitBridge.Operator
                         return false;
                     }
 
-                    detail = $"Launcher dispatch accepted ({dispatch.LaunchId}): {selectedLauncherPath}. Sidecar readiness is not yet claimed; late failure will be reported once on the next Operator Desktop invocation.";
+                    detail = $"Launcher dispatch accepted ({dispatch.LaunchId}): {selectedLauncherPath}. Sidecar readiness is not yet claimed; an observed late failure will be surfaced in Revit, with the durable receipt retained as a fallback when Revit cannot accept the notification.";
                     return true;
                 }
 
@@ -176,7 +219,9 @@ namespace RevitBridge.Operator
             }
         }
 
-        private static OperatorDesktopDispatchResult DispatchLauncher(string launcherPath)
+        private static OperatorDesktopDispatchResult DispatchLauncher(
+            string launcherPath,
+            Func<string, Action, bool>? reportDelayedFailure)
         {
             try
             {
@@ -187,7 +232,11 @@ namespace RevitBridge.Operator
                     return OperatorDesktopDispatchResult.Rejected("Windows did not return a launcher process handle.");
                 }
 
-                _ = Task.Run(() => ObserveLauncherProcess(process, launcherPath, launchId));
+                _ = Task.Run(() => ObserveLauncherProcess(
+                    process,
+                    launcherPath,
+                    launchId,
+                    reportDelayedFailure));
                 return OperatorDesktopDispatchResult.DispatchAccepted(launchId);
             }
             catch (Exception ex)
@@ -270,7 +319,11 @@ namespace RevitBridge.Operator
             return null;
         }
 
-        private static void ObserveLauncherProcess(Process process, string launcherPath, string launchId)
+        private static void ObserveLauncherProcess(
+            Process process,
+            string launcherPath,
+            string launchId,
+            Func<string, Action, bool>? reportDelayedFailure)
         {
             try
             {
@@ -280,18 +333,57 @@ namespace RevitBridge.Operator
                     ? WaitForSidecarLiveness(PostExitLivenessTimeoutMilliseconds)
                     : IsSidecarLive(OperatorDesktopLaunchPlan.RuntimeIdentityUrl);
                 var failure = GetObservedLaunchFailure(launcherPath, exited, exitCode, sidecarLive);
-                if (failure != null) FailureReceipts.Record(failure, launchId);
+                if (failure != null)
+                {
+                    ReportOrPersistObservedFailure(
+                        failure,
+                        launchId,
+                        FailureReceipts,
+                        reportDelayedFailure);
+                }
             }
             catch (Exception ex)
             {
-                FailureReceipts.Record(
+                ReportOrPersistObservedFailure(
                     $"Launcher observation failed for {launcherPath}: {ex.GetType().Name}: {ex.Message}",
-                    launchId);
+                    launchId,
+                    FailureReceipts,
+                    reportDelayedFailure);
             }
             finally
             {
                 process.Dispose();
             }
+        }
+
+        internal static void ReportOrPersistObservedFailure(
+            string failure,
+            string launchId,
+            OperatorDesktopLaunchFailureReceiptStore failureReceipts,
+            Func<string, Action, bool>? reportDelayedFailure)
+        {
+            var persisted = 0;
+            Action persistFallback = () =>
+            {
+                if (Interlocked.Exchange(ref persisted, 1) == 0)
+                {
+                    failureReceipts.Record(failure, launchId);
+                }
+            };
+            var reported = false;
+            if (reportDelayedFailure != null)
+            {
+                try
+                {
+                    reported = reportDelayedFailure(failure, persistFallback);
+                }
+                catch
+                {
+                    reported = false;
+                }
+            }
+
+            if (!reported) persistFallback();
         }
 
         private static bool WaitForSidecarLiveness(int timeoutMilliseconds)
@@ -538,6 +630,7 @@ namespace RevitBridge.Operator
         private readonly HashSet<string> _knownReceiptIds = new HashSet<string>(StringComparer.Ordinal);
         private readonly object _backgroundSync = new object();
         private Task _backgroundTask = Task.CompletedTask;
+        private readonly Task _initialRefreshTask;
         private int _initialRefreshComplete;
 
         public OperatorDesktopLaunchFailureReceiptStore(
@@ -556,12 +649,20 @@ namespace RevitBridge.Operator
             _instanceId = !string.IsNullOrWhiteSpace(instanceId) ? instanceId : throw new ArgumentException("Instance id is required.", nameof(instanceId));
             _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
             _freshness = freshness > TimeSpan.Zero ? freshness : throw new ArgumentOutOfRangeException(nameof(freshness));
-            QueueBackground(
+            _initialRefreshTask = QueueBackground(
                 RefreshAndClaim,
                 () => Volatile.Write(ref _initialRefreshComplete, 1));
         }
 
         public bool InitialRefreshComplete => Volatile.Read(ref _initialRefreshComplete) != 0;
+
+        internal bool WaitForInitialRefresh(TimeSpan timeout)
+        {
+            if (InitialRefreshComplete) return true;
+            if (timeout <= TimeSpan.Zero) return false;
+            _initialRefreshTask.Wait(timeout);
+            return InitialRefreshComplete;
+        }
 
         public void Record(string message, string? launchId = null)
         {
@@ -695,7 +796,7 @@ namespace RevitBridge.Operator
             }
         }
 
-        private void QueueBackground(Action action, Action? completed = null)
+        private Task QueueBackground(Action action, Action? completed = null)
         {
             lock (_backgroundSync)
             {
@@ -717,6 +818,7 @@ namespace RevitBridge.Operator
                         completed?.Invoke();
                     }
                 });
+                return _backgroundTask;
             }
         }
 
