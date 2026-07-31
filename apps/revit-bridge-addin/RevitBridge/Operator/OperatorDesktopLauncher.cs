@@ -115,7 +115,7 @@ namespace RevitBridge.Operator
         {
             Interlocked.Exchange(ref ShuttingDown, 1);
             LaunchGate.Shutdown();
-            FailureReceipts.ReleaseAllClaimsForInstance();
+            FailureReceipts.TryReleaseAllClaimsForInstance();
         }
 
         internal static OperatorDesktopLaunchFailureReceiptStore SharedFailureReceipts => FailureReceipts;
@@ -763,15 +763,28 @@ namespace RevitBridge.Operator
         internal const int MaximumTrackedReceipts = OperatorDesktopLaunchFailureReceiptStore.MaximumEnvelopeEntries;
         internal const int MaximumDetailedFailures = 4;
         private readonly OperatorDesktopLaunchFailureReceiptStore _failureReceipts;
+        private readonly Action<IReadOnlyCollection<string>> _acknowledge;
+        private readonly Action<IReadOnlyCollection<string>> _release;
+        private readonly Action<IEnumerable<OperatorDesktopPersistedFailure>> _surface;
         private readonly object _sync = new object();
+        private readonly object _completionSync = new object();
         private PendingAggregate _pending = new PendingAggregate();
         private OperatorDesktopDelayedFailureBatch? _activeBatch;
+        private readonly HashSet<string> _acknowledgementsPending = new HashSet<string>(StringComparer.Ordinal);
+        private Task _completionTask = Task.CompletedTask;
         private long _nextToken;
         private bool _shuttingDown;
 
-        public OperatorDesktopDelayedFailureBuffer(OperatorDesktopLaunchFailureReceiptStore failureReceipts)
+        public OperatorDesktopDelayedFailureBuffer(
+            OperatorDesktopLaunchFailureReceiptStore failureReceipts,
+            Action<IReadOnlyCollection<string>>? acknowledge = null,
+            Action<IReadOnlyCollection<string>>? release = null,
+            Action<IEnumerable<OperatorDesktopPersistedFailure>>? surface = null)
         {
             _failureReceipts = failureReceipts ?? throw new ArgumentNullException(nameof(failureReceipts));
+            _acknowledge = acknowledge ?? failureReceipts.AcknowledgePersistedFailures;
+            _release = release ?? failureReceipts.ReleasePersistedFailures;
+            _surface = surface ?? failureReceipts.SurfacePersistedFailures;
         }
 
         public bool TryEnqueue(OperatorDesktopPersistedFailure failure)
@@ -783,9 +796,9 @@ namespace RevitBridge.Operator
                 else
                 {
                     var activeIds = _activeBatch == null
-                        ? new HashSet<string>(StringComparer.Ordinal)
+                        ? new HashSet<string>(_acknowledgementsPending, StringComparer.Ordinal)
                         : new HashSet<string>(
-                            _activeBatch.Failures.Select(item => item.ReceiptId),
+                            _activeBatch.Failures.Select(item => item.ReceiptId).Concat(_acknowledgementsPending),
                             StringComparer.Ordinal);
                     var current = _failureReceipts.ReadClaimedFailuresForInstance()
                         .Where(item => !activeIds.Contains(item.ReceiptId))
@@ -794,7 +807,7 @@ namespace RevitBridge.Operator
                 }
             }
 
-            if (release) _failureReceipts.ReleasePersistedFailures(new[] { failure.ReceiptId });
+            if (release) _release(new[] { failure.ReceiptId });
             return true;
         }
 
@@ -822,20 +835,46 @@ namespace RevitBridge.Operator
         public void CompleteDisplay(OperatorDesktopDelayedFailureBatch batch, bool displayed)
         {
             if (batch == null) throw new ArgumentNullException(nameof(batch));
+            IReadOnlyList<string> receiptIds;
             lock (_sync)
             {
                 if (_activeBatch == null || _activeBatch.Token != batch.Token) return;
+                _activeBatch = null;
+                receiptIds = batch.Failures.Select(failure => failure.ReceiptId).ToList();
                 if (displayed)
                 {
-                    _failureReceipts.AcknowledgePersistedFailures(
-                        batch.Failures.Select(failure => failure.ReceiptId).ToList());
+                    foreach (var receiptId in receiptIds) _acknowledgementsPending.Add(receiptId);
                 }
-                else
-                {
-                    _failureReceipts.SurfacePersistedFailures(batch.Failures);
-                }
-                _activeBatch = null;
             }
+
+            if (!displayed)
+            {
+                try { _surface(batch.Failures); } catch { }
+                return;
+            }
+
+            QueueCompletion(() =>
+            {
+                try { _acknowledge(receiptIds); }
+                catch
+                {
+                    // A displayed failure must never become invisible merely because the
+                    // durable acknowledgement could not acquire/read/write its receipt.
+                    try { _surface(batch.Failures); } catch { }
+                }
+                finally
+                {
+                    lock (_sync)
+                    {
+                        foreach (var receiptId in receiptIds) _acknowledgementsPending.Remove(receiptId);
+                    }
+                }
+            });
+        }
+
+        internal Task WaitForCompletionIdleAsync()
+        {
+            lock (_completionSync) return _completionTask;
         }
 
         public void FailPendingDelivery()
@@ -848,7 +887,7 @@ namespace RevitBridge.Operator
                 _pending = new PendingAggregate();
                 batch = aggregate.ToBatch(++_nextToken);
             }
-            _failureReceipts.SurfacePersistedFailures(batch.Failures);
+            _surface(batch.Failures);
         }
 
         public void Dispose()
@@ -866,7 +905,20 @@ namespace RevitBridge.Operator
                 _pending = new PendingAggregate();
                 _activeBatch = null;
             }
-            if (receiptIds.Count > 0) _failureReceipts.ReleasePersistedFailures(receiptIds);
+            if (receiptIds.Count > 0) _release(receiptIds);
+        }
+
+        private void QueueCompletion(Action action)
+        {
+            lock (_completionSync)
+            {
+                var prior = _completionTask;
+                _completionTask = Task.Run(async () =>
+                {
+                    try { await prior.ConfigureAwait(false); } catch { }
+                    action();
+                });
+            }
         }
 
         private sealed class PendingAggregate
@@ -920,6 +972,7 @@ namespace RevitBridge.Operator
         private readonly Action _disposeRaiseTarget;
         private readonly Func<int, Task> _delay;
         private readonly object _retrySync = new object();
+        private readonly object _raiseTargetSync = new object();
         private Task _retryTask = Task.CompletedTask;
         private int _raiseOutstanding;
         private int _shuttingDown;
@@ -978,8 +1031,11 @@ namespace RevitBridge.Operator
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             Interlocked.Exchange(ref _shuttingDown, 1);
-            _buffer.Dispose();
-            try { _disposeRaiseTarget(); } catch { }
+            try { _buffer.Dispose(); } catch { }
+            lock (_raiseTargetSync)
+            {
+                try { _disposeRaiseTarget(); } catch { }
+            }
         }
 
         private void EnsureRaise()
@@ -1031,8 +1087,13 @@ namespace RevitBridge.Operator
 
         private OperatorDesktopDelayedFailureRaiseResult TryRaise()
         {
-            try { return _raise(); }
-            catch { return OperatorDesktopDelayedFailureRaiseResult.Denied; }
+            lock (_raiseTargetSync)
+            {
+                if (Volatile.Read(ref _shuttingDown) != 0)
+                    return OperatorDesktopDelayedFailureRaiseResult.Denied;
+                try { return _raise(); }
+                catch { return OperatorDesktopDelayedFailureRaiseResult.Denied; }
+            }
         }
     }
 
@@ -1153,6 +1214,20 @@ namespace RevitBridge.Operator
 
         internal void ReleaseAllClaimsForInstance()
             => RemoveOrReleasePersistedFailures(null, remove: false);
+
+        internal bool TryReleaseAllClaimsForInstance()
+        {
+            try
+            {
+                ReleaseAllClaimsForInstance();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                AddSyntheticFailure($"Operator Desktop failure receipt shutdown cleanup failed ({ex.GetType().Name}: {ex.Message}).");
+                return false;
+            }
+        }
 
         internal IReadOnlyList<OperatorDesktopPersistedFailure> ReadClaimedFailuresForInstance()
         {
