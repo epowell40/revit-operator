@@ -33,6 +33,62 @@ public sealed class DeploymentEngineTests : IDisposable
         Assert.Throws<DeploymentException>(() => manifest.Validate());
     }
 
+    [Theory]
+    [InlineData(".env.example")]
+    [InlineData("node_modules/.bin/openai")]
+    [InlineData("node_modules/.bin/openai.cmd")]
+    [InlineData("node_modules/.package-lock.json")]
+    [InlineData("node_modules/has-symbols/.github/FUNDING.yml")]
+    [InlineData("node_modules/has-symbols/test/.eslintrc")]
+    [InlineData("node_modules/.well-known/asset.json")]
+    [InlineData("node_modules\\.bin\\openai.ps1")]
+    [InlineData("node_modules/openai/_vendor/partial-json-parser/parser.mjs")]
+    public void Manifest_relative_paths_allow_single_leading_dot_npm_segments(string path)
+    {
+        ReleaseManifest.EnsureSafeRelativePath(path, "test path");
+    }
+
+    [Theory]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("../escape")]
+    [InlineData("/escape")]
+    [InlineData("\\escape")]
+    [InlineData("C:escape")]
+    [InlineData("C:\\temp\\openai")]
+    [InlineData("\\\\server\\share\\openai")]
+    [InlineData("\\\\?\\C:\\temp\\openai")]
+    [InlineData("\\\\.\\C:\\temp\\openai")]
+    [InlineData("node_modules/./openai")]
+    [InlineData("node_modules/../escape")]
+    [InlineData("node_modules\\..\\escape")]
+    [InlineData("node_modules//openai")]
+    [InlineData("node_modules\\\\openai")]
+    [InlineData("%2e%2e/escape")]
+    [InlineData(".%2e/escape")]
+    [InlineData("node_modules/openai/._vendor/parser.mjs")]
+    [InlineData("node_modules/openai/__vendor/parser.mjs")]
+    [InlineData("\uFF0Eenv.example")]
+    [InlineData("\u2024env.example")]
+    [InlineData("node_modules\u2215openai")]
+    [InlineData("node_modules\uFF0Fopenai")]
+    [InlineData("node_modules/.bin/openai:evil")]
+    [InlineData("node_modules/.bin/openai\uFF1Aevil")]
+    [InlineData("node_modules/.CON/openai")]
+    [InlineData("node_modules/con.txt")]
+    [InlineData("node_modules/.com1/openai")]
+    [InlineData("node_modules/LPT9.txt")]
+    [InlineData("node_modules/aux./openai")]
+    [InlineData("node_modules/.bin/open\u0000ai")]
+    [InlineData("node_modules/.bin/open\tai")]
+    [InlineData("node_modules/.bin/open\rai")]
+    [InlineData("node_modules/.bin/open\nai")]
+    public void Manifest_relative_paths_reject_traversal_aliases_and_unsafe_segments(string path)
+    {
+        var exception = Assert.Throws<DeploymentException>(() => ReleaseManifest.EnsureSafeRelativePath(path, "test path"));
+        Assert.Equal(ExitCodes.ManifestInvalid, exception.ExitCode);
+    }
+
     [Fact]
     public void Bundle_validation_fails_closed_on_hash_mismatch()
     {
