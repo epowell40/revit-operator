@@ -1010,6 +1010,52 @@ test("non-streaming brain dispatch preserves the durable schedule continuation",
   }
 });
 
+test("non-streaming brain dispatch preserves the durable schedule value replacement continuation", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "brain-schedule-value-replacement-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const session = "brain-schedule-value-replacement";
+  const initial: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: session,
+    message_id: "schedule-value-message-1",
+    user_text: 'please rename any equipment that includes "-G-" in it\'s designation so that it instead reads "-0-", so, for example, "B3-G-IA-01" needs to be renamed "B3-0-IA-01". please review all the plumbing schedules on P6.01, P6.02, P6.03, thanks.'
+  };
+  try {
+    const first = await decide(initial);
+    const preflightActionId = first.actions[0]?.action_id ?? "";
+    assert.match(preflightActionId, /^schedule-value-replacement-preflight-/);
+    const second = await decide({
+      ...initial,
+      message_id: "schedule-value-message-2",
+      user_text: "",
+      tool_results: [{
+        action_id: preflightActionId,
+        method: "POST",
+        path: "/revit/replace-schedule-values",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          applied: false,
+          planHash: "a".repeat(64),
+          writableCandidateCount: 2
+        }
+      }]
+    });
+    const applyActionId = second.actions[0]?.action_id ?? "";
+    assert.match(applyActionId, /^schedule-value-replacement-apply-/);
+    assert.equal(
+      (second.actions[0]?.body as Record<string, unknown>)?.expectedPlanHash,
+      "a".repeat(64)
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    __closeForTests();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("streaming brain dispatch reaches the same bounded schedule workflow", { concurrency: false }, async () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "brain-schedule-stream-"));
