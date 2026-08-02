@@ -95,6 +95,21 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void TransactionPlanIsMediumRiskButAlwaysPreview()
+        {
+            var body = "{\"actions\":[{\"method\":\"POST\",\"path\":\"/revit/set-parameters\",\"body\":{}}]}";
+
+            Assert.Equal(OperatorActionRisk.Medium, OperatorApprovalPolicy.GetRisk(
+                "POST", "/revit/transaction-plan", body));
+            Assert.Equal(OperatorActionEffect.Preview, OperatorApprovalPolicy.GetEffect(
+                "POST", "/revit/transaction-plan", body));
+            Assert.Equal("preview", OperatorApprovalPolicy.GetEffectWireValue(
+                "POST", "/revit/transaction-plan", body));
+            Assert.Equal(OperatorActionEffect.Preview, OperatorApprovalPolicy.GetEffect(
+                "POST", "/revit/transaction-plan", null));
+        }
+
+        [Fact]
         public void NativeApiPolicyMutationIsHighRiskAndRequiresSafeModeApproval()
         {
             Assert.Equal(

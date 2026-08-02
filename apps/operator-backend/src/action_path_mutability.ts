@@ -71,6 +71,8 @@ export type ConditionalActionPathEffect = "read" | "preview" | "apply";
 export function conditionalActionPathEffect(pathname: string, body?: unknown): ConditionalActionPathEffect | undefined {
   const normalized = (pathname || "").trim().toLowerCase();
   const row = bodyRecord(body);
+  // This endpoint evaluates a plan inside a rollback-only transaction.
+  if (normalized === "/revit/transaction-plan") return "preview";
   if (normalized === "/revit/fire-damper-audit") {
     return typeof row.command === "string" && row.command.trim().toLowerCase() === "fix" ? "apply" : "read";
   }

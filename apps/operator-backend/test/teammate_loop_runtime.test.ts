@@ -62,6 +62,19 @@ test("structured contract distinguishes teammate modes and fails closed on stale
   assert.equal(stale.context_state, "invalid");
 });
 
+test("transaction-plan is preview-only to the teammate loop", () => {
+  __testOnlyResetTeammateLoopState();
+  const preview = guardGenericTeammateDecision(request("Preview the transaction plan before applying it."), response([{
+    action_id: "transaction-plan-preview",
+    method: "POST",
+    path: "/revit/transaction-plan",
+    body: { actions: [{ method: "POST", path: "/revit/set-parameters" }] }
+  }]));
+
+  assert.equal(preview.actions.length, 1);
+  assert.equal(preview.teammate_loop_receipt?.stage, "preview");
+});
+
 test("generic provider loop binds preview to one apply and requires post-apply verification", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS and keep the model consistent.";

@@ -91,6 +91,43 @@ test("conditional reads and previews are also classified from their planned bodi
   assert.deepEqual(normalized.map(result => result.request_effect), ["read", "preview"]);
 });
 
+test("transaction plans remain previews with or without retained server plan state", () => {
+  const action = {
+    action_id: "transaction-plan-preview",
+    method: "POST" as const,
+    path: "/revit/transaction-plan",
+    body: { actions: [{ method: "POST", path: "/revit/set-parameters" }] }
+  };
+  registerServerPlannedActions("session-a", [action]);
+
+  const planned = normalizeIncomingToolResults([{
+    action_id: action.action_id,
+    method: action.method,
+    path: action.path,
+    status: "done"
+  }], "session-a");
+  assert.equal(planned[0]?.request_effect, "preview");
+
+  const unplanned = normalizeIncomingToolResults([{
+    action_id: "transaction-plan-after-restart",
+    method: "POST" as const,
+    path: "/revit/transaction-plan",
+    status: "done" as const
+  }], "session-without-plan");
+  assert.equal(unplanned[0]?.request_effect, "preview");
+
+  assert.throws(
+    () => normalizeIncomingToolResults([{
+      action_id: "transaction-plan-spoof",
+      method: "POST" as const,
+      path: "/revit/transaction-plan",
+      request_effect: "apply" as const,
+      status: "done" as const
+    }], "session-without-plan"),
+    /request_effect does not match server fail-closed policy/
+  );
+});
+
 test("unplanned known read-only routes remain read-only but client effects are never authoritative", () => {
   const normalized = normalizeIncomingToolResults([{
     action_id: "legacy-result",
