@@ -128,6 +128,43 @@ test("transaction plans remain previews with or without retained server plan sta
   );
 });
 
+test("schedule inspection POSTs remain reads with or without retained server plan state", () => {
+  const action = {
+    action_id: "schedule-read",
+    method: "POST" as const,
+    path: "/revit/schedules",
+    body: { action: "detail", scheduleId: 2284420, includeFields: true, includeData: true }
+  };
+  registerServerPlannedActions("session-a", [action]);
+
+  const planned = normalizeIncomingToolResults([{
+    action_id: action.action_id,
+    method: action.method,
+    path: action.path,
+    status: "done"
+  }], "session-a");
+  assert.equal(planned[0]?.request_effect, "read");
+
+  const unplanned = normalizeIncomingToolResults([{
+    action_id: "schedule-read-after-restart",
+    method: "POST" as const,
+    path: "/revit/schedules",
+    status: "done" as const
+  }], "session-without-plan");
+  assert.equal(unplanned[0]?.request_effect, "read");
+
+  assert.throws(
+    () => normalizeIncomingToolResults([{
+      action_id: "schedule-read-spoof",
+      method: "POST" as const,
+      path: "/revit/schedules",
+      request_effect: "apply" as const,
+      status: "done" as const
+    }], "session-without-plan"),
+    /request_effect does not match server fail-closed policy/
+  );
+});
+
 test("unplanned known read-only routes remain read-only but client effects are never authoritative", () => {
   const normalized = normalizeIncomingToolResults([{
     action_id: "legacy-result",

@@ -40,6 +40,7 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/get-parameters",
   "/revit/quantify",
   "/revit/sheets",
+  "/revit/schedules",
   "/revit/measure-gap",
   "/revit/get-lighting-data",
   "/revit/analyze-dimensions",

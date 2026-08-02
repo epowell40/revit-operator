@@ -71,6 +71,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Theory]
+        [InlineData("{\"action\":\"list\"}")]
+        [InlineData("{\"action\":\"detail\",\"scheduleId\":2284420}")]
+        public void ScheduleInspectionPostsRemainLowRiskAndReadOnly(string body)
+        {
+            AssertLow("POST", "/revit/schedules", body);
+            Assert.Equal(OperatorActionEffect.Read, OperatorApprovalPolicy.GetEffect(
+                "POST", "/revit/schedules", body));
+            Assert.Equal("read", OperatorApprovalPolicy.GetEffectWireValue(
+                "POST", "/revit/schedules", body));
+        }
+
+        [Theory]
         [InlineData("/revit/fire-damper-audit", "{\"command\":\"fix\"}")]
         [InlineData("/revit/lighting-audit", "{\"command\":\"validate_ies\",\"fix\":true}")]
         [InlineData("/revit/lighting-audit", "{\"command\":\"photometrics\",\"visualize\":true}")]
