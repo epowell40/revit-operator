@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.bimtools.com/revit-operator/execution-truth/receipt.v1.schema.json",
+  "title": "Revit Operator Execution Truth Receipt v1",
+  "description": "Structural schema for a bounded post-execution observation. Normative semantic validation, canonical hash verification, Unicode checks, ordering, secret screening, and filesystem containment are defined by the v1 conformance corpus and parser contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "version",
+    "canonicalization",
+    "observed_at_utc",
+    "execution",
+    "request",
+    "document",
+    "fence",
+    "outcome",
+    "transactions",
+    "changes",
+    "evidence_refs",
+    "verifier_refs",
+    "result_sha256",
+    "receipt_sha256"
+  ],
+  "properties": {
+    "schema": { "const": "revit-operator.execution-truth-receipt.v1" },
+    "version": { "const": 1 },
+    "canonicalization": { "const": "revit-operator.canonical-json.nfc.v1" },
+    "observed_at_utc": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_id", "attempt", "executor_id"],
+      "properties": {
+        "execution_id": { "$ref": "#/$defs/identifier" },
+        "attempt": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "executor_id": { "$ref": "#/$defs/identifier" },
+        "session_id": { "$ref": "#/$defs/identifier" },
+        "job_id": { "$ref": "#/$defs/identifier" },
+        "item_id": { "$ref": "#/$defs/identifier" },
+        "task_id": { "$ref": "#/$defs/identifier" },
+        "action_id": { "$ref": "#/$defs/identifier" },
+        "correlation_id": { "$ref": "#/$defs/identifier" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request_hash"],
+      "dependentRequired": {
+        "method": ["path"],
+        "path": ["method"]
+      },
+      "properties": {
+        "request_hash": { "$ref": "#/$defs/sha256" },
+        "method": { "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+        "path": { "$ref": "#/$defs/requestPath" },
+        "effect_hashes": { "$ref": "#/$defs/hashSet" },
+        "policy_hashes": { "$ref": "#/$defs/hashSet" },
+        "authorization_hashes": { "$ref": "#/$defs/hashSet" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_fingerprint"],
+      "properties": {
+        "project_fingerprint": { "$ref": "#/$defs/sha256" },
+        "document_session_id": { "$ref": "#/$defs/identifier" },
+        "title": { "$ref": "#/$defs/label" },
+        "path": { "$ref": "#/$defs/workspaceRelativePath" },
+        "state_before_sha256": { "$ref": "#/$defs/sha256" },
+        "state_after_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "fence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["batch_claim", "courier_claim", "direct_request", "none"] },
+        "token_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "dependentSchemas": {
+        "token_sha256": {
+          "type": "object",
+          "properties": {
+            "kind": { "enum": ["batch_claim", "courier_claim", "direct_request"] }
+          },
+          "required": ["kind"]
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "effect", "retryable", "reconciliation_required"],
+      "properties": {
+        "status": { "enum": ["succeeded", "failed", "unknown"] },
+        "effect": { "enum": ["read_only", "not_started", "no_change", "committed", "rolled_back", "partial", "unknown"] },
+        "code": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "phase": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[a-z][a-z0-9_]*$" },
+        "retryable": { "type": "boolean" },
+        "reconciliation_required": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "succeeded" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "effect": { "enum": ["read_only", "no_change", "committed"] },
+              "retryable": { "const": false }
+            }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+          "then": { "type": "object", "properties": { "effect": { "enum": ["not_started", "no_change", "rolled_back", "partial"] } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "status": { "const": "unknown" } }, "required": ["status"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "effect": { "const": "unknown" },
+              "retryable": { "const": false },
+              "reconciliation_required": { "const": true }
+            }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "effect": { "const": "committed" } }, "required": ["effect"] },
+          "then": { "type": "object", "properties": { "retryable": { "const": false } } }
+        },
+        {
+          "if": { "type": "object", "properties": { "effect": { "const": "partial" } }, "required": ["effect"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "retryable": { "const": false },
+              "reconciliation_required": { "const": true }
+            }
+          }
+        }
+      ]
+    },
+    "transactions": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/transaction" }
+    },
+    "changes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["coverage"],
+      "properties": {
+        "coverage": { "enum": ["not_applicable", "complete", "partial", "unavailable"] },
+        "manifest_ref": { "$ref": "#/$defs/changeManifestRef" },
+        "created_count": { "$ref": "#/$defs/changeCount" },
+        "modified_count": { "$ref": "#/$defs/changeCount" },
+        "deleted_count": { "$ref": "#/$defs/changeCount" },
+        "truncated": { "type": "boolean" },
+        "omitted_count": { "type": "integer", "minimum": 1, "maximum": 1000000000 }
+      },
+      "allOf": [
+        {
+          "if": { "type": "object", "properties": { "coverage": { "enum": ["not_applicable", "unavailable"] } }, "required": ["coverage"] },
+          "then": {
+            "type": "object",
+            "maxProperties": 1
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "coverage": { "const": "complete" } }, "required": ["coverage"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "truncated": { "const": false }
+            },
+            "not": {
+              "type": "object",
+              "properties": { "omitted_count": {} },
+              "required": ["omitted_count"]
+            }
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "omitted_count": {} }, "required": ["omitted_count"] },
+          "then": {
+            "type": "object",
+            "properties": {
+              "coverage": { "const": "partial" },
+              "truncated": { "const": true }
+            },
+            "required": ["truncated"]
+          }
+        },
+        {
+          "if": { "type": "object", "properties": { "truncated": { "const": true } }, "required": ["truncated"] },
+          "then": { "type": "object", "properties": { "coverage": { "const": "partial" } } }
+        }
+      ]
+    },
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/evidenceArtifactRef" }
+    },
+    "verifier_refs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/verifierRef" }
+    },
+    "result_sha256": { "$ref": "#/$defs/sha256" },
+    "receipt_sha256": {
+      "allOf": [
+        { "$ref": "#/$defs/sha256" },
+        { "description": "SHA-256 of the canonical full receipt payload with this receipt_sha256 field excluded." }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "effect": { "enum": ["read_only", "not_started"] } },
+            "required": ["effect"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "transactions": { "type": "array", "maxItems": 0 },
+          "changes": { "type": "object", "properties": { "coverage": { "const": "not_applicable" } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "effect": { "enum": ["committed", "partial", "unknown"] } },
+            "required": ["effect"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "changes": { "type": "object", "properties": { "coverage": { "enum": ["complete", "partial", "unavailable"] } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "effect": { "const": "rolled_back" } },
+            "required": ["effect"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/transaction" },
+                { "type": "object", "properties": { "impact_state": { "const": "rolledBack" } } }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "object",
+            "properties": { "effect": { "const": "no_change" } },
+            "required": ["effect"]
+          }
+        },
+        "required": ["outcome"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "transactions": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/transaction" },
+                { "type": "object", "properties": { "impact_state": { "enum": ["rolledBack", "notCommittedOrUnknown"] } } }
+              ]
+            }
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "coverage": { "const": "complete" },
+              "created_count": { "const": 0 },
+              "modified_count": { "const": 0 },
+              "deleted_count": { "const": 0 }
+            },
+            "required": ["coverage", "created_count", "modified_count", "deleted_count"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!~)(?![A-Za-z]:)(?!.*\\\\)(?!.*:)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)[A-Za-z0-9._/-]+$"
+    },
+    "requestPath": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 512,
+      "pattern": "^/(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9](?:[A-Za-z0-9._~/-]*[A-Za-z0-9._~-])?$"
+    },
+    "mediaType": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
+    },
+    "hashSet": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/sha256" }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "workspace_relative_path", "sha256", "media_type"],
+      "properties": {
+        "kind": { "enum": ["result", "transaction_receipt", "change_manifest", "evidence", "verifier_receipt"] },
+        "workspace_relative_path": { "$ref": "#/$defs/workspaceRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "media_type": { "$ref": "#/$defs/mediaType" }
+      }
+    },
+    "evidenceArtifactRef": {
+      "allOf": [
+        { "$ref": "#/$defs/artifactRef" },
+        { "type": "object", "properties": { "kind": { "enum": ["result", "transaction_receipt", "change_manifest", "evidence"] } } }
+      ]
+    },
+    "transactionReceiptRef": {
+      "allOf": [
+        { "$ref": "#/$defs/artifactRef" },
+        { "type": "object", "properties": { "kind": { "const": "transaction_receipt" } } }
+      ]
+    },
+    "changeManifestRef": {
+      "allOf": [
+        { "$ref": "#/$defs/artifactRef" },
+        { "type": "object", "properties": { "kind": { "const": "change_manifest" } } }
+      ]
+    },
+    "verifierReceiptRef": {
+      "allOf": [
+        { "$ref": "#/$defs/artifactRef" },
+        { "type": "object", "properties": { "kind": { "const": "verifier_receipt" } } }
+      ]
+    },
+    "transaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transaction_id", "impact_state"],
+      "properties": {
+        "transaction_id": { "$ref": "#/$defs/identifier" },
+        "undo_label": { "$ref": "#/$defs/label" },
+        "impact_state": { "enum": ["committed", "rolledBack", "notCommittedOrUnknown"] },
+        "receipt_ref": { "$ref": "#/$defs/transactionReceiptRef" }
+      }
+    },
+    "changeCount": {
+      "description": "Count of final durable effects attributable to this execution; excludes transient work that was rolled back.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "verifierRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verifier_id", "verifier_version", "status", "receipt_ref"],
+      "properties": {
+        "verifier_id": { "$ref": "#/$defs/identifier" },
+        "verifier_version": { "$ref": "#/$defs/identifier" },
+        "status": { "enum": ["passed", "failed", "inconclusive"] },
+        "receipt_ref": { "$ref": "#/$defs/verifierReceiptRef" }
+      }
+    }
+  }
+}
