@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
-import { __testOnlyClearScheduleCellUpdateStates, maybeRunDeterministicScheduleCellUpdate } from "../src/deterministic/schedule_cell_update_runtime.js";
+import { __testOnlyClearScheduleCellUpdateStates, maybeRunDeterministicScheduleCellUpdate, type ScheduleCellUpdateContinuationStore } from "../src/deterministic/schedule_cell_update_runtime.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { PersistenceManager } from "../src/persistence/persistence_manager.js";
+
 import { parseDirectScheduleCellUpdate, parseScheduleCellUpdateFromConversation } from "../src/schedule_cell_update_intent.js";
 
 const userText = "change AHU-1 supply air from 10,000 to 20,000 on the schedule";
+const previousWorkspaceRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+const runtimeTestRoot = fs.mkdtempSync(path.join(os.tmpdir(), "schedule-runtime-tests-"));
+process.env.OPERATOR_WORKSPACE_ROOT = runtimeTestRoot;
+test.after(() => {
+  if (previousWorkspaceRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+  else process.env.OPERATOR_WORKSPACE_ROOT = previousWorkspaceRoot;
+  fs.rmSync(runtimeTestRoot, { recursive: true, force: true });
+});
 
 function request(session: string, tool_results?: ChatRequest["tool_results"]): ChatRequest {
   return {
@@ -13,6 +26,21 @@ function request(session: string, tool_results?: ChatRequest["tool_results"]): C
     message_id: `${session}-${tool_results?.length ?? 0}`,
     user_text: tool_results ? "" : userText,
     tool_results
+  };
+}
+function responseActionId(value: { actions?: Array<{ action_id: string }> } | null | undefined, stage: "preflight" | "apply"): string {
+  const actionId = value?.actions?.find(action => action.action_id.includes(`-${stage}-`))?.action_id;
+  assert.ok(actionId, `missing ${stage} action id`);
+  return actionId;
+}
+
+function scheduleToolResult(action_id: string, result_json: unknown): NonNullable<ChatRequest["tool_results"]>[number] {
+  return {
+    action_id,
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    status: "done",
+    result_json
   };
 }
 
@@ -135,7 +163,7 @@ test("authoritative teammate wording drives a bounded schedule action despite a 
   req.context = { ui: { authoritative_user_text: 'Space 101 is labeled “Cafe” in the Space Schedule, but it should read “Cafe - Verified.” Update it and make sure the model and schedule agree.' } };
   const first = await maybeRunDeterministicScheduleCellUpdate(req, { async interpret() { throw new Error("direct grammar should avoid model interpretation"); } });
   assert.deepEqual(first?.actions, [{
-    action_id: "schedule-cell-update-preflight",
+    action_id: responseActionId(first, "preflight"),
     method: "POST",
     path: "/revit/update-schedule-cell",
     body: { scheduleQuery: "Space Schedule", scheduleExact: true, rowKey: "101", targetField: "Name", expectedValue: "Cafe", value: "Cafe - Verified", apply: false, dryRun: true }
@@ -145,29 +173,31 @@ test("authoritative teammate wording drives a bounded schedule action despite a 
 test("schedule update runtime preflights, applies, and requires committed readback", async () => {
   __testOnlyClearScheduleCellUpdateStates();
   const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-success"));
+  const preflightActionId = responseActionId(first, "preflight");
   assert.deepEqual(first?.actions, [{
-    action_id: "schedule-cell-update-preflight",
+    action_id: preflightActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     body: { rowKey: "AHU-1", targetField: "supply air", expectedValue: "10,000", value: "20,000", apply: false, dryRun: true }
   }]);
 
   const second = await maybeRunDeterministicScheduleCellUpdate(request("schedule-success", [{
-    action_id: "schedule-cell-update-preflight",
+    action_id: preflightActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     status: "done",
     result_json: { status: "Dry Run", applied: false, candidate: { schedule: { id: 100, name: "Mechanical Equipment" } }, before: { display: "10,000 CFM" }, proposed: { display: "20,000 CFM" } }
   }]));
+  const applyActionId = responseActionId(second, "apply");
   assert.deepEqual(second?.actions, [{
-    action_id: "schedule-cell-update-apply",
+    action_id: applyActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     body: { rowKey: "AHU-1", targetField: "supply air", expectedValue: "10,000 CFM", value: "20,000", apply: true, dryRun: false }
   }]);
 
   const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-success", [{
-    action_id: "schedule-cell-update-apply",
+    action_id: applyActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     status: "done",
@@ -180,9 +210,10 @@ test("schedule update runtime preflights, applies, and requires committed readba
 
 test("ambiguous native resolution terminates without emitting an apply action", async () => {
   __testOnlyClearScheduleCellUpdateStates();
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-ambiguous"));
+  const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-ambiguous"));
+  const preflightActionId = responseActionId(first, "preflight");
   const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-ambiguous", [{
-    action_id: "schedule-cell-update-preflight",
+    action_id: preflightActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     status: "done",
@@ -196,9 +227,10 @@ test("ambiguous native resolution terminates without emitting an apply action", 
 
 test("native provenance blockers relay a targeted clarification question", async () => {
   __testOnlyClearScheduleCellUpdateStates();
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-provenance"));
+  const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-provenance"));
+  const preflightActionId = responseActionId(first, "preflight");
   const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-provenance", [{
-    action_id: "schedule-cell-update-preflight",
+    action_id: preflightActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     status: "done",
@@ -217,9 +249,10 @@ test("native provenance blockers relay a targeted clarification question", async
 
 test("a stale expected value blocks before apply", async () => {
   __testOnlyClearScheduleCellUpdateStates();
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-stale"));
+  const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-stale"));
+  const preflightActionId = responseActionId(first, "preflight");
   const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-stale", [{
-    action_id: "schedule-cell-update-preflight",
+    action_id: preflightActionId,
     method: "POST",
     path: "/revit/update-schedule-cell",
     status: "done",
@@ -231,13 +264,15 @@ test("a stale expected value blocks before apply", async () => {
 
 test("verified flag and zero verification failures are both required for success", async () => {
   __testOnlyClearScheduleCellUpdateStates();
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-readback"));
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-readback", [{
-    action_id: "schedule-cell-update-preflight", method: "POST", path: "/revit/update-schedule-cell", status: "done",
+  const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-readback"));
+  const preflightActionId = responseActionId(first, "preflight");
+  const second = await maybeRunDeterministicScheduleCellUpdate(request("schedule-readback", [{
+    action_id: preflightActionId, method: "POST", path: "/revit/update-schedule-cell", status: "done",
     result_json: { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } }
   }]));
+  const applyActionId = responseActionId(second, "apply");
   const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-readback", [{
-    action_id: "schedule-cell-update-apply", method: "POST", path: "/revit/update-schedule-cell", status: "done",
+    action_id: applyActionId, method: "POST", path: "/revit/update-schedule-cell", status: "done",
     result_json: { status: "Applied With Verification Failure", applied: true, verified: false, verificationFailedCount: 1 }
   }]));
   assert.equal(done?.schedule_update_receipt?.status, "failed");
@@ -257,9 +292,10 @@ test("orphaned schedule tool results stop instead of falling through", async () 
 
 test("preflight readback is required and becomes the guarded expected value for apply", async () => {
   __testOnlyClearScheduleCellUpdateStates();
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-guard"));
+  const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-guard"));
+  const preflightActionId = responseActionId(first, "preflight");
   const missing = await maybeRunDeterministicScheduleCellUpdate(request("schedule-guard", [{
-    action_id: "schedule-cell-update-preflight", method: "POST", path: "/revit/update-schedule-cell", status: "done",
+    action_id: preflightActionId, method: "POST", path: "/revit/update-schedule-cell", status: "done",
     result_json: { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } } }
   }]));
   assert.equal(missing?.actions.length, 0);
@@ -269,11 +305,201 @@ test("preflight readback is required and becomes the guarded expected value for 
 
 test("unexpected in-flight continuation fails closed instead of reaching generic routing", async () => {
   __testOnlyClearScheduleCellUpdateStates();
-  await maybeRunDeterministicScheduleCellUpdate(request("schedule-wrong-continuation"));
+  const first = await maybeRunDeterministicScheduleCellUpdate(request("schedule-wrong-continuation"));
+  const preflightActionId = responseActionId(first, "preflight");
   const done = await maybeRunDeterministicScheduleCellUpdate(request("schedule-wrong-continuation", [{
     action_id: "some-other-action", method: "POST", path: "/revit/query", status: "done", result_json: { ok: true }
   }]));
   assert.equal(done?.actions.length, 0);
   assert.match(done?.assistant_message ?? "", /unexpected continuation/i);
-  assert.equal(done?.schedule_update_receipt?.status, "failed");
+  assert.equal(done?.schedule_update_receipt, undefined);
+  assert.match(done?.assistant_message ?? "", /non-terminal/i);
+  const valid = await maybeRunDeterministicScheduleCellUpdate(request("schedule-wrong-continuation", [scheduleToolResult(preflightActionId, { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } })]));
+  assert.match(responseActionId(valid, "apply"), /^schedule-cell-update-apply-/);
+});
+
+test("schedule continuation rehydrates after a persistence-manager replacement", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "schedule-continuation-restart-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const session = "schedule-restart";
+  try {
+    const first = await maybeRunDeterministicScheduleCellUpdate(request(session), undefined, new PersistenceManager());
+    const preflightActionId = responseActionId(first, "preflight");
+    assert.match(preflightActionId, /^schedule-cell-update-preflight-/);
+
+    const second = await maybeRunDeterministicScheduleCellUpdate(request(session, [{
+      action_id: preflightActionId,
+      method: "POST",
+      path: "/revit/update-schedule-cell",
+      status: "done",
+      result_json: { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } }
+    }]), undefined, new PersistenceManager());
+    const applyActionId = responseActionId(second, "apply");
+    assert.match(applyActionId, /^schedule-cell-update-apply-/);
+    assert.equal((second?.actions[0]?.body as Record<string, unknown>)?.expectedValue, "10,000 CFM");
+
+    const done = await maybeRunDeterministicScheduleCellUpdate(request(session, [{
+      action_id: applyActionId,
+      method: "POST",
+      path: "/revit/update-schedule-cell",
+      status: "done",
+      result_json: { status: "Applied and Verified", applied: true, verified: true, verificationFailedCount: 0, after: { display: "20,000 CFM" } }
+    }]), undefined, new PersistenceManager());
+    assert.equal(done?.schedule_update_receipt?.status, "complete");
+    assert.equal(fs.existsSync(path.join(root, "runs", "sessions", session, "mutation_continuations", "schedule-cell-update.json")), false);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("expired and malformed persisted continuations fail closed", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "schedule-continuation-invalid-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const store = new PersistenceManager();
+    store.writeMutationContinuation({
+      sessionId: "schedule-malformed",
+      operationId: "schedule-cell-update",
+      kind: "revit.schedule-cell-update",
+      expiresAt: Date.now() + 60_000,
+      state: {}
+    });
+    const malformed = await maybeRunDeterministicScheduleCellUpdate(request("schedule-malformed", [{
+      action_id: "schedule-cell-update-preflight", method: "POST", path: "/revit/update-schedule-cell", status: "done", result_json: {}
+    }]), undefined, new PersistenceManager());
+    assert.equal(malformed?.schedule_update_receipt?.status, "failed");
+    assert.match(malformed?.assistant_message ?? "", /quarantined/i);
+    const malformedRecord = store.readMutationContinuation<{ stage?: string }>({ sessionId: "schedule-malformed", operationId: "schedule-cell-update" });
+    assert.equal(malformedRecord?.state.stage, "quarantined");
+
+
+    const malformedPath = path.join(root, "runs", "sessions", "schedule-unreadable", "mutation_continuations", "schedule-cell-update.json");
+    fs.mkdirSync(path.dirname(malformedPath), { recursive: true });
+    fs.writeFileSync(malformedPath, "{", "utf8");
+    const unreadable = await maybeRunDeterministicScheduleCellUpdate(request("schedule-unreadable", [{
+      action_id: "schedule-cell-update-preflight", method: "POST", path: "/revit/update-schedule-cell", status: "done", result_json: {}
+    }]), undefined, new PersistenceManager());
+    assert.equal(unreadable?.schedule_update_receipt?.status, "failed");
+    assert.match(unreadable?.assistant_message ?? "", /quarantined/i);
+    const unreadableRecord = store.readMutationContinuation<{ stage?: string }>({ sessionId: "schedule-unreadable", operationId: "schedule-cell-update" });
+    assert.equal(unreadableRecord?.state.stage, "quarantined");
+
+    const seed = await maybeRunDeterministicScheduleCellUpdate(request("schedule-expired"), undefined, store);
+    assert.match(responseActionId(seed, "preflight"), /^schedule-cell-update-preflight-/);
+    const seeded = store.readMutationContinuation<Record<string, unknown>>({ sessionId: "schedule-expired", operationId: "schedule-cell-update" });
+    assert.ok(seeded);
+    store.writeMutationContinuation({
+      sessionId: "schedule-expired",
+      operationId: "schedule-cell-update",
+      kind: "revit.schedule-cell-update",
+      expiresAt: Date.now() - 1,
+      state: { ...seeded.state, expires_at: Date.now() - 1 }
+    });
+    const expired = await maybeRunDeterministicScheduleCellUpdate(request("schedule-expired", [{
+      action_id: "schedule-cell-update-preflight", method: "POST", path: "/revit/update-schedule-cell", status: "done", result_json: {}
+    }]), undefined, new PersistenceManager());
+    assert.equal(expired?.schedule_update_receipt?.status, "failed");
+    assert.match(expired?.assistant_message ?? "", /expired or was lost/i);
+    assert.equal(store.readMutationContinuation({ sessionId: "schedule-expired", operationId: "schedule-cell-update" }), null);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+test("expected-revision deletion does not claim an already-retired continuation", { concurrency: false }, () => {
+  const store = new PersistenceManager();
+  const session = "schedule-delete-cas";
+  store.writeMutationContinuation({
+    sessionId: session,
+    operationId: "schedule-cell-update",
+    kind: "revit.schedule-cell-update",
+    expiresAt: Date.now() + 60_000,
+    state: {}
+  });
+  const record = store.readMutationContinuation({ sessionId: session, operationId: "schedule-cell-update" });
+  assert.ok(record);
+  assert.equal(store.deleteMutationContinuation({ sessionId: session, operationId: "schedule-cell-update", expectedRevision: record.revision + 1 }), false);
+  assert.equal(store.deleteMutationContinuation({ sessionId: session, operationId: "schedule-cell-update", expectedRevision: record.revision }), true);
+  assert.equal(store.deleteMutationContinuation({ sessionId: session, operationId: "schedule-cell-update", expectedRevision: record.revision }), false);
+});
+
+test("schedule continuation action ids reject overlap and delayed prior results", async () => {
+  __testOnlyClearScheduleCellUpdateStates();
+  const session = "schedule-correlation";
+  const first = await maybeRunDeterministicScheduleCellUpdate(request(session));
+  const firstPreflight = responseActionId(first, "preflight");
+  const overlap = await maybeRunDeterministicScheduleCellUpdate(request(session));
+  assert.equal(overlap?.schedule_update_receipt?.status, "blocked");
+  const firstPreflightStep = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(firstPreflight, { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } })]));
+  const firstApply = responseActionId(firstPreflightStep, "apply");
+  const firstDone = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(firstApply, { status: "Applied and Verified", applied: true, verified: true, verificationFailedCount: 0, after: { display: "20,000 CFM" } })]));
+  assert.equal(firstDone?.schedule_update_receipt?.status, "complete");
+  const second = await maybeRunDeterministicScheduleCellUpdate(request(session));
+  const secondPreflight = responseActionId(second, "preflight");
+  assert.notEqual(secondPreflight, firstPreflight);
+  const stale = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(firstPreflight, { status: "Dry Run", applied: false, candidate: { schedule: { id: 999 } }, before: { display: "stale" } })]));
+  assert.equal(stale?.schedule_update_receipt, undefined);
+  assert.match(stale?.assistant_message ?? "", /non-terminal/i);
+  assert.match(stale?.assistant_message ?? "", /unexpected continuation/i);
+  const valid = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(secondPreflight, { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } })]));
+  const secondApply = responseActionId(valid, "apply");
+  const secondDone = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(secondApply, { status: "Applied and Verified", applied: true, verified: true, verificationFailedCount: 0, after: { display: "20,000 CFM" } })]));
+  assert.equal(secondDone?.schedule_update_receipt?.status, "complete");
+
+});
+test("concurrent schedule requests have one continuation owner and one CAS terminal", { concurrency: false }, async () => {
+  __testOnlyClearScheduleCellUpdateStates();
+  const session = "schedule-concurrent-owner";
+  const [first, second] = await Promise.all([
+    maybeRunDeterministicScheduleCellUpdate(request(session)),
+    maybeRunDeterministicScheduleCellUpdate(request(session))
+  ]);
+  const actionOwners = [first, second].filter(item => (item?.actions.length ?? 0) > 0);
+  assert.equal(actionOwners.length, 1);
+  assert.equal([first, second].filter(item => item?.schedule_update_receipt?.status === "blocked").length, 1);
+  const preflight = responseActionId(actionOwners[0], "preflight");
+  const applyStep = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(preflight, { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } })]));
+  const applyActionId = responseActionId(applyStep, "apply");
+  const [done, duplicate] = await Promise.all([
+    maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(applyActionId, { status: "Applied and Verified", applied: true, verified: true, verificationFailedCount: 0, after: { display: "20,000 CFM" } })])),
+    maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(applyActionId, { status: "Applied and Verified", applied: true, verified: true, verificationFailedCount: 0, after: { display: "20,000 CFM" } })]))
+  ]);
+  const terminals = [done, duplicate];
+  assert.equal(terminals.filter(item => item?.schedule_update_receipt?.status === "complete").length, 1);
+  assert.equal(terminals.filter(item => item?.schedule_update_receipt?.status === "failed").length, 1);
+});
+test("failed continuation cleanup quarantines instead of allowing replay", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "schedule-continuation-quarantine-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const inner = new PersistenceManager();
+  const store: ScheduleCellUpdateContinuationStore = {
+    writeMutationContinuation: inner.writeMutationContinuation.bind(inner),
+    createMutationContinuation: inner.createMutationContinuation.bind(inner),
+    replaceMutationContinuation: inner.replaceMutationContinuation.bind(inner),
+    readMutationContinuation: inner.readMutationContinuation.bind(inner),
+    deleteMutationContinuation: () => { throw new Error("delete denied"); },
+    quarantineMalformedMutationContinuation: inner.quarantineMalformedMutationContinuation.bind(inner)
+  };
+  const session = "schedule-quarantine";
+  try {
+    const first = await maybeRunDeterministicScheduleCellUpdate(request(session), undefined, store);
+    const preflight = responseActionId(first, "preflight");
+    const failed = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(preflight, { status: "Ambiguous", applied: false, blockedReason: "ambiguous" })]), undefined, store);
+    assert.equal(failed?.schedule_update_receipt?.status, "failed");
+    const replay = await maybeRunDeterministicScheduleCellUpdate(request(session, [scheduleToolResult(preflight, { status: "Ambiguous", applied: false, blockedReason: "ambiguous" })]), undefined, store);
+    assert.equal(replay?.schedule_update_receipt?.status, "failed");
+    assert.match(replay?.assistant_message ?? "", /quarantined/i);
+    const record = inner.readMutationContinuation<{ stage?: string }>({ sessionId: session, operationId: "schedule-cell-update" });
+    assert.equal(record?.state.stage, "quarantined");
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
