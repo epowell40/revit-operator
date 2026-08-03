@@ -10,12 +10,29 @@ import { sendNativeBridgeRequest } from "./native_revit_transport.js";
 export type DirectBridgeResult = {
   ok: boolean;
   method: "GET" | "POST";
+  action_id?: string;
   path: string;
   result_json?: unknown;
   error?: string;
+  retryable?: boolean;
+  outcome_unknown?: boolean;
+  failure_code?: string;
   duration_ms: number;
   attachments?: Array<{ kind: "image"; mime: string; filename?: string; local_path?: string }>;
 };
+
+export class DirectBridgeRequestError extends Error {
+  constructor(
+    message: string,
+    readonly statusCode: number,
+    readonly retryable?: boolean,
+    readonly outcome_unknown = false,
+    readonly failure_code?: string
+  ) {
+    super(message);
+    this.name = "DirectBridgeRequestError";
+  }
+}
 
 export type BridgeRequestOptions = {
   baseUrl?: string;
@@ -38,6 +55,21 @@ function inferBridgeTimeoutMs(): number {
   return Math.max(2_000, Number.parseInt(process.env.OPERATOR_REDLINE_FAST_PATH_TIMEOUT_MS ?? "30000", 10) || 30_000);
 }
 
+function parseFailureMetadata(bodyText: string): { retryable?: boolean; outcome_unknown?: boolean; code?: string } {
+  try {
+    const value = JSON.parse(bodyText) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const record = value as Record<string, unknown>;
+    return {
+      ...(typeof record.retryable === "boolean" ? { retryable: record.retryable } : {}),
+      ...(record.outcome_unknown === true ? { outcome_unknown: true } : {}),
+      ...(typeof record.code === "string" && record.code.trim() ? { code: record.code.trim() } : {})
+    };
+  } catch {
+    return {};
+  }
+}
+
 async function requestBridgeJson(
   method: "GET" | "POST",
   pathname: string,
@@ -55,10 +87,31 @@ async function requestBridgeJson(
     env: options.env,
     receiptPath: options.receiptPath
   });
+  const metadata = parseFailureMetadata(result.bodyText);
   if (result.statusCode < 200 || result.statusCode >= 300) {
-    throw new Error(result.bodyText || `${method} ${pathname} failed with HTTP ${result.statusCode}`);
+    // Revit uses HTTP 408 for a submitted action whose terminal receipt was
+    // not observed. Never let a server-supplied retryable flag turn that into
+    // an automatic replay of a possible mutation.
+    const outcomeUnknown = metadata.outcome_unknown === true || result.statusCode === 408;
+    throw new DirectBridgeRequestError(
+      result.bodyText || `${method} ${pathname} failed with HTTP ${result.statusCode}`,
+      result.statusCode,
+      outcomeUnknown ? false : metadata.retryable,
+      outcomeUnknown,
+      metadata.code
+    );
   }
-  return result.bodyText ? (JSON.parse(result.bodyText) as unknown) : null;
+  const data = result.bodyText ? (JSON.parse(result.bodyText) as unknown) : null;
+  if (metadata.outcome_unknown === true) {
+    throw new DirectBridgeRequestError(
+      result.bodyText || `${method} ${pathname} returned an unknown outcome`,
+      result.statusCode,
+      false,
+      true,
+      metadata.code
+    );
+  }
+  return data;
 }
 
 export async function canUseDirectBridgeFastPath(options: BridgeRequestOptions = {}): Promise<boolean> {
@@ -136,6 +189,7 @@ export async function callBridgeActionDirect(
   body?: unknown
 ): Promise<DirectBridgeResult> {
   const startedAt = Date.now();
+  const actionId = randomUUID();
   try {
     persistence.appendToolCall(sessionId, {
       ts: new Date(startedAt).toISOString(),
@@ -167,34 +221,55 @@ export async function callBridgeActionDirect(
         ts: new Date().toISOString(),
         kind: "mcp.tool_result",
         session_id: sessionId,
+        action_id: actionId,
+        method,
+        path: pathname,
         tool: pathname,
         server: "revit-bridge",
         status: "success",
         result: data,
-        error: null
+        error: null,
+        ...(attachments.length > 0 ? { attachments } : {})
       });
     } catch {
       // ignore
     }
-    return { ok: true, method, path: pathname, result_json: data, duration_ms: durationMs, ...(attachments.length > 0 ? { attachments } : {}) };
+    return { ok: true, action_id: actionId, method, path: pathname, result_json: data, duration_ms: durationMs, ...(attachments.length > 0 ? { attachments } : {}) };
   } catch (err) {
     const durationMs = Date.now() - startedAt;
     const message = err instanceof Error ? err.message : "Unknown bridge error";
+    const bridgeError = err instanceof DirectBridgeRequestError ? err : null;
     try {
       persistence.appendToolOutput(sessionId, {
         ts: new Date().toISOString(),
         kind: "mcp.tool_result",
         session_id: sessionId,
+        action_id: actionId,
+        method,
+        path: pathname,
         tool: pathname,
         server: "revit-bridge",
         status: "failed",
         result: null,
-        error: message
+        error: message,
+        ...(bridgeError?.retryable !== undefined ? { retryable: bridgeError.retryable } : {}),
+        ...(bridgeError?.outcome_unknown ? { outcome_unknown: true, retryable: false } : {}),
+        ...(bridgeError?.failure_code ? { failure_code: bridgeError.failure_code } : {}),
       });
     } catch {
       // ignore
     }
-    return { ok: false, method, path: pathname, error: message, duration_ms: durationMs };
+    return {
+      ok: false,
+      action_id: actionId,
+      method,
+      path: pathname,
+      error: message,
+      ...(bridgeError?.retryable !== undefined ? { retryable: bridgeError.retryable } : {}),
+      ...(bridgeError?.outcome_unknown ? { outcome_unknown: true, retryable: false } : {}),
+      ...(bridgeError?.failure_code ? { failure_code: bridgeError.failure_code } : {}),
+      duration_ms: durationMs
+    };
   }
 }
 
@@ -216,10 +291,13 @@ export function readAbsoluteImageDataUrl(localPath: string, maxBytes?: number | 
 
 export function toToolResultFromDirectBridgeResult(result: DirectBridgeResult): ToolResult {
   return compactIncomingToolResult({
-    action_id: randomUUID(),
+    action_id: result.action_id ?? randomUUID(),
     method: result.method,
     path: result.path,
-    status: result.ok ? "done" : "failed",
+    status: result.ok && result.outcome_unknown !== true ? "done" : "failed",
+    ...(result.outcome_unknown === true ? { outcome_unknown: true, retryable: false } : {}),
+    ...(result.outcome_unknown !== true && result.retryable !== undefined ? { retryable: result.retryable } : {}),
+    ...(result.failure_code ? { failure_code: result.failure_code } : {}),
     ...(result.ok ? { result_json: result.result_json ?? null } : {}),
     ...(result.ok ? {} : { error: result.error ?? "Bridge action failed." }),
     ...(Number.isFinite(result.duration_ms) ? { duration_ms: result.duration_ms } : {}),

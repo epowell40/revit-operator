@@ -79,6 +79,21 @@ test("client request_effect and transport substitutions cannot downgrade a plann
   );
 });
 
+test("outcome-unknown tool results are retained and never remain retryable", () => {
+  const normalized = normalizeIncomingToolResults([{
+    action_id: "unknown-write",
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    status: "done",
+    retryable: true,
+    outcome_unknown: true
+  }], "unknown-write-session");
+
+  assert.equal(normalized[0]?.status, "failed");
+  assert.equal(normalized[0]?.outcome_unknown, true);
+  assert.equal(normalized[0]?.retryable, false);
+});
+
 test("conditional reads and previews are also classified from their planned bodies", () => {
   registerServerPlannedActions("session-a", [
     { action_id: "audit", method: "POST", path: "/revit/fire-damper-audit", body: { command: "audit" } },

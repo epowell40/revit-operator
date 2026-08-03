@@ -123,12 +123,19 @@ export type ToolOutputRecord =
       ts: string;
       kind: "mcp.tool_result";
       session_id: string;
+      action_id?: string | null;
+      method?: string | null;
+      path?: string | null;
       tool: string;
       server?: string | null;
       status?: string | null;
       duration_ms?: number | null;
       result?: unknown;
       error?: string | null;
+      attachments?: ToolResult["attachments"];
+      retryable?: boolean;
+      outcome_unknown?: boolean;
+      failure_code?: string;
       turn_id?: string | null;
       thread_id?: string | null;
     }
@@ -433,6 +440,7 @@ export class PersistenceManager {
       } satisfies MutationContinuationRecord<T>);
     });
   }
+
   createMutationContinuation<T>(args: {
     sessionId: string;
     operationId: string;
@@ -468,7 +476,6 @@ export class PersistenceManager {
       throw error;
     }
   }
-
 
   replaceMutationContinuation<T>(args: {
     sessionId: string;
@@ -576,12 +583,12 @@ export class PersistenceManager {
     }
     if (
       parsed.schema_version !== 1 ||
+      typeof parsed.revision !== "number" ||
+      !Number.isInteger(parsed.revision) || parsed.revision < 1 ||
       parsed.session_id !== sessionId ||
       parsed.operation_id !== operationId ||
       typeof parsed.kind !== "string" ||
       !parsed.kind.trim() ||
-      typeof parsed.revision !== "number" ||
-      !Number.isInteger(parsed.revision) || parsed.revision < 1 ||
       typeof parsed.expires_at !== "number" ||
       !Number.isFinite(parsed.expires_at) ||
       !Object.prototype.hasOwnProperty.call(parsed, "state")

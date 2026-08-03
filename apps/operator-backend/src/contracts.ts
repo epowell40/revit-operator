@@ -30,6 +30,9 @@ export type ToolResult = {
   path: string;
   request_effect?: "read" | "preview" | "apply";
   status: "done" | "failed";
+  /** A failed call may have reached Revit without a settled execution receipt. */
+  retryable?: boolean;
+  outcome_unknown?: boolean;
   result_json?: unknown;
   error?: string;
   result_summary?: string;

@@ -4292,13 +4292,20 @@ function asToolResult(raw: unknown): ToolResult | null {
   const path = typeof r.path === "string" ? r.path.trim() : "";
   if (!path) return null;
   const statusRaw = typeof r.status === "string" ? r.status.trim().toLowerCase() : "";
-  const status: "done" | "failed" = statusRaw === "failed" ? "failed" : "done";
+  const status: "done" | "failed" = statusRaw === "failed" || r.outcome_unknown === true ? "failed" : "done";
   const out: ToolResult = {
     action_id: actionId,
     method,
     path,
     status
   };
+  if (r.outcome_unknown === true) {
+    out.outcome_unknown = true;
+    out.retryable = false;
+  } else if (typeof r.retryable === "boolean") {
+    out.retryable = r.retryable;
+  }
+  if (typeof r.failure_code === "string" && r.failure_code.trim()) out.failure_code = r.failure_code.trim();
   if (Object.prototype.hasOwnProperty.call(r, "result_json")) out.result_json = r.result_json;
   if (typeof r.error === "string" && r.error.trim()) out.error = r.error.trim();
   if (Array.isArray(r.attachments)) out.attachments = r.attachments as ToolResult["attachments"];
@@ -4306,9 +4313,30 @@ function asToolResult(raw: unknown): ToolResult | null {
 }
 
 function toolResultKey(r: ToolResult): string {
-  return `${r.action_id}|${r.method}|${(r.path ?? "").trim().toLowerCase()}|${r.status}`;
+  return `${r.action_id}|${r.method}|${(r.path ?? "").trim().toLowerCase()}`;
 }
 
+function asPersistedToolResult(row: Record<string, unknown>): ToolResult | null {
+  const direct = asToolResult(row.tool_result);
+  if (direct) return direct;
+  if (row.kind !== "mcp.tool_result" || row.server !== "revit-bridge") return null;
+  const actionId = typeof row.action_id === "string" ? row.action_id.trim() : "";
+  const method = typeof row.method === "string" ? row.method.trim().toUpperCase() : "";
+  const pathValue = typeof row.path === "string" ? row.path.trim() : "";
+  if (!actionId || (method !== "GET" && method !== "POST") || !pathValue) return null;
+  return asToolResult({
+    action_id: actionId,
+    method,
+    path: pathValue,
+    status: row.status === "failed" || row.outcome_unknown === true ? "failed" : "done",
+    ...(row.status !== "failed" && Object.prototype.hasOwnProperty.call(row, "result") ? { result_json: row.result } : {}),
+    ...(typeof row.error === "string" ? { error: row.error } : {}),
+    ...(typeof row.retryable === "boolean" ? { retryable: row.retryable } : {}),
+    ...(row.outcome_unknown === true ? { outcome_unknown: true } : {}),
+    ...(Array.isArray(row.attachments) ? { attachments: row.attachments } : {}),
+    ...(typeof row.failure_code === "string" ? { failure_code: row.failure_code } : {})
+  });
+}
 function loadPersistedToolResultsFromRunBundle(
   sessionId: string,
   maxRecent: number
@@ -4328,7 +4356,7 @@ function loadPersistedToolResultsFromRunBundle(
       .map(line => {
         try {
           const row = JSON.parse(line) as Record<string, unknown>;
-          return asToolResult(row.tool_result);
+          return asPersistedToolResult(row);
         } catch {
           return null;
         }
@@ -4359,18 +4387,30 @@ function getAugmentedToolResults(req: ChatRequest, maxRecent = 40): ToolResult[]
   if (recent.length === 0 && persisted.length === 0) return current;
 
   const merged = recent.concat(persisted, current);
-  const seen = new Set<string>();
-  const deduped: ToolResult[] = [];
+  const selectedByKey = new Map<string, ToolResult>();
+  const order: string[] = [];
   for (let i = merged.length - 1; i >= 0; i--) {
     const r = merged[i]!;
     const key = toolResultKey(r);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(r);
-    if (deduped.length >= 240) break;
+    const selected = selectedByKey.get(key);
+    if (!selected) {
+      selectedByKey.set(key, r);
+      order.push(key);
+      continue;
+    }
+    // A persisted unknown outcome is safety-critical: a stale current result
+    // must not replace it with a successful-looking result for the same action.
+    if (r.outcome_unknown === true && selected.outcome_unknown !== true) {
+      selectedByKey.set(key, r);
+    }
   }
+  const deduped = order.slice(0, 240).map(key => selectedByKey.get(key)!).filter(Boolean);
   deduped.reverse();
   return deduped.map((r) => compactIncomingToolResult(r));
+}
+
+export function __testOnlyLoadPersistedToolResultsFromRunBundle(sessionId: string, maxRecent = 40): ToolResult[] {
+  return loadPersistedToolResultsFromRunBundle(sessionId, maxRecent);
 }
 
 export function __testOnlyGetAugmentedToolResults(req: ChatRequest, maxRecent = 40): ToolResult[] {
