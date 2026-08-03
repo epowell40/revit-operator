@@ -126,8 +126,8 @@ test("compiled trusted-policy loader locates and validates the bundled pinned po
     assert.equal(exposed[0]?.method, "GET");
     assert.equal(exposed[0]?.path, "/revit/context");
     assert.deepEqual(exposed[0]?.typed_mcp_aliases, ["revit_get_context"]);
-    assert.equal(exposed[0]?.channels.search.exposed, true);
-    assert.equal(exposed[0]?.channels.generic_call.exposed, true);
+    assert.equal(exposed[0]?.channels.search.exposed, false);
+    assert.equal(exposed[0]?.channels.generic_call.exposed, false);
     assert.equal(exposed[0]?.channels.typed_mcp.exposed, true);
     assert.equal(exposed[0]?.channels.deterministic_workflow.exposed, false);
     assert.deepEqual(
