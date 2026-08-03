@@ -18,7 +18,7 @@
     { "path": "benchmark/environment.ts", "max_lines": 1720, "reason": "Benchmark environment discovery and reporting await platform-adapter extraction." },
     { "path": "vision/gemini_agentic_vision.ts", "max_lines": 1687, "reason": "Vision provider adapter awaits transport and response-normalization extraction. Reviewed existing-conditions structured-image fields add bounded source-grounding support." },
     { "path": "existing_conditions/staged_repair_ledger.ts", "max_lines": 1526, "reason": "Reviewed monotonic repair-ledger state machine; validation and transition policies remain together to preserve the fail-closed contract." },
-    { "path": "existing_conditions/one_action_execution_ledger.ts", "max_lines": 1490, "reason": "Reviewed one-action execution ledger; EPIC-0434 preserves truthful outcome metadata while receipt validation and state transitions remain together to preserve repair semantics." },
+    { "path": "existing_conditions/one_action_execution_ledger.ts", "max_lines": 1538, "reason": "Reviewed one-action execution ledger; replay-resistant in-flight action identity filtering, receipt validation, and state transitions remain together to preserve scoped sequencing and truthful repair semantics." },
     { "path": "existing_conditions/plan_trace_extraction.ts", "max_lines": 1217, "reason": "Reviewed bounded plan-trace extractor; thresholding and topology diagnostics remain coupled pending a focused split." },
     { "path": "admin_codex_jobs.ts", "max_lines": 1344, "reason": "Private-only admin job orchestration; retained here so the shared ratchet also validates integration layout." }
   ]
