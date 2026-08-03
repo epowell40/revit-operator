@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -287,6 +289,8 @@ namespace RevitBridge.Server
                     _isRunning = true;
                     WriteActiveUrlFile(candidateUrl);
                     WriteActiveTransportReceipt(candidateUrl, _nativeTransportEpoch);
+                    ClearActiveListenerIdentityReceipt();
+                    WriteActiveListenerIdentityReceipt(candidateUrl, _nativeTransportEpoch);
                     WriteStartupLog($"HTTP listener started at {candidateUrl}");
                     Task.Run(() => HandleIncomingConnections());
                     return;
@@ -300,6 +304,7 @@ namespace RevitBridge.Server
 
             WriteActiveUrlFile("");
             WriteActiveTransportReceipt("", "");
+            ClearActiveListenerIdentityReceipt();
             WriteStartupLog("HTTP listener failed for every candidate URL; wrote empty bridge_url.txt.");
         }
 
@@ -310,6 +315,7 @@ namespace RevitBridge.Server
             try { _listener?.Close(); } catch { }
             _nativeTransportEpoch = "";
             WriteActiveTransportReceipt("", "");
+            ClearActiveListenerIdentityReceipt();
         }
 
         private static IEnumerable<string> ResolveCandidateUrls()
@@ -393,6 +399,52 @@ namespace RevitBridge.Server
             catch { }
         }
 
+        private static void WriteActiveListenerIdentityReceipt(string url, string serverEpoch)
+        {
+            try
+            {
+                using (var process = Process.GetCurrentProcess())
+                {
+                    var receipt = JsonSerializer.Serialize(new
+                    {
+                        version = "revit-operator.bridge-listener-identity.v1",
+                        url = (url ?? "").TrimEnd('/'),
+                        server_epoch = serverEpoch ?? "",
+                        pid = process.Id,
+                        created_utc = process.StartTime.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture)
+                    });
+                    var root = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "RevitOperator");
+                    Directory.CreateDirectory(root);
+                    var receiptPath = Path.Combine(root, "bridge_listener_identity.v1.json");
+                    var pendingPath = receiptPath + ".pending";
+                    File.WriteAllText(pendingPath, receipt + Environment.NewLine);
+                    if (File.Exists(receiptPath))
+                    {
+                        File.Replace(pendingPath, receiptPath, null);
+                    }
+                    else
+                    {
+                        File.Move(pendingPath, receiptPath);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static void ClearActiveListenerIdentityReceipt()
+        {
+            try
+            {
+                var root = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "RevitOperator");
+                File.Delete(Path.Combine(root, "bridge_listener_identity.v1.json"));
+                File.Delete(Path.Combine(root, "bridge_listener_identity.v1.json.pending"));
+            }
+            catch { }
+        }
         private static void WriteStartupLog(string message)
         {
             try
