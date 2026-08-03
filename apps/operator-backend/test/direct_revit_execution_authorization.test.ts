@@ -119,7 +119,17 @@ test("compiled trusted-policy loader locates and validates the bundled pinned po
     assert.equal(trusted.policy.policy_hash, BUNDLED_TOOL_EXPOSURE_POLICY_HASH);
     assert.equal(trusted.policy.records.length, 25);
     assert.equal(trusted.policy.records.flatMap(record => Object.values(record.channels)).length, 100);
-    assert.equal(trusted.policy.records.flatMap(record => Object.values(record.channels)).some(decision => decision.exposed), false);
+    const exposed = trusted.policy.records.filter(record =>
+      Object.values(record.channels).some(decision => decision.exposed)
+    );
+    assert.equal(exposed.length, 1);
+    assert.equal(exposed[0]?.method, "GET");
+    assert.equal(exposed[0]?.path, "/revit/context");
+    assert.deepEqual(exposed[0]?.typed_mcp_aliases, ["revit_get_context"]);
+    assert.equal(exposed[0]?.channels.search.exposed, true);
+    assert.equal(exposed[0]?.channels.generic_call.exposed, true);
+    assert.equal(exposed[0]?.channels.typed_mcp.exposed, true);
+    assert.equal(exposed[0]?.channels.deterministic_workflow.exposed, false);
     assert.deepEqual(
       trusted.policy.records.find(record => record.path === "/revit/certified/sheets/count")?.execution_surface,
       {
