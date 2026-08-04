@@ -14,7 +14,9 @@ import {
 } from "./trusted_tool_exposure_policy.js";
 
 export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION = "revit-operator.revit-direct-final-authorization.v1";
-export const DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA = "revit-operator.revit-direct-admission-request.v1";
+export const DIRECT_REVIT_ADMISSION_REQUEST_V1_SCHEMA = "revit-operator.revit-direct-admission-request.v1";
+export const DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA = "revit-operator.revit-direct-admission-request.v2";
+export const DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA = DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA;
 export const DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS = 5_000;
 export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
 // body_json is itself JSON-escaped in the authorization request wrapper. The
@@ -22,7 +24,8 @@ export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
 // \uXXXX escape, so the outer request needs a separate, still-bounded ceiling.
 export const DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES = (DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES * 6) + 64 * 1024;
 
-const DIRECT_REQUEST_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json", "channel", "alias"] as const;
+const DIRECT_REQUEST_V1_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json", "channel", "alias"] as const;
+const DIRECT_REQUEST_V2_KEYS = [...DIRECT_REQUEST_V1_KEYS, "runtime_mode"] as const;
 const REQUEST_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/;
 const TOOL_ALIAS = /^[a-z][a-z0-9_]*$/;
 type DirectRevitExecutionChannel = "search" | "generic_call" | "typed_mcp";
@@ -68,14 +71,14 @@ function malformed(message: string): never {
   throw new DirectRevitExecutionAuthorizationError("CERTIFICATION_DIRECT_REQUEST_MALFORMED", message, 400, false);
 }
 
-function asExactRequest(value: unknown): Record<string, unknown> {
+function asExactRequest(value: unknown, expectedKeys: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) malformed("Direct Revit authorization request must be an object.");
   const request = value as Record<string, unknown>;
-  const expected = new Set<string>(DIRECT_REQUEST_KEYS);
+  const expected = new Set<string>(expectedKeys);
   for (const key of Object.keys(request)) {
     if (!expected.has(key)) malformed(`Direct Revit authorization request contains unknown field ${key}.`);
   }
-  for (const key of DIRECT_REQUEST_KEYS) {
+  for (const key of expectedKeys) {
     if (!Object.prototype.hasOwnProperty.call(request, key)) malformed(`Direct Revit authorization request is missing ${key}.`);
   }
   return request;
@@ -106,10 +109,19 @@ export function authorizeDirectRevitExecution(
   env: NodeJS.ProcessEnv = process.env,
   now: Date = new Date()
 ): DirectRevitExecutionAuthorization {
-  const request = asExactRequest(value);
-  if (request.schema !== DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    malformed("Direct Revit authorization request must be an object.");
+  }
+  const requestSchema = (value as Record<string, unknown>).schema;
+  let expectedKeys: readonly string[];
+  if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V1_SCHEMA) {
+    expectedKeys = DIRECT_REQUEST_V1_KEYS;
+  } else if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA) {
+    expectedKeys = DIRECT_REQUEST_V2_KEYS;
+  } else {
     malformed("Direct Revit authorization request schema is unsupported.");
   }
+  const request = asExactRequest(value, expectedKeys);
   if (typeof request.request_id !== "string" || !REQUEST_ID.test(request.request_id)) {
     malformed("Direct Revit authorization request_id must be 32 or 64 lowercase hexadecimal characters.");
   }
@@ -142,6 +154,17 @@ export function authorizeDirectRevitExecution(
   }
   const channel = request.channel as DirectRevitExecutionChannel;
   const alias = request.alias as string;
+  let runtimeMode: string;
+  if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V1_SCHEMA) {
+    runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
+  } else {
+    if (typeof request.runtime_mode !== "string") malformed("Direct Revit authorization runtime_mode must be canonical.");
+    runtimeMode = normalizeRuntimeMode(request.runtime_mode);
+    if (request.runtime_mode !== runtimeMode || !/^[a-z][a-z0-9_]*$/.test(runtimeMode) || runtimeMode.length > 64) {
+      malformed("Direct Revit authorization runtime_mode must be canonical.");
+    }
+  }
+
   const bodyPresent = request.body_present as boolean;
   const bodyJson = request.body_json as string;
   if (Buffer.byteLength(bodyJson, "utf8") > DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES) {
@@ -183,7 +206,6 @@ export function authorizeDirectRevitExecution(
     );
   }
 
-  const runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   try {
     const trusted = loadTrustedToolExposurePolicy(env);

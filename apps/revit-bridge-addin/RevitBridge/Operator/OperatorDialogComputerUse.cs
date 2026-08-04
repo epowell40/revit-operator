@@ -9,6 +9,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Threading;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Events;
 using RevitBridge.Common;
@@ -32,11 +33,14 @@ namespace RevitBridge.Operator
         private long _nextEventId;
         private long _nextGuardId;
         private DialogEventRecord? _lastEvent;
+        private bool _dialogEventSubscribed;
+        private readonly Dispatcher _dispatcher;
+        private DispatcherTimer? _guardExpiryTimer;
 
         public OperatorDialogComputerUse(UIControlledApplication application)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _application.DialogBoxShowing += OnDialogBoxShowing;
+            _dispatcher = Dispatcher.CurrentDispatcher;
         }
 
         public object Observe(UIApplication? app, ObserveParams? request)
@@ -126,6 +130,8 @@ namespace RevitBridge.Operator
             {
                 CleanupExpiredGuards_NoLock();
                 _guards.Add(guard);
+                UpdateDialogEventSubscription_NoLock();
+                ScheduleGuardExpiry_NoLock();
             }
 
             return new
@@ -150,13 +156,12 @@ namespace RevitBridge.Operator
 
         public void Dispose()
         {
-            try
+            lock (_gate)
             {
-                _application.DialogBoxShowing -= OnDialogBoxShowing;
-            }
-            catch
-            {
-                // ignore shutdown races
+                _guardExpiryTimer?.Stop();
+                _guardExpiryTimer = null;
+                _guards.Clear();
+                UpdateDialogEventSubscription_NoLock();
             }
         }
 
@@ -178,6 +183,8 @@ namespace RevitBridge.Operator
             lock (_gate)
             {
                 CleanupExpiredGuards_NoLock();
+                UpdateDialogEventSubscription_NoLock();
+                ScheduleGuardExpiry_NoLock();
                 _lastEvent = record;
                 matchedGuard = _guards.FirstOrDefault(g => g.CanTrigger(record));
                 if (matchedGuard != null)
@@ -224,6 +231,9 @@ namespace RevitBridge.Operator
                                 }
                             }
                         }
+
+                        CleanupExpiredGuards_NoLock();
+                        _dispatcher.BeginInvoke(new Action(RefreshGuardStateOnDispatcher), DispatcherPriority.Background);
 
                     if (_lastEvent != null && _lastEvent.EventId == record.EventId)
                     {
@@ -771,6 +781,8 @@ namespace RevitBridge.Operator
             lock (_gate)
             {
                 _guards.RemoveAll(guard => guard.GuardId == parsed);
+                UpdateDialogEventSubscription_NoLock();
+                ScheduleGuardExpiry_NoLock();
             }
         }
 
@@ -934,6 +946,39 @@ namespace RevitBridge.Operator
             _guards.RemoveAll(x => x.ExpiresAtUtc <= now || x.TriggerCount >= x.MaxTriggers);
         }
 
+        private void UpdateDialogEventSubscription_NoLock()
+        {
+            if (!_dispatcher.CheckAccess())
+                throw new InvalidOperationException("Dialog event subscription must be updated on the Revit dispatcher.");
+            var shouldSubscribe = _guards.Count > 0;
+            if (shouldSubscribe == _dialogEventSubscribed) return;
+
+            try
+            {
+                if (shouldSubscribe)
+                {
+                    _application.DialogBoxShowing += OnDialogBoxShowing;
+                }
+                else
+                {
+                    _application.DialogBoxShowing -= OnDialogBoxShowing;
+                }
+                _dialogEventSubscribed = shouldSubscribe;
+            }
+            catch
+            {
+                // A guard must fail closed if Revit rejects the event hook.
+                if (shouldSubscribe)
+                {
+                    _guards.Clear();
+                    throw;
+                }
+
+                // Revit may already be tearing down. Keep shutdown best-effort.
+                _dialogEventSubscribed = false;
+            }
+        }
+
         private static bool ButtonTokenMatchesLabel(string? tokenRaw, string? labelRaw)
         {
             var token = NormalizeToken(tokenRaw);
@@ -959,6 +1004,43 @@ namespace RevitBridge.Operator
                     return label == "continue";
                 default:
                     return label.IndexOf(token, StringComparison.Ordinal) >= 0;
+            }
+        }
+
+        private void ScheduleGuardExpiry_NoLock()
+        {
+            if (!_dispatcher.CheckAccess())
+                throw new InvalidOperationException("Dialog guard expiry must be scheduled on the Revit dispatcher.");
+            _guardExpiryTimer?.Stop();
+            _guardExpiryTimer = null;
+            if (_guards.Count == 0) return;
+            var delay = _guards.Min(x => x.ExpiresAtUtc) - DateTime.UtcNow;
+            if (delay < TimeSpan.FromMilliseconds(1)) delay = TimeSpan.FromMilliseconds(1);
+            var timer = new DispatcherTimer(DispatcherPriority.Background, _dispatcher) { Interval = delay };
+            timer.Tick += OnGuardExpiryTimerTick;
+            _guardExpiryTimer = timer;
+            timer.Start();
+        }
+
+        private void OnGuardExpiryTimerTick(object? sender, EventArgs args)
+        {
+            lock (_gate)
+            {
+                _guardExpiryTimer?.Stop();
+                _guardExpiryTimer = null;
+                CleanupExpiredGuards_NoLock();
+                UpdateDialogEventSubscription_NoLock();
+                ScheduleGuardExpiry_NoLock();
+            }
+        }
+
+        private void RefreshGuardStateOnDispatcher()
+        {
+            lock (_gate)
+            {
+                CleanupExpiredGuards_NoLock();
+                UpdateDialogEventSubscription_NoLock();
+                ScheduleGuardExpiry_NoLock();
             }
         }
 

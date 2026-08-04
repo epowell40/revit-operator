@@ -28,7 +28,7 @@ function rawSha256(value: string): string {
 
 function directRequest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schema: "revit-operator.revit-direct-admission-request.v1",
+    schema: "revit-operator.revit-direct-admission-request.v2",
     request_id: REQUEST_ID,
     method: "POST",
     path: "/revit/ping",
@@ -36,8 +36,14 @@ function directRequest(overrides: Record<string, unknown> = {}): Record<string, 
     body_json: "{}",
     channel: "generic_call",
     alias: "revit_call_tool",
+    runtime_mode: "local",
     ...overrides
   };
+}
+
+function directV1Request(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  const { runtime_mode: _runtimeMode, schema: _schema, ...request } = directRequest(overrides);
+  return { ...request, schema: "revit-operator.revit-direct-admission-request.v1" };
 }
 
 function writePolicy(root: string, options: {
@@ -324,13 +330,18 @@ test("direct authorization rejects caller trust material, malformed contracts, r
   const exact = directRequest();
 
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, effect_hash: allowed.record.effect_hash }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
-  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, schema: "revit-operator.revit-direct-admission-request.v2" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, schema: "revit-operator.revit-direct-admission-request.v3" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  const { runtime_mode: _runtimeMode, ...v2WithoutRuntime } = exact;
+  expectDirectError(() => authorizeDirectRevitExecution(v2WithoutRuntime, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...directV1Request(), runtime_mode: "local" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, request_id: "A".repeat(32) }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, method: "post" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, path: "/revit/ping/" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "typed_mcp", alias: "revit_call_tool" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "generic_call", alias: "revit_ping" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "deterministic_workflow" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, runtime_mode: "Production" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, runtime_mode: "local-mode" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, body_json: "{" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution(directRequest({ method: "GET", body_present: true, body_json: "{}" }), certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution(directRequest({ body_present: false, body_json: "" }), certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
@@ -347,11 +358,19 @@ test("direct authorization rejects caller trust material, malformed contracts, r
   assert.equal(authorizeDirectRevitExecution(exact, certifiedEnv(allowed, {
     REVIT_OPERATOR_MODE: "Development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
-  })).runtime_mode, "development");
+  })).runtime_mode, "local");
   assert.equal(authorizeDirectRevitExecution(exact, certifiedEnv(allowed, {
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: " laboratory "
-  })).runtime_mode, "development");
+  })).runtime_mode, "local");
+  assert.equal(authorizeDirectRevitExecution(directRequest({ runtime_mode: "production" }), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "hosted"
+  })).runtime_mode, "production");
+  assert.equal(authorizeDirectRevitExecution(directRequest(), certifiedEnv(allowed)).runtime_mode, "local");
+  assert.equal(authorizeDirectRevitExecution(directV1Request(), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "production"
+  })).runtime_mode, "production");
+  assert.equal(authorizeDirectRevitExecution(directV1Request(), certifiedEnv(allowed)).runtime_mode, "local");
 });
 
 test("direct authorization enforces the raw 2 MiB body ceiling and returns structured service failures for trust-anchor problems", () => {
