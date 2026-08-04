@@ -23,7 +23,7 @@ const EPOCH = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 const REQUEST_ID = "fedcba9876543210fedcba9876543210";
 const REQUEST_TIME = 1785345600123;
 const RESPONSE_TIME = 1785345600456;
-const REQUEST_ENVELOPE = "{\"v\":\"revit-operator.native-transport.v1\",\"alg\":\"A256CBC-HS512\",\"epoch\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"dir\":\"request\",\"iv\":\"QEFCQ0RFRkdISUpLTE1OTw\",\"ciphertext\":\"-W4DbKOCrKPoTdu_C_RlTcOB46_wzvZLmTwyt-G9MtdwXRHa_K5YmNUYaSyQE40-TbRQhBilL1OWTfaT9Bnoei9oYhkPOUH4WHVBnDK8gw-MJq0Ugb-XlzUOvoBXTVnplMUawAdKNb39SPpOr1TTBi4SuzUoryj4OQKiK-LywJDwlBRYe5zyLRA02sXXPJixzdoqsm91yK19boib1EHXePWdCcYmRKbTbDNAg5E0NlqsGiHdWTMgg9ZkSKHBxkTNfitSDttCWQyzM4xqWCv6ryxU51iIJ65_31zhMEeuZtXHJ5c3WsqkEN7jSAw4MM8N_4xfPcStHgMSaiBtDWFQixwP6KFcB_CAjxZaHfy-8Ufr0fQ4IiPVXsZwDt4fDOTV4ZIdwj35Rtxcpq-a-dzx6Q\",\"tag\":\"OpENiO5foy5aliWUb8ONQCAlCbd1Mgt0XVt1blb2e6U\"}";
+const REQUEST_ENVELOPE = "{\"v\":\"revit-operator.native-transport.v1\",\"alg\":\"A256CBC-HS512\",\"epoch\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"dir\":\"request\",\"iv\":\"QEFCQ0RFRkdISUpLTE1OTw\",\"ciphertext\":\"-W4DbKOCrKPoTdu_C_RlTcOB46_wzvZLmTwyt-G9MtdwXRHa_K5YmNUYaSyQE40-TbRQhBilL1OWTfaT9Bnoei9oYhkPOUH4WHVBnDK8gw-MJq0Ugb-XlzUOvoBXTVnplMUawAdKNb39SPpOr1TTBi4SuzUoryj4OQKiK-LywJDwlBRYe5zyLRA02sXXPJixzdoqsm91yK19boib1EHXePWdCcYmRKbTbDNAg5E0NlqsGiHdWTMgg9ZkSKHBxkTNfitSDttCWQyzM4xqWCv6ryxU51iIJ65_31zhMEeuZtXHJ5c3WsqkEN7jSAw4MM8N_4xfPcStHgMSaiBtDWFQi_2uHVgUhsv2zc6Efsou06GPkeMOAnillQUMJ9xLqXCgaAt3HROqMFOF1X1_Owy49PhS1hGWmElOqcYo_wUTXpyh3t-mmOaVghkw6GZ7vZD-bAk1OggasGYWyq3I4rFtSg\",\"tag\":\"8RGpK29AhveBYF5zxYcHWQqVRo2TsAqdvaICDxtS-sM\"}";
 const RESPONSE_ENVELOPE = "{\"v\":\"revit-operator.native-transport.v1\",\"alg\":\"A256CBC-HS512\",\"epoch\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"dir\":\"response\",\"iv\":\"YGFiY2RlZmdoaWprbG1ubw\",\"ciphertext\":\"pEM9pnNnjmvYWJnT02ktf4OIzoNFGl_uT1bILY8oUY6eqnDGE4zu78JxJ3-jJIJdTKiP-azhpHsvVhIOFMBOLh9Qsr-cBK6dXMFQBYWXYTH62yp_oGZnq4O9Ec8m-2o2mP0z--f5YkB3xpHLtmp77La0DJn9PgizHml0jYZ1m9yBpbSZjSUCdvxMfcg6zIYZI0KCXAsmZ69jbh3S1N1zKdqscXy0WG3rTHWB3pUoyZWgkDeKF34DyBMaeoB76zG2hVA68O9tLXt4y2OkchJfwn3aiZ1FbsMhalbdG8XY9TUw_807F-xLxhOjL8cKG2SG\",\"tag\":\"drUlfD17QYEhMihSyLNVUvhUuBZEbcKIIMIehfYM5zg\"}";
 
 function sequence(start: number, length: number): Buffer {
@@ -160,6 +160,10 @@ test("request protection mirrors the native request fence for strict JSON, norma
   assert.throws(() => protectBody("{\"value\":\"line\\rbreak\"}"), NativeTransportProtocolError);
   assert.throws(() => protectBody(`${"[".repeat(64)}0${"]".repeat(64)}`), NativeTransportProtocolError);
   assert.throws(() => protectBody(JSON.stringify("x".repeat(2 * 1024 * 1024))), NativeTransportProtocolError);
+  const exact = { operatorToken: TOKEN, serverEpoch: EPOCH, method: "GET", path: "/revit/context" } as const;
+  assert.throws(() => protectNativeTransportRequest({ ...exact, channel: "typed_mcp", alias: "revit_call_tool" }), NativeTransportProtocolError);
+  assert.throws(() => protectNativeTransportRequest({ ...exact, channel: "generic_call", alias: "revit_get_context" }), NativeTransportProtocolError);
+  assert.throws(() => protectNativeTransportRequest({ ...exact, channel: "search", alias: "revit_call_tool" }), NativeTransportProtocolError);
 });
 
 test("response authentication rejects tamper, reflection, binding mismatch, stale data, plaintext, and oversize", () => {

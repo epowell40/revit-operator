@@ -268,9 +268,11 @@ namespace RevitBridge.Common
             string? bodyJson,
             string? writeGrant,
             DateTimeOffset nowUtc,
-            string? requestId = null)
+            string? requestId = null,
+            string? channel = null,
+            string? alias = null)
         {
-            return ProtectRequestCore(operatorToken, serverEpoch, method, path, bodyJson, writeGrant, nowUtc, requestId, null, null);
+            return ProtectRequestCore(operatorToken, serverEpoch, method, path, bodyJson, writeGrant, nowUtc, requestId, null, null, channel, alias);
         }
 
         internal static OperatorNativeTransportProtectedRequest ProtectRequestCore(
@@ -283,7 +285,9 @@ namespace RevitBridge.Common
             DateTimeOffset nowUtc,
             string? requestId,
             byte[]? deterministicNonce,
-            byte[]? deterministicIv)
+            byte[]? deterministicIv,
+            string? channel = null,
+            string? alias = null)
         {
             var body = bodyJson ?? "";
             var bodyBytes = StrictEncode(body, "Native request body is not strict UTF-8.");
@@ -294,7 +298,9 @@ namespace RevitBridge.Common
                 hasQuery: false,
                 hasEntityBody: bodyPresent,
                 bodyBytes: bodyBytes,
-                requestId: requestId);
+                requestId: requestId,
+                channel: channel ?? "generic_call",
+                alias: alias ?? "revit_call_tool");
             var nonceBytes = RequireOrGenerateRandom(deterministicNonce, NonceBytes, nameof(deterministicNonce));
             var nonce = Base64UrlEncode(nonceBytes);
             var protectedWriteGrant = writeGrant ?? "";
@@ -341,6 +347,8 @@ namespace RevitBridge.Common
             var path = RequireString(fields, "path", 512);
             var bodyPresent = RequireBoolean(fields, "body_present");
             var body = RequireStringAllowEmpty(fields, "body_json", OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes);
+            var channel = RequireString(fields, "channel", 32);
+            var alias = RequireString(fields, "alias", 128);
             var writeGrant = RequireStringAllowEmpty(fields, "write_grant", OperatorNativeTransportProtocol.MaximumWriteGrantUtf8Bytes);
             var bodyBytes = StrictEncode(body, "Protected native request body is not strict UTF-8.");
             var request = OperatorNativeHttpRequestFence.Prepare(
@@ -349,7 +357,9 @@ namespace RevitBridge.Common
                 hasQuery: false,
                 hasEntityBody: bodyPresent,
                 bodyBytes: bodyBytes,
-                requestId: requestId);
+                requestId: requestId,
+                channel: channel ?? "generic_call",
+                alias: alias ?? "revit_call_tool");
             replayCache.Accept(request.RequestId, nonce, nowUtc);
             return new OperatorNativeTransportRequestContext(request, nonce, epoch, writeGrant, issuedAt);
         }
@@ -498,6 +508,8 @@ namespace RevitBridge.Common
                 writer.WriteString("path", request.Path);
                 writer.WriteBoolean("body_present", request.BodyPresent);
                 writer.WriteString("body_json", request.BodyJson);
+                writer.WriteString("channel", request.Channel);
+                writer.WriteString("alias", request.Alias);
                 writer.WriteString("write_grant", writeGrant);
                 writer.WriteEndObject();
             }
@@ -750,7 +762,7 @@ namespace RevitBridge.Common
 
         private static readonly HashSet<string> RequestInnerFields = new HashSet<string>(StringComparer.Ordinal)
         {
-            "request_id", "request_nonce", "issued_at_unix_ms", "method", "path", "body_present", "body_json", "write_grant"
+            "request_id", "request_nonce", "issued_at_unix_ms", "method", "path", "body_present", "body_json", "channel", "alias", "write_grant"
         };
 
         private static readonly HashSet<string> ResponseInnerFields = new HashSet<string>(StringComparer.Ordinal)

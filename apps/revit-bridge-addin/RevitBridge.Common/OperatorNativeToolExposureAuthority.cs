@@ -25,7 +25,9 @@ namespace RevitBridge.Common
             string policyRecordHash,
             string evidenceRecordHash,
             string requestHash,
-            string effectHash)
+            string effectHash,
+            string channel,
+            string alias)
         {
             Method = method;
             Path = path;
@@ -35,6 +37,8 @@ namespace RevitBridge.Common
             EvidenceRecordHash = evidenceRecordHash;
             RequestHash = requestHash;
             EffectHash = effectHash;
+            Channel = channel;
+            Alias = alias;
         }
 
         public string Method { get; }
@@ -45,6 +49,8 @@ namespace RevitBridge.Common
         public string EvidenceRecordHash { get; }
         public string RequestHash { get; }
         public string EffectHash { get; }
+        public string Channel { get; }
+        public string Alias { get; }
     }
 
     /// <summary>
@@ -159,6 +165,8 @@ namespace RevitBridge.Common
         public string EvidenceSourceHash { get; }
         public int RecordCount => _records.Count;
         public int GenericCallExposedCount => _records.Count(record => record.GenericCallExposed && record.Visibility != "workflow_only");
+        public int SearchExposedCount => _records.Count(record => record.SearchExposed && record.Visibility != "workflow_only");
+        public int TypedMcpExposedCount => _records.Count(record => record.TypedMcpExposed && record.Visibility != "workflow_only");
 
         public void RequireAuthorized(OperatorNativeToolExposureBinding binding)
         {
@@ -171,7 +179,15 @@ namespace RevitBridge.Common
                 && record.EvidenceRecordHash == binding.EvidenceRecordHash
                 && record.RequestHash == binding.RequestHash
                 && record.EffectHash == binding.EffectHash).ToList();
-            if (matches.Count != 1 || !matches[0].GenericCallExposed || matches[0].Visibility == "workflow_only") Deny();
+            if (matches.Count != 1 || matches[0].Visibility == "workflow_only") Deny();
+            var record = matches[0];
+            var authorized = binding.Channel == "generic_call"
+                ? record.GenericCallExposed && binding.Alias == "revit_call_tool"
+                : (binding.Channel == "typed_mcp" && record.TypedMcpExposed
+                    || binding.Channel == "search" && record.SearchExposed)
+                    && binding.Alias != "revit_call_tool"
+                    && record.TypedMcpAliases.Contains(binding.Alias);
+            if (!authorized) Deny();
         }
 
         private static void Deny()
@@ -221,7 +237,7 @@ namespace RevitBridge.Common
                     var path = RequireString(element, "path");
                     if (!Path.IsMatch(path) || path.EndsWith("/", StringComparison.Ordinal) || path.Contains("//") || HasDotSegment(path))
                         throw new InvalidDataException("Embedded certification policy path is noncanonical.");
-                    RequireAliases(element);
+                    var typedMcpAliases = RequireAliases(element);
                     if (hasExecutionSurface) RequireExecutionSurface(element);
                     var requestHash = RequireHash(element, "request_hash");
                     var effectHash = RequireHash(element, "effect_hash");
@@ -231,6 +247,8 @@ namespace RevitBridge.Common
                     var channels = Unique(element, "channels", JsonValueKind.Object);
                     RequireExactKeys(channels, Set(ChannelNames), "policy channels");
                     var genericCallExposed = false;
+                    var searchExposed = false;
+                    var typedMcpExposed = false;
                     foreach (var channel in ChannelNames)
                     {
                         var decision = Unique(channels, channel, JsonValueKind.Object);
@@ -239,13 +257,15 @@ namespace RevitBridge.Common
                         RequireOneOf(decision, "required_level", Levels);
                         RequireStringArray(decision, "reason_codes");
                         if (channel == "generic_call") genericCallExposed = exposed;
+                        if (channel == "search") searchExposed = exposed;
+                        if (channel == "typed_mcp") typedMcpExposed = exposed;
                     }
                     var recordHash = RequireHash(element, "policy_record_hash");
                     if (HashCanonicalObjectWithout(element, "policy_record_hash") != recordHash)
                         throw new InvalidDataException("Embedded certification policy record hash is invalid.");
                     var identity = method + "\n" + path + "\n" + requestHash + "\n" + effectHash;
                     if (!identities.Add(identity)) throw new InvalidDataException("Embedded certification policy has duplicate exact records.");
-                    records.Add(new Record(method, path, requestHash, effectHash, evidenceRecordHash, recordHash, visibility, genericCallExposed));
+                    records.Add(new Record(method, path, requestHash, effectHash, evidenceRecordHash, recordHash, visibility, genericCallExposed, searchExposed, typedMcpExposed, typedMcpAliases));
                 }
                 if (records.Count == 0) throw new InvalidDataException("Embedded certification policy has no records.");
                 return new OperatorNativeToolExposureEmbeddedAuthority(policyHash, evidenceSourceHash, records);
@@ -381,7 +401,7 @@ namespace RevitBridge.Common
             return result;
         }
 
-        private static void RequireAliases(JsonElement record)
+        private static HashSet<string> RequireAliases(JsonElement record)
         {
             var aliases = StringArray(record, "typed_mcp_aliases");
             for (var index = 0; index < aliases.Count; index++)
@@ -390,6 +410,7 @@ namespace RevitBridge.Common
                     || (index > 0 && string.CompareOrdinal(aliases[index - 1], aliases[index]) >= 0))
                     throw new InvalidDataException("Embedded certification policy aliases are invalid.");
             }
+            return new HashSet<string>(aliases, StringComparer.Ordinal);
         }
 
         private static void RequireExecutionSurface(JsonElement record)
@@ -454,7 +475,7 @@ namespace RevitBridge.Common
 
         private sealed class Record
         {
-            public Record(string method, string path, string requestHash, string effectHash, string evidenceRecordHash, string policyRecordHash, string visibility, bool genericCallExposed)
+            public Record(string method, string path, string requestHash, string effectHash, string evidenceRecordHash, string policyRecordHash, string visibility, bool genericCallExposed, bool searchExposed, bool typedMcpExposed, HashSet<string> typedMcpAliases)
             {
                 Method = method;
                 Path = path;
@@ -464,6 +485,9 @@ namespace RevitBridge.Common
                 PolicyRecordHash = policyRecordHash;
                 Visibility = visibility;
                 GenericCallExposed = genericCallExposed;
+                SearchExposed = searchExposed;
+                TypedMcpExposed = typedMcpExposed;
+                TypedMcpAliases = typedMcpAliases;
             }
 
             public string Method { get; }
@@ -474,6 +498,9 @@ namespace RevitBridge.Common
             public string PolicyRecordHash { get; }
             public string Visibility { get; }
             public bool GenericCallExposed { get; }
+            public bool SearchExposed { get; }
+            public bool TypedMcpExposed { get; }
+            public HashSet<string> TypedMcpAliases { get; }
         }
     }
 }

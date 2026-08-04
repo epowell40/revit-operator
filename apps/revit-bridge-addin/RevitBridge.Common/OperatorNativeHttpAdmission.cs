@@ -29,13 +29,15 @@ namespace RevitBridge.Common
 
     public sealed class OperatorNativeHttpRequest
     {
-        internal OperatorNativeHttpRequest(string requestId, string method, string path, bool bodyPresent, string bodyJson)
+        internal OperatorNativeHttpRequest(string requestId, string method, string path, bool bodyPresent, string bodyJson, string channel, string alias)
         {
             RequestId = requestId;
             Method = method;
             Path = path;
             BodyPresent = bodyPresent;
             BodyJson = bodyJson;
+            Channel = channel;
+            Alias = alias;
             SourceBodySha256 = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(bodyJson);
         }
 
@@ -43,6 +45,8 @@ namespace RevitBridge.Common
         public string Method { get; }
         public string Path { get; }
         public bool BodyPresent { get; }
+        public string Channel { get; }
+        public string Alias { get; }
         public string BodyJson { get; }
         public string SourceBodySha256 { get; }
     }
@@ -91,6 +95,9 @@ namespace RevitBridge.Common
         private static readonly Regex CanonicalPath = new Regex(
             @"^/revit/[a-z0-9][a-z0-9._~/-]*$",
             RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        private static readonly Regex ToolAlias = new Regex(
+            @"^[a-z][a-z0-9_]*$",
+            RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly JsonDocumentOptions StrictJson = new JsonDocumentOptions
         {
             AllowTrailingCommas = false,
@@ -104,7 +111,9 @@ namespace RevitBridge.Common
             bool hasQuery,
             bool hasEntityBody,
             byte[]? bodyBytes,
-            string? requestId = null)
+            string? requestId = null,
+            string? channel = "generic_call",
+            string? alias = "revit_call_tool")
         {
             if (!string.Equals(method, "GET", StringComparison.Ordinal)
                 && !string.Equals(method, "POST", StringComparison.Ordinal))
@@ -120,6 +129,13 @@ namespace RevitBridge.Common
             if (hasQuery)
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit requests cannot include an unsigned query string.");
 
+            if ((channel != "search" && channel != "generic_call" && channel != "typed_mcp")
+                || string.IsNullOrEmpty(alias)
+                || !ToolAlias.IsMatch(alias)
+                || (channel == "generic_call" && alias != "revit_call_tool")
+                || (channel != "generic_call" && alias == "revit_call_tool"))
+                throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit request channel or alias is invalid.");
+
             var bytes = bodyBytes ?? Array.Empty<byte>();
             if (bytes.Length > MaximumBodyUtf8Bytes)
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit request body exceeds the 2 MiB UTF-8 limit.");
@@ -128,7 +144,7 @@ namespace RevitBridge.Common
             {
                 if (hasEntityBody || bytes.Length != 0)
                     throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit GET requests cannot include a body.");
-                return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, false, "");
+                return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, false, "", channel!, alias!);
             }
 
             if (!hasEntityBody || bytes.Length == 0)
@@ -164,7 +180,7 @@ namespace RevitBridge.Common
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit request body contains invalid Unicode normalization data.");
             }
 
-            return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, true, bodyJson);
+            return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, true, bodyJson, channel!, alias!);
         }
 
         public static bool IsLoopbackEndpoint(IPEndPoint? endpoint)
@@ -280,6 +296,8 @@ namespace RevitBridge.Common
             string method,
             string path,
             bool bodyPresent,
+            string channel,
+            string alias,
             string sourceBodySha256,
             string canonicalBodyJson,
             string bodySha256,
@@ -291,6 +309,8 @@ namespace RevitBridge.Common
             Method = method;
             Path = path;
             BodyPresent = bodyPresent;
+            Channel = channel;
+            Alias = alias;
             SourceBodySha256 = sourceBodySha256;
             CanonicalBodyJson = canonicalBodyJson;
             BodySha256 = bodySha256;
@@ -303,6 +323,8 @@ namespace RevitBridge.Common
         public string Method { get; }
         public string Path { get; }
         public bool BodyPresent { get; }
+        public string Channel { get; }
+        public string Alias { get; }
         public string SourceBodySha256 { get; }
         public string CanonicalBodyJson { get; }
         public string BodySha256 { get; }
@@ -316,6 +338,8 @@ namespace RevitBridge.Common
                 || !string.Equals(Method, request.Method, StringComparison.Ordinal)
                 || !string.Equals(Path, request.Path, StringComparison.Ordinal)
                 || BodyPresent != request.BodyPresent
+                || !string.Equals(Channel, request.Channel, StringComparison.Ordinal)
+                || !string.Equals(Alias, request.Alias, StringComparison.Ordinal)
                 || !string.Equals(SourceBodySha256, request.SourceBodySha256, StringComparison.Ordinal))
             {
                 code = "CERTIFICATION_DIRECT_AUTHORIZATION_MISMATCH";
@@ -409,7 +433,7 @@ namespace RevitBridge.Common
         {
             "version", "phase", "authorized_at", "valid_for_ms", "request_id", "method", "path", "body_present",
             "source_body_sha256", "canonical_body_json", "body_sha256", "policy_hash", "policy_record_hash", "evidence_record_hash", "request_hash", "effect_hash",
-            "channel", "runtime_mode", "exposure_profile", "policy_trust_source", "authorization_hash"
+            "channel", "alias", "runtime_mode", "exposure_profile", "policy_trust_source", "authorization_hash"
         };
         private static readonly HashSet<string> FailureKeys = new HashSet<string>(StringComparer.Ordinal) { "ok", "code", "error", "retryable" };
 
@@ -469,6 +493,7 @@ namespace RevitBridge.Common
                 var requestHash = RequireString(authorization, "request_hash");
                 var effectHash = RequireString(authorization, "effect_hash");
                 var channel = RequireString(authorization, "channel");
+                var alias = RequireString(authorization, "alias");
                 var runtimeMode = RequireString(authorization, "runtime_mode");
                 var exposureProfile = RequireString(authorization, "exposure_profile");
                 var trustSource = RequireString(authorization, "policy_trust_source");
@@ -479,13 +504,14 @@ namespace RevitBridge.Common
                     || validForMs != OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds)
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_SCHEMA_INVALID", "Native Revit authorization schema, phase, or validity is invalid.");
                 if (requestId != request.RequestId || method != request.Method || path != request.Path
-                    || bodyPresent != request.BodyPresent || sourceBodySha256 != request.SourceBodySha256)
+                    || bodyPresent != request.BodyPresent || sourceBodySha256 != request.SourceBodySha256
+                    || channel != request.Channel || alias != request.Alias)
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_MISMATCH", "Native Revit authorization response does not bind the exact request.");
                 if (!Sha256.IsMatch(sourceBodySha256) || !Sha256.IsMatch(bodySha256) || !Sha256.IsMatch(policyHash) || !Sha256.IsMatch(policyRecordHash)
                     || !Sha256.IsMatch(evidenceRecordHash) || !Sha256.IsMatch(requestHash) || !Sha256.IsMatch(effectHash)
                     || !Sha256.IsMatch(authorizationHash))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_HASH_INVALID", "Native Revit authorization response contains an invalid digest.");
-                if (channel != "generic_call" || exposureProfile != "certified"
+                if ((channel != "search" && channel != "generic_call" && channel != "typed_mcp") || exposureProfile != "certified"
                     || (trustSource != "bundled" && trustSource != "deployment")
                     || runtimeMode != OperatorNativeHttpRuntimeProfile.NormalizeCertifiedRuntimeMode(expectedRuntimeMode))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_PROFILE_INVALID", "Native Revit authorization response has an invalid channel, runtime, profile, or trust source.");
@@ -524,7 +550,9 @@ namespace RevitBridge.Common
                     policyRecordHash,
                     evidenceRecordHash,
                     requestHash,
-                    effectHash));
+                    effectHash,
+                    channel,
+                    alias));
 
                 var elapsed = authorizationRoundTrip ?? TimeSpan.Zero;
                 if (elapsed < TimeSpan.Zero || elapsed >= TimeSpan.FromMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds))
@@ -540,6 +568,8 @@ namespace RevitBridge.Common
                     method,
                     path,
                     bodyPresent,
+                    channel,
+                    alias,
                     sourceBodySha256,
                     canonicalBodyJson,
                     bodySha256,

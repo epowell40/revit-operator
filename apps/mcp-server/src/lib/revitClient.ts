@@ -187,7 +187,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   // Certification is the final in-process admission boundary shared by direct
   // HTTP and durable courier dispatch. A write grant only matters after this
   // exact request/effect/channel decision has passed.
-  assertToolExposure({
+  const exposure = assertToolExposure({
     method: upperMethod,
     path,
     body,
@@ -227,12 +227,18 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
 
     try {
       if (!laboratoryBypass) {
+        const nativeChannel = exposure.channel;
+        if (nativeChannel === "deterministic_workflow") {
+          throw new Error("Deterministic workflow certification requires the durable courier transport.");
+        }
         const result = await callNativeTransport({
           operatorToken: token,
           method: upperMethod,
           path,
           bodyJson: serializedBody,
           writeGrant,
+          channel: nativeChannel,
+          alias: exposure.alias,
           signal: controller.signal
         });
         return {

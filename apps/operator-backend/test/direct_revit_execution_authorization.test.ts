@@ -34,6 +34,8 @@ function directRequest(overrides: Record<string, unknown> = {}): Record<string, 
     path: "/revit/ping",
     body_present: true,
     body_json: "{}",
+    channel: "generic_call",
+    alias: "revit_call_tool",
     ...overrides
   };
 }
@@ -144,6 +146,29 @@ test("compiled trusted-policy loader locates and validates the bundled pinned po
   } finally {
     process.chdir(priorCwd);
   }
+});
+
+test("bundled direct authorization permits only the exact typed context alias", () => {
+  const authorization = authorizeDirectRevitExecution(directRequest({
+    method: "GET",
+    path: "/revit/context",
+    body_present: false,
+    body_json: "",
+    channel: "typed_mcp",
+    alias: "revit_get_context"
+  }), {}, new Date("2026-08-03T12:00:00.000Z"));
+  assert.equal(authorization.channel, "typed_mcp");
+  assert.equal(authorization.alias, "revit_get_context");
+  assert.equal(authorization.path, "/revit/context");
+
+  expectDirectError(() => authorizeDirectRevitExecution(directRequest({
+    method: "GET",
+    path: "/revit/context",
+    body_present: false,
+    body_json: "",
+    channel: "generic_call",
+    alias: "revit_call_tool"
+  }), {}), 403, "CERTIFICATION_POLICY_DENIED");
 });
 
 test("trusted backend policy rejects standalone false promotion onto bridge and courier channels", () => {
@@ -303,6 +328,9 @@ test("direct authorization rejects caller trust material, malformed contracts, r
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, request_id: "A".repeat(32) }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, method: "post" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, path: "/revit/ping/" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "typed_mcp", alias: "revit_call_tool" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "generic_call", alias: "revit_ping" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
+  expectDirectError(() => authorizeDirectRevitExecution({ ...exact, channel: "deterministic_workflow" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution({ ...exact, body_json: "{" }, certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution(directRequest({ method: "GET", body_present: true, body_json: "{}" }), certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
   expectDirectError(() => authorizeDirectRevitExecution(directRequest({ body_present: false, body_json: "" }), certifiedEnv(allowed)), 400, "CERTIFICATION_DIRECT_REQUEST_MALFORMED");
@@ -457,13 +485,14 @@ test("authenticated HTTP endpoint returns exact structured deny and allow receip
   assert.equal(receipt.authorization.policy_hash, policy.policyHash);
   assert.equal(receipt.authorization.effect_hash, policy.record.effect_hash);
   assert.equal(receipt.authorization.channel, "generic_call");
+  assert.equal(receipt.authorization.alias, "revit_call_tool");
   assert.equal(receipt.authorization.request_id, REQUEST_ID);
   assert.equal(receipt.authorization.valid_for_ms, 5_000);
   assert.equal(receipt.authorization.source_body_sha256, rawSha256("{}"));
   assert.equal(receipt.authorization.canonical_body_json, "{}");
   assert.equal(receipt.authorization.body_sha256, rawSha256("{}"));
   assert.deepEqual(Object.keys(receipt.authorization).sort(), [
-    "authorization_hash", "authorized_at", "body_present", "body_sha256", "canonical_body_json",
+    "alias", "authorization_hash", "authorized_at", "body_present", "body_sha256", "canonical_body_json",
     "channel", "effect_hash", "evidence_record_hash", "exposure_profile", "method", "path",
     "phase", "policy_hash", "policy_record_hash", "policy_trust_source", "request_hash", "request_id",
     "runtime_mode", "source_body_sha256", "valid_for_ms", "version"

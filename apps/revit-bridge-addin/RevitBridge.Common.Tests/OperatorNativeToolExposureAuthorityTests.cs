@@ -15,8 +15,8 @@ namespace RevitBridge.Common.Tests
         private const string PingPolicyRecordHash = "sha256:562c15fa462ecb29483575d4f5f5e50b4758d01ad7120164bcd9b912bac76764";
         private const string PingEvidenceRecordHash = "sha256:2ca9b4f041441c78f12a4f538c68bdb0762cad5af1e410f73ae344ef412e8744";
         private const string PingRequestHash = "sha256:0b796e96f4f2c01cc134330c807ec1f27ae71aa8474245c3d5bba51d0fe2ca43";
-        private const string ContextPolicyRecordHash = "sha256:b6c88c06233a14164b270a71335baa9fc3b1e43f4e23e104a8015104a0bf3b92";
-        private const string ContextEvidenceRecordHash = "sha256:df810f5e1385f8897f60044ae744402d837a4589d3d822c4b3d411fcfd8923c9";
+        private const string ContextPolicyRecordHash = "sha256:e795c609f293ae9c478de71dd6a61e806ba50bc135f69b2b3093425d2c4a082f";
+        private const string ContextEvidenceRecordHash = "sha256:b2ee2e72154548e3130f43c0b47dc5746819e81c3fba058fabeac991b40e2915";
         private const string ContextRequestHash = "sha256:53e28cd5f70a848ff670fdc4954243b47203acef6dd06ad1a9a433c56186142a";
         private const string ReadEffectHash = "sha256:0f19ae675c51b10854e3977070ad34e4898a004c4a724058f933c17233f37bf8";
 
@@ -28,7 +28,9 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(OperatorNativeToolExposureEmbeddedAuthority.CompiledPolicyHash, authority.PolicyHash);
             Assert.Equal("sha256:e46f5e2b4409bc1ab5d74886930d3ef711bb3d3d14136350b38ed4f36a6b58b8", authority.EvidenceSourceHash);
             Assert.Equal(25, authority.RecordCount);
-            Assert.Equal(1, authority.GenericCallExposedCount);
+            Assert.Equal(0, authority.GenericCallExposedCount);
+            Assert.Equal(0, authority.SearchExposedCount);
+            Assert.Equal(1, authority.TypedMcpExposedCount);
             Assert.Contains(
                 OperatorNativeToolExposureEmbeddedAuthority.ResourceName,
                 typeof(OperatorNativeToolExposureEmbeddedAuthority).Assembly.GetManifestResourceNames());
@@ -46,8 +48,32 @@ namespace RevitBridge.Common.Tests
                     ContextPolicyRecordHash,
                     ContextEvidenceRecordHash,
                     ContextRequestHash,
-                    ReadEffectHash));
+                    ReadEffectHash,
+                    "typed_mcp",
+                    "revit_get_context"));
         }
+
+        [Theory]
+        [InlineData("generic_call", "revit_call_tool")]
+        [InlineData("typed_mcp", "revit_ping")]
+        [InlineData("search", "revit_get_context")]
+        public void CertifiedContextRejectsBroaderOrMismatchedBindings(string channel, string alias)
+        {
+            Assert.Throws<OperatorNativeHttpAdmissionException>(() =>
+                OperatorNativeToolExposureEmbeddedAuthority.Instance.RequireAuthorized(
+                    new OperatorNativeToolExposureBinding(
+                        "GET",
+                        "/revit/context",
+                        "",
+                        OperatorNativeToolExposureEmbeddedAuthority.CompiledPolicyHash,
+                        ContextPolicyRecordHash,
+                        ContextEvidenceRecordHash,
+                        ContextRequestHash,
+                        ReadEffectHash,
+                        channel,
+                        alias)));
+        }
+
         [Fact]
         public void RequestHashWrapsFractionalCanonicalBodyWithoutNumericReserialization()
         {
@@ -174,7 +200,8 @@ namespace RevitBridge.Common.Tests
                 ["evidence_record_hash"] = bindings["evidence_record_hash"],
                 ["request_hash"] = bindings["request_hash"],
                 ["effect_hash"] = bindings["effect_hash"],
-                ["channel"] = "generic_call",
+                ["channel"] = request.Channel,
+                ["alias"] = request.Alias,
                 ["runtime_mode"] = "local",
                 ["exposure_profile"] = "certified",
                 ["policy_trust_source"] = "bundled"

@@ -600,7 +600,9 @@ namespace RevitBridge.Operator
                 method = request.Method,
                 path = request.Path,
                 body_present = request.BodyPresent,
-                body_json = request.BodyJson
+                body_json = request.BodyJson,
+                channel = request.Channel,
+                alias = request.Alias
             }, OperatorUiProtocol.JsonOptions);
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
