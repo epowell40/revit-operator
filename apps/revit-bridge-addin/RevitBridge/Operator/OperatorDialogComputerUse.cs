@@ -32,11 +32,11 @@ namespace RevitBridge.Operator
         private long _nextEventId;
         private long _nextGuardId;
         private DialogEventRecord? _lastEvent;
+        private bool _dialogEventSubscribed;
 
         public OperatorDialogComputerUse(UIControlledApplication application)
         {
             _application = application ?? throw new ArgumentNullException(nameof(application));
-            _application.DialogBoxShowing += OnDialogBoxShowing;
         }
 
         public object Observe(UIApplication? app, ObserveParams? request)
@@ -126,6 +126,7 @@ namespace RevitBridge.Operator
             {
                 CleanupExpiredGuards_NoLock();
                 _guards.Add(guard);
+                UpdateDialogEventSubscription_NoLock();
             }
 
             return new
@@ -150,13 +151,10 @@ namespace RevitBridge.Operator
 
         public void Dispose()
         {
-            try
+            lock (_gate)
             {
-                _application.DialogBoxShowing -= OnDialogBoxShowing;
-            }
-            catch
-            {
-                // ignore shutdown races
+                _guards.Clear();
+                UpdateDialogEventSubscription_NoLock();
             }
         }
 
@@ -224,6 +222,9 @@ namespace RevitBridge.Operator
                                 }
                             }
                         }
+
+                        CleanupExpiredGuards_NoLock();
+                        UpdateDialogEventSubscription_NoLock();
 
                     if (_lastEvent != null && _lastEvent.EventId == record.EventId)
                     {
@@ -771,6 +772,7 @@ namespace RevitBridge.Operator
             lock (_gate)
             {
                 _guards.RemoveAll(guard => guard.GuardId == parsed);
+                UpdateDialogEventSubscription_NoLock();
             }
         }
 
@@ -932,6 +934,37 @@ namespace RevitBridge.Operator
         {
             var now = DateTime.UtcNow;
             _guards.RemoveAll(x => x.ExpiresAtUtc <= now || x.TriggerCount >= x.MaxTriggers);
+        }
+
+        private void UpdateDialogEventSubscription_NoLock()
+        {
+            var shouldSubscribe = _guards.Count > 0;
+            if (shouldSubscribe == _dialogEventSubscribed) return;
+
+            try
+            {
+                if (shouldSubscribe)
+                {
+                    _application.DialogBoxShowing += OnDialogBoxShowing;
+                }
+                else
+                {
+                    _application.DialogBoxShowing -= OnDialogBoxShowing;
+                }
+                _dialogEventSubscribed = shouldSubscribe;
+            }
+            catch
+            {
+                // A guard must fail closed if Revit rejects the event hook.
+                if (shouldSubscribe)
+                {
+                    _guards.Clear();
+                    throw;
+                }
+
+                // Revit may already be tearing down. Keep shutdown best-effort.
+                _dialogEventSubscribed = false;
+            }
         }
 
         private static bool ButtonTokenMatchesLabel(string? tokenRaw, string? labelRaw)
