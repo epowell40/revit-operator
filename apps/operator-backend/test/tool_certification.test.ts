@@ -629,8 +629,8 @@ test("seeded policy exposes only the certified context read and keeps every othe
   assert.equal(context.path, "/revit/context");
   assert.deepEqual(context.typed_mcp_aliases, ["revit_get_context"]);
   assert.equal(context.highest_cumulative_level, "L4");
-  assert.equal(context.channels.search.exposed, true);
-  assert.equal(context.channels.generic_call.exposed, true);
+  assert.equal(context.channels.search.exposed, false);
+  assert.equal(context.channels.generic_call.exposed, false);
   assert.equal(context.channels.typed_mcp.exposed, true);
   assert.equal(context.channels.deterministic_workflow.exposed, false);
   assert.ok(policy.records
