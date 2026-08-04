@@ -203,7 +203,15 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void FinalRefreshUsesFreshRequestIdAndCannotChangeEffectiveBody()
         {
-            var source = Prepare("POST", "/revit/ping", "{\"z\":1,\"a\":2}");
+            var source = OperatorNativeHttpRequestFence.Prepare(
+                "POST",
+                "/revit/ping",
+                false,
+                true,
+                Utf8("{\"z\":1,\"a\":2}"),
+                RequestId,
+                "typed_mcp",
+                "revit_ping");
             const string canonical = "{\"a\":2,\"z\":1}";
             var early = Verify(source, canonical);
             var effective = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(
@@ -211,6 +219,8 @@ namespace RevitBridge.Common.Tests
                 OperatorNativeHttpDispatchFence.RequireFreshOneUse(early, source, DateTimeOffset.UtcNow));
             Assert.NotEqual(source.RequestId, effective.RequestId);
             Assert.Equal(canonical, effective.BodyJson);
+            Assert.Equal(source.Channel, effective.Channel);
+            Assert.Equal(source.Alias, effective.Alias);
 
             var final = Verify(effective, canonical);
             Assert.Equal(canonical, OperatorNativeHttpDispatchFence.RequireFreshOneUse(

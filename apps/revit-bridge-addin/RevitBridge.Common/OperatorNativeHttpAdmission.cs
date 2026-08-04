@@ -403,7 +403,9 @@ namespace RevitBridge.Common
                 sourceRequest.Path,
                 hasQuery: false,
                 hasEntityBody: sourceRequest.BodyPresent,
-                bodyBytes: bytes);
+                bodyBytes: bytes,
+                channel: sourceRequest.Channel,
+                alias: sourceRequest.Alias);
         }
     }
 
