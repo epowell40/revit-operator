@@ -22,7 +22,7 @@ export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
 // \uXXXX escape, so the outer request needs a separate, still-bounded ceiling.
 export const DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES = (DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES * 6) + 64 * 1024;
 
-const DIRECT_REQUEST_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json", "channel", "alias"] as const;
+const DIRECT_REQUEST_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json", "channel", "alias", "runtime_mode"] as const;
 const REQUEST_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/;
 const TOOL_ALIAS = /^[a-z][a-z0-9_]*$/;
 type DirectRevitExecutionChannel = "search" | "generic_call" | "typed_mcp";
@@ -142,6 +142,12 @@ export function authorizeDirectRevitExecution(
   }
   const channel = request.channel as DirectRevitExecutionChannel;
   const alias = request.alias as string;
+  if (typeof request.runtime_mode !== "string") malformed("Direct Revit authorization runtime_mode must be canonical.");
+  const runtimeMode = normalizeRuntimeMode(request.runtime_mode);
+  if (request.runtime_mode !== runtimeMode || !/^[a-z][a-z0-9_]*$/.test(runtimeMode) || runtimeMode.length > 64) {
+    malformed("Direct Revit authorization runtime_mode must be canonical.");
+  }
+
   const bodyPresent = request.body_present as boolean;
   const bodyJson = request.body_json as string;
   if (Buffer.byteLength(bodyJson, "utf8") > DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES) {
@@ -183,7 +189,6 @@ export function authorizeDirectRevitExecution(
     );
   }
 
-  const runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   try {
     const trusted = loadTrustedToolExposurePolicy(env);

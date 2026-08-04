@@ -602,7 +602,8 @@ namespace RevitBridge.Operator
                 body_present = request.BodyPresent,
                 body_json = request.BodyJson,
                 channel = request.Channel,
-                alias = request.Alias
+                alias = request.Alias,
+                runtime_mode = OperatorNativeHttpRuntimeProfile.NormalizeCertifiedRuntimeMode(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"))
             }, OperatorUiProtocol.JsonOptions);
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
