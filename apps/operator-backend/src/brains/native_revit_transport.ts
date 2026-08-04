@@ -22,7 +22,7 @@ const MAX_MESSAGE_AGE_MS = 30_000;
 const MAX_FUTURE_SKEW_MS = 10_000;
 const EXACT_RECEIPT_FIELDS = ["version", "algorithm", "transport_path", "url", "server_epoch"];
 const EXACT_ENVELOPE_FIELDS = ["v", "alg", "epoch", "dir", "iv", "ciphertext", "tag"];
-const EXACT_REQUEST_FIELDS = ["request_id", "request_nonce", "issued_at_unix_ms", "method", "path", "body_present", "body_json", "write_grant"];
+const EXACT_REQUEST_FIELDS = ["request_id", "request_nonce", "issued_at_unix_ms", "method", "path", "body_present", "body_json", "channel", "alias", "write_grant"];
 const EXACT_RESPONSE_FIELDS = ["request_id", "request_nonce", "issued_at_unix_ms", "status_code", "body_json"];
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -322,6 +322,8 @@ function protectRequest(
     path: pathname,
     body_present: prepared.bodyPresent,
     body_json: prepared.bodyJson,
+    channel: "generic_call",
+    alias: "revit_call_tool",
     write_grant: writeGrant
   }), "Protected native request");
   const envelopeJson = protectPlaintext(token, epoch, "request", inner, deterministic.iv ?? randomBytes(16));

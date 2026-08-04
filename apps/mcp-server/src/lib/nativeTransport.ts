@@ -106,6 +106,8 @@ export function protectNativeTransportRequest(input: {
   path: string;
   bodyJson?: string;
   writeGrant?: string;
+  channel?: "search" | "generic_call" | "typed_mcp";
+  alias?: string;
   issuedAtUnixMs?: number;
   requestId?: string;
   requestNonce?: Buffer;
@@ -129,6 +131,14 @@ export function protectNativeTransportRequest(input: {
   if (writeGrantBytes.length > 16 * 1024) {
     throw new NativeTransportProtocolError("Protected native write grant exceeds its limit.", "pre_dispatch");
   }
+  const channel = input.channel ?? "generic_call";
+  const alias = input.alias ?? "revit_call_tool";
+  if ((channel !== "search" && channel !== "generic_call" && channel !== "typed_mcp")
+    || !/^[a-z][a-z0-9_]*$/.test(alias)
+    || (channel === "generic_call" && alias !== "revit_call_tool")
+    || (channel !== "generic_call" && alias === "revit_call_tool")) {
+    throw new NativeTransportProtocolError("Protected native request channel or alias is invalid.", "pre_dispatch");
+  }
 
   const inner = JSON.stringify({
     request_id: requestId,
@@ -138,6 +148,8 @@ export function protectNativeTransportRequest(input: {
     path: input.path,
     body_present: method === "POST",
     body_json: input.bodyJson ?? "",
+    channel,
+    alias,
     write_grant: writeGrant
   });
   const epoch = encodeBase64Url(decodeCanonicalBase64Url(input.serverEpoch, 32, "server epoch", "pre_dispatch"));
@@ -202,6 +214,8 @@ export async function callNativeTransport(input: {
   path: string;
   bodyJson?: string;
   writeGrant?: string;
+  channel?: "search" | "generic_call" | "typed_mcp";
+  alias?: string;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
@@ -212,7 +226,9 @@ export async function callNativeTransport(input: {
     method: input.method,
     path: input.path,
     bodyJson: input.bodyJson,
-    writeGrant: input.writeGrant
+    writeGrant: input.writeGrant,
+    channel: input.channel,
+    alias: input.alias
   });
 
   const response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {

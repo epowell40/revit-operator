@@ -31,7 +31,7 @@ namespace RevitBridge.Common.Tests
                 Sequence(0x20, 32),
                 Sequence(0x40, 16));
 
-            Assert.Equal("{\"v\":\"revit-operator.native-transport.v1\",\"alg\":\"A256CBC-HS512\",\"epoch\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"dir\":\"request\",\"iv\":\"QEFCQ0RFRkdISUpLTE1OTw\",\"ciphertext\":\"-W4DbKOCrKPoTdu_C_RlTcOB46_wzvZLmTwyt-G9MtdwXRHa_K5YmNUYaSyQE40-TbRQhBilL1OWTfaT9Bnoei9oYhkPOUH4WHVBnDK8gw-MJq0Ugb-XlzUOvoBXTVnplMUawAdKNb39SPpOr1TTBi4SuzUoryj4OQKiK-LywJDwlBRYe5zyLRA02sXXPJixzdoqsm91yK19boib1EHXePWdCcYmRKbTbDNAg5E0NlqsGiHdWTMgg9ZkSKHBxkTNfitSDttCWQyzM4xqWCv6ryxU51iIJ65_31zhMEeuZtXHJ5c3WsqkEN7jSAw4MM8N_4xfPcStHgMSaiBtDWFQixwP6KFcB_CAjxZaHfy-8Ufr0fQ4IiPVXsZwDt4fDOTV4ZIdwj35Rtxcpq-a-dzx6Q\",\"tag\":\"OpENiO5foy5aliWUb8ONQCAlCbd1Mgt0XVt1blb2e6U\"}", request.EnvelopeJson);
+            Assert.Equal("{\"v\":\"revit-operator.native-transport.v1\",\"alg\":\"A256CBC-HS512\",\"epoch\":\"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\",\"dir\":\"request\",\"iv\":\"QEFCQ0RFRkdISUpLTE1OTw\",\"ciphertext\":\"-W4DbKOCrKPoTdu_C_RlTcOB46_wzvZLmTwyt-G9MtdwXRHa_K5YmNUYaSyQE40-TbRQhBilL1OWTfaT9Bnoei9oYhkPOUH4WHVBnDK8gw-MJq0Ugb-XlzUOvoBXTVnplMUawAdKNb39SPpOr1TTBi4SuzUoryj4OQKiK-LywJDwlBRYe5zyLRA02sXXPJixzdoqsm91yK19boib1EHXePWdCcYmRKbTbDNAg5E0NlqsGiHdWTMgg9ZkSKHBxkTNfitSDttCWQyzM4xqWCv6ryxU51iIJ65_31zhMEeuZtXHJ5c3WsqkEN7jSAw4MM8N_4xfPcStHgMSaiBtDWFQi_2uHVgUhsv2zc6Efsou06GPkeMOAnillQUMJ9xLqXCgaAt3HROqMFOF1X1_Owy49PhS1hGWmElOqcYo_wUTXpyh3t-mmOaVghkw6GZ7vZD-bAk1OggasGYWyq3I4rFtSg\",\"tag\":\"8RGpK29AhveBYF5zxYcHWQqVRo2TsAqdvaICDxtS-sM\"}", request.EnvelopeJson);
             Assert.DoesNotContain(Token, request.EnvelopeJson);
             Assert.DoesNotContain("set-parameter", request.EnvelopeJson);
             Assert.DoesNotContain("AHU-1", request.EnvelopeJson);
@@ -52,6 +52,8 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("POST", opened.Request.Method);
             Assert.Equal("/revit/set-parameter", opened.Request.Path);
             Assert.Equal("{\"elementId\":42,\"value\":\"AHU-1\"}", opened.Request.BodyJson);
+            Assert.Equal("generic_call", opened.Request.Channel);
+            Assert.Equal("revit_call_tool", opened.Request.Alias);
             Assert.Equal("grant-v1-test", opened.WriteGrant);
 
             var responseEnvelope = OperatorNativeTransportCodec.ProtectResponseCore(

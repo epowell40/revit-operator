@@ -22,8 +22,10 @@ export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
 // \uXXXX escape, so the outer request needs a separate, still-bounded ceiling.
 export const DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES = (DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES * 6) + 64 * 1024;
 
-const DIRECT_REQUEST_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json"] as const;
+const DIRECT_REQUEST_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json", "channel", "alias"] as const;
 const REQUEST_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/;
+const TOOL_ALIAS = /^[a-z][a-z0-9_]*$/;
+type DirectRevitExecutionChannel = "search" | "generic_call" | "typed_mcp";
 
 export type DirectRevitExecutionAuthorization = {
   version: typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION;
@@ -42,7 +44,8 @@ export type DirectRevitExecutionAuthorization = {
   evidence_record_hash: string;
   request_hash: string;
   effect_hash: string;
-  channel: "generic_call";
+  channel: DirectRevitExecutionChannel;
+  alias: string;
   runtime_mode: string;
   exposure_profile: "certified";
   policy_trust_source: "bundled" | "deployment";
@@ -130,6 +133,15 @@ export function authorizeDirectRevitExecution(
   if (typeof request.body_present !== "boolean" || typeof request.body_json !== "string") {
     malformed("Direct Revit authorization body contract is invalid.");
   }
+  if ((request.channel !== "search" && request.channel !== "generic_call" && request.channel !== "typed_mcp")
+    || typeof request.alias !== "string"
+    || !TOOL_ALIAS.test(request.alias)
+    || (request.channel === "generic_call" && request.alias !== "revit_call_tool")
+    || (request.channel !== "generic_call" && request.alias === "revit_call_tool")) {
+    malformed("Direct Revit authorization channel and alias contract is invalid.");
+  }
+  const channel = request.channel as DirectRevitExecutionChannel;
+  const alias = request.alias as string;
   const bodyPresent = request.body_present as boolean;
   const bodyJson = request.body_json as string;
   if (Buffer.byteLength(bodyJson, "utf8") > DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES) {
@@ -180,8 +192,8 @@ export function authorizeDirectRevitExecution(
       method,
       path: toolPath,
       requestHash,
-      channel: "generic_call",
-      alias: "revit_call_tool"
+      channel,
+      alias
     });
     const record = evaluation.record;
     const payload = {
@@ -201,7 +213,8 @@ export function authorizeDirectRevitExecution(
       evidence_record_hash: record.evidence_record_hash,
       request_hash: record.request_hash,
       effect_hash: record.effect_hash,
-      channel: "generic_call" as const,
+      channel,
+      alias,
       runtime_mode: runtimeMode,
       exposure_profile: "certified" as const,
       policy_trust_source: trusted.trustSource

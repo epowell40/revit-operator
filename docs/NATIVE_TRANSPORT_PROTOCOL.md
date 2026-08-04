@@ -19,6 +19,20 @@ OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory
 
 Every other mode fails closed unless this protocol is used.
 
+## Compatibility and deployment boundary
+
+The current v1 request schema includes the mandatory authenticated channel
+and alias fields documented below. An earlier pre-release v1 implementation
+did not carry those fields and is intentionally not wire-compatible. The exact
+request parser rejects that older shape before native admission; it is not
+silently interpreted as a generic call.
+
+The Sidecar/MCP client and Revit add-in are therefore one atomic workstation
+release unit for this revision. OperatorDeploy must install both from the same
+release package, and Revit must be restarted to activate the new add-in before
+the new Sidecar is started. A mixed old/new rollout fails closed at protected
+request parsing. Deployments must not update either endpoint independently.
+
 ## Discovery and outer HTTP contract
 
 On every successful native listener start Revit generates a fresh random
@@ -84,6 +98,8 @@ serialization order:
   "path": "/revit/set-parameter",
   "body_present": true,
   "body_json": "{\"elementId\":42}",
+  "channel": "generic_call",
+  "alias": "revit_call_tool",
   "write_grant": "<possibly empty>"
 }
 ```
@@ -93,6 +109,11 @@ no body; POST has a present strict JSON body of at most 2 MiB. The target path,
 request ID/correlation, body, and write grant therefore exist only inside the
 ciphertext. Write grants are limited to 16 KiB and the final request envelope
 to 8 MiB.
+
+channel is exactly search, generic_call, or typed_mcp. alias is a lowercase
+tool alias and must agree with that channel. In particular, generic_call
+requires revit_call_tool, while non-generic channels may not claim that alias.
+Both fields are authenticated and are required by the exact Revit-side parser.
 
 The response plaintext has exactly:
 
@@ -178,6 +199,8 @@ request IV  bytes 40..4f
 request time 1785345600123
 method/path POST /revit/set-parameter
 body        {"elementId":42,"value":"AHU-1"}
+channel     generic_call
+alias       revit_call_tool
 write grant grant-v1-test
 response IV bytes 60..6f
 response time 1785345600456

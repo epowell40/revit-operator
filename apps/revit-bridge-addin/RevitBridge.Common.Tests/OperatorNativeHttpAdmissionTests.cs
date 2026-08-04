@@ -41,7 +41,14 @@ namespace RevitBridge.Common.Tests
             var get = OperatorNativeHttpRequestFence.Prepare("GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId);
             Assert.False(get.BodyPresent);
             Assert.Equal("", get.BodyJson);
+            var typed = OperatorNativeHttpRequestFence.Prepare(
+                "GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId, "typed_mcp", "revit_get_context");
+            Assert.Equal("typed_mcp", typed.Channel);
+            Assert.Equal("revit_get_context", typed.Alias);
 
+            Reject(() => OperatorNativeHttpRequestFence.Prepare("GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId, "typed_mcp", "revit_call_tool"));
+            Reject(() => OperatorNativeHttpRequestFence.Prepare("GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId, "generic_call", "revit_get_context"));
+            Reject(() => OperatorNativeHttpRequestFence.Prepare("GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId, "deterministic_workflow", "revit_get_context"));
             Reject(() => OperatorNativeHttpRequestFence.Prepare("post", "/revit/ping", false, true, Utf8("{}"), RequestId));
             Reject(() => OperatorNativeHttpRequestFence.Prepare("PUT", "/revit/ping", false, true, Utf8("{}"), RequestId));
             Reject(() => OperatorNativeHttpRequestFence.Prepare("POST", "/Revit/ping", false, true, Utf8("{}"), RequestId));
@@ -196,7 +203,15 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void FinalRefreshUsesFreshRequestIdAndCannotChangeEffectiveBody()
         {
-            var source = Prepare("POST", "/revit/ping", "{\"z\":1,\"a\":2}");
+            var source = OperatorNativeHttpRequestFence.Prepare(
+                "POST",
+                "/revit/ping",
+                false,
+                true,
+                Utf8("{\"z\":1,\"a\":2}"),
+                RequestId,
+                "typed_mcp",
+                "revit_ping");
             const string canonical = "{\"a\":2,\"z\":1}";
             var early = Verify(source, canonical);
             var effective = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(
@@ -204,6 +219,8 @@ namespace RevitBridge.Common.Tests
                 OperatorNativeHttpDispatchFence.RequireFreshOneUse(early, source, DateTimeOffset.UtcNow));
             Assert.NotEqual(source.RequestId, effective.RequestId);
             Assert.Equal(canonical, effective.BodyJson);
+            Assert.Equal(source.Channel, effective.Channel);
+            Assert.Equal(source.Alias, effective.Alias);
 
             var final = Verify(effective, canonical);
             Assert.Equal(canonical, OperatorNativeHttpDispatchFence.RequireFreshOneUse(
@@ -413,7 +430,8 @@ namespace RevitBridge.Common.Tests
                     request.Path,
                     canonicalBody),
                 ["effect_hash"] = "sha256:" + new string('5', 64),
-                ["channel"] = "generic_call",
+                ["channel"] = request.Channel,
+                ["alias"] = request.Alias,
                 ["runtime_mode"] = "local",
                 ["exposure_profile"] = "certified",
                 ["policy_trust_source"] = "deployment"

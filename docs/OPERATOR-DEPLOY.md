@@ -4,6 +4,12 @@
 
 The portable channel is a transactional, per-user deployment utility embedded in a complete workstation package. It uses versioned release directories rather than overwriting the loaded Revit add-in directory in place.
 
+The workstation package is also the atomic compatibility boundary for the
+certified native transport. Its Sidecar/MCP client and Revit add-in must come
+from the same package revision; neither endpoint may be upgraded independently.
+After activation, restart Revit before starting the packaged Sidecar. Mixed
+native-transport schemas fail closed by design.
+
 - Installed releases: `%LOCALAPPDATA%\RevitOperator\releases\<releaseVersion>\`
 - Deployment state: `%LOCALAPPDATA%\RevitOperator\deployment\state.json`
 - Activation journal: `%LOCALAPPDATA%\RevitOperator\deployment\activation-journal.v1.json`
