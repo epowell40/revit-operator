@@ -15,22 +15,39 @@ namespace RevitBridge.Common.Tests
         private const string PingPolicyRecordHash = "sha256:562c15fa462ecb29483575d4f5f5e50b4758d01ad7120164bcd9b912bac76764";
         private const string PingEvidenceRecordHash = "sha256:2ca9b4f041441c78f12a4f538c68bdb0762cad5af1e410f73ae344ef412e8744";
         private const string PingRequestHash = "sha256:0b796e96f4f2c01cc134330c807ec1f27ae71aa8474245c3d5bba51d0fe2ca43";
+        private const string ContextPolicyRecordHash = "sha256:b6c88c06233a14164b270a71335baa9fc3b1e43f4e23e104a8015104a0bf3b92";
+        private const string ContextEvidenceRecordHash = "sha256:df810f5e1385f8897f60044ae744402d837a4589d3d822c4b3d411fcfd8923c9";
+        private const string ContextRequestHash = "sha256:53e28cd5f70a848ff670fdc4954243b47203acef6dd06ad1a9a433c56186142a";
         private const string ReadEffectHash = "sha256:0f19ae675c51b10854e3977070ad34e4898a004c4a724058f933c17233f37bf8";
 
         [Fact]
-        public void EmbeddedPolicyIsPinnedStrictAndCurrentlyAllDeny()
+        public void EmbeddedPolicyIsPinnedAndExposesOnlyCertifiedContext()
         {
             var authority = OperatorNativeToolExposureEmbeddedAuthority.Instance;
 
             Assert.Equal(OperatorNativeToolExposureEmbeddedAuthority.CompiledPolicyHash, authority.PolicyHash);
             Assert.Equal("sha256:e46f5e2b4409bc1ab5d74886930d3ef711bb3d3d14136350b38ed4f36a6b58b8", authority.EvidenceSourceHash);
             Assert.Equal(25, authority.RecordCount);
-            Assert.Equal(0, authority.GenericCallExposedCount);
+            Assert.Equal(1, authority.GenericCallExposedCount);
             Assert.Contains(
                 OperatorNativeToolExposureEmbeddedAuthority.ResourceName,
                 typeof(OperatorNativeToolExposureEmbeddedAuthority).Assembly.GetManifestResourceNames());
         }
 
+        [Fact]
+        public void CertifiedContextBindingIsAuthorizedByEmbeddedPolicy()
+        {
+            OperatorNativeToolExposureEmbeddedAuthority.Instance.RequireAuthorized(
+                new OperatorNativeToolExposureBinding(
+                    "GET",
+                    "/revit/context",
+                    "",
+                    OperatorNativeToolExposureEmbeddedAuthority.CompiledPolicyHash,
+                    ContextPolicyRecordHash,
+                    ContextEvidenceRecordHash,
+                    ContextRequestHash,
+                    ReadEffectHash));
+        }
         [Fact]
         public void RequestHashWrapsFractionalCanonicalBodyWithoutNumericReserialization()
         {

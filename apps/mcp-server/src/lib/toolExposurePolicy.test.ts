@@ -136,13 +136,23 @@ test("assertToolExposure returns the exact certified record provenance and bound
   assert.equal(decision.workflow, undefined);
 });
 
-test("current policy validates all record hashes and denies all 100 exact channel decisions", () => {
+test("current policy validates all record hashes and exposes only the certified typed context alias", () => {
   const { policy, policyPath } = loadToolExposurePolicy(certifiedEnv());
   assert.equal(policyPath, sourcePolicyPath);
   assert.equal(policy.records.length * 4, 100);
   const decisions = policy.records.flatMap(record => Object.values(record.channels));
   assert.equal(decisions.length, 100);
-  assert.equal(decisions.every(decision => decision.exposed === false), true);
+  const exposed = policy.records.flatMap(record =>
+    Object.entries(record.channels)
+      .filter(([, decision]) => decision.exposed)
+      .map(([channel]) => ({ record, channel }))
+  );
+  assert.equal(exposed.length, 1);
+  assert.equal(exposed[0]?.record.method, "GET");
+  assert.equal(exposed[0]?.record.path, "/revit/context");
+  assert.equal(exposed[0]?.channel, "typed_mcp");
+  assert.equal(isMcpToolAliasExposed("revit_get_context", certifiedEnv()), true);
+  assert.equal(isMcpToolAliasExposed("revit_call_tool", certifiedEnv()), false);
   const safeRead = policy.records.find(record => record.path === "/revit/certified/sheets/count");
   assert.deepEqual(safeRead?.execution_surface, {
     kind: "standalone_executor",

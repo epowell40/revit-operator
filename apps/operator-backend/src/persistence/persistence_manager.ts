@@ -123,12 +123,19 @@ export type ToolOutputRecord =
       ts: string;
       kind: "mcp.tool_result";
       session_id: string;
+      action_id?: string | null;
+      method?: string | null;
+      path?: string | null;
       tool: string;
       server?: string | null;
       status?: string | null;
       duration_ms?: number | null;
       result?: unknown;
       error?: string | null;
+      attachments?: ToolResult["attachments"];
+      retryable?: boolean;
+      outcome_unknown?: boolean;
+      failure_code?: string;
       turn_id?: string | null;
       thread_id?: string | null;
     }
@@ -163,9 +170,73 @@ export type ChatResultRecord =
       error: string;
     };
 
+export type MutationContinuationRecord<T = unknown> = {
+  schema_version: 1;
+  revision: number;
+  session_id: string;
+  operation_id: string;
+  kind: string;
+  expires_at: number;
+  state: T;
+};
+
 function chatResultPath(sessionId: string, messageId: string): string {
   const p = runBundlePaths(sessionId);
   return path.join(p.sessionDir, "chat_results", `${safeDirName(messageId)}.json`);
+}
+
+function mutationContinuationPath(sessionId: string, operationId: string): string {
+  const p = runBundlePaths(sessionId);
+  return path.join(p.sessionDir, "mutation_continuations", safeDirName(operationId) + ".json");
+}
+
+function mutationContinuationLockPath(sessionId: string, operationId: string): string {
+  return `${mutationContinuationPath(sessionId, operationId)}.lock`;
+}
+
+class MutationContinuationBusyError extends Error {
+  constructor() {
+    super("Mutation continuation is busy.");
+  }
+}
+
+function withMutationContinuationLock<T>(sessionId: string, operationId: string, fn: () => T): T {
+  const targetPath = mutationContinuationPath(sessionId, operationId);
+  const lockPath = mutationContinuationLockPath(sessionId, operationId);
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  let fd: number | null = null;
+  try {
+    try {
+      fd = fs.openSync(lockPath, "wx", 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        if (Date.now() - fs.statSync(lockPath).mtimeMs > 30_000) fs.rmSync(lockPath, { force: true });
+      } catch {
+        // Preserve the busy result when the lock cannot be inspected safely.
+      }
+      if (fd === null) {
+        try {
+          fd = fs.openSync(lockPath, "wx", 0o600);
+        } catch {
+          throw new MutationContinuationBusyError();
+        }
+      }
+    }
+    return fn();
+  } finally {
+    if (fd !== null) {
+      try {
+        fs.closeSync(fd);
+      } finally {
+        try {
+          fs.rmSync(lockPath, { force: true });
+        } catch {
+          // Best effort; the stale-lock guard prevents permanent blockage.
+        }
+      }
+    }
+  }
 }
 
 function writeAllSync(fd: number, buf: Buffer): void {
@@ -334,6 +405,219 @@ export class PersistenceManager {
       throw new Error("Invalid persisted chat result.");
     }
     return parsed as ChatResultRecord;
+  }
+
+  writeMutationContinuation<T>(args: {
+    sessionId: string;
+    operationId: string;
+    kind: string;
+    expiresAt: number;
+    state: T;
+    expectedRevision?: number;
+  }): void {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const operationId = (args.operationId ?? "").toString().trim();
+    const kind = (args.kind ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!operationId) throw new Error("operationId is required.");
+    if (!kind) throw new Error("kind is required.");
+    if (!Number.isFinite(args.expiresAt)) throw new Error("expiresAt must be finite.");
+    this.ensureSession(sessionId);
+    const filePath = mutationContinuationPath(sessionId, operationId);
+    withMutationContinuationLock(sessionId, operationId, () => {
+      const current = fs.existsSync(filePath) ? this.readMutationContinuation<T>({ sessionId, operationId }) : null;
+      if (args.expectedRevision !== undefined && current?.revision !== args.expectedRevision) {
+        throw new Error("Mutation continuation changed concurrently.");
+      }
+      atomicWriteJson(filePath, {
+        schema_version: 1,
+        revision: (current?.revision ?? 0) + 1,
+        session_id: sessionId,
+        operation_id: operationId,
+        kind,
+        expires_at: args.expiresAt,
+        state: args.state
+      } satisfies MutationContinuationRecord<T>);
+    });
+  }
+
+  createMutationContinuation<T>(args: {
+    sessionId: string;
+    operationId: string;
+    kind: string;
+    expiresAt: number;
+    state: T;
+  }): boolean {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const operationId = (args.operationId ?? "").toString().trim();
+    const kind = (args.kind ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!operationId) throw new Error("operationId is required.");
+    if (!kind) throw new Error("kind is required.");
+    if (!Number.isFinite(args.expiresAt)) throw new Error("expiresAt must be finite.");
+    this.ensureSession(sessionId);
+    const filePath = mutationContinuationPath(sessionId, operationId);
+    try {
+      return withMutationContinuationLock(sessionId, operationId, () => {
+        if (fs.existsSync(filePath)) return false;
+        atomicWriteJson(filePath, {
+          schema_version: 1,
+          revision: 1,
+          session_id: sessionId,
+          operation_id: operationId,
+          kind,
+          expires_at: args.expiresAt,
+          state: args.state
+        } satisfies MutationContinuationRecord<T>);
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof MutationContinuationBusyError) return false;
+      throw error;
+    }
+  }
+
+  replaceMutationContinuation<T>(args: {
+    sessionId: string;
+    operationId: string;
+    kind: string;
+    expiresAt: number;
+    expectedRevision: number;
+    state: T;
+  }): boolean {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const operationId = (args.operationId ?? "").toString().trim();
+    const kind = (args.kind ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!operationId) throw new Error("operationId is required.");
+    if (!kind) throw new Error("kind is required.");
+    if (!Number.isFinite(args.expiresAt)) throw new Error("expiresAt must be finite.");
+    this.ensureSession(sessionId);
+    const filePath = mutationContinuationPath(sessionId, operationId);
+    try {
+      return withMutationContinuationLock(sessionId, operationId, () => {
+        const current = this.readMutationContinuation<T>({ sessionId, operationId });
+        if (!current || current.revision !== args.expectedRevision) return false;
+        atomicWriteJson(filePath, {
+          schema_version: 1,
+          revision: current.revision + 1,
+          session_id: sessionId,
+          operation_id: operationId,
+          kind,
+          expires_at: args.expiresAt,
+          state: args.state
+        } satisfies MutationContinuationRecord<T>);
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof MutationContinuationBusyError) return false;
+      throw error;
+    }
+  }
+  quarantineMalformedMutationContinuation<T>(args: {
+    sessionId: string;
+    operationId: string;
+    kind: string;
+    expiresAt: number;
+    state: T;
+  }): boolean {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const operationId = (args.operationId ?? "").toString().trim();
+    const kind = (args.kind ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!operationId) throw new Error("operationId is required.");
+    if (!kind) throw new Error("kind is required.");
+    if (!Number.isFinite(args.expiresAt)) throw new Error("expiresAt must be finite.");
+    this.ensureSession(sessionId);
+    const filePath = mutationContinuationPath(sessionId, operationId);
+    try {
+      return withMutationContinuationLock(sessionId, operationId, () => {
+        if (!fs.existsSync(filePath)) return false;
+        let parsed: Partial<MutationContinuationRecord<T>> | null = null;
+        try {
+          parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<MutationContinuationRecord<T>>;
+        } catch {
+          // The malformed bytes are the reason this quarantine path was requested.
+        }
+        const envelopeValid = Boolean(parsed) &&
+          parsed?.schema_version === 1 &&
+          typeof parsed.revision === "number" && Number.isInteger(parsed.revision) && parsed.revision >= 1 &&
+          parsed.session_id === sessionId &&
+          parsed.operation_id === operationId &&
+          typeof parsed.kind === "string" && Boolean(parsed.kind.trim()) &&
+          typeof parsed.expires_at === "number" && Number.isFinite(parsed.expires_at) &&
+          Object.prototype.hasOwnProperty.call(parsed, "state");
+        if (envelopeValid) return false;
+        const revision = parsed && typeof parsed.revision === "number" && Number.isInteger(parsed.revision) && parsed.revision >= 1
+          ? parsed.revision
+          : 0;
+        atomicWriteJson(filePath, {
+          schema_version: 1,
+          revision: revision + 1,
+          session_id: sessionId,
+          operation_id: operationId,
+          kind,
+          expires_at: args.expiresAt,
+          state: args.state
+        } satisfies MutationContinuationRecord<T>);
+        return true;
+      });
+    } catch (error) {
+      if (error instanceof MutationContinuationBusyError) return false;
+      throw error;
+    }
+  }
+
+  readMutationContinuation<T>(args: { sessionId: string; operationId: string }): MutationContinuationRecord<T> | null {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const operationId = (args.operationId ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!operationId) throw new Error("operationId is required.");
+    const filePath = mutationContinuationPath(sessionId, operationId);
+    if (!fs.existsSync(filePath)) return null;
+    let parsed: Partial<MutationContinuationRecord<T>>;
+    try {
+      parsed = JSON.parse(fs.readFileSync(filePath, "utf8")) as Partial<MutationContinuationRecord<T>>;
+    } catch {
+      throw new Error("Invalid persisted mutation continuation.");
+    }
+    if (
+      parsed.schema_version !== 1 ||
+      typeof parsed.revision !== "number" ||
+      !Number.isInteger(parsed.revision) || parsed.revision < 1 ||
+      parsed.session_id !== sessionId ||
+      parsed.operation_id !== operationId ||
+      typeof parsed.kind !== "string" ||
+      !parsed.kind.trim() ||
+      typeof parsed.expires_at !== "number" ||
+      !Number.isFinite(parsed.expires_at) ||
+      !Object.prototype.hasOwnProperty.call(parsed, "state")
+    ) {
+      throw new Error("Invalid persisted mutation continuation.");
+    }
+    return parsed as MutationContinuationRecord<T>;
+  }
+
+  deleteMutationContinuation(args: { sessionId: string; operationId: string; expectedRevision?: number }): boolean {
+    const sessionId = (args.sessionId ?? "").toString().trim();
+    const operationId = (args.operationId ?? "").toString().trim();
+    if (!sessionId) throw new Error("sessionId is required.");
+    if (!operationId) throw new Error("operationId is required.");
+    try {
+      return withMutationContinuationLock(sessionId, operationId, () => {
+        const filePath = mutationContinuationPath(sessionId, operationId);
+        if (!fs.existsSync(filePath)) return args.expectedRevision === undefined;
+        if (args.expectedRevision !== undefined) {
+          const current = this.readMutationContinuation({ sessionId, operationId });
+          if (!current || current.revision !== args.expectedRevision) return false;
+        }
+        fs.rmSync(filePath, { force: true });
+        return true;
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return args.expectedRevision === undefined;
+      throw error;
+    }
   }
 }
 

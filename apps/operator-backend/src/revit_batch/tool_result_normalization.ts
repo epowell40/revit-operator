@@ -70,7 +70,10 @@ function unplannedRequestEffect(method: "GET" | "POST", actionPath: string): Non
   // reads/previews from writes. If that plan was lost after a restart or cache
   // eviction, classify conservatively instead of allowing a bodyless fallback
   // (or client-supplied request_effect) to downgrade a possible mutation.
-  if (conditionalActionPathEffect(actionPath) !== undefined) return "apply";
+  const conditional = conditionalActionPathEffect(actionPath);
+  // The transaction-plan route is an explicit rollback-only preview invariant.
+  if (conditional === "preview") return "preview";
+  if (conditional !== undefined) return "apply";
   return pathLooksWrite(actionPath) ? "apply" : "read";
 }
 
@@ -114,7 +117,9 @@ export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unk
       method,
       path: actionPath,
       ...(requestEffect ? { request_effect: requestEffect } : {}),
-      status: row.status,
+      status: row.outcome_unknown === true ? "failed" : row.status,
+      ...(row.outcome_unknown === true ? { outcome_unknown: true, retryable: false } : {}),
+      ...(row.outcome_unknown !== true && typeof row.retryable === "boolean" ? { retryable: row.retryable } : {}),
       ...(row.result_json !== undefined ? { result_json: row.result_json } : {}),
       ...(typeof row.error === "string" ? { error: row.error } : {}),
       ...(typeof row.failure_kind === "string" ? { failure_kind: row.failure_kind } : {}),

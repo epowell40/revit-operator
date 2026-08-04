@@ -71,6 +71,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Theory]
+        [InlineData("{\"action\":\"list\"}")]
+        [InlineData("{\"action\":\"detail\",\"scheduleId\":2284420}")]
+        public void ScheduleInspectionPostsRemainLowRiskAndReadOnly(string body)
+        {
+            AssertLow("POST", "/revit/schedules", body);
+            Assert.Equal(OperatorActionEffect.Read, OperatorApprovalPolicy.GetEffect(
+                "POST", "/revit/schedules", body));
+            Assert.Equal("read", OperatorApprovalPolicy.GetEffectWireValue(
+                "POST", "/revit/schedules", body));
+        }
+
+        [Theory]
         [InlineData("/revit/fire-damper-audit", "{\"command\":\"fix\"}")]
         [InlineData("/revit/lighting-audit", "{\"command\":\"validate_ies\",\"fix\":true}")]
         [InlineData("/revit/lighting-audit", "{\"command\":\"photometrics\",\"visualize\":true}")]
@@ -92,6 +104,21 @@ namespace RevitBridge.Common.Tests
         {
             Assert.Equal(OperatorActionEffect.Preview, OperatorApprovalPolicy.GetEffect("POST", path, body));
             Assert.Equal("preview", OperatorApprovalPolicy.GetEffectWireValue("POST", path, body));
+        }
+
+        [Fact]
+        public void TransactionPlanIsMediumRiskButAlwaysPreview()
+        {
+            var body = "{\"actions\":[{\"method\":\"POST\",\"path\":\"/revit/set-parameters\",\"body\":{}}]}";
+
+            Assert.Equal(OperatorActionRisk.Medium, OperatorApprovalPolicy.GetRisk(
+                "POST", "/revit/transaction-plan", body));
+            Assert.Equal(OperatorActionEffect.Preview, OperatorApprovalPolicy.GetEffect(
+                "POST", "/revit/transaction-plan", body));
+            Assert.Equal("preview", OperatorApprovalPolicy.GetEffectWireValue(
+                "POST", "/revit/transaction-plan", body));
+            Assert.Equal(OperatorActionEffect.Preview, OperatorApprovalPolicy.GetEffect(
+                "POST", "/revit/transaction-plan", null));
         }
 
         [Fact]

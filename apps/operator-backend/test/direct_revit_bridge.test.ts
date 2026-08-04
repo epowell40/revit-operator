@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  DirectBridgeRequestError,
   __testOnlyClearDirectBridgeAvailabilityCache,
   __testOnlyExtractBridgeImageAttachmentPaths,
   __testOnlyRequestBridgeJson,
@@ -89,6 +90,86 @@ test("direct bridge transport aborts requests that exceed the configured timeout
   );
 });
 
+test("direct bridge preserves Revit 408 outcome-unknown as non-retryable", async () => {
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+    ok: false,
+    code: "revit_action_deadline_elapsed_outcome_unknown",
+    retryable: true,
+    outcome_unknown: true
+  }), { status: 408 });
+
+  await assert.rejects(
+    __testOnlyRequestBridgeJson("POST", "/revit/update-schedule-cell", { value: "new" }, {
+      baseUrl: "http://bridge.local:5000",
+      token: "test-token",
+      timeoutMs: 100,
+      fetchImpl,
+      env: LAB_ENV
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof DirectBridgeRequestError);
+      assert.equal(error.statusCode, 408);
+      assert.equal(error.outcome_unknown, true);
+      assert.equal(error.retryable, false);
+      assert.equal(error.failure_code, "revit_action_deadline_elapsed_outcome_unknown");
+      return true;
+    }
+  );
+
+  const result = toToolResultFromDirectBridgeResult({
+    ok: false,
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    error: "deadline elapsed",
+    retryable: true,
+    outcome_unknown: true,
+    failure_code: "revit_action_deadline_elapsed_outcome_unknown",
+    duration_ms: 12
+  });
+  assert.equal(result.retryable, false);
+  assert.equal(result.outcome_unknown, true);
+  assert.equal(result.failure_code, "revit_action_deadline_elapsed_outcome_unknown");
+});
+test("direct bridge treats a body-only unknown outcome as failed", async () => {
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({
+    ok: false,
+    code: "revit_action_deadline_elapsed_outcome_unknown",
+    retryable: true,
+    outcome_unknown: true
+  }), { status: 200 });
+
+  await assert.rejects(
+    __testOnlyRequestBridgeJson("POST", "/revit/update-schedule-cell", { value: "new" }, {
+      baseUrl: "http://bridge.local:5000",
+      token: "test-token",
+      timeoutMs: 100,
+      fetchImpl,
+      env: LAB_ENV
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof DirectBridgeRequestError);
+      assert.equal(error.statusCode, 200);
+      assert.equal(error.outcome_unknown, true);
+      assert.equal(error.retryable, false);
+      return true;
+    }
+  );
+});
+
+test("outcome-unknown direct results are always failed and non-retryable", () => {
+  const result = toToolResultFromDirectBridgeResult({
+    ok: true,
+    action_id: "malformed-unknown",
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    retryable: true,
+    outcome_unknown: true,
+    duration_ms: 1
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.retryable, false);
+  assert.equal(result.outcome_unknown, true);
+});
 test("direct bridge availability caches successful probes by bridge URL", async () => {
   __testOnlyClearDirectBridgeAvailabilityCache();
   let calls = 0;
@@ -141,6 +222,7 @@ test("direct bridge image reads are type- and size-bounded", () => {
 test("direct bridge results normalize to compact tool results", () => {
   const result = toToolResultFromDirectBridgeResult({
     ok: true,
+    action_id: "direct-action-test",
     method: "POST",
     path: "/revit/export-image",
     result_json: { path: "C:/captures/view.png" },
@@ -149,6 +231,7 @@ test("direct bridge results normalize to compact tool results", () => {
   });
 
   assert.equal(result.status, "done");
+  assert.equal(result.action_id, "direct-action-test");
   assert.equal(result.path, "/revit/export-image");
   assert.equal(result.duration_ms, 12);
   assert.equal(result.attachments?.[0]?.filename, "view.png");

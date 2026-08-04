@@ -579,6 +579,44 @@ function recordToolResults(
   }
 }
 
+/**
+ * Only a result for an action that is still recorded as in flight may advance
+ * the staged existing-conditions ledger. The bridge can deliver a delayed
+ * receipt after a backend restart, and providers can also replay a receipt
+ * with the same path and workflow fingerprint but a different action id. A
+ * path/fingerprint match alone is not an execution identity.
+ */
+function persistedContinuationResults(
+  sessionId: string,
+  toolResults: ToolResult[],
+  currentScope: string | null
+): ToolResult[] {
+  const ledger = readExistingConditionsExecutionLedger(sessionId);
+  return toolResults.filter(result => {
+    const actionId = clean(result.action_id);
+    const method = clean(result.method).toUpperCase();
+    const resultPath = clean(result.path).toLowerCase();
+    if (!actionId || (method !== "GET" && method !== "POST") || !resultPath) return false;
+    const planned = ledger
+      .filter(entry =>
+        entry.event === "action_planned" &&
+        entry.action_id === actionId &&
+        entry.method === method &&
+        entry.path.toLowerCase() === resultPath &&
+        scopesMatch(entry, currentScope)
+      )
+      .at(-1);
+    if (!planned) return false;
+    return !ledger.some(entry =>
+      entry.sequence > planned.sequence &&
+      (entry.event === "action_completed" || entry.event === "action_failed") &&
+      entry.action_id === actionId &&
+      entry.method === method &&
+      entry.path.toLowerCase() === resultPath &&
+      entriesShareScope(planned, entry)
+    );
+  });
+}
 function scopesMatch(
   entry: ExistingConditionsExecutionLedgerEntry,
   currentScope: string | null
@@ -1197,6 +1235,11 @@ export function maybeContinueExistingConditionsOneActionLoop(
 ): ChatResponse | null {
   persistExecutionControlDirectives(req);
   const toolResults = Array.isArray(req.tool_results) ? req.tool_results : [];
+  const continuationResults = persistedContinuationResults(
+    req.session_id,
+    toolResults,
+    documentScopeSha256(req.context)
+  );
   recordToolResults(req.session_id, toolResults, documentScopeSha256(req.context));
   const boundedReadTerminal = oneBoundedReadTerminalDecision(req, toolResults);
   if (boundedReadTerminal) return boundedReadTerminal;
@@ -1209,7 +1252,7 @@ export function maybeContinueExistingConditionsOneActionLoop(
     recordProviderIndependentStageResults(
       req.session_id,
       persistedBeforeRecovery.workflow,
-      toolResults
+      continuationResults
     );
   }
 
@@ -1224,7 +1267,7 @@ export function maybeContinueExistingConditionsOneActionLoop(
     recordProviderIndependentStageResults(
       req.session_id,
       persisted.workflow,
-      toolResults
+      continuationResults
     );
   }
   const plan = buildNextExistingConditionsStagePlan({
@@ -1257,6 +1300,11 @@ export function enforceExistingConditionsOneActionLoop(args: {
   persistExecutionControlDirectives(args.req);
   const toolResults = Array.isArray(args.req.tool_results) ? args.req.tool_results : [];
   const currentDocumentScope = documentScopeSha256(args.req.context);
+  const continuationResults = persistedContinuationResults(
+    args.req.session_id,
+    toolResults,
+    currentDocumentScope
+  );
   recordToolResults(args.req.session_id, toolResults, currentDocumentScope);
   const boundedReadTerminal = oneBoundedReadTerminalDecision(args.req, toolResults);
   if (boundedReadTerminal) return boundedReadTerminal;
@@ -1269,7 +1317,7 @@ export function enforceExistingConditionsOneActionLoop(args: {
     recordProviderIndependentStageResults(
       args.req.session_id,
       persistedBeforeRecovery.workflow,
-      toolResults
+      continuationResults
     );
   }
 

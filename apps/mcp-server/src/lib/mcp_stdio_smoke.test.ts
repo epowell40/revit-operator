@@ -28,6 +28,7 @@ const certifiedSafeNonRevitAliases = [
   "read_excel",
   "read_pdf_text",
   "read_word",
+  "revit_get_context",
   "validate_ies_files",
   "web_fetch_evidence",
   "workspace_pdf_merge",
@@ -211,7 +212,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
   for (const exposureEnv of negativeCases) {
     const names = await listToolsForExposureEnv(exposureEnv);
     assert.deepEqual(names, certifiedSafeNonRevitAliases, `non-exact escape must expose only certified-safe aliases: ${JSON.stringify(exposureEnv)}`);
-    assert.equal(names.filter(name => name.startsWith("revit_")).length, 0, `non-exact escape exposed a Revit alias: ${JSON.stringify(exposureEnv)}`);
+    assert.equal(names.filter(name => name.startsWith("revit_")).length, 1, `non-exact escape exposed a Revit alias: ${JSON.stringify(exposureEnv)}`);
   }
 
   const laboratoryNames = await listToolsForExposureEnv({
@@ -553,11 +554,11 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   const listedNames = listed.tools.map(tool => tool.name).sort();
   assert.equal(listedNames.includes("operator_runtime_probe"), true);
   assert.deepEqual(listedNames, certifiedSafeNonRevitAliases, "Certified tools/list must expose exactly the declared safe local/diagnostic aliases.");
-  assert.equal(listedNames.length, 15);
+  assert.equal(listedNames.length, 16);
   assert.deepEqual(
     listedNames.filter(name => name.startsWith("revit_")),
-    [],
-    "No uncertified Revit schema may be model-visible in tools/list."
+    ["revit_get_context"],
+    "Only the certified typed context alias may be model-visible in tools/list."
   );
   assert.equal(listedNames.includes("titleblock_update_text"), false, "The non-revit bridge alias must not bypass certified visibility.");
   assert.equal(listedNames.includes("operator_test_unbound_mcp_alias"), false, "An unbound alias registered through registerTool must fail closed.");
@@ -648,7 +649,7 @@ test("MCP stdio tools/list follows trusted aliases and cached registry data is r
   const listed = await withTimeout(client.listTools(), "listing trusted MCP aliases");
   const names = listed.tools.map(tool => tool.name);
   assert.equal(names.includes("revit_tool_registry"), true);
-  assert.equal(names.includes("revit_get_context"), false);
+  assert.equal(names.includes("revit_get_context"), true);
 
   const first = await withTimeout(client.callTool({
     name: "revit_tool_registry",

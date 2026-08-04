@@ -259,7 +259,19 @@ namespace RevitBridge.Operator
 
             var method = (action.Method ?? "").Trim().ToUpperInvariant();
             var path = (action.Path ?? "").Trim();
-            var risk = OperatorApprovalPolicy.GetRisk(method, path);
+            var jsonBody = "";
+            if (action.Body != null)
+            {
+                if (action.Body is JsonElement je)
+                {
+                    jsonBody = je.GetRawText();
+                }
+                else
+                {
+                    jsonBody = JsonSerializer.Serialize(action.Body, OperatorUiProtocol.JsonOptions);
+                }
+            }
+            var risk = OperatorApprovalPolicy.GetRisk(method, path, jsonBody);
             var correlationId = OperatorCorrelationId.NormalizeOrCreate(action.CorrelationId, action.ActionId);
             action.CorrelationId = correlationId;
 
@@ -306,19 +318,6 @@ namespace RevitBridge.Operator
             if (!_handlers.TryGetValue(path, out var handler))
             {
                 throw new InvalidOperationException($"No handler mapped for: {path}");
-            }
-
-            var jsonBody = "";
-            if (action.Body != null)
-            {
-                if (action.Body is JsonElement je)
-                {
-                    jsonBody = je.GetRawText();
-                }
-                else
-                {
-                    jsonBody = JsonSerializer.Serialize(action.Body, OperatorUiProtocol.JsonOptions);
-                }
             }
 
             if (IsDirectDialogComputerUsePath(path))

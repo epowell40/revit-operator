@@ -611,7 +611,7 @@ test("candidate request fixtures fail closed on missing aliases, mismatched requ
   );
 });
 
-test("seeded audit and standalone candidates remain unexposed without cumulative evidence", () => {
+test("seeded policy exposes only the certified context read and keeps every other candidate closed", () => {
   const evidenceText = fs.readFileSync(evidencePath, "utf8");
   const candidatesText = fs.readFileSync(candidatesPath, "utf8");
   const evidence = JSON.parse(evidenceText) as ToolCertificationEvidenceFile;
@@ -620,9 +620,24 @@ test("seeded audit and standalone candidates remain unexposed without cumulative
   assert.equal(reads.length, 24);
   assert.equal(evidence.records.length, 25);
   assert.equal(evidence.records.flatMap(item => item.typed_mcp_aliases).length, 20);
-  assert.ok(policy.records.every(item => EXPOSURE_CHANNELS.every(channel => !item.channels[channel].exposed)));
+  const exposed = policy.records.filter(item =>
+    EXPOSURE_CHANNELS.some(channel => item.channels[channel].exposed)
+  );
+  assert.equal(exposed.length, 1);
+  const context = exposed[0]!;
+  assert.equal(context.method, "GET");
+  assert.equal(context.path, "/revit/context");
+  assert.deepEqual(context.typed_mcp_aliases, ["revit_get_context"]);
+  assert.equal(context.highest_cumulative_level, "L4");
+  assert.equal(context.channels.search.exposed, false);
+  assert.equal(context.channels.generic_call.exposed, false);
+  assert.equal(context.channels.typed_mcp.exposed, true);
+  assert.equal(context.channels.deterministic_workflow.exposed, false);
   assert.ok(policy.records
-    .filter(item => item.path !== "/revit/certified/sheets/count")
+    .filter(item => item !== context)
+    .every(item => EXPOSURE_CHANNELS.every(channel => !item.channels[channel].exposed)));
+  assert.ok(policy.records
+    .filter(item => item.path !== "/revit/certified/sheets/count" && item.path !== "/revit/context")
     .every(item => item.channels.search.reason_codes.includes(CERTIFICATION_REASON_CODES.gap)));
 
   const scheduleCell = policy.records.find(item => item.path === "/revit/update-schedule-cell");

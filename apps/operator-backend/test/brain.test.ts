@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyIsExistingConditionsReconstructionRequest, __testOnlyMaybeBuildPersistedExistingConditionsTerminal, __testOnlyMaybeRunSemanticAecWorkflow, __testOnlyMaybeRunTopLevelMepRouteRedline, __testOnlyMaybeRunTopLevelSemanticAecWorkflow, decide } from "../src/brain.js";
+import { __testOnlyFinalizeDecision, __testOnlyIsBridgeStatusQuestion, __testOnlyIsExistingConditionsReconstructionRequest, __testOnlyMaybeBuildPersistedExistingConditionsTerminal, __testOnlyMaybeRunSemanticAecWorkflow, __testOnlyMaybeRunTopLevelMepRouteRedline, __testOnlyMaybeRunTopLevelSemanticAecWorkflow, decide, decideStreaming } from "../src/brain.js";
 import { AEC_TASK_INTENT_V1_SCHEMA } from "../src/aec_task_intent.js";
 import { decideRule } from "../src/brains/rule_brain.js";
 import { shouldOpenZippyBimTool } from "../src/brains/zippybim_intent.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
-import { appendEvent } from "../src/memory/sqlite_store.js";
+import { __closeForTests, appendEvent } from "../src/memory/sqlite_store.js";
 import { existingConditionsExecutionLedgerPath } from "../src/existing_conditions/one_action_execution_ledger.js";
 
 const testRunId = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -970,4 +970,127 @@ test("finalizeDecision applies visual gate requirement to receptacle redline wor
 
   assert.equal(res.actions.length, 0);
   assert.match(res.assistant_message, /passing visual verification gate/i);
+});
+
+test("non-streaming brain dispatch preserves the durable schedule continuation", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "brain-schedule-continuation-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const session = "brain-schedule-non-stream";
+  const initial: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: session,
+    message_id: "schedule-message-1",
+    user_text: "change AHU-1 supply air from 10,000 to 20,000 on the schedule"
+  };
+  try {
+    const first = await decide(initial);
+    const preflightActionId = first.actions[0]?.action_id ?? "";
+    assert.match(preflightActionId, /^schedule-cell-update-preflight-/);
+    const second = await decide({
+      ...initial,
+      message_id: "schedule-message-2",
+      user_text: "",
+      tool_results: [{
+        action_id: preflightActionId,
+        method: "POST",
+        path: "/revit/update-schedule-cell",
+        status: "done",
+        result_json: { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } }
+      }]
+    });
+    const applyActionId = second.actions[0]?.action_id ?? "";
+    assert.match(applyActionId, /^schedule-cell-update-apply-/);
+    assert.equal((second.actions[0]?.body as Record<string, unknown>)?.expectedValue, "10,000 CFM");
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    __closeForTests();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("non-streaming brain dispatch preserves the durable schedule value replacement continuation", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "brain-schedule-value-replacement-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const session = "brain-schedule-value-replacement";
+  const initial: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: session,
+    message_id: "schedule-value-message-1",
+    user_text: 'please rename any equipment that includes "-G-" in it\'s designation so that it instead reads "-0-", so, for example, "B3-G-IA-01" needs to be renamed "B3-0-IA-01". please review all the plumbing schedules on P6.01, P6.02, P6.03, thanks.'
+  };
+  try {
+    const first = await decide(initial);
+    const preflightActionId = first.actions[0]?.action_id ?? "";
+    assert.match(preflightActionId, /^schedule-value-replacement-preflight-/);
+    const second = await decide({
+      ...initial,
+      message_id: "schedule-value-message-2",
+      user_text: "",
+      tool_results: [{
+        action_id: preflightActionId,
+        method: "POST",
+        path: "/revit/replace-schedule-values",
+        status: "done",
+        result_json: {
+          status: "Dry Run",
+          applied: false,
+          planHash: "a".repeat(64),
+          writableCandidateCount: 2
+        }
+      }]
+    });
+    const applyActionId = second.actions[0]?.action_id ?? "";
+    assert.match(applyActionId, /^schedule-value-replacement-apply-/);
+    assert.equal(
+      (second.actions[0]?.body as Record<string, unknown>)?.expectedPlanHash,
+      "a".repeat(64)
+    );
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    __closeForTests();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("streaming brain dispatch reaches the same bounded schedule workflow", { concurrency: false }, async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "brain-schedule-stream-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const session = "brain-schedule-stream";
+  const initial: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: session,
+    message_id: "schedule-stream-1",
+    user_text: "change AHU-1 supply air from 10,000 to 20,000 on the schedule"
+  };
+  try {
+    const deltas: string[] = [];
+    const first = await decideStreaming(initial, { onDelta: text => deltas.push(text) });
+    const preflightActionId = first.actions[0]?.action_id ?? "";
+    assert.match(preflightActionId, /^schedule-cell-update-preflight-/);
+    assert.ok(deltas.join("").length > 0);
+    const second = await decideStreaming({
+      ...initial,
+      message_id: "schedule-stream-2",
+      user_text: "",
+      tool_results: [{
+        action_id: preflightActionId,
+        method: "POST",
+        path: "/revit/update-schedule-cell",
+        status: "done",
+        result_json: { status: "Dry Run", applied: false, candidate: { schedule: { id: 100 } }, before: { display: "10,000 CFM" } }
+      }]
+    }, { onDelta() {} });
+    const applyActionId = second.actions[0]?.action_id ?? "";
+    assert.match(applyActionId, /^schedule-cell-update-apply-/);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    __closeForTests();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

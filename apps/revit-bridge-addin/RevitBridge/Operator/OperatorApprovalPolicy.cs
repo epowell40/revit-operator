@@ -416,6 +416,12 @@ namespace RevitBridge.Operator
 
             if (m == "GET") return OperatorActionEffect.Read;
 
+            if (m == "POST" &&
+                string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))
+            {
+                return OperatorActionEffect.Preview;
+            }
+
             if (m == "POST" && HasMutatingBody(p, body))
             {
                 if (string.Equals(p, "/revit/list-element-types", StringComparison.OrdinalIgnoreCase) &&

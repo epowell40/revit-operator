@@ -10,7 +10,7 @@ import {
   type ToolExposurePolicyRecord
 } from "./tool_certification.js";
 
-export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:57b14a45d427818122cb7df0f2eb697a7883b8aadbc90abed305a74cc1ba8503";
+export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:6e85fc33a142914fa1e9ab94afd25a2e23ffab2cf757c1c7ef66548f3a982a27";
 
 const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;

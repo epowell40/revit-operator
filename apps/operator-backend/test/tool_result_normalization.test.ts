@@ -79,6 +79,21 @@ test("client request_effect and transport substitutions cannot downgrade a plann
   );
 });
 
+test("outcome-unknown tool results are retained and never remain retryable", () => {
+  const normalized = normalizeIncomingToolResults([{
+    action_id: "unknown-write",
+    method: "POST",
+    path: "/revit/update-schedule-cell",
+    status: "done",
+    retryable: true,
+    outcome_unknown: true
+  }], "unknown-write-session");
+
+  assert.equal(normalized[0]?.status, "failed");
+  assert.equal(normalized[0]?.outcome_unknown, true);
+  assert.equal(normalized[0]?.retryable, false);
+});
+
 test("conditional reads and previews are also classified from their planned bodies", () => {
   registerServerPlannedActions("session-a", [
     { action_id: "audit", method: "POST", path: "/revit/fire-damper-audit", body: { command: "audit" } },
@@ -89,6 +104,80 @@ test("conditional reads and previews are also classified from their planned bodi
     { action_id: "preview", method: "POST", path: "/revit/list-element-types", status: "done" }
   ], "session-a");
   assert.deepEqual(normalized.map(result => result.request_effect), ["read", "preview"]);
+});
+
+test("transaction plans remain previews with or without retained server plan state", () => {
+  const action = {
+    action_id: "transaction-plan-preview",
+    method: "POST" as const,
+    path: "/revit/transaction-plan",
+    body: { actions: [{ method: "POST", path: "/revit/set-parameters" }] }
+  };
+  registerServerPlannedActions("session-a", [action]);
+
+  const planned = normalizeIncomingToolResults([{
+    action_id: action.action_id,
+    method: action.method,
+    path: action.path,
+    status: "done"
+  }], "session-a");
+  assert.equal(planned[0]?.request_effect, "preview");
+
+  const unplanned = normalizeIncomingToolResults([{
+    action_id: "transaction-plan-after-restart",
+    method: "POST" as const,
+    path: "/revit/transaction-plan",
+    status: "done" as const
+  }], "session-without-plan");
+  assert.equal(unplanned[0]?.request_effect, "preview");
+
+  assert.throws(
+    () => normalizeIncomingToolResults([{
+      action_id: "transaction-plan-spoof",
+      method: "POST" as const,
+      path: "/revit/transaction-plan",
+      request_effect: "apply" as const,
+      status: "done" as const
+    }], "session-without-plan"),
+    /request_effect does not match server fail-closed policy/
+  );
+});
+
+test("schedule inspection POSTs remain reads with or without retained server plan state", () => {
+  const action = {
+    action_id: "schedule-read",
+    method: "POST" as const,
+    path: "/revit/schedules",
+    body: { action: "detail", scheduleId: 2284420, includeFields: true, includeData: true }
+  };
+  registerServerPlannedActions("session-a", [action]);
+
+  const planned = normalizeIncomingToolResults([{
+    action_id: action.action_id,
+    method: action.method,
+    path: action.path,
+    status: "done"
+  }], "session-a");
+  assert.equal(planned[0]?.request_effect, "read");
+
+  const unplanned = normalizeIncomingToolResults([{
+    action_id: "schedule-read-after-restart",
+    method: "POST" as const,
+    path: "/revit/schedules",
+    status: "done" as const
+  }], "session-without-plan");
+  assert.equal(unplanned[0]?.request_effect, "read");
+
+  assert.throws(
+    () => normalizeIncomingToolResults([{
+      action_id: "schedule-read-spoof",
+      method: "POST" as const,
+      path: "/revit/schedules",
+      request_effect: "apply" as const,
+      status: "done" as const
+    }], "session-without-plan"),
+    /request_effect does not match server fail-closed policy/
+  );
 });
 
 test("unplanned known read-only routes remain read-only but client effects are never authoritative", () => {

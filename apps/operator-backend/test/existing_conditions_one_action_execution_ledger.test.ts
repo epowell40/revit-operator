@@ -948,6 +948,149 @@ test("provider-independent loop enforces staged repair readback visual and check
   }
 });
 
+test("staged and verification receipts require the persisted action attempt", { concurrency: false }, () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-stale-stage-receipt-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try {
+    const sessionId = "stale-stage-receipt-session";
+    const fingerprint = "a".repeat(64);
+    const operation = {
+      action_key: "repair:move-retained",
+      observation_ids: ["retained-1"],
+      path: "/revit/move-elements",
+      depends_on: [],
+      expected_created_min: 0,
+      expected_created_max: 0,
+      apply_body: {
+        ids: [901],
+        mode: "vector",
+        vectorX: 1,
+        vectorY: 0,
+        vectorZ: 0,
+        moveTogether: true
+      }
+    };
+    const workflowBody = {
+      inputFingerprintSha256: fingerprint,
+      targetViewId: 123,
+      operations: [operation],
+      provisionalObservationIds: [],
+      dryRun: true,
+      verify: true,
+      maximumCreatedElements: 1
+    };
+    const initial = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId),
+      decision: response([{
+        action_id: "provider-stale-stage",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        body: workflowBody
+      }])
+    });
+    const dryRunActionId = initial.actions[0]!.action_id;
+
+    const staleStage = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: "orphan-stage-result",
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "done",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey: "operation:repair:move-retained",
+          status: "DryRunReady",
+          dryRun: true,
+          rollbackVerified: true,
+          residualCreatedElementIds: [],
+          operationOutputs: [{ action_key: "repair:move-retained", created_element_ids: [], affected_element_ids: [901] }]
+        }
+      }]),
+      decision: response([])
+    });
+    assert.deepEqual(
+      readExistingConditionsRepairLedger(sessionId).map(entry => entry.event),
+      ["workflow_registered", "stage_registered"]
+    );
+    assert.deepEqual(staleStage.actions, []);
+    assert.match(staleStage.assistant_message, /in flight|duplicate/i);
+
+    const apply = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: dryRunActionId,
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "done",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey: "operation:repair:move-retained",
+          status: "DryRunReady",
+          dryRun: true,
+          rollbackVerified: true,
+          residualCreatedElementIds: [],
+          operationOutputs: [{ action_key: "repair:move-retained", created_element_ids: [], affected_element_ids: [901] }]
+        }
+      }]),
+      decision: response([])
+    });
+    assert.equal((apply.actions[0]?.body as Record<string, unknown>)?.dryRun, false);
+    const applyActionId = apply.actions[0]!.action_id;
+
+    const readback = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: applyActionId,
+        method: "POST",
+        path: "/revit/existing-conditions-mep-draft-workflow",
+        status: "done",
+        result_json: {
+          inputFingerprintSha256: fingerprint,
+          stageKey: "operation:repair:move-retained",
+          status: "Applied",
+          dryRun: false,
+          atomic: true,
+          operationOutputs: [{ action_key: "repair:move-retained", created_element_ids: [], affected_element_ids: [901] }]
+        }
+      }]),
+      decision: response([])
+    });
+    assert.equal(readback.actions[0]?.path, "/revit/get-element-summary");
+    const readbackActionId = readback.actions[0]!.action_id;
+
+    const staleReadback = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: "orphan-readback-result",
+        method: "POST",
+        path: "/revit/get-element-summary",
+        status: "done",
+        result_json: [{ id: 901, found: true }]
+      }]),
+      decision: response([])
+    });
+    assert.deepEqual(staleReadback.actions, []);
+    assert.doesNotMatch(
+      readExistingConditionsRepairLedger(sessionId).map(entry => entry.event).join(","),
+      /readback_accepted/
+    );
+
+    const visual = enforceExistingConditionsOneActionLoop({
+      req: request(sessionId, [{
+        action_id: readbackActionId,
+        method: "POST",
+        path: "/revit/get-element-summary",
+        status: "done",
+        result_json: [{ id: 901, found: true }]
+      }]),
+      decision: response([])
+    });
+    assert.equal(visual.actions[0]?.path, "/revit/highlight-and-export");
+    assert.ok(readExistingConditionsRepairLedger(sessionId).some(entry => entry.event === "readback_accepted"));
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+  }
+});
+
 test("recovered apply warning rejects only the active stage before sidecar observation", { concurrency: false }, () => {
   const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-recovered-stage-"));
@@ -1161,9 +1304,17 @@ test("explicit dry-run-only request pauses before apply after an accepted dry-ru
       workflow
     });
 
-    const initial = maybeContinueExistingConditionsOneActionLoop({
+    const initialPlan = maybeContinueExistingConditionsOneActionLoop({
       ...request(sessionId),
       user_text: "Dry-run only. Never apply this stage."
+    });
+    assert.ok(initialPlan);
+    const initial = enforceExistingConditionsOneActionLoop({
+      req: {
+        ...request(sessionId),
+        user_text: "Dry-run only. Never apply this stage."
+      },
+      decision: initialPlan
     });
     assert.ok(initial);
     const stageKey = String((initial.actions[0]?.body as Record<string, unknown>).stageKey);
@@ -1274,9 +1425,17 @@ test("clean failed backbone batch can pause after automatic split registration",
       workflow
     });
 
-    const initial = maybeContinueExistingConditionsOneActionLoop({
+    const initialPlan = maybeContinueExistingConditionsOneActionLoop({
       ...request(sessionId),
       user_text: "If blocked, stop before executing either split stage."
+    });
+    assert.ok(initialPlan);
+    const initial = enforceExistingConditionsOneActionLoop({
+      req: {
+        ...request(sessionId),
+        user_text: "If blocked, stop before executing either split stage."
+      },
+      decision: initialPlan
     });
     assert.ok(initial);
     assert.equal(initial.actions[0]?.path, "/revit/existing-conditions-mep-draft-workflow");
