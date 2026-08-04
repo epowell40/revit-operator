@@ -595,7 +595,7 @@ namespace RevitBridge.Operator
             if (request == null) throw new ArgumentNullException(nameof(request));
             var body = JsonSerializer.Serialize(new
             {
-                schema = "revit-operator.revit-direct-admission-request.v1",
+                schema = "revit-operator.revit-direct-admission-request.v2",
                 request_id = request.RequestId,
                 method = request.Method,
                 path = request.Path,
