@@ -201,7 +201,10 @@ test("hosted MCP courier is session-bound, approval-gated, and never auto-replay
   assert.doesNotMatch(queue, /status:\s*"pending"[\s\S]{0,160}Previous claim expired/);
   assert.match(mcpClient, /OPERATOR_REVIT_TRANSPORT/);
   assert.match(mcpClient, /callRevitViaCourier/);
-  assert.match(codexBrain, /clientsByWorkspace = new Map/);
+  assert.match(codexBrain, /clientsByProfile = new Map/);
+  assert.match(codexBrain, /function clientCacheKey\(workspaceRoot: string, profile: CodexThreadStartProfile\)/);
+  assert.match(codexBrain, /profile\.profileNamespace/);
+  assert.match(codexBrain, /mcpRuntimesByWorkspace = new Map/);
   assert.match(codexBrain, /fn:\s*\(client: CodexAppServer\)/);
   assert.doesNotMatch(codexBrain, /let client:\s*CodexAppServer\s*\|\s*null/);
 });

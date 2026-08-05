@@ -6,7 +6,7 @@ import { appendEvent } from "../memory/sqlite_store.js";
 import { appendNotification } from "../memory/sqlite_store.js";
 import { getCodexThreadId, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
-import { ensureCodexHomeAuth, ensureCodexHomeConfig } from "../codex/config.js";
+import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
 import {
@@ -32,8 +32,11 @@ import { getPinnedGoal } from "../session_store.js";
 import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
-import { AGENT_RESPONSE_STYLE_LINES, formatAgentTurnContract } from "../agent_response_policy.js";
+import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
+import { formatCodexRequestEnvelope, getCodexThreadStartProfile, type CodexThreadStartProfile } from "./codex_turn_profile.js";
+import { formatCodexPermissionSummary } from "./codex_permission_summary.js";
+import { assertCertifiedMcpServerStatus } from "../codex/certified_mcp_status.js";
 import {
   beginTeammateLoopOwner,
   bindTeammateLoopOwnerTurn,
@@ -58,47 +61,15 @@ export type FreshRevitEvidenceRequirement = {
 const FRESH_REVIT_EVIDENCE_FAILURE =
   "I could not verify this against live Revit because the required Revit tool did not complete successfully in this turn. No result was guessed.";
 
-const clientsByWorkspace = new Map<string, CodexAppServer>();
+const clientsByProfile = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
 const revitToolParallelGuard = new RevitToolParallelGuard();
 const lastPermissionSignatureBySession = new Map<string, string>();
 const activeCodexTurnAborts = new Map<string, AbortController>();
 
 export { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
-
-function clipPromptBlock(value: string, maxChars: number): string {
-  return value.length <= maxChars ? value : `${value.slice(0, maxChars)}\n…(truncated)`;
-}
-
-export function formatCodexRequestEnvelope(req: ChatRequest): string {
-  const blocks: string[] = [];
-  const turnContract = formatAgentTurnContract(req.user_text, req.context);
-  if (turnContract) blocks.push(turnContract);
-  if (req.context !== undefined) {
-    try {
-      blocks.push(
-        `CURRENT REVIT/SERVER CONTEXT:\n${clipPromptBlock(JSON.stringify(req.context, null, 2), 20_000)}`
-      );
-    } catch {
-      blocks.push("CURRENT REVIT/SERVER CONTEXT:\n(not serializable)");
-    }
-  }
-
-  if (Array.isArray(req.user_attachments) && req.user_attachments.length > 0) {
-    const attachments = req.user_attachments.map(attachment => ({
-      id: attachment.id,
-      relative_path: attachment.relative_path,
-      filename: attachment.filename,
-      mime: attachment.mime,
-      bytes: attachment.bytes,
-      sha256: attachment.sha256
-    }));
-    blocks.push(
-      `USER ATTACHMENTS (paths are relative to the Operator Workspace; inspect these exact files when visual evidence is required):\n${clipPromptBlock(JSON.stringify(attachments, null, 2), 8_000)}`
-    );
-  }
-  return blocks.join("\n\n");
-}
+export { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
+export { assertCertifiedMcpServerStatus };
 
 function codexTurnAbortKey(sessionId: string, messageId: string): string {
   return `${sessionId.trim()}:${messageId.trim()}`;
@@ -135,6 +106,14 @@ function getWorkspaceRoot(): string {
 
 function getCodexHome(workspaceRoot: string): string {
   return path.join(workspaceRoot, ".codex");
+}
+
+function getCodexProfilePaths(workspaceRoot: string, profile: CodexThreadStartProfile): { codexHome: string; cwd: string } {
+  if (profile.certified) return prepareCertifiedCodexIsolation({ workspaceRoot });
+  const codexHome = getCodexHome(workspaceRoot);
+  ensureCodexHomeAuth({ codexHome });
+  ensureCodexHomeConfig({ codexHome });
+  return { codexHome, cwd: workspaceRoot };
 }
 
 function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
@@ -231,6 +210,15 @@ export function getOperatorAgentBaseInstructions(): string {
   ].join("\n");
 }
 
+export type { CodexThreadStartProfile } from "./codex_turn_profile.js";
+
+export function getCodexThreadStartProfileForTest(req: Pick<ChatRequest, "session_id" | "context">): CodexThreadStartProfile {
+  return getCodexThreadStartProfile(req, {
+    baseInstructions: getOperatorAgentBaseInstructions(),
+    developerInstructions: developerInstructions()
+  });
+}
+
 function truncateForCodex(value: string, maxChars = 1600): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}…(truncated)`;
@@ -283,6 +271,8 @@ function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): strin
     if (!r || typeof r !== "object") continue;
     const head = `- [${i}] ${String(r.status || "").toUpperCase()} ${r.method} ${r.path} (action_id=${r.action_id})`;
     lines.push(head);
+    const failureCode = typeof r.failure_code === "string" ? r.failure_code.trim() : "";
+    if (failureCode) lines.push(`  - failure_code: ${failureCode}`);
 
     const atts = Array.isArray(r.attachments) ? r.attachments : [];
     const imgs = atts.filter(a => a && typeof a === "object" && (a as any).kind === "image");
@@ -310,47 +300,16 @@ export function formatToolResultsForCodexForTest(toolResults: ToolResult[] | und
   return formatToolResultsForCodex(toolResults);
 }
 
-function formatPermissionSummaryFromContext(ctx: unknown): { summary: string; signature: string } | null {
-  try {
-    const ui: any = (ctx as any)?.ui;
-    if (!ui || typeof ui !== "object") return null;
+function formatCertifiedCodexContinuation(req: ChatRequest): string {
+  return [
+    formatCodexRequestEnvelope(req),
+    formatToolResultsForCodex(req.tool_results),
+    "Continue from the certified context and the recorded pre-dispatch limitation. Provide a terminal evidence answer without requesting tools."
+  ].filter(Boolean).join("\n\n");
+}
 
-    const approvalMode = typeof ui.approval_mode === "string" ? ui.approval_mode.trim() : "";
-    const wg: any = ui.write_grant;
-    const nativeApi: any = ui.native_api_policy;
-
-    let wgSummary = "off";
-    let wgSig = "off";
-    if (wg && typeof wg === "object") {
-      const active = wg.active === true;
-      const mode = typeof wg.mode === "string" ? wg.mode.trim() : "";
-      const exp = typeof wg.expires_at_utc === "string" ? wg.expires_at_utc.trim() : "";
-      const uses = Number.isFinite(wg.uses_remaining) ? String(wg.uses_remaining) : "";
-      const err = typeof wg.error === "string" ? wg.error.trim() : "";
-
-      if (!active && err) wgSummary = `error (${err})`;
-      else if (active) {
-        const bits = [`active`, mode ? `mode=${mode}` : null, uses ? `uses_remaining=${uses}` : null, exp ? `expires_at_utc=${exp}` : null]
-          .filter(Boolean)
-          .join(" ");
-        wgSummary = bits || "active";
-      } else {
-        wgSummary = "off";
-      }
-
-      wgSig = [active ? "1" : "0", mode || "", uses || "", exp || "", err || ""].join("|");
-    }
-
-    const nativeProfile = nativeApi && typeof nativeApi === "object" && typeof nativeApi.profile === "string" ? nativeApi.profile.trim() : "";
-    const nativeLocked = nativeApi && typeof nativeApi === "object" && nativeApi.locked === true;
-    const nativeSig = [nativeProfile || "", nativeLocked ? "1" : "0"].join("|");
-    const nativeSummary = nativeProfile ? ` native_api_profile=${nativeProfile}${nativeLocked ? " (locked)" : ""};` : "";
-    const summary = `Bridge permissions: approval_mode=${approvalMode || "unknown"}; write_grant=${wgSummary};${nativeSummary}`.replace(/;\s*$/, ".");
-    const signature = [approvalMode || "", wgSig, nativeSig].join("||");
-    return { summary, signature };
-  } catch {
-    return null;
-  }
+export function formatCertifiedCodexContinuationForTest(req: ChatRequest): string {
+  return formatCertifiedCodexContinuation(req);
 }
 
 function developerInstructions(): string {
@@ -553,44 +512,71 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
   throw new Error(`Unsupported Codex server request: ${request.method}`);
 }
 
-async function getClient(workspaceRoot = getWorkspaceRoot()): Promise<CodexAppServer> {
-  const existing = clientsByWorkspace.get(workspaceRoot);
+export async function handleCertifiedCodexServerRequest(request: CodexServerRequest): Promise<unknown> {
+  const method = request.method.toLowerCase();
+  if (/(?:^|\/)(?:dynamic)?tool\/call$/.test(method) || (method.startsWith("mcp") && request.method !== "mcpServer/elicitation/request")) {
+    return { contentItems: [{ type: "inputText", text: "Certified direct mode does not permit dynamic, MCP, or Revit tool execution." }], success: false };
+  }
+  if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") return { decision: "decline" };
+  if (request.method === "mcpServer/elicitation/request") return { action: "decline", content: null, _meta: null };
+  if (request.method === "item/tool/requestUserInput") return { answers: {} };
+  if (request.method === "currentTime/read") return { currentTimeAt: Math.floor(Date.now() / 1000) };
+  throw new Error(`Unsupported certified Codex server request: ${request.method}`);
+}
+
+function clientCacheKey(workspaceRoot: string, profile: CodexThreadStartProfile): string {
+  return `${workspaceRoot}\u0000${profile.profileNamespace}`;
+}
+
+async function getClient(workspaceRoot: string, profile: CodexThreadStartProfile): Promise<CodexAppServer> {
+  const cacheKey = clientCacheKey(workspaceRoot, profile);
+  const existing = clientsByProfile.get(cacheKey);
   if (existing) return existing;
-  const codexHome = getCodexHome(workspaceRoot);
-  ensureCodexHomeAuth({ codexHome });
-  ensureCodexHomeConfig({ codexHome });
+  const { codexHome, cwd } = getCodexProfilePaths(workspaceRoot, profile);
   const spawnEnv = buildCodexSpawnEnv(workspaceRoot);
-  let mcpRuntime = mcpRuntimesByWorkspace.get(workspaceRoot);
-  if (!mcpRuntime) {
-    mcpRuntime = new CodexMcpToolRuntime({
-      backendCwd: process.cwd(),
-      workspaceRoot,
-      codexHome,
-      spawnEnv
-    });
-    mcpRuntimesByWorkspace.set(workspaceRoot, mcpRuntime);
+  let mcpRuntime: CodexMcpToolRuntime | undefined;
+  if (!profile.certified) {
+    mcpRuntime = mcpRuntimesByWorkspace.get(workspaceRoot);
+    if (!mcpRuntime) {
+      mcpRuntime = new CodexMcpToolRuntime({
+        backendCwd: process.cwd(),
+        workspaceRoot,
+        codexHome,
+        spawnEnv
+      });
+      mcpRuntimesByWorkspace.set(workspaceRoot, mcpRuntime);
+    }
   }
 
   const client = new CodexAppServer({
-    cwd: workspaceRoot,
+    cwd,
     codexHome,
     spawnEnv
   });
-  client.setServerRequestHandler(async request => await handleCodexServerRequest(mcpRuntime, request));
-  clientsByWorkspace.set(workspaceRoot, client);
+  client.setServerRequestHandler(async request => profile.certified
+    ? await handleCertifiedCodexServerRequest(request)
+    : await handleCodexServerRequest(mcpRuntime!, request));
+  clientsByProfile.set(cacheKey, client);
   try {
     await client.ensureStarted();
+    if (profile.certified) assertCertifiedMcpServerStatus(await client.request("mcpServerStatus/list", {
+      cursor: null,
+      limit: 100,
+      detail: "toolsAndAuthOnly",
+    }));
   } catch (error) {
-    if (clientsByWorkspace.get(workspaceRoot) === client) clientsByWorkspace.delete(workspaceRoot);
+    if (clientsByProfile.get(cacheKey) === client) clientsByProfile.delete(cacheKey);
     client.stop();
     throw error;
   }
 
   // Ensure MCP server config is reloaded at least once on startup.
-  try {
-    await client.request("config/mcpServer/reload", undefined);
-  } catch {
-    // best effort; some codex versions may not expose this method
+  if (!profile.certified) {
+    try {
+      await client.request("config/mcpServer/reload", undefined);
+    } catch {
+      // best effort; some codex versions may not expose this method
+    }
   }
 
   return client;
@@ -601,16 +587,17 @@ function isTransportClosedError(err: unknown): boolean {
   return /transport closed/i.test(msg) || /app-server exited/i.test(msg) || /ECONNRESET/i.test(msg);
 }
 
-async function withTransportRetry<T>(workspaceRoot: string, fn: (client: CodexAppServer) => Promise<T>): Promise<T> {
-  let client = await getClient(workspaceRoot);
+async function withTransportRetry<T>(workspaceRoot: string, profile: CodexThreadStartProfile, fn: (client: CodexAppServer) => Promise<T>): Promise<T> {
+  const cacheKey = clientCacheKey(workspaceRoot, profile);
+  let client = await getClient(workspaceRoot, profile);
   try {
     return await fn(client);
   } catch (err) {
     if (!isTransportClosedError(err)) throw err;
     // Best-effort: restart the app-server connection once and retry.
-    if (clientsByWorkspace.get(workspaceRoot) === client) clientsByWorkspace.delete(workspaceRoot);
+    if (clientsByProfile.get(cacheKey) === client) clientsByProfile.delete(cacheKey);
     client.stop();
-    client = await getClient(workspaceRoot);
+    client = await getClient(workspaceRoot, profile);
     // Touch the connection to ensure it's alive.
     try {
       await client.request("initialize", {
@@ -625,28 +612,33 @@ async function withTransportRetry<T>(workspaceRoot: string, fn: (client: CodexAp
 }
 
 export async function warmCodexAppServer(): Promise<void> {
-  await getClient(getWorkspaceRoot());
+  await getClient(getWorkspaceRoot(), getCodexThreadStartProfileForTest({ session_id: "warm", context: {} }));
 }
 
 export function getCodexAppServerCompatibility(): { version: ReturnType<CodexAppServer["getCompatibilityReceipt"]>["version"]; initialized: boolean } | null {
-  const receipt = clientsByWorkspace.get(getWorkspaceRoot())?.getCompatibilityReceipt();
+  const profile = getCodexThreadStartProfileForTest({ session_id: "compatibility", context: {} });
+  const receipt = clientsByProfile.get(clientCacheKey(getWorkspaceRoot(), profile))?.getCompatibilityReceipt();
   return receipt ? { version: receipt.version, initialized: receipt.initialize_response !== null } : null;
 }
 
-async function getOrCreateThreadId(sessionId: string, client: CodexAppServer, workspaceRoot: string): Promise<string> {
-  const existing = getCodexThreadId(sessionId);
+async function getOrCreateThreadId(req: ChatRequest, client: CodexAppServer, workspaceRoot: string): Promise<string> {
+  const profile = getCodexThreadStartProfileForTest(req);
+  const existing = getCodexThreadId(profile.threadKey);
   if (existing) return existing;
 
-  const runtime = mcpRuntimesByWorkspace.get(workspaceRoot);
-  if (!runtime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
-  const dynamicTools = [await runtime.getDynamicToolNamespace()];
+  const dynamicTools: unknown[] = [];
+  if (profile.dynamicToolMode === "revit_runtime") {
+    const runtime = mcpRuntimesByWorkspace.get(workspaceRoot);
+    if (!runtime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+    dynamicTools.push(await runtime.getDynamicToolNamespace());
+  }
   const resp = (await client.request("thread/start", {
-    cwd: workspaceRoot,
-    sandbox: "workspace-write",
-    approvalPolicy: "never",
+    cwd: getCodexProfilePaths(workspaceRoot, profile).cwd,
+    sandbox: profile.sandbox,
+    approvalPolicy: profile.approvalPolicy,
     model: getDefaultModel(),
-    baseInstructions: getOperatorAgentBaseInstructions(),
-    developerInstructions: developerInstructions(),
+    baseInstructions: profile.baseInstructions,
+    developerInstructions: profile.developerInstructions,
     dynamicTools,
     experimentalRawEvents: false
   })) as any;
@@ -661,9 +653,9 @@ async function getOrCreateThreadId(sessionId: string, client: CodexAppServer, wo
     // ignore; not required on all builds
   }
 
-  setCodexThreadId(sessionId, threadId);
+  setCodexThreadId(profile.threadKey, threadId);
   try {
-    appendEvent(sessionId, "assistant", "codex.thread.start", { thread_id: threadId });
+    appendEvent(req.session_id, "assistant", "codex.thread.start", profile.certified ? { thread_id: threadId, certified: true } : { thread_id: threadId });
   } catch {
     // ignore
   }
@@ -677,19 +669,23 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 }
 
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
-  let courierTarget: ReturnType<typeof revitCourierTargetFromContext>;
-  try {
-    courierTarget = revitCourierTargetFromContext(req.context);
-  } catch (error) {
-    const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+  const threadProfile = getCodexThreadStartProfileForTest(req);
+  const certifiedDirect = threadProfile.certified;
+  let courierTarget: ReturnType<typeof revitCourierTargetFromContext> | undefined;
+  if (!certifiedDirect) {
+    try {
+      courierTarget = revitCourierTargetFromContext(req.context);
+    } catch (error) {
+      const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
+      cb.onDone?.(message);
+      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+    }
   }
   const workspaceRoot = getWorkspaceRoot();
-  let c = await getClient(workspaceRoot);
-  const threadId = await withTransportRetry(workspaceRoot, async activeClient => {
+  let c = await getClient(workspaceRoot, threadProfile);
+  const threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
     c = activeClient;
-    return await getOrCreateThreadId(req.session_id, activeClient, workspaceRoot);
+    return await getOrCreateThreadId(req, activeClient, workspaceRoot);
   });
 
   // Some app-server builds require a conversation listener for streaming notifications;
@@ -701,25 +697,27 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   const text = (req.user_text ?? "").toString();
-  const freshEvidenceRequirement = getFreshRevitEvidenceRequirement(text);
+  const freshEvidenceRequirement = certifiedDirect ? { required: false, kind: "none" as const, prompt: "" } : getFreshRevitEvidenceRequirement(text);
   let memBlock = "";
   let projectProfileBlock = "";
   let requirementsBlock = "";
   let requirementsReceipt: RequirementsReceipt | null = null;
   let requirementsError = "";
-  const allowUnscopedLegacyMemory = mayInjectUnscopedLegacyMemory(req.context);
+  const allowUnscopedLegacyMemory = !certifiedDirect && mayInjectUnscopedLegacyMemory(req.context);
   try {
     projectProfileBlock = allowUnscopedLegacyMemory ? formatProjectProfileForPrompt() : "";
   } catch {
     projectProfileBlock = "";
   }
-  try {
-    requirementsReceipt = resolveRequirementsForChat(req);
-    requirementsBlock = formatRequirementsForPrompt(requirementsReceipt);
-  } catch (error) {
-    requirementsReceipt = null;
-    requirementsBlock = "";
-    requirementsError = error instanceof Error ? error.message : String(error);
+  if (!certifiedDirect) {
+    try {
+      requirementsReceipt = resolveRequirementsForChat(req);
+      requirementsBlock = formatRequirementsForPrompt(requirementsReceipt);
+    } catch (error) {
+      requirementsReceipt = null;
+      requirementsBlock = "";
+      requirementsError = error instanceof Error ? error.message : String(error);
+    }
   }
   if (requirementsError) {
     const message = `Durable requirements could not be read safely (${requirementsError}). I stopped before planning or tool actions.`;
@@ -760,27 +758,31 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
           type: "text",
           text: (() => {
             const blocks: string[] = [];
-            if (activeGoalBlock) blocks.push(activeGoalBlock);
+            if (!certifiedDirect && activeGoalBlock) blocks.push(activeGoalBlock);
             if (projectProfileBlock) blocks.push(projectProfileBlock);
             if (requirementsBlock) blocks.push(requirementsBlock);
-            try {
-              blocks.push(formatEnvironmentSummaryForPrompt());
-            } catch {}
-            try {
-              const contractMemory = formatRevitToolContractMemoryForPrompt();
-              if (contractMemory) blocks.push(contractMemory);
-            } catch {}
+            if (!certifiedDirect) {
+              try {
+                blocks.push(formatEnvironmentSummaryForPrompt());
+              } catch {}
+              try {
+                const contractMemory = formatRevitToolContractMemoryForPrompt();
+                if (contractMemory) blocks.push(contractMemory);
+              } catch {}
+            }
             if (freshEvidenceRequirement.prompt) blocks.push(freshEvidenceRequirement.prompt);
             if (memBlock) blocks.push(`MEMORY CONTEXT (read-only):\n${memBlock}`);
-            try {
-              const perms = formatPermissionSummaryFromContext(req.context);
-              if (perms) {
-                const prev = lastPermissionSignatureBySession.get(req.session_id) || "";
-                lastPermissionSignatureBySession.set(req.session_id, perms.signature);
-                if (prev && prev !== perms.signature) blocks.push(`PERMISSION UPDATE (changed since last message):\n${perms.summary}`);
-                else blocks.push(perms.summary);
-              }
-            } catch {}
+            if (!certifiedDirect) {
+              try {
+                const perms = formatCodexPermissionSummary(req.context);
+                if (perms) {
+                  const prev = lastPermissionSignatureBySession.get(req.session_id) || "";
+                  lastPermissionSignatureBySession.set(req.session_id, perms.signature);
+                  if (prev && prev !== perms.signature) blocks.push(`PERMISSION UPDATE (changed since last message):\n${perms.summary}`);
+                  else blocks.push(perms.summary);
+                }
+              } catch {}
+            }
             const requestEnvelope = formatCodexRequestEnvelope(req);
             if (requestEnvelope) blocks.push(requestEnvelope);
             if (text.trim()) blocks.push(`USER:\n${text}`);
@@ -791,8 +793,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
           text_elements: [] as any[]
         }
       ]
-    : // If the client sends an empty user_text (legacy tool-loop continuation), still nudge Codex.
-      [{ type: "text", text: [activeGoalBlock, requirementsBlock, "(continue)"].filter(Boolean).join("\n\n"), text_elements: [] as any[] }];
+    : certifiedDirect
+      ? [{ type: "text", text: formatCertifiedCodexContinuation(req), text_elements: [] as any[] }]
+      // If the client sends an empty user_text (legacy tool-loop continuation), still nudge Codex.
+      : [{ type: "text", text: [activeGoalBlock, requirementsBlock, "(continue)"].filter(Boolean).join("\n\n"), text_elements: [] as any[] }];
 
   let requirementsLease: ReturnType<typeof beginRequirementsPlanningLease> | null = null;
   if (requirementsReceipt) {
@@ -818,21 +822,23 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
     }
   }
-  const mcpRuntime = mcpRuntimesByWorkspace.get(workspaceRoot);
-  if (!mcpRuntime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+  const mcpRuntime = threadProfile.startRevitTurnRuntime ? mcpRuntimesByWorkspace.get(workspaceRoot) : null;
+  if (threadProfile.startRevitTurnRuntime && !mcpRuntime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
   let teammateContext: ReturnType<typeof beginTeammateLoopOwner> | null = null;
-  let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease>;
+  let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
   let start: any;
   try {
-    teammateContext = beginTeammateLoopOwner(mcpRuntime, req);
-    courierContext = beginRevitCourierTurnContext({
-      session_id: req.session_id,
-      message_id: req.message_id,
-      ttl_ms: codexTurnTimeoutMs() + 60_000,
-      ...courierTarget
-    });
-    start = (await withTransportRetry(workspaceRoot, async activeClient => {
+    if (threadProfile.startRevitTurnRuntime) {
+      teammateContext = beginTeammateLoopOwner(mcpRuntime!, req);
+      courierContext = beginRevitCourierTurnContext({
+        session_id: req.session_id,
+        message_id: req.message_id,
+        ttl_ms: codexTurnTimeoutMs() + 60_000,
+        ...courierTarget!
+      });
+    }
+    start = (await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
       return await activeClient.request("turn/start", {
         threadId,
@@ -1103,7 +1109,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
   let turnCancelled = false;
   try {
-    await withTransportRetry(workspaceRoot, async activeClient => {
+    await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
       return await activeClient.waitForTurnCompleted({
         threadId,
@@ -1122,7 +1128,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       activeCodexTurnAborts.delete(activeTurnKey);
     }
     endRequirementsPlanningLease(requirementsLease);
-    teammateReceipt = teammateLoopReceiptForLease(teammateContext);
+    teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
     endTeammateLoopOwner(teammateContext);
     teammateContext = null;
     endRevitCourierTurnContext(courierContext);

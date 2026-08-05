@@ -2,10 +2,168 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   __testOnlyTrackCodexBrainTurnAbort,
+  assertCertifiedMcpServerStatus,
   cancelCodexBrainTurn,
+  formatCodexRequestEnvelope,
+  formatCertifiedCodexContinuationForTest,
   formatToolResultsForCodexForTest,
+  getCodexThreadStartProfileForTest,
+  handleCertifiedCodexServerRequest,
   getCodexBaseInstructionsForTest
 } from "../src/brains/codex_brain.js";
+
+const certifiedBinding = {
+  schema: "revit-operator.certified-sidecar-bootstrap.v1",
+  method: "GET",
+  path: "/revit/context",
+  request: {},
+  effect: "read",
+  channel: "typed_mcp",
+  alias: "revit_get_context"
+};
+
+test("certified Codex threads are isolated from MCP and Revit turn runtimes", () => {
+  const certified = getCodexThreadStartProfileForTest({
+    session_id: "session-profile",
+    context: { operator_brain_route: "direct", certified_sidecar_bootstrap: certifiedBinding }
+  });
+  assert.equal(certified.certified, true);
+  assert.equal(certified.threadKey, "certified-v1:15:session-profile");
+  assert.equal(certified.sandbox, "read-only");
+  assert.equal(certified.approvalPolicy, "never");
+  assert.equal(certified.dynamicToolMode, "none");
+  assert.equal(certified.startRevitTurnRuntime, false);
+  assert.match(certified.baseInstructions, /only executable Revit action.*GET \/revit\/context/i);
+  assert.doesNotMatch(certified.baseInstructions, /revit_search_tools|Execution ladder/i);
+
+  const normal = getCodexThreadStartProfileForTest({ session_id: "session-profile", context: {} });
+  assert.equal(normal.certified, false);
+  assert.equal(normal.threadKey, "normal-v1:15:session-profile");
+  assert.equal(normal.sandbox, "workspace-write");
+  assert.equal(normal.dynamicToolMode, "revit_runtime");
+  assert.equal(normal.startRevitTurnRuntime, true);
+});
+
+test("Codex persisted profile keys remain disjoint for adversarial session strings", () => {
+  const certified = getCodexThreadStartProfileForTest({
+    session_id: "s",
+    context: { operator_brain_route: "direct", certified_sidecar_bootstrap: certifiedBinding }
+  });
+  const normalCollision = getCodexThreadStartProfileForTest({ session_id: "s:certified-direct", context: {} });
+  const normalDelimiter = getCodexThreadStartProfileForTest({ session_id: "certified-v1:1:s", context: {} });
+  const certifiedDelimiter = getCodexThreadStartProfileForTest({
+    session_id: "normal-v1:1:s",
+    context: { operator_brain_route: "direct", certified_sidecar_bootstrap: certifiedBinding }
+  });
+  assert.notEqual(certified.threadKey, normalCollision.threadKey);
+  assert.notEqual(normalDelimiter.threadKey, certifiedDelimiter.threadKey);
+  assert.match(certified.threadKey, /^certified-v1:1:s$/);
+  assert.match(normalCollision.threadKey, /^normal-v1:18:s:certified-direct$/);
+});
+
+test("certified envelope is canonical, bounded, and omits generic turn guidance", () => {
+  const envelope = formatCodexRequestEnvelope({
+    version: "operator.backend.v1",
+    session_id: "envelope",
+    message_id: "m-envelope",
+    user_text: "change everything",
+    user_attachments: [{ id: "ignored", filename: "ignored.pdf", bytes: 99 }],
+    context: {
+      unrelated: "x".repeat(35_000),
+      operator_brain_route: "direct",
+      certified_sidecar_bootstrap: certifiedBinding,
+      revit: {
+        source: { live: true, provenance: "typed_mcp" },
+        process_id: 42,
+        courier_executor_id: "executor-a",
+        document: { projectIdentity: "project-1", activeView: { id: "v1", name: "COVER", type: "DrawingSheet" } },
+        readiness: { active_document_name: "Snowdon Towers", active_document_path: "C:/Model.rvt", active_view_name: "COVER", active_view_type: "DrawingSheet", selection: [1, 2] }
+      },
+      ui: { revit_document: { process_id: 42 } }
+    }
+  });
+  assert.match(envelope, /"active_document_name":"Snowdon Towers"/);
+  assert.match(envelope, /"active_document_path":"C:\/Model\.rvt"/);
+  assert.match(envelope, /COVER/);
+  assert.doesNotMatch(envelope, /"document":\{"title":"Snowdon Towers"|"document":\{[^}]*"path":"C:\/Model\.rvt"/);
+  assert.match(envelope, /certified_sidecar_bootstrap/);
+  assert.match(envelope, /revit_get_context/);
+  assert.doesNotMatch(envelope, /x{1000}|CURRENT TURN CONTRACT|discover one exact contract|apply once only|ignored\.pdf/);
+});
+
+test("normal Codex envelope retains the generic contract and attachment metadata", () => {
+  const envelope = formatCodexRequestEnvelope({
+    version: "operator.backend.v1",
+    session_id: "normal-envelope",
+    message_id: "m-normal",
+    user_text: "Inspect the model.",
+    context: {},
+    user_attachments: [{ id: "attachment-1", filename: "normal.pdf", bytes: 99 }]
+  });
+  assert.match(envelope, /CURRENT TURN CONTRACT/);
+  assert.match(envelope, /normal\.pdf/);
+});
+
+test("certified Codex handler declines dynamic MCP requests without a runtime dispatch", async () => {
+  let callToolCalls = 0;
+  const runtime = { callTool: () => { callToolCalls += 1; } };
+  for (const method of ["item/tool/call", "item/dynamicTool/call"]) {
+    const response = await handleCertifiedCodexServerRequest({
+      method,
+      params: { namespace: "revit_operator", tool: "revit_find_elements", arguments: {} }
+    } as any);
+    assert.equal((response as any).success, false);
+    assert.match((response as any).contentItems[0].text, /does not permit dynamic, MCP, or Revit tool execution/);
+  }
+  assert.equal(callToolCalls, 0);
+  void runtime;
+});
+
+test("certified startup fails closed when MCP status exposes an adversarial server", () => {
+  assert.doesNotThrow(() => assertCertifiedMcpServerStatus({ data: [] }));
+  assert.doesNotThrow(() => assertCertifiedMcpServerStatus({ data: [], nextCursor: null }));
+  for (const malformed of [
+    {},
+    { data: "not-an-array" },
+    { data: [], nextCursor: "page-2" },
+    { data: [], mcpServers: [{ name: "evil" }] },
+    { data: [], unknown: true },
+  ]) {
+    assert.throws(
+      () => assertCertifiedMcpServerStatus(malformed),
+      /Certified Codex MCP status is unavailable or malformed/,
+    );
+  }
+  assert.throws(
+    () => assertCertifiedMcpServerStatus({ data: [{ name: "evil", command: "fake-mcp-server" }] }),
+    /refused configured MCP servers: evil/
+  );
+});
+
+test("certified empty Codex continuations retain context and the denied synthetic result", () => {
+  const continuation = formatCertifiedCodexContinuationForTest({
+    version: "operator.backend.v1",
+    session_id: "session-continuation",
+    message_id: "message-continuation",
+    user_text: "",
+    context: { operator_brain_route: "direct", certified_sidecar_bootstrap: certifiedBinding },
+    tool_results: [{
+      action_id: "certified-correction",
+      method: "GET",
+      path: "/revit/find-elements",
+      status: "failed",
+      failure_code: "certified_action_denied",
+      request_dispatched: false,
+      outcome_unknown: false,
+      reconciliation_required: false
+    }]
+  });
+  assert.match(continuation, /certified_sidecar_bootstrap/);
+  assert.match(continuation, /revit_get_context/);
+  assert.match(continuation, /failure_code: certified_action_denied/);
+  assert.match(continuation, /terminal evidence answer/);
+  assert.doesNotMatch(continuation, /Execution ladder|revit_search_tools|\(continue\)/);
+});
 
 test("Codex planner cancellation aborts the active turn so its planning lease can unwind", () => {
   const tracked = __testOnlyTrackCodexBrainTurnAbort("session-cancel", "message-cancel");

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 function ensureDir(p: string): void {
   try {
@@ -122,4 +123,23 @@ export function ensureCodexHomeAuth(opts: { codexHome: string }): void {
   } catch {
     // ignore
   }
+}
+
+export type CertifiedCodexIsolation = { codexHome: string; cwd: string };
+
+export function prepareCertifiedCodexIsolation(opts: { workspaceRoot: string; isolationRoot?: string }): CertifiedCodexIsolation {
+  const workspaceRoot = path.resolve(opts.workspaceRoot);
+  const workspaceHash = createHash("sha256").update(workspaceRoot).digest("hex").slice(0, 24);
+  const baseRoot = path.resolve(opts.isolationRoot ?? path.join(os.tmpdir(), "revit-operator-certified-codex-v1"));
+  const runtimeRoot = path.join(baseRoot, workspaceHash);
+  const codexHome = path.join(runtimeRoot, "home");
+  const cwd = path.join(runtimeRoot, "cwd");
+  ensureDir(codexHome);
+  ensureDir(cwd);
+  ensureCodexHomeAuth({ codexHome });
+  // Replace, rather than merge, configuration so no unmanaged MCP entry can
+  // survive in this home. The external cwd keeps project-level config outside
+  // the app-server's configuration ancestry.
+  fs.writeFileSync(path.join(codexHome, "config.toml"), "# Revit Operator certified-v1: MCP servers are intentionally absent.\n", "utf8");
+  return { codexHome, cwd };
 }

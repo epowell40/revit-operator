@@ -391,13 +391,6 @@ async function decideWithSelectedBrain(
   req: ChatRequest,
   dependencies: BrainDecisionDependencies
 ): Promise<ChatResponse> {
-  if (route === "codex" && isCertifiedSidecarRequest(req)) {
-    return {
-      version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message: "Certified direct mode does not permit the Codex MCP runtime; no action was dispatched.",
-      actions: [], ok: false, request_dispatched: false, outcome_unknown: false, reconciliation_required: false
-    };
-  }
   if (route === "rule") return (dependencies.ruleBrain ?? decideRule)(req);
   if (route === "openai") return (dependencies.openAiBrain ?? decideOpenAi)(req);
   if (route === "codex") return (dependencies.codexBrain ?? decideCodex)(req);
@@ -411,13 +404,6 @@ async function decideWithSelectedBrainStreaming(
   cb: StreamCallbacks,
   dependencies: BrainDecisionDependencies
 ): Promise<ChatResponse> {
-  if (route === "codex" && isCertifiedSidecarRequest(req)) {
-    return {
-      version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message: "Certified direct mode does not permit the Codex MCP runtime; no action was dispatched.",
-      actions: [], ok: false, request_dispatched: false, outcome_unknown: false, reconciliation_required: false
-    };
-  }
   if (route === "openai") {
     return (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb);
   }
