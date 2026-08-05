@@ -10,6 +10,7 @@ import {
   isCertifiedSidecarRequest
 } from "../src/capabilities/certified_sidecar_capability.js";
 import { __testOnlyFinalizeDecision, decide, decideStreaming } from "../src/brain.js";
+import { formatCodexRequestEnvelope } from "../src/brains/codex_brain.js";
 import { __testOnlyBuildPromptForRequest } from "../src/brains/openai_brain.js";
 import { normalizeIncomingToolResults } from "../src/revit_batch/tool_result_normalization.js";
 
@@ -167,19 +168,21 @@ test("backend ingress preserves exact predispatch safety facts for a certified c
   assert.equal(normalized?.failure_code, "certified_action_denied");
 });
 
-test("certified direct hard-gates the Codex MCP runtime before inference in both modes", async () => {
+test("certified direct reaches Codex in both modes with the exact injected context", async () => {
   const certifiedRequest = request({ operator_brain_route: "direct", certified_sidecar_bootstrap: binding });
   let providerCalls = 0;
   const prior = process.env.OPERATOR_BRAIN;
   process.env.OPERATOR_BRAIN = "codex";
   try {
-    const nonStreaming = await decide(certifiedRequest, { codexBrain: async () => { providerCalls += 1; throw new Error("must not run"); } });
-    const streaming = await decideStreaming(certifiedRequest, {}, { codexStreamingBrain: async () => { providerCalls += 1; throw new Error("must not run"); } });
-    assert.equal(providerCalls, 0);
-    assert.equal(nonStreaming.ok, false);
-    assert.equal(streaming.ok, false);
-    assert.equal(nonStreaming.request_dispatched, false);
-    assert.equal(streaming.request_dispatched, false);
+    const response: ChatResponse = { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "The injected context is available.", actions: [] };
+    const nonStreaming = await decide(certifiedRequest, { codexBrain: async req => { providerCalls += 1; assert.deepEqual(req.context, certifiedRequest.context); return response; } });
+    const streaming = await decideStreaming(certifiedRequest, {}, { codexStreamingBrain: async (req, cb) => { providerCalls += 1; assert.deepEqual(req.context, certifiedRequest.context); cb.onDelta?.(response.assistant_message); return response; } });
+    assert.equal(providerCalls, 2);
+    assert.equal(nonStreaming.assistant_message, response.assistant_message);
+    assert.equal(streaming.assistant_message, response.assistant_message);
+    const envelope = formatCodexRequestEnvelope(certifiedRequest);
+    assert.match(envelope, /certified_sidecar_bootstrap/);
+    assert.match(envelope, /revit_get_context/);
   } finally {
     if (prior === undefined) delete process.env.OPERATOR_BRAIN;
     else process.env.OPERATOR_BRAIN = prior;

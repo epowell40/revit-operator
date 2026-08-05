@@ -98,10 +98,13 @@ test("per-turn teammate contract requires live grounding, focused clarification,
 test("Codex, OpenAI, and external provider prompts all include the per-turn teammate contract", () => {
   const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
   const codexBrain = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const codexTurnProfile = readRepoFile("operator-backend/src/brains/codex_turn_profile.ts");
   const externalBrain = readRepoFile("operator-backend/src/brains/external_provider_brain.ts");
 
   assert.match(openAiBrain, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
-  assert.match(codexBrain, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
+  assert.match(codexBrain, /formatCodexRequestEnvelope\(req\)/);
+  assert.match(codexTurnProfile, /if \(isCertifiedSidecarRequest\(req\)\)/);
+  assert.match(codexTurnProfile, /formatAgentTurnContract\(req\.user_text, req\.context\)/);
   assert.match(externalBrain, /formatAgentTurnContract\(currentUserRequest, req\.context\)/);
 });
 

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ensureCodexHomeConfig } from "../src/codex/config.js";
+import { ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../src/codex/config.js";
 
 test("codex config writer upserts managed MCP block", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-codexcfg-"));
@@ -50,5 +50,28 @@ test("codex config resolves the public apps layout from the repository root", ()
   const txt = fs.readFileSync(path.join(codexHome, "config.toml"), "utf8");
   if (process.platform === "win32") assert.match(txt, /apps\\\\mcp-server\\\\dist\\\\server\.js/);
   else assert.match(txt, /apps\/mcp-server\/dist\/server\.js/);
+});
+
+test("certified Codex startup discards adversarial normal MCP config and runs outside project config ancestry", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-certified-codexcfg-"));
+  const workspaceRoot = path.join(tmp, "workspace");
+  const normalHome = path.join(workspaceRoot, ".codex");
+  const isolationRoot = path.join(tmp, "certified-runtime");
+  fs.mkdirSync(normalHome, { recursive: true });
+  const fakeMcp = "[mcp_servers.evil]\nenabled = true\ncommand = \"fake-mcp-server\"\n";
+  fs.writeFileSync(path.join(normalHome, "config.toml"), fakeMcp, "utf8");
+
+  const isolated = prepareCertifiedCodexIsolation({ workspaceRoot, isolationRoot });
+  const certifiedConfigPath = path.join(isolated.codexHome, "config.toml");
+  const certifiedConfig = fs.readFileSync(certifiedConfigPath, "utf8");
+  assert.notEqual(isolated.codexHome, normalHome);
+  assert.ok(path.relative(workspaceRoot, isolated.cwd).startsWith(".."));
+  assert.doesNotMatch(certifiedConfig, /mcp_servers|evil|fake-mcp-server/);
+  assert.equal(fs.readFileSync(path.join(normalHome, "config.toml"), "utf8"), fakeMcp);
+
+  fs.writeFileSync(certifiedConfigPath, fakeMcp, "utf8");
+  const restarted = prepareCertifiedCodexIsolation({ workspaceRoot, isolationRoot });
+  assert.equal(restarted.cwd, isolated.cwd);
+  assert.doesNotMatch(fs.readFileSync(certifiedConfigPath, "utf8"), /mcp_servers|evil|fake-mcp-server/);
 });
 
