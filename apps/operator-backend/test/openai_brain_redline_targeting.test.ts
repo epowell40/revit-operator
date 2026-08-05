@@ -1226,8 +1226,12 @@ test("redline auto-align keeps a directly attached image instead of an analyzed 
 
 test("redline auto-align can read export-view-frame result path without attachment wrapper", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-frame-path-"));
+  const workspace = path.join(root, "workspace");
+  const priorRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  fs.mkdirSync(workspace);
+  process.env.OPERATOR_WORKSPACE_ROOT = workspace;
   try {
-    const framePath = path.join(root, "view-frame.png");
+    const framePath = path.join(workspace, "view-frame.png");
     fs.writeFileSync(framePath, Buffer.from(RED_MARK_PNG_BASE64, "base64"));
     const context = __testOnlyExtractLatestFrameImageContext(
       [
@@ -1257,6 +1261,8 @@ test("redline auto-align can read export-view-frame result path without attachme
     assert.equal(context.image_local_path, framePath);
     assert.match(context.image_data_url ?? "", /^data:image\/png;base64,/);
   } finally {
+    if (priorRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = priorRoot;
     try {
       fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     } catch {
@@ -1266,7 +1272,7 @@ test("redline auto-align can read export-view-frame result path without attachme
 });
 
 test("redline auto-align can use compacted native frame attachment bytes on hosted backend", () => {
-  const payload = RED_MARK_PNG_BASE64 + "A".repeat(650_000);
+  const payload = Buffer.concat([Buffer.from(RED_MARK_PNG_BASE64, "base64"), Buffer.alloc(487_500)]).toString("base64");
   const compacted = compactIncomingToolResult({
     action_id: "hosted-frame",
     method: "POST",
@@ -1303,7 +1309,7 @@ test("redline auto-align can use compacted native frame attachment bytes on host
 });
 
 test("goal-mode routing preserves export-view-frame image attachments through tool result normalization", () => {
-  const payload = RED_MARK_PNG_BASE64 + "A".repeat(650_000);
+  const payload = Buffer.concat([Buffer.from(RED_MARK_PNG_BASE64, "base64"), Buffer.alloc(487_500)]).toString("base64");
   const req: ChatRequest = {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     session_id: "hosted-goal-attachment-normalization",
@@ -1349,8 +1355,12 @@ test("goal-mode routing preserves export-view-frame image attachments through to
 
 test("redline frame extraction accepts snake-case native frame payloads", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-frame-snake-"));
+  const workspace = path.join(root, "workspace");
+  const priorRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  fs.mkdirSync(workspace);
+  process.env.OPERATOR_WORKSPACE_ROOT = workspace;
   try {
-    const framePath = path.join(root, "view-frame-snake.png");
+    const framePath = path.join(workspace, "view-frame-snake.png");
     fs.writeFileSync(framePath, Buffer.from(RED_MARK_PNG_BASE64, "base64"));
     const context = __testOnlyExtractLatestFrameImageContext(
       [
@@ -1383,6 +1393,8 @@ test("redline frame extraction accepts snake-case native frame payloads", () => 
     assert.equal(context.image_local_path, framePath);
     assert.match(context.image_data_url ?? "", /^data:image\/png;base64,/);
   } finally {
+    if (priorRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = priorRoot;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

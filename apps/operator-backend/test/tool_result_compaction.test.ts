@@ -1007,3 +1007,157 @@ test("chat request limit uses env override within guardrails", () => {
     else process.env.OPERATOR_CHAT_MAX_REQUEST_BYTES = prior;
   }
 });
+test("compaction preserves Spatial Observation v1 frame, mapping, and grounded evidence", () => {
+  const compacted = compactVisibleElementsResult({
+    schemaVersion: "spatial-observation/v1",
+    frameId: "frame-7", path: "artifacts/frame-7.png", widthPx: 1600, heightPx: 900,
+    mapping: { mode: "2d_affine", frameBasis: "exported_raster" }, count: 2, scanned: 3, truncated: false,
+    items: [
+      { elementId: 12, sourceScopedId: "host:12", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2 } },
+      { elementId: 12, sourceScopedId: "link:9:12", source: { scope: "linked", linkInstanceId: 9 }, bbox: { image: { normalizedMinX: 0.4, normalizedMinY: 0.5, normalizedMaxX: 0.6, normalizedMaxY: 0.7 } } }
+    ]
+  }) as any;
+  assert.equal(compacted.compactionSchemaVersion, "spatial-observation-summary/v1");
+  assert.equal(compacted.sourceSchemaVersion, null);
+  assert.equal(compacted.observationId, "frame-7");
+  assert.equal(compacted.image?.path, "artifacts/frame-7.png");
+  assert.equal(compacted.image?.widthPx, 1600);
+  assert.equal(compacted.mapping?.frameBasis, "exported_raster");
+  assert.deepEqual(compacted.coverage, { count: 2, scanned: 3, truncated: false, resultBounds: null });
+  const samples = new Map<string, any>(compacted.itemsSampled.map((item: any) => [String(item.sourceScopedId), item] as [string, any]));
+  assert.equal(samples.get("host:12")?.groundingStatus, "anchored");
+  assert.equal(samples.get("host:12")?.anchor?.image?.normalizedX, 0.2);
+  assert.equal(samples.get("host:12")?.orientation?.planAzimuthRadians, 1.2);
+  assert.equal(samples.get("link:9:12")?.groundingStatus, "bbox");
+  assert.equal(samples.get("link:9:12")?.bbox?.image?.normalizedMinX, 0.4);
+  assert.deepEqual(compactVisibleElementsResult(compacted), compacted);
+});
+
+test("compaction does not manufacture a full observation schema or grounding from empty evidence", () => {
+  const compacted = compactVisibleElementsResult({
+    frameId: "frame-partial",
+    count: 4,
+    items: [
+      { elementId: 1, sourceScopedId: "host:1", groundingStatus: "anchored", anchor: {} },
+      { elementId: 2, sourceScopedId: "host:2", groundingStatus: "geometry", geometry: { kind: "none" } },
+      { elementId: 3, sourceScopedId: "host:3", geometry: { kind: "point", point: { x: 1, y: 2, z: 3 } } },
+      { elementId: 4, sourceScopedId: "host:4", bbox: { model: { min: { x: 0, y: 0, z: 0 }, max: { x: 1, y: 1, z: 1 } } } }
+    ]
+  }) as any;
+  assert.equal(compacted.compactionSchemaVersion, "spatial-observation-summary/v1");
+  assert.equal(compacted.sourceSchemaVersion, null);
+  assert.equal(compacted.schemaVersion, undefined);
+  const samples = new Map<number, any>(compacted.itemsSampled.map((item: any) => [item.elementId, item]));
+  assert.equal(samples.get(1)?.groundingStatus, "ungrounded");
+  assert.equal(samples.get(2)?.groundingStatus, "ungrounded");
+  assert.equal(samples.get(3)?.groundingStatus, "geometry");
+  assert.equal(samples.get(4)?.groundingStatus, "bbox");
+});
+
+test("malicious pre-compacted observations cannot bypass schema or grounding validation", () => {
+  const compacted = compactVisibleElementsResult({
+    _compacted: true,
+    compaction: "visible-elements-inventory-summary",
+    compactionSchemaVersion: "spatial-observation-summary/v1",
+    schemaVersion: "spatial-observation/v1",
+    sourceSchemaVersion: "spatial-observation/v1",
+    items: [{ elementId: 999, groundingStatus: "anchored", anchor: {} }],
+    callerControlled: { groundingStatus: "anchored" },
+    itemsOmitted: 0,
+    summary: { categoryCounts: [] },
+    itemsSampled: [
+      { elementId: 1, sourceScopedId: "host:1", groundingStatus: "anchored", anchor: {}, geometry: { kind: "none" } }
+    ]
+  }) as any;
+  assert.equal(compacted.schemaVersion, undefined);
+  assert.equal(compacted.compaction, "visible-elements-inventory-summary");
+  assert.equal(compacted.compactionSchemaVersion, "spatial-observation-summary/v1");
+  assert.equal(compacted.sourceSchemaVersion, null);
+  assert.equal(compacted.items, undefined);
+  assert.equal(compacted.callerControlled, undefined);
+  assert.equal(compacted.itemsSampled[0]?.groundingStatus, "ungrounded");
+});
+
+test("canonical coordinate evidence survives first compaction and recompaction", () => {
+  const first = compactVisibleElementsResult({
+    frameId: "frame-coordinate-forms",
+    targetLevel: { id: 311, name: "Level 4", elevationFt: 42.5 },
+    count: 7,
+    items: [
+      { elementId: 1, sourceScopedId: "host:1", anchor: { x: 1, y: 2, z: 3 } },
+      { elementId: 2, sourceScopedId: "host:2", anchor: { point: { model: { x: 2, y: 3, z: 4 }, image: { normalizedX: 0.2, normalizedY: 0.3 } } } },
+      { elementId: 3, sourceScopedId: "host:3", bbox: { model: { min: { x: 0, y: 0, z: 0 }, max: { x: 5, y: 6, z: 7 } } } },
+      { elementId: 4, sourceScopedId: "host:4", bbox: { image: { normalizedMinX: 0.1, normalizedMinY: 0.2, normalizedMaxX: 0.3, normalizedMaxY: 0.4 } } },
+      { elementId: 5, sourceScopedId: "host:5", geometry: { kind: "point", point: { x: 5, y: 6, z: 7 } } },
+      { elementId: 6, sourceScopedId: "host:6", geometry: { kind: "point", point: { model: { x: 6, y: 7, z: 8 }, image: { x: 60, y: 70 } } } },
+      { elementId: 7, sourceScopedId: "host:7", geometry: { kind: "curve", start: { x: 1, y: 1, z: 0 }, end: { model: { x: 9, y: 9, z: 0 } } } }
+    ]
+  }, { maxItems: 7 }) as any;
+  const second = compactVisibleElementsResult(first, { maxItems: 7 }) as any;
+  assert.deepEqual(second, first);
+  assert.deepEqual(first.targetLevel, { id: 311, name: "Level 4", elevationFt: 42.5 });
+  const samples = new Map<number, any>(first.itemsSampled.map((item: any) => [item.elementId, item]));
+  assert.equal(samples.get(1)?.groundingStatus, "anchored");
+  assert.equal(samples.get(1)?.anchor?.model?.x, 1);
+  assert.equal(samples.get(1)?.anchor?.image, null);
+  assert.equal(samples.get(2)?.anchor?.image?.normalizedY, 0.3);
+  assert.equal(samples.get(3)?.groundingStatus, "bbox");
+  assert.equal(samples.get(3)?.bbox?.model?.max?.z, 7);
+  assert.equal(samples.get(4)?.bbox?.image?.normalizedMaxY, 0.4);
+  assert.equal(samples.get(5)?.groundingStatus, "geometry");
+  assert.equal(samples.get(5)?.geometry?.point?.model?.z, 7);
+  assert.equal(samples.get(5)?.geometry?.point?.image, null);
+  assert.equal(samples.get(6)?.geometry?.point?.image?.x, 60);
+  assert.equal(samples.get(7)?.geometry?.end?.model?.x, 9);
+});
+
+test("forged clean-marker summaries cannot retain nested unknown or oversized values", () => {
+  const huge = "x".repeat(5000);
+  const compacted = compactVisibleElementsResult({
+    _compacted: true,
+    compaction: "visible-elements-inventory-summary",
+    compactionSchemaVersion: "spatial-observation-summary/v1",
+    sourceSchemaVersion: "spatial-observation/v1",
+    image: { path: { forged: true }, widthPx: "wide", heightPx: -1 },
+    coverage: { count: 1, scanned: 1, truncated: false, resultBounds: { forged: true } },
+    mapping: { mode: "2d_affine", topLeftXyz: { forged: true }, notes: huge },
+    warnings: [huge, { forged: true }, "bounded warning"],
+    summary: { categoryCounts: [{ key: huge, count: 1 }, { key: "Walls", count: 2, forged: true }] },
+    itemsSampled: [{
+      elementId: 1,
+      sourceScopedId: "host:1",
+      name: huge,
+      parameters: { Panel: { forged: true } },
+      bbox: { image: { minX: { forged: true }, minY: 1, maxX: 2, maxY: 3 } },
+      anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }
+    }],
+    itemsOmitted: 0
+  }) as any;
+  assert.equal(compacted.sourceSchemaVersion, null);
+  assert.equal(compacted.image.path, null);
+  assert.equal(compacted.image.widthPx, null);
+  assert.equal(compacted.coverage.resultBounds, null);
+  assert.equal(compacted.mapping.topLeftXyz, null);
+  assert.equal(compacted.mapping.notes, null);
+  assert.deepEqual(compacted.warnings, ["bounded warning"]);
+  assert.deepEqual(compacted.summary.categoryCounts, [{ key: "Walls", count: 2 }]);
+  assert.equal(compacted.itemsSampled[0].name, null);
+  assert.equal(compacted.itemsSampled[0].parameters, null);
+  assert.equal(compacted.itemsSampled[0].bbox.image.minX, undefined);
+  assert.deepEqual(compactVisibleElementsResult(compacted), compacted);
+});
+
+test("pre-compacted omitted counts saturate safely and remain idempotent", () => {
+  const compacted = compactVisibleElementsResult({
+    _compacted: true,
+    compaction: "visible-elements-inventory-summary",
+    compactionSchemaVersion: "spatial-observation-summary/v1",
+    itemsOmitted: Number.MAX_SAFE_INTEGER,
+    itemsSampled: [
+      { elementId: 1, sourceScopedId: "host:1", anchor: { image: { normalizedX: 0.1, normalizedY: 0.2 } } },
+      { elementId: 2, sourceScopedId: "host:2", anchor: { image: { normalizedX: 0.3, normalizedY: 0.4 } } }
+    ]
+  }, { maxItems: 1 }) as any;
+  assert.equal(compacted.itemsOmitted, Number.MAX_SAFE_INTEGER);
+  assert.deepEqual(compactVisibleElementsResult(compacted, { maxItems: 1 }), compacted);
+});

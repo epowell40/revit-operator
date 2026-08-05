@@ -36,6 +36,7 @@ const certifiedSafeNonRevitAliases = [
   "workspace_rename_file",
   "write_excel"
 ].sort();
+const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=", "base64");
 
 function smokeCanonical(value: unknown): unknown {
   if (typeof value === "string") return value.replace(/\r\n?/g, "\n").normalize("NFC");
@@ -219,8 +220,9 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 123, "Exact development laboratory mode must preserve the complete legacy catalog plus the laboratory SafeRead alias.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 107, "Exact development laboratory mode must preserve all Revit aliases plus the laboratory SafeRead alias.");
+  assert.equal(laboratoryNames.length, 124, "Exact development laboratory mode must preserve the complete catalog plus the observation and laboratory SafeRead aliases.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 108, "Exact development laboratory mode must preserve all Revit aliases plus observation and laboratory SafeRead.");
+  assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
 });
 
 test("MCP stdio server registers repaired tools and rejects semantic write controls before backend execution", async (t) => {
@@ -238,6 +240,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const scheduleCellBodies: any[] = [];
   const scheduleReplacementBodies: any[] = [];
   const setParameterBodies: any[] = [];
+  const observationBodies: any[] = [];
+  let observationImagePath = "";
   const bridge = http.createServer(async (req, res) => {
     const requestBody = await new Promise<string>((resolve, reject) => {
       const chunks: Buffer[] = [];
@@ -271,6 +275,24 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     }
     if (requestUrl.pathname === "/revit/context") {
       res.end(JSON.stringify({ document: "Snowdon", view: "L4 - Power" }));
+      return;
+    }
+    if (requestUrl.pathname === "/revit/export-visible-elements") {
+      observationBodies.push(JSON.parse(requestBody || "{}"));
+      res.end(JSON.stringify({
+        frameId: "frame-stdio-1",
+        path: observationImagePath,
+        widthPx: 1200,
+        heightPx: 675,
+        viewId: 42,
+        viewName: "L4 - Power",
+        viewType: "FloorPlan",
+        mapping: { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] },
+        count: 1,
+        scanned: 1,
+        truncated: false,
+        items: [{ elementId: 12, sourceScopedId: "host:12", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } } }]
+      }));
       return;
     }
     if (requestUrl.pathname === "/revit/sheets") {
@@ -321,6 +343,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   });
   const bridgePort = await listen(bridge);
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-stdio-"));
+  observationImagePath = path.join(workspace, "frame-stdio-1.png");
+  fs.writeFileSync(observationImagePath, tinyPng);
   fs.writeFileSync(path.join(workspace, "write_grant.json"), JSON.stringify({
     token: "grant-token",
     expires_at_utc: new Date(Date.now() + 60_000).toISOString()
@@ -364,8 +388,9 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 123, "Laboratory mode must preserve the complete legacy catalog plus the SafeRead alias.");
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 107, "Laboratory mode must preserve all legacy revit_ aliases plus the SafeRead alias.");
+  assert.equal(tools.tools.length, 124, "Laboratory mode must preserve the complete catalog plus the observation and SafeRead aliases.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 108, "Laboratory mode must preserve all revit_ aliases plus observation and SafeRead.");
+  assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
   for (const name of [
     "operator_runtime_probe",
@@ -434,6 +459,15 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     arguments: { method: "GET", path: "/revit/context", requireKnownPath: true }
   }), "calling a generic bridge read over stdio");
   assert.match((context as any).content[0].text, /L4 - Power/);
+
+  const observation = await withTimeout(client.callTool({
+    name: "revit_observe_model",
+    arguments: { imageSize: 1200, limit: 2, includeLinked: false }
+  }), "observing a Revit frame over stdio");
+  const observationText = (observation as any).content.find((item: any) => item.type === "text")?.text ?? "";
+  assert.match(observationText, /"schemaVersion": "spatial-observation\/v1"/);
+  assert.equal((observation as any).content.some((item: any) => item.type === "image" && item.mimeType === "image/png"), true);
+  assert.deepEqual(observationBodies[0], { imageSize: 1200, includeLinked: false, limit: 2, includeMapping: true, includeGeometry: true });
 
   const sheetCount = await withTimeout(client.callTool({
     name: "revit_list_sheets",
@@ -562,6 +596,14 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   );
   assert.equal(listedNames.includes("titleblock_update_text"), false, "The non-revit bridge alias must not bypass certified visibility.");
   assert.equal(listedNames.includes("operator_test_unbound_mcp_alias"), false, "An unbound alias registered through registerTool must fail closed.");
+  assert.equal(listedNames.includes("revit_observe_model"), false, "The laboratory-only observation alias must not leak into certified tools/list.");
+
+  const blockedObservation = await withTimeout(client.callTool({
+    name: "revit_observe_model",
+    arguments: {}
+  }), "blocking the hidden spatial observation alias in certified mode");
+  assert.equal((blockedObservation as any).isError, true, "The hidden spatial observation alias must fail closed in certified mode.");
+  assert.equal(bridgeRequests, 0, "A direct call to the hidden spatial observation alias must not reach the bridge.");
 
   const blockedCalls = [
     { name: "revit_ping", arguments: {} },
