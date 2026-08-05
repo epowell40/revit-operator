@@ -265,11 +265,11 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: `Certified sidecar control-plane failure (${certified.controlPlaneFailure}); no action was dispatched.`,
-      actions: []
+      actions: [], ok: false, request_dispatched: false, outcome_unknown: false, reconciliation_required: false
     };
   }
   const certifiedMessage = assistantMessage;
-  const certifiedDisposition = buildCertifiedReadDisposition(req);
+  const certifiedDisposition = buildCertifiedReadDisposition(req, certified?.state, certifiedMessage);
   if (certifiedMessage.trim().length > 0 || actions.length > 0) {
     const guarded = enforceVerificationDisclaimer(
       req,
@@ -281,9 +281,11 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
           certified_capability_limitations: [{
             code: "CERTIFIED_ACTION_DENIED" as const,
             action_ids: environmentActions.filter(action => !actions.includes(action)).map(action => action.action_id),
+            actions: environmentActions.filter(action => !actions.includes(action)),
             message: "Unavailable certified actions were not dispatched."
           }]
         } : {}),
+        ...(certified?.state ? { certified_capability_state: certified.state } : {}),
         ...(certifiedDisposition ? { certified_read_disposition: certifiedDisposition } : {})
       })
     );
@@ -389,6 +391,13 @@ async function decideWithSelectedBrain(
   req: ChatRequest,
   dependencies: BrainDecisionDependencies
 ): Promise<ChatResponse> {
+  if (route === "codex" && isCertifiedSidecarRequest(req)) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "Certified direct mode does not permit the Codex MCP runtime; no action was dispatched.",
+      actions: [], ok: false, request_dispatched: false, outcome_unknown: false, reconciliation_required: false
+    };
+  }
   if (route === "rule") return (dependencies.ruleBrain ?? decideRule)(req);
   if (route === "openai") return (dependencies.openAiBrain ?? decideOpenAi)(req);
   if (route === "codex") return (dependencies.codexBrain ?? decideCodex)(req);
@@ -402,6 +411,13 @@ async function decideWithSelectedBrainStreaming(
   cb: StreamCallbacks,
   dependencies: BrainDecisionDependencies
 ): Promise<ChatResponse> {
+  if (route === "codex" && isCertifiedSidecarRequest(req)) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: "Certified direct mode does not permit the Codex MCP runtime; no action was dispatched.",
+      actions: [], ok: false, request_dispatched: false, outcome_unknown: false, reconciliation_required: false
+    };
+  }
   if (route === "openai") {
     return (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb);
   }
@@ -449,7 +465,10 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
         await decideWithSelectedBrain(route, routedReq, dependencies)
       );
     }
-    return finalizeGenericDecision(req, await decideWithSelectedBrain(route, req, dependencies));
+    const decision = await decideWithSelectedBrain(route, req, dependencies);
+    return isCertifiedSidecarRequest(req)
+      ? finalizeDecision(req, decision)
+      : finalizeGenericDecision(req, decision);
   }
 
   const roomReceptacleDecision = maybeRunDeterministicRoomReceptacleAnalog(req);
@@ -580,6 +599,16 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
         routedReq,
         await decideWithSelectedBrainStreaming(route, routedReq, cb, dependencies)
       );
+    }
+    if (isCertifiedSidecarRequest(req)) {
+      const decision = finalizeDecision(
+        req,
+        await decideWithSelectedBrainStreaming(route, req, { abortSignal: cb.abortSignal }, dependencies)
+      );
+      const text = decision.assistant_message || "";
+      cb.onDelta?.(text);
+      cb.onDone?.(text);
+      return decision;
     }
     const streamGate = genericStreamGate(req, cb);
     const decision = finalizeGenericDecision(

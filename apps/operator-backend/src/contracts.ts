@@ -79,8 +79,24 @@ export type ChatResponse = {
   certified_capability_limitations?: Array<{
     code: "CERTIFIED_ACTION_DENIED";
     action_ids: string[];
+    actions: ActionCall[];
     message: string;
   }>;
+  ok?: false;
+  request_dispatched?: false;
+  outcome_unknown?: false;
+  reconciliation_required?: false;
+  certified_capability_state?: {
+    schema: "revit-operator.certified-sidecar-capability-state.v1";
+    policy_hash: string;
+    method: "GET";
+    path: "/revit/context";
+    request_hash: string;
+    effect_hash: string;
+    channel: "typed_mcp";
+    alias: "revit_get_context";
+    evidence_id: "certified-context";
+  };
   certified_read_disposition?: {
     schema: "revit-operator.certified-read-disposition.v1";
     terminal: true;
@@ -91,6 +107,8 @@ export type ChatResponse = {
     document_executor_signature: string;
     action_ids: string[];
     evidence_ids: string[];
+    answer_status: "grounded_evidence_summary";
+    answer_evidence_ids: string[];
     correction_count: 1;
   };
   teammate_loop_receipt?: {

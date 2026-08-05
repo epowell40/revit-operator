@@ -39,7 +39,24 @@ export function isCertifiedSidecarRequest(req: Pick<ChatRequest, "context">): bo
   return context?.operator_brain_route === "direct" && exactBootstrap(context.certified_sidecar_bootstrap);
 }
 
-export type CertifiedSidecarActionFilter = { actions: ActionCall[]; policyHash?: string; denied: boolean; controlPlaneFailure?: string };
+export type CertifiedSidecarCapabilityState = {
+  schema: "revit-operator.certified-sidecar-capability-state.v1";
+  policy_hash: string;
+  method: "GET";
+  path: typeof CERTIFIED_SIDECAR_CONTEXT_PATH;
+  request_hash: string;
+  effect_hash: string;
+  channel: "typed_mcp";
+  alias: typeof CERTIFIED_SIDECAR_CONTEXT_ALIAS;
+  evidence_id: "certified-context";
+};
+
+export type CertifiedSidecarActionFilter = {
+  actions: ActionCall[];
+  state?: CertifiedSidecarCapabilityState;
+  denied: boolean;
+  controlPlaneFailure?: string;
+};
 
 /** Provider-neutral final fence: no route-only or static-allowlist inference is possible here. */
 export function filterCertifiedSidecarActions(actions: ActionCall[], env: NodeJS.ProcessEnv = process.env): CertifiedSidecarActionFilter {
@@ -47,8 +64,22 @@ export function filterCertifiedSidecarActions(actions: ActionCall[], env: NodeJS
     const trusted = loadTrustedToolExposurePolicy(env);
     const requestHash = computeRequestHash("GET", CERTIFIED_SIDECAR_CONTEXT_PATH, {});
     const evaluation = evaluateTrustedToolExposurePolicy({ policy: trusted.policy, method: "GET", path: CERTIFIED_SIDECAR_CONTEXT_PATH, requestHash, channel: "typed_mcp", alias: CERTIFIED_SIDECAR_CONTEXT_ALIAS });
-    const allowed = actions.filter(action => action.method === "GET" && action.path === CERTIFIED_SIDECAR_CONTEXT_PATH && action.body === undefined && !!evaluation.record.effect_hash);
-    return { actions: allowed, policyHash: trusted.policy.policy_hash, denied: allowed.length !== actions.length };
+    const allowed = actions.filter(action => action.method === "GET" && action.path === CERTIFIED_SIDECAR_CONTEXT_PATH && action.body === undefined);
+    return {
+      actions: allowed,
+      state: {
+        schema: "revit-operator.certified-sidecar-capability-state.v1",
+        policy_hash: trusted.policy.policy_hash,
+        method: "GET",
+        path: CERTIFIED_SIDECAR_CONTEXT_PATH,
+        request_hash: evaluation.record.request_hash,
+        effect_hash: evaluation.record.effect_hash,
+        channel: "typed_mcp",
+        alias: CERTIFIED_SIDECAR_CONTEXT_ALIAS,
+        evidence_id: "certified-context"
+      },
+      denied: allowed.length !== actions.length
+    };
   } catch (error) {
     const code = error instanceof TrustedToolExposurePolicyError ? error.code : "CERTIFICATION_POLICY_UNAVAILABLE";
     return { actions: [], denied: true, controlPlaneFailure: code };
@@ -56,8 +87,7 @@ export function filterCertifiedSidecarActions(actions: ActionCall[], env: NodeJS
 }
 
 const EXPECTED_PRE_DISPATCH_DENIALS = new Set([
-  "revit_execution_denied", "revit_execution_not_dispatched", "revit_execution_authorization_unavailable",
-  "revit_execution_authorization_endpoint_missing", "revit_bridge_loopback_required"
+  "certified_action_denied"
 ]);
 
 function documentExecutorSignature(req: Pick<ChatRequest, "context">): string {
@@ -68,29 +98,48 @@ function documentExecutorSignature(req: Pick<ChatRequest, "context">): string {
 }
 
 /** A backend-generated terminal receipt; prose never grants degraded completion. */
-export function buildCertifiedReadDisposition(req: ChatRequest) {
+function groundedCertifiedAnswer(req: ChatRequest, assistantMessage: string): boolean {
+  const context = contextRecord(req);
+  const revit = context?.revit && typeof context.revit === "object" ? context.revit as Record<string, unknown> : {};
+  const document = revit.document && typeof revit.document === "object" ? revit.document as Record<string, unknown> : {};
+  const readiness = revit.readiness && typeof revit.readiness === "object" ? revit.readiness as Record<string, unknown> : {};
+  const ui = context?.ui && typeof context.ui === "object" ? context.ui as Record<string, unknown> : {};
+  const uiDocument = ui.revit_document && typeof ui.revit_document === "object" ? ui.revit_document as Record<string, unknown> : {};
+  const evidenceValues = [document.title, document.path, readiness.active_view_name, uiDocument.title, uiDocument.path]
+    .filter((value): value is string => typeof value === "string" && value.trim().length >= 4)
+    .map(value => value.trim().toLowerCase());
+  const answer = assistantMessage.trim().toLowerCase();
+  return answer.length >= 20 && evidenceValues.some(value => answer.includes(value));
+}
+
+export function buildCertifiedReadDisposition(req: ChatRequest, state: CertifiedSidecarCapabilityState | undefined, assistantMessage = "") {
   if (!isCertifiedSidecarRequest(req)) return null;
+  if (!state) return null;
   const results = Array.isArray(req.tool_results) ? req.tool_results : [];
-  if (results.length !== 1) return null;
-  const result = results[0]!;
-  const read = result.request_effect === "read" || result.method === "GET";
-  if (!read || result.status !== "failed" || result.request_dispatched !== false || result.outcome_unknown !== false
-    || result.reconciliation_required !== false || !EXPECTED_PRE_DISPATCH_DENIALS.has(String(result.failure_code ?? ""))) return null;
-  try {
-    const trusted = loadTrustedToolExposurePolicy();
-    return {
-      schema: "revit-operator.certified-read-disposition.v1" as const,
-      terminal: true as const,
-      status: "degraded" as const,
-      session_id: req.session_id,
-      message_id: req.message_id,
-      policy_hash: trusted.policy.policy_hash,
-      document_executor_signature: documentExecutorSignature(req),
-      action_ids: [result.action_id],
-      evidence_ids: [result.action_id],
-      correction_count: 1 as const
-    };
-  } catch {
-    return null;
-  }
+  if (results.length === 0) return null;
+  const failures = results.filter(result => result.status === "failed");
+  if (failures.length !== 1) return null;
+  if (results.some(result => result.request_effect !== "read")) return null;
+  if (results.some(result => result.outcome_unknown !== false || result.reconciliation_required !== false)) return null;
+  const failure = failures[0]!;
+  if (failure.request_dispatched !== false || !EXPECTED_PRE_DISPATCH_DENIALS.has(String(failure.failure_code ?? ""))) return null;
+  if (!groundedCertifiedAnswer(req, assistantMessage)) return null;
+  const successfulEvidenceIds = results
+    .filter(result => result.status === "done")
+    .map(result => result.action_id)
+    .filter((value): value is string => typeof value === "string" && value.length > 0);
+  return {
+    schema: "revit-operator.certified-read-disposition.v1" as const,
+    terminal: true as const,
+    status: "degraded" as const,
+    session_id: req.session_id,
+    message_id: req.message_id,
+    policy_hash: state.policy_hash,
+    document_executor_signature: documentExecutorSignature(req),
+    action_ids: [failure.action_id],
+    evidence_ids: [state.evidence_id, ...successfulEvidenceIds],
+    answer_status: "grounded_evidence_summary" as const,
+    answer_evidence_ids: [state.evidence_id],
+    correction_count: 1 as const
+  };
 }
