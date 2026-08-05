@@ -33,6 +33,10 @@ export type ToolResult = {
   /** A failed call may have reached Revit without a settled execution receipt. */
   retryable?: boolean;
   outcome_unknown?: boolean;
+  /** True only after the native request has left the sidecar. */
+  request_dispatched?: boolean;
+  /** A result requiring reconciliation is never eligible for read degradation. */
+  reconciliation_required?: boolean;
   result_json?: unknown;
   error?: string;
   result_summary?: string;

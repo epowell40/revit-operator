@@ -43,6 +43,7 @@ import {
   maybeContinueExistingConditionsOneActionLoop
 } from "./existing_conditions/one_action_execution_ledger.js";
 import { ensureWorkspaceLayout } from "./workspace.js";
+import { filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -257,11 +258,23 @@ export function __testOnlyMaybeBuildPersistedExistingConditionsTerminal(
 
 function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   const assistantMessage = (decision.assistant_message ?? "").toString();
-  const actions = applyEnvironmentPolicyToActions(Array.isArray(decision.actions) ? decision.actions : []);
-  if (assistantMessage.trim().length > 0 || actions.length > 0) {
+  const environmentActions = applyEnvironmentPolicyToActions(Array.isArray(decision.actions) ? decision.actions : []);
+  const certified = isCertifiedSidecarRequest(req) ? filterCertifiedSidecarActions(environmentActions) : null;
+  const actions = certified?.actions ?? environmentActions;
+  if (certified?.controlPlaneFailure) {
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: `Certified sidecar control-plane failure (${certified.controlPlaneFailure}); no action was dispatched.`,
+      actions: []
+    };
+  }
+  const certifiedMessage = certified?.denied
+    ? "Certified sidecar capability denied the proposed action; no action was dispatched."
+    : assistantMessage;
+  if (certifiedMessage.trim().length > 0 || actions.length > 0) {
     const guarded = enforceVerificationDisclaimer(
       req,
-      enforceModeledRedlineGuard(req, { ...decision, actions })
+      enforceModeledRedlineGuard(req, { ...decision, assistant_message: certifiedMessage, actions })
     );
     return __testOnlyIsExistingConditionsReconstructionRequest(req)
       ? enforceExistingConditionsOneActionLoop({ req, decision: guarded })
@@ -405,7 +418,9 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   }
 
   if (isDirectBrainRouteRequest(req)) {
-    const serviceAccessoryDecision = (dependencies.mepServiceAccessoryPreflight ?? maybeRunMepServiceAccessoryPreflight)(req);
+    const serviceAccessoryDecision = isCertifiedSidecarRequest(req)
+      ? null
+      : (dependencies.mepServiceAccessoryPreflight ?? maybeRunMepServiceAccessoryPreflight)(req);
     if (serviceAccessoryDecision) return finalizeDecision(req, serviceAccessoryDecision);
     const route = resolveOperatorBrainRoute();
     if (__testOnlyIsExistingConditionsReconstructionRequest(req)) {
@@ -525,7 +540,9 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
   }
 
   if (isDirectBrainRouteRequest(req)) {
-    const serviceAccessoryDecision = (dependencies.mepServiceAccessoryPreflight ?? maybeRunMepServiceAccessoryPreflight)(req);
+    const serviceAccessoryDecision = isCertifiedSidecarRequest(req)
+      ? null
+      : (dependencies.mepServiceAccessoryPreflight ?? maybeRunMepServiceAccessoryPreflight)(req);
     if (serviceAccessoryDecision) {
       const text = serviceAccessoryDecision.assistant_message || "";
       cb.onDelta?.(text);
