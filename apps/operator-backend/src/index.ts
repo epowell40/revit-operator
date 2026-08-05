@@ -2134,7 +2134,7 @@ const server = http.createServer(async (req, res) => {
             if (delayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, delayMs));
           }
         send("assistant.done", { text });
-        send("actions", { actions: macroResp.actions });
+        send("actions", { actions: macroResp.actions, certified_capability_state: macroResp.certified_capability_state, certified_capability_limitations: macroResp.certified_capability_limitations, certified_read_disposition: macroResp.certified_read_disposition, ok: macroResp.ok });
         send("done", {});
 
           try {
@@ -2256,7 +2256,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         send("assistant.done", { text });
-        send("actions", { actions: decision.actions });
+        send("actions", { actions: decision.actions, certified_capability_state: decision.certified_capability_state, certified_capability_limitations: decision.certified_capability_limitations, certified_read_disposition: decision.certified_read_disposition, ok: decision.ok });
         send("done", {});
 
         try {

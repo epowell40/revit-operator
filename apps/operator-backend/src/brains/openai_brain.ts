@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildAllowlistFromPairs, filterAllowlistedActions } from "../allowlist.js";
 import { pathLooksWrite } from "../action_path_mutability.js";
+import { CERTIFIED_SIDECAR_PROMPT_LINES, CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES, isCertifiedSidecarRequest } from "../capabilities/certified_sidecar_capability.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ActionCall,
@@ -18565,6 +18566,9 @@ function maybeBuildCapabilityRecoveryResponse(args: {
 }): ChatResponse | null {
   const { req, decision, filteredActions, allowlisted } = args;
   if (allowlisted.length > 0) return null;
+  // The certified direct lane has one host-observed capability; discovery can
+  // neither expand it nor improve a neutral answer grounded in that context.
+  if (isCertifiedSidecarRequest(req)) return null;
   const candidateGuardFailure = activeCandidateVisibleGuardFailure(req.session_id);
   if (
     candidateGuardFailure &&
@@ -18831,9 +18835,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   const history = getHistory(req.session_id);
   const lines: string[] = [];
   const speedSettings = resolveSpeedSettings(req.context);
-
-  lines.push(process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt());
-  lines.push("");
+  const certifiedDirectSidecar = isCertifiedSidecarRequest(req);
+  lines.push(...(certifiedDirectSidecar ? CERTIFIED_SIDECAR_PROMPT_LINES : [process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt(), ""]));
   const turnContract = formatAgentTurnContract(req.user_text, req.context);
   if (turnContract) lines.push(turnContract, "");
   if (speedSettings.speed_mode) {
@@ -18850,11 +18853,10 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     }
     lines.push("");
   }
-  lines.push("Fast Revit edit playbooks:");
-  lines.push("- Parameter edits: resolve the exact writable parameter name from read evidence, then write and require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit. When a literal value may occur across categories, use allModelInstances:true with valueEquals for one complete identifier or valueContains for an intentional substring audit, add writableOnly when appropriate, and page the filtered matches; do not guess categories or parameter names. If the scope comes from schedule sheets, resolve placedSchedules and read bounded schedule data first, then reconcile against host-model element IDs.");
-  lines.push("- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.");
-  lines.push("- Avoid exploratory tool-doc/tool-examples calls for common parameter updates when /revit/find-elements, /revit/get-parameters, /revit/set-parameter, or /revit/update-panel-parameter are already available.");
-  lines.push("");
+  if (!certifiedDirectSidecar) lines.push("Fast Revit edit playbooks:",
+    "- Parameter edits: resolve the exact writable parameter name from read evidence, then write and require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit. When a literal value may occur across categories, use allModelInstances:true with valueEquals for one complete identifier or valueContains for an intentional substring audit, add writableOnly when appropriate, and page the filtered matches; do not guess categories or parameter names. If the scope comes from schedule sheets, resolve placedSchedules and read bounded schedule data first, then reconcile against host-model element IDs.",
+    "- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.",
+    "- Avoid exploratory tool-doc/tool-examples calls for common parameter updates when /revit/find-elements, /revit/get-parameters, /revit/set-parameter, or /revit/update-panel-parameter are already available.", "");
 
   try {
     lines.push(formatEnvironmentSummaryForPrompt());
@@ -18938,16 +18940,13 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     // ignore
   }
 
-  if (shouldIncludeSkillLibrary(req)) {
+  if (!certifiedDirectSidecar && shouldIncludeSkillLibrary(req)) {
     const skills = getSkillLibraryText();
     if (skills) {
       const maxChars = Math.max(1200, Number.parseInt(process.env.OPERATOR_PROMPT_MAX_SKILL_CHARS ?? "7000", 10) || 7000);
-      const trimmed = skills.length > maxChars ? skills.slice(0, maxChars) + "\n…(truncated)" : skills;
-      lines.push("Skill library (selected docs; may be truncated):");
-      lines.push(trimmed);
-      lines.push("");
+      lines.push("Skill library (selected docs; may be truncated):", skills.length > maxChars ? skills.slice(0, maxChars) + "\n…(truncated)" : skills, "");
     }
-  } else {
+  } else if (!certifiedDirectSidecar) {
     lines.push("Skill library omitted for token efficiency on this turn. Query specific docs/skills only when needed.");
     lines.push("");
   }
@@ -19155,7 +19154,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   }
 
   const toolsFromContext = (req.context as any)?.capabilities?.tools;
-  if (Array.isArray(toolsFromContext) && toolsFromContext.length > 0) {
+  if (certifiedDirectSidecar) lines.push(...CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES);
+  else if (Array.isArray(toolsFromContext) && toolsFromContext.length > 0) {
     const totalTools = toolsFromContext.length;
     lines.push("Tools summary (allowlisted Revit actions):");
     lines.push(`- Total available this session: ${totalTools}`);
