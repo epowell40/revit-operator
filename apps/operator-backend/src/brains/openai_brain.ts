@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildAllowlistFromPairs, filterAllowlistedActions } from "../allowlist.js";
 import { pathLooksWrite } from "../action_path_mutability.js";
+import { isCertifiedSidecarRequest } from "../capabilities/certified_sidecar_capability.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ActionCall,
@@ -18565,6 +18566,9 @@ function maybeBuildCapabilityRecoveryResponse(args: {
 }): ChatResponse | null {
   const { req, decision, filteredActions, allowlisted } = args;
   if (allowlisted.length > 0) return null;
+  // The certified direct lane has one host-observed capability; discovery can
+  // neither expand it nor improve a neutral answer grounded in that context.
+  if (isCertifiedSidecarRequest(req)) return null;
   const candidateGuardFailure = activeCandidateVisibleGuardFailure(req.session_id);
   if (
     candidateGuardFailure &&

@@ -79,10 +79,34 @@ test("certified direct lane bypasses the phrase preflight in both modes but cent
     assert.equal(providerCalls, 2);
     assert.equal(nonStreaming.actions.length, 0);
     assert.equal(streaming.actions.length, 0);
-    assert.match(nonStreaming.assistant_message, /capability denied/);
+    assert.equal(nonStreaming.assistant_message, "I will discover elements.");
+    assert.equal(nonStreaming.certified_capability_limitations?.[0]?.code, "CERTIFIED_ACTION_DENIED");
+    assert.deepEqual(nonStreaming.certified_capability_limitations?.[0]?.action_ids, ["find"]);
   } finally {
     if (prior === undefined) delete process.env.OPERATOR_BRAIN;
     else process.env.OPERATOR_BRAIN = prior;
+  }
+});
+
+test("only a proven predispatch certified read denial receives a structural degraded receipt", () => {
+  const base = request({
+    operator_brain_route: "direct",
+    certified_sidecar_bootstrap: binding,
+    revit: { process_id: 42, courier_executor_id: "executor-a", document: { title: "Model", path: "C:/Model.rvt" } }
+  });
+  const eligible = __testOnlyFinalizeDecision({ ...base, tool_results: [{
+    action_id: "read-1", method: "GET", path: "/revit/context", request_effect: "read", status: "failed",
+    request_dispatched: false, outcome_unknown: false, reconciliation_required: false, failure_code: "revit_execution_denied"
+  }] }, { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "The injected context is still available.", actions: [] });
+  assert.equal(eligible.certified_read_disposition?.status, "degraded");
+  assert.deepEqual(eligible.certified_read_disposition?.action_ids, ["read-1"]);
+  for (const unsafe of [
+    { request_effect: "apply", request_dispatched: false, outcome_unknown: false, reconciliation_required: false },
+    { request_effect: "read", request_dispatched: true, outcome_unknown: false, reconciliation_required: false },
+    { request_effect: "read", request_dispatched: false, outcome_unknown: true, reconciliation_required: true }
+  ]) {
+    const response = __testOnlyFinalizeDecision({ ...base, tool_results: [{ action_id: "unsafe", method: "GET", path: "/revit/context", status: "failed", failure_code: "revit_execution_denied", ...unsafe }] }, { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: "No action.", actions: [] });
+    assert.equal(response.certified_read_disposition, undefined);
   }
 });
 

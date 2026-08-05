@@ -54,3 +54,43 @@ export function filterCertifiedSidecarActions(actions: ActionCall[], env: NodeJS
     return { actions: [], denied: true, controlPlaneFailure: code };
   }
 }
+
+const EXPECTED_PRE_DISPATCH_DENIALS = new Set([
+  "revit_execution_denied", "revit_execution_not_dispatched", "revit_execution_authorization_unavailable",
+  "revit_execution_authorization_endpoint_missing", "revit_bridge_loopback_required"
+]);
+
+function documentExecutorSignature(req: Pick<ChatRequest, "context">): string {
+  const context = contextRecord(req);
+  const revit = context?.revit && typeof context.revit === "object" ? context.revit as Record<string, unknown> : {};
+  const document = revit.document && typeof revit.document === "object" ? revit.document as Record<string, unknown> : {};
+  return JSON.stringify([document.title ?? "", document.path ?? "", revit.process_id ?? "", revit.courier_executor_id ?? ""]);
+}
+
+/** A backend-generated terminal receipt; prose never grants degraded completion. */
+export function buildCertifiedReadDisposition(req: ChatRequest) {
+  if (!isCertifiedSidecarRequest(req)) return null;
+  const results = Array.isArray(req.tool_results) ? req.tool_results : [];
+  if (results.length !== 1) return null;
+  const result = results[0]!;
+  const read = result.request_effect === "read" || result.method === "GET";
+  if (!read || result.status !== "failed" || result.request_dispatched !== false || result.outcome_unknown !== false
+    || result.reconciliation_required !== false || !EXPECTED_PRE_DISPATCH_DENIALS.has(String(result.failure_code ?? ""))) return null;
+  try {
+    const trusted = loadTrustedToolExposurePolicy();
+    return {
+      schema: "revit-operator.certified-read-disposition.v1" as const,
+      terminal: true as const,
+      status: "degraded" as const,
+      session_id: req.session_id,
+      message_id: req.message_id,
+      policy_hash: trusted.policy.policy_hash,
+      document_executor_signature: documentExecutorSignature(req),
+      action_ids: [result.action_id],
+      evidence_ids: [result.action_id],
+      correction_count: 1 as const
+    };
+  } catch {
+    return null;
+  }
+}

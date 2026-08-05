@@ -76,6 +76,23 @@ export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  certified_capability_limitations?: Array<{
+    code: "CERTIFIED_ACTION_DENIED";
+    action_ids: string[];
+    message: string;
+  }>;
+  certified_read_disposition?: {
+    schema: "revit-operator.certified-read-disposition.v1";
+    terminal: true;
+    status: "degraded";
+    session_id: string;
+    message_id: string;
+    policy_hash: string;
+    document_executor_signature: string;
+    action_ids: string[];
+    evidence_ids: string[];
+    correction_count: 1;
+  };
   teammate_loop_receipt?: {
     schema: "revit-operator.teammate-loop-receipt.v1";
     turn_kind: "conversation" | "inspection" | "navigation" | "mutation";

@@ -43,7 +43,7 @@ import {
   maybeContinueExistingConditionsOneActionLoop
 } from "./existing_conditions/one_action_execution_ledger.js";
 import { ensureWorkspaceLayout } from "./workspace.js";
-import { filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
+import { buildCertifiedReadDisposition, filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -268,13 +268,24 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
       actions: []
     };
   }
-  const certifiedMessage = certified?.denied
-    ? "Certified sidecar capability denied the proposed action; no action was dispatched."
-    : assistantMessage;
+  const certifiedMessage = assistantMessage;
+  const certifiedDisposition = buildCertifiedReadDisposition(req);
   if (certifiedMessage.trim().length > 0 || actions.length > 0) {
     const guarded = enforceVerificationDisclaimer(
       req,
-      enforceModeledRedlineGuard(req, { ...decision, assistant_message: certifiedMessage, actions })
+      enforceModeledRedlineGuard(req, {
+        ...decision,
+        assistant_message: certifiedMessage,
+        actions,
+        ...(certified?.denied ? {
+          certified_capability_limitations: [{
+            code: "CERTIFIED_ACTION_DENIED" as const,
+            action_ids: environmentActions.filter(action => !actions.includes(action)).map(action => action.action_id),
+            message: "Unavailable certified actions were not dispatched."
+          }]
+        } : {}),
+        ...(certifiedDisposition ? { certified_read_disposition: certifiedDisposition } : {})
+      })
     );
     return __testOnlyIsExistingConditionsReconstructionRequest(req)
       ? enforceExistingConditionsOneActionLoop({ req, decision: guarded })
