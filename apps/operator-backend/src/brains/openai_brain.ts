@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { buildAllowlistFromPairs, filterAllowlistedActions } from "../allowlist.js";
 import { pathLooksWrite } from "../action_path_mutability.js";
-import { isCertifiedSidecarRequest } from "../capabilities/certified_sidecar_capability.js";
+import { CERTIFIED_SIDECAR_PROMPT_LINES, CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES, isCertifiedSidecarRequest } from "../capabilities/certified_sidecar_capability.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ActionCall,
@@ -18836,19 +18836,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   const lines: string[] = [];
   const speedSettings = resolveSpeedSettings(req.context);
   const certifiedDirectSidecar = isCertifiedSidecarRequest(req);
-
-  lines.push(certifiedDirectSidecar
-    ? "You are the general Revit Operator reasoning agent. Interpret the user's natural-language intent, use only the certified live evidence and exact capability surface supplied by the host, and state limitations honestly. Do not select tools from keyword or noun triggers."
-    : process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt());
-  lines.push("");
-  if (certifiedDirectSidecar) {
-    lines.push("Certified direct Sidecar lane:");
-    lines.push("- The live Revit document/view context in this request was already observed by the Sidecar through the exact certified revit_get_context binding.");
-    lines.push("- Answer directly from that evidence whenever it is sufficient. Do not repeat the context read merely to prove connectivity.");
-    lines.push("- The only executable Revit action in this profile is exact GET /revit/context. Do not propose find-elements, capabilities, tool search/docs/examples, native API discovery, UI automation, writes, navigation, or visual exports.");
-    lines.push("- If deeper evidence is unavailable, report the established context facts and name the limitation. Never turn an unavailable exploratory action into a claim that the live context itself is unavailable.");
-    lines.push("");
-  }
+  lines.push(...(certifiedDirectSidecar ? CERTIFIED_SIDECAR_PROMPT_LINES : [process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt(), ""]));
   const turnContract = formatAgentTurnContract(req.user_text, req.context);
   if (turnContract) lines.push(turnContract, "");
   if (speedSettings.speed_mode) {
@@ -18865,13 +18853,10 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     }
     lines.push("");
   }
-  if (!certifiedDirectSidecar) {
-    lines.push("Fast Revit edit playbooks:");
-    lines.push("- Parameter edits: resolve the exact writable parameter name from read evidence, then write and require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit. When a literal value may occur across categories, use allModelInstances:true with valueEquals for one complete identifier or valueContains for an intentional substring audit, add writableOnly when appropriate, and page the filtered matches; do not guess categories or parameter names. If the scope comes from schedule sheets, resolve placedSchedules and read bounded schedule data first, then reconcile against host-model element IDs.");
-    lines.push("- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.");
-    lines.push("- Avoid exploratory tool-doc/tool-examples calls for common parameter updates when /revit/find-elements, /revit/get-parameters, /revit/set-parameter, or /revit/update-panel-parameter are already available.");
-    lines.push("");
-  }
+  if (!certifiedDirectSidecar) lines.push("Fast Revit edit playbooks:",
+    "- Parameter edits: resolve the exact writable parameter name from read evidence, then write and require post-commit verification. For a confirmed category-wide audit, use categories + includeStringParameters + offset/limit. When a literal value may occur across categories, use allModelInstances:true with valueEquals for one complete identifier or valueContains for an intentional substring audit, add writableOnly when appropriate, and page the filtered matches; do not guess categories or parameter names. If the scope comes from schedule sheets, resolve placedSchedules and read bounded schedule data first, then reconcile against host-model element IDs.",
+    "- For a named electrical panel AIC/SCCR edit, prefer one targeted POST /revit/update-panel-parameter using panelName, parameterName:\"A.I.C. Rating\" or \"Short Circuit Rating\", value, onlyWhenBlank:false, targetScope:\"panel\", dryRun:false when the user asked to make the change and write grant is active; avoid /revit/tool-doc or /revit/tool-examples unless that direct call fails.",
+    "- Avoid exploratory tool-doc/tool-examples calls for common parameter updates when /revit/find-elements, /revit/get-parameters, /revit/set-parameter, or /revit/update-panel-parameter are already available.", "");
 
   try {
     lines.push(formatEnvironmentSummaryForPrompt());
@@ -18959,10 +18944,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     const skills = getSkillLibraryText();
     if (skills) {
       const maxChars = Math.max(1200, Number.parseInt(process.env.OPERATOR_PROMPT_MAX_SKILL_CHARS ?? "7000", 10) || 7000);
-      const trimmed = skills.length > maxChars ? skills.slice(0, maxChars) + "\n…(truncated)" : skills;
-      lines.push("Skill library (selected docs; may be truncated):");
-      lines.push(trimmed);
-      lines.push("");
+      lines.push("Skill library (selected docs; may be truncated):", skills.length > maxChars ? skills.slice(0, maxChars) + "\n…(truncated)" : skills, "");
     }
   } else if (!certifiedDirectSidecar) {
     lines.push("Skill library omitted for token efficiency on this turn. Query specific docs/skills only when needed.");
@@ -19172,12 +19154,8 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   }
 
   const toolsFromContext = (req.context as any)?.capabilities?.tools;
-  if (certifiedDirectSidecar) {
-    lines.push("Tools summary (trusted certified Sidecar surface):");
-    lines.push("- GET /revit/context — exact typed revit_get_context binding; the current result is already present in request context.");
-    lines.push("- No discovery, mutation, navigation, visual, generic-call, or native-API action is exposed in this profile.");
-    lines.push("");
-  } else if (Array.isArray(toolsFromContext) && toolsFromContext.length > 0) {
+  if (certifiedDirectSidecar) lines.push(...CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES);
+  else if (Array.isArray(toolsFromContext) && toolsFromContext.length > 0) {
     const totalTools = toolsFromContext.length;
     lines.push("Tools summary (allowlisted Revit actions):");
     lines.push(`- Total available this session: ${totalTools}`);

@@ -5,6 +5,19 @@ import { evaluateTrustedToolExposurePolicy, loadTrustedToolExposurePolicy, Trust
 export const CERTIFIED_SIDECAR_BOOTSTRAP_SCHEMA = "revit-operator.certified-sidecar-bootstrap.v1";
 export const CERTIFIED_SIDECAR_CONTEXT_PATH = "/revit/context";
 export const CERTIFIED_SIDECAR_CONTEXT_ALIAS = "revit_get_context";
+export const CERTIFIED_SIDECAR_PROMPT_LINES = [
+  "You are the general Revit Operator reasoning agent. Interpret the user's natural-language intent, use only the certified live evidence and exact capability surface supplied by the host, and state limitations honestly. Do not select tools from keyword or noun triggers.",
+  "", "Certified direct Sidecar lane:",
+  "- The live Revit document/view context in this request was already observed by the Sidecar through the exact certified revit_get_context binding.",
+  "- Answer directly from that evidence whenever it is sufficient. Do not repeat the context read merely to prove connectivity.",
+  "- The only executable Revit action in this profile is exact GET /revit/context. Do not propose find-elements, capabilities, tool search/docs/examples, native API discovery, UI automation, writes, navigation, or visual exports.",
+  "- If deeper evidence is unavailable, report the established context facts and name the limitation. Never turn an unavailable exploratory action into a claim that the live context itself is unavailable.", ""
+] as const;
+export const CERTIFIED_SIDECAR_TOOL_SUMMARY_LINES = [
+  "Tools summary (trusted certified Sidecar surface):",
+  "- GET /revit/context — exact typed revit_get_context binding; the current result is already present in request context.",
+  "- No discovery, mutation, navigation, visual, generic-call, or native-API action is exposed in this profile.", ""
+] as const;
 
 type CertifiedSidecarBootstrap = {
   schema: typeof CERTIFIED_SIDECAR_BOOTSTRAP_SCHEMA;
