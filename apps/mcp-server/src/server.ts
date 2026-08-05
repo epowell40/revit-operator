@@ -9,6 +9,7 @@ import { createRequire } from "module";
 
 xlsx.set_fs(fs);
 import { callRevit } from "./lib/revitClient.js";
+import { observeModelV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -1511,6 +1512,27 @@ server.tool("revit_export_view_frame", "Export active view image + deterministic
       const data = await callRevit("/revit/export-view-frame", "POST", { viewId, imageSize, folder, includeMapping });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+server.tool(
+  "revit_observe_model",
+  "Observe the active Revit view as one image plus a mapped inventory; use before target resolution, preview, and result comparison.",
+  {
+    viewId: z.number().int().positive().optional(),
+    imageSize: z.number().int().min(256).max(4096).optional(),
+    categories: z.array(z.string().min(1).max(128)).max(64).optional(),
+    excludeCategories: z.array(z.string().min(1).max(128)).max(64).optional(),
+    includeLinked: z.boolean().optional(),
+    modelBounds: z.array(z.number().finite()).length(6).optional(),
+    limit: z.number().int().min(1).max(2000).optional()
+  },
+  async (args) => {
+    try {
+      return await observeModelV1(args, callRevit);
+    } catch (e) {
+      return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
   }
 );
 

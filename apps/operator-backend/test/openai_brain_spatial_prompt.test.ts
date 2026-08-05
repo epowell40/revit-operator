@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { __testOnlyBuildPromptForRequest } from "../src/brains/openai_brain.js";
+import { __testOnlyBuildInputForRequest, __testOnlyBuildPromptForRequest } from "../src/brains/openai_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/contracts.js";
 import { compactIncomingToolResult } from "../src/tool_result_compaction.js";
 
@@ -272,4 +272,25 @@ test("base prompt teaches generic physical identity discovery before room resolu
   assert.match(prompt, /matching schedule detail with fields\/data and reconcile schedule rows\/keys against physical instances/);
   assert.match(prompt, /Do not add an inferred category as a hard filter/);
   assert.match(prompt, /locate-elements with its discovered elementIds, spatialResolution:"geometry_with_nearest"/);
+});
+test("neutral text still transports valid, bounded, deduplicated tool images", async () => {
+  const req: ChatRequest = {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    session_id: "tool-image-neutral",
+    message_id: "one",
+    user_text: "continue",
+    tool_results: [{
+      action_id: "observation", method: "POST", path: "/revit/export-visible-elements", status: "done",
+      attachments: [
+        { kind: "image", mime: "image/png", data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=" },
+        { kind: "image", mime: "image/png", data_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=" }
+      ]
+    }]
+  };
+  const input = await __testOnlyBuildInputForRequest(req);
+  assert.equal(Array.isArray(input), true);
+  const images = (input as any)[1].content.filter((entry: any) => entry.type === "input_image");
+  assert.equal(images.length, 1);
+  const noImage = await __testOnlyBuildInputForRequest({ ...req, tool_results: [] });
+  assert.equal(typeof noImage, "string");
 });

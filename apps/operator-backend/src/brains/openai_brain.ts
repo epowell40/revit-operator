@@ -3993,7 +3993,6 @@ function collectRecentStaleElementIds(toolResults: ToolResult[]): number[] {
 }
 
 function shouldAttachImages(req: ChatRequest): boolean {
-  const text = ((req.user_text ?? "") as string).toLowerCase();
   const serverCtx = (req.context as any)?.__server;
   const hasUserImage = Array.isArray(req.user_attachments)
     ? req.user_attachments.some(a => {
@@ -4026,8 +4025,8 @@ function shouldAttachImages(req: ChatRequest): boolean {
   if (postWriteEvidence?.has_post_write_verification) return true;
   if (hasVisualToolEvidence && isRedlineFocusedTurn(req)) return true;
 
-  const visualIntentHints = ["image", "screenshot", "capture", "redline", "verify", "visual", "see", "look", "sheet"];
-  return visualIntentHints.some(h => text.includes(h));
+  // Current tool-result images are evidence for this request regardless of user phrasing.
+  return true;
 }
 
 function readWorkspaceImageDataUrl(relativePath: string, maxBytes: number): string | null {
@@ -19716,6 +19715,13 @@ async function buildInput(req: ChatRequest, lane?: { route: SpeedRouteKind; reas
       ]
     }
   ];
+}
+
+export async function __testOnlyBuildInputForRequest(
+  req: ChatRequest,
+  lane?: { route: SpeedRouteKind; reason: string }
+): Promise<any> {
+  return buildInput(req, lane);
 }
 
 function extractFirstJsonObject(text: string): string | null {

@@ -83,49 +83,159 @@ function pickTransform(value: unknown): {
 function pickImageProjection(value: unknown): { x: number | null; y: number | null; normalizedX: number | null; normalizedY: number | null; insideFrame: boolean | null } | null {
   const obj = asObject(value);
   if (!obj) return null;
+  const x = pickFirstNumber(obj.x, obj.xPx, obj.x_px);
+  const y = pickFirstNumber(obj.y, obj.yPx, obj.y_px);
+  const normalizedX = pickFirstNumber(obj.normalizedX, obj.normalized_x);
+  const normalizedY = pickFirstNumber(obj.normalizedY, obj.normalized_y);
+  if (!((x !== null && y !== null) || (normalizedX !== null && normalizedY !== null))) return null;
   return {
-    x: pickFirstNumber(obj.x, obj.xPx, obj.x_px),
-    y: pickFirstNumber(obj.y, obj.yPx, obj.y_px),
-    normalizedX: pickFirstNumber(obj.normalizedX, obj.normalized_x),
-    normalizedY: pickFirstNumber(obj.normalizedY, obj.normalized_y),
+    x,
+    y,
+    normalizedX,
+    normalizedY,
     insideFrame: pickFirstBool(obj.insideFrame, obj.inside_frame)
   };
+}
+
+function pickExplicitImageProjection(value: unknown): ReturnType<typeof pickImageProjection> {
+  const obj = asObject(value);
+  if (!obj) return null;
+  const hasExplicitImageCoordinates = ["xPx", "x_px", "yPx", "y_px", "normalizedX", "normalized_x", "normalizedY", "normalized_y"]
+    .some(key => Object.prototype.hasOwnProperty.call(obj, key));
+  return hasExplicitImageCoordinates ? pickImageProjection(obj) : null;
 }
 
 function pickProjectedPoint(value: unknown): { model: { x: number; y: number; z: number } | null; image: { x: number | null; y: number | null; normalizedX: number | null; normalizedY: number | null; insideFrame: boolean | null } | null } | null {
   const obj = asObject(value);
   if (!obj) return null;
+  const nested = asObject(obj.point);
+  const model = pickVector(obj.model) ?? pickVector(obj.xyz) ?? pickVector(obj)
+    ?? pickVector(nested?.model) ?? pickVector(nested?.xyz) ?? pickVector(nested);
+  const image = pickImageProjection(obj.image) ?? pickExplicitImageProjection(obj)
+    ?? pickImageProjection(nested?.image) ?? pickExplicitImageProjection(nested);
+  return model || image ? { model, image } : null;
+}
+
+function pickModelRect(value: unknown): { min: { x: number; y: number; z: number }; max: { x: number; y: number; z: number }; center: { x: number; y: number; z: number } | null } | null {
+  const obj = asObject(value);
+  if (!obj) return null;
+  const min = pickVector(obj.min ?? obj.minimum);
+  const max = pickVector(obj.max ?? obj.maximum);
+  if (!min || !max) return null;
+  return { min, max, center: pickVector(obj.center) };
+}
+
+function pickCanonicalGeometry(value: unknown): Record<string, unknown> | null {
+  const geometry = asObject(value);
+  if (!geometry) return null;
+  const kind = boundedString(pickString(geometry.kind, geometry.type)?.toLowerCase() ?? null, 64);
+  const point = pickProjectedPoint(geometry.point ?? geometry.xyz ?? geometry.origin);
+  const midpoint = pickProjectedPoint(geometry.midpoint);
+  const start = pickProjectedPoint(geometry.start ?? geometry.startPoint ?? geometry.start_point);
+  const end = pickProjectedPoint(geometry.end ?? geometry.endPoint ?? geometry.end_point);
+  const bounds = pickModelRect(geometry.bounds ?? geometry.bbox ?? geometry.boundingBox);
+  const rawPoints = geometry.points ?? geometry.vertices;
+  const points = Array.isArray(rawPoints)
+    ? rawPoints.slice(0, 64).map(pickProjectedPoint).filter((item): item is NonNullable<ReturnType<typeof pickProjectedPoint>> => !!item)
+    : [];
+  if (!kind && !point && !midpoint && !start && !end && !bounds && points.length === 0) return null;
   return {
-    model: pickVector(obj.model),
-    image: pickImageProjection(obj.image)
+    kind,
+    point,
+    midpoint,
+    start,
+    end,
+    bounds,
+    points: points.length > 0 ? points : null
   };
+}
+
+function boundedString(value: unknown, maxChars: number): string | null {
+  return typeof value === "string" && value.length <= maxChars ? value : null;
+}
+
+function boundedScalar(value: unknown, maxStringChars = 512): string | number | boolean | null {
+  if (typeof value === "string") return boundedString(value, maxStringChars);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+  return null;
+}
+
+function boundedNonNegativeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function saturatingSafeAdd(left: number, right: number): number {
+  if (!Number.isSafeInteger(left) || left < 0 || !Number.isSafeInteger(right) || right < 0) return Number.MAX_SAFE_INTEGER;
+  return left > Number.MAX_SAFE_INTEGER - right ? Number.MAX_SAFE_INTEGER : left + right;
+}
+
+function sanitizeTargetLevel(value: unknown): { id: number | null; name: string | null; elevationFt: number | null } | null {
+  if (typeof value === "string") {
+    const name = boundedString(value, 512);
+    return name ? { id: null, name, elevationFt: null } : null;
+  }
+  const level = asObject(value);
+  if (!level) return null;
+  const id = boundedNonNegativeInteger(level.id ?? level.levelId ?? level.level_id);
+  const name = boundedString(level.name ?? level.levelName ?? level.level_name, 512);
+  const elevationFt = pickNumber(level.elevationFt ?? level.elevation_ft ?? level.elevation);
+  return id !== null || name !== null || elevationFt !== null ? { id, name, elevationFt } : null;
+}
+
+function pickFiniteTriple(value: unknown): [number, number, number] | null {
+  if (Array.isArray(value) && value.length === 3 && value.every(item => typeof item === "number" && Number.isFinite(item))) {
+    return [value[0] as number, value[1] as number, value[2] as number];
+  }
+  const vector = pickVector(value);
+  return vector ? [vector.x, vector.y, vector.z] : null;
+}
+
+function sanitizeObservationMapping(value: unknown): Record<string, unknown> | null {
+  const mapping = asObject(value);
+  if (!mapping) return null;
+  return {
+    mode: boundedString(mapping.mode, 64),
+    topLeftXyz: pickFiniteTriple(mapping.topLeftXyz),
+    topRightXyz: pickFiniteTriple(mapping.topRightXyz),
+    bottomLeftXyz: pickFiniteTriple(mapping.bottomLeftXyz),
+    modelUnits: boundedString(mapping.modelUnits, 32),
+    frameBasis: boundedString(mapping.frameBasis, 64),
+    rasterWidthPx: boundedNonNegativeInteger(mapping.rasterWidthPx),
+    rasterHeightPx: boundedNonNegativeInteger(mapping.rasterHeightPx),
+    rasterAspect: pickNumber(mapping.rasterAspect),
+    frameAspect: pickNumber(mapping.frameAspect),
+    cropBoxAspect: pickNumber(mapping.cropBoxAspect),
+    aspectMismatch: pickNumber(mapping.aspectMismatch),
+    aspectCorrectionApplied: pickBool(mapping.aspectCorrectionApplied),
+    aspectCorrectionAxis: boundedString(mapping.aspectCorrectionAxis, 16),
+    notes: boundedString(mapping.notes, 1024)
+  };
+}
+
+function sanitizeWarnings(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.slice(0, 12).flatMap(item => {
+    const warning = boundedString(item, 512);
+    return warning === null ? [] : [warning];
+  });
+}
+
+function sanitizeResultBounds(value: unknown): Record<string, unknown> | null {
+  const bounds = asObject(value);
+  if (!bounds) return null;
+  const model = pickModelRect(bounds.model ?? bounds);
+  const image = pickImageRect(bounds.image);
+  return model || image ? { model, image } : null;
 }
 
 function pickImageRect(value: unknown): Record<string, unknown> | null {
   const obj = asObject(value);
   if (!obj) return null;
   const out: Record<string, unknown> = {};
-  for (const key of [
-    "minX",
-    "minY",
-    "maxX",
-    "maxY",
-    "normalizedMinX",
-    "normalizedMinY",
-    "normalizedMaxX",
-    "normalizedMaxY",
-    "minNormalizedX",
-    "minNormalizedY",
-    "maxNormalizedX",
-    "maxNormalizedY",
-    "minU",
-    "minV",
-    "maxU",
-    "maxV",
-    "intersectsFrame"
-  ]) {
-    if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
-    out[key] = obj[key];
+  for (const key of ["minX", "minY", "maxX", "maxY", "minU", "minV", "maxU", "maxV"] as const) {
+    const number = pickNumber(obj[key]);
+    if (number !== null) out[key] = number;
   }
   const normalizedMinX = pickFirstNumber(obj.normalizedMinX, obj.normalized_min_x, obj.minNormalizedX, obj.min_normalized_x);
   const normalizedMinY = pickFirstNumber(obj.normalizedMinY, obj.normalized_min_y, obj.minNormalizedY, obj.min_normalized_y);
@@ -143,7 +253,7 @@ function pickImageRect(value: unknown): Record<string, unknown> | null {
 function pickCountEntries(values: string[], maxEntries = 8): Array<{ key: string; count: number }> {
   const counts = new Map<string, number>();
   for (const value of values) {
-    const trimmed = value.trim();
+    const trimmed = value.trim().slice(0, 256);
     if (!trimmed) continue;
     counts.set(trimmed, (counts.get(trimmed) ?? 0) + 1);
   }
@@ -351,6 +461,25 @@ function isProtectedVisibleElementTextAnchor(value: unknown): boolean {
     /^[A-Z]?\d{2,6}[A-Z]?$/i.test(text);
 }
 
+function visibleElementGroundingStatus(obj: Record<string, unknown>): "anchored" | "bbox" | "geometry" | "ungrounded" {
+  if (pickProjectedPoint(obj.anchor)) return "anchored";
+  const bbox = asObject(obj.bbox);
+  const imageRect = pickImageRect(bbox?.image);
+  const completeImageRect = !!imageRect && (
+    ["normalizedMinX", "normalizedMinY", "normalizedMaxX", "normalizedMaxY"].every(key => pickNumber(imageRect[key]) !== null)
+    || ["minX", "minY", "maxX", "maxY"].every(key => pickNumber(imageRect[key]) !== null)
+  );
+  if (completeImageRect || !!pickModelRect(bbox?.model)) return "bbox";
+  const geometry = pickCanonicalGeometry(obj.geometry);
+  const geometryKind = pickString(geometry?.kind)?.toLowerCase();
+  if (geometry && geometryKind !== "none") {
+    if (geometry.point || geometry.midpoint || geometry.bounds) return "geometry";
+    if (geometry.start && geometry.end) return "geometry";
+    if (Array.isArray(geometry.points) && geometry.points.length > 0) return "geometry";
+  }
+  return "ungrounded";
+}
+
 function summarizeVisibleElementItem(value: unknown): Record<string, unknown> | null {
   const obj = asObject(value);
   if (!obj) return null;
@@ -361,99 +490,114 @@ function summarizeVisibleElementItem(value: unknown): Record<string, unknown> | 
   const associatedSpatial = asObject(obj.associatedSpatial);
   const taggedSpatial = asObject(obj.taggedSpatial);
   const bbox = asObject(obj.bbox);
-  const geometry = asObject(obj.geometry);
+  const geometry = pickCanonicalGeometry(obj.geometry);
   const orientation = asObject(obj.orientation);
   const hostProvenance = asObject(obj.hostProvenance);
   const parameters = asObject(obj.parameters);
   const parameterGroups = asObject(obj.parameterGroups);
   const electricalParameters = asObject(parameterGroups?.electrical);
   const electricalCircuit = asObject(obj.electricalCircuit);
-  const bboxModel = bbox ? asObject(bbox.model) : null;
-  const bboxCenter = bboxModel ? pickVector(bboxModel.center) : null;
-  const geometryKind = pickString(geometry?.kind);
+  const rawBboxModel = bbox ? asObject(bbox.model) : null;
+  const bboxModel = pickModelRect(bbox?.model);
+  const bboxCenter = bboxModel?.center ?? pickVector(rawBboxModel?.center);
+  const bboxImage = pickImageRect(bbox?.image);
   const parameterSummary: Record<string, unknown> = {};
   for (const key of ["Panel", "panel", "Circuit Number", "Circuit", "circuitNumber", "circuit"]) {
-    if (parameters && Object.prototype.hasOwnProperty.call(parameters, key)) parameterSummary[key] = parameters[key];
+    if (parameters && Object.prototype.hasOwnProperty.call(parameters, key)) {
+      const scalar = boundedScalar(parameters[key]);
+      if (scalar !== null) parameterSummary[key] = scalar;
+    }
   }
   const electricalSummary: Record<string, unknown> = {};
   for (const key of ["Panel", "panel", "Circuit Number", "Circuit", "circuitNumber", "circuit"]) {
     if (electricalParameters && Object.prototype.hasOwnProperty.call(electricalParameters, key)) {
-      electricalSummary[key] = electricalParameters[key];
+      const scalar = boundedScalar(electricalParameters[key]);
+      if (scalar !== null) electricalSummary[key] = scalar;
     }
   }
   const summary: Record<string, unknown> = {
-    elementId: obj.elementId ?? null,
-    uniqueId: obj.uniqueId ?? null,
-    sourceScopedId: obj.sourceScopedId ?? null,
-    sourceScope: pickString(source?.scope) ?? null,
-    name: obj.name ?? null,
-    category: obj.category ?? null,
-    builtInCategory: obj.builtInCategory ?? null,
-    categoryToken: obj.categoryToken ?? null,
-    typeName: obj.typeName ?? null,
-    familyName: obj.familyName ?? null,
-    visibleText: getVisibleElementTextPayload(obj),
-    levelName: obj.levelName ?? null,
-    hostId: obj.hostId ?? null,
-    hostScopedId: obj.hostScopedId ?? null,
-    hostCategory: obj.hostCategory ?? null,
-    hostBuiltInCategory: obj.hostBuiltInCategory ?? null,
+    elementId: boundedNonNegativeInteger(obj.elementId),
+    uniqueId: boundedString(obj.uniqueId, 256),
+    sourceScopedId: boundedString(obj.sourceScopedId, 256),
+    groundingStatus: visibleElementGroundingStatus(obj),
+    source:
+      source
+        ? {
+            scope: boundedString(source.scope, 64),
+            linkInstanceId: boundedNonNegativeInteger(source.linkInstanceId ?? source.link_instance_id),
+            linkInstanceName: boundedString(source.linkInstanceName ?? source.link_instance_name, 512),
+            sourceDocumentTitle: boundedString(source.sourceDocumentTitle ?? source.source_document_title, 512)
+          }
+        : null,
+    sourceScope: boundedString(source?.scope, 64),
+    name: boundedString(obj.name, 512),
+    category: boundedString(obj.category, 256),
+    builtInCategory: boundedString(obj.builtInCategory, 256),
+    categoryToken: boundedString(obj.categoryToken, 256),
+    typeName: boundedString(obj.typeName, 512),
+    familyName: boundedString(obj.familyName, 512),
+    visibleText: boundedString(getVisibleElementTextPayload(obj), 1024),
+    levelName: boundedString(obj.levelName, 512),
+    hostId: boundedNonNegativeInteger(obj.hostId),
+    hostScopedId: boundedString(obj.hostScopedId, 256),
+    hostCategory: boundedString(obj.hostCategory, 256),
+    hostBuiltInCategory: boundedString(obj.hostBuiltInCategory, 256),
     hostProvenance:
       hostProvenance
         ? {
-            source: hostProvenance.source ?? null,
-            hostScopedId: hostProvenance.hostScopedId ?? null,
-            linkInstanceId: hostProvenance.linkInstanceId ?? null,
-            linkInstanceName: hostProvenance.linkInstanceName ?? null,
-            linkedElementId: hostProvenance.linkedElementId ?? null,
-            linkedElementScopedId: hostProvenance.linkedElementScopedId ?? null
+            source: boundedString(hostProvenance.source, 128),
+            hostScopedId: boundedString(hostProvenance.hostScopedId, 256),
+            linkInstanceId: boundedNonNegativeInteger(hostProvenance.linkInstanceId),
+            linkInstanceName: boundedString(hostProvenance.linkInstanceName, 512),
+            linkedElementId: boundedNonNegativeInteger(hostProvenance.linkedElementId),
+            linkedElementScopedId: boundedString(hostProvenance.linkedElementScopedId, 256)
           }
         : null,
     host:
       host
         ? {
-            id: host.id ?? null,
-            scopedId: host.scopedId ?? null,
-            sourceScopedId: host.sourceScopedId ?? null,
-            category: host.category ?? null,
-            builtInCategory: host.builtInCategory ?? null,
-            name: host.name ?? null,
-            resolvedFrom: host.resolvedFrom ?? null,
-            linkInstanceId: host.linkInstanceId ?? null
+            id: boundedNonNegativeInteger(host.id),
+            scopedId: boundedString(host.scopedId, 256),
+            sourceScopedId: boundedString(host.sourceScopedId, 256),
+            category: boundedString(host.category, 256),
+            builtInCategory: boundedString(host.builtInCategory, 256),
+            name: boundedString(host.name, 512),
+            resolvedFrom: boundedString(host.resolvedFrom, 256),
+            linkInstanceId: boundedNonNegativeInteger(host.linkInstanceId)
           }
         : null,
     room:
       room
         ? {
-            id: room.id ?? null,
-            number: room.number ?? null,
-            name: room.name ?? null
+            id: boundedNonNegativeInteger(room.id),
+            number: boundedString(room.number, 128),
+            name: boundedString(room.name, 512)
           }
         : null,
     space:
       space
         ? {
-            id: space.id ?? null,
-            number: space.number ?? null,
-            name: space.name ?? null
+            id: boundedNonNegativeInteger(space.id),
+            number: boundedString(space.number, 128),
+            name: boundedString(space.name, 512)
           }
         : null,
     associatedSpatial:
       associatedSpatial
         ? {
-            id: associatedSpatial.id ?? null,
-            number: associatedSpatial.number ?? null,
-            name: associatedSpatial.name ?? null,
-            type: associatedSpatial.type ?? associatedSpatial.kind ?? null
+            id: boundedNonNegativeInteger(associatedSpatial.id),
+            number: boundedString(associatedSpatial.number, 128),
+            name: boundedString(associatedSpatial.name, 512),
+            type: boundedString(associatedSpatial.type ?? associatedSpatial.kind, 128)
           }
         : null,
     taggedSpatial:
       taggedSpatial
         ? {
-            id: taggedSpatial.id ?? null,
-            number: taggedSpatial.number ?? null,
-            name: taggedSpatial.name ?? null,
-            type: taggedSpatial.type ?? taggedSpatial.kind ?? null
+            id: boundedNonNegativeInteger(taggedSpatial.id),
+            number: boundedString(taggedSpatial.number, 128),
+            name: boundedString(taggedSpatial.name, 512),
+            type: boundedString(taggedSpatial.type ?? taggedSpatial.kind, 128)
           }
         : null,
     parameters: Object.keys(parameterSummary).length > 0 ? parameterSummary : null,
@@ -466,10 +610,10 @@ function summarizeVisibleElementItem(value: unknown): Record<string, unknown> | 
     electricalCircuit:
       electricalCircuit
         ? {
-            primaryLabel: electricalCircuit.primaryLabel ?? null,
-            panel: electricalCircuit.panel ?? null,
-            circuit: electricalCircuit.circuit ?? null,
-            systemId: electricalCircuit.systemId ?? null
+            primaryLabel: boundedString(electricalCircuit.primaryLabel, 256),
+            panel: boundedString(electricalCircuit.panel, 256),
+            circuit: boundedString(electricalCircuit.circuit, 256),
+            systemId: boundedScalar(electricalCircuit.systemId, 256)
           }
         : null,
     anchor: pickProjectedPoint(obj.anchor),
@@ -477,29 +621,23 @@ function summarizeVisibleElementItem(value: unknown): Record<string, unknown> | 
       bbox
         ? {
             center: bboxCenter,
-            image: pickImageRect(bbox.image)
+            model: bboxModel,
+            image: bboxImage
           }
         : null,
-    geometry:
-      geometryKind
-        ? {
-            kind: geometryKind,
-            point: pickProjectedPoint(geometry?.point),
-            midpoint: pickProjectedPoint(geometry?.midpoint)
-          }
-        : null,
+    geometry,
     orientation:
       orientation
         ? {
             facing: pickVector(orientation.facing),
             hand: pickVector(orientation.hand),
             curveDirection: pickVector(orientation.curveDirection),
-            rotationRadians: orientation.rotationRadians ?? null,
-            planAzimuthRadians: orientation.planAzimuthRadians ?? null,
-            planAzimuthSource: orientation.planAzimuthSource ?? null,
-            mirrored: orientation.mirrored ?? null,
-            handFlipped: orientation.handFlipped ?? null,
-            facingFlipped: orientation.facingFlipped ?? null,
+            rotationRadians: pickNumber(orientation.rotationRadians),
+            planAzimuthRadians: pickNumber(orientation.planAzimuthRadians),
+            planAzimuthSource: boundedString(orientation.planAzimuthSource, 128),
+            mirrored: pickBool(orientation.mirrored),
+            handFlipped: pickBool(orientation.handFlipped),
+            facingFlipped: pickBool(orientation.facingFlipped),
             transform: pickTransform(orientation.transform),
             sourceToHostTransform: pickTransform(orientation.sourceToHostTransform)
           }
@@ -524,28 +662,75 @@ export function compactVisibleElementsResult(
 
   if (obj._compacted === true && Array.isArray(obj.itemsSampled)) {
     const summary = asObject(obj.summary);
-    const sliceEntries = (key: string): unknown[] | null => {
+    const summarizedItems = (obj.itemsSampled as unknown[])
+      .slice(0, maxItems)
+      .map(summarizeVisibleElementItem)
+      .filter((item): item is Record<string, unknown> => !!item);
+    const sliceEntries = (key: string): Array<{ key: string; count: number }> | null => {
       const entries = summary && Array.isArray(summary[key]) ? (summary[key] as unknown[]) : null;
-      return entries ? entries.slice(0, maxCountEntries) : null;
+      if (!entries) return null;
+      return entries.slice(0, maxCountEntries).flatMap(entry => {
+        const record = asObject(entry);
+        const label = boundedString(record?.key, 256);
+        const count = boundedNonNegativeInteger(record?.count);
+        return label && count !== null ? [{ key: label, count }] : [];
+      });
     };
+    const image = asObject(obj.image);
+    const coverage = asObject(obj.coverage);
+    const modelBounds = asObject(obj.modelBoundsFt);
+    const mapping = asObject(obj.mapping);
     return {
-      ...obj,
-      itemsSampled: (obj.itemsSampled as unknown[]).slice(0, maxItems),
+      _compacted: true,
+      compaction: "visible-elements-inventory-summary",
+      approx_json_chars: boundedNonNegativeInteger(obj.approx_json_chars) ?? approxJsonChars(value),
+      ...(typeof obj.ok === "boolean" ? { ok: obj.ok } : {}),
+      compactionSchemaVersion: "spatial-observation-summary/v1",
+      sourceSchemaVersion: null,
+      observationId: boundedString(obj.observationId, 256) ?? boundedString(obj.frameId, 256),
+      frameId: boundedString(obj.frameId, 256),
+      viewId: boundedNonNegativeInteger(obj.viewId),
+      viewType: boundedString(obj.viewType, 128),
+      viewName: boundedString(obj.viewName, 512),
+      path: boundedString(obj.path, 2048),
+      image: {
+        path: boundedString(image?.path, 2048) ?? boundedString(obj.path, 2048),
+        widthPx: boundedNonNegativeInteger(image?.widthPx ?? obj.widthPx),
+        heightPx: boundedNonNegativeInteger(image?.heightPx ?? obj.heightPx)
+      },
+      widthPx: boundedNonNegativeInteger(obj.widthPx),
+      heightPx: boundedNonNegativeInteger(obj.heightPx),
+      targetLevel: sanitizeTargetLevel(obj.targetLevel),
+      count: boundedNonNegativeInteger(obj.count) ?? summarizedItems.length,
+      scanned: boundedNonNegativeInteger(obj.scanned),
+      truncated: pickBool(obj.truncated),
+      coverage: {
+        count: boundedNonNegativeInteger(coverage?.count ?? obj.count) ?? summarizedItems.length,
+        scanned: boundedNonNegativeInteger(coverage?.scanned ?? obj.scanned),
+        truncated: pickBool(coverage?.truncated ?? obj.truncated),
+        resultBounds: sanitizeResultBounds(coverage?.resultBounds)
+      },
+      ...(typeof obj.modelBoundsApplied === "boolean" ? { modelBoundsApplied: obj.modelBoundsApplied } : {}),
+      ...(modelBounds && pickVector(modelBounds.min) && pickVector(modelBounds.max)
+        ? { modelBoundsFt: { min: pickVector(modelBounds.min), max: pickVector(modelBounds.max) } }
+        : {}),
+      ...(mapping ? { mapping: sanitizeObservationMapping(mapping) } : {}),
+      itemsSampled: summarizedItems,
       itemsOmitted:
-        typeof obj.itemsOmitted === "number"
-          ? Math.max(0, Math.round(obj.itemsOmitted) + Math.max(0, (obj.itemsSampled as unknown[]).length - maxItems))
-          : obj.itemsOmitted ?? null,
+        boundedNonNegativeInteger(obj.itemsOmitted) !== null
+          ? saturatingSafeAdd(boundedNonNegativeInteger(obj.itemsOmitted)!, Math.max(0, (obj.itemsSampled as unknown[]).length - maxItems))
+          : null,
       summary:
         summary
           ? {
-              ...summary,
-              ...(sliceEntries("categoryCounts") ? { categoryCounts: sliceEntries("categoryCounts") } : {}),
-              ...(sliceEntries("roomCounts") ? { roomCounts: sliceEntries("roomCounts") } : {}),
-              ...(sliceEntries("spaceCounts") ? { spaceCounts: sliceEntries("spaceCounts") } : {}),
-              ...(sliceEntries("hostCategoryCounts") ? { hostCategoryCounts: sliceEntries("hostCategoryCounts") } : {}),
-              ...(sliceEntries("familyTypeCounts") ? { familyTypeCounts: sliceEntries("familyTypeCounts") } : {})
+              categoryCounts: sliceEntries("categoryCounts") ?? [],
+              roomCounts: sliceEntries("roomCounts") ?? [],
+              spaceCounts: sliceEntries("spaceCounts") ?? [],
+              hostCategoryCounts: sliceEntries("hostCategoryCounts") ?? [],
+              familyTypeCounts: sliceEntries("familyTypeCounts") ?? []
             }
-          : null
+          : null,
+      warnings: sanitizeWarnings(obj.warnings)
     };
   }
 
@@ -634,44 +819,38 @@ export function compactVisibleElementsResult(
     compaction: "visible-elements-inventory-summary",
     approx_json_chars: approxJsonChars(value),
     ...(typeof obj.ok === "boolean" ? { ok: obj.ok } : {}),
-    frameId: obj.frameId ?? null,
-    viewId: obj.viewId ?? null,
-    viewType: obj.viewType ?? null,
-    viewName: obj.viewName ?? null,
-    path: obj.path ?? null,
-    widthPx: obj.widthPx ?? null,
-    heightPx: obj.heightPx ?? null,
-    targetLevel: obj.targetLevel ?? obj.target_level ?? null,
-    count: typeof obj.count === "number" ? obj.count : items.length,
-    scanned: obj.scanned ?? null,
-    truncated: obj.truncated ?? null,
+    compactionSchemaVersion: "spatial-observation-summary/v1",
+    sourceSchemaVersion: null,
+    observationId: boundedString(obj.observationId ?? obj.observation_id, 256) ?? boundedString(obj.frameId ?? obj.frame_id, 256),
+    frameId: boundedString(obj.frameId ?? obj.frame_id, 256),
+    viewId: boundedNonNegativeInteger(obj.viewId ?? obj.view_id),
+    viewType: boundedString(obj.viewType ?? obj.view_type, 128),
+    viewName: boundedString(obj.viewName ?? obj.view_name, 512),
+    path: boundedString(obj.path, 2048),
+    image: {
+      path: boundedString(asObject(obj.image)?.path, 2048) ?? boundedString(obj.path, 2048),
+      widthPx: boundedNonNegativeInteger(asObject(obj.image)?.widthPx ?? obj.widthPx),
+      heightPx: boundedNonNegativeInteger(asObject(obj.image)?.heightPx ?? obj.heightPx)
+    },
+    widthPx: boundedNonNegativeInteger(obj.widthPx),
+    heightPx: boundedNonNegativeInteger(obj.heightPx),
+    targetLevel: sanitizeTargetLevel(obj.targetLevel ?? obj.target_level),
+    count: boundedNonNegativeInteger(obj.count) ?? items.length,
+    scanned: boundedNonNegativeInteger(obj.scanned),
+    truncated: pickBool(obj.truncated),
+    coverage: {
+      count: boundedNonNegativeInteger(obj.count) ?? items.length,
+      scanned: boundedNonNegativeInteger(obj.scanned),
+      truncated: pickBool(obj.truncated),
+      resultBounds: sanitizeResultBounds(obj.resultBounds ?? obj.result_bounds)
+    },
     ...(typeof obj.modelBoundsApplied === "boolean"
       ? { modelBoundsApplied: obj.modelBoundsApplied }
       : {}),
     ...(modelBoundsMin && modelBoundsMax
       ? { modelBoundsFt: { min: modelBoundsMin, max: modelBoundsMax } }
       : {}),
-    ...(mapping
-      ? {
-          mapping: {
-            mode: mapping.mode ?? null,
-            topLeftXyz: mapping.topLeftXyz ?? null,
-            topRightXyz: mapping.topRightXyz ?? null,
-            bottomLeftXyz: mapping.bottomLeftXyz ?? null,
-            modelUnits: mapping.modelUnits ?? null,
-            frameBasis: mapping.frameBasis ?? null,
-            rasterWidthPx: mapping.rasterWidthPx ?? null,
-            rasterHeightPx: mapping.rasterHeightPx ?? null,
-            rasterAspect: mapping.rasterAspect ?? null,
-            frameAspect: mapping.frameAspect ?? null,
-            cropBoxAspect: mapping.cropBoxAspect ?? null,
-            aspectMismatch: mapping.aspectMismatch ?? null,
-            aspectCorrectionApplied: mapping.aspectCorrectionApplied ?? null,
-            aspectCorrectionAxis: mapping.aspectCorrectionAxis ?? null,
-            notes: mapping.notes ?? null
-          }
-        }
-      : {}),
+    ...(mapping ? { mapping: sanitizeObservationMapping(mapping) } : {}),
     summary: {
       categoryCounts: pickCountEntries(categories, maxCountEntries),
       roomCounts: pickCountEntries(roomKeys, maxCountEntries),
@@ -679,7 +858,7 @@ export function compactVisibleElementsResult(
       hostCategoryCounts: pickCountEntries(hostCategories, maxCountEntries),
       familyTypeCounts: pickCountEntries(familyTypes, maxCountEntries)
     },
-    warnings: Array.isArray(obj.warnings) ? obj.warnings.slice(0, 12) : null,
+    warnings: sanitizeWarnings(obj.warnings),
     itemsSampled: sampledItems,
     itemsOmitted: Math.max(0, items.length - sampledItems.length)
   };
