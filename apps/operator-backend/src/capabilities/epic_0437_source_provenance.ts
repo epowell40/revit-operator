@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { TextDecoder } from "node:util";
 import { canonicalJson, sha256NormalizedText, type JsonValue } from "./tool_certification.js";
 import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } from "./trusted_tool_exposure_policy.js";
 
@@ -38,6 +39,8 @@ const EPIC_0437_SOURCE_ROOT_FILES = [
 ] as const;
 
 const IGNORED_SOURCE_DIRECTORIES = new Set([".git", ".vs", "bin", "obj", "node_modules", "dist", "TestResults"]);
+const EPIC_0437_TEXT_SOURCE_EXTENSIONS = new Set([".addin", ".cs", ".csproj", ".json", ".md", ".ps1", ".sln", ".ts"]);
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 function discoverSourceFiles(repoRoot: string, relativeRoot: string): string[] {
   const output: string[] = [];
@@ -111,12 +114,26 @@ function sha256Bytes(file: string): string {
   return `sha256:${createHash("sha256").update(fs.readFileSync(file)).digest("hex")}`;
 }
 
+function readEpic0437SourceText(absolute: string, relative: string): string {
+  if (!EPIC_0437_TEXT_SOURCE_EXTENSIONS.has(path.extname(relative).toLowerCase())) {
+    throw new Error(`EPIC-0437 source provenance refuses an unsupported non-text build input: ${relative}`);
+  }
+  let source: string;
+  try {
+    source = STRICT_UTF8.decode(fs.readFileSync(absolute));
+  } catch {
+    throw new Error(`EPIC-0437 source provenance refuses malformed UTF-8: ${relative}`);
+  }
+  if (source.includes("\0")) throw new Error(`EPIC-0437 source provenance refuses NUL/binary text: ${relative}`);
+  return source;
+}
+
 export function epic0437SourceInputHash(repoRoot: string, relative: string, normalization?: Epic0437SourceInput["normalization"]): string {
   const absolute = path.join(repoRoot, relative);
   // Every enumerated source/build input is UTF-8 text. Git may materialize the
   // same reviewed text as LF or CRLF, so bind its normalized text identity.
-  if (normalization === undefined) return sha256NormalizedText(fs.readFileSync(absolute, "utf8"));
-  let source = fs.readFileSync(absolute, "utf8");
+  if (normalization === undefined) return sha256NormalizedText(readEpic0437SourceText(absolute, relative));
+  let source = readEpic0437SourceText(absolute, relative);
   if (normalization !== undefined) {
     if (normalization !== "epic-0437-generated-policy-anchor-masked.v1" || !MASKED_POLICY_ANCHOR_SOURCES.has(relative)) throw new Error(`Unsupported EPIC-0437 source normalization: ${relative}`);
     let replacements = 0;

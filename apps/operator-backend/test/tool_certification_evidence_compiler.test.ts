@@ -35,6 +35,15 @@ test("source provenance is cross-platform for line endings but still binds exact
   assert.equal(epic0437SourceInputHash(root, relative), lfHash);
   fs.writeFileSync(source, "const a = 1;\r\nconst b = 3;\r\n", "utf8");
   assert.notEqual(epic0437SourceInputHash(root, relative), lfHash);
+  fs.writeFileSync(source, Buffer.from([0xc3, 0x28]));
+  assert.throws(() => epic0437SourceInputHash(root, relative), /malformed UTF-8/);
+  fs.writeFileSync(source, Buffer.from([0xa0, 0xa1]));
+  assert.throws(() => epic0437SourceInputHash(root, relative), /malformed UTF-8/);
+  fs.writeFileSync(source, "const a = 1;\0\n", "utf8");
+  assert.throws(() => epic0437SourceInputHash(root, relative), /NUL\/binary text/);
+  const unsupported = path.join(root, "source.bin");
+  fs.writeFileSync(unsupported, "text", "utf8");
+  assert.throws(() => epic0437SourceInputHash(root, "source.bin"), /unsupported non-text build input/);
 });
 
 test("artifact-bound compiler verifies exact cumulative L0-L2 proof files against current inputs", () => {
