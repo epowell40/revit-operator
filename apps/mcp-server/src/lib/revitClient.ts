@@ -270,6 +270,11 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   // status is unknown, it must be reconciled instead of retried automatically.
   const mutating = requestEffect !== "read";
   const laboratoryBypass = isExactDevelopmentLaboratory();
+  const protectedLaboratoryEvidence = laboratoryBypass
+    && process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
+  if (protectedLaboratoryEvidence && options.certifiedMoveOneAdmission) {
+    throw new Error("Protected laboratory evidence transport cannot manufacture certified request-family admission; use the exact generic candidate body until L4 policy is generated.");
+  }
 
   const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string>; certifiedExecutionContext?: CertifiedMoveExecutionContext }> => {
     const controller = new AbortController();
@@ -281,7 +286,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       : undefined;
 
     try {
-      if (!laboratoryBypass) {
+      if (!laboratoryBypass || protectedLaboratoryEvidence) {
         const nativeChannel = exposure.channel;
         if (nativeChannel === "deterministic_workflow") {
           throw new Error("Deterministic workflow certification requires the durable courier transport.");

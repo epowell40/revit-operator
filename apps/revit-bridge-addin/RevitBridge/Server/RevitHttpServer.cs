@@ -618,11 +618,15 @@ namespace RevitBridge.Server
                 var queryIndex = rawUrl.IndexOf('?');
                 var rawPath = queryIndex >= 0 ? rawUrl.Substring(0, queryIndex) : rawUrl;
                 var hasQuery = queryIndex >= 0;
+                var protectedLaboratoryEvidence = laboratoryBypass
+                    && string.Equals(req.HttpMethod, "POST", StringComparison.Ordinal)
+                    && string.Equals(rawPath, OperatorNativeTransportProtocol.TransportPath, StringComparison.Ordinal)
+                    && string.Equals(req.ContentType, OperatorNativeTransportProtocol.ContentType, StringComparison.Ordinal);
 
                 OperatorNativeHttpRequest? effectiveRequest = null;
                 string path;
                 string requestBody;
-                if (laboratoryBypass)
+                if (laboratoryBypass && !protectedLaboratoryEvidence)
                 {
                     correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
                     resp.Headers["X-Operator-Correlation-Id"] = correlationId;
@@ -667,12 +671,23 @@ namespace RevitBridge.Server
                         _nativeTransportReplayCache);
                     correlationId = protectedTransportRequest.Request.RequestId;
                     var sourceRequest = protectedTransportRequest.Request;
-                    var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None, "preflight");
-                    var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
-                        earlyReceipt,
-                        sourceRequest,
-                        DateTimeOffset.UtcNow);
-                    effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                    if (protectedLaboratoryEvidence)
+                    {
+                        // This is an explicitly selected evidence-generation lane,
+                        // not certified production admission. It retains encrypted,
+                        // replay-protected transport and all ordinary write grants,
+                        // but does not manufacture an L4 policy decision.
+                        effectiveRequest = sourceRequest;
+                    }
+                    else
+                    {
+                        var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None, "preflight");
+                        var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+                            earlyReceipt,
+                            sourceRequest,
+                            DateTimeOffset.UtcNow);
+                        effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                    }
                     path = effectiveRequest.Path;
                     requestBody = effectiveRequest.BodyJson;
                 }
@@ -739,19 +754,19 @@ namespace RevitBridge.Server
                 
                 if (path == "/revit/ping")
                 {
-                    if (effectiveRequest != null)
+                    if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     responseText = JsonSerializer.Serialize(new { status = "ok", timestamp = DateTime.Now });
                 }
                 else if (path == "/revit/capabilities")
                 {
-                    if (effectiveRequest != null)
+                    if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     responseText = JsonSerializer.Serialize(RevitBridge.Operator.OperatorCapabilities.Get());
                 }
                 else if (path == "/revit/write-grant-status")
                 {
-                    if (effectiveRequest != null)
+                    if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     var status = OperatorWriteGrant.ReadStatus();
                     responseText = JsonSerializer.Serialize(new
@@ -785,7 +800,7 @@ namespace RevitBridge.Server
                     object result;
                     if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))
                     {
-                        if (effectiveRequest != null)
+                        if (effectiveRequest != null && !protectedLaboratoryEvidence)
                             body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                         result = handler is NativeApiPolicyHandler nativeApiPolicyHandler
                             ? await nativeApiPolicyHandler.HandleForMethod(null!, body, effectiveMethod)
@@ -799,6 +814,7 @@ namespace RevitBridge.Server
                         try
                         {
                             var capturedEffectiveRequest = effectiveRequest;
+                            var capturedRequiresCertifiedAuthorization = !protectedLaboratoryEvidence;
                             var capturedBody = body;
                             result = await _eventService.Run(
                                 app =>
@@ -806,7 +822,7 @@ namespace RevitBridge.Server
                                     var dispatchBody = capturedBody;
                                     OperatorCertifiedMoveExecutionStart? executionStart = null;
                                     OperatorCertifiedFamilyExecutionContext? executionContext = null;
-                                    if (capturedEffectiveRequest != null)
+                                    if (capturedEffectiveRequest != null && capturedRequiresCertifiedAuthorization)
                                     {
                                         dispatchBody = RequireFinalNativeAuthorizationAsync(
                                             capturedEffectiveRequest,

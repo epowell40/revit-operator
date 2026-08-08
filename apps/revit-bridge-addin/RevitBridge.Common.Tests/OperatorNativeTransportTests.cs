@@ -221,6 +221,20 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void LaboratoryCertificationEvidenceRetainsProtectedTransportWithoutManufacturingPolicyAdmission()
+        {
+            var root = FindRepositoryRoot();
+            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+
+            Assert.Contains("protectedLaboratoryEvidence = laboratoryBypass", server);
+            Assert.Contains("OperatorNativeTransportProtocol.TransportPath", server);
+            Assert.Contains("OperatorNativeTransportHttpAdapter.OpenCertifiedRequest", server);
+            Assert.Contains("if (laboratoryBypass && !protectedLaboratoryEvidence)", server);
+            Assert.Contains("if (effectiveRequest != null && !protectedLaboratoryEvidence)", server);
+            Assert.Contains("does not manufacture an L4 policy decision", server);
+        }
+
+        [Fact]
         public void HttpAdapterRejectsRawHeadersAndProtectsApplicationStatusAndFailures()
         {
             Assert.True(OperatorNativeHttpRuntimeProfile.IsExactDevelopmentLaboratory("development", "laboratory"));
