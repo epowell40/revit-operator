@@ -46,9 +46,12 @@ test("discard archive publication cannot overwrite and leaves recovery blocking 
   assert.equal(fs.readFileSync(archive, "utf8"), "recovery");
 });
 
-test("trusted tasklist resolver is pinned to System32", () => {
+test("trusted tasklist resolver is pinned to System32", { skip: process.platform !== "win32" }, () => {
   const resolved = resolveTrustedWindowsTasklist(process.env.SystemRoot);
   assert.equal(path.win32.basename(resolved).toLowerCase(), "tasklist.exe");
   assert.equal(path.win32.dirname(resolved).toLowerCase(), path.win32.join(process.env.SystemRoot!, "System32").toLowerCase());
+});
+
+test("trusted tasklist resolver fails closed without SystemRoot", () => {
   assert.throws(() => resolveTrustedWindowsTasklist(undefined), /SystemRoot is unavailable/);
 });

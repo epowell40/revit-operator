@@ -79,11 +79,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.test.ts",
-      "sha256": "sha256:77e6704312cd971ffc7944e10250101f667aad9d548653563eec7ac91c216c55"
+      "sha256": "sha256:18524af806a70c13a07a5a6db71d7988a631753867e730a05e563d40f7d3fbac"
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.ts",
-      "sha256": "sha256:b0d265c829f7820534b43eaf354de88a36808f788beac311c05ad5f8a3347e19"
+      "sha256": "sha256:a8af5c2b2c821e580c47ab05eb6c7b2fe13b800ddededc920860f70d407f436d"
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437RecoveryControl.test.ts",
@@ -4313,7 +4313,7 @@
       "sha256": "sha256:3fc2e8880d127f1b1418cddb0df7d1327a2d3eb21f4a3be9e08e05e8cb964d6f"
     }
   ],
-  "inputs_hash": "sha256:b309132e1bfeb68dae8abe0a9981392853277a6ddf5426cf1d7968fd4c3c1be8",
+  "inputs_hash": "sha256:8a135e4aa4d916acb87324e74bdee3e11b16e7b24742a2e1296c96779c882627",
   "result": {
     "passed": true,
     "checks": [

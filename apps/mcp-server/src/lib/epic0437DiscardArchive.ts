@@ -36,7 +36,7 @@ export function assertEpic0437DiscardArchiveFacts(facts: Epic0437DiscardArchiveF
   if (facts.revitRunning) throw new Error("Revit.exe is still running. Close Revit without saving the disposable model before archiving recovery authority.");
   if (!facts.recoveryIsRegularFile || facts.recoveryIsRedirect
     || normalized(facts.requestedRecoveryPath) !== normalized(facts.recoveryRealPath)
-    || normalized(path.dirname(facts.recoveryRealPath)) !== normalized(facts.runsRootRealPath)) {
+    || normalized(path.win32.dirname(facts.recoveryRealPath)) !== normalized(facts.runsRootRealPath)) {
     throw new Error("Recovery record escapes or redirects from the exact runs root.");
   }
   const relativeModel = path.win32.relative(facts.disposableRootRealPath, facts.disposableModelRealPath);
