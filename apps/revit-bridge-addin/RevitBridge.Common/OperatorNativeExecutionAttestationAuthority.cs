@@ -75,9 +75,13 @@ namespace RevitBridge.Common
 
         private static RSA CreateKey()
         {
-            var key = RSA.Create();
-            key.KeySize = 2048;
-            return key;
+#if NETFRAMEWORK
+            // RSA.Create() returns a legacy 1024-bit CSP instance on .NET
+            // Framework and silently ignores a later KeySize assignment.
+            return new RSACryptoServiceProvider(2048);
+#else
+            return RSA.Create(2048);
+#endif
         }
 
         private static string Base64Url(byte[] value)

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using RevitBridge.Common;
 using Xunit;
@@ -9,6 +10,11 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void Process_local_key_signs_exact_canonical_receipt_and_rejects_tamper()
         {
+            var modulus = OperatorNativeExecutionAttestationAuthority.ModulusBase64Url
+                .Replace('-', '+').Replace('_', '/');
+            modulus += new string('=', (4 - modulus.Length % 4) % 4);
+            Assert.Equal(256, Convert.FromBase64String(modulus).Length);
+
             var payload = new Dictionary<string, object?>
             {
                 ["schema"] = "revit-operator.certified-family-execution-receipt.v1",

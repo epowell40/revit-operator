@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 using RevitBridge.Operator;
@@ -23,6 +24,9 @@ namespace RevitBridge
         {
             Instance = this;
             WriteStartupLog("OnStartup begin.");
+
+            application.ControlledApplication.DocumentOpened += OnDocumentOpened;
+            application.ControlledApplication.DocumentClosing += OnDocumentClosing;
 
             try
             {
@@ -147,6 +151,8 @@ namespace RevitBridge
         public Result OnShutdown(UIControlledApplication application)
         {
             WriteStartupLog("OnShutdown begin.");
+            application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
+            application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
             try
             {
                 WriteStartupLog("Operator Desktop launch notification shutdown begin.");
@@ -190,6 +196,18 @@ namespace RevitBridge
             }
             WriteStartupLog("OnShutdown complete.");
             return Result.Succeeded;
+        }
+
+        private static void OnDocumentOpened(object sender, DocumentOpenedEventArgs args)
+        {
+            try { OperatorNativeDocumentSessionAuthority.RegisterOpenedDocument(args.Document); }
+            catch (Exception ex) { WriteStartupLog($"Document session registration failed closed: {ex.GetType().FullName}: {ex.Message}"); }
+        }
+
+        private static void OnDocumentClosing(object sender, DocumentClosingEventArgs args)
+        {
+            try { OperatorNativeDocumentSessionAuthority.InvalidateClosingDocument(args.Document); }
+            catch (Exception ex) { WriteStartupLog($"Document session invalidation failed closed: {ex.GetType().FullName}: {ex.Message}"); }
         }
 
         private static OperatorApprovalMode GetCourierApprovalMode()

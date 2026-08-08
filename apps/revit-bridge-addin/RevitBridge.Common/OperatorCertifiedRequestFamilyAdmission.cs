@@ -6,7 +6,6 @@ using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Runtime.CompilerServices;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 
@@ -417,12 +416,34 @@ namespace RevitBridge.Common
     public static class OperatorNativeDocumentSessionAuthority
     {
         private sealed class Session { public string Id { get; } = Guid.NewGuid().ToString("N"); }
-        private static readonly ConditionalWeakTable<Document, Session> Sessions = new ConditionalWeakTable<Document, Session>();
+        private static readonly object Gate = new object();
+        private static readonly Dictionary<string, Session> Sessions = new Dictionary<string, Session>(StringComparer.OrdinalIgnoreCase);
 
         public static string GetSessionId(Document document)
         {
             if (document == null) throw new ArgumentNullException(nameof(document));
-            return Sessions.GetValue(document, _ => new Session()).Id;
+            var key = DocumentKey(document);
+            lock (Gate)
+            {
+                if (!Sessions.TryGetValue(key, out var session))
+                {
+                    session = new Session();
+                    Sessions[key] = session;
+                }
+                return session.Id;
+            }
+        }
+
+        public static void RegisterOpenedDocument(Document document)
+        {
+            if (document == null) throw new ArgumentNullException(nameof(document));
+            lock (Gate) Sessions[DocumentKey(document)] = new Session();
+        }
+
+        public static void InvalidateClosingDocument(Document document)
+        {
+            if (document == null) return;
+            lock (Gate) Sessions.Remove(DocumentKey(document));
         }
 
         public static void RequireCurrent(UIApplication app, OperatorCertifiedRequestFamilyAdmission? admission)
@@ -458,5 +479,16 @@ namespace RevitBridge.Common
                 403,
                 false,
                 "healthy");
+
+        private static string DocumentKey(Document document)
+        {
+            string? projectUniqueId = null;
+            try { projectUniqueId = document.ProjectInformation?.UniqueId; } catch { }
+            var fingerprint = OperatorRevitBatchBinding.ComputeProjectFingerprint(document.Title, document.PathName, projectUniqueId);
+            string path;
+            try { path = Path.GetFullPath(document.PathName ?? ""); }
+            catch { path = document.PathName ?? ""; }
+            return fingerprint + "\n" + path.Normalize(NormalizationForm.FormC);
+        }
     }
 }
