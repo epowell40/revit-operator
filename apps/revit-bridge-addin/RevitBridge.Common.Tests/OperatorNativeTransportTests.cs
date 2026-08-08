@@ -205,6 +205,22 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void NativeServerDiscoveryReceiptsAreOwnedAndFailClosedAcrossRevitProcesses()
+        {
+            var root = FindRepositoryRoot();
+            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            var listenerStarted = server.IndexOf("listener.Start();", StringComparison.Ordinal);
+            var discoveryClaim = server.IndexOf("TryPublishActiveDiscoveryReceipts(candidateUrl, _nativeTransportEpoch)", StringComparison.Ordinal);
+
+            Assert.True(listenerStarted >= 0 && discoveryClaim > listenerStarted);
+            Assert.Contains("HasLiveForeignDiscoveryOwner(listenerPath)", server);
+            Assert.Contains("IsExactDiscoveryOwner(listenerPath, url, serverEpoch)", server);
+            Assert.Contains("A live Revit bridge already owns the global discovery receipts", server);
+            Assert.Contains("preserved any discovery receipts owned by another Revit process", server);
+            Assert.DoesNotContain("WriteActiveTransportReceipt(\"\", \"\")", server);
+        }
+
+        [Fact]
         public void HttpAdapterRejectsRawHeadersAndProtectsApplicationStatusAndFailures()
         {
             Assert.True(OperatorNativeHttpRuntimeProfile.IsExactDevelopmentLaboratory("development", "laboratory"));

@@ -37,7 +37,9 @@ namespace RevitBridge.Server
         private bool _isRunning;
         private string _activeUrl = "";
         private string _nativeTransportEpoch = "";
+        private bool _ownsActiveDiscoveryReceipt;
         private const string DefaultUrl = "http://127.0.0.1:5000/";
+        private const string DiscoveryMutexName = @"Local\RevitOperator.BridgeDiscovery.v1";
         private readonly Dictionary<string, HandlerRequest> _handlers;
 
         public RevitHttpServer(RevitEventService eventService, IOperatorNativeHttpAuthorizer nativeHttpAuthorizer)
@@ -287,10 +289,11 @@ namespace RevitBridge.Server
                     _listener = listener;
                     _activeUrl = candidateUrl;
                     _isRunning = true;
-                    WriteActiveUrlFile(candidateUrl);
-                    WriteActiveTransportReceipt(candidateUrl, _nativeTransportEpoch);
-                    ClearActiveListenerIdentityReceipt();
-                    WriteActiveListenerIdentityReceipt(candidateUrl, _nativeTransportEpoch);
+                    _ownsActiveDiscoveryReceipt = TryPublishActiveDiscoveryReceipts(candidateUrl, _nativeTransportEpoch);
+                    if (!_ownsActiveDiscoveryReceipt)
+                    {
+                        WriteStartupLog("A live Revit bridge already owns the global discovery receipts; this fallback listener will not replace them.");
+                    }
                     WriteStartupLog($"HTTP listener started at {candidateUrl}");
                     Task.Run(() => HandleIncomingConnections());
                     return;
@@ -302,20 +305,22 @@ namespace RevitBridge.Server
                 }
             }
 
-            WriteActiveUrlFile("");
-            WriteActiveTransportReceipt("", "");
-            ClearActiveListenerIdentityReceipt();
-            WriteStartupLog("HTTP listener failed for every candidate URL; wrote empty bridge_url.txt.");
+            WriteStartupLog("HTTP listener failed for every candidate URL; preserved any discovery receipts owned by another Revit process.");
         }
 
         public void Stop()
         {
+            var activeUrl = _activeUrl;
+            var nativeTransportEpoch = _nativeTransportEpoch;
             _isRunning = false;
             try { _listener?.Stop(); } catch { }
             try { _listener?.Close(); } catch { }
+            if (_ownsActiveDiscoveryReceipt)
+            {
+                ClearActiveDiscoveryReceiptsIfOwned(activeUrl, nativeTransportEpoch);
+            }
+            _ownsActiveDiscoveryReceipt = false;
             _nativeTransportEpoch = "";
-            WriteActiveTransportReceipt("", "");
-            ClearActiveListenerIdentityReceipt();
         }
 
         private static IEnumerable<string> ResolveCandidateUrls()
@@ -433,17 +438,126 @@ namespace RevitBridge.Server
             catch { }
         }
 
-        private static void ClearActiveListenerIdentityReceipt()
+        private static bool TryPublishActiveDiscoveryReceipts(string url, string serverEpoch)
         {
+            var ownsMutex = false;
+            Mutex? mutex = null;
             try
             {
                 var root = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "RevitOperator");
-                File.Delete(Path.Combine(root, "bridge_listener_identity.v1.json"));
-                File.Delete(Path.Combine(root, "bridge_listener_identity.v1.json.pending"));
+                Directory.CreateDirectory(root);
+                mutex = new Mutex(false, DiscoveryMutexName);
+                try
+                {
+                    ownsMutex = mutex.WaitOne(TimeSpan.FromSeconds(5));
+                }
+                catch (AbandonedMutexException)
+                {
+                    ownsMutex = true;
+                }
+                if (!ownsMutex) return false;
+
+                var listenerPath = Path.Combine(root, "bridge_listener_identity.v1.json");
+                if (HasLiveForeignDiscoveryOwner(listenerPath)) return false;
+
+                WriteActiveUrlFile(url);
+                WriteActiveTransportReceipt(url, serverEpoch);
+                WriteActiveListenerIdentityReceipt(url, serverEpoch);
+                return true;
+            }
+            catch { return false; }
+            finally
+            {
+                if (ownsMutex)
+                {
+                    try { mutex?.ReleaseMutex(); } catch { }
+                }
+                mutex?.Dispose();
+            }
+        }
+
+        private static void ClearActiveDiscoveryReceiptsIfOwned(string url, string serverEpoch)
+        {
+            var ownsMutex = false;
+            Mutex? mutex = null;
+            try
+            {
+                mutex = new Mutex(false, DiscoveryMutexName);
+                try
+                {
+                    ownsMutex = mutex.WaitOne(TimeSpan.FromSeconds(5));
+                }
+                catch (AbandonedMutexException)
+                {
+                    ownsMutex = true;
+                }
+                if (!ownsMutex) return;
+
+                var root = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "RevitOperator");
+                var listenerPath = Path.Combine(root, "bridge_listener_identity.v1.json");
+                if (!IsExactDiscoveryOwner(listenerPath, url, serverEpoch)) return;
+
+                File.Delete(Path.Combine(root, "bridge_url.txt"));
+                File.Delete(Path.Combine(root, "bridge_transport.v1.json"));
+                File.Delete(Path.Combine(root, "bridge_transport.v1.json.pending"));
+                File.Delete(listenerPath);
+                File.Delete(listenerPath + ".pending");
             }
             catch { }
+            finally
+            {
+                if (ownsMutex)
+                {
+                    try { mutex?.ReleaseMutex(); } catch { }
+                }
+                mutex?.Dispose();
+            }
+        }
+
+        private static bool HasLiveForeignDiscoveryOwner(string listenerPath)
+        {
+            try
+            {
+                using (var document = JsonDocument.Parse(File.ReadAllText(listenerPath)))
+                {
+                    var root = document.RootElement;
+                    var pid = root.GetProperty("pid").GetInt32();
+                    if (pid == Process.GetCurrentProcess().Id) return false;
+                    var createdUtc = root.GetProperty("created_utc").GetString() ?? "";
+                    if (!DateTimeOffset.TryParseExact(
+                        createdUtc,
+                        "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                        out var expectedStart)) return false;
+                    using (var process = Process.GetProcessById(pid))
+                    {
+                        var actualStart = process.StartTime.ToUniversalTime();
+                        return Math.Abs((actualStart - expectedStart.UtcDateTime).TotalMilliseconds) < 1000;
+                    }
+                }
+            }
+            catch { return false; }
+        }
+
+        private static bool IsExactDiscoveryOwner(string listenerPath, string url, string serverEpoch)
+        {
+            try
+            {
+                using (var document = JsonDocument.Parse(File.ReadAllText(listenerPath)))
+                {
+                    var root = document.RootElement;
+                    return string.Equals(root.GetProperty("version").GetString(), "revit-operator.bridge-listener-identity.v1", StringComparison.Ordinal)
+                        && root.GetProperty("pid").GetInt32() == Process.GetCurrentProcess().Id
+                        && string.Equals(root.GetProperty("url").GetString(), (url ?? "").TrimEnd('/'), StringComparison.Ordinal)
+                        && string.Equals(root.GetProperty("server_epoch").GetString(), serverEpoch ?? "", StringComparison.Ordinal);
+                }
+            }
+            catch { return false; }
         }
         private static void WriteStartupLog(string message)
         {
