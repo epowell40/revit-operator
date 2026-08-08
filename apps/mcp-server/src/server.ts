@@ -1940,20 +1940,20 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
         executionContext = readCertifiedMoveExecutionContext(data);
         assertCertifiedMoveExecutionReceipt(admission, policyBinding, data, executionContext);
       } catch (receiptError) {
-        if (admission.request.phase === "apply") {
-          return {
-            isError: true,
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify(certifiedMovePostDispatchVerificationFailurePayload(
-                receiptError,
-                admittedRequest!,
-                executionContext
-              ))
-            }]
-          };
-        }
-        throw receiptError;
+        // Both apply and rollback preview cross the native mutation boundary.
+        // If the signed native result cannot be verified, rollback is not
+        // independently proven either, so neither phase may be retried.
+        return {
+          isError: true,
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(certifiedMovePostDispatchVerificationFailurePayload(
+              receiptError,
+              admittedRequest!,
+              executionContext
+            ))
+          }]
+        };
       }
       const previewReceipt = admission.request.phase === "preview"
         ? issueCertifiedMovePreviewReceipt(admission, policyBinding, data)

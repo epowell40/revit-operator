@@ -615,6 +615,53 @@ test("certified family courier rejects raw or standalone-decision failure receip
   }
 });
 
+test("certified family courier rejects deleted or downgraded durable jobs before any result exists", async () => {
+  const policy = writeMoveFamilyPolicy();
+  for (const mode of ["deleted-job", "downgraded-job"] as const) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-missing-job-"));
+    const restore = saveEnv();
+    try {
+      process.env.OPERATOR_WORKSPACE_ROOT = root;
+      process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+      process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+      process.env.REVIT_OPERATOR_MODE = "hosted";
+      delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+      writeContext(root, {
+        session_id: "family-missing-job-session",
+        message_id: mode,
+        target_executor_id: "family-workstation"
+      });
+      clearCertifiedMoveTargetLedgerForTests();
+      registerCertifiedSpatialObservation(
+        { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+      );
+      const admission = admitCertifiedMoveOneRequest({
+        phase: "preview", elementId: 4821, observationId: "family-missing-job-frame",
+        vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
+      });
+      const pending = runWithRevitToolAlias("revit_move_one_certified", async () => await callRevit(
+        "/revit/move-elements", "POST", admission.outboundBody,
+        { channel: "typed_mcp", certifiedMoveOneAdmission: admission }
+      ));
+      const jobRef = await waitForJob(root);
+      const jobPath = path.join(jobRef.dir, "job.json");
+      if (mode === "deleted-job") fs.unlinkSync(jobPath);
+      else {
+        const job = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+        fs.writeFileSync(jobPath, JSON.stringify({ ...job, version: "revit-operator.revit-tool-job.v1" }), "utf8");
+      }
+      await assert.rejects(pending, /no exact persisted v2 durable job/);
+      assert.equal(fs.existsSync(path.join(jobRef.dir, "result.json")), false);
+    } finally {
+      clearCertifiedMoveTargetLedgerForTests();
+      restore();
+    }
+  }
+});
+
 test("certified v2 normalizes context expiry, keeps duplicate identity stable, and rotates identity when expiry changes", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-expiry-identity-"));
   const restore = saveEnv();

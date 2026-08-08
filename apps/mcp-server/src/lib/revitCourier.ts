@@ -222,24 +222,33 @@ function readAuthoritativeResult(
   id: string,
   expectedEnvelope?: CertificationEnvelope
 ): CourierResult | null {
-  const receipt = readResult(resultPath, id);
-  if (!receipt) return null;
   const job = readJsonObject(jobPath);
-  if (expectedEnvelope?.version === 2 && job?.version !== JOB_VERSION_V2) {
+  if (expectedEnvelope?.version === 2 && (!job || job.version !== JOB_VERSION_V2)) {
     throw new Error("Certified family courier result has no exact persisted v2 durable job.");
   }
-  if (job?.version !== JOB_VERSION_V2) return receipt;
-  const envelope = job.certification_envelope as CertificationEnvelope | undefined;
-  if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
-  if (expectedEnvelope?.version === 2
-    && (envelope.version !== 2 || envelope.envelope_hash !== expectedEnvelope.envelope_hash)) {
-    throw new Error("Certified family courier result does not match the exact in-process certification envelope.");
+  const envelope = job?.certification_envelope as CertificationEnvelope | undefined;
+  if (expectedEnvelope?.version === 2) {
+    if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
+    if (envelope.version !== 2 || envelope.envelope_hash !== expectedEnvelope.envelope_hash) {
+      throw new Error("Certified family courier result does not match the exact in-process certification envelope.");
+    }
+    if (!job || job.id !== id || job.correlation_id !== id || job.idempotency_key !== id
+      || job.method !== envelope.method || job.path !== envelope.path
+      || job.body_present !== envelope.body_present
+      || typeof job.body_json !== "string" || sha256(job.body_json) !== envelope.body_sha256) {
+      throw new Error("Certified family courier result does not match the exact immutable durable job identity.");
+    }
   }
+  const receipt = readResult(resultPath, id);
+  if (!receipt) return null;
+  if (job?.version !== JOB_VERSION_V2) return receipt;
+  if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
   if (envelope.version !== 2) return receipt;
-  if (job.id !== id || job.correlation_id !== id || job.idempotency_key !== id
-    || job.method !== envelope.method || job.path !== envelope.path
-    || job.body_present !== envelope.body_present
-    || typeof job.body_json !== "string" || sha256(job.body_json) !== envelope.body_sha256) {
+  if (expectedEnvelope?.version !== 2
+    && (job.id !== id || job.correlation_id !== id || job.idempotency_key !== id
+      || job.method !== envelope.method || job.path !== envelope.path
+      || job.body_present !== envelope.body_present
+      || typeof job.body_json !== "string" || sha256(job.body_json) !== envelope.body_sha256)) {
     throw new Error("Certified family courier result does not match the exact immutable durable job identity.");
   }
   const jobDir = path.dirname(jobPath);

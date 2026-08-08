@@ -74,3 +74,24 @@ test("certified move receipt-verification failure preserves exact dispatch and s
   assert.equal((payload.certification_binding as Record<string, unknown>).policy_hash, binding.policyHash);
   assert.equal((payload.certification_binding as Record<string, unknown>).preview_receipt_hash, binding.previewReceiptHash);
 });
+
+test("certified move preview receipt-verification failure is unknown and non-retryable", () => {
+  const previewBinding = {
+    ...binding,
+    phase: "preview" as const,
+    previewInstanceHash: null,
+    previewReceiptHash: null
+  };
+  const payload = certifiedMovePostDispatchVerificationFailurePayload(
+    new Error("rollback receipt projection mismatch"),
+    previewBinding,
+    { dispatchId: "7".repeat(32), correlationId: "7".repeat(32) }
+  );
+  assert.equal(payload.request_phase, "preview");
+  assert.equal(payload.dispatch_id, "7".repeat(32));
+  assert.equal(payload.outcome_unknown, true);
+  assert.equal(payload.retryable, false);
+  assert.equal(payload.reconciliation_required, true);
+  assert.equal((payload.certification_binding as Record<string, unknown>).preview_instance_hash, null);
+  assert.equal((payload.certification_binding as Record<string, unknown>).preview_receipt_hash, null);
+});
