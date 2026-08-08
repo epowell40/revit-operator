@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
-import { compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
+import { assertEpic0437PromotableRecoveryState, compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
 import { EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, parseAndVerifyEpic0437PromotionAuthorization } from "../src/capabilities/epic_0437_promotion_authority.js";
 
 const backendRoot = process.cwd();
@@ -92,6 +92,17 @@ test("artifact-bound evidence cannot be hand-promoted without one exact proof pe
   });
   assert.equal(policy.records[0]?.channels.typed_mcp.exposed, false);
   assert.ok(policy.records[0]?.channels.typed_mcp.reason_codes.includes("CERT_EVIDENCE_MISMATCHED"));
+});
+
+test("EPIC-0437 compiler rejects every manual or discard-only recovery state", () => {
+  assert.doesNotThrow(() => assertEpic0437PromotableRecoveryState("L3", "preview_only"));
+  assert.doesNotThrow(() => assertEpic0437PromotableRecoveryState("L4", "restored"));
+  for (const state of [
+    "host_restart_discard_required", "manual_close_without_save_required", "manual_reconciliation_required",
+    "reconciliation_required", "restored_after_failure", "preview_only", null
+  ]) {
+    assert.throws(() => assertEpic0437PromotableRecoveryState("L4", state), /exact safe recovery state/);
+  }
 });
 
 function writeForgeableLegacyLiveFixture(level: "L3" | "L4"): { root: string; relative: string; save: () => string } {

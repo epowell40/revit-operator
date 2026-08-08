@@ -231,6 +231,36 @@ export type LaboratoryNativeAttestationBinding = Readonly<{
   exponent_base64url: "AQAB";
 }>;
 
+export type Epic0437RecoveryContinuity = "same_native_session" | "discard_required";
+
+/**
+ * Classifies whether a stored recovery receipt can remain under the current
+ * process-local native authority. This function never authorizes execution:
+ * callers must still run verifyStoredLaboratoryExecutionResult before a
+ * same-session recovery. A mismatch is deliberately collapsed to the
+ * non-mutating discard path; an old process key must never rehydrate native
+ * move authority after Revit restarts.
+ */
+export function classifyEpic0437RecoveryContinuity(
+  resultValue: unknown,
+  trusted: LaboratoryNativeAttestationBinding,
+  currentDocumentSessionId: string
+): Epic0437RecoveryContinuity {
+  if (!resultValue || typeof resultValue !== "object" || Array.isArray(resultValue)
+    || trusted.algorithm !== "RS256" || trusted.exponent_base64url !== "AQAB"
+    || !currentDocumentSessionId) return "discard_required";
+  const receiptValue = (resultValue as Record<string, unknown>).laboratory_execution_receipt;
+  if (!receiptValue || typeof receiptValue !== "object" || Array.isArray(receiptValue)) return "discard_required";
+  const receipt = receiptValue as Record<string, unknown>;
+  return receipt.native_attestation_algorithm === trusted.algorithm
+    && receipt.native_attestation_key_id === trusted.key_id
+    && receipt.native_attestation_modulus_base64url === trusted.modulus_base64url
+    && receipt.native_attestation_exponent_base64url === trusted.exponent_base64url
+    && receipt.document_session_id === currentDocumentSessionId
+    ? "same_native_session"
+    : "discard_required";
+}
+
 /** Verifies a stored native result without trusting any caller-authored recovery fields. */
 export function verifyStoredLaboratoryExecutionResult(
   resultValue: unknown,

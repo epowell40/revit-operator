@@ -6,10 +6,12 @@ import { canonicalTestNativeJson, signTestNativeReceipt, TEST_NATIVE_EXECUTION_A
 import { issueLaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
 import {
   admitLaboratoryMoveEvidenceRequest,
+  classifyEpic0437RecoveryContinuity,
   consumeLaboratoryMoveEvidenceAdmission as consumeLaboratoryMoveEvidenceAdmissionRaw,
   issueLaboratoryMovePreviewLineage,
   LABORATORY_MOVE_APPLY_EFFECT_HASH,
-  LABORATORY_MOVE_PREVIEW_EFFECT_HASH
+  LABORATORY_MOVE_PREVIEW_EFFECT_HASH,
+  type LaboratoryNativeAttestationBinding
 } from "./laboratoryMoveEvidence.js";
 import { canonicalToolExposureJson } from "./toolExposurePolicy.js";
 
@@ -131,6 +133,26 @@ test("move evidence admission reuses exact typed validator and remains explicitl
   assert.throws(() => consumeLaboratoryMoveEvidenceAdmission({
     admission, method: "POST", path: "/revit/move-elements", bodyJson, channel: "typed_mcp", alias: "revit_move_one_certified"
   }, env), /replayed/);
+});
+
+test("recovery continuity permits only the exact current native key and document session", () => {
+  const admission = previewAdmission();
+  const dto = consumeLaboratoryMoveEvidenceAdmission({
+    admission, method: "POST", path: "/revit/move-elements",
+    bodyJson: canonicalToolExposureJson(admission.outboundBody), channel: "typed_mcp", alias: "revit_move_one_certified"
+  });
+  const result = signedPreviewResult(admission, dto);
+  const attestation: LaboratoryNativeAttestationBinding = {
+    algorithm: "RS256", key_id: TEST_NATIVE_EXECUTION_ATTESTATION.key_id,
+    modulus_base64url: TEST_NATIVE_EXECUTION_ATTESTATION.modulus_base64url, exponent_base64url: "AQAB"
+  };
+  assert.equal(classifyEpic0437RecoveryContinuity(result, attestation, dto.document_session_id), "same_native_session");
+  assert.equal(classifyEpic0437RecoveryContinuity(result, attestation, "f".repeat(32)), "discard_required");
+  assert.equal(classifyEpic0437RecoveryContinuity(result, {
+    ...attestation,
+    key_id: `sha256:${"f".repeat(64)}`
+  }, dto.document_session_id), "discard_required");
+  assert.equal(classifyEpic0437RecoveryContinuity({}, attestation, dto.document_session_id), "discard_required");
 });
 
 test("move evidence admission rejects caller objects, body/alias/path substitution, and wrong lane", () => {

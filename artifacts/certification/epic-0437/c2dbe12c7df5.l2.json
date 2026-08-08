@@ -19,7 +19,7 @@
     },
     {
       "path": "apps/mcp-server/package.json",
-      "sha256": "sha256:cab1c5ad1ee873cdcf2467ca330c69ba5a3dcdffeeb98f2b34148f548ff7fcab"
+      "sha256": "sha256:a4b37041b1ec6663a295483dff91ee7110fa48d3f4d0ba17b1731d1e73b1ada9"
     },
     {
       "path": "apps/mcp-server/src/cli/externalAgent.ts",
@@ -107,11 +107,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryMoveEvidence.test.ts",
-      "sha256": "sha256:e2d4f056da3748fb25d856b1a9ad552fd6d24bb05e557fd18a8d5a9d02b2db98"
+      "sha256": "sha256:b80d0169afd3370ff597c83b96d0b1cf5e2d0d76e82c79009f68b6cc8cace26c"
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryMoveEvidence.ts",
-      "sha256": "sha256:819a56c567905328feead14998b4cbf5b8350027efda9a5c75a929b6fcd9208b"
+      "sha256": "sha256:caab6fe4927e7f1303327cf09e98136000a7153684211cc3ef7c7cba0868d349"
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryMoveEvidenceClient.ts",
@@ -219,6 +219,10 @@
       "sha256": "sha256:5f338d0daadb99ae811a207fc4e9b92d72363f11f2ba410520f6845f2fba2a21"
     },
     {
+      "path": "apps/mcp-server/src/scripts/archive_epic_0437_discarded_recovery.ts",
+      "sha256": "sha256:98e66ac89154ed5e56ad9b61ceefae428c13cbeb36accefbdde6c9db729c0515"
+    },
+    {
       "path": "apps/mcp-server/src/scripts/auto_dim_floor_plan.ts",
       "sha256": "sha256:11ebf9524586d80b55b0a41e3686cf6ace99888f8b19115dbce700387d28fc2d"
     },
@@ -236,7 +240,7 @@
     },
     {
       "path": "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
-      "sha256": "sha256:c3cb5238c11a55d040fd62b3728e242305c1e7424806a0b3c2cebdcede4d0fbe"
+      "sha256": "sha256:b8d36062735ddc97da9765449084c8227bc64c8a9df46d9eab676f3d2f279557"
     },
     {
       "path": "apps/mcp-server/src/scripts/run_mep_continuity_acceptance.ts",
@@ -660,7 +664,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
-      "sha256": "sha256:3f9e832613f731cc4ae141271e8b30378aae0dd28d2b0b6979cc2a20bcd5e92e"
+      "sha256": "sha256:ac96051aac2a80a5b1c970f3f9f46f5e2a87e2ad91153dd58e321fbc593b3ffd"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -2349,7 +2353,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_certification_evidence_compiler.test.ts",
-      "sha256": "sha256:395984bf55478d2b8b4fda45b84e8816661f9abf3c1c6add30b66522210690d4"
+      "sha256": "sha256:15b8d5d7f0df7e6fe3c0009ea05f71406b6a77996a1b81a9b580cbb37699e333"
     },
     {
       "path": "apps/operator-backend/test/tool_certification.test.ts",
@@ -4293,7 +4297,7 @@
       "sha256": "sha256:3fc2e8880d127f1b1418cddb0df7d1327a2d3eb21f4a3be9e08e05e8cb964d6f"
     }
   ],
-  "inputs_hash": "sha256:361643ca1f2b8b7c6511d4be708fd4a84aa136fb9b02896cdb3c71c8c53ec9b2",
+  "inputs_hash": "sha256:2a054ef5eab8f919b717492404d6fd0e76580a93fd5f8d4d92059c56adfb5981",
   "result": {
     "passed": true,
     "checks": [

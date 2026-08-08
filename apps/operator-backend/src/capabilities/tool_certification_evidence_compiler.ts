@@ -112,6 +112,11 @@ function locationPoint(value: unknown, location: string): { x: number; y: number
 function samePoint(left: { x: number; y: number; z: number }, right: { x: number; y: number; z: number }): boolean {
   return Math.abs(left.x - right.x) <= 1e-9 && Math.abs(left.y - right.y) <= 1e-9 && Math.abs(left.z - right.z) <= 1e-9;
 }
+
+export function assertEpic0437PromotableRecoveryState(level: "L3" | "L4", state: unknown): void {
+  const expected = level === "L3" ? "preview_only" : "restored";
+  if (state !== expected) throw new Error("EPIC-0437 live run did not finish in the exact safe recovery state");
+}
 function validateMoveProjection(value: unknown, elementId: number, before: { x: number; y: number; z: number }, vectorX: number, rolledBack: boolean, location: string): { x: number; y: number; z: number } {
   const result = object(value, location);
   if (result.rolledBack !== rolledBack || result.movedTogether !== false || !Array.isArray(result.movedIds) || result.movedIds.length !== 1 || result.movedIds[0] !== elementId || !Array.isArray(result.skipped) || result.skipped.length !== 0 || !Array.isArray(result.snapshots) || result.snapshots.length !== 1) throw new Error(`${location} does not prove one exact target outcome`);
@@ -206,7 +211,7 @@ export function validateEpic0437LiveEvidenceRun(
   const recovery = object(run.recovery, `${relativeRunPath}.recovery`);
   exact(recovery, ["path", "sha256", "final_state"], `${relativeRunPath}.recovery`);
   const expectedRecovery = level === "L3" ? "preview_only" : "restored";
-  if (recovery.final_state !== expectedRecovery) throw new Error("EPIC-0437 live run did not finish in the exact safe recovery state");
+  assertEpic0437PromotableRecoveryState(level, recovery.final_state);
   const recoveryRelative = relativeFile(recovery.path, "EPIC-0437 recovery path", "artifacts/certification/epic-0437/runs/");
   const recoveryRaw = fs.readFileSync(resolveInside(repoRoot, recoveryRelative), "utf8");
   if (sha256NormalizedText(recoveryRaw) !== sha(recovery.sha256, "EPIC-0437 recovery hash")) throw new Error("EPIC-0437 recovery state hash mismatch");
