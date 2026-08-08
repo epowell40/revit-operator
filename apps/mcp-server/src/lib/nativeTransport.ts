@@ -47,6 +47,8 @@ export type NativeTransportResult = Readonly<{
   bodyJson: string;
   /** Locally generated identity authenticated by the protected response. */
   requestId: string;
+  receiptPath: string;
+  receiptSha256: string;
 }>;
 
 export class NativeTransportProtocolError extends Error {
@@ -77,7 +79,7 @@ export function nativeTransportReceiptPath(env: NodeJS.ProcessEnv = process.env)
   return path.join(localAppData, "RevitOperator", "bridge_transport.v1.json");
 }
 
-export function readNativeTransportReceipt(env: NodeJS.ProcessEnv = process.env): NativeTransportReceipt {
+function readNativeTransportReceiptSnapshot(env: NodeJS.ProcessEnv): Readonly<{ receipt: NativeTransportReceipt; path: string; raw: string }> {
   const receiptPath = nativeTransportReceiptPath(env);
   let bytes: Buffer;
   try {
@@ -104,7 +106,11 @@ export function readNativeTransportReceipt(env: NodeJS.ProcessEnv = process.env)
   }
   requireLoopbackOrigin(receipt.url);
   decodeCanonicalBase64Url(receipt.server_epoch, 32, "server epoch", "pre_dispatch");
-  return receipt as NativeTransportReceipt;
+  return Object.freeze({ receipt: receipt as NativeTransportReceipt, path: receiptPath, raw });
+}
+
+export function readNativeTransportReceipt(env: NodeJS.ProcessEnv = process.env): NativeTransportReceipt {
+  return readNativeTransportReceiptSnapshot(env).receipt;
 }
 
 export function protectNativeTransportRequest(input: {
@@ -197,7 +203,7 @@ export function openNativeTransportResponse(input: {
   request: ProtectedRequest;
   envelopeBytes: Uint8Array;
   nowUnixMs?: number;
-}): NativeTransportResult {
+}): Omit<NativeTransportResult, "receiptPath" | "receiptSha256"> {
   const envelopeBytes = Buffer.from(input.envelopeBytes);
   if (envelopeBytes.length === 0 || envelopeBytes.length > MAXIMUM_RESPONSE_ENVELOPE_BYTES) {
     throw new NativeTransportProtocolError("Protected native response envelope size is invalid.", "response");
@@ -246,7 +252,11 @@ export async function callNativeTransport(input: {
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
-  const receipt = readNativeTransportReceipt(input.env ?? process.env);
+  const environment = input.env ?? process.env;
+  const snapshot = readNativeTransportReceiptSnapshot(environment);
+  const receiptPath = snapshot.path;
+  const receiptRaw = snapshot.raw;
+  const receipt = snapshot.receipt;
   const request = protectNativeTransportRequest({
     operatorToken: input.operatorToken,
     serverEpoch: receipt.server_epoch,
@@ -282,10 +292,15 @@ export async function callNativeTransport(input: {
   }
   try {
     const bytes = await readLimitedResponse(response, MAXIMUM_RESPONSE_ENVELOPE_BYTES);
-    return openNativeTransportResponse({
+    const opened = openNativeTransportResponse({
       operatorToken: input.operatorToken,
       request,
       envelopeBytes: bytes
+    });
+    return Object.freeze({
+      ...opened,
+      receiptPath,
+      receiptSha256: `sha256:${crypto.createHash("sha256").update(receiptRaw, "utf8").digest("hex")}`
     });
   } catch (error) {
     if (error instanceof NativeTransportProtocolError && error.requestId === request.requestId) throw error;

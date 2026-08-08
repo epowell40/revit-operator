@@ -192,6 +192,22 @@ export type RevitCallOptions = {
 };
 
 const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
+export type RevitDirectLaboratoryEvidenceContext = Readonly<{
+  schema: "revit-operator.direct-laboratory-evidence-context.v1";
+  transportKind: "direct_protected_native";
+  dispatchId: string;
+  correlationId: string;
+  receiptPath: string;
+  receiptSha256: string;
+}>;
+const laboratoryEvidenceContexts = new WeakMap<object, RevitDirectLaboratoryEvidenceContext>();
+
+export function readRevitDirectLaboratoryEvidenceContext(result: unknown): RevitDirectLaboratoryEvidenceContext {
+  if (!result || typeof result !== "object") throw new Error("Direct laboratory result has no protected evidence context.");
+  const context = laboratoryEvidenceContexts.get(result as object);
+  if (!context) throw new Error("Direct laboratory result has no protected evidence context.");
+  return context;
+}
 
 /** Returns only transport-issued context attached to this exact parsed result object. */
 export function readCertifiedMoveExecutionContext(result: unknown): CertifiedMoveExecutionContext {
@@ -276,7 +292,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     throw new Error("Protected laboratory evidence transport cannot manufacture certified request-family admission; use the exact generic candidate body until L4 policy is generated.");
   }
 
-  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string>; certifiedExecutionContext?: CertifiedMoveExecutionContext }> => {
+  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string>; certifiedExecutionContext?: CertifiedMoveExecutionContext; laboratoryEvidenceContext?: RevitDirectLaboratoryEvidenceContext }> => {
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -324,6 +340,16 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
               executorId: options.certifiedMoveOneAdmission.request.nativeAttestationKeyId,
               certificationEnvelopeHash: certificationEnvelope.envelope_hash,
               completionChallengeHash: null
+            })
+          } : {}),
+          ...(protectedLaboratoryEvidence ? {
+            laboratoryEvidenceContext: Object.freeze({
+              schema: "revit-operator.direct-laboratory-evidence-context.v1" as const,
+              transportKind: "direct_protected_native" as const,
+              dispatchId: result.requestId,
+              correlationId: result.requestId,
+              receiptPath: result.receiptPath,
+              receiptSha256: result.receiptSha256
             })
           } : {})
         };
@@ -438,6 +464,9 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         throw new Error("Certified native response omitted its authenticated execution context.");
       }
       certifiedExecutionContexts.set(parsed as object, response.certifiedExecutionContext);
+    }
+    if (response.laboratoryEvidenceContext && parsed && typeof parsed === "object") {
+      laboratoryEvidenceContexts.set(parsed as object, response.laboratoryEvidenceContext);
     }
     return parsed;
   } catch (error) {

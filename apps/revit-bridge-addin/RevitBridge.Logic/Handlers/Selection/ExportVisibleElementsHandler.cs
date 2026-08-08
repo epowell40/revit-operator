@@ -361,6 +361,19 @@ namespace RevitBridge.Logic.Handlers
             payload["geometry"] = geometry;
             payload["categoryToken"] = SelectionUtil.GetCategoryToken(element);
             payload["orientation"] = BuildOrientationPayload(element, linkInstance);
+            if (linkInstance == null)
+            {
+                try { payload["pinned"] = element.Pinned; }
+                catch { payload["pinned"] = null; }
+                try
+                {
+                    var groupId = element.GroupId;
+                    payload["groupId"] = groupId == null || groupId == ElementId.InvalidElementId
+                        ? null
+                        : ElementIdCompat.GetValue(groupId);
+                }
+                catch { payload["groupId"] = null; }
+            }
             ApplyReadableAnnotationPayload(payload, element, linkInstance);
             ApplyHostProvenance(payload);
 

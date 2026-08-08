@@ -93,6 +93,10 @@ function observedPoint(item: JsonObject): Readonly<{ x: number; y: number; z: nu
   return finitePoint(orientation.locationPoint ?? orientation.location_point);
 }
 
+function independentlySafeToMove(item: JsonObject): boolean {
+  return item.pinned === false && (item.groupId === null || item.group_id === null);
+}
+
 function optionalText(value: unknown): string | null {
   return typeof value === "string" && value.trim() && value === value.normalize("NFC") ? value : null;
 }
@@ -127,7 +131,8 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
       ? String(item.sourceScopedId ?? item.source_scoped_id)
       : "";
     const pointXyz = observedPoint(item);
-    if (sourceScopedId !== `host:${elementId}` || !pointLocated(item) || !pointXyz || item.groundingStatus === "ungrounded") continue;
+    if (sourceScopedId !== `host:${elementId}` || !pointLocated(item) || !pointXyz
+      || item.groundingStatus === "ungrounded" || !independentlySafeToMove(item)) continue;
     const binding: CertifiedMoveTargetBinding = Object.freeze({
       observationId,
       documentFingerprint: fingerprint,

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, sealEvidenceRecord, sha256NormalizedText } from "../src/capabilities/tool_certification.js";
-import { compileArtifactBoundEvidence, parseCertificationProofIndex } from "../src/capabilities/tool_certification_evidence_compiler.js";
+import { compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
 
 const backendRoot = process.cwd();
 const repoRoot = path.resolve(backendRoot, "../..");
@@ -58,4 +59,74 @@ test("artifact-bound evidence cannot be hand-promoted without one exact proof pe
   });
   assert.equal(policy.records[0]?.channels.typed_mcp.exposed, false);
   assert.ok(policy.records[0]?.channels.typed_mcp.reason_codes.includes("CERT_EVIDENCE_MISMATCHED"));
+});
+
+function writeLiveFixture(level: "L3" | "L4"): { root: string; relative: string; run: any; save: () => string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "epic-0437-live-proof-"));
+  const directory = path.join(root, "artifacts/certification/epic-0437/runs");
+  fs.mkdirSync(directory, { recursive: true });
+  const transport_evidence = Array.from({ length: level === "L3" ? 7 : 11 }, (_, index) => {
+    const dispatch = String(index + 1).padStart(64, "0");
+    const files = level === "L3"
+      ? [{ name: `${index}.transport.json`, value: { version: "revit-operator.native-transport.v1", algorithm: "A256CBC-HS512", transport_path: "/revit/operator-transport/v1" } }]
+      : [
+          { name: `${index}.job.json`, value: { version: "revit-operator.revit-tool-job.v1", id: dispatch, correlation_id: dispatch } },
+          { name: `${index}.result.json`, value: { version: "revit-operator.revit-tool-result.v1", id: dispatch, correlation_id: dispatch, status: "succeeded", outcome_unknown: false } }
+        ];
+    return {
+      step: `step-${index}`, kind: level === "L3" ? "protected_native" : "courier_sidecar", dispatch_id: dispatch, correlation_id: dispatch,
+      files: files.map(file => {
+        const relative = `artifacts/certification/epic-0437/runs/${file.name}`;
+        const raw = `${JSON.stringify(file.value)}\n`;
+        fs.writeFileSync(path.join(root, relative), raw, "utf8");
+        return { path: relative, sha256: sha256NormalizedText(raw) };
+      })
+    };
+  });
+  const before = { kind: "LocationPoint", pointXyz: [1, 2, 3] };
+  const after = { kind: "LocationPoint", pointXyz: [1.25, 2, 3] };
+  const moved = (rolledBack: boolean, first = before, second = after) => ({ rolledBack, movedTogether: false, movedIds: [4821], skipped: [], snapshots: [{ id: 4821, before: first, after: second }] });
+  const run: any = {
+    schema: "revit-operator.epic-0437-live-evidence-run.v1", level, transport: level === "L3" ? "direct_protected_native" : "courier_sidecar",
+    runtime: { mode: "development", exposure_profile: "laboratory", production_certified: false },
+    document: {
+      title: "Snowdon Towers Sample HVAC", fingerprint: `sha256:${"a".repeat(64)}`, session_id: "1".repeat(32), final_session_id: "1".repeat(32),
+      native_attestation: { schema: "revit-operator.native-execution-attestation-key.v1", algorithm: "RS256", key_id: `sha256:${"b".repeat(64)}`, modulus_base64url: "A".repeat(342), exponent_base64url: "AQAB" }
+    },
+    view: { id: 9948, type: "FloorPlan" },
+    observation: { alias: "revit_observe_model", observation_id: "observation-1", count: 1, certified_target_count: 1, image_attached: true },
+    readback: { alias: "revit_read_move_targets_certified", observation_id: "observation-2", target_count: 1, selected_target: { elementId: 4821, sourceScopedId: "host:4821", observationId: "observation-2", pointXyz: { x: 1, y: 2, z: 3 } } },
+    preview: { alias: "revit_move_one_certified", request_sha256: `sha256:${"c".repeat(64)}`, result: moved(true), rollback_readback_observation_id: "observation-3", rollback_point: { x: 1, y: 2, z: 3 } },
+    apply: level === "L3" ? null : {
+      result: moved(false), committed_point: { x: 1.25, y: 2, z: 3 }, committed_readback_observation_id: "observation-4",
+      restore_result: moved(false, after, before), restored_point: { x: 1, y: 2, z: 3 }, restored_readback_observation_id: "observation-5"
+    },
+    transport_evidence
+  };
+  const relative = "artifacts/certification/epic-0437/runs/run.json";
+  const save = () => {
+    const raw = `${JSON.stringify(run, null, 2)}\n`;
+    fs.writeFileSync(path.join(root, relative), raw, "utf8");
+    return sha256NormalizedText(raw);
+  };
+  return { root, relative, run, save };
+}
+
+test("EPIC-0437 live evidence validation proves rollback, exact commit/restore, native key strength, and transport receipts", () => {
+  for (const level of ["L3", "L4"] as const) {
+    const fixture = writeLiveFixture(level);
+    assert.doesNotThrow(() => validateEpic0437LiveEvidenceRun(fixture.root, fixture.relative, fixture.save(), level));
+  }
+  const rollback = writeLiveFixture("L3");
+  rollback.run.preview.rollback_point.x = 1.25;
+  assert.throws(() => validateEpic0437LiveEvidenceRun(rollback.root, rollback.relative, rollback.save(), "L3"), /rollback readback/);
+  const weakKey = writeLiveFixture("L3");
+  weakKey.run.document.native_attestation.modulus_base64url = "A".repeat(171);
+  assert.throws(() => validateEpic0437LiveEvidenceRun(weakKey.root, weakKey.relative, weakKey.save(), "L3"), /native attestation/);
+  const restore = writeLiveFixture("L4");
+  restore.run.apply.restored_point.x = 1.25;
+  assert.throws(() => validateEpic0437LiveEvidenceRun(restore.root, restore.relative, restore.save(), "L4"), /not exactly restored/);
+  const missingReceipt = writeLiveFixture("L3");
+  fs.rmSync(path.join(missingReceipt.root, missingReceipt.run.transport_evidence[0].files[0].path));
+  assert.throws(() => validateEpic0437LiveEvidenceRun(missingReceipt.root, missingReceipt.relative, missingReceipt.save(), "L3"));
 });

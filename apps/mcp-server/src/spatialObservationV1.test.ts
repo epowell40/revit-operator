@@ -9,7 +9,7 @@ import { normalizeSpatialObservationInput, normalizeSpatialObservationV1, observ
 const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
 const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=", "base64");
 function payload() { return { frameId: "frame-7", path: "C:\\tmp\\frame-7.png", widthPx: 1600, heightPx: 900, viewId: 42, viewName: "Level 1", mapping, count: 2, scanned: 3, truncated: true, items: [
-  { elementId: 12, source: { scope: "host" }, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2, locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } },
+  { elementId: 12, source: { scope: "host" }, pinned: false, groupId: null, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2, locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } },
   { elementId: 12, source: { scope: "linked", linkInstanceId: 9 }, category: "Doors", bbox: { image: { normalizedMinX: 0.4, normalizedMinY: 0.5, normalizedMaxX: 0.5, normalizedMaxY: 0.6 } }, hostProvenance: { source: "linked" } }
 ] , document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } }; }
 

@@ -18,12 +18,20 @@
       "sha256": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc"
     },
     {
+      "path": "apps/operator-backend/package.json",
+      "sha256": "sha256:59e3f151b7ad70a5d20b2f7032f660c8f26e926890ab91f39ef6e007162500f9"
+    },
+    {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
       "sha256": "sha256:5cea3aef84854d0d853ef65524cfa746b943cad92a3f870ef2e3a295b878ccd1"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
-      "sha256": "sha256:032d409a3ec87be06a47feb9f513d60cb7bedd615c6bb1389ffac8d442b016cb"
+      "sha256": "sha256:ef8674623e57cd6bd2164a1e888fd763d2c5dbe6aed5f374ac5897ff3ae5b9ac"
+    },
+    {
+      "path": "apps/operator-backend/src/tools/certify_epic_0437_live.ts",
+      "sha256": "sha256:7c8e630263345d38b0c316b3c7f9ad03b3ec5311c8973145cdce4981ad8c152c"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -46,12 +54,16 @@
       "sha256": "sha256:bd8be837becf8ac286185a3cfa925f63ece7e57a69d8e0e1a21584e553bb0c3d"
     },
     {
+      "path": "apps/mcp-server/package.json",
+      "sha256": "sha256:a3f84a1bee234ab814c68676fca702a15890831ac189ad6829643b7ca56aabf6"
+    },
+    {
       "path": "apps/mcp-server/src/spatialObservationV1.ts",
       "sha256": "sha256:f449d6724391fff85dcb6f9b434e9a10862cf84b3cd217a2bdafd714c0dd7328"
     },
     {
       "path": "apps/mcp-server/src/lib/certifiedMoveTargetLedger.ts",
-      "sha256": "sha256:ecce3b2c90f6bc3e9a18b292cdbbc94a90c548d4a60dc5b83eab7ec0a458e7a7"
+      "sha256": "sha256:d69c6aa804a89ec1371afdfade849da94eb854935c611d38f12d0250a7eaa55b"
     },
     {
       "path": "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.ts",
@@ -63,19 +75,39 @@
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.ts",
-      "sha256": "sha256:8e43f77de849d63fc705aa57b2fdde16cb1a947cd67b3e9708c68ba05e8a9635"
+      "sha256": "sha256:1274892ace9ee6569c93fddb7e52f0ce4cb8b89027b1ab8d8b598e65004b0d25"
     },
     {
       "path": "apps/mcp-server/src/lib/revitCourier.ts",
-      "sha256": "sha256:d14f8614e35cef18c027127c87d4d59c84d9925673b9c8f28372d115d7caf4ee"
+      "sha256": "sha256:ece5921a58c63c53420987c71b29c384d0158243a03e94fd46960d620a5ab623"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/nativeTransport.ts",
+      "sha256": "sha256:6ec4c066c4324a4b5b659f212a1252594a610aeff99a09788702ebb5d25b1224"
+    },
+    {
+      "path": "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
+      "sha256": "sha256:33e8594b0d9271c429a02a45458bbcde9907db4a8a15e832b7aee2d3215f7ddc"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge/App.cs",
+      "sha256": "sha256:097704c98512617b42f1707d4c2dff232612acfc71392aa23d448738eebe9e84"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge/Server/RevitHttpServer.cs",
+      "sha256": "sha256:ca064399840bec5aa2baa94355587c9de5623ff89f3612a86ce088abd71fc9c4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedRequestFamilyAdmission.cs",
-      "sha256": "sha256:874dd00e94c17b7726dfe0219d63aa3752b37c34f8e6fad45c1329af8df6a5da"
+      "sha256": "sha256:b5afcace00be4a6324014ac4c10d0ba52012083b5e4bfd2e7de7a03eea2e976a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedMovePreviewAuthority.cs",
       "sha256": "sha256:60f0ee71d07098907a0ba53fa4d6bbd3c1cc7e649e48eec946e321578d074f44"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeExecutionAttestationAuthority.cs",
+      "sha256": "sha256:7aeb3606af503f99cb7ef68ddb92c19015e12784ff03fbd8d8aad4af937ab005"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeToolExposureAuthority.cs",
@@ -83,7 +115,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Selection/ExportVisibleElementsHandler.cs",
-      "sha256": "sha256:78d03e92858e993ad45f2260950e87bd4961084f6bcfc5953820a2f0d725a686"
+      "sha256": "sha256:ff9beff80a71cb446328421c2592cb604d56f43ef7ff3a8a893deb8ed88a8def"
     }
   ],
   "result": {

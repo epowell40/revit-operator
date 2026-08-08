@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { callRevitViaCourier, RevitCourierError, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
+import { callRevitViaCourier, readRevitCourierLaboratoryEvidenceContext, RevitCourierError, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
 import { callRevit } from "./revitClient.js";
 import {
   canonicalToolExposureJson,
@@ -301,7 +301,20 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
     retryable: false
   }), "utf8");
   try {
-    assert.deepEqual(await pending, { status: "ok" });
+    const result = await pending;
+    assert.deepEqual(result, { status: "ok" });
+    assert.deepEqual(readRevitCourierLaboratoryEvidenceContext(result), {
+      schema: "revit-operator.courier-laboratory-evidence-context.v1",
+      transportKind: "courier",
+      jobId: jobRef.id,
+      correlationId: jobRef.id,
+      sessionId: "session-a",
+      executorId: "workstation-revit-courier-24024",
+      jobPath: path.join(jobRef.dir, "job.json"),
+      resultPath: path.join(jobRef.dir, "result.json"),
+      jobSha256: `sha256:${createHash("sha256").update(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"), "utf8").digest("hex")}`,
+      resultSha256: `sha256:${createHash("sha256").update(fs.readFileSync(path.join(jobRef.dir, "result.json"), "utf8"), "utf8").digest("hex")}`
+    });
   } finally {
     restore();
   }
@@ -445,7 +458,7 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
     clearCertifiedMoveTargetLedgerForTests();
     registerCertifiedSpatialObservation(
       { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
     );
     const admission = admitCertifiedMoveOneRequest({
       phase: "preview", elementId: 4821, observationId: "family-frame",
@@ -555,7 +568,7 @@ test("certified family courier rejects raw or standalone-decision failure receip
       clearCertifiedMoveTargetLedgerForTests();
       registerCertifiedSpatialObservation(
         { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
       );
       const admission = admitCertifiedMoveOneRequest({
         phase: "preview", elementId: 4821, observationId: "family-forged-frame",
@@ -636,7 +649,7 @@ test("certified family courier rejects deleted or downgraded durable jobs before
       clearCertifiedMoveTargetLedgerForTests();
       registerCertifiedSpatialObservation(
         { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
       );
       const admission = admitCertifiedMoveOneRequest({
         phase: "preview", elementId: 4821, observationId: "family-missing-job-frame",

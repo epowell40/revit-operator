@@ -23,6 +23,7 @@ import {
 } from "./certifiedMoveOneRequestFamily.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import { getWorkspaceRoot } from "./workspace.js";
+import { isExactDevelopmentLaboratory } from "./nativeTransport.js";
 
 const JOB_VERSION_V1 = "revit-operator.revit-tool-job.v1";
 const JOB_VERSION_V2 = "revit-operator.revit-tool-job.v2";
@@ -65,6 +66,27 @@ type CourierResult = {
 };
 
 const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
+export type RevitCourierLaboratoryEvidenceContext = Readonly<{
+  schema: "revit-operator.courier-laboratory-evidence-context.v1";
+  transportKind: "courier";
+  jobId: string;
+  correlationId: string;
+  sessionId: string;
+  executorId: string | null;
+  jobPath: string;
+  resultPath: string;
+  jobSha256: string;
+  resultSha256: string;
+}>;
+const laboratoryEvidenceContexts = new WeakMap<object, RevitCourierLaboratoryEvidenceContext>();
+
+/** Returns provenance issued only after a successful exact laboratory courier result. */
+export function readRevitCourierLaboratoryEvidenceContext(result: unknown): RevitCourierLaboratoryEvidenceContext {
+  if (!result || typeof result !== "object") throw new Error("Courier laboratory result has no durable evidence context.");
+  const context = laboratoryEvidenceContexts.get(result as object);
+  if (!context) throw new Error("Courier laboratory result has no durable evidence context.");
+  return context;
+}
 
 /** Reads context derived from the exact durable job and its authenticated completion. */
 export function readCertifiedCourierExecutionContext(result: unknown): CertifiedMoveExecutionContext {
@@ -414,9 +436,10 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return Object.keys(value).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(value, key));
 }
 
-function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierContext, "session_id">>, method: string, revitPath: string, bodyJson: string): string {
+function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierContext, "session_id">>, method: string, revitPath: string, bodyJson: string, laboratoryDiscriminator = ""): string {
+  const laboratoryLine = laboratoryDiscriminator ? `${laboratoryDiscriminator}\n` : "";
   return createHash("sha256")
-    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${context.target_executor_id ?? ""}\n${context.target_document_title ?? ""}\n${context.target_document_path ?? ""}\n${method}\n${revitPath}\n${bodyJson}`)
+    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${context.target_executor_id ?? ""}\n${context.target_document_title ?? ""}\n${context.target_document_path ?? ""}\n${laboratoryLine}${method}\n${revitPath}\n${bodyJson}`)
     .digest("hex");
 }
 
@@ -572,15 +595,41 @@ function bindCertifiedExecutionContext<T>(result: T, receipt: CourierResult, job
   return result;
 }
 
-function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number, envelope?: CertificationEnvelope): T {
-  const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
-  if (receipt) return resolveResult<T>(receipt);
+function bindLaboratoryEvidenceContext<T>(result: T, receipt: CourierResult, job: CourierJob, jobPath: string, resultPath: string): T {
+  if (!isExactDevelopmentLaboratory() || !result || typeof result !== "object") return result;
+  if (job.version !== JOB_VERSION_V1 || receipt.status !== "succeeded" || receipt.id !== job.id || receipt.correlation_id !== job.correlation_id) {
+    throw new Error("Laboratory courier result does not bind the exact durable job.");
+  }
+  const context = Object.freeze({
+    schema: "revit-operator.courier-laboratory-evidence-context.v1" as const,
+    transportKind: "courier" as const,
+    jobId: String(job.id),
+    correlationId: String(job.correlation_id),
+    sessionId: String(job.session_id),
+    executorId: typeof job.target_executor_id === "string" ? job.target_executor_id : null,
+    jobPath,
+    resultPath,
+    jobSha256: sha256(fs.readFileSync(jobPath, "utf8")),
+    resultSha256: sha256(fs.readFileSync(resultPath, "utf8"))
+  });
+  laboratoryEvidenceContexts.set(result as object, context);
+  return result;
+}
 
+function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number, envelope?: CertificationEnvelope): T {
   let job: CourierJob | null = null;
   try {
     job = JSON.parse(fs.readFileSync(jobPath, "utf8")) as CourierJob;
   } catch {
     // The timeout error below remains authoritative when the pending receipt is unreadable.
+  }
+  const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
+  if (receipt) {
+    const result = resolveResult<T>(receipt);
+    if (!job) throw new Error("Courier result exists without its exact durable job.");
+    return envelope
+      ? bindCertifiedExecutionContext(result, receipt, job, envelope)
+      : bindLaboratoryEvidenceContext(result, receipt, job, jobPath, resultPath);
   }
 
   const supportedVersion = job?.version === JOB_VERSION_V1 || job?.version === JOB_VERSION_V2;
@@ -644,6 +693,19 @@ export async function callRevitViaCourier<T>(
   const now = Date.now();
   const runtime = getToolExposureRuntimeDecision();
   const certified = runtime.certified;
+  const laboratoryDecision = !certified && isExactDevelopmentLaboratory() && options.certifiedAdmission
+    ? readCertifiedCourierAdmissionBinding(options.certifiedAdmission).decision
+    : undefined;
+  if (laboratoryDecision && (laboratoryDecision.allowed !== true
+    || laboratoryDecision.mode !== "laboratory"
+    || laboratoryDecision.method !== normalizedMethod
+    || laboratoryDecision.path !== revitPath
+    || !laboratoryDecision.alias)) {
+    throw new Error("Laboratory courier publication requires the exact locally admitted alias, request, and workflow.");
+  }
+  const laboratoryDiscriminator = laboratoryDecision
+    ? canonicalToolExposureJson({ alias: laboratoryDecision.alias, workflow: laboratoryDecision.workflow ?? null })
+    : "";
   const rawBody = certified ? rawJsonBody(body) : undefined;
   const legacyBodyJson = JSON.stringify(body) ?? "null";
   const bodyForSizeCheck = rawBody?.json ?? legacyBodyJson;
@@ -660,7 +722,7 @@ export async function callRevitViaCourier<T>(
   }) : undefined;
   const idempotencyKey = envelope && rawBody
     ? v2IdempotencyKey(context, normalizedMethod, revitPath, rawBody, envelope)
-    : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson);
+    : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson, laboratoryDiscriminator);
   // A stable job id makes a transport retry resume the same durable operation instead of publishing a duplicate write.
   const id = idempotencyKey;
   const jobDir = path.join(getWorkspaceRoot(), "artifacts", "revit-courier", "jobs", id);
@@ -700,7 +762,9 @@ export async function callRevitViaCourier<T>(
     const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
     if (receipt) {
       const result = resolveResult<T>(receipt);
-      return envelope ? bindCertifiedExecutionContext(result, receipt, job, envelope) : result;
+      return envelope
+        ? bindCertifiedExecutionContext(result, receipt, job, envelope)
+        : bindLaboratoryEvidenceContext(result, receipt, job, jobPath, resultPath);
     }
     await delay(200);
   }
