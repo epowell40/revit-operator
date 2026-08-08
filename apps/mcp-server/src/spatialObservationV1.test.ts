@@ -8,9 +8,9 @@ import { normalizeSpatialObservationInput, normalizeSpatialObservationV1, observ
 const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
 const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=", "base64");
 function payload() { return { frameId: "frame-7", path: "C:\\tmp\\frame-7.png", widthPx: 1600, heightPx: 900, viewId: 42, viewName: "Level 1", mapping, count: 2, scanned: 3, truncated: true, items: [
-  { elementId: 12, source: { scope: "host" }, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2 } },
+  { elementId: 12, source: { scope: "host" }, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2, locationKind: "point" } },
   { elementId: 12, source: { scope: "linked", linkInstanceId: 9 }, category: "Doors", bbox: { image: { normalizedMinX: 0.4, normalizedMinY: 0.5, normalizedMaxX: 0.5, normalizedMaxY: 0.6 } }, hostProvenance: { source: "linked" } }
-] }; }
+] , document: { sessionId: "123e4567e89b42d3a456426614174000", projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } }; }
 
 test("normalizes host and linked evidence without requiring an anchor", () => {
   const observation = normalizeSpatialObservationV1(payload()); const items = observation.items as Array<Record<string, unknown>>;
@@ -123,6 +123,7 @@ test("secure image reads enforce real workspace confinement, byte bounds, and PN
 test("wrapper calls the existing primitive once and returns structured and image content", async () => {
   const calls: unknown[] = []; const result = await observeModelV1({}, async (route, method, body) => { calls.push({ route, method, body }); return payload(); }, () => ({ ok: true, data: tinyPng.toString("base64"), mimeType: "image/png" }));
   assert.equal(calls.length, 1); assert.equal((calls[0] as any).route, "/revit/export-visible-elements"); assert.equal(result.content.length, 2); assert.equal(result.content[1]?.type, "image");
+  const observation = JSON.parse((result.content[0] as any).text); assert.equal(observation.certifiedTargetCount, 1); assert.equal(observation.document.documentSessionId, payload().document.sessionId);
 });
 test("wrapper preserves structured evidence and explains an unavailable image", async () => {
   const result = await observeModelV1({}, async () => payload(), () => ({ ok: false, reason: "image is not a supported PNG or JPEG payload" }));

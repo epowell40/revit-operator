@@ -2,6 +2,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import {
+  assertIssuedFamilyEnvelopeForDispatch,
+  type FamilyCertificationEnvelope
+} from "./certifiedExecutionEnvelope.js";
 
 export const NATIVE_TRANSPORT_VERSION = "revit-operator.native-transport.v1";
 export const NATIVE_TRANSPORT_ALGORITHM = "A256CBC-HS512";
@@ -108,6 +112,7 @@ export function protectNativeTransportRequest(input: {
   writeGrant?: string;
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
+  certificationEnvelope?: FamilyCertificationEnvelope;
   issuedAtUnixMs?: number;
   requestId?: string;
   requestNonce?: Buffer;
@@ -139,6 +144,21 @@ export function protectNativeTransportRequest(input: {
     || (channel !== "generic_call" && alias === "revit_call_tool")) {
     throw new NativeTransportProtocolError("Protected native request channel or alias is invalid.", "pre_dispatch");
   }
+  let certificationEnvelope: FamilyCertificationEnvelope | undefined;
+  try {
+    certificationEnvelope = input.certificationEnvelope
+      ? assertIssuedFamilyEnvelopeForDispatch({
+        envelope: input.certificationEnvelope,
+        method,
+        path: input.path,
+        bodyJson: input.bodyJson,
+        channel,
+        alias
+      })
+      : undefined;
+  } catch (error) {
+    throw new NativeTransportProtocolError("Protected native request-family admission is invalid.", "pre_dispatch", error);
+  }
 
   const inner = JSON.stringify({
     request_id: requestId,
@@ -150,6 +170,7 @@ export function protectNativeTransportRequest(input: {
     body_json: input.bodyJson ?? "",
     channel,
     alias,
+    ...(certificationEnvelope ? { certification_envelope: certificationEnvelope } : {}),
     write_grant: writeGrant
   });
   const epoch = encodeBase64Url(decodeCanonicalBase64Url(input.serverEpoch, 32, "server epoch", "pre_dispatch"));
@@ -216,6 +237,7 @@ export async function callNativeTransport(input: {
   writeGrant?: string;
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
+  certificationEnvelope?: FamilyCertificationEnvelope;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
@@ -228,7 +250,8 @@ export async function callNativeTransport(input: {
     bodyJson: input.bodyJson,
     writeGrant: input.writeGrant,
     channel: input.channel,
-    alias: input.alias
+    alias: input.alias,
+    certificationEnvelope: input.certificationEnvelope
   });
 
   const response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {

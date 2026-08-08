@@ -27,7 +27,8 @@ namespace RevitBridge.Common
             string requestHash,
             string effectHash,
             string channel,
-            string alias)
+            string alias,
+            OperatorCertifiedRequestFamilyAdmission? requestFamilyAdmission = null)
         {
             Method = method;
             Path = path;
@@ -39,6 +40,7 @@ namespace RevitBridge.Common
             EffectHash = effectHash;
             Channel = channel;
             Alias = alias;
+            RequestFamilyAdmission = requestFamilyAdmission;
         }
 
         public string Method { get; }
@@ -51,6 +53,7 @@ namespace RevitBridge.Common
         public string EffectHash { get; }
         public string Channel { get; }
         public string Alias { get; }
+        public OperatorCertifiedRequestFamilyAdmission? RequestFamilyAdmission { get; }
     }
 
     /// <summary>
@@ -180,10 +183,28 @@ namespace RevitBridge.Common
                 && record.Path == binding.Path
                 && record.PolicyRecordHash == binding.PolicyRecordHash
                 && record.EvidenceRecordHash == binding.EvidenceRecordHash
-                && record.RequestHash == binding.RequestHash
-                && record.EffectHash == binding.EffectHash).ToList();
+                && record.EffectHash == binding.EffectHash
+                && (record.RequestFamily == null
+                    ? binding.RequestFamilyAdmission == null && record.RequestHash == binding.RequestHash
+                    : binding.RequestFamilyAdmission != null
+                        && binding.RequestHash == binding.RequestFamilyAdmission.RequestInstanceHash
+                        && record.RequestFamily.Id == binding.RequestFamilyAdmission.FamilyId
+                        && record.RequestFamily.ValidatorHash == binding.RequestFamilyAdmission.FamilyHash)).ToList();
             if (matches.Count != 1 || matches[0].Visibility == "workflow_only") Deny();
             var record = matches[0];
+            if (binding.RequestFamilyAdmission != null)
+            {
+                try
+                {
+                    OperatorCertifiedRequestFamilyAdmissionVerifier.RequireValidEffectiveBody(
+                        binding.RequestFamilyAdmission,
+                        binding.CanonicalBodyJson);
+                }
+                catch (InvalidDataException)
+                {
+                    Deny();
+                }
+            }
             var authorized = binding.Channel == "generic_call"
                 ? record.GenericCallExposed && binding.Alias == "revit_call_tool"
                 : (binding.Channel == "typed_mcp" && record.TypedMcpExposed

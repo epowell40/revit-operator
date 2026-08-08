@@ -9,6 +9,7 @@ import { createRequire } from "module";
 
 xlsx.set_fs(fs);
 import { callRevit } from "./lib/revitClient.js";
+import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
@@ -1882,17 +1883,15 @@ server.tool("revit_move_elements", "Move element(s) by a translation vector (sup
 server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-certified element translation with required preview lineage.",
   {
     phase: z.enum(["preview", "apply"]),
-    documentFingerprint: z.string(),
-    sourceScopedId: z.string(),
     elementId: z.number().int().positive(),
     observationId: z.string(),
     vectorFeet: z.object({ x: z.number(), y: z.number(), z: z.number() }),
-    previewInstanceHash: z.string().optional()
+    previewReceipt: z.string().optional()
   },
   async (args) => {
     try {
       const { admission, decision } = assertCertifiedMoveOneToolExposure({
-        request: { ...args, previewInstanceHash: args.previewInstanceHash },
+        request: { ...args, previewReceipt: args.previewReceipt },
         channel: "typed_mcp"
       });
       // In laboratory evidence mode this remains a bounded one-element call.
@@ -1902,12 +1901,25 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
         channel: "typed_mcp",
         certifiedMoveOneAdmission: admission
       });
+      const policyBinding = {
+        policyHash: decision.policyHash,
+        policyRecordHash: decision.policyRecordHash,
+        evidenceRecordHash: decision.evidenceRecordHash,
+        effectHash: decision.effectHash,
+        channel: decision.channel,
+        alias: decision.alias
+      };
+      assertCertifiedMoveExecutionReceipt(admission, policyBinding, data);
+      const previewReceipt = admission.request.phase === "preview"
+        ? issueCertifiedMovePreviewReceipt(admission, policyBinding, data)
+        : undefined;
       return {
         content: [{
           type: "text",
           text: JSON.stringify({
             family: { id: admission.familyId, hash: admission.familyHash },
             requestInstanceHash: admission.requestInstanceHash,
+            ...(previewReceipt ? { previewReceipt } : {}),
             policy: { hash: decision.policyHash, recordHash: decision.policyRecordHash },
             result: data
           }, null, 2)

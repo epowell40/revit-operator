@@ -10,10 +10,12 @@ import {
 import {
   assertCertifiedMoveOneAdmissionExposure,
   assertToolExposure,
+  canonicalToolExposureJson,
   createCertifiedCourierAdmission,
   type ToolExposureChannel
 } from "./toolExposurePolicy.js";
 import type { CertifiedMoveOneAdmission } from "./certifiedMoveOneRequestFamily.js";
+import { createCertificationEnvelope, type FamilyCertificationEnvelope } from "./certifiedExecutionEnvelope.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -204,28 +206,36 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       workflow: options.workflow
     });
 
+  // Family execution bytes are canonical at the first transport boundary so
+  // direct, courier, backend, and native recomputation all see one exact body.
+  const serializedBody = options.certifiedMoveOneAdmission
+    ? canonicalToolExposureJson(options.certifiedMoveOneAdmission.outboundBody)
+    : body === undefined
+      ? undefined
+      : typeof body === "string"
+        ? body
+        : JSON.stringify(body);
+  const transportBody = options.certifiedMoveOneAdmission ? serializedBody : body;
+
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") {
     const certifiedAdmission = createCertifiedCourierAdmission({
       method: upperMethod,
       path,
-      body,
+      body: transportBody,
       channel: options.channel ?? "typed_mcp",
-      workflow: options.workflow
+      workflow: options.workflow,
+      certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
     });
-    return await callRevitViaCourier<T>(path, upperMethod, body, { certifiedAdmission });
+    return await callRevitViaCourier<T>(path, upperMethod, transportBody, { certifiedAdmission });
   }
   if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
 
   const token = getOrCreateOperatorToken();
-  const serializedBody =
-    body === undefined
-      ? undefined
-      : typeof body === "string"
-        ? body
-        : JSON.stringify(body);
   const requestEffect = revitRouteEffect(path, upperMethod, body);
-  const mutating = requestEffect === "apply";
+  // A rollback preview still enters a native mutation transaction. If dispatch
+  // status is unknown, it must be reconciled instead of retried automatically.
+  const mutating = requestEffect !== "read";
   const laboratoryBypass = isExactDevelopmentLaboratory();
 
   const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string> }> => {
@@ -248,6 +258,14 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           writeGrant,
           channel: nativeChannel,
           alias: exposure.alias,
+          certificationEnvelope: options.certifiedMoveOneAdmission
+            ? createCertificationEnvelope({
+              decision: exposure,
+              bodyPresent: serializedBody !== undefined,
+              bodyJson: serializedBody ?? "",
+              certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
+            }) as FamilyCertificationEnvelope
+            : undefined,
           signal: controller.signal
         });
         return {

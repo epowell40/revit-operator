@@ -15,6 +15,11 @@ import {
   failRevitToolJob
 } from "../src/courier/revit_tool_jobs.js";
 import { canonicalJson, computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
+import {
+  assertCertifiedCourierExecutionResult,
+  authorizeCertifiedCourierFinalExecution,
+  RevitCourierCertificationError
+} from "../src/courier/revit_tool_job_certification.js";
 
 test.beforeEach(() => {
   // Existing v1 contract fixtures model the intentionally isolated escape
@@ -171,6 +176,152 @@ function writeCertifiedV2Job(
   return id;
 }
 
+function courierMoveBody(dryRun: boolean) {
+  return {
+    ids: [84], mode: "vector", vectorX: 0, vectorY: 0.5, vectorZ: 0, dryRun,
+    behavior: "allOrNothing", moveTogether: false,
+    options: { failOnPinned: true, unpinIfAllowed: false }
+  };
+}
+
+function courierMoveAdmission(
+  phase: "preview" | "apply",
+  previewInstanceHash: string | null,
+  body: ReturnType<typeof courierMoveBody>,
+  previewReceipt: string | null = null,
+  admissionSessionId = "b".repeat(32)
+) {
+  const familyHash = "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b";
+  const documentFingerprint = `sha256:${"b".repeat(64)}`;
+  const documentSessionId = "22222222222242228222222222222222";
+  const observationBindingHash = `sha256:${createHash("sha256").update([
+    "observation-84", documentFingerprint, documentSessionId, "host:84", "84"
+  ].join("\n"), "utf8").digest("hex")}`;
+  const previewReceiptHash = previewReceipt === null ? null
+    : `sha256:${createHash("sha256").update(previewReceipt, "utf8").digest("hex")}`;
+  const request = {
+    phase, documentFingerprint, documentSessionId, sourceScopedId: "host:84", elementId: 84, observationId: "observation-84",
+    observationBindingHash,
+    vectorFeet: { x: 0, y: 0.5, z: 0 },
+    ...(previewInstanceHash === null ? {} : { previewInstanceHash, previewReceiptHash })
+  };
+  return {
+    schema: "revit-operator.certified-request-family-admission.v1",
+    family_id: "revit-operator.certified-move-one.request-family.v1",
+    family_hash: familyHash,
+    request_instance_hash: sha256({ familyHash, admissionSessionId, request, outboundBody: body } as never),
+    phase,
+    preview_instance_hash: previewInstanceHash,
+    preview_receipt: previewReceipt,
+    preview_receipt_hash: previewReceiptHash,
+    document_fingerprint: documentFingerprint,
+    document_session_id: documentSessionId,
+    source_scoped_id: "host:84", element_id: 84, observation_id: "observation-84",
+    observation_binding_hash: observationBindingHash,
+    admission_session_id: admissionSessionId,
+    outbound_body_sha256: `sha256:${createHash("sha256").update(canonicalJson(body as never), "utf8").digest("hex")}`
+  };
+}
+
+function certifiedMovePolicy(root: string) {
+  const recordBase = {
+    method: "POST", path: "/revit/move-elements", typed_mcp_aliases: ["revit_move_one_certified"],
+    request_hash: computeRequestHash("POST", "/revit/move-elements", courierMoveBody(true)),
+    effect_hash: `sha256:${"7".repeat(64)}`, evidence_record_hash: `sha256:${"8".repeat(64)}`,
+    request_family: {
+      schema: "revit-operator.certified-request-family.v1",
+      id: "revit-operator.certified-move-one.request-family.v1",
+      validator_hash: "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b"
+    },
+    highest_cumulative_level: "L4", observed_levels: ["L0", "L1", "L2", "L3", "L4"], visibility: "candidate",
+    channels: {
+      search: { exposed: true, required_level: "L3", reason_codes: ["CERTIFIED"] },
+      generic_call: { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] },
+      typed_mcp: { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] },
+      deterministic_workflow: { exposed: false, required_level: "L4", reason_codes: ["CERT_CHANNEL_NOT_REQUESTED"] }
+    }
+  };
+  const record = { ...recordBase, policy_record_hash: sha256(recordBase as never) };
+  const policyBase = {
+    schema: "revit-operator.tool-exposure-policy.v1", hash_algorithm: "sha256",
+    evidence_schema: "revit-operator.tool-certification-evidence.v1", evidence_source_hash: `sha256:${"9".repeat(64)}`,
+    records: [record]
+  };
+  const policy = { ...policyBase, policy_hash: sha256(policyBase as never) };
+  const policyPath = path.join(root, "move-policy.json");
+  fs.writeFileSync(policyPath, JSON.stringify(policy), "utf8");
+  return { policy, record, policyPath };
+}
+
+function certifiedMoveJob(
+  policy: ReturnType<typeof certifiedMovePolicy>,
+  body: ReturnType<typeof courierMoveBody>,
+  admission: ReturnType<typeof courierMoveAdmission>
+) {
+  const bodyJson = canonicalJson(body as never);
+  const envelopeBase = {
+    schema: "revit-operator.revit-tool-certification-envelope.v2", version: 2,
+    canonicalization: "revit-operator.canonical-json.nfc-key-sorted.v1",
+    policy_hash: policy.policy.policy_hash, policy_record_hash: policy.record.policy_record_hash,
+    evidence_record_hash: policy.record.evidence_record_hash,
+    request_hash: admission.request_instance_hash, effect_hash: policy.record.effect_hash,
+    method: "POST", path: "/revit/move-elements", body_present: true,
+    body_sha256: `sha256:${createHash("sha256").update(bodyJson).digest("hex")}`,
+    channel: "typed_mcp", alias: "revit_move_one_certified", runtime_mode: "local",
+    exposure_profile: "certified", policy_trust_source: "deployment", request_family_admission: admission
+  };
+  const envelope = { ...envelopeBase, envelope_hash: `sha256:${createHash("sha256").update(canonicalJson(envelopeBase as never)).digest("hex")}` };
+  const expiresAt = new Date(Date.now() + 60_000).toISOString();
+  const identity = {
+    schema: "revit-operator.revit-tool-job-idempotency.v2", canonicalization: "revit-operator.canonical-json.nfc-key-sorted.v1",
+    session_id: "session-move", message_id: "message-move", expires_at: expiresAt, turn_token_sha256: null,
+    target_executor_id: "worker-1", target_document_title: "Snowdon Mechanical",
+    target_document_path: "C:\\models\\SnowdonMechanical.rvt", method: "POST", path: "/revit/move-elements",
+    body_present: true, body_sha256: envelope.body_sha256, certification_envelope_hash: envelope.envelope_hash
+  };
+  const id = createHash("sha256").update(canonicalJson(identity as never)).digest("hex");
+  return {
+    version: "revit-operator.revit-tool-job.v2", id, session_id: "session-move", message_id: "message-move",
+    turn_token_sha256: null, correlation_id: id, idempotency_key: id, method: "POST", path: "/revit/move-elements",
+    target_executor_id: "worker-1", target_document_title: "Snowdon Mechanical",
+    target_document_path: "C:\\models\\SnowdonMechanical.rvt", body: bodyJson, body_json: bodyJson, body_present: true,
+    certification_envelope: envelope, created_at: new Date().toISOString(), expires_at: expiresAt, status: "pending", claim: null
+  };
+}
+
+function certifiedMoveExecutionResult(
+  job: ReturnType<typeof certifiedMoveJob>,
+  admission: ReturnType<typeof courierMoveAdmission>,
+  previewReceipt: string | null = null
+) {
+  const envelope = job.certification_envelope;
+  const result: Record<string, unknown> = {
+    status: admission.phase === "preview" ? "Dry Run" : "Moved",
+    certified_execution_receipt: {
+      schema: "revit-operator.certified-family-execution-receipt.v1", phase: admission.phase,
+      request_instance_hash: admission.request_instance_hash, family_id: admission.family_id, family_hash: admission.family_hash,
+      document_fingerprint: admission.document_fingerprint, document_session_id: admission.document_session_id,
+      source_scoped_id: admission.source_scoped_id, element_id: admission.element_id, observation_id: admission.observation_id,
+      observation_binding_hash: admission.observation_binding_hash, admission_session_id: admission.admission_session_id,
+      policy_hash: envelope.policy_hash, policy_record_hash: envelope.policy_record_hash,
+      evidence_record_hash: envelope.evidence_record_hash, effect_hash: envelope.effect_hash,
+      channel: envelope.channel, alias: envelope.alias,
+      outcome: admission.phase === "preview" ? "rolled_back" : "committed",
+      affected_element_ids: [admission.element_id], outcome_unknown: false
+    }
+  };
+  if (admission.phase === "preview") {
+    const token = previewReceipt ?? `cmpr1_${"C".repeat(43)}`;
+    result.certified_preview_receipt = {
+      schema: "revit-operator.certified-move-preview-receipt.v1", preview_receipt: token,
+      preview_receipt_hash: `sha256:${createHash("sha256").update(token, "utf8").digest("hex")}`,
+      preview_instance_hash: admission.request_instance_hash, admission_session_id: admission.admission_session_id,
+      issued_at_utc: "2026-08-08T12:00:00.000Z"
+    };
+  }
+  return result;
+}
+
 test("legacy v1 courier escape requires exact ordinal development laboratory environment values", () => {
   const deniedRuntimes = [
     { label: "default local", mode: "local", profile: undefined },
@@ -237,6 +388,152 @@ test("v2 courier claim and final authorization bind the raw body, session, execu
   assert.equal(authorized.authorization.body_json, "{\n  \"z\": \"raw\", \"a\": 1\n}");
   assert.equal(authorized.authorization.target_document_path, "C:\\models\\Snowdon.rvt");
   assert.equal(authorized.authorization.policy_hash, policy.policyHash);
+});
+
+test("courier final authorization independently validates and consumes the same sealed move-family lineage", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-"));
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+
+  const previewBody = courierMoveBody(true);
+  const previewAdmission = courierMoveAdmission("preview", null, previewBody);
+  const previewJob = certifiedMoveJob(policy, previewBody, previewAdmission);
+  const preflight = authorizeCertifiedCourierFinalExecution(previewJob, "worker-1", "preflight");
+  assert.equal(preflight.authorization_stage, "preflight");
+  const preview = authorizeCertifiedCourierFinalExecution(previewJob, "worker-1", "final");
+  assert.deepEqual(preview.request_family_admission, previewAdmission);
+  assert.equal(preview.version, "revit-operator.revit-tool-final-authorization.v2");
+  assert.equal(preview.authorization_stage, "final");
+  assert.equal(preview.target_document_title, "Snowdon Mechanical");
+
+  const applyBody = courierMoveBody(false);
+  const applyAdmission = courierMoveAdmission("apply", previewAdmission.request_instance_hash, applyBody, `cmpr1_${"B".repeat(43)}`);
+  const applyJob = certifiedMoveJob(policy, applyBody, applyAdmission);
+  const apply = authorizeCertifiedCourierFinalExecution(applyJob, "worker-1", "final");
+  assert.equal(apply.request_family_admission?.preview_instance_hash, previewAdmission.request_instance_hash);
+  assert.equal(apply.request_family_admission?.document_session_id, "22222222222242228222222222222222");
+  assert.equal(apply.request_hash, applyAdmission.request_instance_hash);
+  assert.equal(apply.effect_hash, policy.record.effect_hash);
+
+  assert.throws(
+    () => authorizeCertifiedCourierFinalExecution(applyJob, "worker-1", "final"),
+    (error: unknown) => error instanceof RevitCourierCertificationError
+      && error.code === "CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED"
+  );
+});
+
+test("courier family envelope rejects forged instance/body and stale policy bindings", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-adversarial-"));
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body);
+  const forged = certifiedMoveJob(policy, body, { ...admission, request_instance_hash: `sha256:${"0".repeat(64)}` });
+  assert.throws(
+    () => authorizeCertifiedCourierFinalExecution(forged, "worker-1", "final"),
+    (error: unknown) => error instanceof RevitCourierCertificationError
+      && error.code === "CERTIFICATION_REQUEST_FAMILY_DENIED"
+  );
+
+  const stale = certifiedMoveJob(policy, body, admission) as any;
+  stale.certification_envelope.policy_hash = `sha256:${"1".repeat(64)}`;
+  // Re-seal the outer envelope so the test reaches the current-policy check.
+  const { envelope_hash: _old, ...payload } = stale.certification_envelope;
+  stale.certification_envelope.envelope_hash = `sha256:${createHash("sha256").update(canonicalJson(payload)).digest("hex")}`;
+  assert.throws(
+    () => authorizeCertifiedCourierFinalExecution(stale, "worker-1", "final"),
+    (error: unknown) => error instanceof RevitCourierCertificationError
+  );
+});
+
+test("durable courier family authorization separates non-consuming preflight from one consuming final stage", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-stages-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body, null, "d".repeat(32));
+  const job = certifiedMoveJob(policy, body, admission);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, job.id);
+  assert.equal(authorizeRevitToolJobExecution({
+    session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "preflight"
+  }).authorization.authorization_stage, "preflight");
+  assert.equal(authorizeRevitToolJobExecution({
+    session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization.authorization_stage, "final");
+  assert.throws(
+    () => authorizeRevitToolJobExecution({
+      session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+    }),
+    /CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED/
+  );
+  const terminal = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
+  assert.equal(terminal.retryable, false);
+  assert.equal(terminal.outcome_unknown, true);
+});
+
+test("courier completion requires an exact native family outcome receipt and terminalizes mismatch as unknown", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-receipt-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body);
+  const job = certifiedMoveJob(policy, body, admission);
+  const result = certifiedMoveExecutionResult(job, admission);
+  assert.doesNotThrow(() => assertCertifiedCourierExecutionResult(job, result));
+  assert.throws(
+    () => assertCertifiedCourierExecutionResult(job, {
+      ...result,
+      certified_execution_receipt: { ...(result.certified_execution_receipt as object), affected_element_ids: [85] }
+    }),
+    (error: unknown) => error instanceof RevitCourierCertificationError
+      && error.code === "CERTIFICATION_EXECUTION_RECEIPT_INVALID"
+  );
+
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, job.id);
+  const terminal = completeRevitToolJob({
+    session_id: "session-move", job_id: job.id, executor_id: "worker-1",
+    result: { ...result, certified_preview_receipt: undefined }
+  });
+  assert.equal(terminal.status, "failed");
+  const receipt = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
+  assert.equal(receipt.code, "CERTIFICATION_JOB_MALFORMED");
+  assert.equal(receipt.retryable, false);
+  assert.equal(receipt.outcome_unknown, true);
+  assert.equal(receipt.phase, "certification_execution_receipt");
+
+  const successRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-receipt-success-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = successRoot;
+  const successDir = path.join(successRoot, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(successDir, { recursive: true });
+  fs.writeFileSync(path.join(successDir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, job.id);
+  const succeeded = completeRevitToolJob({
+    session_id: "session-move", job_id: job.id, executor_id: "worker-1", result
+  });
+  assert.equal(succeeded.status, "succeeded");
+  const successReceipt = JSON.parse(fs.readFileSync(path.join(successDir, "result.json"), "utf8"));
+  assert.equal(successReceipt.status, "succeeded");
+  assert.equal(successReceipt.result.certified_execution_receipt.request_instance_hash, admission.request_instance_hash);
 });
 
 test("v2 final authorization terminalizes known job and claim-lease expiry without an outcome-unknown replay", async () => {

@@ -1365,7 +1365,13 @@ const server = http.createServer(async (req, res) => {
         if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
         try {
           if (action === "authorize-execution") {
-            const authorized = authorizeRevitToolJobExecution({ session_id: sessionId, job_id: jobId, executor_id: executorId });
+            const authorizationStage = (body as any)?.authorization_stage;
+            const authorized = authorizeRevitToolJobExecution({
+              session_id: sessionId,
+              job_id: jobId,
+              executor_id: executorId,
+              ...(authorizationStage === undefined ? {} : { authorization_stage: authorizationStage })
+            });
             return writeJson(res, 200, { ok: true, job: authorized.job, authorization: authorized.authorization });
           }
           const job = action === "complete"

@@ -553,7 +553,7 @@ namespace RevitBridge.Server
                         _nativeTransportReplayCache);
                     correlationId = protectedTransportRequest.Request.RequestId;
                     var sourceRequest = protectedTransportRequest.Request;
-                    var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None);
+                    var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None, "preflight");
                     var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
                         earlyReceipt,
                         sourceRequest,
@@ -696,8 +696,19 @@ namespace RevitBridge.Server
                                             capturedEffectiveRequest,
                                             capturedBody,
                                             localDeadline.Token).GetAwaiter().GetResult();
+                                        OperatorNativeDocumentSessionAuthority.RequireCurrent(
+                                            app,
+                                            capturedEffectiveRequest.CertificationEnvelope?.RequestFamilyAdmission);
+                                        OperatorCertifiedMovePreviewAuthority.RequireApplyReceiptAndConsume(
+                                            capturedEffectiveRequest.CertificationEnvelope,
+                                            dispatchBody);
                                     }
-                                    return handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                    var nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                    return OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
+                                        app,
+                                        nativeResult,
+                                        capturedEffectiveRequest?.CertificationEnvelope,
+                                        dispatchBody);
                                 },
                                 localDeadline.Token,
                                 correlationId);
@@ -868,7 +879,7 @@ namespace RevitBridge.Server
             string expectedCanonicalBody,
             CancellationToken cancellationToken)
         {
-            var finalReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken).ConfigureAwait(false);
+            var finalReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
             return OperatorNativeHttpDispatchFence.RequireFreshOneUse(
                 finalReceipt,
                 effectiveRequest,

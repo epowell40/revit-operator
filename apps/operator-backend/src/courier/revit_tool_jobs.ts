@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   REVIT_COURIER_V2_JOB_VERSION,
   RevitCourierCertificationError,
+  assertCertifiedCourierExecutionResult,
   authorizeCertifiedCourierFinalExecution,
   isRevitCourierDevelopmentLaboratory,
   parseCertifiedCourierJobV2,
@@ -62,7 +63,7 @@ type ClaimInput = {
   session_allowed?: (sessionId: string) => boolean;
 };
 type FinishInput = { session_id: string; job_id: string; executor_id: string; result?: unknown; error?: string; retryable?: boolean };
-type AuthorizeInput = { session_id: string; job_id: string; executor_id: string };
+type AuthorizeInput = { session_id: string; job_id: string; executor_id: string; authorization_stage?: "preflight" | "final" };
 
 function jobsRoot(): string {
   const root = path.join(ensureWorkspaceLayout().artifacts, "revit-courier", "jobs");
@@ -174,7 +175,7 @@ function writeTerminal(job: RevitToolJob, terminal: {
   });
 }
 
-function writeCertificationTerminal(job: RevitToolJob, error: RevitCourierCertificationError): RevitToolJob {
+function writeCertificationTerminal(job: RevitToolJob, error: RevitCourierCertificationError, outcomeUnknown = false): RevitToolJob {
   const terminal = readTerminalResult(job);
   if (terminal) return reconcileJobWithResult(job, terminal);
   if (fs.existsSync(resultPath(job.id))) {
@@ -191,12 +192,12 @@ function writeCertificationTerminal(job: RevitToolJob, error: RevitCourierCertif
     code: error.code,
     retryable: false,
     phase: "certification_final_execution",
-    outcome_unknown: false,
+    outcome_unknown: outcomeUnknown,
     result: {
       code: error.code,
       phase: "certification_final_execution",
       retryable: false,
-      outcome_unknown: false
+      outcome_unknown: outcomeUnknown
     }
   });
 }
@@ -332,6 +333,22 @@ export function completeRevitToolJob(input: FinishInput): RevitToolJob {
   const job = requireClaimedJob(input);
   if (job.status === "failed") throw new Error("Revit courier job is already terminally failed; refusing a contradictory completion.");
   if (job.status === "succeeded" && readTerminalResult(job)) return job;
+  if (job.version === REVIT_COURIER_V2_JOB_VERSION && job.certification_envelope?.request_family_admission) {
+    try {
+      assertCertifiedCourierExecutionResult(job, input.result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Certified native execution receipt is invalid.";
+      return writeTerminal(job, {
+        status: "failed",
+        result: input.result,
+        error: message,
+        code: error instanceof RevitCourierCertificationError ? error.code : "CERTIFICATION_EXECUTION_RECEIPT_INVALID",
+        retryable: false,
+        phase: "certification_execution_receipt",
+        outcome_unknown: true
+      });
+    }
+  }
   return writeTerminal(job, { status: "succeeded", result: input.result, retryable: false });
 }
 
@@ -385,7 +402,9 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
     const certificationError = error instanceof RevitCourierCertificationError
       ? error
       : new RevitCourierCertificationError("CERTIFICATION_FINAL_EXECUTION_FAILED", "Certified courier final execution authorization failed.");
-    const terminalJob = writeCertificationTerminal(job, certificationError);
+    const replayAfterFinal = input.authorization_stage === "final"
+      && certificationError.code === "CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED";
+    const terminalJob = writeCertificationTerminal(job, certificationError, replayAfterFinal);
     const terminalError = new Error(`${certificationError.code}: ${certificationError.message}`);
     (terminalError as Error & { job?: RevitToolJob }).job = terminalJob;
     throw terminalError;
@@ -420,7 +439,7 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
         "Certified courier claim lease expired before final execution authorization; no Revit call was made."
       );
     }
-    const authorization = authorizeCertifiedCourierFinalExecution(job, executorId);
+    const authorization = authorizeCertifiedCourierFinalExecution(job, executorId, input.authorization_stage);
     return { job, authorization };
   } catch (error) {
     return terminalize(error);

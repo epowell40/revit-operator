@@ -17,7 +17,7 @@ import {
   loadTrustedToolExposurePolicy,
   TrustedToolExposurePolicyError
 } from "../src/capabilities/trusted_tool_exposure_policy.js";
-import { computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
+import { canonicalJson, computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
 
 type PolicyFixture = { policyPath: string; policyHash: string; record: Record<string, any> };
 const REQUEST_ID = "0123456789abcdef0123456789abcdef";
@@ -52,6 +52,7 @@ function writePolicy(root: string, options: {
   path?: string;
   exposed?: boolean;
   secondEffect?: boolean;
+  requestFamily?: boolean;
 } = {}): PolicyFixture {
   const request = options.request ?? {};
   const method = options.method ?? "POST";
@@ -75,7 +76,12 @@ function writePolicy(root: string, options: {
       },
       typed_mcp: { exposed: false, required_level: "L4", reason_codes: ["CERT_CHANNEL_NOT_REQUESTED"] },
       deterministic_workflow: { exposed: false, required_level: "L4", reason_codes: ["CERT_CHANNEL_NOT_REQUESTED"] }
-    }
+    },
+    ...(options.requestFamily ? { request_family: {
+      schema: "revit-operator.certified-request-family.v1",
+      id: "revit-operator.certified-move-one.request-family.v1",
+      validator_hash: "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b"
+    } } : {})
   };
   const record = { ...recordBase, policy_record_hash: sha256(recordBase as never) };
   const records: Record<string, unknown>[] = [record];
@@ -98,6 +104,57 @@ function writePolicy(root: string, options: {
   const policyPath = path.join(root, `direct-policy-${Math.random().toString(16).slice(2)}.json`);
   fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`, "utf8");
   return { policyPath, policyHash: policy.policy_hash, record };
+}
+
+function moveBody(dryRun: boolean) {
+  return {
+    ids: [42], mode: "vector", vectorX: 0.25, vectorY: 0, vectorZ: 0, dryRun,
+    behavior: "allOrNothing", moveTogether: false,
+    options: { failOnPinned: true, unpinIfAllowed: false }
+  };
+}
+
+function moveFamilyAdmission(
+  phase: "preview" | "apply",
+  previewInstanceHash: string | null,
+  body: ReturnType<typeof moveBody>,
+  previewReceipt: string | null = null
+) {
+  const familyHash = "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b";
+  const documentFingerprint = `sha256:${"a".repeat(64)}`;
+  const documentSessionId = "11111111111141118111111111111111";
+  const admissionSessionId = "a".repeat(32);
+  const observationBindingHash = rawSha256(["observation-42", documentFingerprint, documentSessionId, "host:42", "42"].join("\n"));
+  const previewReceiptHash = previewReceipt === null ? null : rawSha256(previewReceipt);
+  const request = {
+    phase,
+    documentFingerprint,
+    documentSessionId,
+    sourceScopedId: "host:42",
+    elementId: 42,
+    observationId: "observation-42",
+    observationBindingHash,
+    vectorFeet: { x: 0.25, y: 0, z: 0 },
+    ...(previewInstanceHash === null ? {} : { previewInstanceHash, previewReceiptHash })
+  };
+  return {
+    schema: "revit-operator.certified-request-family-admission.v1",
+    family_id: "revit-operator.certified-move-one.request-family.v1",
+    family_hash: familyHash,
+    request_instance_hash: sha256({ familyHash, admissionSessionId, request, outboundBody: body } as never),
+    phase,
+    preview_instance_hash: previewInstanceHash,
+    preview_receipt: previewReceipt,
+    preview_receipt_hash: previewReceiptHash,
+    document_fingerprint: documentFingerprint,
+    document_session_id: documentSessionId,
+    source_scoped_id: "host:42",
+    element_id: 42,
+    observation_id: "observation-42",
+    observation_binding_hash: observationBindingHash,
+    admission_session_id: admissionSessionId,
+    outbound_body_sha256: rawSha256(canonicalJson(body as never))
+  };
 }
 
 function certifiedEnv(policy: PolicyFixture, overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -277,6 +334,103 @@ test("direct authorization derives every generic-call binding from one exact exp
   assert.equal(getAuthorization.source_body_sha256, rawSha256(""));
   assert.equal(getAuthorization.canonical_body_json, "");
   assert.equal(getAuthorization.body_sha256, rawSha256(""));
+});
+
+test("direct v3 independently validates, policy-binds, and one-time consumes exact move-family preview lineage", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-direct-family-"));
+  const policy = writePolicy(root, {
+    method: "POST",
+    path: "/revit/move-elements",
+    request: moveBody(true),
+    requestFamily: true
+  });
+  const env = certifiedEnv(policy);
+  const common = {
+    schema: "revit-operator.revit-direct-admission-request.v3",
+    method: "POST",
+    path: "/revit/move-elements",
+    channel: "generic_call",
+    alias: "revit_call_tool",
+    runtime_mode: "local",
+    policy_hash: policy.policyHash,
+    policy_record_hash: policy.record.policy_record_hash,
+    evidence_record_hash: policy.record.evidence_record_hash,
+    effect_hash: policy.record.effect_hash,
+    authorization_stage: "final"
+  };
+  const previewBody = moveBody(true);
+  const previewAdmission = moveFamilyAdmission("preview", null, previewBody);
+  const preflight = authorizeDirectRevitExecution({
+    ...common,
+    authorization_stage: "preflight",
+    request_id: "0".repeat(32),
+    body_present: true,
+    body_json: canonicalJson(previewBody as never),
+    request_family_admission: previewAdmission
+  }, env);
+  assert.equal(preflight.authorization_stage, "preflight");
+  const preview = authorizeDirectRevitExecution({
+    ...common,
+    request_id: "1".repeat(32),
+    body_present: true,
+    body_json: canonicalJson(previewBody as never),
+    request_family_admission: previewAdmission
+  }, env);
+  assert.deepEqual(preview.request_family_admission, previewAdmission);
+  assert.equal(preview.version, "revit-operator.revit-direct-final-authorization.v2");
+  assert.equal(preview.authorization_stage, "final");
+  assert.equal(preview.canonical_body_json, canonicalJson(previewBody as never));
+  assert.equal(preview.body_sha256, previewAdmission.outbound_body_sha256);
+
+  const applyBody = moveBody(false);
+  const applyAdmission = moveFamilyAdmission("apply", previewAdmission.request_instance_hash, applyBody, `cmpr1_${"A".repeat(43)}`);
+  const apply = authorizeDirectRevitExecution({
+    ...common,
+    request_id: "2".repeat(32),
+    body_present: true,
+    body_json: canonicalJson(applyBody as never),
+    request_family_admission: applyAdmission
+  }, env);
+  assert.equal(apply.request_family_admission?.preview_instance_hash, previewAdmission.request_instance_hash);
+  assert.equal(apply.request_family_admission?.document_session_id, "11111111111141118111111111111111");
+  assert.equal(apply.request_hash, applyAdmission.request_instance_hash);
+  assert.equal(apply.effect_hash, policy.record.effect_hash);
+
+  expectDirectError(() => authorizeDirectRevitExecution({
+    ...common,
+    request_id: "3".repeat(32),
+    body_present: true,
+    body_json: canonicalJson(applyBody as never),
+    request_family_admission: applyAdmission
+  }, env), 403, "CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED");
+});
+
+test("direct v3 rejects forged family metadata, body drift, and stale policy identity", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-direct-family-adversarial-"));
+  const policy = writePolicy(root, { method: "POST", path: "/revit/move-elements", request: moveBody(true), requestFamily: true });
+  const body = moveBody(true);
+  const admission = moveFamilyAdmission("preview", null, body);
+  const request = {
+    schema: "revit-operator.revit-direct-admission-request.v3",
+    request_id: "4".repeat(32), method: "POST", path: "/revit/move-elements", body_present: true,
+    body_json: canonicalJson(body as never), channel: "generic_call", alias: "revit_call_tool", runtime_mode: "local",
+    policy_hash: policy.policyHash, policy_record_hash: policy.record.policy_record_hash,
+    evidence_record_hash: policy.record.evidence_record_hash, effect_hash: policy.record.effect_hash,
+    authorization_stage: "final",
+    request_family_admission: admission
+  };
+  expectDirectError(() => authorizeDirectRevitExecution({
+    ...request,
+    request_family_admission: { ...admission, family_hash: `sha256:${"0".repeat(64)}` }
+  }, certifiedEnv(policy)), 403, "CERTIFICATION_REQUEST_FAMILY_DENIED");
+  expectDirectError(() => authorizeDirectRevitExecution({
+    ...request,
+    body_json: canonicalJson({ ...body, vectorX: 0.5 } as never)
+  }, certifiedEnv(policy)), 403, "CERTIFICATION_REQUEST_FAMILY_DENIED");
+  expectDirectError(() => authorizeDirectRevitExecution({
+    ...request,
+    policy_hash: `sha256:${"9".repeat(64)}`
+  }, certifiedEnv(policy)), 403, "CERTIFICATION_POLICY_CHANGED");
 });
 
 test("direct authorization rejects source lexical drift before policy evaluation", () => {

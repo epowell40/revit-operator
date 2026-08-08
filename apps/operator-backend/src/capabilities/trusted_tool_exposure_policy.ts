@@ -9,6 +9,11 @@ import {
   type ToolExposurePolicy,
   type ToolExposurePolicyRecord
 } from "./tool_certification.js";
+import {
+  assertPolicyBindsCertifiedRequestFamily,
+  assertValidatedCertifiedRequestFamilyAdmission,
+  type ValidatedCertifiedRequestFamilyAdmission
+} from "./certified_request_family_admission.js";
 
 export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:6e85fc33a142914fa1e9ab94afd25a2e23ffab2cf757c1c7ef66548f3a982a27";
 
@@ -273,22 +278,19 @@ export function evaluateTrustedToolExposurePolicy(input: {
   effectHash?: string;
   channel: ExposureChannel;
   alias?: string;
-  /**
-   * Present only after a local deterministic request-family validator has
-   * accepted the raw request. The request instance remains independently
-   * hash-bound; it is never substituted for a policy-wide wildcard body.
-   */
-  requestFamily?: { id: string; validatorHash: string; requestInstanceHash: string };
+  /** Opaque process-local result of the reviewed deterministic validator. */
+  requestFamilyAdmission?: ValidatedCertifiedRequestFamilyAdmission;
 }): TrustedToolExposureEvaluation {
-  if (input.requestFamily && (!SHA256.test(input.requestFamily.validatorHash) || !SHA256.test(input.requestFamily.requestInstanceHash))) {
-    throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_DENIED", "Parameterized request-family admission is malformed.");
+  if (input.requestFamilyAdmission) {
+    try { assertValidatedCertifiedRequestFamilyAdmission(input.requestFamilyAdmission); }
+    catch { throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_DENIED", "Parameterized request-family admission was not locally validated."); }
   }
   const matches = input.policy.records.filter(record =>
     record.method === input.method
     && record.path === input.path
-    && (input.requestFamily
-      ? record.request_family?.id === input.requestFamily.id
-        && record.request_family.validator_hash === input.requestFamily.validatorHash
+    && (input.requestFamilyAdmission
+      ? record.request_family?.id === input.requestFamilyAdmission.family_id
+        && record.request_family.validator_hash === input.requestFamilyAdmission.family_hash
       : record.request_hash === input.requestHash)
     && (input.effectHash === undefined || record.effect_hash === input.effectHash)
   );
@@ -299,6 +301,10 @@ export function evaluateTrustedToolExposurePolicy(input: {
     );
   }
   const record = matches[0]!;
+  if (input.requestFamilyAdmission) {
+    try { assertPolicyBindsCertifiedRequestFamily(input.requestFamilyAdmission, record); }
+    catch { throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_DENIED", "Current certification policy does not bind the locally validated request family."); }
+  }
   const decision = record.channels[input.channel];
   if (!decision?.exposed || (record.visibility === "workflow_only" && input.channel !== "deterministic_workflow")) {
     throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_DENIED", "Current certification policy does not expose this exact channel.");

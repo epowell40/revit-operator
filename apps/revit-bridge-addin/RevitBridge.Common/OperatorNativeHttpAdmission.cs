@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -29,7 +30,7 @@ namespace RevitBridge.Common
 
     public sealed class OperatorNativeHttpRequest
     {
-        internal OperatorNativeHttpRequest(string requestId, string method, string path, bool bodyPresent, string bodyJson, string channel, string alias)
+        internal OperatorNativeHttpRequest(string requestId, string method, string path, bool bodyPresent, string bodyJson, string channel, string alias, OperatorCourierCertificationEnvelope? certificationEnvelope = null, string? certificationEnvelopeJson = null)
         {
             RequestId = requestId;
             Method = method;
@@ -39,6 +40,8 @@ namespace RevitBridge.Common
             Channel = channel;
             Alias = alias;
             SourceBodySha256 = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(bodyJson);
+            CertificationEnvelope = certificationEnvelope;
+            CertificationEnvelopeJson = certificationEnvelopeJson;
         }
 
         public string RequestId { get; }
@@ -49,6 +52,8 @@ namespace RevitBridge.Common
         public string Alias { get; }
         public string BodyJson { get; }
         public string SourceBodySha256 { get; }
+        public OperatorCourierCertificationEnvelope? CertificationEnvelope { get; }
+        public string? CertificationEnvelopeJson { get; }
     }
 
     public sealed class OperatorNativeHttpAdmissionException : InvalidOperationException, IOperatorRevitFailureMetadata
@@ -113,7 +118,9 @@ namespace RevitBridge.Common
             byte[]? bodyBytes,
             string? requestId = null,
             string? channel = "generic_call",
-            string? alias = "revit_call_tool")
+            string? alias = "revit_call_tool",
+            OperatorCourierCertificationEnvelope? certificationEnvelope = null,
+            string? certificationEnvelopeJson = null)
         {
             if (!string.Equals(method, "GET", StringComparison.Ordinal)
                 && !string.Equals(method, "POST", StringComparison.Ordinal))
@@ -144,6 +151,8 @@ namespace RevitBridge.Common
             {
                 if (hasEntityBody || bytes.Length != 0)
                     throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit GET requests cannot include a body.");
+                if (certificationEnvelope != null)
+                    throw OperatorNativeHttpAdmissionException.InvalidRequest("Parameterized certification envelopes require a POST body.");
                 return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, false, "", channel!, alias!);
             }
 
@@ -180,7 +189,9 @@ namespace RevitBridge.Common
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit request body contains invalid Unicode normalization data.");
             }
 
-            return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, true, bodyJson, channel!, alias!);
+            if ((certificationEnvelope == null) != (certificationEnvelopeJson == null))
+                throw OperatorNativeHttpAdmissionException.InvalidRequest("Native certification envelope representation is incomplete.");
+            return new OperatorNativeHttpRequest(ValidateOrCreateRequestId(requestId), method!, path, true, bodyJson, channel!, alias!, certificationEnvelope, certificationEnvelopeJson);
         }
 
         public static bool IsLoopbackEndpoint(IPEndPoint? endpoint)
@@ -281,12 +292,14 @@ namespace RevitBridge.Common
     {
         Task<OperatorNativeHttpAuthorizationReceipt> AuthorizeAsync(
             OperatorNativeHttpRequest request,
-            CancellationToken cancellationToken);
+            CancellationToken cancellationToken,
+            string authorizationStage = "final");
     }
 
     public sealed class OperatorNativeHttpAuthorizationReceipt
     {
         public const string Version = "revit-operator.revit-direct-final-authorization.v1";
+        public const string FamilyVersion = "revit-operator.revit-direct-final-authorization.v2";
         public const string Phase = "certification_native_direct_admission";
         public const int ValidForMilliseconds = 5000;
         private int _consumed;
@@ -405,7 +418,9 @@ namespace RevitBridge.Common
                 hasEntityBody: sourceRequest.BodyPresent,
                 bodyBytes: bytes,
                 channel: sourceRequest.Channel,
-                alias: sourceRequest.Alias);
+                alias: sourceRequest.Alias,
+                certificationEnvelope: sourceRequest.CertificationEnvelope,
+                certificationEnvelopeJson: sourceRequest.CertificationEnvelopeJson);
         }
     }
 
@@ -437,6 +452,10 @@ namespace RevitBridge.Common
             "source_body_sha256", "canonical_body_json", "body_sha256", "policy_hash", "policy_record_hash", "evidence_record_hash", "request_hash", "effect_hash",
             "channel", "alias", "runtime_mode", "exposure_profile", "policy_trust_source", "authorization_hash"
         };
+        private static readonly HashSet<string> FamilyAuthorizationKeys = new HashSet<string>(AuthorizationKeys, StringComparer.Ordinal)
+        {
+            "request_family_admission", "authorization_stage"
+        };
         private static readonly HashSet<string> FailureKeys = new HashSet<string>(StringComparer.Ordinal) { "ok", "code", "error", "retryable" };
 
         public static OperatorNativeHttpAuthorizationReceipt VerifySuccess(
@@ -444,7 +463,8 @@ namespace RevitBridge.Common
             OperatorNativeHttpRequest request,
             string? expectedRuntimeMode,
             DateTimeOffset nowUtc,
-            TimeSpan? authorizationRoundTrip = null)
+            TimeSpan? authorizationRoundTrip = null,
+            string authorizationStage = "final")
         {
             return VerifySuccess(
                 responseBytes,
@@ -452,7 +472,8 @@ namespace RevitBridge.Common
                 expectedRuntimeMode,
                 nowUtc,
                 authorizationRoundTrip,
-                OperatorNativeToolExposureEmbeddedAuthority.Instance);
+                OperatorNativeToolExposureEmbeddedAuthority.Instance,
+                authorizationStage);
         }
 
         /// <summary>
@@ -466,7 +487,8 @@ namespace RevitBridge.Common
             string? expectedRuntimeMode,
             DateTimeOffset nowUtc,
             TimeSpan? authorizationRoundTrip,
-            IOperatorNativeToolExposureAuthority authority)
+            IOperatorNativeToolExposureAuthority authority,
+            string authorizationStage = "final")
         {
             if (authority == null) throw new ArgumentNullException(nameof(authority));
             var document = ParseResponse(responseBytes, MaximumSuccessResponseUtf8Bytes);
@@ -476,7 +498,8 @@ namespace RevitBridge.Common
                 RequireExactObjectKeys(root, ResponseKeys, "authorization response");
                 RequireBoolean(root, "ok", true);
                 var authorization = RequireUnique(root, "authorization", JsonValueKind.Object);
-                RequireExactObjectKeys(authorization, AuthorizationKeys, "authorization receipt");
+                var hasFamilyAdmission = authorization.EnumerateObject().Any(property => property.Name == "request_family_admission");
+                RequireExactObjectKeys(authorization, hasFamilyAdmission ? FamilyAuthorizationKeys : AuthorizationKeys, "authorization receipt");
 
                 var version = RequireString(authorization, "version");
                 var phase = RequireString(authorization, "phase");
@@ -501,7 +524,23 @@ namespace RevitBridge.Common
                 var trustSource = RequireString(authorization, "policy_trust_source");
                 var authorizationHash = RequireString(authorization, "authorization_hash");
 
-                if (version != OperatorNativeHttpAuthorizationReceipt.Version
+                OperatorCertifiedRequestFamilyAdmission? requestFamilyAdmission = null;
+                string? returnedAuthorizationStage = null;
+                if (hasFamilyAdmission)
+                {
+                    returnedAuthorizationStage = RequireString(authorization, "authorization_stage");
+                    try { requestFamilyAdmission = OperatorCertifiedRequestFamilyAdmissionVerifier.Parse(RequireUnique(authorization, "request_family_admission", JsonValueKind.Object)); }
+                    catch (InvalidDataException invalid)
+                    {
+                        throw Protocol("CERTIFICATION_DIRECT_REQUEST_FAMILY_INVALID", invalid.Message);
+                    }
+                }
+
+                var sourceFamilyAdmission = request.CertificationEnvelope?.RequestFamilyAdmission;
+                if ((sourceFamilyAdmission == null && (version != OperatorNativeHttpAuthorizationReceipt.Version || requestFamilyAdmission != null))
+                    || (sourceFamilyAdmission != null && (version != OperatorNativeHttpAuthorizationReceipt.FamilyVersion || requestFamilyAdmission == null
+                        || (authorizationStage != "preflight" && authorizationStage != "final")
+                        || returnedAuthorizationStage != authorizationStage))
                     || phase != OperatorNativeHttpAuthorizationReceipt.Phase
                     || validForMs != OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds)
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_SCHEMA_INVALID", "Native Revit authorization schema, phase, or validity is invalid.");
@@ -525,6 +564,23 @@ namespace RevitBridge.Common
                         StringComparison.Ordinal))
                     throw Protocol("CERTIFICATION_DIRECT_CANONICAL_BODY_INVALID", "Native Revit authorization response contains an invalid effective body binding.");
                 ValidateEffectiveBody(canonicalBodyJson, bodyPresent);
+                if (sourceFamilyAdmission != null)
+                {
+                    var envelope = request.CertificationEnvelope!;
+                    if (!SameAdmission(sourceFamilyAdmission, requestFamilyAdmission!)
+                        || policyHash != envelope.PolicyHash
+                        || policyRecordHash != envelope.PolicyRecordHash
+                        || evidenceRecordHash != envelope.EvidenceRecordHash
+                        || effectHash != envelope.EffectHash
+                        || requestHash != sourceFamilyAdmission.RequestInstanceHash
+                        || bodySha256 != sourceFamilyAdmission.OutboundBodySha256)
+                        throw Protocol("CERTIFICATION_DIRECT_REQUEST_FAMILY_MISMATCH", "Native Revit authorization changed a sealed request-family or policy binding.");
+                    try { OperatorCertifiedRequestFamilyAdmissionVerifier.RequireValidEffectiveBody(requestFamilyAdmission!, canonicalBodyJson); }
+                    catch (InvalidDataException invalid)
+                    {
+                        throw Protocol("CERTIFICATION_DIRECT_REQUEST_FAMILY_INVALID", invalid.Message);
+                    }
+                }
                 if (!DateTimeOffset.TryParseExact(authorizedAtText, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var authorizedAtUtc))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_TIME_INVALID", "Native Revit authorization timestamp is invalid.");
@@ -536,10 +592,9 @@ namespace RevitBridge.Common
                 // authorization_hash is deliberately only an unkeyed receipt
                 // mix-up/corruption binding. Authority comes from the compiled
                 // policy below, never from a digest supplied by the backend.
-                var independentlyComputedRequestHash = OperatorNativeToolExposureRequestHash.Compute(
-                    method,
-                    path,
-                    canonicalBodyJson);
+                var independentlyComputedRequestHash = requestFamilyAdmission == null
+                    ? OperatorNativeToolExposureRequestHash.Compute(method, path, canonicalBodyJson)
+                    : requestFamilyAdmission.RequestInstanceHash;
                 if (!string.Equals(independentlyComputedRequestHash, requestHash, StringComparison.Ordinal))
                     throw Protocol(
                         "CERTIFICATION_DIRECT_REQUEST_HASH_MISMATCH",
@@ -554,7 +609,8 @@ namespace RevitBridge.Common
                     requestHash,
                     effectHash,
                     channel,
-                    alias));
+                    alias,
+                    requestFamilyAdmission));
 
                 var elapsed = authorizationRoundTrip ?? TimeSpan.Zero;
                 if (elapsed < TimeSpan.Zero || elapsed >= TimeSpan.FromMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds))
@@ -659,8 +715,35 @@ namespace RevitBridge.Common
                 case JsonValueKind.True: return true;
                 case JsonValueKind.False: return false;
                 case JsonValueKind.Null: return null;
+                case JsonValueKind.Object:
+                    var objectResult = new Dictionary<string, object?>(StringComparer.Ordinal);
+                    foreach (var property in value.EnumerateObject()) objectResult.Add(property.Name, JsonElementToObject(property.Value));
+                    return objectResult;
+                case JsonValueKind.Array:
+                    var arrayResult = new List<object?>();
+                    foreach (var item in value.EnumerateArray()) arrayResult.Add(JsonElementToObject(item));
+                    return arrayResult;
                 default: throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_VALUE_INVALID", "Native Revit authorization response contains an unsupported value.");
             }
+        }
+
+        private static bool SameAdmission(OperatorCertifiedRequestFamilyAdmission left, OperatorCertifiedRequestFamilyAdmission right)
+        {
+            return left.FamilyId == right.FamilyId
+                && left.FamilyHash == right.FamilyHash
+                && left.RequestInstanceHash == right.RequestInstanceHash
+                && left.AdmissionSessionId == right.AdmissionSessionId
+                && left.Phase == right.Phase
+                && left.PreviewInstanceHash == right.PreviewInstanceHash
+                && left.PreviewReceipt == right.PreviewReceipt
+                && left.PreviewReceiptHash == right.PreviewReceiptHash
+                && left.DocumentFingerprint == right.DocumentFingerprint
+                && left.DocumentSessionId == right.DocumentSessionId
+                && left.SourceScopedId == right.SourceScopedId
+                && left.ObservationId == right.ObservationId
+                && left.ObservationBindingHash == right.ObservationBindingHash
+                && left.ElementId == right.ElementId
+                && left.OutboundBodySha256 == right.OutboundBodySha256;
         }
 
         private static void RequireExactObjectKeys(JsonElement value, HashSet<string> expected, string location)

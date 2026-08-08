@@ -5,19 +5,24 @@ import {
   assertToolExposure,
   canonicalToolExposureJson,
   getToolExposureRuntimeDecision,
-  readCertifiedCourierAdmission,
+  assertCertifiedMoveOneAdmissionExposure,
+  readCertifiedCourierAdmissionBinding,
   TOOL_EXPOSURE_CANONICALIZATION,
   type CertifiedCourierAdmission,
   type ToolExposureChannel,
   type ToolExposureDecision
 } from "./toolExposurePolicy.js";
+import {
+  createCertificationEnvelope,
+  type CertificationEnvelope
+} from "./certifiedExecutionEnvelope.js";
+import type { CertifiedMoveOneAdmission } from "./certifiedMoveOneRequestFamily.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import { getWorkspaceRoot } from "./workspace.js";
 
 const JOB_VERSION_V1 = "revit-operator.revit-tool-job.v1";
 const JOB_VERSION_V2 = "revit-operator.revit-tool-job.v2";
 const RESULT_VERSION = "revit-operator.revit-tool-result.v1";
-const CERTIFICATION_ENVELOPE_SCHEMA = "revit-operator.revit-tool-certification-envelope.v1";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const EXPOSURE_CHANNELS: readonly ToolExposureChannel[] = ["search", "generic_call", "typed_mcp", "deterministic_workflow"];
 const UNSAFE_CONTEXT_CONTROL = /[\u0000-\u001F\u007F]/u;
@@ -102,28 +107,6 @@ type CourierJob = {
   body_present?: boolean;
   certification_envelope?: CertificationEnvelope;
   [key: string]: unknown;
-};
-
-type CertificationEnvelope = {
-  schema: typeof CERTIFICATION_ENVELOPE_SCHEMA;
-  version: 1;
-  canonicalization: typeof TOOL_EXPOSURE_CANONICALIZATION;
-  policy_hash: string;
-  policy_record_hash: string;
-  evidence_record_hash: string;
-  request_hash: string;
-  effect_hash: string;
-  method: string;
-  path: string;
-  body_present: boolean;
-  body_sha256: string;
-  channel: ToolExposureChannel;
-  alias: string;
-  workflow?: string;
-  runtime_mode: string;
-  exposure_profile: "certified";
-  policy_trust_source: "bundled" | "deployment";
-  envelope_hash: string;
 };
 
 export type RevitCourierCallOptions = {
@@ -246,8 +229,9 @@ function assertExactCertifiedAdmission(
   method: string,
   revitPath: string,
   body: unknown
-): ToolExposureDecision {
-  const decision = readCertifiedCourierAdmission(capability);
+): { decision: ToolExposureDecision; certifiedMoveOneAdmission?: CertifiedMoveOneAdmission } {
+  const binding = readCertifiedCourierAdmissionBinding(capability);
+  const { decision } = binding;
   if (decision.allowed !== true || decision.mode !== "certified") {
     throw new Error("Certified Revit courier publication requires an allowed certified MCP admission decision.");
   }
@@ -274,14 +258,20 @@ function assertExactCertifiedAdmission(
   // The immutable result has to match the earlier decision exactly; a policy
   // rotation or changed binding is a typed fail-closed condition, never a
   // reason to enqueue a broadened job.
-  const recomputed = assertToolExposure({
-    method,
-    path: revitPath,
-    body,
-    channel: decision.channel,
-    workflow: decision.workflow,
-    alias: decision.alias
-  });
+  const recomputed = binding.certifiedMoveOneAdmission
+    ? assertCertifiedMoveOneAdmissionExposure({
+      admission: binding.certifiedMoveOneAdmission,
+      channel: decision.channel,
+      alias: decision.alias
+    })
+    : assertToolExposure({
+      method,
+      path: revitPath,
+      body,
+      channel: decision.channel,
+      workflow: decision.workflow,
+      alias: decision.alias
+    });
   const immutableFields: Array<keyof ToolExposureDecision> = [
     "allowed",
     "mode",
@@ -303,31 +293,7 @@ function assertExactCertifiedAdmission(
       throw new Error(`Certified Revit courier admission decision changed at ${field}; refusing durable publication.`);
     }
   }
-  return recomputed;
-}
-
-function createCertificationEnvelope(decision: ToolExposureDecision, rawBody: { present: boolean; json: string }): CertificationEnvelope {
-  const payload = {
-    schema: CERTIFICATION_ENVELOPE_SCHEMA as typeof CERTIFICATION_ENVELOPE_SCHEMA,
-    version: 1 as const,
-    canonicalization: TOOL_EXPOSURE_CANONICALIZATION as typeof TOOL_EXPOSURE_CANONICALIZATION,
-    policy_hash: decision.policyHash!,
-    policy_record_hash: decision.policyRecordHash!,
-    evidence_record_hash: decision.evidenceRecordHash!,
-    request_hash: decision.requestHash,
-    effect_hash: decision.effectHash,
-    method: decision.method,
-    path: decision.path,
-    body_present: rawBody.present,
-    body_sha256: sha256(rawBody.json),
-    channel: decision.channel,
-    alias: decision.alias!,
-    ...(decision.workflow === undefined ? {} : { workflow: decision.workflow }),
-    runtime_mode: decision.runtimeMode,
-    exposure_profile: "certified" as const,
-    policy_trust_source: decision.policyTrustSource!
-  };
-  return { ...payload, envelope_hash: sha256(canonicalToolExposureJson(payload)) };
+  return { decision: recomputed, ...(binding.certifiedMoveOneAdmission ? { certifiedMoveOneAdmission: binding.certifiedMoveOneAdmission } : {}) };
 }
 
 function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierContext, "session_id">>, method: string, revitPath: string, bodyJson: string): string {
@@ -521,10 +487,15 @@ export async function callRevitViaCourier<T>(
   const bodyForSizeCheck = rawBody?.json ?? legacyBodyJson;
   if (Buffer.byteLength(bodyForSizeCheck, "utf8") > 2 * 1024 * 1024) throw new Error("Revit courier request body exceeds 2 MiB.");
 
-  const decision = certified
+  const binding = certified
     ? assertExactCertifiedAdmission(options.certifiedAdmission, normalizedMethod, revitPath, body)
     : undefined;
-  const envelope = decision && rawBody ? createCertificationEnvelope(decision, rawBody) : undefined;
+  const envelope = binding && rawBody ? createCertificationEnvelope({
+    decision: binding.decision,
+    bodyPresent: rawBody.present,
+    bodyJson: rawBody.json,
+    certifiedMoveOneAdmission: binding.certifiedMoveOneAdmission
+  }) : undefined;
   const idempotencyKey = envelope && rawBody
     ? v2IdempotencyKey(context, normalizedMethod, revitPath, rawBody, envelope)
     : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson);

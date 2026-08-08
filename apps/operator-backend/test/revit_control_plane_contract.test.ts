@@ -219,12 +219,16 @@ test("native direct Revit execution requires the authenticated fixed certificati
   assert.match(index, /authorizeDirectRevitExecution\(body\)/);
   assert.match(authorization, /revit-operator\.revit-direct-admission-request\.v1/);
   assert.match(authorization, /revit-operator\.revit-direct-admission-request\.v2/);
+  assert.match(authorization, /revit-operator\.revit-direct-admission-request\.v3/);
   assert.match(authorization, /phase:\s*"certification_native_direct_admission"/);
   assert.match(authorization, /valid_for_ms:\s*DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS/);
   assert.match(authorization, /DIRECT_REQUEST_V1_KEYS\s*=\s*\[[^\]]*"channel",\s*"alias"\]/);
   assert.match(authorization, /DIRECT_REQUEST_V2_KEYS\s*=\s*\[\.\.\.DIRECT_REQUEST_V1_KEYS,\s*"runtime_mode"\]/);
+  assert.match(authorization, /DIRECT_REQUEST_V3_KEYS\s*=\s*\[[\s\S]{0,300}"request_family_admission"/);
+  assert.match(authorization, /validateCertifiedRequestFamilyAdmission\(request\.request_family_admission/);
   assert.match(authorization, /evaluateTrustedToolExposurePolicy\(\{[\s\S]{0,300}channel,[\s\S]{0,80}alias/);
-  assert.doesNotMatch(authorization, /request\.policy_hash|request\.effect_hash/);
+  assert.match(authorization, /request\.policy_hash !== trusted\.policy\.policy_hash/);
+  assert.match(authorization, /request\.effect_hash !== record\.effect_hash/);
 });
 
 test("geometry-aware tag placement excludes only section-box control volumes from annotation obstacles", () => {

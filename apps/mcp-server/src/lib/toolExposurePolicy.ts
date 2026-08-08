@@ -8,6 +8,7 @@ import {
   admitCertifiedMoveOneRequest,
   CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH,
   CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
+  assertCertifiedMoveApplyPolicyLineage,
   isCertifiedMoveOneAdmission,
   type CertifiedMoveOneAdmission
 } from "./certifiedMoveOneRequestFamily.js";
@@ -133,6 +134,7 @@ export type CertifiedCourierAdmission = {
   readonly [certifiedCourierAdmissionBrand]: true;
 };
 const courierAdmissionDecisions = new WeakMap<object, ToolExposureDecision>();
+const courierMoveAdmissions = new WeakMap<object, CertifiedMoveOneAdmission>();
 
 function normalizeRuntimeMode(value: unknown): string {
   return String(value ?? "local").trim().toLowerCase().replace(/-/g, "_") || "local";
@@ -795,7 +797,17 @@ export function assertCertifiedMoveOneAdmissionExposure(input: {
     },
     requestInstanceHash: admission.requestInstanceHash
   });
-  if (decision.allowed) return decision;
+  if (decision.allowed) {
+    assertCertifiedMoveApplyPolicyLineage(admission, {
+      policyHash: decision.policyHash,
+      policyRecordHash: decision.policyRecordHash,
+      evidenceRecordHash: decision.evidenceRecordHash,
+      effectHash: decision.effectHash,
+      channel: decision.channel,
+      alias: decision.alias
+    });
+    return decision;
+  }
   throw new ToolExposurePolicyError(
     decision.reasonCodes[0] ?? "CERT_REQUEST_FAMILY_DENIED",
     `${decision.channel} exposure denied for certified move-one request family; reasons=${decision.reasonCodes.join(",")}; request_instance_hash=${admission.requestInstanceHash}; effect_hash=${decision.effectHash}.`,
@@ -814,6 +826,7 @@ export function createCertifiedCourierAdmission(input: {
   body?: unknown;
   channel?: ToolExposureChannel;
   workflow?: string;
+  certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
   env?: NodeJS.ProcessEnv;
 }): CertifiedCourierAdmission | undefined {
   const env = input.env ?? process.env;
@@ -825,10 +838,39 @@ export function createCertifiedCourierAdmission(input: {
       "Certified courier publication requires an active MCP tool alias binding."
     );
   }
-  const decision = assertToolExposure({ ...input, alias, env });
+  const decision = input.certifiedMoveOneAdmission
+    ? assertCertifiedMoveOneAdmissionExposure({ admission: input.certifiedMoveOneAdmission, channel: input.channel, alias, env })
+    : assertToolExposure({
+      method: input.method,
+      path: input.path,
+      body: input.body,
+      channel: input.channel,
+      workflow: input.workflow,
+      alias,
+      env
+    });
+  if (decision.method !== input.method || decision.path !== input.path) {
+    throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_ROUTE_MISMATCH", "Certified request-family admission does not bind the requested route.");
+  }
   const capability = Object.freeze({}) as unknown as CertifiedCourierAdmission;
   courierAdmissionDecisions.set(capability, decision);
+  if (input.certifiedMoveOneAdmission) courierMoveAdmissions.set(capability, input.certifiedMoveOneAdmission);
   return capability;
+}
+
+export function readCertifiedCourierAdmissionBinding(capability: unknown): {
+  decision: ToolExposureDecision;
+  certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
+} {
+  const certifiedMoveOneAdmission = courierMoveAdmissions.get(capability as object);
+  try {
+    const decision = readCertifiedCourierAdmission(capability);
+    return { decision, ...(certifiedMoveOneAdmission ? { certifiedMoveOneAdmission } : {}) };
+  } finally {
+    if (capability && (typeof capability === "object" || typeof capability === "function")) {
+      courierMoveAdmissions.delete(capability as object);
+    }
+  }
 }
 
 /**
@@ -853,6 +895,7 @@ export function readCertifiedCourierAdmission(capability: unknown): ToolExposure
   // Consume before inspecting the context or returning. A failed replay from a
   // different execution context cannot leave a usable capability behind.
   courierAdmissionDecisions.delete(capability as object);
+  courierMoveAdmissions.delete(capability as object);
   const activeAlias = String(invokedMcpAlias.getStore() ?? "").trim();
   if (!activeAlias) {
     throw new ToolExposurePolicyError(

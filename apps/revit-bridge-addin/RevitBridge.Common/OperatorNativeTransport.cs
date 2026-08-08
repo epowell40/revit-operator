@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -270,9 +271,10 @@ namespace RevitBridge.Common
             DateTimeOffset nowUtc,
             string? requestId = null,
             string? channel = null,
-            string? alias = null)
+            string? alias = null,
+            string? certificationEnvelopeJson = null)
         {
-            return ProtectRequestCore(operatorToken, serverEpoch, method, path, bodyJson, writeGrant, nowUtc, requestId, null, null, channel, alias);
+            return ProtectRequestCore(operatorToken, serverEpoch, method, path, bodyJson, writeGrant, nowUtc, requestId, null, null, channel, alias, certificationEnvelopeJson);
         }
 
         internal static OperatorNativeTransportProtectedRequest ProtectRequestCore(
@@ -287,7 +289,8 @@ namespace RevitBridge.Common
             byte[]? deterministicNonce,
             byte[]? deterministicIv,
             string? channel = null,
-            string? alias = null)
+            string? alias = null,
+            string? certificationEnvelopeJson = null)
         {
             var body = bodyJson ?? "";
             var bodyBytes = StrictEncode(body, "Native request body is not strict UTF-8.");
@@ -307,7 +310,23 @@ namespace RevitBridge.Common
             if (StrictEncode(protectedWriteGrant, "Native write grant is not strict UTF-8.").Length
                 > OperatorNativeTransportProtocol.MaximumWriteGrantUtf8Bytes)
                 throw Failure("NATIVE_TRANSPORT_WRITE_GRANT_SIZE_INVALID", "Native write grant exceeds the protected transport limit.", 400);
-            var inner = SerializeRequestInner(request, nonce, protectedWriteGrant, nowUtc.ToUniversalTime());
+            OperatorCourierCertificationEnvelope? certificationEnvelope = null;
+            JsonElement? certificationEnvelopeElement = null;
+            if (certificationEnvelopeJson != null)
+            {
+                using var certificationDocument = JsonDocument.Parse(certificationEnvelopeJson, StrictJson);
+                certificationEnvelopeElement = certificationDocument.RootElement.Clone();
+                certificationEnvelope = OperatorCourierCertificationEnvelopeVerifier.VerifyDirectEnvelope(
+                    certificationEnvelopeElement.Value,
+                    request.Method,
+                    request.Path,
+                    request.BodyPresent,
+                    request.BodyJson);
+                request = OperatorNativeHttpRequestFence.Prepare(
+                    request.Method, request.Path, false, request.BodyPresent, bodyBytes, request.RequestId,
+                    request.Channel, request.Alias, certificationEnvelope, certificationEnvelopeElement.Value.GetRawText());
+            }
+            var inner = SerializeRequestInner(request, nonce, protectedWriteGrant, nowUtc.ToUniversalTime(), certificationEnvelopeElement);
             var epoch = RequireServerEpoch(serverEpoch);
             var envelope = Protect(operatorToken, epoch, RequestDirection, inner, deterministicIv);
             if (StrictUtf8.GetByteCount(envelope) > OperatorNativeTransportProtocol.MaximumRequestEnvelopeUtf8Bytes)
@@ -335,7 +354,7 @@ namespace RevitBridge.Common
 
             var epoch = RequireServerEpoch(expectedServerEpoch);
             var plaintext = Open(operatorToken, epoch, RequestDirection, envelopeUtf8, OperatorNativeTransportProtocol.MaximumRequestEnvelopeUtf8Bytes);
-            var fields = ParseExactInner(plaintext, RequestInnerFields, "request");
+            var fields = ParseRequestInner(plaintext);
             var requestId = RequireString(fields, "request_id", 64);
             var nonce = RequireString(fields, "request_nonce", 64);
             var nonceBytes = DecodeBase64Url(nonce, NonceBytes, "request nonce");
@@ -350,6 +369,19 @@ namespace RevitBridge.Common
             var channel = RequireString(fields, "channel", 32);
             var alias = RequireString(fields, "alias", 128);
             var writeGrant = RequireStringAllowEmpty(fields, "write_grant", OperatorNativeTransportProtocol.MaximumWriteGrantUtf8Bytes);
+            OperatorCourierCertificationEnvelope? certificationEnvelope = null;
+            string? certificationEnvelopeJson = null;
+            if (fields.TryGetValue("certification_envelope", out var certificationEnvelopeElement))
+            {
+                if (certificationEnvelopeElement.ValueKind != JsonValueKind.Object) throw AuthFailure();
+                certificationEnvelope = OperatorCourierCertificationEnvelopeVerifier.VerifyDirectEnvelope(
+                    certificationEnvelopeElement,
+                    method,
+                    path,
+                    bodyPresent,
+                    body);
+                certificationEnvelopeJson = certificationEnvelopeElement.GetRawText();
+            }
             var bodyBytes = StrictEncode(body, "Protected native request body is not strict UTF-8.");
             var request = OperatorNativeHttpRequestFence.Prepare(
                 method,
@@ -359,7 +391,9 @@ namespace RevitBridge.Common
                 bodyBytes: bodyBytes,
                 requestId: requestId,
                 channel: channel ?? "generic_call",
-                alias: alias ?? "revit_call_tool");
+                alias: alias ?? "revit_call_tool",
+                certificationEnvelope: certificationEnvelope,
+                certificationEnvelopeJson: certificationEnvelopeJson);
             replayCache.Accept(request.RequestId, nonce, nowUtc);
             return new OperatorNativeTransportRequestContext(request, nonce, epoch, writeGrant, issuedAt);
         }
@@ -495,7 +529,7 @@ namespace RevitBridge.Common
             return new TransportEnvelope(epoch, direction, iv, ciphertext, tag);
         }
 
-        private static byte[] SerializeRequestInner(OperatorNativeHttpRequest request, string nonce, string writeGrant, DateTimeOffset nowUtc)
+        private static byte[] SerializeRequestInner(OperatorNativeHttpRequest request, string nonce, string writeGrant, DateTimeOffset nowUtc, JsonElement? certificationEnvelope)
         {
             using var stream = new MemoryStream();
             using (var writer = new Utf8JsonWriter(stream, CanonicalWriter))
@@ -511,6 +545,11 @@ namespace RevitBridge.Common
                 writer.WriteString("channel", request.Channel);
                 writer.WriteString("alias", request.Alias);
                 writer.WriteString("write_grant", writeGrant);
+                if (certificationEnvelope.HasValue)
+                {
+                    writer.WritePropertyName("certification_envelope");
+                    certificationEnvelope.Value.WriteTo(writer);
+                }
                 writer.WriteEndObject();
             }
             return stream.ToArray();
@@ -699,6 +738,22 @@ namespace RevitBridge.Common
             catch (JsonException) { throw AuthFailure(); }
         }
 
+        private static Dictionary<string, JsonElement> ParseRequestInner(byte[] plaintext)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(plaintext, StrictJson);
+                var hasCertificationEnvelope = document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.EnumerateObject().Any(property => property.Name == "certification_envelope");
+                return ExactObject(
+                    document.RootElement,
+                    hasCertificationEnvelope ? FamilyRequestInnerFields : RequestInnerFields,
+                    "request");
+            }
+            catch (OperatorNativeHttpAdmissionException) { throw; }
+            catch (JsonException) { throw AuthFailure(); }
+        }
+
         private static Dictionary<string, JsonElement> ExactObject(JsonElement root, HashSet<string> expected, string location)
         {
             if (root.ValueKind != JsonValueKind.Object) throw AuthFailure();
@@ -763,6 +818,11 @@ namespace RevitBridge.Common
         private static readonly HashSet<string> RequestInnerFields = new HashSet<string>(StringComparer.Ordinal)
         {
             "request_id", "request_nonce", "issued_at_unix_ms", "method", "path", "body_present", "body_json", "channel", "alias", "write_grant"
+        };
+
+        private static readonly HashSet<string> FamilyRequestInnerFields = new HashSet<string>(RequestInnerFields, StringComparer.Ordinal)
+        {
+            "certification_envelope"
         };
 
         private static readonly HashSet<string> ResponseInnerFields = new HashSet<string>(StringComparer.Ordinal)

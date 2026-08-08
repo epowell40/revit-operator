@@ -272,8 +272,21 @@ namespace RevitBridge.Logic.Handlers
                             : "Per-element pixel/image coordinates use the CropBox fallback because View.Outline mapping was unavailable.");
                 }
 
+                string? projectUniqueId = null;
+                try { projectUniqueId = doc.ProjectInformation?.UniqueId; } catch { }
+                var projectFingerprint = "sha256:" + OperatorRevitBatchBinding.ComputeProjectFingerprint(
+                    doc.Title,
+                    doc.PathName,
+                    projectUniqueId);
+
                 return Task.FromResult<object>(new
                 {
+                    document = new
+                    {
+                        sessionId = OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
+                        projectIdentity = new { fingerprint = projectFingerprint },
+                        activeView = new { id = ElementIdCompat.GetValue(doc.ActiveView.Id) }
+                    },
                     frameId,
                     viewId = ElementIdCompat.GetValue(view.Id),
                     viewType = view.ViewType.ToString(),

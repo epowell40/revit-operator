@@ -341,7 +341,9 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("refreshTimeout.CancelAfter(CourierFinalExecutionRefreshTimeout);", source);
             Assert.Contains("TimeSpan.FromSeconds(5)", source);
             Assert.Contains("RefreshCourierFinalExecutionAuthorization(action, cancellationToken);\n" +
-                "            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);", source);
+                "            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, requireFinalFamilyStage: true);", source);
+            Assert.Contains("authorization.RequestFamilyAdmission != null\n" +
+                "                    && !string.Equals(authorization.AuthorizationStage, \"final\", StringComparison.Ordinal)", source);
         }
 
         [Theory]

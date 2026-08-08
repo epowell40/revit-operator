@@ -361,7 +361,18 @@ namespace RevitBridge.Operator
                         path,
                         correlationId,
                         localDeadline.Token);
+                    OperatorNativeDocumentSessionAuthority.RequireCurrent(
+                        app,
+                        action.CourierFinalExecutionAuthorization?.RequestFamilyAdmission);
+                    OperatorCertifiedMovePreviewAuthority.RequireApplyReceiptAndConsume(
+                        action.CourierVerifiedClaim?.Envelope,
+                        jsonBody);
                     var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
+                    handlerResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
+                        app,
+                        handlerResult,
+                        action.CourierVerifiedClaim?.Envelope,
+                        jsonBody);
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
                     // confusion due to view redraw / regeneration lag.
@@ -407,7 +418,8 @@ namespace RevitBridge.Operator
             OperatorActionCall action,
             string method,
             string path,
-            string correlationId)
+            string correlationId,
+            bool requireFinalFamilyStage = false)
         {
             var authorization = action.CourierFinalExecutionAuthorization;
             if (authorization == null)
@@ -423,6 +435,9 @@ namespace RevitBridge.Operator
                 || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToExecutor(
                     authorization,
                     action.CourierLocalExecutorId)
+                || (requireFinalFamilyStage
+                    && authorization.RequestFamilyAdmission != null
+                    && !string.Equals(authorization.AuthorizationStage, "final", StringComparison.Ordinal))
                 || !TryGetActionBody(action, out var bodyPresent, out var bodyJson)
                 || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToAction(
                     authorization,
@@ -491,7 +506,7 @@ namespace RevitBridge.Operator
             CancellationToken cancellationToken)
         {
             RefreshCourierFinalExecutionAuthorization(action, cancellationToken);
-            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
+            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, requireFinalFamilyStage: true);
         }
 
         private static bool TryGetActionBody(OperatorActionCall action, out bool bodyPresent, out string bodyJson)

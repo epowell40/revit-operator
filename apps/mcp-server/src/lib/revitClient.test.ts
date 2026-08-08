@@ -573,7 +573,7 @@ test("callRevit treats native API policy GET as read and POST as mutating", asyn
   }
 });
 
-test("callRevit classifies conditional POST bodies as read or apply", async () => {
+test("callRevit classifies conditional POST bodies and never retries an unknown rollback preview", async () => {
   const server = http.createServer((_request, response) => {
     response.statusCode = 503;
     response.end("bridge unavailable");
@@ -587,6 +587,15 @@ test("callRevit classifies conditional POST bodies as read or apply", async () =
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.retryable, true);
         assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/move-elements", "POST", { dryRun: true }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
         return true;
       },
     );
@@ -612,8 +621,8 @@ test("callRevit classifies conditional POST bodies as read or apply", async () =
       callRevit("/revit/list-element-types", "POST", { action: "rename_types", dryRun: true }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
-        assert.equal(error.retryable, true);
-        assert.equal(error.outcome_unknown, false);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
         return true;
       },
     );

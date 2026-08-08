@@ -201,6 +201,7 @@ namespace RevitBridge.Operator
                             claimedV2,
                             sessionId!,
                             jobId!,
+                            "preflight",
                             cancellationToken).ConfigureAwait(false);
                         var action = CreateCertifiedAction(claimedV2, authorization, _executorId);
                         // The prequeue receipt only decides whether it is safe
@@ -211,6 +212,7 @@ namespace RevitBridge.Operator
                             claimedV2,
                             sessionId!,
                             jobId!,
+                            "final",
                             token);
                         return action;
                     };
@@ -468,6 +470,7 @@ namespace RevitBridge.Operator
             OperatorCourierCertificationEnvelopeValidationResult claimed,
             string sessionId,
             string jobId,
+            string authorizationStage,
             CancellationToken cancellationToken)
         {
             if (!OperatorCourierFinalExecutionAuthorizationBinder.IsTargetExecutorBound(claimed, _executorId))
@@ -480,10 +483,14 @@ namespace RevitBridge.Operator
             string authorizationJson;
             try
             {
+                var effectiveAuthorizationStage = claimed.Envelope?.RequestFamilyAdmission == null
+                    ? null
+                    : authorizationStage;
                 authorizationJson = await _backendClient.AuthorizeRevitCourierExecutionJsonAsync(
                     sessionId,
                     jobId,
                     _executorId,
+                    effectiveAuthorizationStage,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (!(error is OperatorCourierCertificationException))
@@ -498,7 +505,8 @@ namespace RevitBridge.Operator
                 authorizationJson,
                 claimed,
                 _executorId,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                authorizationStage);
             if (!binding.IsValid || binding.Authorization == null)
             {
                 throw new OperatorCourierCertificationException(

@@ -18,6 +18,7 @@ import {
   ToolExposurePolicyError
 } from "./toolExposurePolicy.js";
 import { CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1 } from "./certifiedMoveOneRequestFamily.js";
+import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -273,12 +274,17 @@ test("general exact evaluator rejects caller-authored request-family metadata", 
 });
 
 test("certified move-one entry point rejects forged admission paths and binds validated preview input", () => {
+  clearCertifiedMoveTargetLedgerForTests();
+  registerCertifiedSpatialObservation(
+    { document: { sessionId: "123e4567e89b42d3a456426614174000", projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+    { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+  );
   const variant = writePolicyVariant(policy => {
     const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
     record.method = "POST";
     record.path = "/revit/move-elements";
     record.typed_mcp_aliases = ["revit_move_one_certified"];
-    record.effect_hash = testDigest({ effect: { resolved_effect: "write" } });
+    record.effect_hash = testDigest({ effect: { resolved_effect: "preview" } });
     record.request_family = {
       schema: "revit-operator.certified-request-family.v1",
       id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
@@ -288,8 +294,7 @@ test("certified move-one entry point rejects forged admission paths and binds va
   });
   const result = assertCertifiedMoveOneToolExposure({
     request: {
-      phase: "preview", documentFingerprint: `sha256:${"a".repeat(64)}`, sourceScopedId: "host:4821",
-      elementId: 4821, observationId: "frame_01", vectorFeet: { x: 1, y: 0, z: 0 }, previewInstanceHash: undefined
+      phase: "preview", elementId: 4821, observationId: "frame_01", vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
     },
     alias: "revit_move_one_certified",
     env: policyVariantEnv(variant)
@@ -299,8 +304,7 @@ test("certified move-one entry point rejects forged admission paths and binds va
   assert.match(result.decision.requestInstanceHash ?? "", /^sha256:[0-9a-f]{64}$/);
   assert.throws(() => assertCertifiedMoveOneToolExposure({
     request: {
-      phase: "preview", documentFingerprint: `sha256:${"a".repeat(64)}`, sourceScopedId: "host:4821",
-      elementId: 4821, observationId: "frame_01", vectorFeet: { x: 3, y: 0, z: 0 }, previewInstanceHash: undefined
+      phase: "preview", elementId: 4821, observationId: "frame_01", vectorFeet: { x: 3, y: 0, z: 0 }, previewReceipt: undefined
     },
     alias: "revit_move_one_certified",
     env: policyVariantEnv(variant)
@@ -388,7 +392,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   const packagedConfig = path.join(root, "operator-backend", "config");
   fs.mkdirSync(packagedLib, { recursive: true });
   fs.mkdirSync(packagedConfig, { recursive: true });
-  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js"]) {
+  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js", "certifiedMoveTargetLedger.js"]) {
     fs.copyFileSync(path.resolve(process.cwd(), "dist", "lib", file), path.join(packagedLib, file));
   }
   fs.copyFileSync(sourcePolicyPath, path.join(packagedConfig, "tool_exposure_policy.v1.json"));

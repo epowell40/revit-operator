@@ -77,6 +77,11 @@ function bodyRecord(body: unknown): Record<string, unknown> {
 
 function conditionalPostEffect(path: string, body: unknown): RevitRouteEffect | undefined {
   const row = bodyRecord(body);
+  if (path === "/revit/move-elements") {
+    // A rolled-back native transaction and a committed translation are two
+    // distinct policy effects. Preview certification never authorizes apply.
+    return row.dryRun === true ? "preview" : "apply";
+  }
   if (path === "/revit/fire-damper-audit") {
     return typeof row.command === "string" && row.command.trim().toLowerCase() === "fix" ? "apply" : "read";
   }

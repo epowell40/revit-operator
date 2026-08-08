@@ -44,6 +44,7 @@ namespace RevitBridge.Handlers
                 {
                     title = doc.Title,
                     path = doc.PathName,
+                    sessionId = RevitBridge.Common.OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
                     projectIdentity = new
                     {
                         fingerprint = projectFingerprint,

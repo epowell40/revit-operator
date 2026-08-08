@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getWorkspaceRoot } from "./lib/workspace.js";
+import { registerCertifiedSpatialObservation } from "./lib/certifiedMoveTargetLedger.js";
 
 export const SPATIAL_OBSERVATION_V1_SCHEMA_VERSION = "spatial-observation/v1";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -15,7 +16,7 @@ export type SpatialObservationInput = {
   limit?: number;
 };
 
-export type SpatialObservationCall = (route: string, method: "POST", body: Record<string, unknown>) => Promise<unknown>;
+export type SpatialObservationCall = (route: string, method: "GET" | "POST", body?: Record<string, unknown>) => Promise<unknown>;
 export type SpatialObservationImageReadResult =
   | { ok: true; data: string; mimeType: "image/png" | "image/jpeg" }
   | { ok: false; reason: string };
@@ -345,7 +346,11 @@ export function readSpatialObservationImage(
 
 export async function observeModelV1(input: SpatialObservationInput, callNative: SpatialObservationCall, readImage: SpatialObservationImageReader = readSpatialObservationImage): Promise<{ content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> }> {
   const payload = await callNative("/revit/export-visible-elements", "POST", normalizeSpatialObservationInput(input));
-  const observation = normalizeSpatialObservationV1(payload);
+  const normalizedObservation = normalizeSpatialObservationV1(payload);
+  // The native capture response contains the document session/fingerprint and
+  // active view read in the same Revit API execution. This avoids a second
+  // context request, alias substitution, and document/view TOCTOU.
+  const observation = registerCertifiedSpatialObservation(normalizedObservation, normalizedObservation);
   const image = readImage(String(observation.path), MAX_IMAGE_BYTES);
   if (!image.ok) {
     const warnings = Array.isArray(observation.warnings) ? observation.warnings : [];
