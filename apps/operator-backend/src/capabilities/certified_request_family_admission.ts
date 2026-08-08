@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
-import { canonicalJson, sha256, type JsonValue, type ToolExposurePolicyRecord } from "./tool_certification.js";
+import { canonicalJson, computeEffectHash, sha256, type JsonValue, type ToolExposurePolicyRecord } from "./tool_certification.js";
 
 export const CERTIFIED_REQUEST_FAMILY_ADMISSION_SCHEMA = "revit-operator.certified-request-family-admission.v1";
 export const CERTIFIED_MOVE_ONE_REQUEST_FAMILY_ID = "revit-operator.certified-move-one.request-family.v1";
-export const CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH = "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b";
+export const CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH = "sha256:24906494c42d86326cfba2c4b76318e8172f83f9cb65cd8aa0c84f7e1281e0de";
+export const CERTIFIED_MOVE_ONE_PREVIEW_EFFECT_HASH = "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c0250fcc55ede2d87107d06ae428b";
+export const CERTIFIED_MOVE_ONE_APPLY_EFFECT_HASH = "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b";
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const ADMISSION_KEYS = [
   "schema", "family_id", "family_hash", "request_instance_hash", "phase", "preview_instance_hash",
   "preview_receipt", "preview_receipt_hash", "document_fingerprint", "document_session_id", "source_scoped_id",
-  "element_id", "observation_id", "observation_binding_hash", "admission_session_id", "outbound_body_sha256"
+  "element_id", "observation_id", "observation_binding_hash", "admission_session_id", "outbound_body_sha256",
+  "native_attestation_key_id", "native_attestation_modulus_base64url", "native_attestation_exponent_base64url"
 ] as const;
 const BODY_KEYS = ["ids", "mode", "vectorX", "vectorY", "vectorZ", "dryRun", "behavior", "moveTogether", "options"] as const;
 const OPTION_KEYS = ["failOnPinned", "unpinIfAllowed"] as const;
@@ -29,6 +32,9 @@ export type CertifiedRequestFamilyAdmission = {
   element_id: number;
   observation_id: string;
   observation_binding_hash: string;
+  native_attestation_key_id: string;
+  native_attestation_modulus_base64url: string;
+  native_attestation_exponent_base64url: string;
   admission_session_id: string;
   outbound_body_sha256: string;
 };
@@ -127,6 +133,18 @@ export function validateCertifiedRequestFamilyAdmission(
   const sourceScopedId = nfcText(raw.source_scoped_id, "source_scoped_id");
   const observationId = nfcText(raw.observation_id, "observation_id");
   const observationBindingHash = hash(raw.observation_binding_hash, "observation_binding_hash");
+  const nativeAttestationKeyId = hash(raw.native_attestation_key_id, "native_attestation_key_id");
+  const nativeAttestationModulus = nfcText(raw.native_attestation_modulus_base64url, "native_attestation_modulus_base64url");
+  const nativeAttestationExponent = nfcText(raw.native_attestation_exponent_base64url, "native_attestation_exponent_base64url");
+  if (!/^[A-Za-z0-9_-]{256,512}$/.test(nativeAttestationModulus)
+    || !/^[A-Za-z0-9_-]{1,16}$/.test(nativeAttestationExponent)
+    || nativeAttestationKeyId !== sha256({
+      algorithm: "RS256",
+      exponent_base64url: nativeAttestationExponent,
+      modulus_base64url: nativeAttestationModulus
+    } as never)) {
+    denied("Native execution attestation key binding is invalid.");
+  }
   if (typeof raw.admission_session_id !== "string" || !/^[0-9a-f]{32}$/.test(raw.admission_session_id)) {
     denied("admission_session_id must be 32 lowercase hexadecimal characters.");
   }
@@ -138,7 +156,8 @@ export function validateCertifiedRequestFamilyAdmission(
     documentFingerprint,
     documentSessionId,
     sourceScopedId,
-    String(elementId)
+    String(elementId),
+    nativeAttestationKeyId
   ].join("\n"));
   if (observationBindingHash !== expectedObservationBinding) denied("Observation binding hash does not match the exact document/session/source/target lineage.");
   const requestInstanceHash = hash(raw.request_instance_hash, "request_instance_hash");
@@ -171,6 +190,9 @@ export function validateCertifiedRequestFamilyAdmission(
     elementId,
     observationId,
     observationBindingHash,
+    nativeAttestationKeyId,
+    nativeAttestationModulusBase64Url: nativeAttestationModulus,
+    nativeAttestationExponentBase64Url: nativeAttestationExponent,
     vectorFeet: { x, y, z },
     ...(previewInstanceHash === null ? {} : { previewInstanceHash, previewReceiptHash })
   };
@@ -197,6 +219,9 @@ export function validateCertifiedRequestFamilyAdmission(
     element_id: elementId,
     observation_id: observationId,
     observation_binding_hash: observationBindingHash,
+    native_attestation_key_id: nativeAttestationKeyId,
+    native_attestation_modulus_base64url: nativeAttestationModulus,
+    native_attestation_exponent_base64url: nativeAttestationExponent,
     admission_session_id: admissionSessionId,
     outbound_body_sha256: outboundBodySha256
   }) as ValidatedCertifiedRequestFamilyAdmission;
@@ -210,6 +235,11 @@ export function assertValidatedCertifiedRequestFamilyAdmission(value: unknown): 
   }
 }
 
+export function certifiedRequestFamilyEffectHash(admission: ValidatedCertifiedRequestFamilyAdmission): string {
+  assertValidatedCertifiedRequestFamilyAdmission(admission);
+  return admission.phase === "preview" ? CERTIFIED_MOVE_ONE_PREVIEW_EFFECT_HASH : CERTIFIED_MOVE_ONE_APPLY_EFFECT_HASH;
+}
+
 export function assertPolicyBindsCertifiedRequestFamily(
   admission: ValidatedCertifiedRequestFamilyAdmission,
   record: ToolExposurePolicyRecord
@@ -220,6 +250,17 @@ export function assertPolicyBindsCertifiedRequestFamily(
     || record.request_family.validator_hash !== admission.family_hash) {
     denied("Current policy does not bind the exact reviewed request-family validator.");
   }
+  if (record.effect_hash !== certifiedRequestFamilyExpectedEffectHash(admission)) {
+    denied("Current policy effect does not match the independently derived request-family phase and body.");
+  }
+}
+
+/** Never accepts a caller-selected effect for a validated family instance. */
+export function certifiedRequestFamilyExpectedEffectHash(
+  admission: ValidatedCertifiedRequestFamilyAdmission
+): string {
+  assertValidatedCertifiedRequestFamilyAdmission(admission);
+  return computeEffectHash({ resolved_effect: admission.phase === "preview" ? "preview" : "write" });
 }
 
 /** Final call-time replay consumption. Native issues and independently owns preview receipts after rollback. */

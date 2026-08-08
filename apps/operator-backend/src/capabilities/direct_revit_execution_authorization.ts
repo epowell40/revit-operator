@@ -14,6 +14,7 @@ import {
 } from "./trusted_tool_exposure_policy.js";
 import {
   CertifiedRequestFamilyAdmissionError,
+  certifiedRequestFamilyEffectHash,
   finalizeCertifiedRequestFamilyAdmission,
   validateCertifiedRequestFamilyAdmission,
   type CertifiedRequestFamilyAdmission,
@@ -242,6 +243,14 @@ export function authorizeDirectRevitExecution(
         body: parsedBody,
         bodyJson
       });
+      if (request.effect_hash !== certifiedRequestFamilyEffectHash(requestFamilyAdmission)) {
+        throw new DirectRevitExecutionAuthorizationError(
+          "CERTIFICATION_REQUEST_FAMILY_DENIED",
+          "Direct request-family phase does not bind the exact reviewed preview/apply effect.",
+          403,
+          false
+        );
+      }
     } catch (error) {
       if (error instanceof CertifiedRequestFamilyAdmissionError) {
         throw new DirectRevitExecutionAuthorizationError(error.code, error.message, 403, false);

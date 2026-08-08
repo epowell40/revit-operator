@@ -11,6 +11,7 @@ import {
   readCertifiedMoveOneTransportBinding
 } from "./certifiedMoveOneRequestFamily.js";
 import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
+import { canonicalTestCertifiedMoveResult, signTestNativeReceipt, TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 
 const elementId = 4821;
 const observationId = "frame_01";
@@ -28,15 +29,18 @@ const policy = {
 function issueTarget(): void {
   clearCertifiedMoveTargetLedgerForTests();
   registerCertifiedSpatialObservation(
-    { document: { sessionId, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+    { document: { sessionId, nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
     { observationId, viewId: 42, items: [{ elementId, sourceScopedId: `host:${elementId}`, groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
   );
 }
 
 function nativePreviewResult(preview: ReturnType<typeof admitCertifiedMoveOneRequest>, token = `cmpr1_${"A".repeat(43)}`): Record<string, unknown> {
+  const nativeResult = {
+    status: "Dry Run", rolledBack: true, movedIds: [elementId], skipped: [], warnings: [],
+    snapshots: [{ id: elementId, before: { kind: "LocationPoint", pointXyz: [0, 0, 0] }, after: { kind: "LocationPoint", pointXyz: [2, 0, 0] } }], movedTogether: false
+  };
   return {
-    status: "Dry Run", rolledBack: true, movedIds: [elementId], skipped: [],
-    snapshots: [{ id: elementId, before: { pointXyz: [0, 0, 0] }, after: { pointXyz: [2, 0, 0] } }], movedTogether: false,
+    ...nativeResult,
     certified_preview_receipt: {
       schema: "revit-operator.certified-move-preview-receipt.v1",
       preview_receipt: token,
@@ -45,12 +49,12 @@ function nativePreviewResult(preview: ReturnType<typeof admitCertifiedMoveOneReq
       admission_session_id: preview.admissionSessionId,
       issued_at_utc: "2035-01-02T03:04:05.006Z"
     },
-    certified_execution_receipt: executionReceipt(preview, "rolled_back")
+    certified_execution_receipt: executionReceipt(preview, "rolled_back", nativeResult)
   };
 }
 
-function executionReceipt(admission: ReturnType<typeof admitCertifiedMoveOneRequest>, outcome: "rolled_back" | "committed"): Record<string, unknown> {
-  return {
+function executionReceipt(admission: ReturnType<typeof admitCertifiedMoveOneRequest>, outcome: "rolled_back" | "committed", nativeResult: Record<string, unknown>): Record<string, unknown> {
+  const receipt: Record<string, unknown> = {
     schema: "revit-operator.certified-family-execution-receipt.v1",
     phase: admission.request.phase,
     request_instance_hash: admission.requestInstanceHash,
@@ -71,8 +75,12 @@ function executionReceipt(admission: ReturnType<typeof admitCertifiedMoveOneRequ
     alias: policy.alias,
     outcome,
     affected_element_ids: [admission.request.elementId],
-    outcome_unknown: false
+    outcome_unknown: false,
+    result_hash: `sha256:${createHash("sha256").update(canonicalTestCertifiedMoveResult(nativeResult), "utf8").digest("hex")}`,
+    native_attestation_key_id: TEST_NATIVE_EXECUTION_ATTESTATION.key_id
   };
+  receipt.native_attestation_signature = signTestNativeReceipt(receipt);
+  return receipt;
 }
 
 test("one-element profile derives target identity from the observation ledger and produces the exact rollback body", () => {

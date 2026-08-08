@@ -321,7 +321,9 @@ namespace RevitBridge.Common
                     request.Method,
                     request.Path,
                     request.BodyPresent,
-                    request.BodyJson);
+                    request.BodyJson,
+                    request.Channel,
+                    request.Alias);
                 request = OperatorNativeHttpRequestFence.Prepare(
                     request.Method, request.Path, false, request.BodyPresent, bodyBytes, request.RequestId,
                     request.Channel, request.Alias, certificationEnvelope, certificationEnvelopeElement.Value.GetRawText());
@@ -379,7 +381,9 @@ namespace RevitBridge.Common
                     method,
                     path,
                     bodyPresent,
-                    body);
+                    body,
+                    channel,
+                    alias);
                 certificationEnvelopeJson = certificationEnvelopeElement.GetRawText();
             }
             var bodyBytes = StrictEncode(body, "Protected native request body is not strict UTF-8.");

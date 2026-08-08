@@ -510,14 +510,18 @@ namespace RevitBridge.Common
             string method,
             string path,
             bool bodyPresent,
-            string bodyJson)
+            string bodyJson,
+            string channel,
+            string alias)
         {
             if (!TryReadEnvelope(envelopeElement, out var envelope, out var error))
                 throw OperatorNativeHttpAdmissionException.InvalidRequest(error?.Error ?? "Direct certification envelope is invalid.");
             if (!string.Equals(envelope.Method, method, StringComparison.Ordinal)
                 || !string.Equals(envelope.Path, path, StringComparison.Ordinal)
                 || envelope.BodyPresent != bodyPresent
-                || !string.Equals(envelope.BodySha256, Sha256Prefixed(bodyJson ?? ""), StringComparison.Ordinal))
+                || !string.Equals(envelope.BodySha256, Sha256Prefixed(bodyJson ?? ""), StringComparison.Ordinal)
+                || !string.Equals(envelope.Channel, channel, StringComparison.Ordinal)
+                || !string.Equals(envelope.Alias, alias, StringComparison.Ordinal))
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Direct certification envelope does not bind the exact request.");
             var computedEnvelopeHash = Sha256Prefixed(CanonicalizeEnvelopePayload(envelopeElement));
             if (!string.Equals(envelope.EnvelopeHash, computedEnvelopeHash, StringComparison.Ordinal))

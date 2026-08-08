@@ -19,7 +19,9 @@ import {
 } from "../src/capabilities/trusted_tool_exposure_policy.js";
 import { canonicalJson, computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
 
-type PolicyFixture = { policyPath: string; policyHash: string; record: Record<string, any> };
+type PolicyFixture = { policyPath: string; policyHash: string; record: Record<string, any>; applyRecord?: Record<string, any> };
+const MOVE_PREVIEW_EFFECT_HASH = "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c0250fcc55ede2d87107d06ae428b";
+const MOVE_APPLY_EFFECT_HASH = "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b";
 const REQUEST_ID = "0123456789abcdef0123456789abcdef";
 
 function rawSha256(value: string): string {
@@ -62,7 +64,7 @@ function writePolicy(root: string, options: {
     path: toolPath,
     typed_mcp_aliases: ["revit_ping"],
     request_hash: computeRequestHash(method, toolPath, request as never),
-    effect_hash: `sha256:${"2".repeat(64)}`,
+    effect_hash: options.requestFamily ? MOVE_PREVIEW_EFFECT_HASH : `sha256:${"2".repeat(64)}`,
     evidence_record_hash: `sha256:${"3".repeat(64)}`,
     highest_cumulative_level: "L4",
     observed_levels: ["L0", "L1", "L2", "L3", "L4"],
@@ -80,11 +82,23 @@ function writePolicy(root: string, options: {
     ...(options.requestFamily ? { request_family: {
       schema: "revit-operator.certified-request-family.v1",
       id: "revit-operator.certified-move-one.request-family.v1",
-      validator_hash: "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b"
+      validator_hash: "sha256:24906494c42d86326cfba2c4b76318e8172f83f9cb65cd8aa0c84f7e1281e0de"
     } } : {})
   };
   const record = { ...recordBase, policy_record_hash: sha256(recordBase as never) };
   const records: Record<string, unknown>[] = [record];
+  let applyRecord: Record<string, any> | undefined;
+  if (options.requestFamily) {
+    const applyRequest = { ...(request as Record<string, unknown>), dryRun: false };
+    const applyBase = {
+      ...recordBase,
+      request_hash: computeRequestHash(method, toolPath, applyRequest as never),
+      effect_hash: MOVE_APPLY_EFFECT_HASH,
+      evidence_record_hash: `sha256:${"7".repeat(64)}`
+    };
+    applyRecord = { ...applyBase, policy_record_hash: sha256(applyBase as never) };
+    records.push(applyRecord);
+  }
   if (options.secondEffect) {
     const ambiguousBase = {
       ...recordBase,
@@ -103,7 +117,7 @@ function writePolicy(root: string, options: {
   const policy = { ...policyBase, policy_hash: sha256(policyBase as never) };
   const policyPath = path.join(root, `direct-policy-${Math.random().toString(16).slice(2)}.json`);
   fs.writeFileSync(policyPath, `${JSON.stringify(policy)}\n`, "utf8");
-  return { policyPath, policyHash: policy.policy_hash, record };
+  return { policyPath, policyHash: policy.policy_hash, record, applyRecord };
 }
 
 function moveBody(dryRun: boolean) {
@@ -120,11 +134,18 @@ function moveFamilyAdmission(
   body: ReturnType<typeof moveBody>,
   previewReceipt: string | null = null
 ) {
-  const familyHash = "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b";
+  const familyHash = "sha256:24906494c42d86326cfba2c4b76318e8172f83f9cb65cd8aa0c84f7e1281e0de";
   const documentFingerprint = `sha256:${"a".repeat(64)}`;
   const documentSessionId = "11111111111141118111111111111111";
   const admissionSessionId = "a".repeat(32);
-  const observationBindingHash = rawSha256(["observation-42", documentFingerprint, documentSessionId, "host:42", "42"].join("\n"));
+  const nativeAttestationModulusBase64Url = "A".repeat(342);
+  const nativeAttestationExponentBase64Url = "AQAB";
+  const nativeAttestationKeyId = sha256({
+    algorithm: "RS256",
+    exponent_base64url: nativeAttestationExponentBase64Url,
+    modulus_base64url: nativeAttestationModulusBase64Url
+  } as never);
+  const observationBindingHash = rawSha256(["observation-42", documentFingerprint, documentSessionId, "host:42", "42", nativeAttestationKeyId].join("\n"));
   const previewReceiptHash = previewReceipt === null ? null : rawSha256(previewReceipt);
   const request = {
     phase,
@@ -134,6 +155,9 @@ function moveFamilyAdmission(
     elementId: 42,
     observationId: "observation-42",
     observationBindingHash,
+    nativeAttestationKeyId,
+    nativeAttestationModulusBase64Url,
+    nativeAttestationExponentBase64Url,
     vectorFeet: { x: 0.25, y: 0, z: 0 },
     ...(previewInstanceHash === null ? {} : { previewInstanceHash, previewReceiptHash })
   };
@@ -152,6 +176,9 @@ function moveFamilyAdmission(
     element_id: 42,
     observation_id: "observation-42",
     observation_binding_hash: observationBindingHash,
+    native_attestation_key_id: nativeAttestationKeyId,
+    native_attestation_modulus_base64url: nativeAttestationModulusBase64Url,
+    native_attestation_exponent_base64url: nativeAttestationExponentBase64Url,
     admission_session_id: admissionSessionId,
     outbound_body_sha256: rawSha256(canonicalJson(body as never))
   };
@@ -384,9 +411,20 @@ test("direct v3 independently validates, policy-binds, and one-time consumes exa
 
   const applyBody = moveBody(false);
   const applyAdmission = moveFamilyAdmission("apply", previewAdmission.request_instance_hash, applyBody, `cmpr1_${"A".repeat(43)}`);
-  const apply = authorizeDirectRevitExecution({
+  expectDirectError(() => authorizeDirectRevitExecution({
     ...common,
     request_id: "2".repeat(32),
+    body_present: true,
+    body_json: canonicalJson(applyBody as never),
+    request_family_admission: applyAdmission
+  }, env), 403, "CERTIFICATION_REQUEST_FAMILY_DENIED");
+  const applyRecord = policy.applyRecord!;
+  const apply = authorizeDirectRevitExecution({
+    ...common,
+    request_id: "5".repeat(32),
+    policy_record_hash: applyRecord.policy_record_hash,
+    evidence_record_hash: applyRecord.evidence_record_hash,
+    effect_hash: applyRecord.effect_hash,
     body_present: true,
     body_json: canonicalJson(applyBody as never),
     request_family_admission: applyAdmission
@@ -394,11 +432,14 @@ test("direct v3 independently validates, policy-binds, and one-time consumes exa
   assert.equal(apply.request_family_admission?.preview_instance_hash, previewAdmission.request_instance_hash);
   assert.equal(apply.request_family_admission?.document_session_id, "11111111111141118111111111111111");
   assert.equal(apply.request_hash, applyAdmission.request_instance_hash);
-  assert.equal(apply.effect_hash, policy.record.effect_hash);
+  assert.equal(apply.effect_hash, MOVE_APPLY_EFFECT_HASH);
 
   expectDirectError(() => authorizeDirectRevitExecution({
     ...common,
     request_id: "3".repeat(32),
+    policy_record_hash: applyRecord.policy_record_hash,
+    evidence_record_hash: applyRecord.evidence_record_hash,
+    effect_hash: applyRecord.effect_hash,
     body_present: true,
     body_json: canonicalJson(applyBody as never),
     request_family_admission: applyAdmission

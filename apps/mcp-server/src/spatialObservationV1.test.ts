@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./lib/certifiedMoveNativeAttestation.testSupport.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +11,7 @@ const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0l
 function payload() { return { frameId: "frame-7", path: "C:\\tmp\\frame-7.png", widthPx: 1600, heightPx: 900, viewId: 42, viewName: "Level 1", mapping, count: 2, scanned: 3, truncated: true, items: [
   { elementId: 12, source: { scope: "host" }, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2, locationKind: "point" } },
   { elementId: 12, source: { scope: "linked", linkInstanceId: 9 }, category: "Doors", bbox: { image: { normalizedMinX: 0.4, normalizedMinY: 0.5, normalizedMaxX: 0.5, normalizedMaxY: 0.6 } }, hostProvenance: { source: "linked" } }
-] , document: { sessionId: "123e4567e89b42d3a456426614174000", projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } }; }
+] , document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } }; }
 
 test("normalizes host and linked evidence without requiring an anchor", () => {
   const observation = normalizeSpatialObservationV1(payload()); const items = observation.items as Array<Record<string, unknown>>;

@@ -13,6 +13,7 @@ import {
 } from "./certifiedExecutionEnvelope.js";
 import { canonicalToolExposureJson, type ToolExposureDecision } from "./toolExposurePolicy.js";
 import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 import { protectNativeTransportRequest } from "./nativeTransport.js";
 
 const hash = (character: string): string => `sha256:${character.repeat(64)}`;
@@ -20,7 +21,7 @@ const hash = (character: string): string => `sha256:${character.repeat(64)}`;
 function admittedPreview() {
   clearCertifiedMoveTargetLedgerForTests();
   registerCertifiedSpatialObservation(
-    { document: { sessionId: "123e4567e89b42d3a456426614174000", projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+    { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
     { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
   );
   return admitCertifiedMoveOneRequest({

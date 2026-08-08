@@ -27,16 +27,19 @@ namespace RevitBridge.Common
             UIApplication app,
             object handlerResult,
             OperatorCourierCertificationEnvelope? envelope,
-            string effectiveBodyJson)
+            string effectiveBodyJson,
+            OperatorCertifiedMoveExecutionStart? executionStart)
         {
             var admission = envelope?.RequestFamilyAdmission;
             if (admission == null) return handlerResult;
+            if (executionStart == null || executionStart.RequestInstanceHash != admission.RequestInstanceHash)
+                throw Denied("Certified move execution is missing its native pre-dispatch state capability.");
             if (admission.Phase != "apply")
-                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson);
+                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson, executionStart);
 
             try
             {
-                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson);
+                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson, executionStart);
             }
             catch (OperatorCertifiedFamilyOutcomeUnknownException)
             {
@@ -46,11 +49,9 @@ namespace RevitBridge.Common
             {
                 // After an apply handler has returned, every failure to bind,
                 // serialize, validate, read back, or attach the native receipt
-                // is an unknown mutation outcome unless the handler explicitly
-                // and parseably reported rollback. Never make such an attempt
+                // is an unknown mutation outcome. Handler-authored rolledBack
+                // metadata is not rollback proof. Never make such an attempt
                 // retryable and never restore its consumed preview token.
-                if (ReportsRolledBack(handlerResult) && error is OperatorNativeHttpAdmissionException)
-                    throw;
                 throw new OperatorCertifiedFamilyOutcomeUnknownException(
                     "Committed move outcome could not be independently certified after handler dispatch.",
                     error);
@@ -61,7 +62,8 @@ namespace RevitBridge.Common
             UIApplication app,
             object handlerResult,
             OperatorCourierCertificationEnvelope envelope,
-            string effectiveBodyJson)
+            string effectiveBodyJson,
+            OperatorCertifiedMoveExecutionStart executionStart)
         {
             var admission = envelope.RequestFamilyAdmission!;
             OperatorNativeDocumentSessionAuthority.RequireCurrent(app, admission);
@@ -72,16 +74,18 @@ namespace RevitBridge.Common
             var now = DateTimeOffset.UtcNow;
             Dictionary<string, object?>? previewReceipt = null;
             string outcome;
+            string nativeResultHash;
             if (admission.Phase == "preview")
             {
-                RequirePreviewResult(result, admission.ElementId);
-                RequireRollbackReadback(app.ActiveUIDocument.Document, result, admission.ElementId);
+                RequirePreviewResult(result, admission.ElementId, executionStart);
+                RequireRollbackReadback(app.ActiveUIDocument.Document, admission.ElementId, executionStart);
+                nativeResultHash = ComputeCertifiedMoveResultHash(result);
                 var tokenBytes = new byte[32];
                 using (var random = RandomNumberGenerator.Create()) random.GetBytes(tokenBytes);
                 var token = "cmpr1_" + Convert.ToBase64String(tokenBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
                 var tokenHash = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(token);
                 var vector = ReadVector(effectiveBodyJson);
-                var entry = new Entry(admission, envelope, now, vector);
+                var entry = new Entry(admission, envelope, now, vector, executionStart);
                 lock (Gate)
                 {
                     Prune(now);
@@ -106,8 +110,9 @@ namespace RevitBridge.Common
                     throw Denied("Move apply rolled back and did not produce a committed native receipt.");
                 try
                 {
-                    RequireApplyResult(result, admission.ElementId);
-                    RequireApplyReadback(app.ActiveUIDocument.Document, result, admission.ElementId);
+                    RequireApplyResult(result, admission.ElementId, executionStart);
+                    RequireApplyReadback(app.ActiveUIDocument.Document, admission.ElementId, executionStart);
+                    nativeResultHash = ComputeCertifiedMoveResultHash(result);
                 }
                 catch (Exception error)
                 {
@@ -140,8 +145,12 @@ namespace RevitBridge.Common
                 ["alias"] = envelope.Alias,
                 ["outcome"] = outcome,
                 ["affected_element_ids"] = new[] { admission.ElementId },
-                ["outcome_unknown"] = false
+                ["outcome_unknown"] = false,
+                ["result_hash"] = nativeResultHash,
+                ["native_attestation_key_id"] = OperatorNativeExecutionAttestationAuthority.KeyId
             };
+            executionReceipt["native_attestation_signature"] =
+                OperatorNativeExecutionAttestationAuthority.SignCanonicalPayload(executionReceipt);
             var output = new Dictionary<string, object?>(StringComparer.Ordinal);
             foreach (var property in result.EnumerateObject())
             {
@@ -154,25 +163,28 @@ namespace RevitBridge.Common
             return output;
         }
 
-        private static bool ReportsRolledBack(object handlerResult)
-        {
-            try
-            {
-                using var document = JsonDocument.Parse(JsonSerializer.Serialize(handlerResult));
-                return Boolean(document.RootElement, "rolledBack", out var rolledBack) && rolledBack;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        public static void RequireApplyReceiptAndConsume(
+        public static OperatorCertifiedMoveExecutionStart? CaptureStartAndConsumeApplyReceipt(
+            UIApplication app,
             OperatorCourierCertificationEnvelope? envelope,
             string effectiveBodyJson)
         {
             var admission = envelope?.RequestFamilyAdmission;
-            if (admission == null || admission.Phase != "apply") return;
+            if (admission == null) return null;
+            OperatorNativeDocumentSessionAuthority.RequireCurrent(app, admission);
+            var element = app.ActiveUIDocument.Document.GetElement(ElementIdCompat.Create(admission.ElementId));
+            if (element == null || !element.IsValidObject || !(element.Location is LocationPoint locationPoint))
+                throw Denied("Certified move target is not an exact native LocationPoint immediately before dispatch.");
+            var vector = ReadVector(effectiveBodyJson);
+            var executionStart = new OperatorCertifiedMoveExecutionStart(
+                admission.RequestInstanceHash,
+                admission.Phase,
+                locationPoint.Point.X,
+                locationPoint.Point.Y,
+                locationPoint.Point.Z,
+                vector.X,
+                vector.Y,
+                vector.Z);
+            if (admission.Phase != "apply") return executionStart;
             if (admission.PreviewReceipt == null || admission.PreviewReceiptHash == null || admission.PreviewInstanceHash == null)
                 throw Denied("Certified move apply is missing its native preview receipt.");
             if (admission.PreviewReceiptHash != OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(admission.PreviewReceipt))
@@ -204,13 +216,18 @@ namespace RevitBridge.Common
                 || entry.Alias != envelope.Alias)
                 throw Denied("Certified move apply does not match the one-use native preview lineage.");
 
-            var applyVector = ReadVector(effectiveBodyJson);
-            if (entry.VectorX != applyVector.X || entry.VectorY != applyVector.Y || entry.VectorZ != applyVector.Z)
+            if (entry.VectorX != vector.X || entry.VectorY != vector.Y || entry.VectorZ != vector.Z)
                 throw Denied("Certified move apply vector differs from its native preview.");
+            if (!Near(entry.StartX, executionStart.StartX)
+                || !Near(entry.StartY, executionStart.StartY)
+                || !Near(entry.StartZ, executionStart.StartZ))
+                throw Denied("Certified move target location changed after its native rollback preview.");
+            return executionStart;
         }
 
-        private static void RequirePreviewResult(JsonElement result, long expectedId)
+        private static void RequirePreviewResult(JsonElement result, long expectedId, OperatorCertifiedMoveExecutionStart executionStart)
         {
+            RequireExactResultKeys(result);
             if (result.ValueKind != JsonValueKind.Object
                 || !String(result, "status", out var status) || status != "Dry Run"
                 || !Boolean(result, "rolledBack", out var rolledBack) || !rolledBack
@@ -230,10 +247,12 @@ namespace RevitBridge.Common
                 || !snapshot.TryGetProperty("before", out var before) || before.ValueKind != JsonValueKind.Object
                 || !snapshot.TryGetProperty("after", out var after) || after.ValueKind != JsonValueKind.Object)
                 throw Denied("Move preview rollback snapshot is incomplete or targets another element.");
+            RequireExactSnapshotDelta(before, after, executionStart, "preview");
         }
 
-        private static void RequireApplyResult(JsonElement result, long expectedId)
+        private static void RequireApplyResult(JsonElement result, long expectedId, OperatorCertifiedMoveExecutionStart executionStart)
         {
+            RequireExactResultKeys(result);
             if (result.ValueKind != JsonValueKind.Object
                 || !String(result, "status", out var status) || status != "Moved"
                 || !Boolean(result, "rolledBack", out var rolledBack) || rolledBack
@@ -253,48 +272,116 @@ namespace RevitBridge.Common
                 || !snapshot.TryGetProperty("before", out var before) || before.ValueKind != JsonValueKind.Object
                 || !snapshot.TryGetProperty("after", out var after) || after.ValueKind != JsonValueKind.Object)
                 throw Denied("Move apply snapshot is incomplete or targets another element.");
+            RequireExactSnapshotDelta(before, after, executionStart, "apply");
         }
 
-        private static void RequireRollbackReadback(Document document, JsonElement result, long elementId)
+        private static void RequireRollbackReadback(Document document, long elementId, OperatorCertifiedMoveExecutionStart executionStart)
         {
             var element = document.GetElement(ElementIdCompat.Create(elementId));
             if (element == null || !element.IsValidObject) throw Denied("Move preview target no longer exists after rollback.");
-            var before = result.GetProperty("snapshots")[0].GetProperty("before");
-            if (!SameLocation(before, element)) throw Denied("Independent native readback did not confirm exact move rollback.");
+            if (!(element.Location is LocationPoint point) || !SamePoint(point.Point, executionStart.StartX, executionStart.StartY, executionStart.StartZ))
+                throw Denied("Independent native readback did not confirm exact move rollback to the captured start point.");
         }
 
-        private static void RequireApplyReadback(Document document, JsonElement result, long elementId)
+        private static void RequireApplyReadback(Document document, long elementId, OperatorCertifiedMoveExecutionStart executionStart)
         {
             var element = document.GetElement(ElementIdCompat.Create(elementId));
             if (element == null || !element.IsValidObject) throw Denied("Move apply target no longer exists after commit.");
-            var after = result.GetProperty("snapshots")[0].GetProperty("after");
-            if (!SameLocation(after, element)) throw Denied("Independent native readback did not confirm the exact committed move location.");
+            if (!(element.Location is LocationPoint point)
+                || !SamePoint(point.Point,
+                    executionStart.StartX + executionStart.VectorX,
+                    executionStart.StartY + executionStart.VectorY,
+                    executionStart.StartZ + executionStart.VectorZ))
+                throw Denied("Independent native readback did not confirm the exact sealed committed move delta.");
         }
 
-        private static bool SameLocation(JsonElement snapshot, Element element)
+        internal static void RequireExactSnapshotDelta(
+            JsonElement before,
+            JsonElement after,
+            OperatorCertifiedMoveExecutionStart executionStart,
+            string phase)
         {
-            if (!String(snapshot, "kind", out var kind)) return false;
-            if (kind == "LocationPoint" && element.Location is LocationPoint point)
-                return SameXyz(snapshot, "pointXyz", point.Point);
-            if (kind == "LocationCurve" && element.Location is LocationCurve curve)
-                return SameXyz(snapshot, "startXyz", curve.Curve.GetEndPoint(0))
-                    && SameXyz(snapshot, "endXyz", curve.Curve.GetEndPoint(1));
-            if (kind == "BboxCenter")
-            {
-                var box = element.get_BoundingBox(null);
-                return box != null && SameXyz(snapshot, "centerXyz", (box.Min + box.Max) * 0.5);
-            }
-            return false;
+            if (!String(before, "kind", out var beforeKind) || beforeKind != "LocationPoint"
+                || !String(after, "kind", out var afterKind) || afterKind != "LocationPoint"
+                || !SameXyz(before, "pointXyz", executionStart.StartX, executionStart.StartY, executionStart.StartZ)
+                || !SameXyz(after, "pointXyz",
+                    executionStart.StartX + executionStart.VectorX,
+                    executionStart.StartY + executionStart.VectorY,
+                    executionStart.StartZ + executionStart.VectorZ))
+                throw Denied("Move " + phase + " snapshots do not prove the exact captured start point and sealed vector.");
         }
 
-        private static bool SameXyz(JsonElement value, string name, XYZ xyz)
+        internal static string ComputeCertifiedMoveResultHash(JsonElement result)
+        {
+            RequireExactResultKeys(result);
+            var movedIds = Required(result, "movedIds", JsonValueKind.Array).EnumerateArray()
+                .Select(item => item.GetInt64()).ToArray();
+            var warnings = Required(result, "warnings", JsonValueKind.Array).EnumerateArray()
+                .Select(item => item.ValueKind == JsonValueKind.String
+                    ? item.GetString() ?? ""
+                    : throw Denied("Certified move warnings must be strings."))
+                .ToArray();
+            var snapshots = Required(result, "snapshots", JsonValueKind.Array).EnumerateArray()
+                .Select(snapshot => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["id"] = snapshot.GetProperty("id").GetInt64(),
+                    ["before"] = SnapshotProjection(snapshot.GetProperty("before")),
+                    ["after"] = SnapshotProjection(snapshot.GetProperty("after"))
+                }).ToArray();
+            var projection = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["status"] = result.GetProperty("status").GetString(),
+                ["movedIds"] = movedIds,
+                ["skipped"] = Array.Empty<object>(),
+                ["warnings"] = warnings,
+                ["snapshots"] = snapshots,
+                ["movedTogether"] = result.GetProperty("movedTogether").GetBoolean(),
+                ["rolledBack"] = result.GetProperty("rolledBack").GetBoolean()
+            };
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(projection));
+            return OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
+                OperatorCourierCertificationEnvelopeVerifier.Canonicalize(document.RootElement));
+        }
+
+        private static Dictionary<string, object?> SnapshotProjection(JsonElement snapshot)
+        {
+            var point = Required(snapshot, "pointXyz", JsonValueKind.Array);
+            if (point.GetArrayLength() != 3) throw Denied("Certified move point snapshot is invalid.");
+            return new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["kind"] = snapshot.GetProperty("kind").GetString(),
+                ["point_bits"] = point.EnumerateArray().Select(value =>
+                    unchecked((ulong)BitConverter.DoubleToInt64Bits(value.GetDouble())).ToString("x16", CultureInfo.InvariantCulture)).ToArray()
+            };
+        }
+
+        private static void RequireExactResultKeys(JsonElement result)
+        {
+            if (result.ValueKind != JsonValueKind.Object) throw Denied("Certified move result must be an object.");
+            var expected = new HashSet<string>(new[]
+            {
+                "status", "movedIds", "skipped", "warnings", "snapshots", "movedTogether", "rolledBack"
+            }, StringComparer.Ordinal);
+            var found = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var property in result.EnumerateObject())
+                if (!expected.Contains(property.Name) || !found.Add(property.Name))
+                    throw Denied("Certified move result contains unknown or duplicate fields.");
+            if (found.Count != expected.Count) throw Denied("Certified move result is missing a required field.");
+        }
+
+        private static bool SameXyz(JsonElement value, string name, double x, double y, double z)
         {
             if (!value.TryGetProperty(name, out var array) || array.ValueKind != JsonValueKind.Array || array.GetArrayLength() != 3) return false;
-            return Near(array[0], xyz.X) && Near(array[1], xyz.Y) && Near(array[2], xyz.Z);
+            return Near(array[0], x) && Near(array[1], y) && Near(array[2], z);
         }
+
+        private static bool SamePoint(XYZ point, double x, double y, double z)
+            => Near(point.X, x) && Near(point.Y, y) && Near(point.Z, z);
 
         private static bool Near(JsonElement value, double expected)
             => value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var actual) && Math.Abs(actual - expected) <= 1e-9;
+
+        private static bool Near(double actual, double expected) => Math.Abs(actual - expected) <= 1e-9;
 
         private static (double X, double Y, double Z) ReadVector(string bodyJson)
         {
@@ -336,7 +423,7 @@ namespace RevitBridge.Common
 
         private sealed class Entry
         {
-            public Entry(OperatorCertifiedRequestFamilyAdmission admission, OperatorCourierCertificationEnvelope envelope, DateTimeOffset issuedAtUtc, (double X, double Y, double Z) vector)
+            public Entry(OperatorCertifiedRequestFamilyAdmission admission, OperatorCourierCertificationEnvelope envelope, DateTimeOffset issuedAtUtc, (double X, double Y, double Z) vector, OperatorCertifiedMoveExecutionStart executionStart)
             {
                 PreviewInstanceHash = admission.RequestInstanceHash; AdmissionSessionId = admission.AdmissionSessionId;
                 FamilyId = admission.FamilyId; FamilyHash = admission.FamilyHash; DocumentFingerprint = admission.DocumentFingerprint;
@@ -345,6 +432,7 @@ namespace RevitBridge.Common
                 PolicyHash = envelope.PolicyHash; PolicyRecordHash = envelope.PolicyRecordHash; EvidenceRecordHash = envelope.EvidenceRecordHash;
                 EffectHash = envelope.EffectHash; Channel = envelope.Channel; Alias = envelope.Alias; IssuedAtUtc = issuedAtUtc;
                 VectorX = vector.X; VectorY = vector.Y; VectorZ = vector.Z;
+                StartX = executionStart.StartX; StartY = executionStart.StartY; StartZ = executionStart.StartZ;
             }
             public string PreviewInstanceHash { get; } public string AdmissionSessionId { get; }
             public string FamilyId { get; } public string FamilyHash { get; } public string DocumentFingerprint { get; }
@@ -353,7 +441,36 @@ namespace RevitBridge.Common
             public string PolicyHash { get; } public string PolicyRecordHash { get; } public string EvidenceRecordHash { get; }
             public string EffectHash { get; } public string Channel { get; } public string Alias { get; }
             public DateTimeOffset IssuedAtUtc { get; } public double VectorX { get; } public double VectorY { get; } public double VectorZ { get; }
+            public double StartX { get; } public double StartY { get; } public double StartZ { get; }
         }
+    }
+
+    public sealed class OperatorCertifiedMoveExecutionStart
+    {
+        internal OperatorCertifiedMoveExecutionStart(
+            string requestInstanceHash,
+            string phase,
+            double startX,
+            double startY,
+            double startZ,
+            double vectorX,
+            double vectorY,
+            double vectorZ)
+        {
+            RequestInstanceHash = requestInstanceHash;
+            Phase = phase;
+            StartX = startX; StartY = startY; StartZ = startZ;
+            VectorX = vectorX; VectorY = vectorY; VectorZ = vectorZ;
+        }
+
+        public string RequestInstanceHash { get; }
+        public string Phase { get; }
+        public double StartX { get; }
+        public double StartY { get; }
+        public double StartZ { get; }
+        public double VectorX { get; }
+        public double VectorY { get; }
+        public double VectorZ { get; }
     }
 
     public sealed class OperatorCertifiedFamilyOutcomeUnknownException : InvalidOperationException, IOperatorRevitFailureMetadata

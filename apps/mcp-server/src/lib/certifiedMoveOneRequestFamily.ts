@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
 import { resolveCertifiedMoveTarget } from "./certifiedMoveTargetLedger.js";
 
 /**
@@ -20,6 +20,9 @@ export type CertifiedMoveOneRequest = {
   elementId: number;
   observationId: string;
   observationBindingHash: string;
+  nativeAttestationKeyId: string;
+  nativeAttestationModulusBase64Url: string;
+  nativeAttestationExponentBase64Url: string;
   vectorFeet: { x: number; y: number; z: number };
   previewInstanceHash?: string;
   previewReceiptHash?: string;
@@ -84,6 +87,9 @@ export type CertifiedMoveOneTransportBinding = Readonly<{
   element_id: number;
   observation_id: string;
   observation_binding_hash: string;
+  native_attestation_key_id: string;
+  native_attestation_modulus_base64url: string;
+  native_attestation_exponent_base64url: string;
   outbound_body_sha256: string;
 }>;
 const transportBindings = new WeakMap<object, CertifiedMoveOneTransportBinding>();
@@ -97,6 +103,7 @@ const FAMILY_MATERIAL: Json = {
   lineage: {
     documentFingerprint: true, documentSessionId: true, sourceScopedId: true,
     observationId: true, observationBindingHash: true,
+    nativeExecutionAttestationKey: true,
     runtimeIssuedSingleUsePreviewReceipt: true, previewRequiredForApply: true
   }
 };
@@ -145,6 +152,9 @@ function samePreviewLineage(preview: CertifiedMoveOneRequest, apply: CertifiedMo
     && preview.elementId === apply.elementId
     && preview.observationId === apply.observationId
     && preview.observationBindingHash === apply.observationBindingHash
+    && preview.nativeAttestationKeyId === apply.nativeAttestationKeyId
+    && preview.nativeAttestationModulusBase64Url === apply.nativeAttestationModulusBase64Url
+    && preview.nativeAttestationExponentBase64Url === apply.nativeAttestationExponentBase64Url
     && preview.vectorFeet.x === apply.vectorFeet.x
     && preview.vectorFeet.y === apply.vectorFeet.y
     && preview.vectorFeet.z === apply.vectorFeet.z;
@@ -182,6 +192,9 @@ export function admitCertifiedMoveOneRequest(input: unknown): CertifiedMoveOneAd
     elementId: target.elementId,
     observationId: target.observationId,
     observationBindingHash: target.observationBindingHash,
+    nativeAttestationKeyId: target.nativeAttestationKeyId,
+    nativeAttestationModulusBase64Url: target.nativeAttestationModulusBase64Url,
+    nativeAttestationExponentBase64Url: target.nativeAttestationExponentBase64Url,
     vectorFeet: { x: vector.x as number, y: vector.y as number, z: vector.z as number },
     ...(previewRecord ? {
       previewInstanceHash: previewRecord.previewAdmission.requestInstanceHash,
@@ -220,6 +233,9 @@ export function admitCertifiedMoveOneRequest(input: unknown): CertifiedMoveOneAd
     element_id: admission.request.elementId,
     observation_id: admission.request.observationId,
     observation_binding_hash: admission.request.observationBindingHash,
+    native_attestation_key_id: admission.request.nativeAttestationKeyId,
+    native_attestation_modulus_base64url: admission.request.nativeAttestationModulusBase64Url,
+    native_attestation_exponent_base64url: admission.request.nativeAttestationExponentBase64Url,
     outbound_body_sha256: rawDigest(canonical(admission.outboundBody as unknown as Json))
   }));
   return admission;
@@ -259,8 +275,78 @@ const EXECUTION_RECEIPT_KEYS = [
   "schema", "phase", "request_instance_hash", "family_id", "family_hash", "document_fingerprint",
   "document_session_id", "source_scoped_id", "element_id", "observation_id", "observation_binding_hash",
   "admission_session_id", "policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash",
-  "channel", "alias", "outcome", "affected_element_ids", "outcome_unknown"
+  "channel", "alias", "outcome", "affected_element_ids", "outcome_unknown", "result_hash",
+  "native_attestation_key_id", "native_attestation_signature"
 ] as const;
+
+const CERTIFIED_MOVE_RESULT_KEYS = [
+  "status", "movedIds", "skipped", "warnings", "snapshots", "movedTogether", "rolledBack",
+  "certified_execution_receipt"
+] as const;
+
+function doubleBits(value: unknown, name: string): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_ATTESTATION_INVALID", `${name} must be a finite number.`);
+  }
+  const buffer = Buffer.allocUnsafe(8);
+  buffer.writeDoubleBE(value, 0);
+  return buffer.toString("hex");
+}
+
+function certifiedMoveResultProjection(
+  result: Record<string, unknown>,
+  phase: Phase,
+  elementId: number
+): Json {
+  exactKeys(
+    result,
+    phase === "preview" ? [...CERTIFIED_MOVE_RESULT_KEYS, "certified_preview_receipt"] : CERTIFIED_MOVE_RESULT_KEYS,
+    "certified move result"
+  );
+  const expectedStatus = phase === "preview" ? "Dry Run" : "Moved";
+  const expectedRolledBack = phase === "preview";
+  if (result.status !== expectedStatus
+    || result.movedTogether !== false
+    || result.rolledBack !== expectedRolledBack
+    || !Array.isArray(result.movedIds) || result.movedIds.length !== 1 || result.movedIds[0] !== elementId
+    || !Array.isArray(result.skipped) || result.skipped.length !== 0
+    || !Array.isArray(result.warnings) || result.warnings.some(item => typeof item !== "string")
+    || !Array.isArray(result.snapshots) || result.snapshots.length !== 1) {
+    throw new CertifiedMoveOneRequestError(
+      "MOVE_ONE_EXECUTION_ATTESTATION_INVALID",
+      "Native move result does not prove the exact certified one-element outcome."
+    );
+  }
+  const snapshot = object(result.snapshots[0], "certified move snapshot");
+  exactKeys(snapshot, ["id", "before", "after"], "certified move snapshot");
+  if (snapshot.id !== elementId) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_ATTESTATION_INVALID", "Native move snapshot does not match the certified target.");
+  }
+  const projectPoint = (value: unknown, name: string): Json => {
+    const point = object(value, name);
+    exactKeys(point, ["kind", "pointXyz"], name);
+    if (point.kind !== "LocationPoint" || !Array.isArray(point.pointXyz) || point.pointXyz.length !== 3) {
+      throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_ATTESTATION_INVALID", `${name} must be an exact LocationPoint snapshot.`);
+    }
+    return {
+      kind: "LocationPoint",
+      point_bits: point.pointXyz.map((coordinate, index) => doubleBits(coordinate, `${name}.pointXyz[${index}]`))
+    };
+  };
+  return {
+    status: expectedStatus,
+    movedIds: [elementId],
+    skipped: [],
+    warnings: result.warnings as string[],
+    snapshots: [{
+      id: elementId,
+      before: projectPoint(snapshot.before, "certified move snapshot.before"),
+      after: projectPoint(snapshot.after, "certified move snapshot.after")
+    }],
+    movedTogether: false,
+    rolledBack: expectedRolledBack
+  };
+}
 
 function exactApplyResult(value: unknown, elementId: number): void {
   const result = object(value, "apply result");
@@ -316,7 +402,8 @@ export function assertCertifiedMoveExecutionReceipt(
     [receipt.channel, policy.channel],
     [receipt.alias, policy.alias],
     [receipt.outcome, admission.request.phase === "preview" ? "rolled_back" : "committed"],
-    [receipt.outcome_unknown, false]
+    [receipt.outcome_unknown, false],
+    [receipt.native_attestation_key_id, admission.request.nativeAttestationKeyId]
   ];
   if (expected.some(([actual, wanted]) => actual !== wanted)
     || !Array.isArray(receipt.affected_element_ids)
@@ -325,6 +412,34 @@ export function assertCertifiedMoveExecutionReceipt(
     throw new CertifiedMoveOneRequestError(
       "MOVE_ONE_EXECUTION_RECEIPT_INVALID",
       "Native execution receipt does not match the exact family, request, document, target, policy, effect, channel, or outcome."
+    );
+  }
+  if (receipt.result_hash !== rawDigest(canonical(certifiedMoveResultProjection(result, admission.request.phase, admission.request.elementId)))
+    || typeof receipt.native_attestation_signature !== "string"
+    || !/^[A-Za-z0-9_-]+$/.test(receipt.native_attestation_signature)) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_ATTESTATION_INVALID", "Native execution result attestation is invalid.");
+  }
+  const { native_attestation_signature: _signature, ...signedReceipt } = receipt;
+  try {
+    const key = createPublicKey({
+      key: {
+        kty: "RSA",
+        alg: "RS256",
+        n: admission.request.nativeAttestationModulusBase64Url,
+        e: admission.request.nativeAttestationExponentBase64Url
+      },
+      format: "jwk"
+    });
+    if (!verify(
+      "sha256",
+      Buffer.from(canonical(signedReceipt as unknown as Json), "utf8"),
+      key,
+      Buffer.from(receipt.native_attestation_signature, "base64url")
+    )) throw new Error("signature mismatch");
+  } catch {
+    throw new CertifiedMoveOneRequestError(
+      "MOVE_ONE_EXECUTION_ATTESTATION_INVALID",
+      "Execution receipt was not signed by the exact native authority observed for this request."
     );
   }
 }

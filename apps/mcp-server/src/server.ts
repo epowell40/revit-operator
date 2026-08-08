@@ -1909,7 +1909,28 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
         channel: decision.channel,
         alias: decision.alias
       };
-      assertCertifiedMoveExecutionReceipt(admission, policyBinding, data);
+      try {
+        assertCertifiedMoveExecutionReceipt(admission, policyBinding, data);
+      } catch (receiptError) {
+        if (admission.request.phase === "apply") {
+          return {
+            isError: true,
+            content: [{
+              type: "text" as const,
+              text: JSON.stringify({
+                code: "CERTIFICATION_DIRECT_OUTCOME_UNKNOWN",
+                error: String(receiptError),
+                phase: "certification_direct_post_dispatch",
+                request_instance_hash: admission.requestInstanceHash,
+                outcome_unknown: true,
+                retryable: false,
+                reconciliation_required: true
+              })
+            }]
+          };
+        }
+        throw receiptError;
+      }
       const previewReceipt = admission.request.phase === "preview"
         ? issueCertifiedMovePreviewReceipt(admission, policyBinding, data)
         : undefined;

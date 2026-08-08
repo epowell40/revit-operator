@@ -284,6 +284,7 @@ namespace RevitBridge.Logic.Handlers
                     document = new
                     {
                         sessionId = OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
+                        nativeExecutionAttestation = OperatorNativeExecutionAttestationAuthority.PublicBinding(),
                         projectIdentity = new { fingerprint = projectFingerprint },
                         activeView = new { id = ElementIdCompat.GetValue(doc.ActiveView.Id) }
                     },

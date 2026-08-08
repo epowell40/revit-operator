@@ -361,18 +361,27 @@ namespace RevitBridge.Operator
                         path,
                         correlationId,
                         localDeadline.Token);
-                    OperatorNativeDocumentSessionAuthority.RequireCurrent(
+                    var executionStart = OperatorCertifiedMovePreviewAuthority.CaptureStartAndConsumeApplyReceipt(
                         app,
-                        action.CourierFinalExecutionAuthorization?.RequestFamilyAdmission);
-                    OperatorCertifiedMovePreviewAuthority.RequireApplyReceiptAndConsume(
                         action.CourierVerifiedClaim?.Envelope,
                         jsonBody);
-                    var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
+                    object handlerResult;
+                    try
+                    {
+                        handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
+                    }
+                    catch (Exception error) when (executionStart?.Phase == "apply")
+                    {
+                        throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                            "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
+                            error);
+                    }
                     handlerResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
                         app,
                         handlerResult,
                         action.CourierVerifiedClaim?.Envelope,
-                        jsonBody);
+                        jsonBody,
+                        executionStart);
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
                     // confusion due to view redraw / regeneration lag.

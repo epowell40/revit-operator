@@ -204,6 +204,9 @@ namespace RevitBridge.Common
                 {
                     Deny();
                 }
+                var expectedEffectHash = OperatorCertifiedRequestFamilyAdmissionVerifier.ExpectedEffectHash(
+                    binding.RequestFamilyAdmission);
+                if (!string.Equals(binding.EffectHash, expectedEffectHash, StringComparison.Ordinal)) Deny();
             }
             var authorized = binding.Channel == "generic_call"
                 ? record.GenericCallExposed && binding.Alias == "revit_call_tool"

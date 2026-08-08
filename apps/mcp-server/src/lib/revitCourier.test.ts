@@ -18,6 +18,7 @@ import {
   CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1
 } from "./certifiedMoveOneRequestFamily.js";
 import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
@@ -442,7 +443,7 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
     });
     clearCertifiedMoveTargetLedgerForTests();
     registerCertifiedSpatialObservation(
-      { document: { sessionId: "123e4567e89b42d3a456426614174000", projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+      { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
       { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
     );
     const admission = admitCertifiedMoveOneRequest({

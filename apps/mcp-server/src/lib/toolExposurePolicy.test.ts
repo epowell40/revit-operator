@@ -19,6 +19,7 @@ import {
 } from "./toolExposurePolicy.js";
 import { CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1 } from "./certifiedMoveOneRequestFamily.js";
 import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -276,7 +277,7 @@ test("general exact evaluator rejects caller-authored request-family metadata", 
 test("certified move-one entry point rejects forged admission paths and binds validated preview input", () => {
   clearCertifiedMoveTargetLedgerForTests();
   registerCertifiedSpatialObservation(
-    { document: { sessionId: "123e4567e89b42d3a456426614174000", projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+    { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
     { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
   );
   const variant = writePolicyVariant(policy => {

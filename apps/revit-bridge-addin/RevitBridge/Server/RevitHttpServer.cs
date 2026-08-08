@@ -690,25 +690,35 @@ namespace RevitBridge.Server
                                 app =>
                                 {
                                     var dispatchBody = capturedBody;
+                                    OperatorCertifiedMoveExecutionStart? executionStart = null;
                                     if (capturedEffectiveRequest != null)
                                     {
                                         dispatchBody = RequireFinalNativeAuthorizationAsync(
                                             capturedEffectiveRequest,
                                             capturedBody,
                                             localDeadline.Token).GetAwaiter().GetResult();
-                                        OperatorNativeDocumentSessionAuthority.RequireCurrent(
+                                        executionStart = OperatorCertifiedMovePreviewAuthority.CaptureStartAndConsumeApplyReceipt(
                                             app,
-                                            capturedEffectiveRequest.CertificationEnvelope?.RequestFamilyAdmission);
-                                        OperatorCertifiedMovePreviewAuthority.RequireApplyReceiptAndConsume(
                                             capturedEffectiveRequest.CertificationEnvelope,
                                             dispatchBody);
                                     }
-                                    var nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                    object nativeResult;
+                                    try
+                                    {
+                                        nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                    }
+                                    catch (Exception error) when (executionStart?.Phase == "apply")
+                                    {
+                                        throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                                            "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
+                                            error);
+                                    }
                                     return OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
                                         app,
                                         nativeResult,
                                         capturedEffectiveRequest?.CertificationEnvelope,
-                                        dispatchBody);
+                                        dispatchBody,
+                                        executionStart);
                                 },
                                 localDeadline.Token,
                                 correlationId);

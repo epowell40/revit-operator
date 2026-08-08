@@ -9,6 +9,9 @@ export type CertifiedMoveTargetBinding = Readonly<{
   sourceScopedId: string;
   elementId: number;
   observationBindingHash: string;
+  nativeAttestationKeyId: string;
+  nativeAttestationModulusBase64Url: string;
+  nativeAttestationExponentBase64Url: string;
 }>;
 
 const observations = new Map<string, Readonly<{
@@ -46,6 +49,23 @@ function digest(parts: readonly string[]): string {
   return `sha256:${createHash("sha256").update(parts.join("\n"), "utf8").digest("hex")}`;
 }
 
+function nativeAttestation(value: unknown): Readonly<{ keyId: string; modulus: string; exponent: string }> {
+  const raw = object(value, "native execution attestation");
+  if (raw.schema !== "revit-operator.native-execution-attestation-key.v1" || raw.algorithm !== "RS256") {
+    throw new Error("Native execution attestation schema or algorithm is invalid.");
+  }
+  const keyId = documentFingerprint(raw.key_id);
+  const modulus = text(raw.modulus_base64url, "native attestation modulus");
+  const exponent = text(raw.exponent_base64url, "native attestation exponent");
+  if (!/^[A-Za-z0-9_-]{256,512}$/.test(modulus) || !/^[A-Za-z0-9_-]{1,16}$/.test(exponent)) {
+    throw new Error("Native execution attestation public key is invalid.");
+  }
+  const material = `{"algorithm":"RS256","exponent_base64url":${JSON.stringify(exponent)},"modulus_base64url":${JSON.stringify(modulus)}}`;
+  const expected = `sha256:${createHash("sha256").update(material, "utf8").digest("hex")}`;
+  if (keyId !== expected) throw new Error("Native execution attestation key id is invalid.");
+  return Object.freeze({ keyId, modulus, exponent });
+}
+
 function pointLocated(item: JsonObject): boolean {
   const orientation = item.orientation && typeof item.orientation === "object" && !Array.isArray(item.orientation)
     ? item.orientation as JsonObject
@@ -67,6 +87,7 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
   const observationId = text(observation.observationId ?? observation.observation_id ?? observation.frameId ?? observation.frame_id, "observation id");
   const fingerprint = documentFingerprint(projectIdentity.fingerprint);
   const sessionId = documentSessionId(document.sessionId ?? document.session_id);
+  const attestation = nativeAttestation(document.nativeExecutionAttestation ?? document.native_execution_attestation);
   const viewId = observation.viewId ?? observation.view_id;
   if (!Number.isSafeInteger(viewId) || viewId !== activeView.id) {
     throw new Error("Spatial observation is not bound to the context's current active view.");
@@ -88,14 +109,25 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
       documentSessionId: sessionId,
       sourceScopedId,
       elementId: elementId as number,
-      observationBindingHash: digest([observationId, fingerprint, sessionId, sourceScopedId, String(elementId)])
+      observationBindingHash: digest([observationId, fingerprint, sessionId, sourceScopedId, String(elementId), attestation.keyId]),
+      nativeAttestationKeyId: attestation.keyId,
+      nativeAttestationModulusBase64Url: attestation.modulus,
+      nativeAttestationExponentBase64Url: attestation.exponent
     });
     targets.set(elementId as number, binding);
   }
   observations.set(observationId, Object.freeze({ documentFingerprint: fingerprint, documentSessionId: sessionId, targets }));
   return {
     ...observation,
-    document: { projectFingerprint: fingerprint, documentSessionId: sessionId },
+    document: {
+      projectFingerprint: fingerprint,
+      documentSessionId: sessionId,
+      nativeExecutionAttestation: {
+        schema: "revit-operator.native-execution-attestation-key.v1",
+        algorithm: "RS256",
+        keyId: attestation.keyId
+      }
+    },
     certifiedTargetCount: targets.size
   };
 }

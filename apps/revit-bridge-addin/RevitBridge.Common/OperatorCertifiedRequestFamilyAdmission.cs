@@ -21,7 +21,9 @@ namespace RevitBridge.Common
     {
         public const string Schema = "revit-operator.certified-request-family-admission.v1";
         public const string MoveOneFamilyId = "revit-operator.certified-move-one.request-family.v1";
-        public const string MoveOneFamilyHash = "sha256:cef4b3d5613abd85772cb844a91376d057d7f835a0c4691d7c461bb010bf460b";
+        public const string MoveOneFamilyHash = "sha256:24906494c42d86326cfba2c4b76318e8172f83f9cb65cd8aa0c84f7e1281e0de";
+        public const string MoveOnePreviewEffectHash = "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c0250fcc55ede2d87107d06ae428b";
+        public const string MoveOneApplyEffectHash = "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b";
 
         public string FamilyId { get; internal set; } = "";
         public string FamilyHash { get; internal set; } = "";
@@ -36,6 +38,9 @@ namespace RevitBridge.Common
         public string SourceScopedId { get; internal set; } = "";
         public string ObservationId { get; internal set; } = "";
         public string ObservationBindingHash { get; internal set; } = "";
+        public string NativeAttestationKeyId { get; internal set; } = "";
+        public string NativeAttestationModulusBase64Url { get; internal set; } = "";
+        public string NativeAttestationExponentBase64Url { get; internal set; } = "";
         public long ElementId { get; internal set; }
         public string OutboundBodySha256 { get; internal set; } = "";
     }
@@ -52,10 +57,12 @@ namespace RevitBridge.Common
         private static readonly Regex Sha256 = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly Regex AdmissionSession = new Regex("^[0-9a-f]{32}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly Regex PreviewReceiptToken = new Regex("^cmpr1_[A-Za-z0-9_-]{43}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+        private static readonly Regex Base64Url = new Regex("^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
         private static readonly HashSet<string> AdmissionKeys = Set(
             "schema", "family_id", "family_hash", "request_instance_hash", "admission_session_id", "phase",
             "preview_instance_hash", "preview_receipt", "preview_receipt_hash", "document_fingerprint", "document_session_id", "source_scoped_id",
-            "observation_id", "observation_binding_hash", "element_id", "outbound_body_sha256");
+            "observation_id", "observation_binding_hash", "native_attestation_key_id", "native_attestation_modulus_base64url",
+            "native_attestation_exponent_base64url", "element_id", "outbound_body_sha256");
         private static readonly HashSet<string> BodyKeys = Set(
             "ids", "mode", "vectorX", "vectorY", "vectorZ", "dryRun", "behavior",
             "moveTogether", "options");
@@ -96,10 +103,18 @@ namespace RevitBridge.Common
             var sourceScopedId = RequireBoundedNfc(value, "source_scoped_id", 1024);
             var observationId = RequireBoundedNfc(value, "observation_id", 1024);
             var observationBindingHash = RequireHash(value, "observation_binding_hash");
+            var nativeAttestationKeyId = RequireHash(value, "native_attestation_key_id");
+            var nativeAttestationModulus = RequireBase64Url(value, "native_attestation_modulus_base64url", 512);
+            var nativeAttestationExponent = RequireBase64Url(value, "native_attestation_exponent_base64url", 16);
+            if (nativeAttestationKeyId != OperatorNativeExecutionAttestationAuthority.ComputeKeyId(nativeAttestationModulus, nativeAttestationExponent)
+                || nativeAttestationKeyId != OperatorNativeExecutionAttestationAuthority.KeyId
+                || nativeAttestationModulus != OperatorNativeExecutionAttestationAuthority.ModulusBase64Url
+                || nativeAttestationExponent != OperatorNativeExecutionAttestationAuthority.ExponentBase64Url)
+                throw Invalid("Native request-family attestation key is not the current Revit process authority.");
             var elementId = RequirePositiveSafeInteger(value, "element_id");
             var expectedObservationBinding = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
                 observationId + "\n" + documentFingerprint + "\n" + documentSessionId + "\n" + sourceScopedId + "\n"
-                + elementId.ToString(CultureInfo.InvariantCulture));
+                + elementId.ToString(CultureInfo.InvariantCulture) + "\n" + nativeAttestationKeyId);
             if (observationBindingHash != expectedObservationBinding)
                 throw Invalid("Native request-family observation binding does not match the exact document/session/source/target lineage.");
             var outboundBodySha256 = RequireHash(value, "outbound_body_sha256");
@@ -118,9 +133,23 @@ namespace RevitBridge.Common
                 SourceScopedId = sourceScopedId,
                 ObservationId = observationId,
                 ObservationBindingHash = observationBindingHash,
+                NativeAttestationKeyId = nativeAttestationKeyId,
+                NativeAttestationModulusBase64Url = nativeAttestationModulus,
+                NativeAttestationExponentBase64Url = nativeAttestationExponent,
                 ElementId = elementId,
                 OutboundBodySha256 = outboundBodySha256
             };
+        }
+
+        public static string ExpectedEffectHash(OperatorCertifiedRequestFamilyAdmission admission)
+        {
+            if (admission == null) throw new ArgumentNullException(nameof(admission));
+            if (admission.FamilyId != OperatorCertifiedRequestFamilyAdmission.MoveOneFamilyId
+                || admission.FamilyHash != OperatorCertifiedRequestFamilyAdmission.MoveOneFamilyHash)
+                throw Invalid("Native request-family effect derivation received an unreviewed family.");
+            if (admission.Phase == "preview") return OperatorCertifiedRequestFamilyAdmission.MoveOnePreviewEffectHash;
+            if (admission.Phase == "apply") return OperatorCertifiedRequestFamilyAdmission.MoveOneApplyEffectHash;
+            throw Invalid("Native request-family effect derivation received an invalid phase.");
         }
 
         /// <summary>
@@ -208,6 +237,9 @@ namespace RevitBridge.Common
             var request = "{\"documentFingerprint\":" + Quote(admission.DocumentFingerprint)
                 + ",\"documentSessionId\":" + Quote(admission.DocumentSessionId)
                 + ",\"elementId\":" + admission.ElementId.ToString(CultureInfo.InvariantCulture)
+                + ",\"nativeAttestationExponentBase64Url\":" + Quote(admission.NativeAttestationExponentBase64Url)
+                + ",\"nativeAttestationKeyId\":" + Quote(admission.NativeAttestationKeyId)
+                + ",\"nativeAttestationModulusBase64Url\":" + Quote(admission.NativeAttestationModulusBase64Url)
                 + ",\"observationBindingHash\":" + Quote(admission.ObservationBindingHash)
                 + ",\"observationId\":" + Quote(admission.ObservationId)
                 + ",\"phase\":" + Quote(admission.Phase)
@@ -329,6 +361,14 @@ namespace RevitBridge.Common
             return text;
         }
 
+        private static string RequireBase64Url(JsonElement value, string name, int maximumLength)
+        {
+            var text = RequireString(value, name);
+            if (text.Length > maximumLength || !Base64Url.IsMatch(text))
+                throw Invalid("Native request-family field " + name + " is not canonical base64url.");
+            return text;
+        }
+
         private static string RequireCanonicalSessionId(JsonElement value, string name)
         {
             var text = RequireString(value, name);
@@ -397,6 +437,8 @@ namespace RevitBridge.Common
             if (!string.Equals(fingerprint, admission.DocumentFingerprint, StringComparison.Ordinal)
                 || !string.Equals(GetSessionId(document), admission.DocumentSessionId, StringComparison.Ordinal))
                 throw Denied("The active Revit document or its process-local session changed after request-family admission.");
+            try { OperatorNativeExecutionAttestationAuthority.RequireCurrentBinding(admission); }
+            catch (InvalidOperationException error) { throw Denied(error.Message); }
             if (!string.Equals(admission.SourceScopedId, "host:" + admission.ElementId.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
                 throw Denied("The certified move target is not the exact admitted host-document element.");
             var element = document.GetElement(ElementIdCompat.Create(admission.ElementId));
