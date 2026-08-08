@@ -1,5 +1,5 @@
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
-import { callRevitViaCourier } from "./revitCourier.js";
+import { callRevitViaCourier, readCertifiedCourierExecutionContext } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import {
@@ -14,7 +14,11 @@ import {
   createCertifiedCourierAdmission,
   type ToolExposureChannel
 } from "./toolExposurePolicy.js";
-import type { CertifiedMoveOneAdmission } from "./certifiedMoveOneRequestFamily.js";
+import {
+  issueCertifiedMoveExecutionContext,
+  type CertifiedMoveExecutionContext,
+  type CertifiedMoveOneAdmission
+} from "./certifiedMoveOneRequestFamily.js";
 import { createCertificationEnvelope, type FamilyCertificationEnvelope } from "./certifiedExecutionEnvelope.js";
 
 // Use localhost or environment variable
@@ -185,6 +189,16 @@ export type RevitCallOptions = {
   certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
 };
 
+const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
+
+/** Returns only transport-issued context attached to this exact parsed result object. */
+export function readCertifiedMoveExecutionContext(result: unknown): CertifiedMoveExecutionContext {
+  if (!result || typeof result !== "object") throw new Error("Certified move result has no authenticated execution context.");
+  const context = certifiedExecutionContexts.get(result as object);
+  if (!context) throw new Error("Certified move result has no authenticated execution context.");
+  return context;
+}
+
 export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown, options: RevitCallOptions = {}): Promise<T> {
   const upperMethod = String(method || "GET").trim().toUpperCase();
   if (isSafeReadReservedPath(path)) {
@@ -227,7 +241,24 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       workflow: options.workflow,
       certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
     });
-    return await callRevitViaCourier<T>(path, upperMethod, transportBody, { certifiedAdmission });
+    const result = await callRevitViaCourier<T>(path, upperMethod, transportBody, { certifiedAdmission });
+    if (options.certifiedMoveOneAdmission) {
+      try {
+        if (!result || typeof result !== "object") throw new Error("Certified courier returned a non-object result.");
+        certifiedExecutionContexts.set(result as object, readCertifiedCourierExecutionContext(result));
+      } catch (error) {
+        throw new RevitBridgeCallError({
+          code: "revit_bridge_invalid_response",
+          message: `${upperMethod} ${path} completed without an authenticated courier execution context. Reconcile the Revit outcome before any retry.`,
+          retryable: false,
+          outcomeUnknown: true,
+          method: upperMethod,
+          path,
+          cause: error
+        });
+      }
+    }
+    return result;
   }
   if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
 
@@ -238,7 +269,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   const mutating = requestEffect !== "read";
   const laboratoryBypass = isExactDevelopmentLaboratory();
 
-  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string> }> => {
+  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string>; certifiedExecutionContext?: CertifiedMoveExecutionContext }> => {
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -250,6 +281,14 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         if (nativeChannel === "deterministic_workflow") {
           throw new Error("Deterministic workflow certification requires the durable courier transport.");
         }
+        const certificationEnvelope = options.certifiedMoveOneAdmission
+          ? createCertificationEnvelope({
+            decision: exposure,
+            bodyPresent: serializedBody !== undefined,
+            bodyJson: serializedBody ?? "",
+            certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
+          }) as FamilyCertificationEnvelope
+          : undefined;
         const result = await callNativeTransport({
           operatorToken: token,
           method: upperMethod,
@@ -258,20 +297,24 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           writeGrant,
           channel: nativeChannel,
           alias: exposure.alias,
-          certificationEnvelope: options.certifiedMoveOneAdmission
-            ? createCertificationEnvelope({
-              decision: exposure,
-              bodyPresent: serializedBody !== undefined,
-              bodyJson: serializedBody ?? "",
-              certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
-            }) as FamilyCertificationEnvelope
-            : undefined,
+          certificationEnvelope,
           signal: controller.signal
         });
         return {
           ok: result.statusCode >= 200 && result.statusCode <= 299,
           status: result.statusCode,
-          async text() { return result.bodyJson; }
+          async text() { return result.bodyJson; },
+          ...(options.certifiedMoveOneAdmission && certificationEnvelope ? {
+            certifiedExecutionContext: issueCertifiedMoveExecutionContext({
+              transportKind: "direct",
+              dispatchId: result.requestId,
+              correlationId: result.requestId,
+              executionSessionId: options.certifiedMoveOneAdmission.admissionSessionId,
+              executorId: options.certifiedMoveOneAdmission.request.nativeAttestationKeyId,
+              certificationEnvelopeHash: certificationEnvelope.envelope_hash,
+              completionChallengeHash: null
+            })
+          } : {})
         };
       }
 
@@ -371,7 +414,14 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     });
   }
   try {
-    return JSON.parse(await response.text()) as T;
+    const parsed = JSON.parse(await response.text()) as T;
+    if (options.certifiedMoveOneAdmission) {
+      if (!parsed || typeof parsed !== "object" || !response.certifiedExecutionContext) {
+        throw new Error("Certified native response omitted its authenticated execution context.");
+      }
+      certifiedExecutionContexts.set(parsed as object, response.certifiedExecutionContext);
+    }
+    return parsed;
   } catch (error) {
     const outcomeUnknown = mutating;
     throw new RevitBridgeCallError({

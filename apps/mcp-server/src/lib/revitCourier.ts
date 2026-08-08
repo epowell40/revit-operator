@@ -16,7 +16,11 @@ import {
   createCertificationEnvelope,
   type CertificationEnvelope
 } from "./certifiedExecutionEnvelope.js";
-import type { CertifiedMoveOneAdmission } from "./certifiedMoveOneRequestFamily.js";
+import {
+  issueCertifiedMoveExecutionContext,
+  type CertifiedMoveExecutionContext,
+  type CertifiedMoveOneAdmission
+} from "./certifiedMoveOneRequestFamily.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import { getWorkspaceRoot } from "./workspace.js";
 
@@ -56,7 +60,18 @@ type CourierResult = {
   code?: string | null;
   retryable?: boolean;
   outcome_unknown?: boolean;
+  certified_execution_context?: unknown;
 };
+
+const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
+
+/** Reads context derived from the exact durable job and its authenticated completion. */
+export function readCertifiedCourierExecutionContext(result: unknown): CertifiedMoveExecutionContext {
+  if (!result || typeof result !== "object") throw new Error("Certified courier result has no authenticated execution context.");
+  const context = certifiedExecutionContexts.get(result as object);
+  if (!context) throw new Error("Certified courier result has no authenticated execution context.");
+  return context;
+}
 
 export class RevitCourierError extends Error {
   readonly code: string;
@@ -410,6 +425,50 @@ function resolveResult<T>(receipt: CourierResult): T {
   });
 }
 
+function bindCertifiedExecutionContext<T>(result: T, receipt: CourierResult, job: CourierJob, envelope: CertificationEnvelope): T {
+  if (envelope.version !== 2) return result;
+  if (!result || typeof result !== "object") throw new Error("Certified family courier returned a non-object result.");
+  const rawContext = receipt.certified_execution_context;
+  if (!rawContext || typeof rawContext !== "object" || Array.isArray(rawContext)) {
+    throw new Error("Certified family courier result omitted its backend-authenticated execution context.");
+  }
+  const persisted = rawContext as Record<string, unknown>;
+  const contextKeys = [
+    "schema", "transport_kind", "dispatch_id", "correlation_id", "execution_session_id",
+    "executor_id", "certification_envelope_hash", "completion_challenge_hash"
+  ];
+  if (Object.keys(persisted).length !== contextKeys.length
+    || contextKeys.some(key => !Object.prototype.hasOwnProperty.call(persisted, key))) {
+    throw new Error("Certified family courier execution context is malformed.");
+  }
+  const sessionId = job.session_id;
+  const executorId = job.target_executor_id;
+  if (typeof sessionId !== "string" || !sessionId || typeof executorId !== "string" || !executorId) {
+    throw new Error("Certified family courier job omitted its bound execution session or executor identity.");
+  }
+  const context = issueCertifiedMoveExecutionContext({
+    transportKind: "courier",
+    dispatchId: String(persisted.dispatch_id),
+    correlationId: String(persisted.correlation_id),
+    executionSessionId: sessionId,
+    executorId,
+    certificationEnvelopeHash: envelope.envelope_hash,
+    completionChallengeHash: typeof persisted.completion_challenge_hash === "string" ? persisted.completion_challenge_hash : null
+  });
+  if (receipt.id !== job.id
+    || persisted.schema !== "revit-operator.certified-courier-execution-context.v1"
+    || persisted.transport_kind !== "courier"
+    || persisted.dispatch_id !== job.id
+    || persisted.correlation_id !== job.correlation_id
+    || persisted.execution_session_id !== sessionId
+    || persisted.executor_id !== executorId
+    || persisted.certification_envelope_hash !== envelope.envelope_hash) {
+    throw new Error("Certified family courier result does not bind the exact durable job, session, executor, and envelope.");
+  }
+  certifiedExecutionContexts.set(result as object, context);
+  return result;
+}
+
 function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number): T {
   const receipt = readResult(resultPath, id);
   if (receipt) return resolveResult<T>(receipt);
@@ -536,7 +595,10 @@ export async function callRevitViaCourier<T>(
   const deadline = Number.isFinite(persistedExpiry) ? Math.min(now + durationMs, persistedExpiry) : now + durationMs;
   while (Date.now() < deadline) {
     const receipt = readResult(resultPath, id);
-    if (receipt) return resolveResult<T>(receipt);
+    if (receipt) {
+      const result = resolveResult<T>(receipt);
+      return envelope ? bindCertifiedExecutionContext(result, receipt, job, envelope) : result;
+    }
     await delay(200);
   }
   return finalizeTimeout<T>(jobPath, resultPath, id, durationMs);

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -47,6 +48,8 @@ namespace RevitBridge.Common
         public string CertificationEnvelopeHash { get; internal set; } = "";
         public OperatorCertifiedRequestFamilyAdmission? RequestFamilyAdmission { get; internal set; }
         public string? AuthorizationStage { get; internal set; }
+        public string? CompletionChallenge { get; internal set; }
+        public string? CompletionChallengeHash { get; internal set; }
         public DateTimeOffset AuthorizedAtUtc { get; internal set; }
         /// <summary>
         /// The receipt is bounded by the immutable v2 job expiry. The current
@@ -116,8 +119,13 @@ namespace RevitBridge.Common
         };
         private static readonly HashSet<string> FamilyAuthorizationRequiredKeys = new HashSet<string>(AuthorizationRequiredKeys, StringComparer.Ordinal)
         {
-            "request_family_admission", "authorization_stage"
+            "request_family_admission", "authorization_stage", "completion_challenge", "completion_challenge_hash"
         };
+        // 32 raw bytes encoded as unpadded canonical base64url. Restricting the
+        // final character rejects alternate encodings with non-zero pad bits.
+        private static readonly Regex CompletionChallengePattern = new Regex(
+            "^cmcc1_[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$",
+            RegexOptions.CultureInvariant);
         private static readonly HashSet<string> AuthorizationOptionalKeys = new HashSet<string>(StringComparer.Ordinal)
         {
             "workflow"
@@ -184,6 +192,15 @@ namespace RevitBridge.Common
             {
                 throw new InvalidOperationException(
                     "Fresh courier request-family authorization is not a final-stage receipt.");
+            }
+            if (authorization.RequestFamilyAdmission != null
+                && !ValidateCompletionChallenge(
+                    authorization.AuthorizationStage,
+                    authorization.CompletionChallenge,
+                    authorization.CompletionChallengeHash))
+            {
+                throw new InvalidOperationException(
+                    "Fresh courier request-family authorization is not bound to an exact completion challenge.");
             }
             return authorization;
         }
@@ -311,7 +328,12 @@ namespace RevitBridge.Common
                 && Same(targetDocumentTitle ?? "", authorization.TargetDocumentTitle ?? "")
                 && Same(targetDocumentPath ?? "", authorization.TargetDocumentPath ?? "")
                 && bodyPresent == authorization.BodyPresent
-                && Same(bodyJson ?? "", authorization.BodyJson);
+                && Same(bodyJson ?? "", authorization.BodyJson)
+                && (authorization.RequestFamilyAdmission == null
+                    || ValidateCompletionChallenge(
+                        authorization.AuthorizationStage,
+                        authorization.CompletionChallenge,
+                        authorization.CompletionChallengeHash));
         }
 
         private static OperatorCourierFinalExecutionAuthorizationValidationResult BindAuthorization(
@@ -353,10 +375,14 @@ namespace RevitBridge.Common
 
             OperatorCertifiedRequestFamilyAdmission? requestFamilyAdmission = null;
             string? authorizationStage = null;
+            string? completionChallenge = null;
+            string? completionChallengeHash = null;
             if (hasFamilyAdmission)
             {
                 if (!TryGetUnique(authorization, "request_family_admission", JsonValueKind.Object, out var familyElement, out error)) return error!;
                 if (!TryString(authorization, "authorization_stage", out authorizationStage, out error)) return error!;
+                if (!TryStringOrNull(authorization, "completion_challenge", out completionChallenge, out error)
+                    || !TryStringOrNull(authorization, "completion_challenge_hash", out completionChallengeHash, out error)) return error!;
                 try { requestFamilyAdmission = OperatorCertifiedRequestFamilyAdmissionVerifier.Parse(familyElement); }
                 catch (System.IO.InvalidDataException invalid)
                 {
@@ -369,6 +395,15 @@ namespace RevitBridge.Common
                     return Invalid(
                         "CERTIFICATION_FINAL_AUTHORIZATION_STAGE_INVALID",
                         "Courier request-family authorization stage is invalid or does not match the requested stage.");
+                }
+                if (!ValidateCompletionChallenge(
+                    authorizationStage,
+                    completionChallenge,
+                    completionChallengeHash))
+                {
+                    return Invalid(
+                        "CERTIFICATION_FINAL_COMPLETION_CHALLENGE_INVALID",
+                        "Courier request-family completion challenge is missing, malformed, mismatched, or present at preflight.");
                 }
             }
 
@@ -488,6 +523,8 @@ namespace RevitBridge.Common
                 CertificationEnvelopeHash = envelopeHash,
                 RequestFamilyAdmission = requestFamilyAdmission,
                 AuthorizationStage = authorizationStage,
+                CompletionChallenge = completionChallenge,
+                CompletionChallengeHash = completionChallengeHash,
                 AuthorizedAtUtc = authorizedAtUtc,
                 ExpiresAtUtc = job.ExpiresAtUtc
             });
@@ -693,6 +730,20 @@ namespace RevitBridge.Common
         private static bool Same(string? left, string? right)
         {
             return string.Equals(left, right, StringComparison.Ordinal);
+        }
+
+        internal static bool ValidateCompletionChallenge(string? stage, string? challenge, string? challengeHash)
+        {
+            if (string.Equals(stage, "preflight", StringComparison.Ordinal))
+                return challenge == null && challengeHash == null;
+            if (!string.Equals(stage, "final", StringComparison.Ordinal)
+                || challenge == null
+                || challengeHash == null
+                || !CompletionChallengePattern.IsMatch(challenge)) return false;
+            return string.Equals(
+                challengeHash,
+                OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(challenge),
+                StringComparison.Ordinal);
         }
 
         private static OperatorCourierFinalExecutionAuthorizationValidationResult Invalid(string code, string error)

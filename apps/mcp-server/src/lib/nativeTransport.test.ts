@@ -133,7 +133,8 @@ test("Node request and response exactly match the executable C# ROSB/1 vector", 
   });
   assert.deepEqual(response, {
     statusCode: 403,
-    bodyJson: "{\"ok\":false,\"error\":\"approval required\"}"
+    bodyJson: "{\"ok\":false,\"error\":\"approval required\"}",
+    requestId: REQUEST_ID
   });
 });
 

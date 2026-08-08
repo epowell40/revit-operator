@@ -45,6 +45,8 @@ type ProtectedRequest = Readonly<{
 export type NativeTransportResult = Readonly<{
   statusCode: number;
   bodyJson: string;
+  /** Locally generated identity authenticated by the protected response. */
+  requestId: string;
 }>;
 
 export class NativeTransportProtocolError extends Error {
@@ -226,7 +228,7 @@ export function openNativeTransportResponse(input: {
     || encodeUtf8(inner.body_json, "protected native response body", "response").length > MAXIMUM_RESPONSE_BODY_BYTES) {
     throw new NativeTransportProtocolError("Protected native response body exceeds its limit.", "response");
   }
-  return { statusCode: inner.status_code, bodyJson: inner.body_json };
+  return { statusCode: inner.status_code, bodyJson: inner.body_json, requestId: input.request.requestId };
 }
 
 export async function callNativeTransport(input: {

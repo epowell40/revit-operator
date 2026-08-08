@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { decideCodexStreaming, revitCourierTargetFromContext } from "../src/brains/codex_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
@@ -321,7 +322,12 @@ function certifiedMoveJob(
 function certifiedMoveExecutionResult(
   job: ReturnType<typeof certifiedMoveJob>,
   admission: ReturnType<typeof courierMoveAdmission>,
-  previewReceipt: string | null = null
+  executionContext: {
+    executor_id: string;
+    completion_challenge_hash: string;
+  },
+  previewReceipt: string | null = null,
+  transportKind: "courier" | "direct" = "courier"
 ) {
   const envelope = job.certification_envelope;
   const nativeResult: Record<string, unknown> = {
@@ -345,6 +351,17 @@ function certifiedMoveExecutionResult(
       after: { kind: "LocationPoint", point_bits: ["0000000000000000", "3fe0000000000000", "0000000000000000"] }
     }]
   };
+  const preview = admission.phase === "preview" ? {
+    schema: "revit-operator.certified-move-preview-receipt.v1",
+    preview_receipt: previewReceipt ?? `cmpr1_${"C".repeat(43)}`,
+    preview_instance_hash: admission.request_instance_hash,
+    admission_session_id: admission.admission_session_id,
+    issued_at_utc: "2026-08-08T12:00:00.000Z"
+  } : null;
+  const previewWithHash = preview === null ? null : {
+    ...preview,
+    preview_receipt_hash: `sha256:${createHash("sha256").update(preview.preview_receipt, "utf8").digest("hex")}`
+  };
   const receipt: Record<string, unknown> = {
     schema: "revit-operator.certified-family-execution-receipt.v1", phase: admission.phase,
     request_instance_hash: admission.request_instance_hash, family_id: admission.family_id, family_hash: admission.family_hash,
@@ -354,6 +371,15 @@ function certifiedMoveExecutionResult(
     policy_hash: envelope.policy_hash, policy_record_hash: envelope.policy_record_hash,
     evidence_record_hash: envelope.evidence_record_hash, effect_hash: envelope.effect_hash,
     channel: envelope.channel, alias: envelope.alias,
+    transport_kind: transportKind, dispatch_id: job.id, correlation_id: job.correlation_id,
+    execution_session_id: job.session_id, executor_id: executionContext.executor_id,
+    certification_envelope_hash: envelope.envelope_hash,
+    completion_challenge_hash: executionContext.completion_challenge_hash,
+    preview_receipt_schema: previewWithHash?.schema ?? null,
+    preview_receipt_hash: previewWithHash?.preview_receipt_hash ?? null,
+    preview_instance_hash: previewWithHash?.preview_instance_hash ?? null,
+    preview_admission_session_id: previewWithHash?.admission_session_id ?? null,
+    preview_issued_at_utc: previewWithHash?.issued_at_utc ?? null,
     outcome: admission.phase === "preview" ? "rolled_back" : "committed",
     affected_element_ids: [admission.element_id], outcome_unknown: false,
     result_hash: `sha256:${createHash("sha256").update(canonicalJson(resultProjection as never), "utf8").digest("hex")}`,
@@ -368,16 +394,29 @@ function certifiedMoveExecutionResult(
     ...nativeResult,
     certified_execution_receipt: receipt
   };
-  if (admission.phase === "preview") {
-    const token = previewReceipt ?? `cmpr1_${"C".repeat(43)}`;
-    result.certified_preview_receipt = {
-      schema: "revit-operator.certified-move-preview-receipt.v1", preview_receipt: token,
-      preview_receipt_hash: `sha256:${createHash("sha256").update(token, "utf8").digest("hex")}`,
-      preview_instance_hash: admission.request_instance_hash, admission_session_id: admission.admission_session_id,
-      issued_at_utc: "2026-08-08T12:00:00.000Z"
-    };
-  }
+  if (previewWithHash) result.certified_preview_receipt = previewWithHash;
   return result;
+}
+
+function testCompletionChallenge(seed = "D") {
+  const completion_challenge = `cmcc1_${seed.repeat(43)}`;
+  return {
+    completion_challenge,
+    completion_challenge_hash: `sha256:${createHash("sha256").update(completion_challenge, "utf8").digest("hex")}`
+  };
+}
+
+function testExecutionContext(job: ReturnType<typeof certifiedMoveJob>, challenge = testCompletionChallenge()) {
+  return {
+    schema: "revit-operator.certified-courier-execution-context.v1" as const,
+    transport_kind: "courier" as const,
+    dispatch_id: job.id,
+    correlation_id: job.correlation_id,
+    execution_session_id: job.session_id,
+    executor_id: "worker-1",
+    certification_envelope_hash: job.certification_envelope.envelope_hash,
+    completion_challenge_hash: challenge.completion_challenge_hash
+  };
 }
 
 test("legacy v1 courier escape requires exact ordinal development laboratory environment values", () => {
@@ -459,9 +498,11 @@ test("courier final authorization independently validates and consumes the same 
   const previewBody = courierMoveBody(true);
   const previewAdmission = courierMoveAdmission("preview", null, previewBody);
   const previewJob = certifiedMoveJob(policy, previewBody, previewAdmission);
-  const preflight = authorizeCertifiedCourierFinalExecution(previewJob, "worker-1", "preflight");
+  const preflight = authorizeCertifiedCourierFinalExecution(previewJob, "worker-1", "preflight", {
+    completion_challenge: null, completion_challenge_hash: null
+  });
   assert.equal(preflight.authorization_stage, "preflight");
-  const preview = authorizeCertifiedCourierFinalExecution(previewJob, "worker-1", "final");
+  const preview = authorizeCertifiedCourierFinalExecution(previewJob, "worker-1", "final", testCompletionChallenge("E"));
   assert.deepEqual(preview.request_family_admission, previewAdmission);
   assert.equal(preview.version, "revit-operator.revit-tool-final-authorization.v2");
   assert.equal(preview.authorization_stage, "final");
@@ -471,19 +512,19 @@ test("courier final authorization independently validates and consumes the same 
   const applyAdmission = courierMoveAdmission("apply", previewAdmission.request_instance_hash, applyBody, `cmpr1_${"B".repeat(43)}`);
   const broadenedApply = certifiedMoveJob(policy, applyBody, applyAdmission, "preview");
   assert.throws(
-    () => authorizeCertifiedCourierFinalExecution(broadenedApply, "worker-1", "final"),
+    () => authorizeCertifiedCourierFinalExecution(broadenedApply, "worker-1", "final", testCompletionChallenge("F")),
     (error: unknown) => error instanceof RevitCourierCertificationError
       && error.code === "CERTIFICATION_REQUEST_FAMILY_DENIED"
   );
   const applyJob = certifiedMoveJob(policy, applyBody, applyAdmission);
-  const apply = authorizeCertifiedCourierFinalExecution(applyJob, "worker-1", "final");
+  const apply = authorizeCertifiedCourierFinalExecution(applyJob, "worker-1", "final", testCompletionChallenge("G"));
   assert.equal(apply.request_family_admission?.preview_instance_hash, previewAdmission.request_instance_hash);
   assert.equal(apply.request_family_admission?.document_session_id, "22222222222242228222222222222222");
   assert.equal(apply.request_hash, applyAdmission.request_instance_hash);
   assert.equal(apply.effect_hash, MOVE_APPLY_EFFECT_HASH);
 
   assert.throws(
-    () => authorizeCertifiedCourierFinalExecution(applyJob, "worker-1", "final"),
+    () => authorizeCertifiedCourierFinalExecution(applyJob, "worker-1", "final", testCompletionChallenge("H")),
     (error: unknown) => error instanceof RevitCourierCertificationError
       && error.code === "CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED"
   );
@@ -497,10 +538,10 @@ test("courier family envelope rejects forged instance/body and stale policy bind
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
   const body = courierMoveBody(true);
-  const admission = courierMoveAdmission("preview", null, body);
+  const admission = courierMoveAdmission("preview", null, body, null, "f".repeat(32));
   const forged = certifiedMoveJob(policy, body, { ...admission, request_instance_hash: `sha256:${"0".repeat(64)}` });
   assert.throws(
-    () => authorizeCertifiedCourierFinalExecution(forged, "worker-1", "final"),
+    () => authorizeCertifiedCourierFinalExecution(forged, "worker-1", "final", testCompletionChallenge("I")),
     (error: unknown) => error instanceof RevitCourierCertificationError
       && error.code === "CERTIFICATION_REQUEST_FAMILY_DENIED"
   );
@@ -511,7 +552,7 @@ test("courier family envelope rejects forged instance/body and stale policy bind
   const { envelope_hash: _old, ...payload } = stale.certification_envelope;
   stale.certification_envelope.envelope_hash = `sha256:${createHash("sha256").update(canonicalJson(payload)).digest("hex")}`;
   assert.throws(
-    () => authorizeCertifiedCourierFinalExecution(stale, "worker-1", "final"),
+    () => authorizeCertifiedCourierFinalExecution(stale, "worker-1", "final", testCompletionChallenge("J")),
     (error: unknown) => error instanceof RevitCourierCertificationError
   );
 });
@@ -531,12 +572,18 @@ test("durable courier family authorization separates non-consuming preflight fro
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
   assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, job.id);
-  assert.equal(authorizeRevitToolJobExecution({
+  const preflight = authorizeRevitToolJobExecution({
     session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "preflight"
-  }).authorization.authorization_stage, "preflight");
-  assert.equal(authorizeRevitToolJobExecution({
+  }).authorization;
+  assert.equal(preflight.authorization_stage, "preflight");
+  assert.equal(preflight.completion_challenge, null);
+  assert.equal(preflight.completion_challenge_hash, null);
+  const final = authorizeRevitToolJobExecution({
     session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
-  }).authorization.authorization_stage, "final");
+  }).authorization;
+  assert.equal(final.authorization_stage, "final");
+  assert.match(final.completion_challenge!, /^cmcc1_[A-Za-z0-9_-]{43}$/);
+  assert.equal(final.completion_challenge_hash, `sha256:${createHash("sha256").update(final.completion_challenge!, "utf8").digest("hex")}`);
   assert.throws(
     () => authorizeRevitToolJobExecution({
       session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
@@ -557,15 +604,16 @@ test("courier completion requires an exact native family outcome receipt and ter
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
   const body = courierMoveBody(true);
-  const admission = courierMoveAdmission("preview", null, body);
+  const admission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
   const job = certifiedMoveJob(policy, body, admission);
-  const result = certifiedMoveExecutionResult(job, admission);
-  assert.doesNotThrow(() => assertCertifiedCourierExecutionResult(job, result));
+  const context = testExecutionContext(job);
+  const result = certifiedMoveExecutionResult(job, admission, context);
+  assert.doesNotThrow(() => assertCertifiedCourierExecutionResult(job, result, context));
   assert.throws(
     () => assertCertifiedCourierExecutionResult(job, {
       ...result,
       certified_execution_receipt: { ...(result.certified_execution_receipt as object), affected_element_ids: [85] }
-    }),
+    }, context),
     (error: unknown) => error instanceof RevitCourierCertificationError
       && error.code === "CERTIFICATION_EXECUTION_RECEIPT_INVALID"
   );
@@ -576,12 +624,12 @@ test("courier completion requires an exact native family outcome receipt and ter
         ...(result.certified_execution_receipt as object),
         native_attestation_signature: "A".repeat(342)
       }
-    }),
+    }, context),
     (error: unknown) => error instanceof RevitCourierCertificationError
       && error.code === "CERTIFICATION_EXECUTION_ATTESTATION_INVALID"
   );
   assert.throws(
-    () => assertCertifiedCourierExecutionResult(job, { ...result, status: "caller-forged" }),
+    () => assertCertifiedCourierExecutionResult(job, { ...result, status: "caller-forged" }, context),
     (error: unknown) => error instanceof RevitCourierCertificationError
       && error.code === "CERTIFICATION_EXECUTION_ATTESTATION_INVALID"
   );
@@ -590,9 +638,17 @@ test("courier completion requires an exact native family outcome receipt and ter
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
   assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, job.id);
+  const mismatchAuthorization = authorizeRevitToolJobExecution({
+    session_id: "session-move", job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization;
+  const mismatchContext = {
+    ...context,
+    completion_challenge_hash: mismatchAuthorization.completion_challenge_hash!
+  };
+  const mismatchResult = certifiedMoveExecutionResult(job, admission, mismatchContext);
   const terminal = completeRevitToolJob({
     session_id: "session-move", job_id: job.id, executor_id: "worker-1",
-    result: { ...result, certified_preview_receipt: undefined }
+    result: { ...mismatchResult, certified_preview_receipt: undefined }
   });
   assert.equal(terminal.status, "failed");
   const receipt = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
@@ -603,17 +659,196 @@ test("courier completion requires an exact native family outcome receipt and ter
 
   const successRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-receipt-success-"));
   process.env.OPERATOR_WORKSPACE_ROOT = successRoot;
-  const successDir = path.join(successRoot, "artifacts", "revit-courier", "jobs", job.id);
+  const successAdmission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const successJob = certifiedMoveJob(policy, body, successAdmission);
+  const successDir = path.join(successRoot, "artifacts", "revit-courier", "jobs", successJob.id);
   fs.mkdirSync(successDir, { recursive: true });
-  fs.writeFileSync(path.join(successDir, "job.json"), JSON.stringify(job), "utf8");
-  assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, job.id);
+  fs.writeFileSync(path.join(successDir, "job.json"), JSON.stringify(successJob), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: "session-move", executor_id: "worker-1" }).job?.id, successJob.id);
+  const successAuthorization = authorizeRevitToolJobExecution({
+    session_id: "session-move", job_id: successJob.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization;
+  const successContext = testExecutionContext(successJob, {
+    completion_challenge: successAuthorization.completion_challenge!,
+    completion_challenge_hash: successAuthorization.completion_challenge_hash!
+  });
+  const successResult = certifiedMoveExecutionResult(successJob, successAdmission, successContext);
   const succeeded = completeRevitToolJob({
-    session_id: "session-move", job_id: job.id, executor_id: "worker-1", result
+    session_id: "session-move", job_id: successJob.id, executor_id: "worker-1", result: successResult
   });
   assert.equal(succeeded.status, "succeeded");
   const successReceipt = JSON.parse(fs.readFileSync(path.join(successDir, "result.json"), "utf8"));
   assert.equal(successReceipt.status, "succeeded");
-  assert.equal(successReceipt.result.certified_execution_receipt.request_instance_hash, admission.request_instance_hash);
+  assert.equal(successReceipt.result.certified_execution_receipt.request_instance_hash, successAdmission.request_instance_hash);
+  assert.deepEqual(successReceipt.certified_execution_context, successContext);
+  assert.equal(fs.existsSync(path.join(successDir, "completion-challenge-consumed.v1.json")), true);
+});
+
+test("courier completion challenge rejects cross-job, cross-workspace, and direct-transport replay", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-completion-replay-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+
+  const firstAdmission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const firstJob = certifiedMoveJob(policy, body, firstAdmission);
+  const firstDir = path.join(root, "artifacts", "revit-courier", "jobs", firstJob.id);
+  fs.mkdirSync(firstDir, { recursive: true });
+  fs.writeFileSync(path.join(firstDir, "job.json"), JSON.stringify(firstJob), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: firstJob.session_id, executor_id: "worker-1" }).job?.id, firstJob.id);
+  const firstAuthorization = authorizeRevitToolJobExecution({
+    session_id: firstJob.session_id, job_id: firstJob.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization;
+  const firstContext = testExecutionContext(firstJob, {
+    completion_challenge: firstAuthorization.completion_challenge!,
+    completion_challenge_hash: firstAuthorization.completion_challenge_hash!
+  });
+  const firstResult = certifiedMoveExecutionResult(firstJob, firstAdmission, firstContext);
+
+  const directResult = certifiedMoveExecutionResult(firstJob, firstAdmission, firstContext, null, "direct");
+  assert.throws(
+    () => assertCertifiedCourierExecutionResult(firstJob, directResult, firstContext),
+    (error: unknown) => error instanceof RevitCourierCertificationError
+      && error.code === "CERTIFICATION_EXECUTION_RECEIPT_INVALID"
+  );
+
+  const secondAdmission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const secondJob = certifiedMoveJob(policy, body, secondAdmission);
+  const secondDir = path.join(root, "artifacts", "revit-courier", "jobs", secondJob.id);
+  fs.mkdirSync(secondDir, { recursive: true });
+  fs.writeFileSync(path.join(secondDir, "job.json"), JSON.stringify(secondJob), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: secondJob.session_id, executor_id: "worker-1" }).job?.id, secondJob.id);
+  authorizeRevitToolJobExecution({
+    session_id: secondJob.session_id, job_id: secondJob.id, executor_id: "worker-1", authorization_stage: "final"
+  });
+  const crossJob = completeRevitToolJob({
+    session_id: secondJob.session_id, job_id: secondJob.id, executor_id: "worker-1", result: firstResult
+  });
+  assert.equal(crossJob.status, "failed");
+  const crossJobReceipt = JSON.parse(fs.readFileSync(path.join(secondDir, "result.json"), "utf8"));
+  assert.equal(crossJobReceipt.code, "CERTIFICATION_EXECUTION_RECEIPT_INVALID");
+  assert.equal(crossJobReceipt.outcome_unknown, true);
+  assert.equal(fs.existsSync(path.join(secondDir, "completion-challenge-consumed.v1.json")), false);
+
+  const foreignRoot = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-completion-foreign-workspace-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = foreignRoot;
+  const foreignDir = path.join(foreignRoot, "artifacts", "revit-courier", "jobs", firstJob.id);
+  fs.mkdirSync(foreignDir, { recursive: true });
+  const runningFirstJob = JSON.parse(fs.readFileSync(path.join(firstDir, "job.json"), "utf8"));
+  fs.writeFileSync(path.join(foreignDir, "job.json"), JSON.stringify(runningFirstJob), "utf8");
+  const crossWorkspace = completeRevitToolJob({
+    session_id: firstJob.session_id, job_id: firstJob.id, executor_id: "worker-1", result: firstResult
+  });
+  assert.equal(crossWorkspace.status, "failed");
+  const crossWorkspaceReceipt = JSON.parse(fs.readFileSync(path.join(foreignDir, "result.json"), "utf8"));
+  assert.equal(crossWorkspaceReceipt.code, "CERTIFICATION_COMPLETION_CHALLENGE_INVALID");
+  assert.equal(crossWorkspaceReceipt.outcome_unknown, true);
+});
+
+test("courier completion survives a backend process restart using only its durable one-use challenge", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-completion-restart-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const job = certifiedMoveJob(policy, body, admission);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: job.session_id, executor_id: "worker-1" }).job?.id, job.id);
+  const authorization = authorizeRevitToolJobExecution({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization;
+  const runningJob = fs.readFileSync(path.join(dir, "job.json"), "utf8");
+  const context = testExecutionContext(job, {
+    completion_challenge: authorization.completion_challenge!,
+    completion_challenge_hash: authorization.completion_challenge_hash!
+  });
+  const result = certifiedMoveExecutionResult(job, admission, context);
+  assert.equal(fs.existsSync(path.join(dir, "completion-challenge-issued.v1.json")), true);
+
+  const completionInput = {
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", result
+  };
+  const completionInputPath = path.join(root, "restart-completion-input.json");
+  fs.writeFileSync(completionInputPath, JSON.stringify(completionInput), "utf8");
+  const restarted = spawnSync(process.execPath, [
+    "--input-type=module",
+    "-e",
+    "import fs from 'node:fs'; import { completeRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); completeRevitToolJob(input);",
+    completionInputPath
+  ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
+  assert.equal(restarted.status, 0, `${restarted.stderr}\n${restarted.stdout}`);
+  assert.equal(fs.existsSync(path.join(dir, "completion-challenge-consumed.v1.json")), true);
+  const durable = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
+  assert.equal(durable.status, "succeeded");
+  assert.deepEqual(durable.certified_execution_context, context);
+
+  // Model a crash/corruption after challenge consumption but before a durable
+  // success receipt can be trusted. A fresh process must not replay execution.
+  fs.unlinkSync(path.join(dir, "result.json"));
+  fs.writeFileSync(path.join(dir, "job.json"), runningJob, "utf8");
+  const replayed = spawnSync(process.execPath, [
+    "--input-type=module",
+    "-e",
+    "import fs from 'node:fs'; import { completeRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); completeRevitToolJob(input);",
+    completionInputPath
+  ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
+  assert.equal(replayed.status, 0, `${replayed.stderr}\n${replayed.stdout}`);
+  const replayDenied = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
+  assert.equal(replayDenied.status, "failed");
+  assert.equal(replayDenied.code, "CERTIFICATION_COMPLETION_CHALLENGE_REPLAY_DENIED");
+  assert.equal(replayDenied.retryable, false);
+  assert.equal(replayDenied.outcome_unknown, true);
+});
+
+test("signed courier preview lineage is exact and apply receipts carry explicit null lineage", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-preview-lineage-"));
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const previewBody = courierMoveBody(true);
+  const previewAdmission = courierMoveAdmission("preview", null, previewBody, null, randomUUID().replace(/-/g, ""));
+  const previewJob = certifiedMoveJob(policy, previewBody, previewAdmission);
+  const previewContext = testExecutionContext(previewJob);
+  const previewResult = certifiedMoveExecutionResult(previewJob, previewAdmission, previewContext);
+  const mismatchedNested = {
+    ...previewResult,
+    certified_preview_receipt: {
+      ...(previewResult.certified_preview_receipt as Record<string, unknown>),
+      issued_at_utc: "2026-08-08T12:00:01.000Z"
+    }
+  };
+  assert.throws(
+    () => assertCertifiedCourierExecutionResult(previewJob, mismatchedNested, previewContext),
+    (error: unknown) => error instanceof RevitCourierCertificationError
+      && error.code === "CERTIFICATION_EXECUTION_RECEIPT_INVALID"
+  );
+
+  const applyBody = courierMoveBody(false);
+  const applyAdmission = courierMoveAdmission(
+    "apply", previewAdmission.request_instance_hash, applyBody, `cmpr1_${"K".repeat(43)}`, randomUUID().replace(/-/g, "")
+  );
+  const applyJob = certifiedMoveJob(policy, applyBody, applyAdmission);
+  const applyContext = testExecutionContext(applyJob, testCompletionChallenge("L"));
+  const applyResult = certifiedMoveExecutionResult(applyJob, applyAdmission, applyContext);
+  const applyReceipt = applyResult.certified_execution_receipt as Record<string, unknown>;
+  assert.equal(applyReceipt.preview_receipt_schema, null);
+  assert.equal(applyReceipt.preview_receipt_hash, null);
+  assert.equal(applyReceipt.preview_instance_hash, null);
+  assert.equal(applyReceipt.preview_admission_session_id, null);
+  assert.equal(applyReceipt.preview_issued_at_utc, null);
+  assert.doesNotThrow(() => assertCertifiedCourierExecutionResult(applyJob, applyResult, applyContext));
 });
 
 test("v2 final authorization terminalizes known job and claim-lease expiry without an outcome-unknown replay", async () => {

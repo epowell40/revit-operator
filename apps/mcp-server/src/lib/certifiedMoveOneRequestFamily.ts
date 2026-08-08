@@ -47,6 +47,16 @@ export type CertifiedMoveOneAdmission = {
   };
 };
 
+export type CertifiedMoveExecutionContext = Readonly<{
+  transportKind: "direct" | "courier";
+  dispatchId: string;
+  correlationId: string;
+  executionSessionId: string;
+  executorId: string;
+  certificationEnvelopeHash: string;
+  completionChallengeHash: string | null;
+}>;
+
 export class CertifiedMoveOneRequestError extends Error {
   constructor(readonly code: string, message: string) { super(`[${code}] ${message}`); }
 }
@@ -54,6 +64,7 @@ export class CertifiedMoveOneRequestError extends Error {
 // Admission objects are process-local capabilities. A structurally identical
 // JSON object cannot skip the reviewed validator on the execution path.
 const admittedRequests = new WeakSet<object>();
+const issuedExecutionContexts = new WeakSet<object>();
 const admissionSessionId = randomBytes(16).toString("hex");
 type PreviewPolicyBinding = Readonly<{
   policyHash: string;
@@ -245,6 +256,26 @@ export function isCertifiedMoveOneAdmission(value: unknown): value is CertifiedM
   return !!value && typeof value === "object" && admittedRequests.has(value as object);
 }
 
+/**
+ * Internal transport proof boundary. Callers cannot manufacture a structurally
+ * similar object that the final receipt verifier will accept.
+ */
+export function issueCertifiedMoveExecutionContext(input: CertifiedMoveExecutionContext): CertifiedMoveExecutionContext {
+  if ((input.transportKind !== "direct" && input.transportKind !== "courier")
+    || !/^(?:[0-9a-f]{32}|[0-9a-f]{64})$/.test(input.dispatchId)
+    || input.correlationId !== input.dispatchId
+    || typeof input.executionSessionId !== "string" || !input.executionSessionId
+    || typeof input.executorId !== "string" || !input.executorId
+    || !/^sha256:[0-9a-f]{64}$/.test(input.certificationEnvelopeHash)
+    || (input.transportKind === "direct" && input.completionChallengeHash !== null)
+    || (input.transportKind === "courier" && !/^sha256:[0-9a-f]{64}$/.test(input.completionChallengeHash ?? ""))) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_CONTEXT_INVALID", "Certified execution context is incomplete or malformed.");
+  }
+  const context = Object.freeze({ ...input });
+  issuedExecutionContexts.add(context);
+  return context;
+}
+
 function policyBinding(value: unknown): PreviewPolicyBinding {
   const raw = object(value, "preview policy binding");
   exactKeys(raw, ["policyHash", "policyRecordHash", "evidenceRecordHash", "effectHash", "channel", "alias"], "preview policy binding");
@@ -275,7 +306,11 @@ const EXECUTION_RECEIPT_KEYS = [
   "schema", "phase", "request_instance_hash", "family_id", "family_hash", "document_fingerprint",
   "document_session_id", "source_scoped_id", "element_id", "observation_id", "observation_binding_hash",
   "admission_session_id", "policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash",
-  "channel", "alias", "outcome", "affected_element_ids", "outcome_unknown", "result_hash",
+  "channel", "alias", "transport_kind", "dispatch_id", "correlation_id", "execution_session_id",
+  "executor_id", "certification_envelope_hash", "completion_challenge_hash",
+  "preview_receipt_schema", "preview_receipt_hash", "preview_instance_hash",
+  "preview_admission_session_id", "preview_issued_at_utc",
+  "outcome", "affected_element_ids", "outcome_unknown", "result_hash",
   "native_attestation_key_id", "native_attestation_signature"
 ] as const;
 
@@ -370,10 +405,14 @@ function exactApplyResult(value: unknown, elementId: number): void {
 export function assertCertifiedMoveExecutionReceipt(
   admission: CertifiedMoveOneAdmission,
   policyValue: unknown,
-  resultValue: unknown
+  resultValue: unknown,
+  executionContext: CertifiedMoveExecutionContext
 ): void {
   if (!isCertifiedMoveOneAdmission(admission)) {
     throw new CertifiedMoveOneRequestError("MOVE_ONE_ADMISSION_INVALID", "Admission was not issued by this runtime.");
+  }
+  if (!executionContext || typeof executionContext !== "object" || !issuedExecutionContexts.has(executionContext as object)) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_CONTEXT_INVALID", "Execution context was not issued by an authenticated transport boundary.");
   }
   if (admission.request.phase === "preview") exactPreviewResult(resultValue, admission.request.elementId);
   else exactApplyResult(resultValue, admission.request.elementId);
@@ -401,6 +440,13 @@ export function assertCertifiedMoveExecutionReceipt(
     [receipt.effect_hash, policy.effectHash],
     [receipt.channel, policy.channel],
     [receipt.alias, policy.alias],
+    [receipt.transport_kind, executionContext.transportKind],
+    [receipt.dispatch_id, executionContext.dispatchId],
+    [receipt.correlation_id, executionContext.correlationId],
+    [receipt.execution_session_id, executionContext.executionSessionId],
+    [receipt.executor_id, executionContext.executorId],
+    [receipt.certification_envelope_hash, executionContext.certificationEnvelopeHash],
+    [receipt.completion_challenge_hash, executionContext.completionChallengeHash],
     [receipt.outcome, admission.request.phase === "preview" ? "rolled_back" : "committed"],
     [receipt.outcome_unknown, false],
     [receipt.native_attestation_key_id, admission.request.nativeAttestationKeyId]
@@ -413,6 +459,32 @@ export function assertCertifiedMoveExecutionReceipt(
       "MOVE_ONE_EXECUTION_RECEIPT_INVALID",
       "Native execution receipt does not match the exact family, request, document, target, policy, effect, channel, or outcome."
     );
+  }
+  if (admission.request.phase === "preview") {
+    const previewReceipt = object(result.certified_preview_receipt, "native preview receipt");
+    exactKeys(previewReceipt, ["schema", "preview_receipt", "preview_receipt_hash", "preview_instance_hash", "admission_session_id", "issued_at_utc"], "native preview receipt");
+    const token = nonempty(previewReceipt.preview_receipt, "native preview receipt token");
+    if (!/^cmpr1_[A-Za-z0-9_-]{43}$/.test(token)
+      || previewReceipt.schema !== "revit-operator.certified-move-preview-receipt.v1"
+      || previewReceipt.preview_receipt_hash !== rawDigest(token)
+      || previewReceipt.preview_instance_hash !== admission.requestInstanceHash
+      || previewReceipt.admission_session_id !== admission.admissionSessionId
+      || typeof previewReceipt.issued_at_utc !== "string"
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(previewReceipt.issued_at_utc)
+      || receipt.preview_receipt_schema !== previewReceipt.schema
+      || receipt.preview_receipt_hash !== previewReceipt.preview_receipt_hash
+      || receipt.preview_instance_hash !== previewReceipt.preview_instance_hash
+      || receipt.preview_admission_session_id !== previewReceipt.admission_session_id
+      || receipt.preview_issued_at_utc !== previewReceipt.issued_at_utc) {
+      throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_ATTESTATION_INVALID", "Signed execution receipt does not bind the exact native preview capability.");
+    }
+  } else if (receipt.preview_receipt_schema !== null
+    || receipt.preview_receipt_hash !== null
+    || receipt.preview_instance_hash !== null
+    || receipt.preview_admission_session_id !== null
+    || receipt.preview_issued_at_utc !== null
+    || result.certified_preview_receipt !== undefined) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_EXECUTION_ATTESTATION_INVALID", "Apply execution receipt must not mint or claim preview lineage.");
   }
   if (receipt.result_hash !== rawDigest(canonical(certifiedMoveResultProjection(result, admission.request.phase, admission.request.elementId)))
     || typeof receipt.native_attestation_signature !== "string"

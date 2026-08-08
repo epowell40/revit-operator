@@ -8,7 +8,7 @@ import mammoth from "mammoth";
 import { createRequire } from "module";
 
 xlsx.set_fs(fs);
-import { callRevit } from "./lib/revitClient.js";
+import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
@@ -1910,7 +1910,7 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
         alias: decision.alias
       };
       try {
-        assertCertifiedMoveExecutionReceipt(admission, policyBinding, data);
+        assertCertifiedMoveExecutionReceipt(admission, policyBinding, data, readCertifiedMoveExecutionContext(data));
       } catch (receiptError) {
         if (admission.request.phase === "apply") {
           return {

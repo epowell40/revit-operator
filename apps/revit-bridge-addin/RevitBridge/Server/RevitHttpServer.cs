@@ -691,16 +691,21 @@ namespace RevitBridge.Server
                                 {
                                     var dispatchBody = capturedBody;
                                     OperatorCertifiedMoveExecutionStart? executionStart = null;
+                                    OperatorCertifiedFamilyExecutionContext? executionContext = null;
                                     if (capturedEffectiveRequest != null)
                                     {
                                         dispatchBody = RequireFinalNativeAuthorizationAsync(
                                             capturedEffectiveRequest,
                                             capturedBody,
                                             localDeadline.Token).GetAwaiter().GetResult();
+                                        executionContext = capturedEffectiveRequest.CertificationEnvelope?.RequestFamilyAdmission == null
+                                            ? null
+                                            : OperatorCertifiedFamilyExecutionContext.Direct(capturedEffectiveRequest);
                                         executionStart = OperatorCertifiedMovePreviewAuthority.CaptureStartAndConsumeApplyReceipt(
                                             app,
                                             capturedEffectiveRequest.CertificationEnvelope,
-                                            dispatchBody);
+                                            dispatchBody,
+                                            executionContext);
                                     }
                                     object nativeResult;
                                     try
@@ -718,7 +723,8 @@ namespace RevitBridge.Server
                                         nativeResult,
                                         capturedEffectiveRequest?.CertificationEnvelope,
                                         dispatchBody,
-                                        executionStart);
+                                        executionStart,
+                                        executionContext);
                                 },
                                 localDeadline.Token,
                                 correlationId);

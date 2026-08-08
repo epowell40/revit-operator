@@ -45,7 +45,7 @@ namespace RevitBridge.Common
             return Base64Url(Key.SignData(bytes, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
         }
 
-        public static bool VerifyCanonicalPayloadForTests(Dictionary<string, object?> payload, string signatureBase64Url)
+        public static bool VerifyCanonicalPayload(Dictionary<string, object?> payload, string signatureBase64Url)
         {
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
             var canonical = OperatorCourierCertificationEnvelopeVerifier.Canonicalize(document.RootElement);

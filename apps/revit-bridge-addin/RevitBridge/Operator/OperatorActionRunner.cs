@@ -361,10 +361,16 @@ namespace RevitBridge.Operator
                         path,
                         correlationId,
                         localDeadline.Token);
+                    var executionContext = action.CourierVerifiedClaim?.Envelope?.RequestFamilyAdmission == null
+                        ? null
+                        : OperatorCertifiedFamilyExecutionContext.Courier(
+                            action.CourierFinalExecutionAuthorization
+                            ?? throw new OperatorCourierFinalExecutionRejectedException("Courier family execution lost its final authorization."));
                     var executionStart = OperatorCertifiedMovePreviewAuthority.CaptureStartAndConsumeApplyReceipt(
                         app,
                         action.CourierVerifiedClaim?.Envelope,
-                        jsonBody);
+                        jsonBody,
+                        executionContext);
                     object handlerResult;
                     try
                     {
@@ -381,7 +387,8 @@ namespace RevitBridge.Operator
                         handlerResult,
                         action.CourierVerifiedClaim?.Envelope,
                         jsonBody,
-                        executionStart);
+                        executionStart,
+                        executionContext);
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
                     // confusion due to view redraw / regeneration lag.
@@ -417,6 +424,9 @@ namespace RevitBridge.Operator
 
             if (recoveredDialog != null)
             {
+                if (action.CourierVerifiedClaim?.Envelope?.RequestFamilyAdmission != null
+                    && OperatorCertifiedMovePreviewAuthority.IsIndependentlyVerifiedCertifiedFamilyResult(result))
+                    return result;
                 throw new OperatorRecoveredDialogException(recoveredDialog, result);
             }
 

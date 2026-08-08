@@ -160,13 +160,14 @@ async function waitForJobs(root: string, expected: number): Promise<Array<{ id: 
   throw new Error(`Timed out waiting for ${expected} courier test jobs.`);
 }
 
-function writeSucceededResult(job: { id: string; dir: string }, result: unknown): void {
+function writeSucceededResult(job: { id: string; dir: string }, result: unknown, certifiedExecutionContext?: unknown): void {
   fs.writeFileSync(path.join(job.dir, "result.json"), JSON.stringify({
     version: "revit-operator.revit-tool-result.v1",
     id: job.id,
     correlation_id: job.id,
     status: "succeeded",
     result,
+    ...(certifiedExecutionContext === undefined ? {} : { certified_execution_context: certifiedExecutionContext }),
     retryable: false
   }), "utf8");
 }
@@ -467,8 +468,21 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
     assert.equal(envelope.request_family_admission.outbound_body_sha256, envelope.body_sha256);
     assert.equal(job.id, job.idempotency_key);
     assert.equal(job.correlation_id, job.id);
-    writeSucceededResult(jobRef, { rolledBack: true });
-    assert.deepEqual(await pending, { rolledBack: true });
+    const familyResult = {
+      rolledBack: true,
+      certified_execution_receipt: { completion_challenge_hash: `sha256:${"9".repeat(64)}` }
+    };
+    writeSucceededResult(jobRef, familyResult, {
+      schema: "revit-operator.certified-courier-execution-context.v1",
+      transport_kind: "courier",
+      dispatch_id: job.id,
+      correlation_id: job.correlation_id,
+      execution_session_id: job.session_id,
+      executor_id: job.target_executor_id,
+      certification_envelope_hash: envelope.envelope_hash,
+      completion_challenge_hash: `sha256:${"9".repeat(64)}`
+    });
+    assert.deepEqual(await pending, familyResult);
   } finally {
     clearCertifiedMoveTargetLedgerForTests();
     restore();

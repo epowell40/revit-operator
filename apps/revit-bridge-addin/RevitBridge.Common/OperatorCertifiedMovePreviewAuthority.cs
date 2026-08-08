@@ -28,18 +28,21 @@ namespace RevitBridge.Common
             object handlerResult,
             OperatorCourierCertificationEnvelope? envelope,
             string effectiveBodyJson,
-            OperatorCertifiedMoveExecutionStart? executionStart)
+            OperatorCertifiedMoveExecutionStart? executionStart,
+            OperatorCertifiedFamilyExecutionContext? executionContext)
         {
             var admission = envelope?.RequestFamilyAdmission;
             if (admission == null) return handlerResult;
             if (executionStart == null || executionStart.RequestInstanceHash != admission.RequestInstanceHash)
                 throw Denied("Certified move execution is missing its native pre-dispatch state capability.");
+            if (!ReferenceEquals(executionStart.ExecutionContext, executionContext))
+                throw Denied("Certified move execution transport context changed after native pre-dispatch capture.");
             if (admission.Phase != "apply")
-                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson, executionStart);
+                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson, executionStart, RequireExecutionContext(executionContext, envelope!));
 
             try
             {
-                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson, executionStart);
+                return AttachReceiptCore(app, handlerResult, envelope!, effectiveBodyJson, executionStart, RequireExecutionContext(executionContext, envelope!));
             }
             catch (OperatorCertifiedFamilyOutcomeUnknownException)
             {
@@ -63,7 +66,8 @@ namespace RevitBridge.Common
             object handlerResult,
             OperatorCourierCertificationEnvelope envelope,
             string effectiveBodyJson,
-            OperatorCertifiedMoveExecutionStart executionStart)
+            OperatorCertifiedMoveExecutionStart executionStart,
+            OperatorCertifiedFamilyExecutionContext executionContext)
         {
             var admission = envelope.RequestFamilyAdmission!;
             OperatorNativeDocumentSessionAuthority.RequireCurrent(app, admission);
@@ -149,6 +153,18 @@ namespace RevitBridge.Common
                 ["result_hash"] = nativeResultHash,
                 ["native_attestation_key_id"] = OperatorNativeExecutionAttestationAuthority.KeyId
             };
+            executionReceipt["transport_kind"] = executionContext.TransportKind;
+            executionReceipt["dispatch_id"] = executionContext.DispatchId;
+            executionReceipt["correlation_id"] = executionContext.CorrelationId;
+            executionReceipt["execution_session_id"] = executionContext.ExecutionSessionId;
+            executionReceipt["executor_id"] = executionContext.ExecutorId;
+            executionReceipt["certification_envelope_hash"] = executionContext.CertificationEnvelopeHash;
+            executionReceipt["completion_challenge_hash"] = executionContext.CompletionChallengeHash;
+            executionReceipt["preview_receipt_schema"] = previewReceipt == null ? null : previewReceipt["schema"];
+            executionReceipt["preview_receipt_hash"] = previewReceipt == null ? null : previewReceipt["preview_receipt_hash"];
+            executionReceipt["preview_instance_hash"] = previewReceipt == null ? null : previewReceipt["preview_instance_hash"];
+            executionReceipt["preview_admission_session_id"] = previewReceipt == null ? null : previewReceipt["admission_session_id"];
+            executionReceipt["preview_issued_at_utc"] = previewReceipt == null ? null : previewReceipt["issued_at_utc"];
             executionReceipt["native_attestation_signature"] =
                 OperatorNativeExecutionAttestationAuthority.SignCanonicalPayload(executionReceipt);
             var output = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -163,13 +179,42 @@ namespace RevitBridge.Common
             return output;
         }
 
+        private static OperatorCertifiedFamilyExecutionContext RequireExecutionContext(
+            OperatorCertifiedFamilyExecutionContext? executionContext,
+            OperatorCourierCertificationEnvelope envelope)
+        {
+            if (executionContext == null
+                || !string.Equals(executionContext.CertificationEnvelopeHash, envelope.EnvelopeHash, StringComparison.Ordinal))
+                throw Denied("Certified move execution is missing its exact native transport context.");
+            if (string.Equals(executionContext.TransportKind, "direct", StringComparison.Ordinal))
+            {
+                if (executionContext.CompletionChallengeHash != null
+                    || !string.Equals(executionContext.DispatchId, executionContext.CorrelationId, StringComparison.Ordinal)
+                    || !string.Equals(executionContext.ExecutionSessionId, envelope.RequestFamilyAdmission!.AdmissionSessionId, StringComparison.Ordinal)
+                    || !string.Equals(executionContext.ExecutorId, OperatorNativeExecutionAttestationAuthority.KeyId, StringComparison.Ordinal))
+                    throw Denied("Certified direct execution transport context is invalid.");
+            }
+            else if (string.Equals(executionContext.TransportKind, "courier", StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(executionContext.CompletionChallengeHash))
+                    throw Denied("Certified courier execution transport context is not challenge-bound.");
+            }
+            else
+            {
+                throw Denied("Certified move execution transport kind is invalid.");
+            }
+            return executionContext;
+        }
+
         public static OperatorCertifiedMoveExecutionStart? CaptureStartAndConsumeApplyReceipt(
             UIApplication app,
             OperatorCourierCertificationEnvelope? envelope,
-            string effectiveBodyJson)
+            string effectiveBodyJson,
+            OperatorCertifiedFamilyExecutionContext? executionContext)
         {
             var admission = envelope?.RequestFamilyAdmission;
             if (admission == null) return null;
+            RequireExecutionContext(executionContext, envelope!);
             OperatorNativeDocumentSessionAuthority.RequireCurrent(app, admission);
             var element = app.ActiveUIDocument.Document.GetElement(ElementIdCompat.Create(admission.ElementId));
             if (element == null || !element.IsValidObject || !(element.Location is LocationPoint locationPoint))
@@ -183,7 +228,8 @@ namespace RevitBridge.Common
                 locationPoint.Point.Z,
                 vector.X,
                 vector.Y,
-                vector.Z);
+                vector.Z,
+                executionContext);
             if (admission.Phase != "apply") return executionStart;
             if (admission.PreviewReceipt == null || admission.PreviewReceiptHash == null || admission.PreviewInstanceHash == null)
                 throw Denied("Certified move apply is missing its native preview receipt.");
@@ -343,6 +389,70 @@ namespace RevitBridge.Common
                 OperatorCourierCertificationEnvelopeVerifier.Canonicalize(document.RootElement));
         }
 
+        public static bool IsIndependentlyVerifiedCertifiedFamilyResult(object result)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(JsonSerializer.Serialize(result));
+                if (document.RootElement.ValueKind != JsonValueKind.Object
+                    || !document.RootElement.TryGetProperty("certified_execution_receipt", out var receipt)
+                    || receipt.ValueKind != JsonValueKind.Object
+                    || !String(receipt, "schema", out var schema)
+                    || schema != "revit-operator.certified-family-execution-receipt.v1"
+                    || !String(receipt, "native_attestation_key_id", out var keyId)
+                    || keyId != OperatorNativeExecutionAttestationAuthority.KeyId
+                    || !String(receipt, "native_attestation_signature", out var signature)
+                    || !Boolean(receipt, "outcome_unknown", out var outcomeUnknown)
+                    || outcomeUnknown) return false;
+                var signedPayload = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var property in receipt.EnumerateObject())
+                {
+                    if (property.Name == "native_attestation_signature") continue;
+                    signedPayload.Add(property.Name, property.Value.Clone());
+                }
+                if (!OperatorNativeExecutionAttestationAuthority.VerifyCanonicalPayload(signedPayload, signature)
+                    || !String(receipt, "result_hash", out var signedResultHash)) return false;
+                var nativeResult = new Dictionary<string, object?>(StringComparer.Ordinal);
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    if (property.Name == "certified_execution_receipt" || property.Name == "certified_preview_receipt") continue;
+                    nativeResult.Add(property.Name, property.Value.Clone());
+                }
+                using var nativeResultDocument = JsonDocument.Parse(JsonSerializer.Serialize(nativeResult));
+                if (signedResultHash != ComputeCertifiedMoveResultHash(nativeResultDocument.RootElement)
+                    || !String(receipt, "phase", out var phase)) return false;
+                if (phase == "preview")
+                {
+                    if (!document.RootElement.TryGetProperty("certified_preview_receipt", out var preview)
+                        || preview.ValueKind != JsonValueKind.Object) return false;
+                    return SignedPreviewFieldMatches(receipt, "preview_receipt_schema", preview, "schema")
+                        && SignedPreviewFieldMatches(receipt, "preview_receipt_hash", preview, "preview_receipt_hash")
+                        && SignedPreviewFieldMatches(receipt, "preview_instance_hash", preview, "preview_instance_hash")
+                        && SignedPreviewFieldMatches(receipt, "preview_admission_session_id", preview, "admission_session_id")
+                        && SignedPreviewFieldMatches(receipt, "preview_issued_at_utc", preview, "issued_at_utc");
+                }
+                return phase == "apply"
+                    && !document.RootElement.TryGetProperty("certified_preview_receipt", out _)
+                    && IsNull(receipt, "preview_receipt_schema")
+                    && IsNull(receipt, "preview_receipt_hash")
+                    && IsNull(receipt, "preview_instance_hash")
+                    && IsNull(receipt, "preview_admission_session_id")
+                    && IsNull(receipt, "preview_issued_at_utc");
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool SignedPreviewFieldMatches(JsonElement receipt, string receiptName, JsonElement preview, string previewName)
+            => String(receipt, receiptName, out var signed)
+                && String(preview, previewName, out var claimed)
+                && signed == claimed;
+
+        private static bool IsNull(JsonElement value, string name)
+            => value.TryGetProperty(name, out var property) && property.ValueKind == JsonValueKind.Null;
+
         private static Dictionary<string, object?> SnapshotProjection(JsonElement snapshot)
         {
             var point = Required(snapshot, "pointXyz", JsonValueKind.Array);
@@ -455,12 +565,14 @@ namespace RevitBridge.Common
             double startZ,
             double vectorX,
             double vectorY,
-            double vectorZ)
+            double vectorZ,
+            OperatorCertifiedFamilyExecutionContext? executionContext = null)
         {
             RequestInstanceHash = requestInstanceHash;
             Phase = phase;
             StartX = startX; StartY = startY; StartZ = startZ;
             VectorX = vectorX; VectorY = vectorY; VectorZ = vectorZ;
+            ExecutionContext = executionContext;
         }
 
         public string RequestInstanceHash { get; }
@@ -471,6 +583,7 @@ namespace RevitBridge.Common
         public double VectorX { get; }
         public double VectorY { get; }
         public double VectorZ { get; }
+        internal OperatorCertifiedFamilyExecutionContext? ExecutionContext { get; }
     }
 
     public sealed class OperatorCertifiedFamilyOutcomeUnknownException : InvalidOperationException, IOperatorRevitFailureMetadata
