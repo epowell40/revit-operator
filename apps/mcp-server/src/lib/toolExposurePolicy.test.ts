@@ -245,7 +245,7 @@ test("exact body-aware policy decisions distinguish known uncertified, request m
   assert.deepEqual(workflowOnlyRaw.reasonCodes, ["CERT_WORKFLOW_ONLY"]);
 });
 
-test("parameterized request-family admission remains validator-hash and instance-hash bound", () => {
+test("general exact evaluator rejects caller-authored request-family metadata", () => {
   const family = {
     schema: "revit-operator.certified-request-family.v1" as const,
     id: "revit-operator.certified-move-one.request-family.v1",
@@ -265,22 +265,11 @@ test("parameterized request-family admission remains validator-hash and instance
     dryRun: false, behavior: "allOrNothing", moveTogether: false,
     options: { failOnPinned: true, unpinIfAllowed: false }
   };
-  const allowed = evaluateToolExposure({
+  const callerAuthored = (evaluateToolExposure as unknown as (input: Record<string, unknown>) => any)({
     method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
     requestFamily: family, requestInstanceHash: `sha256:${"b".repeat(64)}`, env: policyVariantEnv(variant)
   });
-  assert.equal(allowed.allowed, true);
-  assert.equal(allowed.requestInstanceHash, `sha256:${"b".repeat(64)}`);
-  assert.deepEqual(allowed.requestFamily, family);
-  assert.deepEqual(evaluateToolExposure({
-    method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
-    env: policyVariantEnv(variant)
-  }).reasonCodes, ["CERT_REQUEST_HASH_MISMATCH"]);
-  assert.deepEqual(evaluateToolExposure({
-    method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
-    requestFamily: { ...family, validator_hash: `sha256:${"c".repeat(64)}` }, requestInstanceHash: `sha256:${"b".repeat(64)}`,
-    env: policyVariantEnv(variant)
-  }).reasonCodes, ["CERT_REQUEST_HASH_MISMATCH"]);
+  assert.deepEqual(callerAuthored.reasonCodes, ["CERT_REQUEST_HASH_MISMATCH"]);
 });
 
 test("certified move-one entry point rejects forged admission paths and binds validated preview input", () => {

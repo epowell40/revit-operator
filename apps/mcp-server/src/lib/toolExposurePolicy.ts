@@ -505,7 +505,7 @@ function effectHash(toolPath: string, method: string, body: unknown, workflow?: 
   return digest({ effect });
 }
 
-export function evaluateToolExposure(input: {
+function evaluateToolExposureInternal(input: {
   method: string;
   path: string;
   body?: unknown;
@@ -724,6 +724,28 @@ export function assertToolExposure(input: {
   );
 }
 
+/** Exact-body policy evaluation. Parameterized family admission is deliberately
+ * unavailable here; only the sealed family entry point below may use it. */
+export function evaluateToolExposure(input: {
+  method: string;
+  path: string;
+  body?: unknown;
+  channel?: ToolExposureChannel;
+  workflow?: string;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  return evaluateToolExposureInternal({
+    method: input.method,
+    path: input.path,
+    body: input.body,
+    channel: input.channel,
+    workflow: input.workflow,
+    alias: input.alias,
+    env: input.env
+  });
+}
+
 /**
  * The sole entry point for the first parameterized edit profile. It validates
  * the model-facing input before looking up a policy family binding and keeps
@@ -740,7 +762,7 @@ export function assertCertifiedMoveOneToolExposure(input: {
   if (!isCertifiedMoveOneAdmission(admission)) {
     throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_VALIDATOR_INVALID", "Certified move-one validator did not produce a local admission capability.");
   }
-  const decision = evaluateToolExposure({
+  const decision = evaluateToolExposureInternal({
     method: "POST",
     path: "/revit/move-elements",
     body: admission.outboundBody,
