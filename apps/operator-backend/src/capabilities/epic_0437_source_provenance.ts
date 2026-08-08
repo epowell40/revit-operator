@@ -6,74 +6,54 @@ import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } fro
 
 export const EPIC_0437_NATIVE_BUILD_MANIFEST_PATH = "artifacts/certification/epic-0437/native-build-manifest.v1.json";
 
-export const EPIC_0437_SOURCE_INPUTS = [
+const EPIC_0437_SOURCE_ROOTS = [
+  "apps/operator-backend/src",
+  "apps/operator-backend/test",
+  "apps/mcp-server/src",
+  "apps/revit-bridge-addin"
+] as const;
+
+const EPIC_0437_SOURCE_ROOT_FILES = [
   "apps/operator-backend/config/tool_certification_candidates.v1.json",
   "apps/operator-backend/package.json",
-  "apps/operator-backend/src/capabilities/tool_certification.ts",
-  "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
-  "apps/operator-backend/src/capabilities/epic_0437_promotion_authority.ts",
-  "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts",
-  "apps/operator-backend/src/capabilities/trusted_tool_exposure_policy.ts",
-  "apps/operator-backend/src/tools/certify_epic_0437_source.ts",
-  "apps/operator-backend/src/tools/certify_epic_0437_live.ts",
-  "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
-  "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
-  "apps/operator-backend/src/courier/revit_tool_job_certification.ts",
-  "apps/operator-backend/src/courier/revit_tool_jobs.ts",
-  "apps/operator-backend/src/courier/laboratory_evidence.ts",
-  "apps/operator-backend/src/courier/laboratory_execution_receipt.ts",
-  "apps/operator-backend/test/tool_certification.test.ts",
-  "apps/operator-backend/test/tool_certification_evidence_compiler.test.ts",
-  "apps/operator-backend/test/direct_revit_execution_authorization.test.ts",
-  "apps/operator-backend/test/revit_courier_contract.test.ts",
-  "apps/operator-backend/test/laboratory_execution_receipt.test.ts",
-  "apps/mcp-server/src/server.ts",
+  "apps/operator-backend/package-lock.json",
+  "apps/operator-backend/tsconfig.json",
   "apps/mcp-server/package.json",
-  "apps/mcp-server/src/spatialObservationV1.ts",
-  "apps/mcp-server/src/lib/certifiedMoveTargetLedger.ts",
-  "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.ts",
-  "apps/mcp-server/src/lib/certifiedCapabilityProjection.ts",
-  "apps/mcp-server/src/lib/revitClient.ts",
-  "apps/mcp-server/src/lib/revitCourier.ts",
-  "apps/mcp-server/src/lib/nativeTransport.ts",
-  "apps/mcp-server/src/lib/laboratoryEvidenceDispatch.ts",
-  "apps/mcp-server/src/lib/laboratoryMoveEvidence.ts",
-  "apps/mcp-server/src/lib/laboratoryMoveEvidenceClient.ts",
-  "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
-  "apps/mcp-server/src/spatialObservationV1.test.ts",
-  "apps/mcp-server/src/lib/certifiedMoveTargetLedger.test.ts",
-  "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.test.ts",
-  "apps/mcp-server/src/lib/certifiedExecutionEnvelope.test.ts",
-  "apps/mcp-server/src/lib/toolExposurePolicy.ts",
-  "apps/mcp-server/src/lib/toolExposurePolicy.test.ts",
-  "apps/mcp-server/src/lib/revitClient.test.ts",
-  "apps/mcp-server/src/lib/revitCourier.test.ts",
-  "apps/mcp-server/src/lib/nativeTransport.test.ts",
-  "apps/mcp-server/src/lib/laboratoryEvidenceDispatch.test.ts",
-  "apps/mcp-server/src/lib/laboratoryMoveEvidence.test.ts",
-  "apps/revit-bridge-addin/RevitBridge/App.cs",
-  "apps/revit-bridge-addin/RevitBridge/Server/RevitHttpServer.cs",
-  "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionRunner.cs",
-  "apps/revit-bridge-addin/RevitBridge/Operator/OperatorBackendContracts.cs",
-  "apps/revit-bridge-addin/RevitBridge/Operator/OperatorRevitCourierWorker.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedRequestFamilyAdmission.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedMovePreviewAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCourierResultCompactor.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeExecutionAttestationAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeToolExposureAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryEvidenceDispatch.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Selection/ExportVisibleElementsHandler.cs",
-  "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MoveElementsHandler.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorCertifiedFamilyExecutionContextTests.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorCertifiedRequestFamilyAdmissionTests.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorCertifiedMovePreviewAuthorityTests.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeToolExposureAuthorityTests.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorLaboratoryMoveEvidenceAdmissionTests.cs"
+  "apps/mcp-server/package-lock.json",
+  "apps/mcp-server/tsconfig.json"
 ] as const;
+
+const IGNORED_SOURCE_DIRECTORIES = new Set([".git", ".vs", "bin", "obj", "node_modules", "dist", "TestResults"]);
+
+function discoverSourceFiles(repoRoot: string, relativeRoot: string): string[] {
+  const output: string[] = [];
+  const visit = (relative: string): void => {
+    const absolute = path.join(repoRoot, relative);
+    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
+      if (entry.isSymbolicLink()) throw new Error(`EPIC-0437 source provenance refuses symlinked build input: ${relative}/${entry.name}`);
+      const child = `${relative}/${entry.name}`.replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        if (!IGNORED_SOURCE_DIRECTORIES.has(entry.name)) visit(child);
+      } else if (entry.isFile()) {
+        output.push(child);
+      }
+    }
+  };
+  visit(relativeRoot);
+  return output;
+}
+
+export function epic0437SourceInputPaths(repoRoot: string): string[] {
+  const inputs = new Set<string>();
+  for (const relative of EPIC_0437_SOURCE_ROOT_FILES) {
+    if (!fs.existsSync(path.join(repoRoot, relative))) throw new Error(`EPIC-0437 required root build input is missing: ${relative}`);
+    inputs.add(relative);
+  }
+  for (const root of EPIC_0437_SOURCE_ROOTS) {
+    for (const relative of discoverSourceFiles(repoRoot, root)) inputs.add(relative);
+  }
+  return [...inputs].sort((left, right) => left.localeCompare(right));
+}
 
 export const EPIC_0437_NATIVE_BINARIES = {
   common: "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
@@ -106,7 +86,9 @@ function sha256Bytes(file: string): string {
 }
 
 export function epic0437SourceInputHash(repoRoot: string, relative: string, normalization?: Epic0437SourceInput["normalization"]): string {
-  let source = fs.readFileSync(path.join(repoRoot, relative), "utf8");
+  const absolute = path.join(repoRoot, relative);
+  if (normalization === undefined) return sha256Bytes(absolute);
+  let source = fs.readFileSync(absolute, "utf8");
   if (normalization !== undefined) {
     if (normalization !== "epic-0437-generated-policy-anchor-masked.v1" || !MASKED_POLICY_ANCHOR_SOURCES.has(relative)) throw new Error(`Unsupported EPIC-0437 source normalization: ${relative}`);
     let replacements = 0;
@@ -120,7 +102,7 @@ export function epic0437SourceInputHash(repoRoot: string, relative: string, norm
 }
 
 export function currentEpic0437SourceInputs(repoRoot: string): Epic0437SourceInput[] {
-  return EPIC_0437_SOURCE_INPUTS.map(relative => {
+  return epic0437SourceInputPaths(repoRoot).map(relative => {
     const normalization = MASKED_POLICY_ANCHOR_SOURCES.has(relative) ? "epic-0437-generated-policy-anchor-masked.v1" as const : undefined;
     return { path: relative, sha256: epic0437SourceInputHash(repoRoot, relative, normalization), ...(normalization ? { normalization } : {}) };
   });

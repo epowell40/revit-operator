@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
+import path from "node:path";
 import { canonicalJson, type JsonValue } from "../capabilities/tool_certification.js";
 import {
   parseLaboratoryEvidenceDispatch,
@@ -16,8 +17,11 @@ const RECEIPT_FIELDS = [
   "transport_issued_at_utc", "laboratory_evidence", "laboratory_evidence_hash",
   "laboratory_move_evidence", "method", "path", "body_present", "raw_body_sha256",
   "canonical_body_sha256", "phase", "effect_id", "effect_hash", "channel", "alias",
-  "document_fingerprint", "document_session_id", "native_attestation_algorithm",
-  "native_common_assembly_sha256", "native_logic_assembly_sha256", "native_bridge_assembly_sha256",
+  "document_fingerprint", "document_session_id", "revit_process_id", "revit_process_start_utc",
+  "revit_process_image_path", "native_attestation_algorithm",
+  "native_common_assembly_path", "native_common_assembly_sha256",
+  "native_logic_assembly_path", "native_logic_assembly_sha256",
+  "native_bridge_assembly_path", "native_bridge_assembly_sha256",
   "native_attestation_key_id", "native_attestation_modulus_base64url",
   "native_attestation_exponent_base64url", "result_hash", "outcome", "outcome_unknown",
   "issued_at_utc", "native_attestation_signature"
@@ -128,6 +132,12 @@ export function verifyLaboratoryExecutionReceipt(
   for (const [name, value] of Object.entries(attached)) if (name !== LABORATORY_EXECUTION_RECEIPT_FIELD) result[name] = value;
   if (string(receipt, "result_hash", HASH) !== sha256Text(canonicalJson(result as JsonValue))) throw new Error("Native laboratory result hash is invalid.");
   if (!ISO_UTC.test(string(receipt, "transport_issued_at_utc")) || !ISO_UTC.test(string(receipt, "issued_at_utc"))) throw new Error("Native laboratory receipt time is invalid.");
+  if (!Number.isSafeInteger(receipt.revit_process_id) || Number(receipt.revit_process_id) <= 0
+    || !ISO_UTC.test(string(receipt, "revit_process_start_utc"))) throw new Error("Native laboratory Revit process identity is invalid.");
+  for (const name of ["revit_process_image_path", "native_common_assembly_path", "native_logic_assembly_path", "native_bridge_assembly_path"] as const) {
+    const value = string(receipt, name);
+    if (!path.win32.isAbsolute(value) || value.includes("\0")) throw new Error(`Native laboratory ${name} is not one exact absolute Windows path.`);
+  }
   if (typeof receipt.body_present !== "boolean" || typeof receipt.outcome !== "string" || !receipt.outcome) throw new Error("Native laboratory receipt outcome/body binding is invalid.");
   for (const name of ["raw_body_sha256", "canonical_body_sha256", "effect_hash", "document_fingerprint", "native_common_assembly_sha256", "native_logic_assembly_sha256", "native_bridge_assembly_sha256"] as const) string(receipt, name, HASH);
   for (const name of ["request_id", "dispatch_id", "transport_request_nonce", "transport_server_epoch", "method", "path", "phase", "effect_id", "channel", "alias", "document_session_id"] as const) string(receipt, name);

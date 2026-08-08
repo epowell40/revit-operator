@@ -1,14 +1,15 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { issueLaboratoryEvidenceDispatch } from "../lib/laboratoryEvidenceDispatch.js";
+import { verifyStoredLaboratoryExecutionResult, type LaboratoryNativeAttestationBinding } from "../lib/laboratoryMoveEvidence.js";
 import { callLaboratoryMoveOneEvidence } from "../lib/laboratoryMoveEvidenceClient.js";
 import { callRevit, readRevitDirectLaboratoryEvidenceContext } from "../lib/revitClient.js";
 import { readRevitCourierLaboratoryEvidenceContext } from "../lib/revitCourier.js";
 import { callNativeTransport } from "../lib/nativeTransport.js";
 import { canonicalToolExposureJson, runWithRevitToolAlias } from "../lib/toolExposurePolicy.js";
-import { getOperatorToken, getWorkspaceRoot } from "../lib/workspace.js";
+import { getOperatorToken } from "../lib/workspace.js";
 import { observeModelV1, readCertifiedMoveTargetsV1, type SpatialObservationCall } from "../spatialObservationV1.js";
 
 type Point = Readonly<{ x: number; y: number; z: number }>;
@@ -25,6 +26,7 @@ type Step = {
 function argument(name: string): string | undefined { const index = process.argv.indexOf(name); return index >= 0 ? process.argv[index + 1] : undefined; }
 function sha(raw: string): string { return `sha256:${createHash("sha256").update(raw, "utf8").digest("hex")}`; }
 function shaBytes(raw: Buffer): string { return `sha256:${createHash("sha256").update(raw).digest("hex")}`; }
+function normalizedWindowsPath(value: string): string { return path.win32.resolve(value).replace(/[\\/]+$/, "").toLowerCase(); }
 function exactPath(repoRoot: string, relative: string): string {
   if (!relative.startsWith("artifacts/certification/epic-0437/runs/") || relative.includes("\\") || relative.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Evidence path is not a bounded EPIC-0437 run path.");
   const resolved = path.resolve(repoRoot, relative);
@@ -47,20 +49,16 @@ function writeJsonAtomic(target: string, value: unknown): string {
   return sha(rendered);
 }
 
-function pendingRecovery(repoRoot: string): { path: string; relative: string; state: Record<string, any> } | null {
+function recoveryRecords(repoRoot: string): Array<{ path: string; relative: string; state: Record<string, any> }> {
   const runRoot = path.join(repoRoot, "artifacts", "certification", "epic-0437", "runs");
-  if (!fs.existsSync(runRoot)) return null;
-  const terminal = new Set(["preview_only", "restored", "restored_by_reconciliation", "restored_after_failure"]);
-  const pending = fs.readdirSync(runRoot, { withFileTypes: true })
+  if (!fs.existsSync(runRoot)) return [];
+  return fs.readdirSync(runRoot, { withFileTypes: true })
     .filter(item => item.isFile() && item.name.endsWith(".recovery.json"))
     .map(item => {
       const target = path.join(runRoot, item.name);
       try { return { path: target, relative: path.posix.join("artifacts/certification/epic-0437/runs", item.name), state: JSON.parse(fs.readFileSync(target, "utf8")) as Record<string, any> }; }
       catch { throw new Error(`Pending recovery record is unreadable: ${item.name}`); }
-    })
-    .filter(item => !terminal.has(String(item.state.state)));
-  if (pending.length > 1) throw new Error("Multiple EPIC-0437 move recovery records require reconciliation; refusing another evidence run.");
-  return pending[0] ?? null;
+    });
 }
 function point(value: unknown, name: string): Point {
   const raw = value as Record<string, unknown>;
@@ -107,8 +105,26 @@ async function main(): Promise<void> {
 
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
   const outputRelative = argument("--output") ?? `artifacts/certification/epic-0437/runs/${level.toLowerCase()}-${Date.now()}.json`;
+  if (!/^artifacts\/certification\/epic-0437\/runs\/[A-Za-z0-9][A-Za-z0-9._-]*\.json$/.test(outputRelative)) {
+    throw new Error("--output must be one direct, bounded EPIC-0437 runs-root JSON file so recovery discovery is exhaustive.");
+  }
   const outputPath = exactPath(repoRoot, outputRelative);
-  const priorRecovery = pendingRecovery(repoRoot);
+  const disposableArgument = argument("--disposable-model-path");
+  if (!disposableArgument || !path.win32.isAbsolute(disposableArgument) || path.win32.extname(disposableArgument).toLowerCase() !== ".rvt") {
+    throw new Error("--disposable-model-path must be the exact absolute path of the open disposable RVT copy.");
+  }
+  const disposableRoot = path.join(process.env.LOCALAPPDATA ?? "", "RevitOperator", "CertificationEvidence", "DisposableModels");
+  const disposableModelPath = path.resolve(disposableArgument);
+  const normalizedDisposableRoot = `${normalizedWindowsPath(disposableRoot)}\\`;
+  const disposableRelative = path.win32.relative(disposableRoot, disposableModelPath);
+  if (!normalizedWindowsPath(disposableModelPath).startsWith(normalizedDisposableRoot)
+    || !/^[0-9a-f]{32}\\Snowdon Towers Sample HVAC\.rvt$/i.test(disposableRelative)) {
+    throw new Error(`The evidence model must be ${disposableRoot}\\<32-hex-ceremony-id>\\Snowdon Towers Sample HVAC.rvt.`);
+  }
+  const disposableStat = fs.lstatSync(disposableModelPath);
+  if (!disposableStat.isFile() || disposableStat.isSymbolicLink()) throw new Error("The disposable evidence model must be one regular non-symlink file.");
+  const disposableModelSha256Before = shaBytes(fs.readFileSync(disposableModelPath));
+  const discoveredRecoveryRecords = recoveryRecords(repoRoot);
   const runId = randomBytes(16).toString("hex");
   const workflowPrefix = `epic-0437-${level.toLowerCase()}`;
   const steps: Step[] = [];
@@ -184,6 +200,67 @@ async function main(): Promise<void> {
   const bootstrapFingerprint = bootstrapFingerprintRaw.startsWith("sha256:") ? bootstrapFingerprintRaw : `sha256:${bootstrapFingerprintRaw}`;
   const bootstrapSessionId = String(trustBootstrap.document?.sessionId ?? "");
   const bootstrapAttestation = trustBootstrap.document?.nativeExecutionAttestation;
+  const trustedNativeAttestation: LaboratoryNativeAttestationBinding = {
+    algorithm: bootstrapAttestation?.algorithm,
+    key_id: bootstrapAttestation?.key_id,
+    modulus_base64url: bootstrapAttestation?.modulus_base64url,
+    exponent_base64url: bootstrapAttestation?.exponent_base64url
+  };
+
+  const terminalRecoveryStates = new Set(["preview_only", "restored", "restored_after_failure"]);
+  const pendingRecoveryRecords: typeof discoveredRecoveryRecords = [];
+  for (const record of discoveredRecoveryRecords) {
+    const saved = record.state;
+    if (saved.schema !== "revit-operator.epic-0437-move-recovery.v2" || !/^[0-9a-f]{32}$/.test(String(saved.evidence_run_id))
+      || (saved.level !== "L3" && saved.level !== "L4") || saved.source_scoped_id !== `host:${Number(saved.target_id)}`
+      || typeof saved.preview_result_sha256 !== "string" || saved.preview_result_sha256 !== sha(canonicalToolExposureJson(saved.preview_result))) {
+      throw new Error(`Recovery record ${record.relative} is not sealed to one exact native-signed preview result.`);
+    }
+    const previewReceipt = verifyStoredLaboratoryExecutionResult(saved.preview_result, trustedNativeAttestation);
+    const previewDispatch = previewReceipt.laboratory_evidence as Record<string, unknown> | null;
+    const previewProjection = previewReceipt.laboratory_move_evidence as Record<string, unknown> | null;
+    const savedStart = point(saved.start, "sealed recovery start");
+    const savedVector = point(saved.vector, "sealed recovery vector");
+    const previewOutcome = validateMoveResult(saved.preview_result, Number(saved.target_id), savedVector, true);
+    const savedFingerprintRaw = String(saved.document_fingerprint ?? "");
+    const savedFingerprint = savedFingerprintRaw.startsWith("sha256:") ? savedFingerprintRaw : `sha256:${savedFingerprintRaw}`;
+    if (!previewDispatch || !previewProjection
+      || previewDispatch.candidate_source_hash !== "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc"
+      || previewDispatch.evidence_run_id !== saved.evidence_run_id || previewDispatch.evidence_step !== "move-preview"
+      || previewDispatch.production_certified !== false || previewReceipt.phase !== "preview"
+      || previewReceipt.effect_hash !== "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c0250fcc55ede2d87107d06ae428b"
+      || previewReceipt.document_fingerprint !== savedFingerprint || previewReceipt.document_session_id !== saved.document_session_id
+      || previewProjection.source_scoped_id !== saved.source_scoped_id || previewProjection.element_id !== saved.target_id
+      || !same(previewOutcome.before, savedStart) || !same(previewOutcome.after, plus(savedStart, savedVector))) {
+      throw new Error(`Recovery record ${record.relative} fields do not match its exact native-signed preview authority.`);
+    }
+    if (terminalRecoveryStates.has(String(saved.state))) {
+      if (saved.state === "preview_only") {
+        if (saved.level !== "L3" || saved.terminal_move_result !== undefined) throw new Error(`Recovery record ${record.relative} has an invalid preview-only terminal proof.`);
+        continue;
+      }
+      if (saved.level !== "L4" || typeof saved.terminal_move_result_sha256 !== "string"
+        || saved.terminal_move_result_sha256 !== sha(canonicalToolExposureJson(saved.terminal_move_result))) {
+        throw new Error(`Recovery record ${record.relative} is missing its exact signed restoration proof.`);
+      }
+      const terminalReceipt = verifyStoredLaboratoryExecutionResult(saved.terminal_move_result, trustedNativeAttestation);
+      const terminalDispatch = terminalReceipt.laboratory_evidence as Record<string, unknown> | null;
+      const terminalProjection = terminalReceipt.laboratory_move_evidence as Record<string, unknown> | null;
+      const restored = validateMoveResult(saved.terminal_move_result, Number(saved.target_id), minus(savedVector), false);
+      if (!terminalDispatch || !terminalProjection || terminalDispatch.evidence_run_id !== saved.evidence_run_id
+        || terminalDispatch.candidate_source_hash !== previewDispatch.candidate_source_hash
+        || terminalDispatch.production_certified !== false || terminalReceipt.phase !== "apply"
+        || terminalReceipt.effect_hash !== "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b"
+        || typeof terminalProjection.preview_lineage_receipt_hash !== "string"
+        || terminalReceipt.document_fingerprint !== savedFingerprint || !same(restored.before, plus(savedStart, savedVector)) || !same(restored.after, savedStart)) {
+        throw new Error(`Recovery record ${record.relative} terminal state is not proved by an exact native-signed inverse apply.`);
+      }
+      continue;
+    }
+    pendingRecoveryRecords.push(record);
+  }
+  if (pendingRecoveryRecords.length > 1) throw new Error("Multiple authenticated EPIC-0437 recovery records require manual reconciliation; refusing another run.");
+  const priorRecovery = pendingRecoveryRecords[0] ?? null;
 
   // Recovery is a mandatory startup gate. A prior L4 run may have committed
   // even when its transport response was lost or the host crashed. Re-observe
@@ -195,7 +272,7 @@ async function main(): Promise<void> {
     const savedLevel = String(state.level ?? "");
     const savedTargetId = Number(state.target_id);
     const savedViewId = Number(state.view_id);
-    if (state.schema !== "revit-operator.epic-0437-move-recovery.v1" || savedLevel !== "L4"
+    if (state.schema !== "revit-operator.epic-0437-move-recovery.v2" || savedLevel !== "L4"
       || level !== "L4" || savedTargetId !== targetId || savedViewId !== viewId
       || state.source_scoped_id !== `host:${targetId}`) {
       throw new Error(`Pending recovery ${priorRecovery.relative} does not match this exact L4 target/view invocation.`);
@@ -226,12 +303,13 @@ async function main(): Promise<void> {
       const recoveryFingerprintRaw = String(recoveryContext.document?.projectIdentity?.fingerprint ?? "");
       const recoveryFingerprint = recoveryFingerprintRaw.startsWith("sha256:") ? recoveryFingerprintRaw : `sha256:${recoveryFingerprintRaw}`;
       if (recoveryFingerprint !== savedFingerprint) throw new Error("Pending recovery context changed document fingerprint.");
-      await callStep("revit_activate_view", "recovery-activate-view", "/revit/activate-view", "POST", { viewId: savedViewId, zoomToFit: true });
+      if (Number(recoveryContext.document?.activeView?.id) !== savedViewId) {
+        throw new Error(`Pending recovery requires Revit view ${savedViewId} to be active before reconciliation.`);
+      }
       const current = await recoveryReadback("recovery-readback-current");
       if (same(current.point, savedStart)) {
-        updatePriorRecovery("restored_by_reconciliation", { restored_point: current.point, outcome_unknown: false, retryable: false });
-        process.stdout.write(json({ recovered: priorRecovery.relative, state: "restored_by_reconciliation", target_id: targetId }));
-        return;
+        updatePriorRecovery("manual_close_without_save_required", { observed_safe_point: current.point, outcome_unknown: false, retryable: false });
+        throw new Error(`Recovery target is at its signed starting point, but no signed inverse apply exists. Close/discard this disposable model and archive ${priorRecovery.relative} before another run.`);
       }
       const committed = plus(savedStart, savedVector);
       if (!same(current.point, committed)) {
@@ -246,7 +324,8 @@ async function main(): Promise<void> {
       validateMoveResult(applyCall.result, targetId, inverse, false);
       const restored = await recoveryReadback("recovery-readback-restored");
       if (!same(restored.point, savedStart)) throw new Error("Pending recovery inverse apply did not restore the exact starting point.");
-      updatePriorRecovery("restored_after_failure", { restored_point: restored.point, outcome_unknown: false, retryable: false });
+      updatePriorRecovery("restored_after_failure", { restored_point: restored.point, outcome_unknown: false, retryable: false,
+        terminal_move_result: applyCall.result, terminal_move_result_sha256: sha(canonicalToolExposureJson(applyCall.result)) });
       process.stdout.write(json({ recovered: priorRecovery.relative, state: "restored_after_failure", target_id: targetId }));
       return;
     } catch (error) {
@@ -265,7 +344,12 @@ async function main(): Promise<void> {
     || canonicalToolExposureJson(initialContext.document?.nativeExecutionAttestation) !== canonicalToolExposureJson(bootstrapAttestation)) {
     throw new Error("Courier/direct evidence context does not match the independently authenticated native document/session/key bootstrap.");
   }
-  await callStep("revit_activate_view", "activate-view", "/revit/activate-view", "POST", { viewId, zoomToFit: true });
+  if (Number(initialContext.document?.activeView?.id) !== viewId) {
+    throw new Error(`Live evidence requires Revit view ${viewId} to be active before the run; view activation is an operator precondition, not certification evidence.`);
+  }
+  if (normalizedWindowsPath(String(initialContext.document?.path ?? "")) !== normalizedWindowsPath(disposableModelPath)) {
+    throw new Error("The active Revit document is not the exact explicitly supplied disposable model copy.");
+  }
 
   const observationCall: SpatialObservationCall = (route, method, body) => callStep("revit_observe_model", "observation", route, method, body);
   const observationResult = await observeModelV1({}, observationCall);
@@ -305,10 +389,11 @@ async function main(): Promise<void> {
   const recoveryRelative = outputRelative.replace(/\.json$/, ".recovery.json");
   const recoveryPath = exactPath(repoRoot, recoveryRelative);
   let recovery: Record<string, unknown> = {
-    schema: "revit-operator.epic-0437-move-recovery.v1", evidence_run_id: runId, level,
-    document_fingerprint: String(initialContext.document?.projectIdentity?.fingerprint ?? ""),
+    schema: "revit-operator.epic-0437-move-recovery.v2", evidence_run_id: runId, level,
+    document_fingerprint: initialFingerprint,
     document_session_id: initialContext.document?.sessionId, view_id: viewId, target_id: targetId, source_scoped_id: target.sourceScopedId,
-    start, vector, state: level === "L3" ? "preview_only" : "prepared", updated_at_utc: new Date().toISOString()
+    start, vector, preview_result: previewCall.result, preview_result_sha256: sha(canonicalToolExposureJson(previewCall.result)),
+    state: level === "L3" ? "preview_only" : "prepared", updated_at_utc: new Date().toISOString()
   };
   let recoverySha = writeJsonAtomic(recoveryPath, recovery);
   let apply: Record<string, unknown> | null = null;
@@ -322,6 +407,18 @@ async function main(): Promise<void> {
   };
   const saveRecovery = (state: string, details: Record<string, unknown> = {}): void => {
     recovery = { ...recovery, ...details, state, updated_at_utc: new Date().toISOString() };
+    recoverySha = writeJsonAtomic(recoveryPath, recovery);
+  };
+  const saveTerminalRecovery = (state: "restored" | "restored_after_failure", restoredPoint: Point, terminalMoveResult: Record<string, unknown>): void => {
+    recovery = {
+      schema: "revit-operator.epic-0437-move-recovery.v2", evidence_run_id: runId, level,
+      document_fingerprint: initialFingerprint,
+      document_session_id: initialContext.document?.sessionId, view_id: viewId, target_id: targetId, source_scoped_id: target.sourceScopedId,
+      start, vector, preview_result: previewCall.result, preview_result_sha256: sha(canonicalToolExposureJson(previewCall.result)),
+      state, updated_at_utc: new Date().toISOString(), restored_point: restoredPoint,
+      terminal_move_result: terminalMoveResult,
+      terminal_move_result_sha256: sha(canonicalToolExposureJson(terminalMoveResult))
+    };
     recoverySha = writeJsonAtomic(recoveryPath, recovery);
   };
 
@@ -349,7 +446,7 @@ async function main(): Promise<void> {
       const restoredReadback = await currentTargetPoint("readback-restored");
       if (!same(restored.before, committed.after) || !same(restored.after, start) || !same(restoredReadback.point, start)) throw new Error("Exact inverse restoration was not independently proven.");
       restoreRequired = false;
-      saveRecovery("restored", { restored_point: restoredReadback.point, restore_result_sha256: sha(canonicalToolExposureJson(restoreCall.result)) });
+      saveTerminalRecovery("restored", restoredReadback.point, restoreCall.result);
       apply = {
         result: applyCall.result, committed_point: committedReadback.point,
         committed_readback_observation_id: committedReadback.observation.observationId,
@@ -365,7 +462,7 @@ async function main(): Promise<void> {
         const reconciled = await currentTargetPoint(`recovery-readback-${sequence + 1}`);
         if (same(reconciled.point, start)) {
           restoreRequired = false;
-          saveRecovery("restored_by_reconciliation", { restored_point: reconciled.point });
+          saveRecovery("manual_close_without_save_required", { observed_safe_point: reconciled.point, retryable: false, outcome_unknown: false });
         } else if (!same(reconciled.point, plus(start, vector))) {
           throw new Error("Target is at neither the exact starting nor committed point; manual reconciliation is required.");
         } else {
@@ -377,7 +474,7 @@ async function main(): Promise<void> {
           const final = await currentTargetPoint(`recovery-readback-restored-${sequence + 1}`);
           if (!same(final.point, start)) throw new Error("Recovery restore readback did not prove the starting point.");
           restoreRequired = false;
-          saveRecovery("restored_after_failure", { restored_point: final.point });
+          saveTerminalRecovery("restored_after_failure", final.point, recoveryApply.result);
         }
       } catch (recoveryError) {
         saveRecovery("manual_reconciliation_required", { recovery_error: recoveryError instanceof Error ? recoveryError.message : String(recoveryError), retryable: false, outcome_unknown: true });
@@ -387,12 +484,13 @@ async function main(): Promise<void> {
   }
 
   const finalContext = await callStep("revit_get_context", "context-after", "/revit/context", "GET");
+  const disposableModelSha256After = shaBytes(fs.readFileSync(disposableModelPath));
   const fingerprint = String(initialContext.document?.projectIdentity?.fingerprint ?? "");
   const normalizedFingerprint = fingerprint.startsWith("sha256:") ? fingerprint : `sha256:${fingerprint}`;
   if (initialContext.document?.sessionId !== finalContext.document?.sessionId) throw new Error("Document session changed during live evidence.");
   const expectedNames = level === "L3"
-    ? ["context-before", "activate-view", "observation", "readback-initial", "move-preview", "readback-rollback", "context-after"]
-    : ["context-before", "activate-view", "observation", "readback-initial", "move-preview", "readback-rollback", "move-apply", "readback-committed", "restore-preview", "readback-still-committed", "restore-apply", "readback-restored", "context-after"];
+    ? ["context-before", "observation", "readback-initial", "move-preview", "readback-rollback", "context-after"]
+    : ["context-before", "observation", "readback-initial", "move-preview", "readback-rollback", "move-apply", "readback-committed", "restore-preview", "readback-still-committed", "restore-apply", "readback-restored", "context-after"];
   if (JSON.stringify(steps.map(step => step.name)) !== JSON.stringify(expectedNames)) throw new Error("Successful live evidence step graph is not exact.");
   const run = {
     schema: "revit-operator.epic-0437-live-evidence-run.v2", evidence_run_id: runId, level,
@@ -401,7 +499,8 @@ async function main(): Promise<void> {
     runtime: { mode: "development", exposure_profile: "laboratory", protected_evidence: true, production_certified: false },
     document: { title: initialContext.document.title, path: initialContext.document.path, fingerprint: normalizedFingerprint,
       session_id: initialContext.document.sessionId, final_session_id: finalContext.document?.sessionId,
-      native_attestation: bootstrapAttestation },
+      native_attestation: bootstrapAttestation, disposable_model_path: disposableModelPath,
+      disposable_model_sha256_before: disposableModelSha256Before, disposable_model_sha256_after: disposableModelSha256After },
     view: { id: viewId, name: observation.view?.name ?? observation.viewName, type: observation.view?.type ?? observation.viewType },
     observation: { alias: "revit_observe_model", observation_id: observation.observationId, count: observation.count,
       scanned: observation.scanned, certified_target_count: observation.certifiedTargetCount, image_sha256: observationImageSha256,
@@ -415,23 +514,9 @@ async function main(): Promise<void> {
     completed_at_utc: new Date().toISOString()
   };
   const outputSha = writeJsonAtomic(outputPath, run);
-  const trustPinPayload = {
-    schema: "revit-operator.epic-0437-live-native-trust-pin.v1",
-    evidence_run_id: runId,
-    candidate_source_hash: run.candidate_source_hash,
-    run_receipt_path: outputRelative,
-    run_receipt_sha256: outputSha,
-    document_fingerprint: normalizedFingerprint,
-    document_session_id: initialContext.document.sessionId,
-    native_attestation: bootstrapAttestation,
-    issued_at_utc: new Date().toISOString()
-  };
-  const trustKey = createHash("sha256").update(`epic-0437-evidence-trust|${getOperatorToken()}`, "utf8").digest();
-  const trustPin = { ...trustPinPayload, mac_sha256: `sha256:${createHmac("sha256", trustKey).update(canonicalToolExposureJson(trustPinPayload), "utf8").digest("hex")}` };
-  const trustPinPath = path.join(getWorkspaceRoot(), "certification-evidence-trust", `${runId}.json`);
-  writeJsonAtomic(trustPinPath, trustPin);
   process.stdout.write(json({ output: outputRelative, sha256: outputSha, level, element_id: targetId,
-    rollback_verified: true, committed_and_restored: apply !== null, recovery_state: recovery.state, trust_pin_path: trustPinPath }));
+    rollback_verified: true, committed_and_restored: apply !== null, recovery_state: recovery.state,
+    promotion: "requires detached authorization from the independently trusted hardware/offline signer" }));
 }
 
 main().catch(error => { process.stderr.write(`EPIC-0437 live evidence failed: ${String(error)}\n`); process.exitCode = 1; });

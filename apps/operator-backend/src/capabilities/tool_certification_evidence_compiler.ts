@@ -141,8 +141,17 @@ export function validateEpic0437LiveEvidenceRun(
   exact(runtime, ["mode", "exposure_profile", "protected_evidence", "production_certified"], `${relativeRunPath}.runtime`);
   if (runtime.mode !== "development" || runtime.exposure_profile !== "laboratory" || runtime.protected_evidence !== true || runtime.production_certified !== false) throw new Error("EPIC-0437 live run falsely claims a production-certified lane");
   const document = object(run.document, `${relativeRunPath}.document`);
-  exact(document, ["title", "path", "fingerprint", "session_id", "final_session_id", "native_attestation"], `${relativeRunPath}.document`);
+  exact(document, ["title", "path", "fingerprint", "session_id", "final_session_id", "native_attestation", "disposable_model_path", "disposable_model_sha256_before", "disposable_model_sha256_after"], `${relativeRunPath}.document`);
   if (document.title !== "Snowdon Towers Sample HVAC" || !shaPattern.test(String(document.fingerprint)) || !/^[0-9a-f]{32}$/.test(String(document.session_id)) || document.final_session_id !== document.session_id) throw new Error("EPIC-0437 live run document/session binding is invalid");
+  const disposableRoot = path.win32.resolve(process.env.LOCALAPPDATA ?? "", "RevitOperator", "CertificationEvidence", "DisposableModels").toLowerCase() + "\\";
+  const disposablePath = path.win32.resolve(String(document.disposable_model_path ?? "")).toLowerCase();
+  const disposableRelative = path.win32.relative(disposableRoot, disposablePath);
+  if (!disposablePath.startsWith(disposableRoot) || !/^[0-9a-f]{32}\\snowdon towers sample hvac\.rvt$/.test(disposableRelative)
+    || path.win32.resolve(String(document.path ?? "")).toLowerCase() !== disposablePath
+    || !shaPattern.test(String(document.disposable_model_sha256_before))
+    || document.disposable_model_sha256_after !== document.disposable_model_sha256_before) {
+    throw new Error("EPIC-0437 live evidence did not use one exact unsaved disposable model copy");
+  }
   const attestation = object(document.native_attestation, `${relativeRunPath}.document.native_attestation`);
   if (attestation.schema !== "revit-operator.native-execution-attestation-key.v1" || attestation.algorithm !== trustedNativeAttestation.algorithm
     || attestation.key_id !== trustedNativeAttestation.key_id || attestation.modulus_base64url !== trustedNativeAttestation.modulus_base64url
@@ -197,11 +206,22 @@ export function validateEpic0437LiveEvidenceRun(
   const recoveryRaw = fs.readFileSync(resolveInside(repoRoot, recoveryRelative), "utf8");
   if (sha256NormalizedText(recoveryRaw) !== sha(recovery.sha256, "EPIC-0437 recovery hash")) throw new Error("EPIC-0437 recovery state hash mismatch");
   const recoveryState = object(JSON.parse(recoveryRaw), "EPIC-0437 recovery state");
-  if (recoveryState.evidence_run_id !== run.evidence_run_id || recoveryState.state !== expectedRecovery || recoveryState.target_id !== elementId) throw new Error("EPIC-0437 recovery state does not bind the exact safe terminal run");
+  const recoveryFields = ["schema", "evidence_run_id", "level", "document_fingerprint", "document_session_id", "view_id", "target_id", "source_scoped_id",
+    "start", "vector", "preview_result", "preview_result_sha256", "state", "updated_at_utc",
+    ...(level === "L4" ? ["restored_point", "terminal_move_result", "terminal_move_result_sha256"] : [])];
+  exact(recoveryState, recoveryFields, "EPIC-0437 recovery state");
+  if (recoveryState.schema !== "revit-operator.epic-0437-move-recovery.v2" || recoveryState.evidence_run_id !== run.evidence_run_id
+    || recoveryState.level !== level || recoveryState.state !== expectedRecovery || recoveryState.target_id !== elementId
+    || recoveryState.source_scoped_id !== `host:${elementId}` || recoveryState.document_fingerprint !== document.fingerprint
+    || recoveryState.document_session_id !== document.session_id || recoveryState.view_id !== view.id
+    || recoveryState.preview_result_sha256 !== sha256NormalizedText(canonicalJson(recoveryState.preview_result as JsonValue))
+    || (level === "L4" && recoveryState.terminal_move_result_sha256 !== sha256NormalizedText(canonicalJson(recoveryState.terminal_move_result as JsonValue)))) {
+    throw new Error("EPIC-0437 recovery state is not exactly sealed to the safe terminal run");
+  }
 
   const expectedSteps = level === "L3"
-    ? ["context-before", "activate-view", "observation", "readback-initial", "move-preview", "readback-rollback", "context-after"]
-    : ["context-before", "activate-view", "observation", "readback-initial", "move-preview", "readback-rollback", "move-apply", "readback-committed", "restore-preview", "readback-still-committed", "restore-apply", "readback-restored", "context-after"];
+    ? ["context-before", "observation", "readback-initial", "move-preview", "readback-rollback", "context-after"]
+    : ["context-before", "observation", "readback-initial", "move-preview", "readback-rollback", "move-apply", "readback-committed", "restore-preview", "readback-still-committed", "restore-apply", "readback-restored", "context-after"];
   if (!Array.isArray(run.steps) || JSON.stringify(run.steps.map((value: unknown) => object(value, "EPIC-0437 step").name)) !== JSON.stringify(expectedSteps)) throw new Error("EPIC-0437 live run step graph is not exact");
   const dispatches = new Set<string>();
   const signedResults = new Map<string, Record<string, unknown>>();
@@ -220,7 +240,6 @@ export function validateEpic0437LiveEvidenceRun(
     dryRun, behavior: "allOrNothing", moveTogether: false, options: { failOnPinned: true, unpinIfAllowed: false } });
   const expectedStep = (name: string): { method: string; path: string; alias: string; phase: string; effectHash?: string; body?: JsonValue } => {
     if (name === "context-before" || name === "context-after") return { method: "GET", path: "/revit/context", alias: "revit_get_context", phase: "read" };
-    if (name === "activate-view") return { method: "POST", path: "/revit/activate-view", alias: "revit_activate_view", phase: "apply", body: { viewId: view.id as number, zoomToFit: true } };
     if (name === "observation" || name.startsWith("readback-")) return { method: "POST", path: "/revit/export-visible-elements",
       alias: name === "observation" ? "revit_observe_model" : "revit_read_move_targets_certified", phase: "read",
       effectHash: "sha256:0f19ae675c51b10854e3977070ad34e4898a004c4a724058f933c17233f37bf8", body: observationBody };
@@ -235,6 +254,7 @@ export function validateEpic0437LiveEvidenceRun(
     throw new Error(`Unexpected EPIC-0437 evidence step: ${name}`);
   };
   let observedKey: TrustedNativeAttestationBinding | null = null;
+  let observedProcess: string | null = null;
   for (const [index, rawTransport] of run.steps.entries()) {
     const transport = object(rawTransport, `${relativeRunPath}.steps[${index}]`);
     exact(transport, ["name", "method", "path", "channel", "alias", "workflow", "request_body", "canonical_body_sha256", "dispatch_id", "correlation_id", "result_path", "result_sha256", "courier_job_path", "courier_job_sha256", "courier_result_path", "courier_result_sha256"], `${relativeRunPath}.steps[${index}]`);
@@ -395,6 +415,16 @@ export function validateEpic0437LiveEvidenceRun(
     signedReceipts.set(name, verified.receipt);
     observedKey ??= verified.key;
     if (JSON.stringify(observedKey) !== JSON.stringify(verified.key)) throw new Error("EPIC-0437 live process attestation key changed during the run");
+    const processIdentity = canonicalJson({
+      process_id: verified.receipt.revit_process_id,
+      process_start_utc: verified.receipt.revit_process_start_utc,
+      process_image_path: verified.receipt.revit_process_image_path,
+      common_path: verified.receipt.native_common_assembly_path,
+      logic_path: verified.receipt.native_logic_assembly_path,
+      bridge_path: verified.receipt.native_bridge_assembly_path
+    } as JsonValue);
+    observedProcess ??= processIdentity;
+    if (observedProcess !== processIdentity) throw new Error("EPIC-0437 Revit PID/start/image or loaded native module paths changed during the run");
     if (level === "L4") {
       const jobRelative = relativeFile(transport.courier_job_path, "EPIC-0437 courier job", "artifacts/certification/epic-0437/runs/");
       const durableRelative = relativeFile(transport.courier_result_path, "EPIC-0437 courier result", "artifacts/certification/epic-0437/runs/");
@@ -414,6 +444,10 @@ export function validateEpic0437LiveEvidenceRun(
     }
   }
   const sameResult = (left: unknown, right: unknown) => canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
+  if (!sameResult(recoveryState.preview_result, signedResults.get("move-preview"))
+    || (level === "L4" && !sameResult(recoveryState.terminal_move_result, signedResults.get("restore-apply")))) {
+    throw new Error("EPIC-0437 recovery journal authority is not the exact independently verified native-signed preview/restoration result");
+  }
   if (!sameResult(signedResults.get("move-preview"), preview.result)) throw new Error("EPIC-0437 preview summary is not the signed native preview result");
   const observationNative = signedResults.get("observation")!;
   const initialNative = signedResults.get("readback-initial")!;
@@ -515,7 +549,7 @@ function validateArtifact(repoRoot: string, reference: CertificationEvidenceArti
     const inputPath = relativeFile(input.path, `${reference.path}.inputs[${index}].path`);
     const expected = sha(input.sha256, `${reference.path}.inputs[${index}].sha256`);
     const actual = normalization === undefined
-      ? sha256NormalizedText(fs.readFileSync(resolveInside(repoRoot, inputPath), "utf8"))
+      ? `sha256:${createHash("sha256").update(fs.readFileSync(resolveInside(repoRoot, inputPath))).digest("hex")}`
       : epic0437SourceInputHash(repoRoot, inputPath, string(normalization, `${reference.path}.inputs[${index}].normalization`) as "epic-0437-generated-policy-anchor-masked.v1");
     if (actual !== expected) throw new Error(`Certification artifact input is stale: ${inputPath}`);
   }

@@ -1,4 +1,5 @@
 import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
+import path from "node:path";
 import {
   admitCertifiedMoveOneRequest,
   CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH,
@@ -202,7 +203,10 @@ const RECEIPT_KEYS = [
   "transport_issued_at_utc", "laboratory_evidence", "laboratory_evidence_hash", "laboratory_move_evidence",
   "method", "path", "body_present", "raw_body_sha256", "canonical_body_sha256", "phase", "effect_id",
   "effect_hash", "channel", "alias", "document_fingerprint", "document_session_id",
-  "native_common_assembly_sha256", "native_logic_assembly_sha256", "native_bridge_assembly_sha256",
+  "revit_process_id", "revit_process_start_utc", "revit_process_image_path",
+  "native_common_assembly_path", "native_common_assembly_sha256",
+  "native_logic_assembly_path", "native_logic_assembly_sha256",
+  "native_bridge_assembly_path", "native_bridge_assembly_sha256",
   "native_attestation_algorithm", "native_attestation_key_id", "native_attestation_modulus_base64url",
   "native_attestation_exponent_base64url", "result_hash", "outcome", "outcome_unknown", "issued_at_utc",
   "native_attestation_signature"
@@ -218,6 +222,46 @@ const PROJECTION_KEYS = [
   "native_attestation_modulus_base64url", "native_attestation_exponent_base64url", "channel", "alias",
   "preview_lineage_receipt_hash"
 ] as const;
+
+export type LaboratoryNativeAttestationBinding = Readonly<{
+  algorithm: "RS256";
+  key_id: string;
+  modulus_base64url: string;
+  exponent_base64url: "AQAB";
+}>;
+
+/** Verifies a stored native result without trusting any caller-authored recovery fields. */
+export function verifyStoredLaboratoryExecutionResult(
+  resultValue: unknown,
+  trusted: LaboratoryNativeAttestationBinding
+): Readonly<Record<string, unknown>> {
+  if (!resultValue || typeof resultValue !== "object" || Array.isArray(resultValue)) throw new Error("Stored laboratory result is invalid.");
+  const result = resultValue as Record<string, unknown>;
+  const receiptValue = result.laboratory_execution_receipt;
+  if (!receiptValue || typeof receiptValue !== "object" || Array.isArray(receiptValue)) throw new Error("Stored laboratory result omitted its native receipt.");
+  const receipt = receiptValue as Record<string, unknown>;
+  exactKeys(receipt, RECEIPT_KEYS, "stored laboratory execution receipt");
+  if (trusted.algorithm !== "RS256" || trusted.exponent_base64url !== "AQAB"
+    || receipt.native_attestation_algorithm !== trusted.algorithm
+    || receipt.native_attestation_key_id !== trusted.key_id
+    || receipt.native_attestation_modulus_base64url !== trusted.modulus_base64url
+    || receipt.native_attestation_exponent_base64url !== trusted.exponent_base64url
+    || typeof receipt.native_attestation_signature !== "string") throw new Error("Stored laboratory receipt is not signed by the current protected native runtime.");
+  const derivedKeyId = sha(canonical({
+    algorithm: "RS256",
+    exponent_base64url: trusted.exponent_base64url,
+    modulus_base64url: trusted.modulus_base64url
+  }));
+  if (derivedKeyId !== trusted.key_id) throw new Error("Stored laboratory receipt native key identity is invalid.");
+  const { native_attestation_signature: signature, ...signed } = receipt;
+  const key = createPublicKey({ key: { kty: "RSA", n: trusted.modulus_base64url, e: trusted.exponent_base64url }, format: "jwk" });
+  if (!verify("sha256", Buffer.from(canonical(signed), "utf8"), key, Buffer.from(signature as string, "base64url"))) {
+    throw new Error("Stored laboratory receipt signature is invalid.");
+  }
+  const { laboratory_execution_receipt: _receipt, ...nativeResult } = result;
+  if (receipt.result_hash !== sha(canonical(nativeResult))) throw new Error("Stored laboratory receipt does not bind the exact result.");
+  return receipt;
+}
 
 export function assertLaboratoryMoveExecutionReceipt(
   admission: LaboratoryMoveEvidenceAdmission,
@@ -281,6 +325,10 @@ export function assertLaboratoryMoveExecutionReceipt(
     [dispatch.channel, dto.channel], [dispatch.alias, dto.alias], [dispatch.production_certified, false]
   ];
   if (expected.some(([actual, wanted]) => actual !== wanted)
+    || !Number.isSafeInteger(receipt.revit_process_id) || Number(receipt.revit_process_id) <= 0
+    || typeof receipt.revit_process_start_utc !== "string" || !Number.isFinite(Date.parse(receipt.revit_process_start_utc))
+    || [receipt.revit_process_image_path, receipt.native_common_assembly_path, receipt.native_logic_assembly_path, receipt.native_bridge_assembly_path]
+      .some(value => typeof value !== "string" || !path.win32.isAbsolute(value))
     || (dispatch.transport_kind !== "direct" && dispatch.transport_kind !== "courier")
     || (dispatch.transport_kind === "direct" && (dispatch.job_id !== null || dispatch.correlation_id !== null))
     || (dispatch.transport_kind === "courier" && (typeof dispatch.job_id !== "string" || !/^[0-9a-f]{64}$/.test(dispatch.job_id) || dispatch.correlation_id !== dispatch.job_id))

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -143,6 +144,10 @@ namespace RevitBridge.Common
                 document.Title,
                 document.PathName,
                 projectUniqueId);
+            using var hostProcess = Process.GetCurrentProcess();
+            var processImagePath = hostProcess.MainModule?.FileName;
+            if (string.IsNullOrWhiteSpace(processImagePath) || !File.Exists(processImagePath))
+                throw Denied("Protected laboratory evidence cannot identify the exact Revit host process image.");
 
             var receipt = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
@@ -168,8 +173,14 @@ namespace RevitBridge.Common
                 ["alias"] = request.Alias,
                 ["document_fingerprint"] = documentFingerprint,
                 ["document_session_id"] = OperatorNativeDocumentSessionAuthority.GetSessionId(document),
+                ["revit_process_id"] = hostProcess.Id,
+                ["revit_process_start_utc"] = hostProcess.StartTime.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
+                ["revit_process_image_path"] = Path.GetFullPath(processImagePath),
+                ["native_common_assembly_path"] = LoadedAssemblyPath("RevitBridge.Common"),
                 ["native_common_assembly_sha256"] = LoadedAssemblySha256("RevitBridge.Common"),
+                ["native_logic_assembly_path"] = LoadedAssemblyPath("RevitBridge.Logic"),
                 ["native_logic_assembly_sha256"] = LoadedAssemblySha256("RevitBridge.Logic"),
+                ["native_bridge_assembly_path"] = LoadedAssemblyPath("RevitBridge"),
                 ["native_bridge_assembly_sha256"] = LoadedAssemblySha256("RevitBridge"),
                 ["native_attestation_algorithm"] = OperatorNativeExecutionAttestationAuthority.Algorithm,
                 ["native_attestation_key_id"] = OperatorNativeExecutionAttestationAuthority.KeyId,
@@ -212,15 +223,20 @@ namespace RevitBridge.Common
 
         private static string LoadedAssemblySha256(string simpleName)
         {
+            using var stream = File.Open(LoadedAssemblyPath(simpleName), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var algorithm = SHA256.Create();
+            var hash = algorithm.ComputeHash(stream);
+            return "sha256:" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+
+        private static string LoadedAssemblyPath(string simpleName)
+        {
             var matches = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(value => string.Equals(value.GetName().Name, simpleName, StringComparison.Ordinal))
                 .ToList();
             if (matches.Count != 1 || string.IsNullOrWhiteSpace(matches[0].Location) || !File.Exists(matches[0].Location))
                 throw Denied("Protected laboratory evidence cannot identify the exact loaded " + simpleName + " binary.");
-            using var stream = File.Open(matches[0].Location, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var algorithm = SHA256.Create();
-            var hash = algorithm.ComputeHash(stream);
-            return "sha256:" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            return Path.GetFullPath(matches[0].Location);
         }
 
         public static bool VerifyAttachedReceipt(object attachedResult)
@@ -295,8 +311,14 @@ namespace RevitBridge.Common
                     || effectHash != dispatch.EffectHash
                     || !String(receipt, "document_fingerprint", out var documentFingerprint)
                     || !String(receipt, "document_session_id", out var documentSessionId)
+                    || !receipt.TryGetProperty("revit_process_id", out var processId) || processId.ValueKind != JsonValueKind.Number || !processId.TryGetInt32(out var parsedProcessId) || parsedProcessId <= 0
+                    || !String(receipt, "revit_process_start_utc", out _)
+                    || !String(receipt, "revit_process_image_path", out _)
+                    || !String(receipt, "native_common_assembly_path", out _)
                     || !String(receipt, "native_common_assembly_sha256", out _)
+                    || !String(receipt, "native_logic_assembly_path", out _)
                     || !String(receipt, "native_logic_assembly_sha256", out _)
+                    || !String(receipt, "native_bridge_assembly_path", out _)
                     || !String(receipt, "native_bridge_assembly_sha256", out _)) return false;
                 if (moveEvidence.ValueKind == JsonValueKind.Null)
                 {
@@ -421,7 +443,10 @@ namespace RevitBridge.Common
                 "laboratory_move_evidence", "method", "path", "body_present",
                 "raw_body_sha256", "canonical_body_sha256", "phase", "effect_id", "effect_hash",
                 "channel", "alias", "document_fingerprint", "document_session_id",
-                "native_common_assembly_sha256", "native_logic_assembly_sha256", "native_bridge_assembly_sha256",
+                "revit_process_id", "revit_process_start_utc", "revit_process_image_path",
+                "native_common_assembly_path", "native_common_assembly_sha256",
+                "native_logic_assembly_path", "native_logic_assembly_sha256",
+                "native_bridge_assembly_path", "native_bridge_assembly_sha256",
                 "native_attestation_algorithm", "native_attestation_key_id",
                 "native_attestation_modulus_base64url", "native_attestation_exponent_base64url",
                 "result_hash", "outcome", "outcome_unknown", "issued_at_utc", "native_attestation_signature"

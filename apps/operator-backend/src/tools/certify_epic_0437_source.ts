@@ -67,10 +67,11 @@ async function main(): Promise<void> {
   }
 
   const testCommands = [
-    await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "--test-name-pattern=canonical identity|complete cumulative evidence|typed MCP|request-family|missing, unknown|tampered request|runtime validation|candidate provenance|candidate aliases|alias bindings|request fixtures|seeded policy|direct |courier |laboratory", "dist/test/tool_certification.test.js", "dist/test/tool_certification_evidence_compiler.test.js", "dist/test/direct_revit_execution_authorization.test.js", "dist/test/revit_courier_contract.test.js", "dist/test/laboratory_execution_receipt.test.js"], backendRoot),
+    await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "--test-name-pattern=canonical identity|complete cumulative evidence|typed MCP|request-family|missing, unknown|tampered request|runtime validation|candidate provenance|candidate aliases|alias bindings|request fixtures|seeded policy|direct |courier |laboratory", "dist/test/tool_certification.test.js", "dist/test/direct_revit_execution_authorization.test.js", "dist/test/revit_courier_contract.test.js", "dist/test/laboratory_execution_receipt.test.js"], backendRoot),
     await run(gateNode, ["--test", "--test-reporter=dot", "dist/spatialObservationV1.test.js", "dist/lib/certifiedMoveTargetLedger.test.js", "dist/lib/certifiedMoveOneRequestFamily.test.js", "dist/lib/certifiedExecutionEnvelope.test.js", "dist/lib/toolExposurePolicy.test.js", "dist/lib/revitCourier.test.js", "dist/lib/certifiedCapabilityProjection.test.js", "dist/lib/laboratoryEvidenceDispatch.test.js", "dist/lib/laboratoryMoveEvidence.test.js"], mcpRoot)
   ];
-  const commands = [...builds, ...testCommands];
+  const postGenerationCompilerTest = `${gateNode} --test --test-reporter=dot --test-concurrency=1 dist/test/tool_certification_evidence_compiler.test.js`;
+  const commands = [...builds, ...testCommands, { command: postGenerationCompilerTest, duration_ms: 0 }];
   const inputs = currentEpic0437SourceInputs(repoRoot);
   const artifactRoot = path.join(repoRoot, "artifacts", "certification", "epic-0437");
   fs.mkdirSync(artifactRoot, { recursive: true });
@@ -119,6 +120,7 @@ async function main(): Promise<void> {
     proofIndex,
     repoRoot
   });
+  await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "dist/test/tool_certification_evidence_compiler.test.js"], backendRoot);
   console.log(`Wrote L0-L2 proof artifacts for ${proofIndex.records.length} exact candidate identities.`);
 }
 
