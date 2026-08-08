@@ -37,10 +37,38 @@ namespace RevitBridge.Common.Tests
         {
             var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
                 "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var identity = AssemblyName.GetAssemblyName(typeof(JsonDocument).Assembly.Location).FullName!;
             var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null,
-                new object[] { typeof(JsonDocument).Assembly.Location, "System.Text.Json.dll", new[] { "" } }));
+                new object[]
+                {
+                    typeof(JsonDocument).Assembly.Location,
+                    "System.Text.Json.dll",
+                    new[] { new KeyValuePair<string, string>(identity, "") }
+                }));
             Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
                 Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+        }
+
+        [Fact]
+        public void Laboratory_dependency_identity_allows_an_unrelated_preloaded_version()
+        {
+            var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var deployed = typeof(JsonDocument).Assembly.Location;
+            var identity = AssemblyName.GetAssemblyName(deployed).FullName!;
+            var selected = method.Invoke(null, new object[]
+            {
+                deployed,
+                "System.Text.Json.dll",
+                new[]
+                {
+                    new KeyValuePair<string, string>(identity, deployed),
+                    new KeyValuePair<string, string>(
+                        "System.Text.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+                        deployed)
+                }
+            });
+            Assert.Equal(Path.GetFullPath(deployed), selected);
         }
 
         [Fact]

@@ -9,7 +9,7 @@ import { callLaboratoryMoveOneEvidence } from "../lib/laboratoryMoveEvidenceClie
 import { callRevit, readRevitDirectLaboratoryEvidenceContext } from "../lib/revitClient.js";
 import { readRevitCourierLaboratoryEvidenceContext } from "../lib/revitCourier.js";
 import { callNativeTransport } from "../lib/nativeTransport.js";
-import { canonicalToolExposureJson, runWithRevitToolAlias } from "../lib/toolExposurePolicy.js";
+import { assertProtectedLaboratoryEvidenceExposure, canonicalToolExposureJson, runWithRevitToolAlias } from "../lib/toolExposurePolicy.js";
 import { getOperatorToken } from "../lib/workspace.js";
 import { observeModelV1, readCertifiedMoveTargetsV1, type SpatialObservationCall } from "../spatialObservationV1.js";
 
@@ -201,9 +201,30 @@ async function main(): Promise<void> {
   // protected direct channel before any courier-supplied result is accepted.
   // This call is trust bootstrap only and is deliberately absent from the
   // certification step graph.
+  const trustBootstrapWorkflow = `${workflowPrefix}-trust-bootstrap`;
+  const trustBootstrapDispatch = issueLaboratoryEvidenceDispatch({
+    evidenceRunId: runId,
+    evidenceStep: "trust-bootstrap",
+    workflow: trustBootstrapWorkflow,
+    transportKind: "direct"
+  });
+  const trustBootstrapExposure = runWithRevitToolAlias("revit_get_context", () =>
+    assertProtectedLaboratoryEvidenceExposure({
+      method: "GET",
+      path: "/revit/context",
+      channel: "typed_mcp",
+      workflow: trustBootstrapWorkflow
+    }));
   const trustBootstrapResponse = await callNativeTransport({
     operatorToken: getOperatorToken(), method: "GET", path: "/revit/context",
-    channel: "typed_mcp", alias: "revit_get_context"
+    channel: "typed_mcp", alias: "revit_get_context",
+    laboratoryEvidenceDispatch: trustBootstrapDispatch,
+    laboratoryPolicyBinding: {
+      policyHash: trustBootstrapExposure.policyHash ?? "",
+      policyRecordHash: trustBootstrapExposure.policyRecordHash ?? "",
+      evidenceRecordHash: trustBootstrapExposure.evidenceRecordHash ?? "",
+      effectHash: trustBootstrapExposure.effectHash
+    }
   });
   if (trustBootstrapResponse.statusCode < 200 || trustBootstrapResponse.statusCode >= 300) throw new Error("Protected native trust bootstrap did not return a successful context.");
   const trustBootstrap = JSON.parse(trustBootstrapResponse.bodyJson) as Record<string, any>;

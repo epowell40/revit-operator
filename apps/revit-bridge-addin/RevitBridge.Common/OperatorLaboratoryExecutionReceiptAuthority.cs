@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -297,11 +298,11 @@ namespace RevitBridge.Common
             }
 
             var simpleName = Path.GetFileNameWithoutExtension(name);
-            var managedLocations = AppDomain.CurrentDomain.GetAssemblies()
+            var managedAssemblies = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(value => string.Equals(value.GetName().Name, simpleName, StringComparison.Ordinal))
-                .Select(AssemblyLocationOrEmpty)
+                .Select(value => new KeyValuePair<string, string>(value.GetName().FullName ?? "", AssemblyLocationOrEmpty(value)))
                 .ToList();
-            return SelectManagedRuntimeDependencyPath(deployedPath, name, managedLocations);
+            return SelectManagedRuntimeDependencyPath(deployedPath, name, managedAssemblies);
         }
 
         private static string AssemblyLocationOrEmpty(System.Reflection.Assembly assembly)
@@ -310,16 +311,24 @@ namespace RevitBridge.Common
             catch (NotSupportedException) { return ""; }
         }
 
-        private static string SelectManagedRuntimeDependencyPath(string deployedPath, string name, IReadOnlyCollection<string> managedLocations)
+        private static string SelectManagedRuntimeDependencyPath(
+            string deployedPath,
+            string name,
+            IReadOnlyCollection<KeyValuePair<string, string>> managedAssemblies)
         {
-            if (managedLocations.Any(string.IsNullOrWhiteSpace)
-                || managedLocations.Any(value => !File.Exists(value)))
+            var deployedIdentity = AssemblyName.GetAssemblyName(deployedPath).FullName ?? "";
+            var exactIdentityMatches = managedAssemblies
+                .Where(value => string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal))
+                .Select(value => value.Value)
+                .ToList();
+            if (exactIdentityMatches.Any(string.IsNullOrWhiteSpace)
+                || exactIdentityMatches.Any(value => !File.Exists(value)))
                 throw Denied("Protected laboratory evidence cannot resolve every loaded " + name + " assembly location.");
-            var managedMatches = managedLocations
+            var managedMatches = exactIdentityMatches
                 .Select(Path.GetFullPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded " + name + " assemblies.");
+            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded copies of the deployed " + name + " assembly identity.");
             if (managedMatches.Count == 1 && !string.Equals(managedMatches[0], deployedPath, StringComparison.OrdinalIgnoreCase))
                 throw Denied("Protected laboratory evidence loaded " + name + " outside the deployed add-in dependency closure.");
             return managedMatches.Count == 1 ? managedMatches[0] : deployedPath;
