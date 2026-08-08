@@ -9,6 +9,7 @@ import { createRequire } from "module";
 
 xlsx.set_fs(fs);
 import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
+import { certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
@@ -1889,11 +1890,13 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
     previewReceipt: z.string().optional()
   },
   async (args) => {
+    let admittedRequest: Readonly<{ requestInstanceHash: string; phase: "preview" | "apply" }> | null = null;
     try {
       const { admission, decision } = assertCertifiedMoveOneToolExposure({
         request: { ...args, previewReceipt: args.previewReceipt },
         channel: "typed_mcp"
       });
+      admittedRequest = { requestInstanceHash: admission.requestInstanceHash, phase: admission.request.phase };
       // In laboratory evidence mode this remains a bounded one-element call.
       // In certified mode the ordinary call boundary still rejects it until a
       // generated L4 policy plus native family attestation are present.
@@ -1946,7 +1949,19 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
           }, null, 2)
         }]
       };
-    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+    } catch (e) {
+      const transportFailure = admittedRequest ? certifiedMoveTransportFailurePayload(e, admittedRequest) : null;
+      if (transportFailure) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: JSON.stringify(transportFailure)
+          }]
+        };
+      }
+      return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
   }
 );
 

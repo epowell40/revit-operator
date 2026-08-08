@@ -54,6 +54,7 @@ type CourierContext = {
 type CourierResult = {
   version?: string;
   id?: string;
+  correlation_id?: string;
   status?: string;
   result?: unknown;
   error?: string | null;
@@ -215,6 +216,76 @@ function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 }
 
+function readAuthoritativeResult(
+  resultPath: string,
+  jobPath: string,
+  id: string,
+  expectedEnvelope?: CertificationEnvelope
+): CourierResult | null {
+  const receipt = readResult(resultPath, id);
+  if (!receipt) return null;
+  const job = readJsonObject(jobPath);
+  if (job?.version !== JOB_VERSION_V2) return receipt;
+  const envelope = job.certification_envelope as CertificationEnvelope | undefined;
+  if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
+  if (expectedEnvelope?.version === 2
+    && (envelope.version !== 2 || envelope.envelope_hash !== expectedEnvelope.envelope_hash)) {
+    throw new Error("Certified family courier result does not match the exact in-process certification envelope.");
+  }
+  if (envelope.version !== 2) return receipt;
+  const jobDir = path.dirname(jobPath);
+  const decision = readJsonObject(path.join(jobDir, "completion-terminal-decision.v1.json"));
+  const decisionKeys = [
+    "schema", "kind", "job_id", "correlation_id", "session_id", "executor_id", "certification_envelope_hash",
+    "request_instance_hash", "completion_challenge_hash", "terminal_result_sha256", "terminal_result", "decided_at_utc"
+  ] as const;
+  if (!decision || !hasExactKeys(decision, decisionKeys)
+    || decision.schema !== "revit-operator.courier-completion-terminal-decision.v1"
+    || decision.job_id !== id
+    || decision.correlation_id !== job.correlation_id
+    || decision.session_id !== job.session_id
+    || decision.certification_envelope_hash !== envelope.envelope_hash
+    || decision.request_instance_hash !== envelope.request_family_admission.request_instance_hash
+    || (decision.kind !== "success" && decision.kind !== "failure")
+    || (decision.kind === "success") !== (receipt.status === "succeeded")
+    || decision.terminal_result_sha256 !== sha256(JSON.stringify(receipt))
+    || JSON.stringify(decision.terminal_result) !== JSON.stringify(receipt)) {
+    throw new Error("Certified family courier result does not match the exact backend terminal decision.");
+  }
+  const issued = readJsonObject(path.join(jobDir, "completion-challenge-issued.v1.json"));
+  if (decision.completion_challenge_hash === null) {
+    if (decision.kind !== "failure" || !issued
+      || issued.schema !== "revit-operator.courier-completion-terminal-fence.v1"
+      || !hasExactKeys(issued, ["schema", "terminal_decision"])
+      || JSON.stringify(issued.terminal_decision) !== JSON.stringify(decision)) {
+      throw new Error("Certified family pre-dispatch failure is not the exact atomic terminal-fence winner.");
+    }
+    return receipt;
+  }
+  const challengeKeys = [
+    "schema", "transport_kind", "dispatch_id", "correlation_id", "execution_session_id", "executor_id",
+    "certification_envelope_hash", "completion_challenge_hash", "job_id", "session_id", "completion_challenge",
+    "policy_hash", "document_session_id", "request_instance_hash", "issued_at_utc"
+  ] as const;
+  if (!issued || !hasExactKeys(issued, challengeKeys)
+    || issued.schema !== "revit-operator.courier-completion-challenge.v1"
+    || issued.transport_kind !== "courier"
+    || issued.job_id !== id || issued.dispatch_id !== id || issued.correlation_id !== job.correlation_id
+    || issued.session_id !== job.session_id || issued.execution_session_id !== job.session_id
+    || issued.executor_id !== decision.executor_id
+    || issued.certification_envelope_hash !== envelope.envelope_hash
+    || issued.completion_challenge_hash !== decision.completion_challenge_hash
+    || issued.policy_hash !== envelope.policy_hash
+    || issued.document_session_id !== envelope.request_family_admission.document_session_id
+    || issued.request_instance_hash !== envelope.request_family_admission.request_instance_hash
+    || typeof issued.completion_challenge !== "string"
+    || sha256(issued.completion_challenge) !== issued.completion_challenge_hash
+    || (decision.kind === "failure" && (receipt.outcome_unknown !== true || receipt.retryable !== false))) {
+    throw new Error("Certified family dispatch-bound result does not match the exact completion challenge and nonretryable outcome truth.");
+  }
+  return receipt;
+}
+
 function exactJson(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -309,6 +380,20 @@ function assertExactCertifiedAdmission(
     }
   }
   return { decision: recomputed, ...(binding.certifiedMoveOneAdmission ? { certifiedMoveOneAdmission: binding.certifiedMoveOneAdmission } : {}) };
+}
+
+function readJsonObject(filePath: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(value, key));
 }
 
 function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierContext, "session_id">>, method: string, revitPath: string, bodyJson: string): string {
@@ -469,8 +554,8 @@ function bindCertifiedExecutionContext<T>(result: T, receipt: CourierResult, job
   return result;
 }
 
-function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number): T {
-  const receipt = readResult(resultPath, id);
+function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number, envelope?: CertificationEnvelope): T {
+  const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
   if (receipt) return resolveResult<T>(receipt);
 
   let job: CourierJob | null = null;
@@ -594,12 +679,12 @@ export async function callRevitViaCourier<T>(
   const persistedExpiry = Date.parse(job.expires_at ?? "");
   const deadline = Number.isFinite(persistedExpiry) ? Math.min(now + durationMs, persistedExpiry) : now + durationMs;
   while (Date.now() < deadline) {
-    const receipt = readResult(resultPath, id);
+    const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
     if (receipt) {
       const result = resolveResult<T>(receipt);
       return envelope ? bindCertifiedExecutionContext(result, receipt, job, envelope) : result;
     }
     await delay(200);
   }
-  return finalizeTimeout<T>(jobPath, resultPath, id, durationMs);
+  return finalizeTimeout<T>(jobPath, resultPath, id, durationMs, envelope);
 }

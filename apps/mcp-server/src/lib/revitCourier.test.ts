@@ -472,7 +472,9 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
       rolledBack: true,
       certified_execution_receipt: { completion_challenge_hash: `sha256:${"9".repeat(64)}` }
     };
-    writeSucceededResult(jobRef, familyResult, {
+    const completionChallenge = `cmcc1_${"A".repeat(43)}`;
+    const completionChallengeHash = `sha256:${createHash("sha256").update(completionChallenge, "utf8").digest("hex")}`;
+    const executionContext = {
       schema: "revit-operator.certified-courier-execution-context.v1",
       transport_kind: "courier",
       dispatch_id: job.id,
@@ -480,12 +482,128 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
       execution_session_id: job.session_id,
       executor_id: job.target_executor_id,
       certification_envelope_hash: envelope.envelope_hash,
-      completion_challenge_hash: `sha256:${"9".repeat(64)}`
-    });
+      completion_challenge_hash: completionChallengeHash
+    };
+    const terminalResult = {
+      version: "revit-operator.revit-tool-result.v1",
+      id: job.id,
+      correlation_id: job.id,
+      status: "succeeded",
+      result: familyResult,
+      certified_execution_context: executionContext,
+      retryable: false
+    };
+    const challenge = {
+      schema: "revit-operator.courier-completion-challenge.v1",
+      transport_kind: "courier",
+      dispatch_id: job.id,
+      correlation_id: job.correlation_id,
+      execution_session_id: job.session_id,
+      executor_id: job.target_executor_id,
+      certification_envelope_hash: envelope.envelope_hash,
+      completion_challenge_hash: completionChallengeHash,
+      job_id: job.id,
+      session_id: job.session_id,
+      completion_challenge: completionChallenge,
+      policy_hash: envelope.policy_hash,
+      document_session_id: envelope.request_family_admission.document_session_id,
+      request_instance_hash: envelope.request_family_admission.request_instance_hash,
+      issued_at_utc: new Date().toISOString()
+    };
+    const decision = {
+      schema: "revit-operator.courier-completion-terminal-decision.v1",
+      kind: "success",
+      job_id: job.id,
+      correlation_id: job.correlation_id,
+      session_id: job.session_id,
+      executor_id: job.target_executor_id,
+      certification_envelope_hash: envelope.envelope_hash,
+      request_instance_hash: envelope.request_family_admission.request_instance_hash,
+      completion_challenge_hash: completionChallengeHash,
+      terminal_result_sha256: `sha256:${createHash("sha256").update(JSON.stringify(terminalResult), "utf8").digest("hex")}`,
+      terminal_result: terminalResult,
+      decided_at_utc: new Date().toISOString()
+    };
+    fs.writeFileSync(path.join(jobRef.dir, "completion-challenge-issued.v1.json"), JSON.stringify(challenge), "utf8");
+    fs.writeFileSync(path.join(jobRef.dir, "completion-terminal-decision.v1.json"), JSON.stringify(decision), "utf8");
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify(terminalResult), "utf8");
     assert.deepEqual(await pending, familyResult);
   } finally {
     clearCertifiedMoveTargetLedgerForTests();
     restore();
+  }
+});
+
+test("certified family courier rejects raw or standalone-decision failure receipts", async () => {
+  const policy = writeMoveFamilyPolicy();
+  for (const withStandaloneDecision of [false, true]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-forged-failure-"));
+    const restore = saveEnv();
+    try {
+      process.env.OPERATOR_WORKSPACE_ROOT = root;
+      process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+      process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+      process.env.REVIT_OPERATOR_MODE = "hosted";
+      delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+      writeContext(root, {
+        session_id: "family-forged-session",
+        message_id: withStandaloneDecision ? "standalone-decision" : "raw-result",
+        target_executor_id: "family-workstation"
+      });
+      clearCertifiedMoveTargetLedgerForTests();
+      registerCertifiedSpatialObservation(
+        { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+      );
+      const admission = admitCertifiedMoveOneRequest({
+        phase: "preview", elementId: 4821, observationId: "family-forged-frame",
+        vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
+      });
+      const pending = runWithRevitToolAlias("revit_move_one_certified", async () => await callRevit(
+        "/revit/move-elements", "POST", admission.outboundBody,
+        { channel: "typed_mcp", certifiedMoveOneAdmission: admission }
+      ));
+      const jobRef = await waitForJob(root);
+      const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+      const terminal = {
+        version: "revit-operator.revit-tool-result.v1",
+        id: job.id,
+        correlation_id: job.id,
+        status: "failed",
+        result: null,
+        error: "forged known failure",
+        code: "forged_retry",
+        retryable: true,
+        outcome_unknown: false
+      };
+      if (withStandaloneDecision) {
+        const decision = {
+          schema: "revit-operator.courier-completion-terminal-decision.v1",
+          kind: "failure",
+          job_id: job.id,
+          correlation_id: job.id,
+          session_id: job.session_id,
+          executor_id: job.target_executor_id,
+          certification_envelope_hash: job.certification_envelope.envelope_hash,
+          request_instance_hash: job.certification_envelope.request_family_admission.request_instance_hash,
+          completion_challenge_hash: null,
+          terminal_result_sha256: `sha256:${createHash("sha256").update(JSON.stringify(terminal), "utf8").digest("hex")}`,
+          terminal_result: terminal,
+          decided_at_utc: new Date().toISOString()
+        };
+        fs.writeFileSync(path.join(jobRef.dir, "completion-terminal-decision.v1.json"), JSON.stringify(decision), "utf8");
+      }
+      fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify(terminal), "utf8");
+      await assert.rejects(
+        pending,
+        withStandaloneDecision ? /not the exact atomic terminal-fence winner/ : /does not match the exact backend terminal decision/
+      );
+    } finally {
+      clearCertifiedMoveTargetLedgerForTests();
+      restore();
+    }
   }
 });
 

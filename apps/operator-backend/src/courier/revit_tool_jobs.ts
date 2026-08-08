@@ -428,6 +428,46 @@ function validateCompletionDecision(
   return decision as unknown as CourierCompletionDecision;
 }
 
+function validateCompletionDecisionCausality(
+  decision: CourierCompletionDecision,
+  job: CertifiedCourierJobV2,
+  executorId: string | null
+): CourierCompletionChallengeState | null {
+  const issued = readJson<Record<string, unknown>>(challengeIssuedPath(job.id));
+  if (decision.completion_challenge_hash === null) {
+    if (!issued
+      || issued.schema !== "revit-operator.courier-completion-terminal-fence.v1"
+      || Object.keys(issued).length !== 2
+      || !Object.prototype.hasOwnProperty.call(issued, "terminal_decision")
+      || decision.kind !== "failure"
+      || JSON.stringify(issued.terminal_decision) !== JSON.stringify(decision)) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_COMPLETION_DECISION_INVALID",
+        "Courier pre-dispatch failure decision is not the exact atomic terminal-fence winner."
+      );
+    }
+    return null;
+  }
+  if (executorId === null) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_COMPLETION_DECISION_INVALID",
+      "Courier dispatch-bound terminal decision has no exact executor identity."
+    );
+  }
+  const challenge = validateChallengeState(issued, job, executorId);
+  if (challenge.completion_challenge_hash !== decision.completion_challenge_hash
+    || (decision.kind === "failure" && (
+      decision.terminal_result.outcome_unknown !== true
+      || decision.terminal_result.retryable !== false
+    ))) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_COMPLETION_DECISION_INVALID",
+      "Courier dispatch-bound terminal decision does not match the exact issued challenge and nonretryable outcome truth."
+    );
+  }
+  return challenge;
+}
+
 function claimCompletionDecision(
   job: CertifiedCourierJobV2,
   executorId: string | null,
@@ -504,9 +544,9 @@ function readTerminalResult(job: RevitToolJob): RevitToolResult | null {
       const executorId = familyDecisionExecutor(job);
       const decision = validateCompletionDecision(readJson<unknown>(completionDecisionPath(job.id)), job, executorId);
       if (terminalResultSha256(result) !== decision.terminal_result_sha256) return null;
+      const challenge = validateCompletionDecisionCausality(decision, job, executorId);
       if (decision.kind === "success") {
-        const challenge = validateChallengeState(readJson<unknown>(challengeIssuedPath(job.id)), job, executorId!);
-        if (challenge.completion_challenge_hash !== decision.completion_challenge_hash) return null;
+        if (!challenge) return null;
         const executionContext = result.certified_execution_context!;
         assertCertifiedCourierExecutionResult(job, result.result, executionContext);
         consumeCompletionChallenge(job, challenge);
@@ -592,14 +632,12 @@ function publishDurableTerminal(job: RevitToolJob, durableResult: RevitToolResul
 function recoverFamilyCompletionDecision(job: CertifiedCourierJobV2): RevitToolJob {
   const executorId = familyDecisionExecutor(job);
   const decision = validateCompletionDecision(readJson<unknown>(completionDecisionPath(job.id)), job, executorId);
+  const challenge = validateCompletionDecisionCausality(decision, job, executorId);
   if (decision.kind === "success") {
-    const challenge = validateChallengeState(readJson<unknown>(challengeIssuedPath(job.id)), job, executorId!);
-    if (challenge.completion_challenge_hash !== decision.completion_challenge_hash) {
-      throw new RevitCourierCertificationError(
-        "CERTIFICATION_COMPLETION_DECISION_INVALID",
-        "Courier success decision does not match the exact issued completion challenge."
-      );
-    }
+    if (!challenge) throw new RevitCourierCertificationError(
+      "CERTIFICATION_COMPLETION_DECISION_INVALID",
+      "Courier success decision is missing its exact issued completion challenge."
+    );
     const executionContext = decision.terminal_result.certified_execution_context!;
     assertCertifiedCourierExecutionResult(job, decision.terminal_result.result, executionContext);
     consumeCompletionChallenge(job, challenge);

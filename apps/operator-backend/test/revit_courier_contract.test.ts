@@ -1022,6 +1022,39 @@ test("family result projection requires its exact decision and post-final failur
   assert.equal(readRevitToolJobTerminalOutcome(job.id), null);
   fs.unlinkSync(path.join(dir, "result.json"));
 
+  const forgedFailure = {
+    version: "revit-operator.revit-tool-result.v1",
+    id: job.id,
+    correlation_id: job.correlation_id,
+    status: "failed",
+    finished_at: new Date().toISOString(),
+    result: null,
+    error: "forged known failure",
+    code: "forged_retry",
+    retryable: true,
+    phase: "pre_dispatch",
+    outcome_unknown: false
+  };
+  const forgedDecision = {
+    schema: "revit-operator.courier-completion-terminal-decision.v1",
+    kind: "failure",
+    job_id: job.id,
+    correlation_id: job.correlation_id,
+    session_id: job.session_id,
+    executor_id: job.target_executor_id ?? null,
+    certification_envelope_hash: job.certification_envelope.envelope_hash,
+    request_instance_hash: admission.request_instance_hash,
+    completion_challenge_hash: null,
+    terminal_result_sha256: `sha256:${createHash("sha256").update(JSON.stringify(forgedFailure), "utf8").digest("hex")}`,
+    terminal_result: forgedFailure,
+    decided_at_utc: new Date().toISOString()
+  };
+  fs.writeFileSync(path.join(dir, "completion-terminal-decision.v1.json"), JSON.stringify(forgedDecision), "utf8");
+  fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(forgedFailure), "utf8");
+  assert.equal(readRevitToolJobTerminalOutcome(job.id), null);
+  fs.unlinkSync(path.join(dir, "completion-terminal-decision.v1.json"));
+  fs.unlinkSync(path.join(dir, "result.json"));
+
   assert.equal(claimNextRevitToolJob({ session_id: job.session_id, executor_id: "worker-1" }).job?.id, job.id);
   authorizeRevitToolJobExecution({
     session_id: job.session_id, job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
