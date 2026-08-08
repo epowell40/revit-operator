@@ -578,9 +578,9 @@ function validateArtifact(repoRoot: string, reference: CertificationEvidenceArti
     exact(input, normalization === undefined ? ["path", "sha256"] : ["path", "sha256", "normalization"], `${reference.path}.inputs[${index}]`);
     const inputPath = relativeFile(input.path, `${reference.path}.inputs[${index}].path`);
     const expected = sha(input.sha256, `${reference.path}.inputs[${index}].sha256`);
-    const actual = normalization === undefined
-      ? `sha256:${createHash("sha256").update(fs.readFileSync(resolveInside(repoRoot, inputPath))).digest("hex")}`
-      : epic0437SourceInputHash(repoRoot, inputPath, string(normalization, `${reference.path}.inputs[${index}].normalization`) as "epic-0437-generated-policy-anchor-masked.v1");
+    const actual = epic0437SourceInputHash(repoRoot, inputPath, normalization === undefined
+      ? undefined
+      : string(normalization, `${reference.path}.inputs[${index}].normalization`) as "epic-0437-generated-policy-anchor-masked.v1");
     if (actual !== expected) throw new Error(`Certification artifact input is stale: ${inputPath}`);
   }
   const result = object(artifact.result, `${reference.path}.result`);

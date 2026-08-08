@@ -66,7 +66,8 @@ export function epic0437SourceInputPaths(repoRoot: string): string[] {
   for (const root of EPIC_0437_SOURCE_ROOTS) {
     for (const relative of discoverSourceFiles(repoRoot, root)) inputs.add(relative);
   }
-  return [...inputs].sort((left, right) => left.localeCompare(right));
+  // Source identity must not depend on the host's ICU locale or filesystem.
+  return [...inputs].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 export const EPIC_0437_NATIVE_BINARIES = {
@@ -112,7 +113,9 @@ function sha256Bytes(file: string): string {
 
 export function epic0437SourceInputHash(repoRoot: string, relative: string, normalization?: Epic0437SourceInput["normalization"]): string {
   const absolute = path.join(repoRoot, relative);
-  if (normalization === undefined) return sha256Bytes(absolute);
+  // Every enumerated source/build input is UTF-8 text. Git may materialize the
+  // same reviewed text as LF or CRLF, so bind its normalized text identity.
+  if (normalization === undefined) return sha256NormalizedText(fs.readFileSync(absolute, "utf8"));
   let source = fs.readFileSync(absolute, "utf8");
   if (normalization !== undefined) {
     if (normalization !== "epic-0437-generated-policy-anchor-masked.v1" || !MASKED_POLICY_ANCHOR_SOURCES.has(relative)) throw new Error(`Unsupported EPIC-0437 source normalization: ${relative}`);

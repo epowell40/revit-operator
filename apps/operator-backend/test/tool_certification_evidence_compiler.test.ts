@@ -7,6 +7,7 @@ import test from "node:test";
 import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
 import { assertEpic0437PromotableRecoveryState, compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
 import { EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, parseAndVerifyEpic0437PromotionAuthorization } from "../src/capabilities/epic_0437_promotion_authority.js";
+import { epic0437SourceInputHash } from "../src/capabilities/epic_0437_source_provenance.js";
 
 const backendRoot = process.cwd();
 const repoRoot = path.resolve(backendRoot, "../..");
@@ -23,6 +24,18 @@ function compile(proofs = JSON.parse(proofRaw)) {
     repoRoot
   });
 }
+
+test("source provenance is cross-platform for line endings but still binds exact text", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "epic-0437-source-hash-"));
+  const relative = "source.ts";
+  const source = path.join(root, relative);
+  fs.writeFileSync(source, "const a = 1;\nconst b = 2;\n", "utf8");
+  const lfHash = epic0437SourceInputHash(root, relative);
+  fs.writeFileSync(source, "const a = 1;\r\nconst b = 2;\r\n", "utf8");
+  assert.equal(epic0437SourceInputHash(root, relative), lfHash);
+  fs.writeFileSync(source, "const a = 1;\r\nconst b = 3;\r\n", "utf8");
+  assert.notEqual(epic0437SourceInputHash(root, relative), lfHash);
+});
 
 test("artifact-bound compiler verifies exact cumulative L0-L2 proof files against current inputs", () => {
   const compiled = compile();
