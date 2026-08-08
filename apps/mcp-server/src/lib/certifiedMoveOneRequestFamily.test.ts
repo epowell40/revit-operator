@@ -31,7 +31,7 @@ function issueTarget(): void {
   clearCertifiedMoveTargetLedgerForTests();
   registerCertifiedSpatialObservation(
     { document: { sessionId, nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-    { observationId, viewId: 42, items: [{ elementId, sourceScopedId: `host:${elementId}`, groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+    { observationId, viewId: 42, items: [{ elementId, sourceScopedId: `host:${elementId}`, groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
   );
 }
 

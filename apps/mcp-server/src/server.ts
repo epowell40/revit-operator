@@ -11,7 +11,7 @@ xlsx.set_fs(fs);
 import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
-import { observeModelV1 } from "./spatialObservationV1.js";
+import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -1540,6 +1540,19 @@ server.tool(
   async (args) => {
     try {
       return await observeModelV1(args, callRevit);
+    } catch (e) {
+      return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
+  }
+);
+
+server.tool(
+  "revit_read_move_targets_certified",
+  "Read a bounded set of point-located host targets and exact XYZ locations from one fresh native-attested spatial observation. Takes no element identifiers.",
+  {},
+  async () => {
+    try {
+      return await readCertifiedMoveTargetsV1(callRevit);
     } catch (e) {
       return { isError: true, content: [{ type: "text", text: String(e) }] };
     }

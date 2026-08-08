@@ -42,6 +42,18 @@ export type CertificationEvidence = {
   levels: CertificationLevel[];
   state: EvidenceStatus;
   provenance: string;
+  artifacts?: CertificationEvidenceArtifact[];
+};
+
+export type CertificationEvidenceArtifact = {
+  schema: "revit-operator.certification-proof-artifact.v1";
+  level: CertificationLevel;
+  path: string;
+  sha256: string;
+};
+
+export type ArtifactBoundEvidenceContract = {
+  schema: "revit-operator.artifact-bound-certification-evidence.v1";
 };
 
 export type StandaloneExecutorSurface = {
@@ -80,6 +92,7 @@ export type ToolCertificationRecord = {
   requested_channels: ExposureChannel[];
   visibility: ToolVisibility;
   evidence: CertificationEvidence;
+  evidence_contract?: ArtifactBoundEvidenceContract;
   request_family?: RequestFamilyBinding;
   execution_surface?: StandaloneExecutorSurface;
   request_hash: string;
@@ -99,6 +112,7 @@ export type ToolCertificationCandidate = Pick<
 > & {
   request: JsonValue;
   typed_mcp_request_fixtures: TypedMcpRequestFixture[];
+  evidence_contract?: ArtifactBoundEvidenceContract;
   request_family?: RequestFamilyBinding;
   execution_surface?: StandaloneExecutorSurface;
 };
@@ -254,6 +268,27 @@ function assertRepositorySource(value: unknown, location: string): asserts value
   ) {
     throw new Error(`${location} must be a canonical repository-relative config JSON path`);
   }
+}
+
+function assertArtifactSource(value: unknown, location: string): asserts value is string {
+  assertString(value, location);
+  if (
+    value !== normalizeString(value)
+    || value.includes("\\")
+    || value.startsWith("/")
+    || /^[A-Za-z]:/.test(value)
+    || value.split("/").some(part => part === "" || part === "." || part === "..")
+    || !/^artifacts\/certification\/[A-Za-z0-9._/-]+\.json$/.test(value)
+  ) {
+    throw new Error(`${location} must be a canonical repository-relative certification artifact JSON path`);
+  }
+}
+
+function parseEvidenceContract(value: unknown, location: string): ArtifactBoundEvidenceContract {
+  assertPlainObject(value, location);
+  assertExactKeys(value, ["schema"], location);
+  assertEnum(value.schema, ["revit-operator.artifact-bound-certification-evidence.v1"] as const, `${location}.schema`);
+  return value as unknown as ArtifactBoundEvidenceContract;
 }
 
 function parseStandaloneExecutorSurface(value: unknown, location: string): StandaloneExecutorSurface {
@@ -425,6 +460,7 @@ function parseCertificationRecord(
   assertPlainObject(value, location);
   const hasExecutionSurface = Object.prototype.hasOwnProperty.call(value, "execution_surface");
   const hasRequestFamily = Object.prototype.hasOwnProperty.call(value, "request_family");
+  const hasEvidenceContract = Object.prototype.hasOwnProperty.call(value, "evidence_contract");
   assertExactKeys(value, [
     "method",
     "path",
@@ -435,6 +471,7 @@ function parseCertificationRecord(
     "visibility",
     "evidence",
     ...(hasRequestFamily ? ["request_family"] : []),
+    ...(hasEvidenceContract ? ["evidence_contract"] : []),
     ...(hasExecutionSurface ? ["execution_surface"] : []),
     "request_hash",
     "effect_hash",
@@ -449,13 +486,27 @@ function parseCertificationRecord(
   assertUniqueEnumArray(value.requested_channels, EXPOSURE_CHANNELS, `${location}.requested_channels`);
   assertEnum(value.visibility, TOOL_VISIBILITIES, `${location}.visibility`);
   if (hasRequestFamily) parseRequestFamilyBinding(value.request_family, `${location}.request_family`);
+  if (hasEvidenceContract) parseEvidenceContract(value.evidence_contract, `${location}.evidence_contract`);
   assertPlainObject(value.evidence, `${location}.evidence`);
-  assertExactKeys(value.evidence, ["levels", "state", "provenance"], `${location}.evidence`);
+  const hasArtifacts = Object.prototype.hasOwnProperty.call(value.evidence, "artifacts");
+  assertExactKeys(value.evidence, ["levels", "state", "provenance", ...(hasArtifacts ? ["artifacts"] : [])], `${location}.evidence`);
   assertUniqueEnumArray(value.evidence.levels, CERTIFICATION_LEVELS, `${location}.evidence.levels`, true);
   assertEnum(value.evidence.state, EVIDENCE_STATUSES, `${location}.evidence.state`);
   assertRepositorySource(value.evidence.provenance, `${location}.evidence.provenance`);
   if (value.evidence.provenance !== source) {
     throw new Error(`${location}.evidence.provenance must match evidence file provenance.source`);
+  }
+  if (hasArtifacts) {
+    assertArray(value.evidence.artifacts, `${location}.evidence.artifacts`);
+    value.evidence.artifacts.forEach((artifact, artifactIndex) => {
+      const artifactLocation = `${location}.evidence.artifacts[${artifactIndex}]`;
+      assertPlainObject(artifact, artifactLocation);
+      assertExactKeys(artifact, ["schema", "level", "path", "sha256"], artifactLocation);
+      assertEnum(artifact.schema, ["revit-operator.certification-proof-artifact.v1"] as const, `${artifactLocation}.schema`);
+      assertEnum(artifact.level, CERTIFICATION_LEVELS, `${artifactLocation}.level`);
+      assertArtifactSource(artifact.path, `${artifactLocation}.path`);
+      assertSha256(artifact.sha256, `${artifactLocation}.sha256`);
+    });
   }
   if (hasExecutionSurface) {
     if (value.visibility !== "candidate") {
@@ -510,6 +561,7 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
     assertPlainObject(candidate, location);
     const hasExecutionSurface = Object.prototype.hasOwnProperty.call(candidate, "execution_surface");
     const hasRequestFamily = Object.prototype.hasOwnProperty.call(candidate, "request_family");
+    const hasEvidenceContract = Object.prototype.hasOwnProperty.call(candidate, "evidence_contract");
     assertExactKeys(candidate, [
       "method",
       "path",
@@ -517,6 +569,7 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
       "request",
       "typed_mcp_request_fixtures",
       ...(hasRequestFamily ? ["request_family"] : []),
+      ...(hasEvidenceContract ? ["evidence_contract"] : []),
       ...(hasExecutionSurface ? ["execution_surface"] : []),
       "request_hash",
       "effect_hash"
@@ -525,6 +578,7 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
     assertCanonicalToolPath(candidate.path, `${location}.path`);
     assertTypedMcpAliases(candidate.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
     if (hasRequestFamily) parseRequestFamilyBinding(candidate.request_family, `${location}.request_family`);
+    if (hasEvidenceContract) parseEvidenceContract(candidate.evidence_contract, `${location}.evidence_contract`);
     assertStandaloneExecutorBinding(candidate, candidate.typed_mcp_aliases, hasExecutionSurface, location);
     if (hasExecutionSurface) {
       if (candidate.typed_mcp_aliases.length !== 1) {
@@ -567,7 +621,7 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
 }
 
 function certificationIdentity(
-  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash" | "request_family" | "execution_surface">
+  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash" | "request_family" | "execution_surface" | "evidence_contract">
 ): string {
   return canonicalJson({
     method: value.method,
@@ -575,6 +629,7 @@ function certificationIdentity(
     request_hash: value.request_hash,
     effect_hash: value.effect_hash,
     ...(value.request_family ? { request_family: value.request_family } : {}),
+    ...(value.evidence_contract ? { evidence_contract: value.evidence_contract } : {}),
     ...(value.execution_surface ? { execution_surface: value.execution_surface } : {})
   });
 }
@@ -643,13 +698,17 @@ function recordHashPayload(record: Omit<ToolCertificationRecord, "record_hash">)
     requested_channels: [...record.requested_channels].sort(ordinalCompare),
     visibility: record.visibility,
     ...(record.request_family ? { request_family: canonicalValue(record.request_family as unknown as JsonValue) } : {}),
+    ...(record.evidence_contract ? { evidence_contract: canonicalValue(record.evidence_contract as unknown as JsonValue) } : {}),
     ...(record.execution_surface
       ? { execution_surface: canonicalValue(record.execution_surface as unknown as JsonValue) }
       : {}),
     evidence: {
       levels: record.evidence.levels.map(normalizeString),
       state: normalizeString(record.evidence.state),
-      provenance: normalizeString(record.evidence.provenance)
+      provenance: normalizeString(record.evidence.provenance),
+      ...(record.evidence.artifacts
+        ? { artifacts: record.evidence.artifacts.map(artifact => canonicalValue(artifact as unknown as JsonValue)) }
+        : {})
     },
     request_hash: record.request_hash,
     effect_hash: record.effect_hash
@@ -697,6 +756,15 @@ function evidenceAssessment(record: ToolCertificationRecord): {
   else if (record.evidence.state === "revoked") blocking.add(CERTIFICATION_REASON_CODES.revoked);
   else if (record.evidence.state === "mismatched") blocking.add(CERTIFICATION_REASON_CODES.mismatched);
   else if (record.evidence.state !== "verified") blocking.add(CERTIFICATION_REASON_CODES.unknown);
+
+  if (record.evidence_contract?.schema === "revit-operator.artifact-bound-certification-evidence.v1") {
+    const artifacts = record.evidence.artifacts ?? [];
+    const artifactLevels = artifacts.map(artifact => artifact.level);
+    if (artifacts.length !== record.evidence.levels.length
+      || canonicalJson([...artifactLevels].sort(ordinalCompare)) !== canonicalJson([...record.evidence.levels].sort(ordinalCompare))) {
+      blocking.add(CERTIFICATION_REASON_CODES.mismatched);
+    }
+  }
 
   for (const item of record.evidence.levels) {
     const index = levelIndex(item);

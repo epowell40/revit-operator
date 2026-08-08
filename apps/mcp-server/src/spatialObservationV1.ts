@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { getWorkspaceRoot } from "./lib/workspace.js";
-import { registerCertifiedSpatialObservation } from "./lib/certifiedMoveTargetLedger.js";
+import { listCertifiedMoveTargets, registerCertifiedSpatialObservation } from "./lib/certifiedMoveTargetLedger.js";
 
 export const SPATIAL_OBSERVATION_V1_SCHEMA_VERSION = "spatial-observation/v1";
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -345,12 +345,7 @@ export function readSpatialObservationImage(
 }
 
 export async function observeModelV1(input: SpatialObservationInput, callNative: SpatialObservationCall, readImage: SpatialObservationImageReader = readSpatialObservationImage): Promise<{ content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> }> {
-  const payload = await callNative("/revit/export-visible-elements", "POST", normalizeSpatialObservationInput(input));
-  const normalizedObservation = normalizeSpatialObservationV1(payload);
-  // The native capture response contains the document session/fingerprint and
-  // active view read in the same Revit API execution. This avoids a second
-  // context request, alias substitution, and document/view TOCTOU.
-  const observation = registerCertifiedSpatialObservation(normalizedObservation, normalizedObservation);
+  const observation = await captureSpatialObservationV1(input, callNative);
   const image = readImage(String(observation.path), MAX_IMAGE_BYTES);
   if (!image.ok) {
     const warnings = Array.isArray(observation.warnings) ? observation.warnings : [];
@@ -358,4 +353,26 @@ export async function observeModelV1(input: SpatialObservationInput, callNative:
     observation.warnings = warnings;
   }
   return { content: [{ type: "text", text: JSON.stringify(observation, null, 2) }, ...(image.ok ? [{ type: "image" as const, data: image.data, mimeType: image.mimeType }] : [])] };
+}
+
+async function captureSpatialObservationV1(input: SpatialObservationInput, callNative: SpatialObservationCall): Promise<Record<string, unknown>> {
+  const payload = await callNative("/revit/export-visible-elements", "POST", normalizeSpatialObservationInput(input));
+  const normalizedObservation = normalizeSpatialObservationV1(payload);
+  // The native capture response contains the document session/fingerprint and
+  // active view read in the same Revit API execution. This avoids a second
+  // context request, alias substitution, and document/view TOCTOU.
+  return registerCertifiedSpatialObservation(normalizedObservation, normalizedObservation);
+}
+
+/** A no-caller-id resolver/readback: every target comes from this fresh atomic observation. */
+export async function readCertifiedMoveTargetsV1(callNative: SpatialObservationCall): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  const observation = await captureSpatialObservationV1({}, callNative);
+  const observationId = String(observation.observationId);
+  return { content: [{ type: "text", text: JSON.stringify({
+    schemaVersion: "certified-move-target-readback/v1",
+    observationId,
+    document: observation.document,
+    view: observation.view,
+    targets: listCertifiedMoveTargets(observationId)
+  }, null, 2) }] };
 }

@@ -278,7 +278,7 @@ test("certified move-one entry point rejects forged admission paths and binds va
   clearCertifiedMoveTargetLedgerForTests();
   registerCertifiedSpatialObservation(
     { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-    { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+    { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
   );
   const variant = writePolicyVariant(policy => {
     const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");

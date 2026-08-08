@@ -1,0 +1,102 @@
+{
+  "schema": "revit-operator.certification-proof-artifact.v1",
+  "level": "L2",
+  "candidate": {
+    "method": "POST",
+    "path": "/revit/move-elements",
+    "request_hash": "sha256:3fdfdce0e4792c8dff28d4532ac48ad01243a9c1d6289a257e2b59972b29091d",
+    "effect_hash": "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b"
+  },
+  "status": "passed",
+  "producer": {
+    "kind": "automated_test",
+    "command": "npm run certify:epic-0437-source"
+  },
+  "inputs": [
+    {
+      "path": "apps/operator-backend/config/tool_certification_candidates.v1.json",
+      "sha256": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc"
+    },
+    {
+      "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
+      "sha256": "sha256:5cea3aef84854d0d853ef65524cfa746b943cad92a3f870ef2e3a295b878ccd1"
+    },
+    {
+      "path": "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
+      "sha256": "sha256:032d409a3ec87be06a47feb9f513d60cb7bedd615c6bb1389ffac8d442b016cb"
+    },
+    {
+      "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
+      "sha256": "sha256:bf6e3c0bc63ad888fe1620d238e52c78715d611398d36515808c1b70d36b1223"
+    },
+    {
+      "path": "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
+      "sha256": "sha256:2ae93b6080e45a6bb7636dc3a149e6b8e212dfc1937ca10a74dabc24b4c42b0e"
+    },
+    {
+      "path": "apps/operator-backend/src/courier/revit_tool_job_certification.ts",
+      "sha256": "sha256:936100cfab19db787a35f735d48ea8bc0bd49c8e85bf7e551c69a3e6537904c9"
+    },
+    {
+      "path": "apps/operator-backend/src/courier/revit_tool_jobs.ts",
+      "sha256": "sha256:9c82a69b986218ed68a8fa2fa4d3fc49b0473a066c91991aabaf7a218ada5bc3"
+    },
+    {
+      "path": "apps/mcp-server/src/server.ts",
+      "sha256": "sha256:bd8be837becf8ac286185a3cfa925f63ece7e57a69d8e0e1a21584e553bb0c3d"
+    },
+    {
+      "path": "apps/mcp-server/src/spatialObservationV1.ts",
+      "sha256": "sha256:f449d6724391fff85dcb6f9b434e9a10862cf84b3cd217a2bdafd714c0dd7328"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/certifiedMoveTargetLedger.ts",
+      "sha256": "sha256:ecce3b2c90f6bc3e9a18b292cdbbc94a90c548d4a60dc5b83eab7ec0a458e7a7"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.ts",
+      "sha256": "sha256:68c2eef6b3fc885a06cdbb50102c5502c78174185babf61961f319b359ce3f6d"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/certifiedCapabilityProjection.ts",
+      "sha256": "sha256:2f5e9cce8e5c3135ddd80299aec3eee46a2300eb6ae17749d48e32faf68fc92d"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/revitClient.ts",
+      "sha256": "sha256:8e43f77de849d63fc705aa57b2fdde16cb1a947cd67b3e9708c68ba05e8a9635"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/revitCourier.ts",
+      "sha256": "sha256:d14f8614e35cef18c027127c87d4d59c84d9925673b9c8f28372d115d7caf4ee"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedRequestFamilyAdmission.cs",
+      "sha256": "sha256:874dd00e94c17b7726dfe0219d63aa3752b37c34f8e6fad45c1329af8df6a5da"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedMovePreviewAuthority.cs",
+      "sha256": "sha256:60f0ee71d07098907a0ba53fa4d6bbd3c1cc7e649e48eec946e321578d074f44"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeToolExposureAuthority.cs",
+      "sha256": "sha256:7d7b8b9b4ed13f6b2c595b3015863fd58c3a827661db6b6cf208b465cee095f6"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Selection/ExportVisibleElementsHandler.cs",
+      "sha256": "sha256:78d03e92858e993ad45f2260950e87bd4961084f6bcfc5953820a2f0d725a686"
+    }
+  ],
+  "result": {
+    "passed": true,
+    "checks": [
+      {
+        "command": "C:\\Users\\Eli\\AppData\\Local\\Volta\\tools\\image\\node\\20.20.2\\node.exe --test --test-reporter=dot --test-concurrency=1 --test-name-pattern=canonical identity|cumulative evidence|typed MCP|request-family|missing, unknown|tampered request|runtime validation|candidate provenance|candidate aliases|alias bindings|request fixtures|seeded policy|direct |courier  dist/test/tool_certification.test.js dist/test/direct_revit_execution_authorization.test.js dist/test/revit_courier_contract.test.js",
+        "duration_ms": 2888
+      },
+      {
+        "command": "C:\\Users\\Eli\\AppData\\Local\\Volta\\tools\\image\\node\\20.20.2\\node.exe --test --test-reporter=dot dist/spatialObservationV1.test.js dist/lib/certifiedMoveTargetLedger.test.js dist/lib/certifiedMoveOneRequestFamily.test.js dist/lib/certifiedExecutionEnvelope.test.js dist/lib/toolExposurePolicy.test.js dist/lib/revitCourier.test.js dist/lib/certifiedCapabilityProjection.test.js",
+        "duration_ms": 20570
+      }
+    ]
+  }
+}

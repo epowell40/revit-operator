@@ -12,6 +12,10 @@ export type CertifiedMoveTargetBinding = Readonly<{
   nativeAttestationKeyId: string;
   nativeAttestationModulusBase64Url: string;
   nativeAttestationExponentBase64Url: string;
+  pointXyz: Readonly<{ x: number; y: number; z: number }>;
+  category: string | null;
+  familyName: string | null;
+  typeName: string | null;
 }>;
 
 const observations = new Map<string, Readonly<{
@@ -73,6 +77,26 @@ function pointLocated(item: JsonObject): boolean {
   return orientation?.locationKind === "point" || orientation?.location_kind === "point";
 }
 
+function finitePoint(value: unknown): Readonly<{ x: number; y: number; z: number }> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const point = value as JsonObject;
+  return typeof point.x === "number" && Number.isFinite(point.x)
+    && typeof point.y === "number" && Number.isFinite(point.y)
+    && typeof point.z === "number" && Number.isFinite(point.z)
+    ? Object.freeze({ x: point.x, y: point.y, z: point.z })
+    : null;
+}
+
+function observedPoint(item: JsonObject): Readonly<{ x: number; y: number; z: number }> | null {
+  if (!item.orientation || typeof item.orientation !== "object" || Array.isArray(item.orientation)) return null;
+  const orientation = item.orientation as JsonObject;
+  return finitePoint(orientation.locationPoint ?? orientation.location_point);
+}
+
+function optionalText(value: unknown): string | null {
+  return typeof value === "string" && value.trim() && value === value.normalize("NFC") ? value : null;
+}
+
 /**
  * Records only target identity returned by an authenticated native observation
  * and its immediately-following authenticated context read. Model-provided
@@ -102,7 +126,8 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
     const sourceScopedId = typeof (item.sourceScopedId ?? item.source_scoped_id) === "string"
       ? String(item.sourceScopedId ?? item.source_scoped_id)
       : "";
-    if (sourceScopedId !== `host:${elementId}` || !pointLocated(item) || item.groundingStatus === "ungrounded") continue;
+    const pointXyz = observedPoint(item);
+    if (sourceScopedId !== `host:${elementId}` || !pointLocated(item) || !pointXyz || item.groundingStatus === "ungrounded") continue;
     const binding: CertifiedMoveTargetBinding = Object.freeze({
       observationId,
       documentFingerprint: fingerprint,
@@ -112,7 +137,11 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
       observationBindingHash: digest([observationId, fingerprint, sessionId, sourceScopedId, String(elementId), attestation.keyId]),
       nativeAttestationKeyId: attestation.keyId,
       nativeAttestationModulusBase64Url: attestation.modulus,
-      nativeAttestationExponentBase64Url: attestation.exponent
+      nativeAttestationExponentBase64Url: attestation.exponent,
+      pointXyz,
+      category: optionalText(item.category ?? item.categoryName ?? item.category_name),
+      familyName: optionalText(item.familyName ?? item.family_name ?? item.family),
+      typeName: optionalText(item.typeName ?? item.type_name ?? item.type)
     });
     targets.set(elementId as number, binding);
   }
@@ -130,6 +159,33 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
     },
     certifiedTargetCount: targets.size
   };
+}
+
+/** Returns a bounded projection issued only from native-attested observation data. */
+export function listCertifiedMoveTargets(observationIdValue: unknown): ReadonlyArray<Readonly<{
+  observationId: string;
+  sourceScopedId: string;
+  elementId: number;
+  pointXyz: Readonly<{ x: number; y: number; z: number }>;
+  category: string | null;
+  familyName: string | null;
+  typeName: string | null;
+}>> {
+  const observationId = text(observationIdValue, "observationId");
+  const observation = observations.get(observationId);
+  if (!observation) throw new Error("Move targets were not issued by the current process from this observation.");
+  return [...observation.targets.values()]
+    .sort((left, right) => left.elementId - right.elementId)
+    .slice(0, 100)
+    .map(target => Object.freeze({
+      observationId: target.observationId,
+      sourceScopedId: target.sourceScopedId,
+      elementId: target.elementId,
+      pointXyz: target.pointXyz,
+      category: target.category,
+      familyName: target.familyName,
+      typeName: target.typeName
+    }));
 }
 
 export function resolveCertifiedMoveTarget(observationIdValue: unknown, elementIdValue: unknown): CertifiedMoveTargetBinding {

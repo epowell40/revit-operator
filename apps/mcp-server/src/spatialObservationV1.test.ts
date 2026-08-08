@@ -4,12 +4,12 @@ import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./lib/certifiedMoveNativeAtte
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { normalizeSpatialObservationInput, normalizeSpatialObservationV1, observeModelV1, readSpatialObservationImage } from "./spatialObservationV1.js";
+import { normalizeSpatialObservationInput, normalizeSpatialObservationV1, observeModelV1, readCertifiedMoveTargetsV1, readSpatialObservationImage } from "./spatialObservationV1.js";
 
 const mapping = { mode: "2d_affine", topLeftXyz: [0, 10, 0], topRightXyz: [10, 10, 0], bottomLeftXyz: [0, 0, 0] };
 const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO6nS7sAAAAASUVORK5CYII=", "base64");
 function payload() { return { frameId: "frame-7", path: "C:\\tmp\\frame-7.png", widthPx: 1600, heightPx: 900, viewId: 42, viewName: "Level 1", mapping, count: 2, scanned: 3, truncated: true, items: [
-  { elementId: 12, source: { scope: "host" }, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2, locationKind: "point" } },
+  { elementId: 12, source: { scope: "host" }, category: "Walls", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { planAzimuthRadians: 1.2, locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } },
   { elementId: 12, source: { scope: "linked", linkInstanceId: 9 }, category: "Doors", bbox: { image: { normalizedMinX: 0.4, normalizedMinY: 0.5, normalizedMaxX: 0.5, normalizedMaxY: 0.6 } }, hostProvenance: { source: "linked" } }
 ] , document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } }; }
 
@@ -132,4 +132,20 @@ test("wrapper preserves structured evidence and explains an unavailable image", 
   const observation = JSON.parse((result.content[0] as any).text);
   assert.match(observation.warnings[0], /Observation image unavailable/);
   assert.match(observation.warnings[0], /PNG or JPEG/);
+});
+test("certified target readback takes no caller ids and projects exact fresh-observation XYZ", async () => {
+  const calls: unknown[] = [];
+  const result = await readCertifiedMoveTargetsV1(async (route, method, body) => {
+    calls.push({ route, method, body });
+    return payload();
+  });
+  assert.deepEqual(calls, [{ route: "/revit/export-visible-elements", method: "POST", body: {
+    imageSize: 2200, limit: 500, includeMapping: true, includeGeometry: true
+  } }]);
+  const readback = JSON.parse(result.content[0]!.text);
+  assert.equal(readback.schemaVersion, "certified-move-target-readback/v1");
+  assert.deepEqual(readback.targets, [{
+    observationId: "frame-7", sourceScopedId: "host:12", elementId: 12,
+    pointXyz: { x: 1, y: 2, z: 3 }, category: "Walls", familyName: null, typeName: null
+  }]);
 });

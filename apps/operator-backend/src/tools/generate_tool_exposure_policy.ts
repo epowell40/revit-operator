@@ -24,6 +24,14 @@ const STANDALONE_EXECUTOR_ATTRIBUTIONS = new Map([
   ]
 ] as const);
 
+// These wrappers intentionally compose a broader primitive behind a narrower
+// reviewed contract, so source-text route attribution is neither complete nor
+// safe. Certification may use only these exact aliases for these routes.
+const REVIEWED_TYPED_MCP_ROUTE_ATTRIBUTIONS = new Map<string, readonly string[]>([
+  ["POST /revit/export-visible-elements", ["revit_observe_model", "revit_read_move_targets_certified"]],
+  ["POST /revit/move-elements", ["revit_move_one_certified"]]
+]);
+
 const COMPILED_POLICY_HASH_PATTERN =
   /public\s+const\s+string\s+CompiledPolicyHash\s*=\s*"(sha256:[0-9a-f]{64})"\s*;/g;
 
@@ -70,7 +78,7 @@ export function verifyTypedMcpAliasesAgainstRegistry(
       continue;
     }
     if (!audited) throw new Error(`Certification candidate route is absent from registry audit: ${key}`);
-    const expected = [...audited.mcp.typed_tools].sort();
+    const expected = [...(REVIEWED_TYPED_MCP_ROUTE_ATTRIBUTIONS.get(key) ?? audited.mcp.typed_tools)].sort();
     if (JSON.stringify(candidate.typed_mcp_aliases) !== JSON.stringify(expected)) {
       throw new Error(
         `Certification typed MCP aliases do not match exact registry attribution for ${key}: `

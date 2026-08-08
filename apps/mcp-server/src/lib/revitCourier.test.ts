@@ -445,7 +445,7 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
     clearCertifiedMoveTargetLedgerForTests();
     registerCertifiedSpatialObservation(
       { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
     );
     const admission = admitCertifiedMoveOneRequest({
       phase: "preview", elementId: 4821, observationId: "family-frame",
@@ -555,7 +555,7 @@ test("certified family courier rejects raw or standalone-decision failure receip
       clearCertifiedMoveTargetLedgerForTests();
       registerCertifiedSpatialObservation(
         { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
       );
       const admission = admitCertifiedMoveOneRequest({
         phase: "preview", elementId: 4821, observationId: "family-forged-frame",
@@ -636,7 +636,7 @@ test("certified family courier rejects deleted or downgraded durable jobs before
       clearCertifiedMoveTargetLedgerForTests();
       registerCertifiedSpatialObservation(
         { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point" } }] }
+        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
       );
       const admission = admitCertifiedMoveOneRequest({
         phase: "preview", elementId: 4821, observationId: "family-missing-job-frame",

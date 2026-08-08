@@ -1,0 +1,105 @@
+{
+  "schema": "revit-operator.tool-certification-proofs.v1",
+  "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
+  "records": [
+    {
+      "method": "POST",
+      "path": "/revit/export-visible-elements",
+      "request_hash": "sha256:5d7a88495a5d3d5c40115c62892c4e34a5ee59fcff74b4c7e1f6ff9307478045",
+      "effect_hash": "sha256:0f19ae675c51b10854e3977070ad34e4898a004c4a724058f933c17233f37bf8",
+      "effect": {
+        "resolved_effect": "read"
+      },
+      "requested_channels": [
+        "typed_mcp"
+      ],
+      "visibility": "candidate",
+      "artifacts": [
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L0",
+          "path": "artifacts/certification/epic-0437/5d7a88495a5d.l0.json",
+          "sha256": "sha256:46ccfe7f79f48b908e833b0e27c3c7b4c1af39e2c12ecf7b91710b5df962ed3a"
+        },
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L1",
+          "path": "artifacts/certification/epic-0437/5d7a88495a5d.l1.json",
+          "sha256": "sha256:13b02d1209bb8fe6d2dfd774dc04ad62166f19b18d3e3a177a7aac31f2165c7f"
+        },
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L2",
+          "path": "artifacts/certification/epic-0437/5d7a88495a5d.l2.json",
+          "sha256": "sha256:7214d3311bf2ae050595aad5ca7f6773f394875711da95264b66845038b560f7"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/move-elements",
+      "request_hash": "sha256:c2dbe12c7df5ca552f102135d7b61c3568c707d66821d180af929698a50c18ea",
+      "effect_hash": "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c0250fcc55ede2d87107d06ae428b",
+      "effect": {
+        "resolved_effect": "preview"
+      },
+      "requested_channels": [
+        "typed_mcp"
+      ],
+      "visibility": "candidate",
+      "artifacts": [
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L0",
+          "path": "artifacts/certification/epic-0437/c2dbe12c7df5.l0.json",
+          "sha256": "sha256:5714d359c0278eefe33c499743055aa5c09fbcfc42222876a7ee9b14a9cfb455"
+        },
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L1",
+          "path": "artifacts/certification/epic-0437/c2dbe12c7df5.l1.json",
+          "sha256": "sha256:1fe919ea4bc60548c293bde3f602932b10c5c0979e8dc9569c35499e2d86e513"
+        },
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L2",
+          "path": "artifacts/certification/epic-0437/c2dbe12c7df5.l2.json",
+          "sha256": "sha256:4f9df2a66f00ccaa4dda3fb6e3516cfdff6ecd9730c1336159149dd86f61d8ce"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/move-elements",
+      "request_hash": "sha256:3fdfdce0e4792c8dff28d4532ac48ad01243a9c1d6289a257e2b59972b29091d",
+      "effect_hash": "sha256:4da2bf877ae0747d17dec5123defd1912193bd2b9c59b57f7dd8d4aa7b7e1e7b",
+      "effect": {
+        "resolved_effect": "write"
+      },
+      "requested_channels": [
+        "typed_mcp"
+      ],
+      "visibility": "candidate",
+      "artifacts": [
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L0",
+          "path": "artifacts/certification/epic-0437/3fdfdce0e479.l0.json",
+          "sha256": "sha256:38e537781838814e1e8c00b553a49a74210323062b57aeedf79b1576bd49763d"
+        },
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L1",
+          "path": "artifacts/certification/epic-0437/3fdfdce0e479.l1.json",
+          "sha256": "sha256:1f117a4154f467d1aecce82957c75e26abc505f94026ef3abc86893e0f4e00b2"
+        },
+        {
+          "schema": "revit-operator.certification-proof-artifact.v1",
+          "level": "L2",
+          "path": "artifacts/certification/epic-0437/3fdfdce0e479.l2.json",
+          "sha256": "sha256:b9b2f3833f151bd17f86df5b71d836060d35d0022b015a6442efdcf379b8f7e9"
+        }
+      ]
+    }
+  ]
+}

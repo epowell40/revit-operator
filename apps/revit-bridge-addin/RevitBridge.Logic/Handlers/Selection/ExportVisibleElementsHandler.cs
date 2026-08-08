@@ -776,6 +776,7 @@ namespace RevitBridge.Logic.Handlers
             XYZ? basisYVector = null;
             XYZ? basisZVector = null;
             XYZ? transformOrigin = null;
+            XYZ? locationPointVector = null;
             double? rotationRadians = null;
             bool? mirrored = null;
             bool? handFlipped = null;
@@ -823,6 +824,7 @@ namespace RevitBridge.Logic.Handlers
                 if (e.Location is LocationPoint lp)
                 {
                     locationKind = "point";
+                    locationPointVector = TransformPointToHost(linkInstance, lp.Point);
                     rotationRadians = lp.Rotation;
                 }
                 else if (e.Location is LocationCurve lc && lc.Curve != null)
@@ -874,6 +876,7 @@ namespace RevitBridge.Logic.Handlers
             var basisY = BuildVectorOrNull(basisYVector);
             var basisZ = BuildVectorOrNull(basisZVector);
             var origin = BuildVectorOrNull(transformOrigin);
+            var locationPoint = BuildVectorOrNull(locationPointVector);
             var rotationDegrees = rotationRadians.HasValue ? rotationRadians.Value * (180.0 / Math.PI) : (double?)null;
             var planAzimuthDegrees = planAzimuthRadians.HasValue ? planAzimuthRadians.Value * (180.0 / Math.PI) : (double?)null;
             var sourceToHostTransform = BuildLinkTransformPayload(linkInstance);
@@ -885,6 +888,7 @@ namespace RevitBridge.Logic.Handlers
                 basisY == null &&
                 basisZ == null &&
                 origin == null &&
+                locationPoint == null &&
                 rotationRadians == null &&
                 mirrored == null &&
                 handFlipped == null &&
@@ -911,6 +915,7 @@ namespace RevitBridge.Logic.Handlers
                     basisZ
                 },
                 sourceToHostTransform,
+                locationPoint,
                 rotationRadians,
                 rotationDegrees,
                 planAzimuthRadians,

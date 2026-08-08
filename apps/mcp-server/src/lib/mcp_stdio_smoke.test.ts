@@ -222,8 +222,8 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 126, "Exact development laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, laboratory SafeRead, and bounded move-family aliases.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 109, "Exact development laboratory mode must preserve all Revit aliases plus observation, laboratory SafeRead, and the bounded move-family alias.");
+  assert.equal(laboratoryNames.length, 127, "Exact development laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 110, "Exact development laboratory mode must preserve all Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
 });
 
@@ -301,7 +301,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
         scanned: 1,
         truncated: false,
         document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } },
-        items: [{ elementId: 12, sourceScopedId: "host:12", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { locationKind: "point" } }]
+        items: [{ elementId: 12, sourceScopedId: "host:12", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }]
       }));
       return;
     }
@@ -398,8 +398,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 126, "Laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, SafeRead, and bounded move-family aliases.");
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 109, "Laboratory mode must preserve all revit_ aliases plus observation, SafeRead, and the bounded move-family alias.");
+  assert.equal(tools.tools.length, 127, "Laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, target readback, SafeRead, and bounded move-family aliases.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 110, "Laboratory mode must preserve all revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
   for (const name of [
