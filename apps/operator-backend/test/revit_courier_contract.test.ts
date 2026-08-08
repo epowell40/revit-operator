@@ -796,12 +796,13 @@ test("courier completion survives a backend process restart using only its durab
   // success receipt can be trusted. A fresh process must not replay execution.
   fs.unlinkSync(path.join(dir, "result.json"));
   fs.writeFileSync(path.join(dir, "job.json"), runningJob, "utf8");
-  const competingFailure = failRevitToolJob({
+  const recoveredByCompetingFailure = failRevitToolJob({
     session_id: job.session_id, job_id: job.id, executor_id: "worker-1",
     result: { code: "late_competing_failure" }, error: "late competing failure"
   });
-  assert.equal(competingFailure.status, "running");
-  assert.equal(fs.existsSync(path.join(dir, "result.json")), false);
+  assert.equal(recoveredByCompetingFailure.status, "succeeded");
+  assert.equal(fs.existsSync(path.join(dir, "result.json")), true);
+  const recoveredBeforeReplay = fs.readFileSync(path.join(dir, "result.json"), "utf8");
   const replayed = spawnSync(process.execPath, [
     "--input-type=module",
     "-e",
@@ -812,6 +813,7 @@ test("courier completion survives a backend process restart using only its durab
   const recovered = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
   assert.equal(recovered.status, "succeeded");
   assert.deepEqual(recovered.certified_execution_context, context);
+  assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), recoveredBeforeReplay);
   const recoveredBytes = fs.readFileSync(path.join(dir, "result.json"), "utf8");
   assert.equal(completeRevitToolJob({
     session_id: job.session_id, job_id: job.id, executor_id: "worker-1", result: { forged: true }
@@ -859,7 +861,7 @@ test("concurrent terminal publishers use first-writer CAS and never overwrite du
   assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
 });
 
-test("concurrent invalid family completion cannot overwrite the signed-success decision", async () => {
+test("a delayed workstation failure cannot overwrite the signed-success decision", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-concurrent-success-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   process.env.REVIT_OPERATOR_MODE = "local";
@@ -882,12 +884,13 @@ test("concurrent invalid family completion cannot overwrite the signed-success d
     completion_challenge_hash: authorization.completion_challenge_hash!
   });
   const validResult = certifiedMoveExecutionResult(job, admission, context);
-  const invalidResult = certifiedMoveExecutionResult(job, admission, context, null, "direct");
   const validInputPath = path.join(root, "valid-completion.json");
   const invalidInputPath = path.join(root, "invalid-completion.json");
   const baseInput = { session_id: job.session_id, job_id: job.id, executor_id: "worker-1" };
   fs.writeFileSync(validInputPath, JSON.stringify({ ...baseInput, result: validResult }), "utf8");
-  fs.writeFileSync(invalidInputPath, JSON.stringify({ ...baseInput, result: invalidResult }), "utf8");
+  fs.writeFileSync(invalidInputPath, JSON.stringify({
+    ...baseInput, result: { code: "delayed_workstation_failure" }, error: "delayed workstation failure"
+  }), "utf8");
   const decisionPath = path.join(dir, "completion-terminal-decision.v1.json");
   const runChild = (script: string, inputPath: string) => new Promise<number | null>(resolve => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", script, inputPath, decisionPath], {
@@ -896,7 +899,7 @@ test("concurrent invalid family completion cannot overwrite the signed-success d
     child.on("exit", code => resolve(code));
   });
   const completeScript = "import fs from 'node:fs'; import { completeRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); completeRevitToolJob(input);";
-  const invalidAfterDecisionScript = "import fs from 'node:fs'; import { completeRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const signal=new Int32Array(new SharedArrayBuffer(4)); const deadline=Date.now()+2000; while(!fs.existsSync(process.argv[2])&&Date.now()<deadline) Atomics.wait(signal,0,0,5); const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); try { completeRevitToolJob(input); } catch {}";
+  const invalidAfterDecisionScript = "import fs from 'node:fs'; import { failRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const signal=new Int32Array(new SharedArrayBuffer(4)); const deadline=Date.now()+2000; while(!fs.existsSync(process.argv[2])&&Date.now()<deadline) Atomics.wait(signal,0,0,5); const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); try { failRevitToolJob(input); } catch {}";
   await Promise.all([
     runChild(completeScript, validInputPath),
     runChild(invalidAfterDecisionScript, invalidInputPath)
@@ -909,6 +912,49 @@ test("concurrent invalid family completion cannot overwrite the signed-success d
   assert.equal(durable.result.certified_execution_receipt.transport_kind, "courier");
   assert.equal(durable.result.certified_execution_receipt.completion_challenge_hash, context.completion_challenge_hash);
   assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), durableBytes);
+});
+
+test("failure terminal decision recovers its exact durable result after a publication crash", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-failure-recovery-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const job = certifiedMoveJob(policy, body, admission);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: job.session_id, executor_id: "worker-1" }).job?.id, job.id);
+  const authorization = authorizeRevitToolJobExecution({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization;
+  const runningJob = fs.readFileSync(path.join(dir, "job.json"), "utf8");
+  const context = testExecutionContext(job, {
+    completion_challenge: authorization.completion_challenge!,
+    completion_challenge_hash: authorization.completion_challenge_hash!
+  });
+  const invalidResult = certifiedMoveExecutionResult(job, admission, context, null, "direct");
+  assert.equal(completeRevitToolJob({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", result: invalidResult
+  }).status, "failed");
+  const firstFailureBytes = fs.readFileSync(path.join(dir, "result.json"), "utf8");
+  const firstFailure = JSON.parse(firstFailureBytes);
+  assert.equal(firstFailure.status, "failed");
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "completion-terminal-decision.v1.json"), "utf8")).kind, "failure");
+
+  // Simulate process loss after the decision CAS but before result publication.
+  fs.unlinkSync(path.join(dir, "result.json"));
+  fs.writeFileSync(path.join(dir, "job.json"), runningJob, "utf8");
+  const recovered = failRevitToolJob({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1",
+    result: { code: "different_late_failure" }, error: "different late failure"
+  });
+  assert.equal(recovered.status, "failed");
+  assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), firstFailureBytes);
 });
 
 test("signed courier preview lineage is exact and apply receipts carry explicit null lineage", () => {
