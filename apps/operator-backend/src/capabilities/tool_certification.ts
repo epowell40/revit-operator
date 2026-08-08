@@ -798,8 +798,8 @@ export function generateToolExposurePolicy(input: ToolCertificationEvidenceFile 
     return { ...base, policy_record_hash: sha256(policyRecordHashPayload(base)) };
   }).sort((left, right) => {
     const keyOrder = ordinalCompare(
-      `${left.method} ${left.path} ${left.request_hash}`,
-      `${right.method} ${right.path} ${right.request_hash}`
+      `${left.method} ${left.path} ${left.request_hash} ${left.request_family?.schema ?? ""} ${left.request_family?.id ?? ""} ${left.request_family?.validator_hash ?? ""}`,
+      `${right.method} ${right.path} ${right.request_hash} ${right.request_family?.schema ?? ""} ${right.request_family?.id ?? ""} ${right.request_family?.validator_hash ?? ""}`
     );
     return keyOrder || ordinalCompare(left.effect_hash, right.effect_hash);
   });

@@ -399,7 +399,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   const packagedConfig = path.join(root, "operator-backend", "config");
   fs.mkdirSync(packagedLib, { recursive: true });
   fs.mkdirSync(packagedConfig, { recursive: true });
-  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js"]) {
+  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js"]) {
     fs.copyFileSync(path.resolve(process.cwd(), "dist", "lib", file), path.join(packagedLib, file));
   }
   fs.copyFileSync(sourcePolicyPath, path.join(packagedConfig, "tool_exposure_policy.v1.json"));

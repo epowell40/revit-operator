@@ -15,6 +15,10 @@ test("apply requires and binds an exact preview lineage", () => {
   const apply = admitCertifiedMoveOneRequest({ ...base, phase: "apply", previewInstanceHash: preview.requestInstanceHash });
   assert.equal(apply.outboundBody.dryRun, false);
   assert.equal(apply.request.previewInstanceHash, preview.requestInstanceHash);
+  assert.throws(() => admitCertifiedMoveOneRequest({ ...base, phase: "apply", previewInstanceHash: preview.requestInstanceHash }), /PREVIEW_LINEAGE_INVALID/);
+  const anotherPreview = admitCertifiedMoveOneRequest({ ...base, vectorFeet: { x: 1, y: 0, z: 0 } });
+  assert.throws(() => admitCertifiedMoveOneRequest({ ...base, phase: "apply", previewInstanceHash: anotherPreview.requestInstanceHash }), /PREVIEW_LINEAGE_INVALID/);
+  assert.throws(() => admitCertifiedMoveOneRequest({ ...base, phase: "apply", previewInstanceHash: `sha256:${"b".repeat(64)}` }), /PREVIEW_LINEAGE_INVALID/);
 });
 test("profile rejects broadened targets, vectors, and option injection", () => {
   assert.throws(() => admitCertifiedMoveOneRequest({ ...base, elementId: 0 }), /TARGET_INVALID/);

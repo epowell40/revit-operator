@@ -46,6 +46,7 @@ export class CertifiedMoveOneRequestError extends Error {
 // Admission objects are process-local capabilities. A structurally identical
 // JSON object cannot skip the reviewed validator on the execution path.
 const admittedRequests = new WeakSet<object>();
+const issuedPreviewRequests = new Map<string, CertifiedMoveOneRequest>();
 
 const FAMILY_MATERIAL: Json = {
   family: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
@@ -92,6 +93,16 @@ function sha256(value: unknown, name: string): string {
 
 export const CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH = digest(FAMILY_MATERIAL);
 
+function samePreviewLineage(preview: CertifiedMoveOneRequest, apply: CertifiedMoveOneRequest): boolean {
+  return preview.documentFingerprint === apply.documentFingerprint
+    && preview.sourceScopedId === apply.sourceScopedId
+    && preview.elementId === apply.elementId
+    && preview.observationId === apply.observationId
+    && preview.vectorFeet.x === apply.vectorFeet.x
+    && preview.vectorFeet.y === apply.vectorFeet.y
+    && preview.vectorFeet.z === apply.vectorFeet.z;
+}
+
 /** Validates the model-facing profile and produces the legacy handler's exact body. */
 export function admitCertifiedMoveOneRequest(input: unknown): CertifiedMoveOneAdmission {
   const raw = object(input, "request");
@@ -123,6 +134,17 @@ export function admitCertifiedMoveOneRequest(input: unknown): CertifiedMoveOneAd
     options: { failOnPinned: true as const, unpinIfAllowed: false as const }
   };
   const requestInstanceHash = digest({ familyHash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, request: request as unknown as Json, outboundBody: outboundBody as unknown as Json });
+  if (phase === "apply") {
+    const preview = issuedPreviewRequests.get(previewInstanceHash!);
+    // Consume before returning the apply capability. A caller must reconcile an
+    // unknown downstream outcome rather than reuse the same preview approval.
+    issuedPreviewRequests.delete(previewInstanceHash!);
+    if (!preview || !samePreviewLineage(preview, request)) {
+      throw new CertifiedMoveOneRequestError("MOVE_ONE_PREVIEW_LINEAGE_INVALID", "Apply requires one exact, locally issued, unused preview for the same document, source, observation, target, and vector.");
+    }
+  } else {
+    issuedPreviewRequests.set(requestInstanceHash, request);
+  }
   const admission = Object.freeze({ familyId: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1, familyHash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, requestInstanceHash, request, outboundBody });
   admittedRequests.add(admission);
   return admission;
