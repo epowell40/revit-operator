@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canonicalJson, computeEffectHash, parseToolCertificationCandidates, parseToolCertificationEvidence, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
+import { canonicalJson, computeEffectHash, parseToolCertificationCandidates, parseToolCertificationEvidence, renderCanonicalDocument, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
 import { compileArtifactBoundEvidence, parseCertificationProofIndex } from "../capabilities/tool_certification_evidence_compiler.js";
 import {
   EPIC_0437_L2_GATE_CHECKS,
@@ -118,15 +118,21 @@ async function main(): Promise<void> {
     }
   }
   fs.writeFileSync(proofPath, canonical(proofIndex), "utf8");
-  compileArtifactBoundEvidence({
+  const evidencePath = path.join(backendRoot, "config", "tool_certification_evidence.v1.json");
+  const compiledEvidence = compileArtifactBoundEvidence({
     candidates,
     candidateSourceHash: candidateHash,
-    baseline: parseToolCertificationEvidence(json(fs.readFileSync(path.join(backendRoot, "config", "tool_certification_evidence.v1.json"), "utf8"))),
+    baseline: parseToolCertificationEvidence(json(fs.readFileSync(evidencePath, "utf8"))),
     proofIndex,
     repoRoot
   });
+  fs.writeFileSync(
+    evidencePath,
+    renderCanonicalDocument(compiledEvidence as unknown as JsonValue),
+    "utf8"
+  );
   await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "dist/test/tool_certification_evidence_compiler.test.js"], backendRoot);
-  console.log(`Wrote L0-L2 proof artifacts for ${proofIndex.records.length} exact candidate identities.`);
+  console.log(`Wrote converged L0-L2 proof artifacts and certification evidence for ${proofIndex.records.length} exact candidate identities.`);
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {

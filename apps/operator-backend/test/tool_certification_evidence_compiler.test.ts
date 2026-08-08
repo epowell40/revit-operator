@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
+import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, renderCanonicalDocument, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
 import { assertEpic0437PromotableRecoveryState, compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
 import { EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, parseAndVerifyEpic0437PromotionAuthorization } from "../src/capabilities/epic_0437_promotion_authority.js";
 import { epic0437SourceInputHash } from "../src/capabilities/epic_0437_source_provenance.js";
@@ -52,6 +52,11 @@ test("artifact-bound compiler verifies exact cumulative L0-L2 proof files agains
   assert.equal(records.length, 3);
   assert.ok(records.every(record => JSON.stringify(record.evidence.levels) === JSON.stringify(["L0", "L1", "L2"])));
   assert.ok(records.every(record => record.evidence.artifacts?.length === 3));
+});
+
+test("committed certification evidence exactly equals canonical compiler output", () => {
+  const rendered = renderCanonicalDocument(compile() as unknown as JsonValue);
+  assert.equal(evidenceRaw.replace(/\r\n?/g, "\n"), rendered);
 });
 
 test("artifact-bound compiler rejects proof hash tamper, missing levels, and stale candidate source", () => {

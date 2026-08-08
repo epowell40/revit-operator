@@ -72,6 +72,26 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Laboratory_dependency_identity_rejects_when_only_an_unrelated_version_is_loaded()
+        {
+            var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[]
+            {
+                typeof(JsonDocument).Assembly.Location,
+                "System.Text.Json.dll",
+                new[]
+                {
+                    new KeyValuePair<string, string>(
+                        "System.Text.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+                        typeof(JsonDocument).Assembly.Location)
+                }
+            }));
+            Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+        }
+
+        [Fact]
         public void Process_local_key_signs_exact_canonical_receipt_and_rejects_tamper()
         {
             var modulus = OperatorNativeExecutionAttestationAuthority.ModulusBase64Url

@@ -321,6 +321,8 @@ namespace RevitBridge.Common
                 .Where(value => string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal))
                 .Select(value => value.Value)
                 .ToList();
+            if (managedAssemblies.Count > 0 && exactIdentityMatches.Count == 0)
+                throw Denied("Protected laboratory evidence did not load the deployed " + name + " assembly identity.");
             if (exactIdentityMatches.Any(string.IsNullOrWhiteSpace)
                 || exactIdentityMatches.Any(value => !File.Exists(value)))
                 throw Denied("Protected laboratory evidence cannot resolve every loaded " + name + " assembly location.");

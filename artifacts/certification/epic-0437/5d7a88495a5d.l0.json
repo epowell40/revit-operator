@@ -1425,7 +1425,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/certify_epic_0437_source.ts",
-      "sha256": "sha256:7ef0cc38daceefc062b2cc4e738bd6f10e6a9a85edcafc6f18296142ebf7ae15"
+      "sha256": "sha256:acdb98c4f76e1f81219e06c827d786dfe01592cad54a75cec4fe1a1580627731"
     },
     {
       "path": "apps/operator-backend/src/tools/check_skill_library_manifest.ts",
@@ -2373,7 +2373,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_certification_evidence_compiler.test.ts",
-      "sha256": "sha256:c50aa602118351c3adc8edadddf5decb886d317d4525b9b902a0a75d1cbbeae0"
+      "sha256": "sha256:38d2eee78131502e0493521f119cc33ecdce9e7556740eabf12367358314398b"
     },
     {
       "path": "apps/operator-backend/test/tool_registry_audit.test.ts",
@@ -2597,7 +2597,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
-      "sha256": "sha256:52c294451b8e081c7188d71a993fb4d2cd9ecb0a45e95ea5223a1ef2bcd8d31b"
+      "sha256": "sha256:c6598a8a5d6eb75854cbb7151d24f2e3fbd0251487f324cfb938aa9d3eec6133"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeHttpAdmissionTests.cs",
@@ -2961,7 +2961,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
-      "sha256": "sha256:8208465f2280d527cb3d80fd53f569e2fb0e8d8ca6af41dd358697471f043e94"
+      "sha256": "sha256:8d899a18af0e3e8987ecaddeb2513990da5aeb4a34a831ac3dda1423b60de8cd"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
@@ -4313,7 +4313,7 @@
       "sha256": "sha256:d4440e460b7a98f40ed22ef546557def3baeed09f467726033a8aaaeea92da93"
     }
   ],
-  "inputs_hash": "sha256:866e675212080fbac4a4338326093bd1bb7e3000a5c4e86706055e2301940b71",
+  "inputs_hash": "sha256:19b938592494842cd788eb874665fa41d1097c60e54e0c92ae127241ce368a24",
   "result": {
     "passed": true,
     "checks": [
