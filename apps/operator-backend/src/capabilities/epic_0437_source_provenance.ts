@@ -1,0 +1,173 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { canonicalJson, sha256NormalizedText, type JsonValue } from "./tool_certification.js";
+import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } from "./trusted_tool_exposure_policy.js";
+
+export const EPIC_0437_NATIVE_BUILD_MANIFEST_PATH = "artifacts/certification/epic-0437/native-build-manifest.v1.json";
+
+export const EPIC_0437_SOURCE_INPUTS = [
+  "apps/operator-backend/config/tool_certification_candidates.v1.json",
+  "apps/operator-backend/package.json",
+  "apps/operator-backend/src/capabilities/tool_certification.ts",
+  "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
+  "apps/operator-backend/src/capabilities/epic_0437_promotion_authority.ts",
+  "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts",
+  "apps/operator-backend/src/capabilities/trusted_tool_exposure_policy.ts",
+  "apps/operator-backend/src/tools/certify_epic_0437_source.ts",
+  "apps/operator-backend/src/tools/certify_epic_0437_live.ts",
+  "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
+  "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
+  "apps/operator-backend/src/courier/revit_tool_job_certification.ts",
+  "apps/operator-backend/src/courier/revit_tool_jobs.ts",
+  "apps/operator-backend/src/courier/laboratory_evidence.ts",
+  "apps/operator-backend/src/courier/laboratory_execution_receipt.ts",
+  "apps/operator-backend/test/tool_certification.test.ts",
+  "apps/operator-backend/test/tool_certification_evidence_compiler.test.ts",
+  "apps/operator-backend/test/direct_revit_execution_authorization.test.ts",
+  "apps/operator-backend/test/revit_courier_contract.test.ts",
+  "apps/operator-backend/test/laboratory_execution_receipt.test.ts",
+  "apps/mcp-server/src/server.ts",
+  "apps/mcp-server/package.json",
+  "apps/mcp-server/src/spatialObservationV1.ts",
+  "apps/mcp-server/src/lib/certifiedMoveTargetLedger.ts",
+  "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.ts",
+  "apps/mcp-server/src/lib/certifiedCapabilityProjection.ts",
+  "apps/mcp-server/src/lib/revitClient.ts",
+  "apps/mcp-server/src/lib/revitCourier.ts",
+  "apps/mcp-server/src/lib/nativeTransport.ts",
+  "apps/mcp-server/src/lib/laboratoryEvidenceDispatch.ts",
+  "apps/mcp-server/src/lib/laboratoryMoveEvidence.ts",
+  "apps/mcp-server/src/lib/laboratoryMoveEvidenceClient.ts",
+  "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
+  "apps/mcp-server/src/spatialObservationV1.test.ts",
+  "apps/mcp-server/src/lib/certifiedMoveTargetLedger.test.ts",
+  "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.test.ts",
+  "apps/mcp-server/src/lib/certifiedExecutionEnvelope.test.ts",
+  "apps/mcp-server/src/lib/toolExposurePolicy.ts",
+  "apps/mcp-server/src/lib/toolExposurePolicy.test.ts",
+  "apps/mcp-server/src/lib/revitClient.test.ts",
+  "apps/mcp-server/src/lib/revitCourier.test.ts",
+  "apps/mcp-server/src/lib/nativeTransport.test.ts",
+  "apps/mcp-server/src/lib/laboratoryEvidenceDispatch.test.ts",
+  "apps/mcp-server/src/lib/laboratoryMoveEvidence.test.ts",
+  "apps/revit-bridge-addin/RevitBridge/App.cs",
+  "apps/revit-bridge-addin/RevitBridge/Server/RevitHttpServer.cs",
+  "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionRunner.cs",
+  "apps/revit-bridge-addin/RevitBridge/Operator/OperatorBackendContracts.cs",
+  "apps/revit-bridge-addin/RevitBridge/Operator/OperatorRevitCourierWorker.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedRequestFamilyAdmission.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedMovePreviewAuthority.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCourierResultCompactor.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeExecutionAttestationAuthority.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeToolExposureAuthority.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryEvidenceDispatch.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAuthority.cs",
+  "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Selection/ExportVisibleElementsHandler.cs",
+  "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/MoveElementsHandler.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorCertifiedFamilyExecutionContextTests.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorCertifiedRequestFamilyAdmissionTests.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorCertifiedMovePreviewAuthorityTests.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeToolExposureAuthorityTests.cs",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorLaboratoryMoveEvidenceAdmissionTests.cs"
+] as const;
+
+export const EPIC_0437_NATIVE_BINARIES = {
+  common: "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
+  logic: "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
+  bridge: "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll"
+} as const;
+
+export type Epic0437NativeBuildManifest = {
+  schema: "revit-operator.epic-0437-native-build-manifest.v1";
+  candidate_source_hash: string;
+  policy_hash: string;
+  source_inputs_hash: string;
+  source_inputs: Epic0437SourceInput[];
+  configuration: "Release";
+  target_framework: "net48";
+  binaries: { common: { path: string; sha256: string }; logic: { path: string; sha256: string }; bridge: { path: string; sha256: string } };
+  built_at_utc: string;
+};
+
+export type Epic0437SourceInput = { path: string; sha256: string; normalization?: "epic-0437-generated-policy-anchor-masked.v1" };
+
+const MASKED_POLICY_ANCHOR_SOURCES = new Set<string>([
+  "apps/operator-backend/src/capabilities/trusted_tool_exposure_policy.ts",
+  "apps/mcp-server/src/lib/toolExposurePolicy.ts",
+  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeToolExposureAuthority.cs"
+]);
+
+function sha256Bytes(file: string): string {
+  return `sha256:${createHash("sha256").update(fs.readFileSync(file)).digest("hex")}`;
+}
+
+export function epic0437SourceInputHash(repoRoot: string, relative: string, normalization?: Epic0437SourceInput["normalization"]): string {
+  let source = fs.readFileSync(path.join(repoRoot, relative), "utf8");
+  if (normalization !== undefined) {
+    if (normalization !== "epic-0437-generated-policy-anchor-masked.v1" || !MASKED_POLICY_ANCHOR_SOURCES.has(relative)) throw new Error(`Unsupported EPIC-0437 source normalization: ${relative}`);
+    let replacements = 0;
+    source = source.replace(/((?:BUNDLED_TOOL_EXPOSURE_POLICY_HASH|BUNDLED_POLICY_HASH|CompiledPolicyHash)\s*=\s*)"sha256:[0-9a-f]{64}"/g, (_match, prefix: string) => {
+      replacements += 1;
+      return `${prefix}"sha256:<generated-policy-anchor>"`;
+    });
+    if (replacements !== 1) throw new Error(`EPIC-0437 generated policy anchor mask did not match exactly once: ${relative}`);
+  }
+  return sha256NormalizedText(source);
+}
+
+export function currentEpic0437SourceInputs(repoRoot: string): Epic0437SourceInput[] {
+  return EPIC_0437_SOURCE_INPUTS.map(relative => {
+    const normalization = MASKED_POLICY_ANCHOR_SOURCES.has(relative) ? "epic-0437-generated-policy-anchor-masked.v1" as const : undefined;
+    return { path: relative, sha256: epic0437SourceInputHash(repoRoot, relative, normalization), ...(normalization ? { normalization } : {}) };
+  });
+}
+
+export function createEpic0437NativeBuildManifest(repoRoot: string, candidateSourceHash: string): Epic0437NativeBuildManifest {
+  const sourceInputs = currentEpic0437SourceInputs(repoRoot);
+  const policy = parseTrustedToolExposurePolicy(JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/operator-backend/config/tool_exposure_policy.v1.json"), "utf8")));
+  if (policy.policy_hash !== BUNDLED_TOOL_EXPOSURE_POLICY_HASH) throw new Error("EPIC-0437 build manifest policy is not the current bundled trust anchor");
+  const binary = (relative: string) => ({ path: relative, sha256: sha256Bytes(path.join(repoRoot, relative)) });
+  return {
+    schema: "revit-operator.epic-0437-native-build-manifest.v1",
+    candidate_source_hash: candidateSourceHash,
+    policy_hash: policy.policy_hash,
+    source_inputs_hash: sha256NormalizedText(canonicalJson(sourceInputs as JsonValue)),
+    source_inputs: sourceInputs,
+    configuration: "Release",
+    target_framework: "net48",
+    binaries: {
+      common: binary(EPIC_0437_NATIVE_BINARIES.common),
+      logic: binary(EPIC_0437_NATIVE_BINARIES.logic),
+      bridge: binary(EPIC_0437_NATIVE_BINARIES.bridge)
+    },
+    built_at_utc: new Date().toISOString()
+  };
+}
+
+export function validateEpic0437NativeBuildManifest(repoRoot: string, expectedCandidateSourceHash: string): { manifest: Epic0437NativeBuildManifest; sha256: string } {
+  const manifestFile = path.join(repoRoot, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH);
+  const raw = fs.readFileSync(manifestFile, "utf8");
+  const manifest = JSON.parse(raw.replace(/^\uFEFF/, "")) as Epic0437NativeBuildManifest;
+  const exact = (value: Record<string, unknown>, keys: readonly string[], location: string) => {
+    if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...keys].sort())) throw new Error(`${location} keys are not exact`);
+  };
+  exact(manifest as unknown as Record<string, unknown>, ["schema", "candidate_source_hash", "policy_hash", "source_inputs_hash", "source_inputs", "configuration", "target_framework", "binaries", "built_at_utc"], "EPIC-0437 native build manifest");
+  if (manifest.schema !== "revit-operator.epic-0437-native-build-manifest.v1" || manifest.candidate_source_hash !== expectedCandidateSourceHash
+    || manifest.configuration !== "Release" || manifest.target_framework !== "net48" || !Number.isFinite(Date.parse(manifest.built_at_utc))) throw new Error("EPIC-0437 native build manifest identity is stale or invalid");
+  const currentInputs = currentEpic0437SourceInputs(repoRoot);
+  if (canonicalJson(manifest.source_inputs as unknown as JsonValue) !== canonicalJson(currentInputs as unknown as JsonValue)
+    || manifest.source_inputs_hash !== sha256NormalizedText(canonicalJson(currentInputs as unknown as JsonValue))) throw new Error("EPIC-0437 native build manifest source inputs are stale");
+  const policy = parseTrustedToolExposurePolicy(JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/operator-backend/config/tool_exposure_policy.v1.json"), "utf8")));
+  if (manifest.policy_hash !== policy.policy_hash || policy.policy_hash !== BUNDLED_TOOL_EXPOSURE_POLICY_HASH) throw new Error("EPIC-0437 native build manifest policy is stale");
+  exact(manifest.binaries as unknown as Record<string, unknown>, ["common", "logic", "bridge"], "EPIC-0437 native build manifest binaries");
+  for (const key of ["common", "logic", "bridge"] as const) {
+    const binding = manifest.binaries[key];
+    exact(binding as unknown as Record<string, unknown>, ["path", "sha256"], `EPIC-0437 native build manifest ${key}`);
+    if (binding.path !== EPIC_0437_NATIVE_BINARIES[key] || binding.sha256 !== sha256Bytes(path.join(repoRoot, binding.path))) throw new Error(`EPIC-0437 native ${key} build identity is stale`);
+  }
+  return { manifest, sha256: sha256NormalizedText(raw) };
+}

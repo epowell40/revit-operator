@@ -132,6 +132,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Signed_laboratory_result_is_never_compacted_away_from_its_native_signature()
+        {
+            using var document = JsonDocument.Parse(
+                "{\"payload\":\"" + new string('x', OperatorCourierResultCompactor.MaxTransportResultBytes)
+                + "\",\"laboratory_execution_receipt\":{\"schema\":\""
+                + OperatorLaboratoryExecutionReceiptAuthority.Schema + "\"}}");
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                OperatorCourierResultCompactor.Prepare(document.RootElement));
+            Assert.Contains("cannot be compacted", error.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void Oversized_durable_record_can_be_prepared_for_replay_under_backend_limit()
         {
             var root = Path.Combine(Path.GetTempPath(), "revit-courier-outbox-" + Guid.NewGuid().ToString("N"));

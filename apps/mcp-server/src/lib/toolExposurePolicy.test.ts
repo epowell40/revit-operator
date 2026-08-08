@@ -143,9 +143,9 @@ test("assertToolExposure returns the exact certified record provenance and bound
 test("current policy validates all record hashes and exposes only the certified typed context alias", () => {
   const { policy, policyPath } = loadToolExposurePolicy(certifiedEnv());
   assert.equal(policyPath, sourcePolicyPath);
-  assert.equal(policy.records.length * 4, 100);
+  assert.equal(policy.records.length * 4, 112);
   const decisions = policy.records.flatMap(record => Object.values(record.channels));
-  assert.equal(decisions.length, 100);
+  assert.equal(decisions.length, 112);
   const exposed = policy.records.flatMap(record =>
     Object.entries(record.channels)
       .filter(([, decision]) => decision.exposed)
@@ -254,6 +254,7 @@ test("general exact evaluator rejects caller-authored request-family metadata", 
     validator_hash: `sha256:${"a".repeat(64)}`
   };
   const variant = writePolicyVariant(policy => {
+    policy.records = policy.records.filter((candidate: any) => !(candidate.method === "POST" && candidate.path === "/revit/move-elements"));
     const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
     record.method = "POST";
     record.path = "/revit/move-elements";
@@ -278,9 +279,10 @@ test("certified move-one entry point rejects forged admission paths and binds va
   clearCertifiedMoveTargetLedgerForTests();
   registerCertifiedSpatialObservation(
     { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-    { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+    { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
   );
   const variant = writePolicyVariant(policy => {
+    policy.records = policy.records.filter((candidate: any) => !(candidate.method === "POST" && candidate.path === "/revit/move-elements"));
     const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
     record.method = "POST";
     record.path = "/revit/move-elements";

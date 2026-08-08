@@ -10,6 +10,8 @@ import {
 } from "./nativeTransport.js";
 import {
   assertCertifiedMoveOneAdmissionExposure,
+  assertLaboratoryMoveEvidenceAdmissionExposure,
+  assertProtectedLaboratoryEvidenceExposure,
   assertToolExposure,
   canonicalToolExposureJson,
   createCertifiedCourierAdmission,
@@ -21,6 +23,8 @@ import {
   type CertifiedMoveOneAdmission
 } from "./certifiedMoveOneRequestFamily.js";
 import { createCertificationEnvelope, type FamilyCertificationEnvelope } from "./certifiedExecutionEnvelope.js";
+import type { LaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
+import type { LaboratoryMoveEvidenceAdmission } from "./laboratoryMoveEvidence.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -189,6 +193,10 @@ export type RevitCallOptions = {
   workflow?: string;
   /** Opaque, validator-issued capability for the one-element move family. */
   certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
+  /** Opaque one-use provenance for an exact protected certification-evidence step. */
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  /** Distinct evidence-only wrapper capability; never production authority. */
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
 };
 
 const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
@@ -219,15 +227,32 @@ export function readCertifiedMoveExecutionContext(result: unknown): CertifiedMov
 
 export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown, options: RevitCallOptions = {}): Promise<T> {
   const upperMethod = String(method || "GET").trim().toUpperCase();
+  if (options.certifiedMoveOneAdmission && options.laboratoryMoveEvidenceAdmission) {
+    throw new Error("Production and laboratory move-family admissions are mutually exclusive.");
+  }
   if (isSafeReadReservedPath(path)) {
     throw new Error("Certified SafeRead routes are reserved for the direct attested SafeRead microhost client.");
   }
   // Certification is the final in-process admission boundary shared by direct
   // HTTP and durable courier dispatch. A write grant only matters after this
   // exact request/effect/channel decision has passed.
-  const exposure = options.certifiedMoveOneAdmission
+  const familyAdmission = options.certifiedMoveOneAdmission ?? options.laboratoryMoveEvidenceAdmission?.request;
+  const exposure = options.laboratoryMoveEvidenceAdmission
+    ? assertLaboratoryMoveEvidenceAdmissionExposure({
+      admission: options.laboratoryMoveEvidenceAdmission.request,
+      channel: options.channel ?? "typed_mcp"
+    })
+    : options.laboratoryEvidenceDispatch
+    ? assertProtectedLaboratoryEvidenceExposure({
+      method: upperMethod,
+      path,
+      body,
+      channel: options.channel ?? "typed_mcp",
+      workflow: options.workflow
+    })
+    : familyAdmission
     ? assertCertifiedMoveOneAdmissionExposure({
-      admission: options.certifiedMoveOneAdmission,
+      admission: familyAdmission,
       channel: options.channel ?? "typed_mcp"
     })
     : assertToolExposure({
@@ -240,14 +265,14 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
 
   // Family execution bytes are canonical at the first transport boundary so
   // direct, courier, backend, and native recomputation all see one exact body.
-  const serializedBody = options.certifiedMoveOneAdmission
-    ? canonicalToolExposureJson(options.certifiedMoveOneAdmission.outboundBody)
+  const serializedBody = familyAdmission
+    ? canonicalToolExposureJson(familyAdmission.outboundBody)
     : body === undefined
       ? undefined
       : typeof body === "string"
         ? body
         : JSON.stringify(body);
-  const transportBody = options.certifiedMoveOneAdmission ? serializedBody : body;
+  const transportBody = familyAdmission ? serializedBody : body;
 
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") {
@@ -257,9 +282,15 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       body: transportBody,
       channel: options.channel ?? "typed_mcp",
       workflow: options.workflow,
-      certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
+      certifiedMoveOneAdmission: options.certifiedMoveOneAdmission,
+      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission?.request
+      , laboratoryEvidence: options.laboratoryEvidenceDispatch !== undefined
     });
-    const result = await callRevitViaCourier<T>(path, upperMethod, transportBody, { certifiedAdmission });
+    const result = await callRevitViaCourier<T>(path, upperMethod, transportBody, {
+      certifiedAdmission,
+      laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
+      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission
+    });
     if (options.certifiedMoveOneAdmission) {
       try {
         if (!result || typeof result !== "object") throw new Error("Certified courier returned a non-object result.");
@@ -290,6 +321,12 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     && process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
   if (protectedLaboratoryEvidence && options.certifiedMoveOneAdmission) {
     throw new Error("Protected laboratory evidence transport cannot manufacture certified request-family admission; use the exact generic candidate body until L4 policy is generated.");
+  }
+  if (options.laboratoryMoveEvidenceAdmission && !protectedLaboratoryEvidence) {
+    throw new Error("Laboratory move-family evidence admission is forbidden outside exact protected development/laboratory mode.");
+  }
+  if (options.laboratoryEvidenceDispatch && !protectedLaboratoryEvidence) {
+    throw new Error("Laboratory evidence dispatch is forbidden outside exact protected development/laboratory mode.");
   }
 
   const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string>; certifiedExecutionContext?: CertifiedMoveExecutionContext; laboratoryEvidenceContext?: RevitDirectLaboratoryEvidenceContext }> => {
@@ -324,6 +361,14 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           channel: nativeChannel,
           alias: exposure.alias,
           certificationEnvelope,
+          laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
+          laboratoryPolicyBinding: options.laboratoryEvidenceDispatch ? {
+            policyHash: exposure.policyHash ?? "",
+            policyRecordHash: exposure.policyRecordHash ?? "",
+            evidenceRecordHash: exposure.evidenceRecordHash ?? "",
+            effectHash: exposure.effectHash
+          } : undefined,
+          laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
           requestId: certifiedDirectDispatchId,
           signal: controller.signal
         });

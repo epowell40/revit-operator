@@ -13,6 +13,9 @@ export type CertifiedMoveTargetBinding = Readonly<{
   nativeAttestationModulusBase64Url: string;
   nativeAttestationExponentBase64Url: string;
   pointXyz: Readonly<{ x: number; y: number; z: number }>;
+  pinned: false;
+  groupIdReadSucceeded: true;
+  groupId: null;
   category: string | null;
   familyName: string | null;
   typeName: string | null;
@@ -94,7 +97,11 @@ function observedPoint(item: JsonObject): Readonly<{ x: number; y: number; z: nu
 }
 
 function independentlySafeToMove(item: JsonObject): boolean {
-  return item.pinned === false && (item.groupId === null || item.group_id === null);
+  return item.pinned === false
+    && item.groupIdReadSucceeded === true
+    && item.groupId === null
+    && !("group_id" in item)
+    && !("group_id_read_succeeded" in item);
 }
 
 function optionalText(value: unknown): string | null {
@@ -144,6 +151,9 @@ export function registerCertifiedSpatialObservation(contextValue: unknown, obser
       nativeAttestationModulusBase64Url: attestation.modulus,
       nativeAttestationExponentBase64Url: attestation.exponent,
       pointXyz,
+      pinned: false,
+      groupIdReadSucceeded: true,
+      groupId: null,
       category: optionalText(item.category ?? item.categoryName ?? item.category_name),
       familyName: optionalText(item.familyName ?? item.family_name ?? item.family),
       typeName: optionalText(item.typeName ?? item.type_name ?? item.type)
@@ -172,6 +182,9 @@ export function listCertifiedMoveTargets(observationIdValue: unknown): ReadonlyA
   sourceScopedId: string;
   elementId: number;
   pointXyz: Readonly<{ x: number; y: number; z: number }>;
+  pinned: false;
+  groupIdReadSucceeded: true;
+  groupId: null;
   category: string | null;
   familyName: string | null;
   typeName: string | null;
@@ -187,6 +200,9 @@ export function listCertifiedMoveTargets(observationIdValue: unknown): ReadonlyA
       sourceScopedId: target.sourceScopedId,
       elementId: target.elementId,
       pointXyz: target.pointXyz,
+      pinned: target.pinned,
+      groupIdReadSucceeded: target.groupIdReadSucceeded,
+      groupId: target.groupId,
       category: target.category,
       familyName: target.familyName,
       typeName: target.typeName

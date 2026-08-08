@@ -140,7 +140,7 @@ namespace RevitBridge.Common
 
     public sealed class OperatorNativeToolExposureEmbeddedAuthority : IOperatorNativeToolExposureAuthority
     {
-        public const string CompiledPolicyHash = "sha256:6e85fc33a142914fa1e9ab94afd25a2e23ffab2cf757c1c7ef66548f3a982a27";
+        public const string CompiledPolicyHash = "sha256:798a8f18c904bdbda26720a914033feee6b0b01d1bc34614c96878d1ceb07125";
         public const string ResourceName = "RevitBridge.Common.tool_exposure_policy.v1.json";
 
         private static readonly Regex Sha256 = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -455,6 +455,37 @@ namespace RevitBridge.Common
             RequireString(surface, "transport", "direct_loopback");
             RequireExecutorIdentifier(surface, "executor_id");
             RequireExecutorIdentifier(surface, "route_id");
+        }
+
+        public void RequireLaboratoryEvidenceAuthorized(
+            OperatorLaboratoryEvidenceDispatch evidence,
+            string method,
+            string path,
+            string channel,
+            string alias,
+            OperatorLaboratoryMoveEvidenceAdmission? moveAdmission)
+        {
+            if (evidence == null || evidence.PolicyHash != PolicyHash || evidence.Channel != channel || evidence.Alias != alias) Deny();
+            var matches = _records.Where(record => record.Method == method && record.Path == path
+                && record.PolicyRecordHash == evidence.PolicyRecordHash
+                && record.EvidenceRecordHash == evidence.EvidenceRecordHash
+                && record.EffectHash == evidence.EffectHash
+                && record.Visibility != "workflow_only"
+                && record.TypedMcpAliases.Contains(alias)).ToList();
+            if (matches.Count != 1) Deny();
+            var record = matches[0];
+            if (moveAdmission == null)
+            {
+                if (record.RequestFamily != null) Deny();
+                return;
+            }
+            if (moveAdmission.PolicyHash != evidence.PolicyHash
+                || moveAdmission.PolicyRecordHash != evidence.PolicyRecordHash
+                || moveAdmission.EvidenceRecordHash != evidence.EvidenceRecordHash
+                || moveAdmission.EffectHash != evidence.EffectHash
+                || record.RequestFamily == null
+                || record.RequestFamily.Id != moveAdmission.RequestFamilyId
+                || record.RequestFamily.ValidatorHash != moveAdmission.RequestFamilyHash) Deny();
         }
 
         private static RequestFamily RequireRequestFamily(JsonElement record)

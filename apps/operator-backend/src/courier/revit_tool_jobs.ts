@@ -13,6 +13,11 @@ import {
   type CertifiedCourierJobV2
 } from "./revit_tool_job_certification.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import {
+  requireCourierLaboratoryEvidenceJobBinding,
+  type LaboratoryEvidenceDispatch
+} from "./laboratory_evidence.js";
+import { verifyLaboratoryExecutionReceipt } from "./laboratory_execution_receipt.js";
 
 export const REVIT_COURIER_JOB_VERSION = "revit-operator.revit-tool-job.v1";
 export const REVIT_COURIER_RESULT_VERSION = "revit-operator.revit-tool-result.v1";
@@ -23,6 +28,7 @@ export type RevitToolJobV1 = {
   session_id: string;
   message_id?: string | null;
   turn_token?: string | null;
+  turn_token_sha256?: string | null;
   correlation_id: string;
   idempotency_key: string;
   method: "GET" | "POST";
@@ -31,6 +37,7 @@ export type RevitToolJobV1 = {
   target_document_title?: string | null;
   target_document_path?: string | null;
   body?: unknown;
+  laboratory_evidence?: LaboratoryEvidenceDispatch;
   created_at: string;
   expires_at: string;
   status: "pending" | "running" | "succeeded" | "failed";
@@ -729,7 +736,21 @@ function writeCertificationTerminal(job: RevitToolJob, error: RevitCourierCertif
 }
 
 function validCertifiedJobForClaim(job: RevitToolJob): boolean {
-  if (job.version === REVIT_COURIER_JOB_VERSION) return true;
+  if (job.version === REVIT_COURIER_JOB_VERSION) {
+    try {
+      requireCourierLaboratoryEvidenceJobBinding(job);
+      return true;
+    } catch (error) {
+      writeTerminal(job, {
+        status: "failed",
+        error: error instanceof Error ? error.message : "Laboratory evidence job binding is invalid.",
+        code: "CERTIFICATION_LABORATORY_EVIDENCE_JOB_INVALID",
+        retryable: false,
+        outcome_unknown: false
+      });
+      return false;
+    }
+  }
   if (job.version !== REVIT_COURIER_V2_JOB_VERSION) {
     writeCertificationTerminal(job, new RevitCourierCertificationError(
       "CERTIFICATION_JOB_VERSION_UNSUPPORTED",
@@ -921,6 +942,29 @@ export function completeRevitToolJob(input: FinishInput): RevitToolJob {
       });
     }
   }
+  if (job.version === REVIT_COURIER_JOB_VERSION && job.laboratory_evidence) {
+    try {
+      const evidence = requireCourierLaboratoryEvidenceJobBinding(job);
+      if (!evidence) throw new Error("Laboratory evidence dispatch is missing.");
+      verifyLaboratoryExecutionReceipt(input.result, {
+        expectedEvidence: evidence,
+        method: job.method,
+        path: job.path,
+        ...(Object.prototype.hasOwnProperty.call(job, "body") ? { body: job.body } : {})
+      });
+      return writeTerminal(job, { status: "succeeded", result: input.result, retryable: false });
+    } catch (error) {
+      return writeTerminal(job, {
+        status: "failed",
+        result: input.result,
+        error: error instanceof Error ? error.message : "Native laboratory execution receipt is invalid.",
+        code: "CERTIFICATION_LABORATORY_EXECUTION_RECEIPT_INVALID",
+        retryable: false,
+        phase: "laboratory_execution_receipt",
+        outcome_unknown: true
+      });
+    }
+  }
   return writeTerminal(job, { status: "succeeded", result: input.result, retryable: false });
 }
 
@@ -944,7 +988,8 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
   // failure cannot prove that dispatch did not occur. Only a signed success
   // receipt may settle known success; every competing failure is unknown and
   // nonretryable.
-  const outcomeUnknown = (isCertifiedFamilyJob(job) && fs.existsSync(challengeIssuedPath(job.id)))
+  const outcomeUnknown = (job.version === REVIT_COURIER_JOB_VERSION && job.laboratory_evidence !== undefined)
+    || (isCertifiedFamilyJob(job) && fs.existsSync(challengeIssuedPath(job.id)))
     || resultRecord?.outcomeUnknown === true;
   return writeTerminal(job, {
     status: "failed",

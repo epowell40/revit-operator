@@ -6,11 +6,13 @@ import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestat
 const sessionId = "123e4567e89b42d3a456426614174000";
 const context = { document: { sessionId, nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } };
 const observation = { observationId: "frame-1", viewId: 42, items: [
-  { elementId: 17, sourceScopedId: "host:17", groundingStatus: "anchored", pinned: false, groupId: null, category: "Mechanical Equipment", familyName: "Pump", typeName: "P-1", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } },
+  { elementId: 17, sourceScopedId: "host:17", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, category: "Mechanical Equipment", familyName: "Pump", typeName: "P-1", orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } },
   { elementId: 18, sourceScopedId: "host:18", groundingStatus: "geometry", orientation: { locationKind: "curve" } },
   { elementId: 19, sourceScopedId: "link:2:19", groundingStatus: "anchored", orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } },
-  { elementId: 20, sourceScopedId: "host:20", groundingStatus: "anchored", pinned: true, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } },
-  { elementId: 21, sourceScopedId: "host:21", groundingStatus: "anchored", pinned: false, groupId: 99, orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } }
+  { elementId: 20, sourceScopedId: "host:20", groundingStatus: "anchored", pinned: true, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } },
+  { elementId: 21, sourceScopedId: "host:21", groundingStatus: "anchored", pinned: false, groupId: 99, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } },
+  { elementId: 22, sourceScopedId: "host:22", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: false, orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } },
+  { elementId: 23, sourceScopedId: "host:23", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, group_id: null, orientation: { locationKind: "point", locationPoint: { x: 4, y: 5, z: 6 } } }
 ] };
 
 test("mints exact host point target bindings only from a native observation plus current context", () => {
@@ -28,13 +30,17 @@ test("mints exact host point target bindings only from a native observation plus
     nativeAttestationModulusBase64Url: TEST_NATIVE_EXECUTION_ATTESTATION.modulus_base64url,
     nativeAttestationExponentBase64Url: TEST_NATIVE_EXECUTION_ATTESTATION.exponent_base64url,
     pointXyz: { x: 1, y: 2, z: 3 },
+    pinned: false,
+    groupIdReadSucceeded: true,
+    groupId: null,
     category: "Mechanical Equipment",
     familyName: "Pump",
     typeName: "P-1"
   });
   assert.deepEqual(listCertifiedMoveTargets("frame-1"), [{
     observationId: "frame-1", sourceScopedId: "host:17", elementId: 17,
-    pointXyz: { x: 1, y: 2, z: 3 }, category: "Mechanical Equipment", familyName: "Pump", typeName: "P-1"
+    pointXyz: { x: 1, y: 2, z: 3 }, pinned: false, groupIdReadSucceeded: true, groupId: null,
+    category: "Mechanical Equipment", familyName: "Pump", typeName: "P-1"
   }]);
   assert.throws(() => resolveCertifiedMoveTarget("frame-1", 18), /not issued/);
   assert.throws(() => resolveCertifiedMoveTarget("frame-1", 19), /not issued/);

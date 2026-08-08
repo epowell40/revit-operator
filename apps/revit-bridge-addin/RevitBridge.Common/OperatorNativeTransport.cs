@@ -71,13 +71,17 @@ namespace RevitBridge.Common
             string requestNonce,
             string serverEpoch,
             string writeGrant,
-            DateTimeOffset issuedAtUtc)
+            DateTimeOffset issuedAtUtc,
+            OperatorLaboratoryEvidenceDispatch? laboratoryEvidence,
+            OperatorLaboratoryMoveEvidenceAdmission? laboratoryMoveEvidenceAdmission)
         {
             Request = request;
             RequestNonce = requestNonce;
             ServerEpoch = serverEpoch;
             WriteGrant = writeGrant;
             IssuedAtUtc = issuedAtUtc;
+            LaboratoryEvidence = laboratoryEvidence;
+            LaboratoryMoveEvidenceAdmission = laboratoryMoveEvidenceAdmission;
         }
 
         public OperatorNativeHttpRequest Request { get; }
@@ -85,6 +89,8 @@ namespace RevitBridge.Common
         public string ServerEpoch { get; }
         public string WriteGrant { get; }
         public DateTimeOffset IssuedAtUtc { get; }
+        public OperatorLaboratoryEvidenceDispatch? LaboratoryEvidence { get; }
+        public OperatorLaboratoryMoveEvidenceAdmission? LaboratoryMoveEvidenceAdmission { get; }
     }
 
     public sealed class OperatorNativeTransportResponse
@@ -272,9 +278,11 @@ namespace RevitBridge.Common
             string? requestId = null,
             string? channel = null,
             string? alias = null,
-            string? certificationEnvelopeJson = null)
+            string? certificationEnvelopeJson = null,
+            string? laboratoryEvidenceJson = null,
+            string? laboratoryMoveEvidenceAdmissionJson = null)
         {
-            return ProtectRequestCore(operatorToken, serverEpoch, method, path, bodyJson, writeGrant, nowUtc, requestId, null, null, channel, alias, certificationEnvelopeJson);
+            return ProtectRequestCore(operatorToken, serverEpoch, method, path, bodyJson, writeGrant, nowUtc, requestId, null, null, channel, alias, certificationEnvelopeJson, laboratoryEvidenceJson, laboratoryMoveEvidenceAdmissionJson);
         }
 
         internal static OperatorNativeTransportProtectedRequest ProtectRequestCore(
@@ -290,7 +298,9 @@ namespace RevitBridge.Common
             byte[]? deterministicIv,
             string? channel = null,
             string? alias = null,
-            string? certificationEnvelopeJson = null)
+            string? certificationEnvelopeJson = null,
+            string? laboratoryEvidenceJson = null,
+            string? laboratoryMoveEvidenceAdmissionJson = null)
         {
             var body = bodyJson ?? "";
             var bodyBytes = StrictEncode(body, "Native request body is not strict UTF-8.");
@@ -328,7 +338,25 @@ namespace RevitBridge.Common
                     request.Method, request.Path, false, request.BodyPresent, bodyBytes, request.RequestId,
                     request.Channel, request.Alias, certificationEnvelope, certificationEnvelopeElement.Value.GetRawText());
             }
-            var inner = SerializeRequestInner(request, nonce, protectedWriteGrant, nowUtc.ToUniversalTime(), certificationEnvelopeElement);
+            JsonElement? laboratoryEvidenceElement = null;
+            OperatorLaboratoryEvidenceDispatch? laboratoryEvidence = null;
+            if (laboratoryEvidenceJson != null)
+            {
+                using var laboratoryEvidenceDocument = JsonDocument.Parse(laboratoryEvidenceJson, StrictJson);
+                laboratoryEvidence = OperatorLaboratoryEvidenceDispatch.Parse(laboratoryEvidenceDocument.RootElement);
+                laboratoryEvidenceElement = laboratoryEvidence.CanonicalObject;
+            }
+            JsonElement? laboratoryMoveEvidenceAdmissionElement = null;
+            if (laboratoryMoveEvidenceAdmissionJson != null)
+            {
+                if (laboratoryEvidence == null) throw AuthFailure();
+                using var moveDocument = JsonDocument.Parse(laboratoryMoveEvidenceAdmissionJson, StrictJson);
+                laboratoryMoveEvidenceAdmissionElement = OperatorLaboratoryMoveEvidenceAdmission.Parse(
+                    moveDocument.RootElement, laboratoryEvidence).CanonicalObject;
+            }
+            var inner = SerializeRequestInner(
+                request, nonce, protectedWriteGrant, nowUtc.ToUniversalTime(),
+                certificationEnvelopeElement, laboratoryEvidenceElement, laboratoryMoveEvidenceAdmissionElement);
             var epoch = RequireServerEpoch(serverEpoch);
             var envelope = Protect(operatorToken, epoch, RequestDirection, inner, deterministicIv);
             if (StrictUtf8.GetByteCount(envelope) > OperatorNativeTransportProtocol.MaximumRequestEnvelopeUtf8Bytes)
@@ -386,6 +414,15 @@ namespace RevitBridge.Common
                     alias);
                 certificationEnvelopeJson = certificationEnvelopeElement.GetRawText();
             }
+            OperatorLaboratoryEvidenceDispatch? laboratoryEvidence = null;
+            if (fields.TryGetValue("laboratory_evidence", out var laboratoryEvidenceElement))
+                laboratoryEvidence = OperatorLaboratoryEvidenceDispatch.Parse(laboratoryEvidenceElement);
+            OperatorLaboratoryMoveEvidenceAdmission? laboratoryMoveEvidenceAdmission = null;
+            if (fields.TryGetValue("laboratory_move_evidence_admission", out var moveEvidenceElement))
+            {
+                if (laboratoryEvidence == null) throw AuthFailure();
+                laboratoryMoveEvidenceAdmission = OperatorLaboratoryMoveEvidenceAdmission.Parse(moveEvidenceElement, laboratoryEvidence);
+            }
             var bodyBytes = StrictEncode(body, "Protected native request body is not strict UTF-8.");
             var request = OperatorNativeHttpRequestFence.Prepare(
                 method,
@@ -398,8 +435,11 @@ namespace RevitBridge.Common
                 alias: alias ?? "revit_call_tool",
                 certificationEnvelope: certificationEnvelope,
                 certificationEnvelopeJson: certificationEnvelopeJson);
+            if (laboratoryEvidence != null)
+                OperatorNativeToolExposureEmbeddedAuthority.Instance.RequireLaboratoryEvidenceAuthorized(
+                    laboratoryEvidence, request.Method, request.Path, request.Channel, request.Alias, laboratoryMoveEvidenceAdmission);
             replayCache.Accept(request.RequestId, nonce, nowUtc);
-            return new OperatorNativeTransportRequestContext(request, nonce, epoch, writeGrant, issuedAt);
+            return new OperatorNativeTransportRequestContext(request, nonce, epoch, writeGrant, issuedAt, laboratoryEvidence, laboratoryMoveEvidenceAdmission);
         }
 
         public static string ProtectResponse(
@@ -533,7 +573,14 @@ namespace RevitBridge.Common
             return new TransportEnvelope(epoch, direction, iv, ciphertext, tag);
         }
 
-        private static byte[] SerializeRequestInner(OperatorNativeHttpRequest request, string nonce, string writeGrant, DateTimeOffset nowUtc, JsonElement? certificationEnvelope)
+        private static byte[] SerializeRequestInner(
+            OperatorNativeHttpRequest request,
+            string nonce,
+            string writeGrant,
+            DateTimeOffset nowUtc,
+            JsonElement? certificationEnvelope,
+            JsonElement? laboratoryEvidence,
+            JsonElement? laboratoryMoveEvidenceAdmission)
         {
             using var stream = new MemoryStream();
             using (var writer = new Utf8JsonWriter(stream, CanonicalWriter))
@@ -553,6 +600,16 @@ namespace RevitBridge.Common
                 {
                     writer.WritePropertyName("certification_envelope");
                     certificationEnvelope.Value.WriteTo(writer);
+                }
+                if (laboratoryEvidence.HasValue)
+                {
+                    writer.WritePropertyName("laboratory_evidence");
+                    laboratoryEvidence.Value.WriteTo(writer);
+                }
+                if (laboratoryMoveEvidenceAdmission.HasValue)
+                {
+                    writer.WritePropertyName("laboratory_move_evidence_admission");
+                    laboratoryMoveEvidenceAdmission.Value.WriteTo(writer);
                 }
                 writer.WriteEndObject();
             }
@@ -749,10 +806,15 @@ namespace RevitBridge.Common
                 using var document = JsonDocument.Parse(plaintext, StrictJson);
                 var hasCertificationEnvelope = document.RootElement.ValueKind == JsonValueKind.Object
                     && document.RootElement.EnumerateObject().Any(property => property.Name == "certification_envelope");
-                return ExactObject(
-                    document.RootElement,
-                    hasCertificationEnvelope ? FamilyRequestInnerFields : RequestInnerFields,
-                    "request");
+                var hasLaboratoryEvidence = document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.EnumerateObject().Any(property => property.Name == "laboratory_evidence");
+                var hasMoveEvidenceAdmission = document.RootElement.ValueKind == JsonValueKind.Object
+                    && document.RootElement.EnumerateObject().Any(property => property.Name == "laboratory_move_evidence_admission");
+                var expected = new HashSet<string>(RequestInnerFields, StringComparer.Ordinal);
+                if (hasCertificationEnvelope) expected.Add("certification_envelope");
+                if (hasLaboratoryEvidence) expected.Add("laboratory_evidence");
+                if (hasMoveEvidenceAdmission) expected.Add("laboratory_move_evidence_admission");
+                return ExactObject(document.RootElement, expected, "request");
             }
             catch (OperatorNativeHttpAdmissionException) { throw; }
             catch (JsonException) { throw AuthFailure(); }
@@ -827,6 +889,16 @@ namespace RevitBridge.Common
         private static readonly HashSet<string> FamilyRequestInnerFields = new HashSet<string>(RequestInnerFields, StringComparer.Ordinal)
         {
             "certification_envelope"
+        };
+
+        private static readonly HashSet<string> LaboratoryRequestInnerFields = new HashSet<string>(RequestInnerFields, StringComparer.Ordinal)
+        {
+            "laboratory_evidence"
+        };
+
+        private static readonly HashSet<string> FamilyLaboratoryRequestInnerFields = new HashSet<string>(FamilyRequestInnerFields, StringComparer.Ordinal)
+        {
+            "laboratory_evidence"
         };
 
         private static readonly HashSet<string> ResponseInnerFields = new HashSet<string>(StringComparer.Ordinal)

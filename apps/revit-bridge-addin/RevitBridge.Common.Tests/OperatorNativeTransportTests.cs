@@ -227,11 +227,58 @@ namespace RevitBridge.Common.Tests
             var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
 
             Assert.Contains("protectedLaboratoryEvidence = laboratoryBypass", server);
+            Assert.Contains("OPERATOR_CERTIFICATION_PROTECTED_LABORATORY", server);
+            Assert.Contains("CERTIFICATION_LABORATORY_FAMILY_ADMISSION_FORBIDDEN", server);
             Assert.Contains("OperatorNativeTransportProtocol.TransportPath", server);
             Assert.Contains("OperatorNativeTransportHttpAdapter.OpenCertifiedRequest", server);
             Assert.Contains("if (laboratoryBypass && !protectedLaboratoryEvidence)", server);
             Assert.Contains("if (effectiveRequest != null && !protectedLaboratoryEvidence)", server);
             Assert.Contains("does not manufacture an L4 policy decision", server);
+            var eventDispatch = server.IndexOf("result = await _eventService.Run", StringComparison.Ordinal);
+            var signedReceipt = server.IndexOf("AttachAfterRevitThreadCompletion", StringComparison.Ordinal);
+            Assert.True(eventDispatch >= 0 && signedReceipt > eventDispatch);
+        }
+
+        [Fact]
+        public void Laboratory_evidence_dispatch_round_trips_only_as_authenticated_strict_metadata()
+        {
+            var dispatch = JsonSerializer.Serialize(new Dictionary<string, object?>
+            {
+                ["schema"] = OperatorLaboratoryEvidenceDispatch.SchemaName,
+                ["candidate_source_hash"] = OperatorLaboratoryEvidenceDispatch.Epic0437CandidateSourceHash,
+                ["policy_hash"] = OperatorNativeToolExposureEmbeddedAuthority.CompiledPolicyHash,
+                ["policy_record_hash"] = "sha256:e795c609f293ae9c478de71dd6a61e806ba50bc135f69b2b3093425d2c4a082f",
+                ["evidence_record_hash"] = "sha256:b2ee2e72154548e3130f43c0b47dc5746819e81c3fba058fabeac991b40e2915",
+                ["effect_hash"] = "sha256:0f19ae675c51b10854e3977070ad34e4898a004c4a724058f933c17233f37bf8",
+                ["evidence_run_id"] = new string('b', 32),
+                ["evidence_step"] = "context-before",
+                ["transport_kind"] = "direct",
+                ["job_id"] = null,
+                ["correlation_id"] = null,
+                ["workflow"] = "epic-0437-l3-context-before",
+                ["channel"] = "typed_mcp",
+                ["alias"] = "revit_get_context",
+                ["production_certified"] = false
+            });
+            var protectedRequest = OperatorNativeTransportCodec.ProtectRequest(
+                Token, Epoch, "GET", "/revit/context", "", "", Now,
+                RequestId, "typed_mcp", "revit_get_context", laboratoryEvidenceJson: dispatch);
+            var opened = Open(protectedRequest.EnvelopeJson, Now, new OperatorNativeTransportReplayCache());
+            Assert.NotNull(opened.LaboratoryEvidence);
+            Assert.Equal("context-before", opened.LaboratoryEvidence!.EvidenceStep);
+            Assert.Equal("direct", opened.LaboratoryEvidence.TransportKind);
+
+            using var invalid = JsonDocument.Parse(dispatch);
+            var invalidValues = invalid.RootElement.EnumerateObject().ToDictionary(
+                property => property.Name,
+                property => (object?)property.Value.Clone(),
+                StringComparer.Ordinal);
+            invalidValues["production_certified"] = true;
+            Assert.Equal("CERTIFICATION_LABORATORY_EVIDENCE_DISPATCH_INVALID",
+                Assert.Throws<OperatorNativeHttpAdmissionException>(() =>
+                    OperatorNativeTransportCodec.ProtectRequest(
+                        Token, Epoch, "POST", "/revit/context", "{}", "", Now,
+                        laboratoryEvidenceJson: JsonSerializer.Serialize(invalidValues))).Code);
         }
 
         [Fact]

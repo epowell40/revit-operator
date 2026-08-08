@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -86,6 +88,7 @@ namespace RevitBridge.Logic.Handlers
                 var stem = $"Revit_{ElementIdCompat.GetValue(view.Id)}_{frameId}_inventory";
                 var path = SelectionUtil.ExportViewImage(doc, view, p.imageSize, folder, stem);
                 var (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
+                var imageSha256 = ComputeFileSha256(path);
                 RasterAffineFrame frame;
                 try
                 {
@@ -293,6 +296,7 @@ namespace RevitBridge.Logic.Handlers
                     viewType = view.ViewType.ToString(),
                     viewName = view.Name,
                     path,
+                    imageSha256,
                     widthPx,
                     heightPx,
                     targetLevel = SelectionUtil.BuildTargetLevelPayload(view),
@@ -317,6 +321,14 @@ namespace RevitBridge.Logic.Handlers
                     TryRestoreCropBoxActive(doc, view, warnings);
                 }
             }
+        }
+
+        private static string ComputeFileSha256(string path)
+        {
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var algorithm = SHA256.Create();
+            var hash = algorithm.ComputeHash(stream);
+            return "sha256:" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
         private static Dictionary<string, object?> BuildVisibleElementPayload(
@@ -371,8 +383,13 @@ namespace RevitBridge.Logic.Handlers
                     payload["groupId"] = groupId == null || groupId == ElementId.InvalidElementId
                         ? null
                         : ElementIdCompat.GetValue(groupId);
+                    payload["groupIdReadSucceeded"] = true;
                 }
-                catch { payload["groupId"] = null; }
+                catch
+                {
+                    payload["groupId"] = null;
+                    payload["groupIdReadSucceeded"] = false;
+                }
             }
             ApplyReadableAnnotationPayload(payload, element, linkInstance);
             ApplyHostProvenance(payload);

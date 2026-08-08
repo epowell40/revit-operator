@@ -77,6 +77,8 @@ namespace RevitBridge.Operator
 
                 var version = ReadRequiredString(job, "version", 100);
                 OperatorActionCall? legacyAction = null;
+                OperatorLaboratoryEvidenceDispatch? laboratoryEvidence = null;
+                OperatorLaboratoryMoveEvidenceAdmission? laboratoryMoveEvidence = null;
                 OperatorCourierCertificationEnvelopeValidationResult? verifiedV2 = null;
                 string method;
                 string path;
@@ -99,6 +101,26 @@ namespace RevitBridge.Operator
                     correlationId = ReadRequiredString(job, "correlation_id", 160);
                     if (!OperatorCorrelationId.IsValid(correlationId) || !string.Equals(correlationId, jobId, StringComparison.Ordinal))
                         throw new OperatorCourierCertificationException("CERTIFICATION_FINAL_LEGACY_V1_INVALID", "Legacy Revit courier job has an invalid or mismatched correlation_id.");
+                    if (job.TryGetProperty("laboratory_evidence", out var laboratoryEvidenceJson))
+                    {
+                        if (!string.Equals(Environment.GetEnvironmentVariable("OPERATOR_CERTIFICATION_PROTECTED_LABORATORY"), "1", StringComparison.Ordinal))
+                            throw new OperatorCourierCertificationException("CERTIFICATION_LABORATORY_EVIDENCE_LANE_INVALID", "Laboratory evidence courier jobs require the exact protected laboratory lane.");
+                        if (job.TryGetProperty("turn_token", out _)
+                            || !job.TryGetProperty("turn_token_sha256", out var tokenHash)
+                            || tokenHash.ValueKind != JsonValueKind.String)
+                            throw new OperatorCourierCertificationException("CERTIFICATION_LABORATORY_EVIDENCE_TOKEN_INVALID", "Laboratory evidence courier jobs may persist only the bearer-token digest.");
+                        laboratoryEvidence = OperatorLaboratoryEvidenceDispatch.Parse(laboratoryEvidenceJson);
+                        if (!string.Equals(laboratoryEvidence.TransportKind, "courier", StringComparison.Ordinal)
+                            || !string.Equals(laboratoryEvidence.JobId, jobId, StringComparison.Ordinal)
+                            || !string.Equals(laboratoryEvidence.CorrelationId, correlationId, StringComparison.Ordinal))
+                            throw new OperatorCourierCertificationException("CERTIFICATION_LABORATORY_EVIDENCE_JOB_INVALID", "Laboratory evidence dispatch does not bind the exact claimed courier job.");
+                        if (job.TryGetProperty("laboratory_move_evidence_admission", out var moveEvidenceJson))
+                            laboratoryMoveEvidence = OperatorLaboratoryMoveEvidenceAdmission.Parse(moveEvidenceJson, laboratoryEvidence);
+                    }
+                    else if (job.TryGetProperty("laboratory_move_evidence_admission", out _))
+                    {
+                        throw new OperatorCourierCertificationException("CERTIFICATION_LABORATORY_MOVE_EVIDENCE_INVALID", "Move evidence admission is missing its authenticated laboratory dispatch.");
+                    }
                     method = ReadRequiredString(job, "method", 10).ToUpperInvariant();
                     path = ReadRequiredString(job, "path", 300);
                     var expectedDocumentTitle = ReadOptionalString(job, "target_document_title", 500);
@@ -121,6 +143,8 @@ namespace RevitBridge.Operator
                         Body = body,
                         ExpectedDocumentTitle = expectedDocumentTitle,
                         ExpectedDocumentPath = expectedDocumentPath
+                        , LaboratoryEvidenceDispatch = laboratoryEvidence
+                        , LaboratoryMoveEvidenceAdmission = laboratoryMoveEvidence
                     };
                 }
                 else if (string.Equals(version, OperatorCourierCertificationEnvelope.JobVersion, StringComparison.Ordinal))

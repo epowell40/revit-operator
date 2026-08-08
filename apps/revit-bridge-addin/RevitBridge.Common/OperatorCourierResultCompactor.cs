@@ -43,6 +43,14 @@ namespace RevitBridge.Common
                 };
             }
 
+            // A native laboratory receipt signs the exact, full handler result.
+            // Compaction would silently detach the signature from its semantics,
+            // so oversized signed evidence fails closed instead.
+            if (source.ValueKind == JsonValueKind.Object
+                && source.TryGetProperty(OperatorLaboratoryExecutionReceiptAuthority.ResultField, out _))
+                throw new InvalidOperationException(
+                    "Signed laboratory execution evidence exceeds the courier transport limit and cannot be compacted.");
+
             var stats = new CompactionStats();
             var bounded = Compact(source, 0, stats);
             var root = WrapWithReceipt(bounded, originalBytes, stats, emergencySummary: false);

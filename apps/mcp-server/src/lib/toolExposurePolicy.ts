@@ -127,7 +127,7 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:6e85fc33a142914fa1e9ab94afd25a2e23ffab2cf757c1c7ef66548f3a982a27";
+const BUNDLED_POLICY_HASH = "sha256:798a8f18c904bdbda26720a914033feee6b0b01d1bc34614c96878d1ceb07125";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {
@@ -815,6 +815,91 @@ export function assertCertifiedMoveOneAdmissionExposure(input: {
   );
 }
 
+/** Distinct evidence-only family evaluator; it can never return certified mode authority. */
+export function assertLaboratoryMoveEvidenceAdmissionExposure(input: {
+  admission: unknown;
+  channel?: ToolExposureChannel;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  const env = input.env ?? process.env;
+  if (env.REVIT_OPERATOR_MODE !== "development"
+    || env.OPERATOR_TOOL_EXPOSURE_PROFILE !== "laboratory"
+    || env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1"
+    || !isCertifiedMoveOneAdmission(input.admission)) {
+    throw new ToolExposurePolicyError("CERT_LABORATORY_FAMILY_DENIED", "Move-family evidence admission requires an opaque validator admission in the exact protected laboratory lane.");
+  }
+  const admission = input.admission;
+  const decision = evaluateToolExposureInternal({
+    method: "POST", path: "/revit/move-elements", body: admission.outboundBody,
+    channel: input.channel ?? "typed_mcp", alias: input.alias, env,
+    requestFamily: { schema: "revit-operator.certified-request-family.v1", id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1, validator_hash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH },
+    requestInstanceHash: admission.requestInstanceHash
+  });
+  if (!decision.allowed || decision.mode !== "laboratory") {
+    throw new ToolExposurePolicyError("CERT_LABORATORY_FAMILY_DENIED", "Move-family evidence admission did not resolve to exact laboratory authority.", decision);
+  }
+  return bindProtectedLaboratoryDecisionToCurrentPolicy(decision, env);
+}
+
+function bindProtectedLaboratoryDecisionToCurrentPolicy(
+  decision: ToolExposureDecision,
+  env: NodeJS.ProcessEnv,
+  policyIdentity: { requestHash: string; effectHash: string } = { requestHash: decision.requestHash, effectHash: decision.effectHash }
+): ToolExposureDecision {
+  const { policy, policyPath, trustSource } = loadToolExposurePolicy(env);
+  const record = policy.records.find(candidate => candidate.method === decision.method
+    && candidate.path === decision.path
+    && candidate.effect_hash === policyIdentity.effectHash
+    && (decision.requestFamily
+      ? candidate.request_family?.schema === decision.requestFamily.schema
+        && candidate.request_family.id === decision.requestFamily.id
+        && candidate.request_family.validator_hash === decision.requestFamily.validator_hash
+      : candidate.request_hash === policyIdentity.requestHash));
+  if (!record || !decision.alias || !record.typed_mcp_aliases.includes(decision.alias)) {
+    throw new ToolExposurePolicyError(
+      "CERT_LABORATORY_POLICY_BINDING_DENIED",
+      "Protected laboratory evidence requires one exact reviewed candidate record and typed alias in the current trusted policy.",
+      decision
+    );
+  }
+  return Object.freeze({
+    ...decision,
+    policyPath,
+    policyHash: policy.policy_hash,
+    policyRecordHash: record.policy_record_hash,
+    evidenceRecordHash: record.evidence_record_hash,
+    requestHash: decision.requestFamily ? decision.requestHash : record.request_hash,
+    effectHash: record.effect_hash,
+    policyTrustSource: trustSource,
+    visibility: record.visibility
+  });
+}
+
+/** Binds generic protected-laboratory evidence to an exact current candidate record. */
+export function assertProtectedLaboratoryEvidenceExposure(input: {
+  method: string;
+  path: string;
+  body?: unknown;
+  channel?: ToolExposureChannel;
+  workflow?: string;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  const env = input.env ?? process.env;
+  if (env.REVIT_OPERATOR_MODE !== "development"
+    || env.OPERATOR_TOOL_EXPOSURE_PROFILE !== "laboratory"
+    || env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1") {
+    throw new ToolExposurePolicyError("CERT_LABORATORY_POLICY_BINDING_DENIED", "Protected laboratory evidence lane is not exact.");
+  }
+  const decision = assertToolExposure(input);
+  if (decision.mode !== "laboratory") throw new ToolExposurePolicyError("CERT_LABORATORY_POLICY_BINDING_DENIED", "Laboratory policy binding resolved outside laboratory mode.", decision);
+  return bindProtectedLaboratoryDecisionToCurrentPolicy(decision, env, {
+    requestHash: requestHash(decision.method, decision.path, input.body, true),
+    effectHash: effectHash(decision.path, decision.method, input.body)
+  });
+}
+
 /**
  * Creates a process-local, non-serializable courier capability from the
  * active MCP alias. Callers cannot supply an alias here: the AsyncLocalStorage
@@ -827,10 +912,15 @@ export function createCertifiedCourierAdmission(input: {
   channel?: ToolExposureChannel;
   workflow?: string;
   certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
+  laboratoryMoveEvidenceAdmission?: CertifiedMoveOneAdmission;
+  laboratoryEvidence?: boolean;
   env?: NodeJS.ProcessEnv;
 }): CertifiedCourierAdmission | undefined {
   const env = input.env ?? process.env;
-  if (!isCertifiedToolExposureMode(env)) return undefined;
+  const runtime = getToolExposureRuntimeDecision(env);
+  const protectedLaboratory = runtime.mode === "laboratory"
+    && env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
+  if (!runtime.certified && !protectedLaboratory) return undefined;
   const alias = String(invokedMcpAlias.getStore() ?? "").trim();
   if (!alias) {
     throw new ToolExposurePolicyError(
@@ -838,8 +928,24 @@ export function createCertifiedCourierAdmission(input: {
       "Certified courier publication requires an active MCP tool alias binding."
     );
   }
-  const decision = input.certifiedMoveOneAdmission
+  if (input.certifiedMoveOneAdmission && input.laboratoryMoveEvidenceAdmission) {
+    throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_VALIDATOR_INVALID", "Production and laboratory family admissions are mutually exclusive.");
+  }
+  const familyAdmission = input.certifiedMoveOneAdmission ?? input.laboratoryMoveEvidenceAdmission;
+  let decision = input.laboratoryMoveEvidenceAdmission
+    ? assertLaboratoryMoveEvidenceAdmissionExposure({ admission: input.laboratoryMoveEvidenceAdmission, channel: input.channel, alias, env })
+    : input.certifiedMoveOneAdmission
     ? assertCertifiedMoveOneAdmissionExposure({ admission: input.certifiedMoveOneAdmission, channel: input.channel, alias, env })
+    : input.laboratoryEvidence
+    ? assertProtectedLaboratoryEvidenceExposure({
+      method: input.method,
+      path: input.path,
+      body: input.body,
+      channel: input.channel,
+      workflow: input.workflow,
+      alias,
+      env
+    })
     : assertToolExposure({
       method: input.method,
       path: input.path,
@@ -849,12 +955,15 @@ export function createCertifiedCourierAdmission(input: {
       alias,
       env
     });
+  if (protectedLaboratory && input.laboratoryMoveEvidenceAdmission && input.workflow !== undefined) {
+    decision = Object.freeze({ ...decision, workflow: input.workflow });
+  }
   if (decision.method !== input.method || decision.path !== input.path) {
     throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_ROUTE_MISMATCH", "Certified request-family admission does not bind the requested route.");
   }
   const capability = Object.freeze({}) as unknown as CertifiedCourierAdmission;
   courierAdmissionDecisions.set(capability, decision);
-  if (input.certifiedMoveOneAdmission) courierMoveAdmissions.set(capability, input.certifiedMoveOneAdmission);
+  if (familyAdmission) courierMoveAdmissions.set(capability, familyAdmission);
   return capability;
 }
 

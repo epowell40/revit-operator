@@ -271,7 +271,7 @@ namespace RevitBridge.Common
             return executionStart;
         }
 
-        private static void RequirePreviewResult(JsonElement result, long expectedId, OperatorCertifiedMoveExecutionStart executionStart)
+        internal static void RequirePreviewResult(JsonElement result, long expectedId, OperatorCertifiedMoveExecutionStart executionStart)
         {
             RequireExactResultKeys(result);
             if (result.ValueKind != JsonValueKind.Object
@@ -296,7 +296,7 @@ namespace RevitBridge.Common
             RequireExactSnapshotDelta(before, after, executionStart, "preview");
         }
 
-        private static void RequireApplyResult(JsonElement result, long expectedId, OperatorCertifiedMoveExecutionStart executionStart)
+        internal static void RequireApplyResult(JsonElement result, long expectedId, OperatorCertifiedMoveExecutionStart executionStart)
         {
             RequireExactResultKeys(result);
             if (result.ValueKind != JsonValueKind.Object
@@ -321,7 +321,7 @@ namespace RevitBridge.Common
             RequireExactSnapshotDelta(before, after, executionStart, "apply");
         }
 
-        private static void RequireRollbackReadback(Document document, long elementId, OperatorCertifiedMoveExecutionStart executionStart)
+        internal static void RequireRollbackReadback(Document document, long elementId, OperatorCertifiedMoveExecutionStart executionStart)
         {
             var element = document.GetElement(ElementIdCompat.Create(elementId));
             if (element == null || !element.IsValidObject) throw Denied("Move preview target no longer exists after rollback.");
@@ -329,7 +329,7 @@ namespace RevitBridge.Common
                 throw Denied("Independent native readback did not confirm exact move rollback to the captured start point.");
         }
 
-        private static void RequireApplyReadback(Document document, long elementId, OperatorCertifiedMoveExecutionStart executionStart)
+        internal static void RequireApplyReadback(Document document, long elementId, OperatorCertifiedMoveExecutionStart executionStart)
         {
             var element = document.GetElement(ElementIdCompat.Create(elementId));
             if (element == null || !element.IsValidObject) throw Denied("Move apply target no longer exists after commit.");
@@ -493,7 +493,7 @@ namespace RevitBridge.Common
 
         private static bool Near(double actual, double expected) => Math.Abs(actual - expected) <= 1e-9;
 
-        private static (double X, double Y, double Z) ReadVector(string bodyJson)
+        internal static (double X, double Y, double Z) ReadVector(string bodyJson)
         {
             if (string.IsNullOrEmpty(bodyJson)) return (0, 0, 0);
             using var document = JsonDocument.Parse(bodyJson);

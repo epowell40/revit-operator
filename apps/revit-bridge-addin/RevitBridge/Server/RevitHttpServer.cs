@@ -619,6 +619,10 @@ namespace RevitBridge.Server
                 var rawPath = queryIndex >= 0 ? rawUrl.Substring(0, queryIndex) : rawUrl;
                 var hasQuery = queryIndex >= 0;
                 var protectedLaboratoryEvidence = laboratoryBypass
+                    && string.Equals(
+                        Environment.GetEnvironmentVariable("OPERATOR_CERTIFICATION_PROTECTED_LABORATORY"),
+                        "1",
+                        StringComparison.Ordinal)
                     && string.Equals(req.HttpMethod, "POST", StringComparison.Ordinal)
                     && string.Equals(rawPath, OperatorNativeTransportProtocol.TransportPath, StringComparison.Ordinal)
                     && string.Equals(req.ContentType, OperatorNativeTransportProtocol.ContentType, StringComparison.Ordinal);
@@ -669,6 +673,53 @@ namespace RevitBridge.Server
                         req.Headers.AllKeys,
                         DateTimeOffset.UtcNow,
                         _nativeTransportReplayCache);
+                    if (protectedLaboratoryEvidence)
+                    {
+                        if (protectedTransportRequest.LaboratoryEvidence == null)
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_EVIDENCE_DISPATCH_REQUIRED",
+                                "Protected laboratory evidence requires exact authenticated evidence dispatch metadata.",
+                                403,
+                                false,
+                                "healthy");
+                        if (protectedTransportRequest.Request.Channel != protectedTransportRequest.LaboratoryEvidence.Channel
+                            || protectedTransportRequest.Request.Alias != protectedTransportRequest.LaboratoryEvidence.Alias)
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_EVIDENCE_CHANNEL_MISMATCH",
+                                "Protected laboratory evidence does not bind the exact authenticated channel and alias.",
+                                403,
+                                false,
+                                "healthy");
+                        var isMove = string.Equals(protectedTransportRequest.Request.Method, "POST", StringComparison.Ordinal)
+                            && string.Equals(protectedTransportRequest.Request.Path, "/revit/move-elements", StringComparison.Ordinal);
+                        if (isMove != (protectedTransportRequest.LaboratoryMoveEvidenceAdmission != null))
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_MOVE_EVIDENCE_ADMISSION_REQUIRED",
+                                isMove
+                                    ? "Protected laboratory move evidence requires its exact reviewed family admission."
+                                    : "Laboratory move evidence admission is forbidden for every other route.",
+                                403,
+                                false,
+                                "healthy");
+                        if (isMove && (protectedTransportRequest.Request.Channel != protectedTransportRequest.LaboratoryMoveEvidenceAdmission!.Channel
+                            || protectedTransportRequest.Request.Alias != protectedTransportRequest.LaboratoryMoveEvidenceAdmission.Alias))
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_MOVE_EVIDENCE_CHANNEL_MISMATCH",
+                                "Protected laboratory move evidence does not bind the exact typed channel and alias.",
+                                403,
+                                false,
+                                "healthy");
+                    }
+                    else if (protectedTransportRequest.LaboratoryEvidence != null
+                        || protectedTransportRequest.LaboratoryMoveEvidenceAdmission != null)
+                    {
+                        throw new OperatorNativeHttpAdmissionException(
+                            "CERTIFICATION_LABORATORY_EVIDENCE_DISPATCH_FORBIDDEN",
+                            "Laboratory evidence dispatch metadata is forbidden outside the exact protected laboratory lane.",
+                            403,
+                            false,
+                            "healthy");
+                    }
                     correlationId = protectedTransportRequest.Request.RequestId;
                     var sourceRequest = protectedTransportRequest.Request;
                     if (protectedLaboratoryEvidence)
@@ -677,6 +728,16 @@ namespace RevitBridge.Server
                         // not certified production admission. It retains encrypted,
                         // replay-protected transport and all ordinary write grants,
                         // but does not manufacture an L4 policy decision.
+                        if (sourceRequest.CertificationEnvelope != null)
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_FAMILY_ADMISSION_FORBIDDEN",
+                                "Protected laboratory evidence cannot carry a certification envelope or request-family admission.",
+                                403,
+                                false,
+                                "healthy");
+                        OperatorLaboratoryExecutionReceiptAuthority.RequireNoCallerAuthoredReceipt(
+                            sourceRequest.BodyPresent,
+                            sourceRequest.BodyJson);
                         effectiveRequest = sourceRequest;
                     }
                     else
@@ -821,6 +882,7 @@ namespace RevitBridge.Server
                                 {
                                     var dispatchBody = capturedBody;
                                     OperatorCertifiedMoveExecutionStart? executionStart = null;
+                                    OperatorCertifiedMoveExecutionStart? laboratoryMoveExecutionStart = null;
                                     OperatorCertifiedFamilyExecutionContext? executionContext = null;
                                     if (capturedEffectiveRequest != null && capturedRequiresCertifiedAuthorization)
                                     {
@@ -837,24 +899,52 @@ namespace RevitBridge.Server
                                             dispatchBody,
                                             executionContext);
                                     }
+                                    else if (capturedEffectiveRequest != null && protectedLaboratoryEvidence)
+                                    {
+                                        laboratoryMoveExecutionStart = OperatorLaboratoryMoveEvidenceAuthority.CaptureStartAndConsumeApplyReceipt(
+                                            app,
+                                            protectedTransportRequest!.LaboratoryMoveEvidenceAdmission,
+                                            protectedTransportRequest.LaboratoryEvidence!,
+                                            dispatchBody);
+                                    }
                                     object nativeResult;
                                     try
                                     {
                                         nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
                                     }
-                                    catch (Exception error) when (executionStart?.Phase == "apply")
+                                    catch (Exception error) when (executionStart?.Phase == "apply"
+                                        || laboratoryMoveExecutionStart?.Phase == "apply")
                                     {
                                         throw new OperatorCertifiedFamilyOutcomeUnknownException(
                                             "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
                                             error);
                                     }
-                                    return OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
+                                    var certifiedResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
                                         app,
                                         nativeResult,
                                         capturedEffectiveRequest?.CertificationEnvelope,
                                         dispatchBody,
                                         executionStart,
                                         executionContext);
+                                    if (capturedEffectiveRequest != null && protectedLaboratoryEvidence)
+                                    {
+                                        try
+                                        {
+                                            return OperatorLaboratoryExecutionReceiptAuthority.AttachAfterRevitThreadCompletion(
+                                                app,
+                                                certifiedResult,
+                                                protectedTransportRequest!,
+                                                DateTimeOffset.UtcNow,
+                                                laboratoryMoveExecutionStart);
+                                        }
+                                        catch (Exception error) when (laboratoryMoveExecutionStart?.Phase == "apply")
+                                        {
+                                            throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                                                "Committed laboratory move outcome could not be independently certified after handler dispatch.",
+                                                error);
+                                        }
+                                    }
+                                    return certifiedResult;
                                 },
                                 localDeadline.Token,
                                 correlationId);

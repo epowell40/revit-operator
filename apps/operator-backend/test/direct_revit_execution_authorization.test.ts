@@ -209,8 +209,8 @@ test("compiled trusted-policy loader locates and validates the bundled pinned po
   try {
     const trusted = loadTrustedToolExposurePolicy({});
     assert.equal(trusted.policy.policy_hash, BUNDLED_TOOL_EXPOSURE_POLICY_HASH);
-    assert.equal(trusted.policy.records.length, 25);
-    assert.equal(trusted.policy.records.flatMap(record => Object.values(record.channels)).length, 100);
+    assert.equal(trusted.policy.records.length, 28);
+    assert.equal(trusted.policy.records.flatMap(record => Object.values(record.channels)).length, 112);
     const exposed = trusted.policy.records.filter(record =>
       Object.values(record.channels).some(decision => decision.exposed)
     );

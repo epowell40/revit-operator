@@ -6,6 +6,15 @@ import {
   assertIssuedFamilyEnvelopeForDispatch,
   type FamilyCertificationEnvelope
 } from "./certifiedExecutionEnvelope.js";
+import {
+  consumeLaboratoryEvidenceDispatch,
+  type LaboratoryEvidenceDispatch
+  , type LaboratoryPolicyBinding
+} from "./laboratoryEvidenceDispatch.js";
+import {
+  consumeLaboratoryMoveEvidenceAdmission,
+  type LaboratoryMoveEvidenceAdmission
+} from "./laboratoryMoveEvidence.js";
 
 export const NATIVE_TRANSPORT_VERSION = "revit-operator.native-transport.v1";
 export const NATIVE_TRANSPORT_ALGORITHM = "A256CBC-HS512";
@@ -123,10 +132,14 @@ export function protectNativeTransportRequest(input: {
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
   certificationEnvelope?: FamilyCertificationEnvelope;
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  laboratoryPolicyBinding?: LaboratoryPolicyBinding;
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
   issuedAtUnixMs?: number;
   requestId?: string;
   requestNonce?: Buffer;
   iv?: Buffer;
+  env?: NodeJS.ProcessEnv;
 }): ProtectedRequest {
   const method = input.method;
   validateRequest(method, input.path, input.bodyJson);
@@ -169,6 +182,34 @@ export function protectNativeTransportRequest(input: {
   } catch (error) {
     throw new NativeTransportProtocolError("Protected native request-family admission is invalid.", "pre_dispatch", error);
   }
+  if (certificationEnvelope && (input.laboratoryEvidenceDispatch || input.laboratoryMoveEvidenceAdmission)) {
+    throw new NativeTransportProtocolError("Production certification and laboratory evidence dispatch are mutually exclusive.", "pre_dispatch");
+  }
+  const laboratoryEvidence = input.laboratoryEvidenceDispatch
+    ? consumeLaboratoryEvidenceDispatch(input.laboratoryEvidenceDispatch, {
+      transportKind: "direct",
+      jobId: null,
+      correlationId: null,
+      channel,
+      alias,
+      policy: input.laboratoryPolicyBinding ?? { policyHash: "", policyRecordHash: "", evidenceRecordHash: "", effectHash: "" }
+    }, input.env ?? process.env)
+    : undefined;
+  const laboratoryMoveEvidenceAdmission = input.laboratoryMoveEvidenceAdmission
+    ? consumeLaboratoryMoveEvidenceAdmission({
+      admission: input.laboratoryMoveEvidenceAdmission,
+      method,
+      path: input.path,
+      bodyJson: input.bodyJson ?? "",
+      channel,
+      alias,
+      policy: input.laboratoryPolicyBinding ?? { policyHash: "", policyRecordHash: "", evidenceRecordHash: "", effectHash: "" }
+    }, input.env ?? process.env)
+    : undefined;
+  if (laboratoryMoveEvidenceAdmission
+    && (!laboratoryEvidence || laboratoryMoveEvidenceAdmission.evidence_run_id !== laboratoryEvidence.evidence_run_id)) {
+    throw new NativeTransportProtocolError("Move-family evidence admission requires the exact same laboratory evidence dispatch run.", "pre_dispatch");
+  }
 
   const inner = JSON.stringify({
     request_id: requestId,
@@ -181,6 +222,8 @@ export function protectNativeTransportRequest(input: {
     channel,
     alias,
     ...(certificationEnvelope ? { certification_envelope: certificationEnvelope } : {}),
+    ...(laboratoryEvidence ? { laboratory_evidence: laboratoryEvidence } : {}),
+    ...(laboratoryMoveEvidenceAdmission ? { laboratory_move_evidence_admission: laboratoryMoveEvidenceAdmission } : {}),
     write_grant: writeGrant
   });
   const epoch = encodeBase64Url(decodeCanonicalBase64Url(input.serverEpoch, 32, "server epoch", "pre_dispatch"));
@@ -248,6 +291,9 @@ export async function callNativeTransport(input: {
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
   certificationEnvelope?: FamilyCertificationEnvelope;
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  laboratoryPolicyBinding?: LaboratoryPolicyBinding;
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
   requestId?: string;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
@@ -267,7 +313,11 @@ export async function callNativeTransport(input: {
     channel: input.channel,
     alias: input.alias,
     certificationEnvelope: input.certificationEnvelope,
-    requestId: input.requestId
+    laboratoryEvidenceDispatch: input.laboratoryEvidenceDispatch,
+    laboratoryPolicyBinding: input.laboratoryPolicyBinding,
+    laboratoryMoveEvidenceAdmission: input.laboratoryMoveEvidenceAdmission,
+    requestId: input.requestId,
+    env: environment
   });
 
   let response: Response;

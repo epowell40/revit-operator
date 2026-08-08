@@ -1,18 +1,9 @@
 {
-  "schema": "revit-operator.certification-proof-artifact.v1",
-  "level": "L2",
-  "candidate": {
-    "method": "POST",
-    "path": "/revit/move-elements",
-    "request_hash": "sha256:c2dbe12c7df5ca552f102135d7b61c3568c707d66821d180af929698a50c18ea",
-    "effect_hash": "sha256:4b9d9a0b4beb537b1db23b84aa3a2319497c0250fcc55ede2d87107d06ae428b"
-  },
-  "status": "passed",
-  "producer": {
-    "kind": "automated_test",
-    "command": "npm run certify:epic-0437-source"
-  },
-  "inputs": [
+  "schema": "revit-operator.epic-0437-native-build-manifest.v1",
+  "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
+  "policy_hash": "sha256:798a8f18c904bdbda26720a914033feee6b0b01d1bc34614c96878d1ceb07125",
+  "source_inputs_hash": "sha256:ecbb14334574c7a16a570a0d51c09ec3cc47fe810d8858e410d3d6a8ada17b0d",
+  "source_inputs": [
     {
       "path": "apps/operator-backend/config/tool_certification_candidates.v1.json",
       "sha256": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc"
@@ -281,17 +272,21 @@
       "sha256": "sha256:75921db83016939508fceb4fdaeea737d81608dc3a054dd03b02002bceeb6faf"
     }
   ],
-  "result": {
-    "passed": true,
-    "checks": [
-      "C:\\Program Files\\nodejs\\node.exe C:\\Users\\Eli\\source\\repos\\RevitOperatorWorkspace\\worktrees\\public-0437-progressive-discovery\\apps\\operator-backend\\node_modules\\typescript\\bin\\tsc -p tsconfig.json",
-      "C:\\Program Files\\nodejs\\node.exe C:\\Users\\Eli\\source\\repos\\RevitOperatorWorkspace\\worktrees\\public-0437-progressive-discovery\\apps\\mcp-server\\node_modules\\typescript\\bin\\tsc -p tsconfig.json",
-      "dotnet test RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj -c Release -f net8.0-windows --no-restore",
-      "dotnet test RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj -c Release -f net48 --no-restore",
-      "dotnet build RevitBridge/RevitBridge.csproj -c Release -f net8.0-windows --no-restore",
-      "dotnet build RevitBridge/RevitBridge.csproj -c Release -f net48 --no-restore",
-      "C:\\Program Files\\nodejs\\node.exe --test --test-reporter=dot --test-concurrency=1 --test-name-pattern=canonical identity|complete cumulative evidence|typed MCP|request-family|missing, unknown|tampered request|runtime validation|candidate provenance|candidate aliases|alias bindings|request fixtures|seeded policy|direct |courier |laboratory dist/test/tool_certification.test.js dist/test/tool_certification_evidence_compiler.test.js dist/test/direct_revit_execution_authorization.test.js dist/test/revit_courier_contract.test.js dist/test/laboratory_execution_receipt.test.js",
-      "C:\\Program Files\\nodejs\\node.exe --test --test-reporter=dot dist/spatialObservationV1.test.js dist/lib/certifiedMoveTargetLedger.test.js dist/lib/certifiedMoveOneRequestFamily.test.js dist/lib/certifiedExecutionEnvelope.test.js dist/lib/toolExposurePolicy.test.js dist/lib/revitCourier.test.js dist/lib/certifiedCapabilityProjection.test.js dist/lib/laboratoryEvidenceDispatch.test.js dist/lib/laboratoryMoveEvidence.test.js"
-    ]
-  }
+  "configuration": "Release",
+  "target_framework": "net48",
+  "binaries": {
+    "common": {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
+      "sha256": "sha256:5dfde74f5209a4301b30891b07c6ae61b0d3515bc8daa21e6f45047bea407c16"
+    },
+    "logic": {
+      "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
+      "sha256": "sha256:9714ade66efd0b86d8f74f3afac0d8965fc8c31a5fc54b108ce159d9a0cd22d4"
+    },
+    "bridge": {
+      "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
+      "sha256": "sha256:3b2e319dcb36bf7cfec1559a49bf8306a1a0bd949f98c1acf5dfb48186581682"
+    }
+  },
+  "built_at_utc": "2026-08-08T19:09:42.915Z"
 }

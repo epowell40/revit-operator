@@ -24,6 +24,18 @@ import {
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import { getWorkspaceRoot } from "./workspace.js";
 import { isExactDevelopmentLaboratory } from "./nativeTransport.js";
+import {
+  consumeLaboratoryEvidenceDispatch,
+  readLaboratoryEvidenceDispatchBinding,
+  type LaboratoryEvidenceDispatch,
+  type LaboratoryEvidenceDispatchDto
+} from "./laboratoryEvidenceDispatch.js";
+import {
+  consumeLaboratoryMoveEvidenceAdmission,
+  isLaboratoryMoveEvidenceAdmission,
+  type LaboratoryMoveEvidenceAdmission,
+  type LaboratoryMoveEvidenceAdmissionDto
+} from "./laboratoryMoveEvidence.js";
 
 const JOB_VERSION_V1 = "revit-operator.revit-tool-job.v1";
 const JOB_VERSION_V2 = "revit-operator.revit-tool-job.v2";
@@ -144,6 +156,8 @@ type CourierJob = {
   body_json?: string;
   body_present?: boolean;
   certification_envelope?: CertificationEnvelope;
+  laboratory_evidence?: LaboratoryEvidenceDispatchDto;
+  laboratory_move_evidence_admission?: LaboratoryMoveEvidenceAdmissionDto;
   [key: string]: unknown;
 };
 
@@ -154,6 +168,8 @@ export type RevitCourierCallOptions = {
    * the durable job is written.
    */
   certifiedAdmission?: CertifiedCourierAdmission;
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
 };
 
 function timeoutMs(): number {
@@ -703,10 +719,29 @@ export async function callRevitViaCourier<T>(
     || !laboratoryDecision.alias)) {
     throw new Error("Laboratory courier publication requires the exact locally admitted alias, request, and workflow.");
   }
+  const laboratoryDispatchBinding = options.laboratoryEvidenceDispatch
+    ? readLaboratoryEvidenceDispatchBinding(options.laboratoryEvidenceDispatch)
+    : undefined;
+  if (laboratoryDispatchBinding && (!laboratoryDecision
+    || process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1"
+    || laboratoryDispatchBinding.transportKind !== "courier"
+    || laboratoryDispatchBinding.workflow !== laboratoryDecision.workflow)) {
+    throw new Error("Courier laboratory evidence dispatch does not match the exact locally admitted workflow and protected lane.");
+  }
+  if (options.laboratoryMoveEvidenceAdmission && (!laboratoryDispatchBinding
+    || !isLaboratoryMoveEvidenceAdmission(options.laboratoryMoveEvidenceAdmission)
+    || options.laboratoryMoveEvidenceAdmission.evidenceRunId !== laboratoryDispatchBinding.evidenceRunId)) {
+    throw new Error("Courier move-family evidence requires one matching opaque laboratory dispatch and admission.");
+  }
   const laboratoryDiscriminator = laboratoryDecision
-    ? canonicalToolExposureJson({ alias: laboratoryDecision.alias, workflow: laboratoryDecision.workflow ?? null })
+    ? canonicalToolExposureJson({
+      alias: laboratoryDecision.alias,
+      workflow: laboratoryDecision.workflow ?? null,
+      evidence_run_id: laboratoryDispatchBinding?.evidenceRunId ?? null,
+      evidence_step: laboratoryDispatchBinding?.evidenceStep ?? null
+    })
     : "";
-  const rawBody = certified ? rawJsonBody(body) : undefined;
+  const rawBody = certified || options.laboratoryMoveEvidenceAdmission ? rawJsonBody(body) : undefined;
   const legacyBodyJson = JSON.stringify(body) ?? "null";
   const bodyForSizeCheck = rawBody?.json ?? legacyBodyJson;
   if (Buffer.byteLength(bodyForSizeCheck, "utf8") > 2 * 1024 * 1024) throw new Error("Revit courier request body exceeds 2 MiB.");
@@ -725,6 +760,37 @@ export async function callRevitViaCourier<T>(
     : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson, laboratoryDiscriminator);
   // A stable job id makes a transport retry resume the same durable operation instead of publishing a duplicate write.
   const id = idempotencyKey;
+  const laboratoryEvidence = options.laboratoryEvidenceDispatch
+    ? consumeLaboratoryEvidenceDispatch(options.laboratoryEvidenceDispatch, {
+      transportKind: "courier",
+      jobId: id,
+      correlationId: id,
+      channel: laboratoryDecision?.channel ?? "",
+      alias: laboratoryDecision?.alias ?? "",
+      policy: {
+        policyHash: laboratoryDecision?.policyHash ?? "",
+        policyRecordHash: laboratoryDecision?.policyRecordHash ?? "",
+        evidenceRecordHash: laboratoryDecision?.evidenceRecordHash ?? "",
+        effectHash: laboratoryDecision?.effectHash ?? ""
+      }
+    })
+    : undefined;
+  const laboratoryMoveEvidenceAdmission = options.laboratoryMoveEvidenceAdmission && rawBody
+    ? consumeLaboratoryMoveEvidenceAdmission({
+      admission: options.laboratoryMoveEvidenceAdmission,
+      method: normalizedMethod,
+      path: revitPath,
+      bodyJson: rawBody.json,
+      channel: laboratoryDecision?.channel ?? "",
+      alias: laboratoryDecision?.alias ?? "",
+      policy: {
+        policyHash: laboratoryDecision?.policyHash ?? "",
+        policyRecordHash: laboratoryDecision?.policyRecordHash ?? "",
+        evidenceRecordHash: laboratoryDecision?.evidenceRecordHash ?? "",
+        effectHash: laboratoryDecision?.effectHash ?? ""
+      }
+    })
+    : undefined;
   const jobDir = path.join(getWorkspaceRoot(), "artifacts", "revit-courier", "jobs", id);
   const jobPath = path.join(jobDir, "job.json");
   const resultPath = path.join(jobDir, "result.json");
@@ -737,7 +803,7 @@ export async function callRevitViaCourier<T>(
     id,
     session_id: context.session_id,
     message_id: context.message_id ?? null,
-    ...(envelope
+    ...((envelope || laboratoryEvidence)
       ? { turn_token_sha256: context.token ? sha256(context.token) : null }
       : { turn_token: context.token ?? null }),
     correlation_id: id,
@@ -750,6 +816,8 @@ export async function callRevitViaCourier<T>(
     ...(body === undefined ? {} : { body }),
     ...(rawBody ? { body_json: rawBody.json, body_present: rawBody.present } : {}),
     ...(envelope ? { certification_envelope: envelope } : {}),
+    ...(laboratoryEvidence ? { laboratory_evidence: laboratoryEvidence } : {}),
+    ...(laboratoryMoveEvidenceAdmission ? { laboratory_move_evidence_admission: laboratoryMoveEvidenceAdmission } : {}),
     created_at: new Date(now).toISOString(),
     expires_at: envelope ? context.expires_at : new Date(now + durationMs).toISOString(),
     status: "pending",

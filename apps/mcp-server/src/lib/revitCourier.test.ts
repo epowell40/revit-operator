@@ -20,6 +20,8 @@ import {
 import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
 import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
+import { issueLaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
+import { admitLaboratoryMoveEvidenceRequest } from "./laboratoryMoveEvidence.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -435,6 +437,95 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
   }
 });
 
+test("protected laboratory courier persists exact source/run/step/channel/alias and job identity", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-evidence-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY = "1";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    writeContext(root, { session_id: "evidence-session", message_id: "evidence-message", token: "laboratory-bearer-must-not-persist" });
+    const workflow = "epic-0437-l4-context-before";
+    const dispatch = issueLaboratoryEvidenceDispatch({
+      evidenceRunId: "a".repeat(32), evidenceStep: "context-before", workflow, transportKind: "courier"
+    });
+    const pending = runWithRevitToolAlias("revit_get_context", () => callRevit<{ ok: boolean }>(
+      "/revit/context", "GET", undefined, { workflow, laboratoryEvidenceDispatch: dispatch }
+    ));
+    const jobRef = await waitForJob(root);
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v1");
+    const policy = JSON.parse(fs.readFileSync(sourcePolicyPath, "utf8"));
+    const contextRecord = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/context");
+    assert.deepEqual(job.laboratory_evidence, {
+      schema: "revit-operator.laboratory-evidence-dispatch.v2",
+      candidate_source_hash: "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
+      policy_hash: policy.policy_hash, policy_record_hash: contextRecord.policy_record_hash,
+      evidence_record_hash: contextRecord.evidence_record_hash, effect_hash: contextRecord.effect_hash,
+      evidence_run_id: "a".repeat(32), evidence_step: "context-before", transport_kind: "courier",
+      job_id: jobRef.id, correlation_id: jobRef.id, workflow, channel: "typed_mcp",
+      alias: "revit_get_context", production_certified: false
+    });
+    assert.equal(job.certification_envelope, undefined);
+    assert.equal(job.turn_token, undefined);
+    assert.equal(job.turn_token_sha256, `sha256:${createHash("sha256").update("laboratory-bearer-must-not-persist", "utf8").digest("hex")}`);
+    assert.equal(JSON.stringify(job).includes("laboratory-bearer-must-not-persist"), false);
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+      version: "revit-operator.revit-tool-result.v1", id: jobRef.id, correlation_id: jobRef.id,
+      status: "succeeded", result: { ok: true }, retryable: false
+    }), "utf8");
+    assert.deepEqual(await pending, { ok: true });
+  } finally { restore(); }
+});
+
+test("protected laboratory courier persists the opaque move-family admission separately from production certification", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-move-evidence-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY = "1";
+    writeContext(root, { session_id: "move-evidence-session", message_id: "move-evidence-message" });
+    clearCertifiedMoveTargetLedgerForTests();
+    registerCertifiedSpatialObservation(
+      { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+      { observationId: "move-evidence-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+    );
+    const workflow = "epic-0437-l4-move-preview";
+    const dispatch = issueLaboratoryEvidenceDispatch({ evidenceRunId: "b".repeat(32), evidenceStep: "move-preview", workflow, transportKind: "courier" });
+    const move = admitLaboratoryMoveEvidenceRequest({ evidenceDispatch: dispatch, request: {
+      phase: "preview", elementId: 4821, observationId: "move-evidence-frame", vectorFeet: { x: 0.25, y: 0, z: 0 }, previewReceipt: undefined
+    } });
+    const bodyJson = canonicalToolExposureJson(move.outboundBody);
+    const certifiedAdmission = runWithRevitToolAlias("revit_move_one_certified", () => createCertifiedCourierAdmission({
+      method: "POST", path: "/revit/move-elements", body: bodyJson, channel: "typed_mcp", workflow,
+      laboratoryMoveEvidenceAdmission: move.request
+    }));
+    const pending = runWithRevitToolAlias("revit_move_one_certified", () => callRevitViaCourier("/revit/move-elements", "POST", bodyJson, {
+      certifiedAdmission, laboratoryEvidenceDispatch: dispatch, laboratoryMoveEvidenceAdmission: move
+    }));
+    const jobRef = await waitForJob(root);
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v1");
+    assert.equal(job.certification_envelope, undefined);
+    assert.equal(job.laboratory_move_evidence_admission.schema, "revit-operator.laboratory-move-evidence-admission.v1");
+    assert.equal(job.laboratory_move_evidence_admission.production_certified, false);
+    assert.equal(job.laboratory_move_evidence_admission.request_instance_hash, move.request.requestInstanceHash);
+    assert.equal(job.laboratory_move_evidence_admission.outbound_body_sha256, `sha256:${createHash("sha256").update(bodyJson, "utf8").digest("hex")}`);
+    assert.equal(job.laboratory_evidence.job_id, jobRef.id);
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+      version: "revit-operator.revit-tool-result.v1", id: jobRef.id, correlation_id: jobRef.id,
+      status: "failed", error: "test terminal rejection", code: "TEST", retryable: false, outcome_unknown: false
+    }), "utf8");
+    await assert.rejects(pending, /test terminal rejection/);
+  } finally { restore(); }
+});
+
 test("certified move family publishes one sealed v2 envelope and binds it into courier idempotency", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-"));
   const restore = saveEnv();
@@ -458,7 +549,7 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
     clearCertifiedMoveTargetLedgerForTests();
     registerCertifiedSpatialObservation(
       { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
     );
     const admission = admitCertifiedMoveOneRequest({
       phase: "preview", elementId: 4821, observationId: "family-frame",
@@ -568,7 +659,7 @@ test("certified family courier rejects raw or standalone-decision failure receip
       clearCertifiedMoveTargetLedgerForTests();
       registerCertifiedSpatialObservation(
         { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
       );
       const admission = admitCertifiedMoveOneRequest({
         phase: "preview", elementId: 4821, observationId: "family-forged-frame",
@@ -649,7 +740,7 @@ test("certified family courier rejects deleted or downgraded durable jobs before
       clearCertifiedMoveTargetLedgerForTests();
       registerCertifiedSpatialObservation(
         { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
-        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
       );
       const admission = admitCertifiedMoveOneRequest({
         phase: "preview", elementId: 4821, observationId: "family-missing-job-frame",

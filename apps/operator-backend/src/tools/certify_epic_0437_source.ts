@@ -1,56 +1,39 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeEffectHash, parseToolCertificationCandidates, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
-import { parseCertificationProofIndex } from "../capabilities/tool_certification_evidence_compiler.js";
+import { computeEffectHash, parseToolCertificationCandidates, parseToolCertificationEvidence, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
+import { compileArtifactBoundEvidence, parseCertificationProofIndex } from "../capabilities/tool_certification_evidence_compiler.js";
+import {
+  EPIC_0437_NATIVE_BUILD_MANIFEST_PATH,
+  createEpic0437NativeBuildManifest,
+  currentEpic0437SourceInputs
+} from "../capabilities/epic_0437_source_provenance.js";
 import { buildRegistryAudit, findRepoRoot } from "./audit_tool_registry.js";
 import { verifyTypedMcpAliasesAgainstRegistry } from "./generate_tool_exposure_policy.js";
 
-const SOURCE_INPUTS = [
-  "apps/operator-backend/config/tool_certification_candidates.v1.json",
-  "apps/operator-backend/package.json",
-  "apps/operator-backend/src/capabilities/tool_certification.ts",
-  "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
-  "apps/operator-backend/src/tools/certify_epic_0437_live.ts",
-  "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
-  "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
-  "apps/operator-backend/src/courier/revit_tool_job_certification.ts",
-  "apps/operator-backend/src/courier/revit_tool_jobs.ts",
-  "apps/mcp-server/src/server.ts",
-  "apps/mcp-server/package.json",
-  "apps/mcp-server/src/spatialObservationV1.ts",
-  "apps/mcp-server/src/lib/certifiedMoveTargetLedger.ts",
-  "apps/mcp-server/src/lib/certifiedMoveOneRequestFamily.ts",
-  "apps/mcp-server/src/lib/certifiedCapabilityProjection.ts",
-  "apps/mcp-server/src/lib/revitClient.ts",
-  "apps/mcp-server/src/lib/revitCourier.ts",
-  "apps/mcp-server/src/lib/nativeTransport.ts",
-  "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
-  "apps/revit-bridge-addin/RevitBridge/App.cs",
-  "apps/revit-bridge-addin/RevitBridge/Server/RevitHttpServer.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedRequestFamilyAdmission.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorCertifiedMovePreviewAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeExecutionAttestationAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeToolExposureAuthority.cs",
-  "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Selection/ExportVisibleElementsHandler.cs"
-] as const;
-
 function json(raw: string): unknown { return JSON.parse(raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n")); }
-function run(command: string, args: string[], cwd: string): { command: string; duration_ms: number } {
+function run(command: string, args: string[], cwd: string): Promise<{ command: string; duration_ms: number }> {
   const started = Date.now();
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: "pipe", windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0) {
-    process.stderr.write(result.stdout ?? "");
-    process.stderr.write(result.stderr ?? "");
-    throw new Error(`Certification command failed (${result.status ?? result.signal ?? result.error?.message ?? "unknown"}): ${command} ${args.join(" ")}`);
-  }
-  return { command: `${command} ${args.join(" ")}`, duration_ms: Date.now() - started };
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, windowsHide: true, stdio: "inherit" });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code !== 0) {
+        reject(new Error(`Certification command failed (${code ?? signal ?? "unknown"}): ${command} ${args.join(" ")}`));
+        return;
+      }
+      resolve({ command: `${command} ${args.join(" ")}`, duration_ms: Date.now() - started });
+    });
+  });
 }
 function canonical(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
 
-function main(): void {
-  const backendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+async function main(): Promise<void> {
+  const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const backendRoot = fs.existsSync(path.join(moduleRoot, "config", "tool_certification_candidates.v1.json"))
+    ? moduleRoot
+    : path.resolve(moduleRoot, "..");
   const catalogRoot = findRepoRoot(backendRoot);
   const repoRoot = path.basename(catalogRoot).toLowerCase() === "apps" ? path.dirname(catalogRoot) : catalogRoot;
   const candidatePath = path.join(backendRoot, "config", "tool_certification_candidates.v1.json");
@@ -61,6 +44,20 @@ function main(): void {
   const candidateHash = sha256NormalizedText(candidateRaw);
   if (proofIndex.candidate_source_hash !== candidateHash) throw new Error("EPIC-0437 proof index is stale for candidates");
 
+  const nativeRoot = path.join(repoRoot, "apps", "revit-bridge-addin");
+  const mcpRoot = path.join(repoRoot, "apps", "mcp-server");
+  const systemNode = process.platform === "win32" ? path.join(process.env.ProgramW6432 ?? process.env.ProgramFiles ?? "C:\\Program Files", "nodejs", "node.exe") : process.execPath;
+  const gateNode = fs.existsSync(systemNode) ? systemNode : process.execPath;
+  if (process.argv.includes("--gates-already-run")) throw new Error("--gates-already-run is forbidden; source certification must execute its own gates");
+  const builds = [
+    await run(gateNode, [path.join(backendRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], backendRoot),
+    await run(gateNode, [path.join(mcpRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], mcpRoot),
+    await run("dotnet", ["test", "RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj", "-c", "Release", "-f", "net8.0-windows", "--no-restore"], nativeRoot),
+    await run("dotnet", ["test", "RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj", "-c", "Release", "-f", "net48", "--no-restore"], nativeRoot),
+    await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj", "-c", "Release", "-f", "net8.0-windows", "--no-restore"], nativeRoot),
+    await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj", "-c", "Release", "-f", "net48", "--no-restore"], nativeRoot)
+  ];
+
   const audit = buildRegistryAudit({ repoRoot: catalogRoot });
   verifyTypedMcpAliasesAgainstRegistry(candidates, catalogRoot);
   const routeKeys = new Set<string>(audit.tools.map(tool => tool.key));
@@ -69,16 +66,16 @@ function main(): void {
     if (computeEffectHash(profile.effect) !== profile.effect_hash) throw new Error(`L1 effect identity mismatch: ${profile.method} ${profile.path}`);
   }
 
-  const commands = [
-    run(process.execPath, ["--test", "--test-reporter=dot", "--test-concurrency=1", "--test-name-pattern=canonical identity|cumulative evidence|typed MCP|request-family|missing, unknown|tampered request|runtime validation|candidate provenance|candidate aliases|alias bindings|request fixtures|seeded policy|direct |courier ", "dist/test/tool_certification.test.js", "dist/test/direct_revit_execution_authorization.test.js", "dist/test/revit_courier_contract.test.js"], backendRoot),
-    run(process.execPath, ["--test", "--test-reporter=dot", "dist/spatialObservationV1.test.js", "dist/lib/certifiedMoveTargetLedger.test.js", "dist/lib/certifiedMoveOneRequestFamily.test.js", "dist/lib/certifiedExecutionEnvelope.test.js", "dist/lib/toolExposurePolicy.test.js", "dist/lib/revitCourier.test.js", "dist/lib/certifiedCapabilityProjection.test.js"], path.join(repoRoot, "apps", "mcp-server"))
+  const testCommands = [
+    await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "--test-name-pattern=canonical identity|complete cumulative evidence|typed MCP|request-family|missing, unknown|tampered request|runtime validation|candidate provenance|candidate aliases|alias bindings|request fixtures|seeded policy|direct |courier |laboratory", "dist/test/tool_certification.test.js", "dist/test/tool_certification_evidence_compiler.test.js", "dist/test/direct_revit_execution_authorization.test.js", "dist/test/revit_courier_contract.test.js", "dist/test/laboratory_execution_receipt.test.js"], backendRoot),
+    await run(gateNode, ["--test", "--test-reporter=dot", "dist/spatialObservationV1.test.js", "dist/lib/certifiedMoveTargetLedger.test.js", "dist/lib/certifiedMoveOneRequestFamily.test.js", "dist/lib/certifiedExecutionEnvelope.test.js", "dist/lib/toolExposurePolicy.test.js", "dist/lib/revitCourier.test.js", "dist/lib/certifiedCapabilityProjection.test.js", "dist/lib/laboratoryEvidenceDispatch.test.js", "dist/lib/laboratoryMoveEvidence.test.js"], mcpRoot)
   ];
-  const inputs = SOURCE_INPUTS.map(relative => ({
-    path: relative,
-    sha256: sha256NormalizedText(fs.readFileSync(path.join(repoRoot, relative), "utf8"))
-  }));
+  const commands = [...builds, ...testCommands];
+  const inputs = currentEpic0437SourceInputs(repoRoot);
   const artifactRoot = path.join(repoRoot, "artifacts", "certification", "epic-0437");
   fs.mkdirSync(artifactRoot, { recursive: true });
+  const buildManifest = createEpic0437NativeBuildManifest(repoRoot, candidateHash);
+  fs.writeFileSync(path.join(repoRoot, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH), canonical(buildManifest), "utf8");
 
   for (const profile of proofIndex.records) {
     profile.artifacts = [];
@@ -101,7 +98,7 @@ function main(): void {
             ? ["route_present", "reviewed_typed_alias_attribution"]
             : level === "L1"
               ? ["candidate_schema", "request_hash", "effect_hash", "request_family_hash", "artifact_contract"]
-              : commands
+              : commands.map(item => item.command)
         } as { passed: true; [key: string]: JsonValue }
       };
       const rendered = canonical(artifact);
@@ -115,7 +112,16 @@ function main(): void {
     }
   }
   fs.writeFileSync(proofPath, canonical(proofIndex), "utf8");
+  compileArtifactBoundEvidence({
+    candidates,
+    candidateSourceHash: candidateHash,
+    baseline: parseToolCertificationEvidence(json(fs.readFileSync(path.join(backendRoot, "config", "tool_certification_evidence.v1.json"), "utf8"))),
+    proofIndex,
+    repoRoot
+  });
   console.log(`Wrote L0-L2 proof artifacts for ${proofIndex.records.length} exact candidate identities.`);
 }
 
-if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) main();
+if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  main().catch(error => { process.stderr.write(`${String(error)}\n`); process.exitCode = 1; });
+}

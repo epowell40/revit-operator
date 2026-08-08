@@ -60,6 +60,38 @@ namespace RevitBridge.Common
             catch { return false; }
         }
 
+        public static bool VerifyCanonicalPayloadWithPublicBinding(
+            Dictionary<string, object?> payload,
+            string signatureBase64Url,
+            string keyId,
+            string modulusBase64Url,
+            string exponentBase64Url)
+        {
+            try
+            {
+                var modulus = DecodeBase64Url(modulusBase64Url);
+                var exponent = DecodeBase64Url(exponentBase64Url);
+                if (modulus.Length != 256
+                    || exponent.Length != 3
+                    || exponent[0] != 0x01 || exponent[1] != 0x00 || exponent[2] != 0x01
+                    || keyId != ComputeKeyId(modulusBase64Url, exponentBase64Url)) return false;
+                using var document = JsonDocument.Parse(JsonSerializer.Serialize(payload));
+                var canonical = OperatorCourierCertificationEnvelopeVerifier.Canonicalize(document.RootElement);
+#if NETFRAMEWORK
+                using RSA verifier = new RSACryptoServiceProvider(2048);
+#else
+                using RSA verifier = RSA.Create(2048);
+#endif
+                verifier.ImportParameters(new RSAParameters { Modulus = modulus, Exponent = exponent });
+                return verifier.VerifyData(
+                    new UTF8Encoding(false, true).GetBytes(canonical),
+                    DecodeBase64Url(signatureBase64Url),
+                    HashAlgorithmName.SHA256,
+                    RSASignaturePadding.Pkcs1);
+            }
+            catch { return false; }
+        }
+
         public static string ComputeKeyId(string modulusBase64Url, string exponentBase64Url)
         {
             var payload = new Dictionary<string, object?>(StringComparer.Ordinal)

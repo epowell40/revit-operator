@@ -22,6 +22,9 @@ import {
 } from "../src/capabilities/tool_certification.js";
 import {
   extractCompiledPolicyHash,
+  updateBundledPolicyHash,
+  updateCompiledPolicyHash,
+  updateMcpBundledPolicyHash,
   generatePolicyBytes,
   verifyGeneratedPolicyMatchesCompiledAnchor,
   verifyTypedMcpAliasesAgainstRegistry
@@ -529,6 +532,38 @@ test("generated policy matches the reviewed literal C# native trust anchor", () 
   assert.doesNotThrow(() =>
     verifyGeneratedPolicyMatchesCompiledAnchor(generated, authoritySource)
   );
+});
+
+test("canonical generator updates only the exact literal native policy anchor", () => {
+  const generated = generatePolicyBytes(
+    fs.readFileSync(evidencePath, "utf8"),
+    fs.readFileSync(candidatesPath, "utf8")
+  );
+  const source = `before\n        public const string CompiledPolicyHash = "sha256:${"0".repeat(64)}";\nafter\n`;
+  const updated = updateCompiledPolicyHash(generated, source);
+  assert.equal(extractCompiledPolicyHash(updated), JSON.parse(generated).policy_hash);
+  assert.match(updated, /^before\n/);
+  assert.match(updated, /\nafter\n$/);
+  assert.throws(() => updateCompiledPolicyHash(generated, source + source), /exactly one literal/);
+});
+
+test("canonical generator updates only the exact literal backend policy anchor", () => {
+  const generated = generatePolicyBytes(
+    fs.readFileSync(evidencePath, "utf8"),
+    fs.readFileSync(candidatesPath, "utf8")
+  );
+  const source = `before\nexport const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:${"0".repeat(64)}";\nafter\n`;
+  const updated = updateBundledPolicyHash(generated, source);
+  assert.match(updated, new RegExp(JSON.parse(generated).policy_hash));
+  assert.throws(() => updateBundledPolicyHash(generated, source + source), /exactly one literal/);
+});
+
+test("canonical generator updates only the exact literal MCP policy anchor", () => {
+  const generated = generatePolicyBytes(fs.readFileSync(evidencePath, "utf8"), fs.readFileSync(candidatesPath, "utf8"));
+  const source = `before\nconst BUNDLED_POLICY_HASH = "sha256:${"0".repeat(64)}";\nafter\n`;
+  const updated = updateMcpBundledPolicyHash(generated, source);
+  assert.match(updated, new RegExp(JSON.parse(generated).policy_hash));
+  assert.throws(() => updateMcpBundledPolicyHash(generated, source + source), /exactly one literal/);
 });
 
 test("generated policy check rejects a stale literal C# native trust anchor", () => {

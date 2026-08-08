@@ -56,6 +56,15 @@ namespace RevitBridge.Operator
 
         [JsonIgnore]
         public Func<CancellationToken, Task<OperatorCourierFinalExecutionAuthorization>>? CourierFinalExecutionRefreshAsync { get; internal set; }
+
+        // Evidence-only courier metadata is parsed from the immutable claimed
+        // job by the local worker. JsonIgnore prevents any chat/action payload
+        // from manufacturing this authority.
+        [JsonIgnore]
+        public OperatorLaboratoryEvidenceDispatch? LaboratoryEvidenceDispatch { get; internal set; }
+
+        [JsonIgnore]
+        public OperatorLaboratoryMoveEvidenceAdmission? LaboratoryMoveEvidenceAdmission { get; internal set; }
     }
 
     public sealed class OperatorChatRequest

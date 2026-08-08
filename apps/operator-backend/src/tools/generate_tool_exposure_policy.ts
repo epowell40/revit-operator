@@ -124,6 +124,38 @@ export function verifyGeneratedPolicyMatchesCompiledAnchor(
   }
 }
 
+export function updateCompiledPolicyHash(generatedPolicy: string, csharpAuthoritySource: string): string {
+  const parsed = parseJsonDocument(generatedPolicy);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Generated tool exposure policy must be a JSON object");
+  const policyHash = (parsed as Record<string, unknown>).policy_hash;
+  if (typeof policyHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(policyHash)) throw new Error("Generated tool exposure policy hash is invalid");
+  extractCompiledPolicyHash(csharpAuthoritySource);
+  return csharpAuthoritySource.replace(
+    /public const string CompiledPolicyHash = "sha256:[0-9a-f]{64}";/,
+    `public const string CompiledPolicyHash = "${policyHash}";`
+  );
+}
+
+export function updateBundledPolicyHash(generatedPolicy: string, trustedPolicySource: string): string {
+  const parsed = parseJsonDocument(generatedPolicy);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Generated tool exposure policy must be a JSON object");
+  const policyHash = (parsed as Record<string, unknown>).policy_hash;
+  if (typeof policyHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(policyHash)) throw new Error("Generated tool exposure policy hash is invalid");
+  const pattern = /export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:[0-9a-f]{64}";/g;
+  if ([...trustedPolicySource.matchAll(pattern)].length !== 1) throw new Error("Backend policy authority must contain exactly one literal bundled trust anchor");
+  return trustedPolicySource.replace(pattern, `export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "${policyHash}";`);
+}
+
+export function updateMcpBundledPolicyHash(generatedPolicy: string, mcpPolicySource: string): string {
+  const parsed = parseJsonDocument(generatedPolicy);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Generated tool exposure policy must be a JSON object");
+  const policyHash = (parsed as Record<string, unknown>).policy_hash;
+  if (typeof policyHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(policyHash)) throw new Error("Generated tool exposure policy hash is invalid");
+  const pattern = /const BUNDLED_POLICY_HASH = "sha256:[0-9a-f]{64}";/g;
+  if ([...mcpPolicySource.matchAll(pattern)].length !== 1) throw new Error("MCP policy authority must contain exactly one literal bundled trust anchor");
+  return mcpPolicySource.replace(pattern, `const BUNDLED_POLICY_HASH = "${policyHash}";`);
+}
+
 function csharpAuthorityPath(repoRoot: string): string {
   const appsLayout = path.join(
     repoRoot,
@@ -183,6 +215,20 @@ function runCli(): void {
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, generated, "utf8");
+  if (process.argv.includes("--update-native-anchor")) {
+    const trustedAuthorityPath = path.join(backendRoot, "src", "capabilities", "trusted_tool_exposure_policy.ts");
+    const trustedSource = fs.readFileSync(trustedAuthorityPath, "utf8");
+    fs.writeFileSync(trustedAuthorityPath, updateBundledPolicyHash(generated, trustedSource), "utf8");
+    const catalogRoot = findRepoRoot(backendRoot);
+    const repoRoot = path.basename(catalogRoot).toLowerCase() === "apps" ? path.dirname(catalogRoot) : catalogRoot;
+    const mcpAuthorityPath = path.join(repoRoot, "apps", "mcp-server", "src", "lib", "toolExposurePolicy.ts");
+    const mcpSource = fs.readFileSync(mcpAuthorityPath, "utf8");
+    fs.writeFileSync(mcpAuthorityPath, updateMcpBundledPolicyHash(generated, mcpSource), "utf8");
+    const authorityPath = csharpAuthorityPath(catalogRoot);
+    const source = fs.readFileSync(authorityPath, "utf8");
+    fs.writeFileSync(authorityPath, updateCompiledPolicyHash(generated, source), "utf8");
+    console.log(`Updated exact backend/MCP/native policy trust anchors: ${trustedAuthorityPath}; ${mcpAuthorityPath}; ${authorityPath}`);
+  }
   console.log(`Wrote tool exposure policy: ${outputPath}`);
 }
 

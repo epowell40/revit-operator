@@ -287,6 +287,17 @@ namespace RevitBridge.Operator
 
             OperatorActionSchemaValidator.ValidateOrThrow(action);
 
+            if (action.LaboratoryEvidenceDispatch != null && action.CourierVerifiedClaim != null)
+                throw new InvalidOperationException("Laboratory evidence and production certification authority are mutually exclusive.");
+            var laboratoryCourierContext = action.LaboratoryEvidenceDispatch == null
+                ? null
+                : OperatorLaboratoryExecutionReceiptAuthority.BeginCourierExecution(
+                    action.LaboratoryEvidenceDispatch,
+                    action.LaboratoryMoveEvidenceAdmission,
+                    method,
+                    path,
+                    jsonBody);
+
             if (string.Equals(path, "/revit/ping", StringComparison.OrdinalIgnoreCase))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
@@ -371,12 +382,19 @@ namespace RevitBridge.Operator
                         action.CourierVerifiedClaim?.Envelope,
                         jsonBody,
                         executionContext);
+                    var laboratoryExecutionStart = laboratoryCourierContext == null
+                        ? null
+                        : OperatorLaboratoryMoveEvidenceAuthority.CaptureStartAndConsumeApplyReceipt(
+                            app,
+                            action.LaboratoryMoveEvidenceAdmission,
+                            action.LaboratoryEvidenceDispatch!,
+                            jsonBody);
                     object handlerResult;
                     try
                     {
                         handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
                     }
-                    catch (Exception error) when (executionStart?.Phase == "apply")
+                    catch (Exception error) when (executionStart?.Phase == "apply" || laboratoryExecutionStart?.Phase == "apply")
                     {
                         throw new OperatorCertifiedFamilyOutcomeUnknownException(
                             "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
@@ -389,6 +407,24 @@ namespace RevitBridge.Operator
                         jsonBody,
                         executionStart,
                         executionContext);
+                    if (laboratoryCourierContext != null)
+                    {
+                        try
+                        {
+                            handlerResult = OperatorLaboratoryExecutionReceiptAuthority.AttachAfterRevitThreadCompletion(
+                                app,
+                                handlerResult,
+                                laboratoryCourierContext,
+                                DateTimeOffset.UtcNow,
+                                laboratoryExecutionStart);
+                        }
+                        catch (Exception error) when (laboratoryExecutionStart?.Phase == "apply")
+                        {
+                            throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                                "Committed laboratory move outcome could not be independently certified after handler dispatch.",
+                                error);
+                        }
+                    }
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
                     // confusion due to view redraw / regeneration lag.

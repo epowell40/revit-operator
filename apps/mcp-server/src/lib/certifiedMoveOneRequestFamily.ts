@@ -74,12 +74,21 @@ type PreviewPolicyBinding = Readonly<{
   channel: string;
   alias: string;
 }>;
-type PreviewReceiptRecord = Readonly<{
+type ProductionPreviewReceiptRecord = Readonly<{
+  lane: "production";
   previewAdmission: CertifiedMoveOneAdmission;
   token: string;
   receiptHash: string;
   policy: PreviewPolicyBinding;
 }>;
+type LaboratoryPreviewReceiptRecord = Readonly<{
+  lane: "laboratory_evidence";
+  previewAdmission: CertifiedMoveOneAdmission;
+  token: string;
+  receiptHash: string;
+  receiptJson: string;
+}>;
+type PreviewReceiptRecord = ProductionPreviewReceiptRecord | LaboratoryPreviewReceiptRecord;
 const issuedPreviewReceipts = new Map<string, PreviewReceiptRecord>();
 const applyPreviewLineage = new WeakMap<object, PreviewReceiptRecord>();
 export type CertifiedMoveOneTransportBinding = Readonly<{
@@ -538,8 +547,58 @@ export function issueCertifiedMovePreviewReceipt(admission: CertifiedMoveOneAdmi
     || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(receipt.issued_at_utc)) {
     throw new CertifiedMoveOneRequestError("MOVE_ONE_PREVIEW_RESULT_INVALID", "Native preview receipt does not bind the exact admitted preview.");
   }
-  issuedPreviewReceipts.set(token, Object.freeze({ previewAdmission: admission, token, receiptHash, policy: policyBinding(policyValue) }));
+  issuedPreviewReceipts.set(token, Object.freeze({ lane: "production", previewAdmission: admission, token, receiptHash, policy: policyBinding(policyValue) }));
   return token;
+}
+
+/**
+ * Internal bridge for the evidence-only wrapper. The wrapper verifies the full
+ * native-signed preview receipt before registering this lineage. Production
+ * authorization rejects this distinct lane below.
+ */
+export function registerLaboratoryMovePreviewLineage(
+  admission: CertifiedMoveOneAdmission,
+  receiptJson: string,
+  receiptHash: string,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  if (env.REVIT_OPERATOR_MODE !== "development"
+    || env.OPERATOR_TOOL_EXPOSURE_PROFILE !== "laboratory"
+    || env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1"
+    || !isCertifiedMoveOneAdmission(admission)
+    || admission.request.phase !== "preview"
+    || typeof receiptJson !== "string"
+    || !/^sha256:[0-9a-f]{64}$/.test(receiptHash)
+    || rawDigest(receiptJson) !== receiptHash) {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_PREVIEW_RESULT_INVALID", "Laboratory preview lineage registration is invalid.");
+  }
+  const token = `lmepr1_${randomBytes(32).toString("base64url")}`;
+  issuedPreviewReceipts.set(token, Object.freeze({
+    lane: "laboratory_evidence",
+    previewAdmission: admission,
+    token,
+    receiptHash,
+    receiptJson
+  }));
+  return token;
+}
+
+export function readLaboratoryMovePreviewLineage(admission: CertifiedMoveOneAdmission): Readonly<{
+  previewRequestInstanceHash: string;
+  previewExecutionReceiptSha256: string;
+  previewExecutionReceiptJson: string;
+}> | null {
+  if (!isCertifiedMoveOneAdmission(admission)) throw new CertifiedMoveOneRequestError("MOVE_ONE_ADMISSION_INVALID", "Admission was not issued by this runtime.");
+  if (admission.request.phase === "preview") return null;
+  const prior = applyPreviewLineage.get(admission);
+  if (!prior || prior.lane !== "laboratory_evidence") {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_PREVIEW_LINEAGE_INVALID", "Apply requires exact laboratory evidence preview lineage.");
+  }
+  return Object.freeze({
+    previewRequestInstanceHash: prior.previewAdmission.requestInstanceHash,
+    previewExecutionReceiptSha256: prior.receiptHash,
+    previewExecutionReceiptJson: prior.receiptJson
+  });
 }
 
 /** Apply is denied if policy/effect/channel/alias rotated after the preview. */
@@ -548,6 +607,9 @@ export function assertCertifiedMoveApplyPolicyLineage(admission: CertifiedMoveOn
   if (admission.request.phase !== "apply") return;
   const prior = applyPreviewLineage.get(admission);
   if (!prior) throw new CertifiedMoveOneRequestError("MOVE_ONE_PREVIEW_LINEAGE_INVALID", "Apply preview lineage is unavailable.");
+  if (prior.lane !== "production") {
+    throw new CertifiedMoveOneRequestError("MOVE_ONE_PREVIEW_LINEAGE_INVALID", "Laboratory evidence lineage cannot authorize production execution.");
+  }
   const current = policyBinding(policyValue);
   // Preview and apply deliberately use distinct policy records/effect hashes.
   // The policy set, family lineage, channel, and alias must remain unchanged;

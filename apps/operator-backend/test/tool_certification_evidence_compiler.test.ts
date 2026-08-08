@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { constants, generateKeyPairSync, sign } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, sealEvidenceRecord, sha256NormalizedText } from "../src/capabilities/tool_certification.js";
+import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
 import { compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
+import { EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, parseAndVerifyEpic0437PromotionAuthorization } from "../src/capabilities/epic_0437_promotion_authority.js";
 
 const backendRoot = process.cwd();
 const repoRoot = path.resolve(backendRoot, "../..");
@@ -61,7 +63,7 @@ test("artifact-bound evidence cannot be hand-promoted without one exact proof pe
   assert.ok(policy.records[0]?.channels.typed_mcp.reason_codes.includes("CERT_EVIDENCE_MISMATCHED"));
 });
 
-function writeLiveFixture(level: "L3" | "L4"): { root: string; relative: string; run: any; save: () => string } {
+function writeForgeableLegacyLiveFixture(level: "L3" | "L4"): { root: string; relative: string; save: () => string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "epic-0437-live-proof-"));
   const directory = path.join(root, "artifacts/certification/epic-0437/runs");
   fs.mkdirSync(directory, { recursive: true });
@@ -109,24 +111,40 @@ function writeLiveFixture(level: "L3" | "L4"): { root: string; relative: string;
     fs.writeFileSync(path.join(root, relative), raw, "utf8");
     return sha256NormalizedText(raw);
   };
-  return { root, relative, run, save };
+  return { root, relative, save };
 }
 
-test("EPIC-0437 live evidence validation proves rollback, exact commit/restore, native key strength, and transport receipts", () => {
+test("EPIC-0437 compiler rejects legacy self-authored live evidence and requires an independent live-process key pin", () => {
   for (const level of ["L3", "L4"] as const) {
-    const fixture = writeLiveFixture(level);
-    assert.doesNotThrow(() => validateEpic0437LiveEvidenceRun(fixture.root, fixture.relative, fixture.save(), level));
+    const fixture = writeForgeableLegacyLiveFixture(level);
+    const digest = fixture.save();
+    assert.throws(() => validateEpic0437LiveEvidenceRun(fixture.root, fixture.relative, digest, level), /independently authenticated live-process key pin/);
+    assert.throws(() => validateEpic0437LiveEvidenceRun(fixture.root, fixture.relative, digest, level, {
+      algorithm: "RS256", key_id: `sha256:${"f".repeat(64)}`, modulus_base64url: "A".repeat(342), exponent_base64url: "AQAB"
+    }), /keys are not exact|identity, source, or transport/);
   }
-  const rollback = writeLiveFixture("L3");
-  rollback.run.preview.rollback_point.x = 1.25;
-  assert.throws(() => validateEpic0437LiveEvidenceRun(rollback.root, rollback.relative, rollback.save(), "L3"), /rollback readback/);
-  const weakKey = writeLiveFixture("L3");
-  weakKey.run.document.native_attestation.modulus_base64url = "A".repeat(171);
-  assert.throws(() => validateEpic0437LiveEvidenceRun(weakKey.root, weakKey.relative, weakKey.save(), "L3"), /native attestation/);
-  const restore = writeLiveFixture("L4");
-  restore.run.apply.restored_point.x = 1.25;
-  assert.throws(() => validateEpic0437LiveEvidenceRun(restore.root, restore.relative, restore.save(), "L4"), /not exactly restored/);
-  const missingReceipt = writeLiveFixture("L3");
-  fs.rmSync(path.join(missingReceipt.root, missingReceipt.run.transport_evidence[0].files[0].path));
-  assert.throws(() => validateEpic0437LiveEvidenceRun(missingReceipt.root, missingReceipt.relative, missingReceipt.save(), "L3"));
+});
+
+test("EPIC-0437 promotion compiler rejects a self-authored signer even when every payload field is well shaped", () => {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const payload = {
+    schema: "revit-operator.epic-0437-promotion-payload.v1",
+    evidence_run_id: "1".repeat(32), level: "L3", candidate_source_hash: `sha256:${"2".repeat(64)}`,
+    policy_hash: `sha256:${"3".repeat(64)}`,
+    native_build_manifest_path: "artifacts/certification/epic-0437/native-build-manifest.v1.json",
+    native_build_manifest_sha256: `sha256:${"4".repeat(64)}`,
+    run_receipt_path: "artifacts/certification/epic-0437/runs/forged.json",
+    run_receipt_sha256: `sha256:${"5".repeat(64)}`,
+    candidate: { method: "POST", path: "/revit/export-visible-elements", request_hash: `sha256:${"6".repeat(64)}`, effect_hash: `sha256:${"7".repeat(64)}` },
+    capability: "observation_readback",
+    native_attestation: { algorithm: "RS256", key_id: `sha256:${"8".repeat(64)}`, modulus_base64url: "A".repeat(342), exponent_base64url: "AQAB" },
+    issued_at_utc: "2026-08-08T12:00:00.000Z"
+  } as const;
+  const signature = sign("sha256", Buffer.from(canonicalJson(payload as unknown as JsonValue), "utf8"), {
+    key: privateKey, padding: constants.RSA_PKCS1_PSS_PADDING, saltLength: 32
+  }).toString("base64url");
+  assert.throws(() => parseAndVerifyEpic0437PromotionAuthorization({
+    schema: "revit-operator.epic-0437-promotion-authorization.v1", algorithm: "PS256",
+    key_id: EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, payload, signature_base64url: signature
+  }), /signature is invalid/);
 });
