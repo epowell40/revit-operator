@@ -44,7 +44,7 @@ namespace RevitBridge.Common.Tests
             values["phase"] = "apply";
             values["effect_id"] = OperatorLaboratoryMoveEvidenceAdmission.ApplyEffectId;
             values["effect_hash"] = OperatorCertifiedRequestFamilyAdmission.MoveOneApplyEffectHash;
-            const string receiptJson = "{\"schema\":\"revit-operator.laboratory-execution-receipt.v1\"}";
+            const string receiptJson = "{\"schema\":\"revit-operator.laboratory-execution-receipt.v2\"}";
             values["preview_lineage"] = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["schema"] = OperatorLaboratoryMoveEvidenceAdmission.PreviewLineageSchemaName,
@@ -55,7 +55,7 @@ namespace RevitBridge.Common.Tests
             Assert.NotNull(Parse(WithAdmissionHash(values), dispatch).Lineage);
 
             var lineage = (Dictionary<string, object?>)values["preview_lineage"]!;
-            lineage["preview_execution_receipt_json"] = "{ \"schema\":\"revit-operator.laboratory-execution-receipt.v1\"}";
+            lineage["preview_execution_receipt_json"] = "{ \"schema\":\"revit-operator.laboratory-execution-receipt.v2\"}";
             lineage["preview_execution_receipt_sha256"] = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
                 (string)lineage["preview_execution_receipt_json"]!);
             Assert.Equal("CERTIFICATION_LABORATORY_MOVE_EVIDENCE_INVALID",

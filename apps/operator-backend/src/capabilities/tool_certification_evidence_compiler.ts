@@ -24,7 +24,7 @@ import {
 import { EPIC_0437_CANDIDATE_SOURCE_HASH } from "../courier/laboratory_evidence.js";
 import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } from "./trusted_tool_exposure_policy.js";
 import { parseAndVerifyEpic0437PromotionAuthorization } from "./epic_0437_promotion_authority.js";
-import { EPIC_0437_L2_GATE_CHECKS, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, currentEpic0437SourceInputs, epic0437SourceInputHash, validateEpic0437NativeBuildManifest } from "./epic_0437_source_provenance.js";
+import { EPIC_0437_L2_GATE_CHECKS, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, currentEpic0437SourceInputs, epic0437RuntimeDependencyReceiptMatchesManifest, epic0437SourceInputHash, validateEpic0437NativeBuildManifest } from "./epic_0437_source_provenance.js";
 
 type ProofProfile = {
   method: string;
@@ -245,7 +245,7 @@ export function validateEpic0437LiveEvidenceRun(
     native_common_assembly_sha256: trustedBuild.manifest.binaries.common.sha256,
     native_logic_assembly_sha256: trustedBuild.manifest.binaries.logic.sha256,
     native_bridge_assembly_sha256: trustedBuild.manifest.binaries.bridge.sha256,
-    runtime_dependencies: trustedBuild.manifest.runtime_dependencies.map(value => ({ name: value.name, sha256: value.sha256 }))
+    runtime_dependencies: trustedBuild.manifest.runtime_dependencies
   };
   const observationBody = { imageSize: 2200, limit: 500, includeMapping: true, includeGeometry: true };
   const moveBody = (vectorX: number, dryRun: boolean) => ({ ids: [elementId], mode: "vector", vectorX, vectorY: 0, vectorZ: 0,
@@ -296,13 +296,15 @@ export function validateEpic0437LiveEvidenceRun(
       alias: string(transport.alias, "EPIC-0437 step alias"),
       ...(requestBody === undefined ? { bodyJson: "" } : { body: requestBody })
     });
+    const runtimeDependencies = verified.receipt.native_runtime_dependencies as Array<Record<string, unknown>>;
+    const runtimeDependenciesMatch = epic0437RuntimeDependencyReceiptMatchesManifest(
+      trustedBuild.manifest, runtimeDependencies);
     if (verified.receipt.canonical_body_sha256 !== expectedBodyHash || verified.receipt.dispatch_id !== dispatch
       || verified.receipt.document_fingerprint !== document.fingerprint || verified.receipt.document_session_id !== document.session_id
       || verified.receipt.native_common_assembly_sha256 !== expectedNativeBuild.native_common_assembly_sha256
       || verified.receipt.native_logic_assembly_sha256 !== expectedNativeBuild.native_logic_assembly_sha256
       || verified.receipt.native_bridge_assembly_sha256 !== expectedNativeBuild.native_bridge_assembly_sha256
-      || canonicalJson((verified.receipt.native_runtime_dependencies as Array<Record<string, unknown>>).map(value => ({ name: value.name, sha256: value.sha256 })) as JsonValue)
-        !== canonicalJson(expectedNativeBuild.runtime_dependencies as JsonValue)
+      || !runtimeDependenciesMatch
       || verified.receipt.native_runtime_dependencies_hash !== sha256NormalizedText(canonicalJson(verified.receipt.native_runtime_dependencies as JsonValue))
       || verified.evidence.evidence_run_id !== run.evidence_run_id || verified.evidence.evidence_step !== name
       || verified.evidence.workflow !== transport.workflow || verified.evidence.channel !== transport.channel || verified.evidence.alias !== transport.alias

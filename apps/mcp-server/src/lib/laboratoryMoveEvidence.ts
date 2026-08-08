@@ -212,6 +212,13 @@ const RECEIPT_KEYS = [
   "native_attestation_exponent_base64url", "result_hash", "outcome", "outcome_unknown", "issued_at_utc",
   "native_attestation_signature"
 ] as const;
+const RUNTIME_DEPENDENCY_NAMES = [
+  "Microsoft.Bcl.AsyncInterfaces.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll",
+  "Microsoft.Web.WebView2.Wpf.dll", "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll",
+  "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll", "System.Runtime.CompilerServices.Unsafe.dll",
+  "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
+  "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
+] as const;
 const DISPATCH_KEYS = [
   "schema", "candidate_source_hash", "policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash", "evidence_run_id", "evidence_step", "transport_kind", "job_id",
   "correlation_id", "workflow", "channel", "alias", "production_certified"
@@ -339,7 +346,7 @@ export function assertLaboratoryMoveExecutionReceipt(
     [projection.native_attestation_modulus_base64url, dto.native_attestation_modulus_base64url],
     [projection.native_attestation_exponent_base64url, dto.native_attestation_exponent_base64url],
     [projection.channel, dto.channel], [projection.alias, dto.alias], [projection.preview_lineage_receipt_hash, expectedPreviewHash],
-    [receipt.schema, "revit-operator.laboratory-execution-receipt.v1"], [receipt.method, dto.method], [receipt.path, dto.path],
+    [receipt.schema, "revit-operator.laboratory-execution-receipt.v2"], [receipt.method, dto.method], [receipt.path, dto.path],
     [receipt.body_present, true], [receipt.raw_body_sha256, dto.outbound_body_sha256],
     [receipt.canonical_body_sha256, dto.outbound_body_sha256], [receipt.phase, phase], [receipt.effect_id, dto.effect_id],
     [receipt.effect_hash, dto.effect_hash], [receipt.channel, dto.channel], [receipt.alias, dto.alias],
@@ -366,6 +373,25 @@ export function assertLaboratoryMoveExecutionReceipt(
     || receipt.laboratory_evidence_hash !== sha(canonical(dispatch))) {
     throw new Error("Native laboratory move receipt does not bind the exact admitted family request and dispatch.");
   }
+  if (!Array.isArray(receipt.native_runtime_dependencies)
+    || receipt.native_runtime_dependencies.length !== RUNTIME_DEPENDENCY_NAMES.length
+    || receipt.native_runtime_dependencies_hash !== sha(canonical(receipt.native_runtime_dependencies))) {
+    throw new Error("Native laboratory move receipt runtime dependency closure is invalid.");
+  }
+  const deployedDirectory = path.win32.dirname(receipt.native_bridge_assembly_path as string).toLowerCase();
+  receipt.native_runtime_dependencies.forEach((value: unknown, index: number) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Native laboratory runtime dependency is invalid.");
+    const dependency = value as Record<string, unknown>;
+    exactKeys(dependency, ["name", "origin", "path", "sha256"], `native runtime dependency ${index}`);
+    if (dependency.name !== RUNTIME_DEPENDENCY_NAMES[index]
+      || (dependency.origin !== "deployed_addin" && dependency.origin !== "revit_host")
+      || typeof dependency.path !== "string" || !path.win32.isAbsolute(dependency.path)
+      || path.win32.basename(dependency.path) !== dependency.name
+      || (dependency.origin === "deployed_addin" && path.win32.dirname(dependency.path).toLowerCase() !== deployedDirectory)
+      || typeof dependency.sha256 !== "string" || !/^sha256:[0-9a-f]{64}$/.test(dependency.sha256)) {
+      throw new Error("Native laboratory runtime dependency path/origin/hash is invalid.");
+    }
+  });
   const { laboratory_execution_receipt: _receipt, ...nativeResult } = result;
   if (receipt.result_hash !== sha(canonical(nativeResult))) throw new Error("Native laboratory receipt does not bind the exact handler result.");
   if (typeof receipt.native_attestation_signature !== "string") throw new Error("Native laboratory move receipt signature is missing.");

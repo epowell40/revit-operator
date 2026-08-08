@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
@@ -50,7 +51,7 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void Laboratory_dependency_identity_allows_an_unrelated_preloaded_version()
+        public void Laboratory_dependency_identity_allows_the_exact_deployed_identity()
         {
             var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
                 "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -60,13 +61,7 @@ namespace RevitBridge.Common.Tests
             {
                 deployed,
                 "System.Text.Json.dll",
-                new[]
-                {
-                    new KeyValuePair<string, string>(identity, deployed),
-                    new KeyValuePair<string, string>(
-                        "System.Text.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
-                        deployed)
-                }
+                new[] { new KeyValuePair<string, string>(identity, deployed) }
             });
             Assert.Equal(Path.GetFullPath(deployed), selected);
         }
@@ -89,6 +84,42 @@ namespace RevitBridge.Common.Tests
             }));
             Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
                 Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+        }
+
+        [Fact]
+        public void Laboratory_dependency_identity_allows_only_an_exact_reviewed_host_path_identity_and_hash()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-host-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var source = typeof(JsonDocument).Assembly.Location;
+                var deployed = Path.Combine(directory, "deployed-System.Text.Json.dll");
+                var host = Path.Combine(directory, "host-System.Text.Json.dll");
+                File.Copy(source, deployed);
+                File.Copy(source, host);
+                var identity = AssemblyName.GetAssemblyName(source).FullName!;
+                using var stream = File.OpenRead(host);
+                using var algorithm = SHA256.Create();
+                var hash = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "SelectManagedRuntimeDependencyPathWithApprovedHost", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var args = new object[]
+                {
+                    deployed, "System.Text.Json.dll", new[] { new KeyValuePair<string, string>(identity, host) },
+                    host, hash, identity
+                };
+                Assert.Equal(Path.GetFullPath(host), method.Invoke(null, args));
+
+                args[4] = "sha256:" + new string('0', 64);
+                var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, args));
+                Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                    Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
         }
 
         [Fact]
@@ -342,7 +373,7 @@ namespace RevitBridge.Common.Tests
                     "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
                 }.Select((name, index) => new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["name"] = name, ["path"] = @"C:\Operator\" + name,
+                    ["name"] = name, ["origin"] = "deployed_addin", ["path"] = @"C:\Operator\" + name,
                     ["sha256"] = "sha256:" + index.ToString("x", CultureInfo.InvariantCulture).PadLeft(64, '0')
                 }).ToArray(),
                 ["native_runtime_dependencies_hash"] = "",

@@ -7,7 +7,7 @@ import test from "node:test";
 import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, renderCanonicalDocument, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
 import { assertEpic0437PromotableRecoveryState, compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
 import { EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, parseAndVerifyEpic0437PromotionAuthorization } from "../src/capabilities/epic_0437_promotion_authority.js";
-import { epic0437SourceInputHash } from "../src/capabilities/epic_0437_source_provenance.js";
+import { epic0437RuntimeDependencyReceiptMatchesManifest, epic0437SourceInputHash, type Epic0437NativeBuildManifest } from "../src/capabilities/epic_0437_source_provenance.js";
 
 const backendRoot = process.cwd();
 const repoRoot = path.resolve(backendRoot, "../..");
@@ -44,6 +44,26 @@ test("source provenance is cross-platform for line endings but still binds exact
   const unsupported = path.join(root, "source.bin");
   fs.writeFileSync(unsupported, "text", "utf8");
   assert.throws(() => epic0437SourceInputHash(root, "source.bin"), /unsupported non-text build input/);
+});
+
+test("runtime provenance admits only the exact deployed digest or reviewed Revit-host path and digest", () => {
+  const manifest = {
+    runtime_dependencies: [{
+      name: "System.Buffers.dll", path: "apps/runtime/System.Buffers.dll", sha256: `sha256:${"1".repeat(64)}`,
+      host: {
+        path: "C:\\Program Files\\Autodesk\\Revit 2024\\System.Buffers.dll",
+        sha256: `sha256:${"2".repeat(64)}`,
+        assembly_full_name: "System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
+      }
+    }]
+  } as unknown as Epic0437NativeBuildManifest;
+  const deployed = [{ name: "System.Buffers.dll", origin: "deployed_addin", path: "C:\\Operator\\System.Buffers.dll", sha256: `sha256:${"1".repeat(64)}` }];
+  const host = [{ name: "System.Buffers.dll", origin: "revit_host", path: "c:\\program files\\autodesk\\revit 2024\\System.Buffers.dll", sha256: `sha256:${"2".repeat(64)}` }];
+  assert.equal(epic0437RuntimeDependencyReceiptMatchesManifest(manifest, deployed), true);
+  assert.equal(epic0437RuntimeDependencyReceiptMatchesManifest(manifest, host), true);
+  assert.equal(epic0437RuntimeDependencyReceiptMatchesManifest(manifest, [{ ...host[0], path: "C:\\Elsewhere\\System.Buffers.dll" }]), false);
+  assert.equal(epic0437RuntimeDependencyReceiptMatchesManifest(manifest, [{ ...host[0], sha256: `sha256:${"3".repeat(64)}` }]), false);
+  assert.equal(epic0437RuntimeDependencyReceiptMatchesManifest(manifest, [{ ...host[0], origin: "caller" }]), false);
 });
 
 test("artifact-bound compiler verifies exact cumulative L0-L2 proof files against current inputs", () => {
@@ -200,7 +220,7 @@ test("EPIC-0437 promotion compiler rejects a self-authored signer even when ever
     schema: "revit-operator.epic-0437-promotion-payload.v1",
     evidence_run_id: "1".repeat(32), level: "L3", candidate_source_hash: `sha256:${"2".repeat(64)}`,
     policy_hash: `sha256:${"3".repeat(64)}`,
-    native_build_manifest_path: "artifacts/certification/epic-0437/native-build-manifest.v1.json",
+    native_build_manifest_path: "artifacts/certification/epic-0437/native-build-manifest.v2.json",
     native_build_manifest_sha256: `sha256:${"4".repeat(64)}`,
     run_receipt_path: "artifacts/certification/epic-0437/runs/forged.json",
     run_receipt_sha256: `sha256:${"5".repeat(64)}`,

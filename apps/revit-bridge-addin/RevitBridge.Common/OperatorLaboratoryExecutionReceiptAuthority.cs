@@ -19,7 +19,7 @@ namespace RevitBridge.Common
     /// </summary>
     public static class OperatorLaboratoryExecutionReceiptAuthority
     {
-        public const string Schema = "revit-operator.laboratory-execution-receipt.v1";
+        public const string Schema = "revit-operator.laboratory-execution-receipt.v2";
         public const string ResultField = "laboratory_execution_receipt";
         private static readonly string CourierProcessEpoch = RandomBase64Url(32);
         private static readonly string[] RuntimeDependencyNames = new[]
@@ -30,6 +30,55 @@ namespace RevitBridge.Common
             "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
             "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
         };
+        private sealed class ApprovedHostRuntimeDependency
+        {
+            public ApprovedHostRuntimeDependency(string path, string sha256, string assemblyFullName)
+            {
+                Path = path;
+                Sha256 = sha256;
+                AssemblyFullName = assemblyFullName;
+            }
+
+            public string Path { get; }
+            public string Sha256 { get; }
+            public string AssemblyFullName { get; }
+        }
+
+        // Revit 2024 loads these platform assemblies before Operator. Each
+        // exception is an exact reviewed path + strong identity + file digest;
+        // same-name assemblies from any other location remain denied.
+        private static readonly IReadOnlyDictionary<string, ApprovedHostRuntimeDependency> ApprovedHostRuntimeDependencies =
+            new Dictionary<string, ApprovedHostRuntimeDependency>(StringComparer.Ordinal)
+            {
+                ["Microsoft.Web.WebView2.Core.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\Microsoft.Web.WebView2.Core.dll",
+                    "sha256:f351435147bd9c6f70d9704ca1de3f170234fa9ccc536f1ac736c1c9bd20dcc3",
+                    "Microsoft.Web.WebView2.Core, Version=1.0.1343.22, Culture=neutral, PublicKeyToken=2a8ab48044d2601e"),
+                ["Microsoft.Web.WebView2.WinForms.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\Microsoft.Web.WebView2.WinForms.dll",
+                    "sha256:41e75eae9d79b33254fcff4f147f1bc905363b6faf9e94e22a9fcdfbbf398532",
+                    "Microsoft.Web.WebView2.WinForms, Version=1.0.1343.22, Culture=neutral, PublicKeyToken=2a8ab48044d2601e"),
+                ["Microsoft.Web.WebView2.Wpf.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\Microsoft.Web.WebView2.Wpf.dll",
+                    "sha256:e0f391bb35f8b954fb8e816a177bdd491c15bb0c1480fa0a6fad0b3224144681",
+                    "Microsoft.Web.WebView2.Wpf, Version=1.0.1343.22, Culture=neutral, PublicKeyToken=2a8ab48044d2601e"),
+                ["System.Buffers.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\System.Buffers.dll",
+                    "sha256:c65fff603b283dc966d1a8b730c11d5e5e750e8021bd24640612f6cc3f2c6fb7",
+                    "System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"),
+                ["System.Memory.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\System.Memory.dll",
+                    "sha256:8e76318e8b06692abf7dab1169d27d15557f7f0a34d36af6463eff0fe21213c7",
+                    "System.Memory, Version=4.0.1.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"),
+                ["System.Numerics.Vectors.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\System.Numerics.Vectors.dll",
+                    "sha256:1d3ef8698281e7cf7371d1554afef5872b39f96c26da772210a33da041ba1183",
+                    "System.Numerics.Vectors, Version=4.1.4.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"),
+                ["System.Runtime.CompilerServices.Unsafe.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Revit 2024\System.Runtime.CompilerServices.Unsafe.dll",
+                    "sha256:66409f670315afe8610f17a4d3a1ee52d72b6a46c544cec97544e8385f90ad74",
+                    "System.Runtime.CompilerServices.Unsafe, Version=4.0.4.1, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a")
+            };
 
         public static OperatorLaboratoryCourierReceiptContext BeginCourierExecution(
             OperatorLaboratoryEvidenceDispatch laboratoryEvidence,
@@ -272,6 +321,7 @@ namespace RevitBridge.Common
                 result.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
                     ["name"] = name,
+                    ["origin"] = IsApprovedHostRuntimeDependency(name, dependencyPath) ? "revit_host" : "deployed_addin",
                     ["path"] = dependencyPath,
                     ["sha256"] = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant()
                 });
@@ -316,24 +366,61 @@ namespace RevitBridge.Common
             string name,
             IReadOnlyCollection<KeyValuePair<string, string>> managedAssemblies)
         {
-            var deployedIdentity = AssemblyName.GetAssemblyName(deployedPath).FullName ?? "";
-            var exactIdentityMatches = managedAssemblies
-                .Where(value => string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal))
-                .Select(value => value.Value)
-                .ToList();
-            if (managedAssemblies.Count > 0 && exactIdentityMatches.Count == 0)
-                throw Denied("Protected laboratory evidence did not load the deployed " + name + " assembly identity.");
-            if (exactIdentityMatches.Any(string.IsNullOrWhiteSpace)
-                || exactIdentityMatches.Any(value => !File.Exists(value)))
+            ApprovedHostRuntimeDependencies.TryGetValue(name, out var approved);
+            return SelectManagedRuntimeDependencyPathWithApprovedHost(
+                deployedPath, name, managedAssemblies, approved?.Path, approved?.Sha256, approved?.AssemblyFullName);
+        }
+
+        private static string SelectManagedRuntimeDependencyPathWithApprovedHost(
+            string deployedPath,
+            string name,
+            IReadOnlyCollection<KeyValuePair<string, string>> managedAssemblies,
+            string? approvedHostPath,
+            string? approvedHostSha256,
+            string? approvedHostAssemblyFullName)
+        {
+            if (managedAssemblies.Any(value => string.IsNullOrWhiteSpace(value.Value))
+                || managedAssemblies.Any(value => !File.Exists(value.Value)))
                 throw Denied("Protected laboratory evidence cannot resolve every loaded " + name + " assembly location.");
-            var managedMatches = exactIdentityMatches
-                .Select(Path.GetFullPath)
+            var managedMatches = managedAssemblies
+                .Select(value => Path.GetFullPath(value.Value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded copies of the deployed " + name + " assembly identity.");
-            if (managedMatches.Count == 1 && !string.Equals(managedMatches[0], deployedPath, StringComparison.OrdinalIgnoreCase))
-                throw Denied("Protected laboratory evidence loaded " + name + " outside the deployed add-in dependency closure.");
-            return managedMatches.Count == 1 ? managedMatches[0] : deployedPath;
+            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded copies of " + name + ".");
+            if (managedMatches.Count == 0) return deployedPath;
+
+            var selected = managedMatches[0];
+            if (string.Equals(selected, deployedPath, StringComparison.OrdinalIgnoreCase))
+            {
+                var deployedIdentity = AssemblyName.GetAssemblyName(deployedPath).FullName ?? "";
+                if (managedAssemblies.Any(value => !string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal)))
+                    throw Denied("Protected laboratory evidence loaded a different identity from the deployed " + name + ".");
+                return selected;
+            }
+            if (string.IsNullOrWhiteSpace(approvedHostPath) || string.IsNullOrWhiteSpace(approvedHostSha256)
+                || string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)
+                || !string.Equals(selected, Path.GetFullPath(approvedHostPath), StringComparison.OrdinalIgnoreCase)
+                || managedAssemblies.Any(value => !string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal))
+                || !FileHashMatches(selected, approvedHostSha256))
+                throw Denied("Protected laboratory evidence loaded " + name + " outside the reviewed add-in/host dependency closure.");
+            return selected;
+        }
+
+        private static bool IsApprovedHostRuntimeDependency(string name, string candidatePath, IEnumerable<string>? loadedIdentities = null)
+        {
+            if (!ApprovedHostRuntimeDependencies.TryGetValue(name, out var approved)
+                || !string.Equals(Path.GetFullPath(candidatePath), Path.GetFullPath(approved.Path), StringComparison.OrdinalIgnoreCase)
+                || !File.Exists(candidatePath)) return false;
+            if (loadedIdentities != null && loadedIdentities.Any(value => !string.Equals(value, approved.AssemblyFullName, StringComparison.Ordinal))) return false;
+            return FileHashMatches(candidatePath, approved.Sha256);
+        }
+
+        private static bool FileHashMatches(string candidatePath, string expectedSha256)
+        {
+            using var stream = File.Open(candidatePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var algorithm = SHA256.Create();
+            var hash = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+            return string.Equals(hash, expectedSha256, StringComparison.Ordinal);
         }
 
         public static bool VerifyAttachedReceipt(object attachedResult)
@@ -576,12 +663,19 @@ namespace RevitBridge.Common
             var index = 0;
             foreach (var dependency in dependencies.EnumerateArray())
             {
-                if (dependency.ValueKind != JsonValueKind.Object || dependency.EnumerateObject().Count() != 3
+                if (dependency.ValueKind != JsonValueKind.Object || dependency.EnumerateObject().Count() != 4
                     || !String(dependency, "name", out var name) || name != RuntimeDependencyNames[index++]
+                    || !String(dependency, "origin", out var origin) || (origin != "deployed_addin" && origin != "revit_host")
                     || !String(dependency, "path", out var dependencyPath) || !Path.IsPathRooted(dependencyPath)
                     || !string.Equals(Path.GetFileName(dependencyPath), name, StringComparison.Ordinal)
-                    || !string.Equals(Path.GetDirectoryName(Path.GetFullPath(dependencyPath)), expectedDirectory, StringComparison.OrdinalIgnoreCase)
                     || !String(dependency, "sha256", out var dependencyHash) || !IsSha256(dependencyHash)) return false;
+                if (origin == "deployed_addin")
+                {
+                    if (!string.Equals(Path.GetDirectoryName(Path.GetFullPath(dependencyPath)), expectedDirectory, StringComparison.OrdinalIgnoreCase)) return false;
+                }
+                else if (!ApprovedHostRuntimeDependencies.TryGetValue(name, out var approved)
+                    || !string.Equals(Path.GetFullPath(dependencyPath), Path.GetFullPath(approved.Path), StringComparison.OrdinalIgnoreCase)
+                    || dependencyHash != approved.Sha256) return false;
             }
             return true;
         }

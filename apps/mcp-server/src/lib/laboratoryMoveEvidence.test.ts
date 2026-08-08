@@ -67,7 +67,7 @@ function signedPreviewResult(admission: ReturnType<typeof previewAdmission>, dto
     snapshots: [{ id: elementId, before: { kind: "LocationPoint", pointXyz: [1, 2, 3] }, after: { kind: "LocationPoint", pointXyz: [1.25, 2, 3] } }]
   };
   const receipt: Record<string, unknown> = {
-    schema: "revit-operator.laboratory-execution-receipt.v1",
+    schema: "revit-operator.laboratory-execution-receipt.v2",
     request_id: "d".repeat(32), dispatch_id: "d".repeat(32), transport_request_nonce: "A".repeat(43),
     transport_server_epoch: "B".repeat(43), transport_issued_at_utc: "2035-01-02T03:04:05.006Z",
     laboratory_evidence: laboratoryEvidence, laboratory_evidence_hash: hash(canonicalTestNativeJson(laboratoryEvidence)),
@@ -90,7 +90,7 @@ function signedPreviewResult(admission: ReturnType<typeof previewAdmission>, dto
       "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll", "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll",
       "System.Runtime.CompilerServices.Unsafe.dll", "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
       "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
-    ].map((name, index) => ({ name, path: `C:\\Operator\\${name}`, sha256: `sha256:${index.toString(16).padStart(64, "0")}` })),
+    ].map((name, index) => ({ name, origin: "deployed_addin", path: `C:\\Operator\\${name}`, sha256: `sha256:${index.toString(16).padStart(64, "0")}` })),
     native_runtime_dependencies_hash: "",
     native_attestation_algorithm: "RS256", native_attestation_key_id: TEST_NATIVE_EXECUTION_ATTESTATION.key_id,
     native_attestation_modulus_base64url: TEST_NATIVE_EXECUTION_ATTESTATION.modulus_base64url,

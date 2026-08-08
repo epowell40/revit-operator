@@ -6,7 +6,7 @@ import {
   type LaboratoryEvidenceDispatch
 } from "./laboratory_evidence.js";
 
-export const LABORATORY_EXECUTION_RECEIPT_SCHEMA = "revit-operator.laboratory-execution-receipt.v1";
+export const LABORATORY_EXECUTION_RECEIPT_SCHEMA = "revit-operator.laboratory-execution-receipt.v2";
 export const LABORATORY_EXECUTION_RECEIPT_FIELD = "laboratory_execution_receipt";
 
 const HASH = /^sha256:[0-9a-f]{64}$/;
@@ -155,10 +155,11 @@ export function verifyLaboratoryExecutionReceipt(
   const dependencyDirectory = path.win32.dirname(string(receipt, "native_bridge_assembly_path")).toLowerCase();
   receipt.native_runtime_dependencies.forEach((value, index) => {
     const dependency = object(value, `native runtime dependency ${index}`);
-    exact(dependency, ["name", "path", "sha256"], `native runtime dependency ${index}`);
+    exact(dependency, ["name", "origin", "path", "sha256"], `native runtime dependency ${index}`);
     const dependencyPath = string(dependency, "path");
     if (dependency.name !== RUNTIME_DEPENDENCY_NAMES[index] || !path.win32.isAbsolute(dependencyPath)
-      || path.win32.dirname(dependencyPath).toLowerCase() !== dependencyDirectory
+      || (dependency.origin !== "deployed_addin" && dependency.origin !== "revit_host")
+      || (dependency.origin === "deployed_addin" && path.win32.dirname(dependencyPath).toLowerCase() !== dependencyDirectory)
       || path.win32.basename(dependencyPath) !== dependency.name) throw new Error("Native laboratory runtime dependency path/name is invalid.");
     string(dependency, "sha256", HASH);
   });
