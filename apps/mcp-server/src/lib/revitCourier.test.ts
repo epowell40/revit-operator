@@ -536,7 +536,7 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
 
 test("certified family courier rejects raw or standalone-decision failure receipts", async () => {
   const policy = writeMoveFamilyPolicy();
-  for (const withStandaloneDecision of [false, true]) {
+  for (const mode of ["raw", "standalone-decision", "deleted-job", "downgraded-job"] as const) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-forged-failure-"));
     const restore = saveEnv();
     try {
@@ -549,7 +549,7 @@ test("certified family courier rejects raw or standalone-decision failure receip
       process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
       writeContext(root, {
         session_id: "family-forged-session",
-        message_id: withStandaloneDecision ? "standalone-decision" : "raw-result",
+        message_id: mode,
         target_executor_id: "family-workstation"
       });
       clearCertifiedMoveTargetLedgerForTests();
@@ -578,7 +578,7 @@ test("certified family courier rejects raw or standalone-decision failure receip
         retryable: true,
         outcome_unknown: false
       };
-      if (withStandaloneDecision) {
+      if (mode === "standalone-decision") {
         const decision = {
           schema: "revit-operator.courier-completion-terminal-decision.v1",
           kind: "failure",
@@ -595,10 +595,18 @@ test("certified family courier rejects raw or standalone-decision failure receip
         };
         fs.writeFileSync(path.join(jobRef.dir, "completion-terminal-decision.v1.json"), JSON.stringify(decision), "utf8");
       }
+      if (mode === "deleted-job") fs.unlinkSync(path.join(jobRef.dir, "job.json"));
+      if (mode === "downgraded-job") {
+        fs.writeFileSync(path.join(jobRef.dir, "job.json"), JSON.stringify({ ...job, version: "revit-operator.revit-tool-job.v1" }), "utf8");
+      }
       fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify(terminal), "utf8");
       await assert.rejects(
         pending,
-        withStandaloneDecision ? /not the exact atomic terminal-fence winner/ : /does not match the exact backend terminal decision/
+        mode === "standalone-decision"
+          ? /not the exact atomic terminal-fence winner/
+          : mode === "raw"
+            ? /does not match the exact backend terminal decision/
+            : /no exact persisted v2 durable job/
       );
     } finally {
       clearCertifiedMoveTargetLedgerForTests();

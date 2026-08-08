@@ -4,7 +4,17 @@ import { RevitBridgeCallError } from "./revitClient.js";
 import { RevitCourierError } from "./revitCourier.js";
 import { certifiedMoveTransportFailurePayload } from "./certifiedMoveTransportFailure.js";
 
-const binding = { requestInstanceHash: `sha256:${"a".repeat(64)}`, phase: "apply" as const };
+const hash = (character: string) => `sha256:${character.repeat(64)}`;
+const binding = {
+  requestInstanceHash: hash("a"), phase: "apply" as const,
+  familyId: "revit-operator.certified-move-one.request-family.v1", familyHash: hash("b"),
+  admissionSessionId: "1".repeat(32), documentFingerprint: hash("c"), documentSessionId: "2".repeat(32),
+  sourceScopedId: "host:4821", elementId: 4821, observationId: "frame-1", observationBindingHash: hash("d"),
+  nativeAttestationKeyId: hash("e"), previewInstanceHash: hash("f"), previewReceiptHash: hash("0"),
+  policyHash: hash("1"), policyRecordHash: hash("2"), evidenceRecordHash: hash("3"), effectHash: hash("4"),
+  outboundBodySha256: hash("5"),
+  channel: "typed_mcp", alias: "revit_move_one_certified"
+};
 
 test("certified move transport failure preserves direct unknown-outcome truth", () => {
   const error = new RevitBridgeCallError({
@@ -13,17 +23,26 @@ test("certified move transport failure preserves direct unknown-outcome truth", 
     retryable: true,
     outcomeUnknown: true,
     method: "POST",
-    path: "/revit/move-elements"
+    path: "/revit/move-elements",
+    correlationId: "9".repeat(32)
   });
-  assert.deepEqual(certifiedMoveTransportFailurePayload(error, binding), {
-    code: "revit_bridge_invalid_response",
-    error: error.message,
-    phase: "transport_post_dispatch",
-    request_instance_hash: binding.requestInstanceHash,
-    request_phase: "apply",
-    outcome_unknown: true,
-    retryable: false,
-    reconciliation_required: true
+  const payload = certifiedMoveTransportFailurePayload(error, binding)!;
+  assert.equal(payload.code, "revit_bridge_invalid_response");
+  assert.equal(payload.dispatch_id, "9".repeat(32));
+  assert.equal(payload.correlation_id, "9".repeat(32));
+  assert.equal(payload.outcome_unknown, true);
+  assert.equal(payload.retryable, false);
+  assert.equal(payload.reconciliation_required, true);
+  assert.deepEqual(payload.certification_binding, {
+    family_id: binding.familyId, family_hash: binding.familyHash, request_instance_hash: binding.requestInstanceHash,
+    admission_session_id: binding.admissionSessionId, document_fingerprint: binding.documentFingerprint,
+    document_session_id: binding.documentSessionId, source_scoped_id: binding.sourceScopedId, element_id: binding.elementId,
+    observation_id: binding.observationId, observation_binding_hash: binding.observationBindingHash,
+    native_attestation_key_id: binding.nativeAttestationKeyId, preview_instance_hash: binding.previewInstanceHash,
+    preview_receipt_hash: binding.previewReceiptHash, policy_hash: binding.policyHash,
+    policy_record_hash: binding.policyRecordHash, evidence_record_hash: binding.evidenceRecordHash,
+    effect_hash: binding.effectHash, outbound_body_sha256: binding.outboundBodySha256,
+    channel: binding.channel, alias: binding.alias
   });
 });
 
@@ -35,7 +54,9 @@ test("certified move transport failure preserves courier classification and reje
     outcomeUnknown: false,
     jobId: "b".repeat(64)
   });
-  assert.equal(certifiedMoveTransportFailurePayload(error, binding)?.retryable, true);
-  assert.equal(certifiedMoveTransportFailurePayload(error, binding)?.outcome_unknown, false);
+  const payload = certifiedMoveTransportFailurePayload(error, binding)!;
+  assert.equal(payload.retryable, true);
+  assert.equal(payload.outcome_unknown, false);
+  assert.equal(payload.dispatch_id, "b".repeat(64));
   assert.equal(certifiedMoveTransportFailurePayload(new Error("ordinary"), binding), null);
 });

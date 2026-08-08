@@ -225,6 +225,9 @@ function readAuthoritativeResult(
   const receipt = readResult(resultPath, id);
   if (!receipt) return null;
   const job = readJsonObject(jobPath);
+  if (expectedEnvelope?.version === 2 && job?.version !== JOB_VERSION_V2) {
+    throw new Error("Certified family courier result has no exact persisted v2 durable job.");
+  }
   if (job?.version !== JOB_VERSION_V2) return receipt;
   const envelope = job.certification_envelope as CertificationEnvelope | undefined;
   if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
@@ -233,6 +236,12 @@ function readAuthoritativeResult(
     throw new Error("Certified family courier result does not match the exact in-process certification envelope.");
   }
   if (envelope.version !== 2) return receipt;
+  if (job.id !== id || job.correlation_id !== id || job.idempotency_key !== id
+    || job.method !== envelope.method || job.path !== envelope.path
+    || job.body_present !== envelope.body_present
+    || typeof job.body_json !== "string" || sha256(job.body_json) !== envelope.body_sha256) {
+    throw new Error("Certified family courier result does not match the exact immutable durable job identity.");
+  }
   const jobDir = path.dirname(jobPath);
   const decision = readJsonObject(path.join(jobDir, "completion-terminal-decision.v1.json"));
   const decisionKeys = [

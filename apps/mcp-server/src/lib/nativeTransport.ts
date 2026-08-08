@@ -51,11 +51,13 @@ export type NativeTransportResult = Readonly<{
 
 export class NativeTransportProtocolError extends Error {
   readonly phase: "pre_dispatch" | "response";
+  readonly requestId?: string;
 
-  constructor(message: string, phase: "pre_dispatch" | "response", cause?: unknown) {
+  constructor(message: string, phase: "pre_dispatch" | "response", cause?: unknown, requestId?: string) {
     super(message, { cause });
     this.name = "NativeTransportProtocolError";
     this.phase = phase;
+    this.requestId = requestId;
   }
 }
 
@@ -240,6 +242,7 @@ export async function callNativeTransport(input: {
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
   certificationEnvelope?: FamilyCertificationEnvelope;
+  requestId?: string;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
@@ -253,30 +256,41 @@ export async function callNativeTransport(input: {
     writeGrant: input.writeGrant,
     channel: input.channel,
     alias: input.alias,
-    certificationEnvelope: input.certificationEnvelope
+    certificationEnvelope: input.certificationEnvelope,
+    requestId: input.requestId
   });
 
-  const response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {
-    method: "POST",
-    signal: input.signal,
-    headers: { "Content-Type": NATIVE_TRANSPORT_CONTENT_TYPE },
-    body: request.envelopeJson
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {
+      method: "POST",
+      signal: input.signal,
+      headers: { "Content-Type": NATIVE_TRANSPORT_CONTENT_TYPE },
+      body: request.envelopeJson
+    });
+  } catch (error) {
+    throw new NativeTransportProtocolError("Protected native transport response was unavailable.", "response", error, request.requestId);
+  }
   if (response.status !== 200) {
     try { await response.body?.cancel(); } catch { /* best effort */ }
-    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated outer HTTP status.", "response");
+    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated outer HTTP status.", "response", undefined, request.requestId);
   }
   const responseContentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim();
   if (responseContentType !== NATIVE_TRANSPORT_CONTENT_TYPE) {
     try { await response.body?.cancel(); } catch { /* best effort */ }
-    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated content type.", "response");
+    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated content type.", "response", undefined, request.requestId);
   }
-  const bytes = await readLimitedResponse(response, MAXIMUM_RESPONSE_ENVELOPE_BYTES);
-  return openNativeTransportResponse({
-    operatorToken: input.operatorToken,
-    request,
-    envelopeBytes: bytes
-  });
+  try {
+    const bytes = await readLimitedResponse(response, MAXIMUM_RESPONSE_ENVELOPE_BYTES);
+    return openNativeTransportResponse({
+      operatorToken: input.operatorToken,
+      request,
+      envelopeBytes: bytes
+    });
+  } catch (error) {
+    if (error instanceof NativeTransportProtocolError && error.requestId === request.requestId) throw error;
+    throw new NativeTransportProtocolError("Protected native transport response could not be authenticated.", "response", error, request.requestId);
+  }
 }
 
 function validateRequest(method: string, requestPath: string, bodyJson: string | undefined): void {

@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
 import { callRevitViaCourier, readCertifiedCourierExecutionContext } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
@@ -61,6 +62,7 @@ export class RevitBridgeCallError extends Error {
     method: string;
     path: string;
     status?: number;
+    correlationId?: string;
     bridgeDetails?: RevitBridgeErrorDetails;
     cause?: unknown;
   }) {
@@ -84,7 +86,7 @@ export class RevitBridgeCallError extends Error {
     this.phase = stringField(details, "phase");
     this.host_health = stringField(details, "host_health");
     this.opens_circuit = booleanField(details, "opens_circuit");
-    this.correlation_id = stringField(details, "correlation_id");
+    this.correlation_id = input.correlationId ?? stringField(details, "correlation_id");
     this.deadline_class = stringField(details, "deadline_class");
     this.deadline_ms = numberField(details, "deadline_ms");
   }
@@ -274,6 +276,9 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
+    const certifiedDirectDispatchId = !laboratoryBypass && options.certifiedMoveOneAdmission
+      ? randomBytes(16).toString("hex")
+      : undefined;
 
     try {
       if (!laboratoryBypass) {
@@ -298,6 +303,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           channel: nativeChannel,
           alias: exposure.alias,
           certificationEnvelope,
+          requestId: certifiedDirectDispatchId,
           signal: controller.signal
         });
         return {
@@ -330,6 +336,9 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       });
       return response;
     } catch (error) {
+      const protectedRequestId = error instanceof NativeTransportProtocolError
+        ? (error.requestId ?? certifiedDirectDispatchId)
+        : certifiedDirectDispatchId;
       if (controller.signal.aborted) {
         const outcomeUnknown = mutating;
         throw new RevitBridgeCallError({
@@ -339,6 +348,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           outcomeUnknown,
           method: upperMethod,
           path,
+          correlationId: protectedRequestId,
           cause: error,
         });
       }
@@ -351,6 +361,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           outcomeUnknown,
           method: upperMethod,
           path,
+          correlationId: protectedRequestId,
           cause: error,
         });
       }
@@ -376,6 +387,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         outcomeUnknown,
         method: upperMethod,
         path,
+        correlationId: protectedRequestId,
         cause: error,
       });
     } finally {
@@ -431,6 +443,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       outcomeUnknown,
       method: upperMethod,
       path,
+      correlationId: response.certifiedExecutionContext?.dispatchId,
       cause: error,
     });
   }

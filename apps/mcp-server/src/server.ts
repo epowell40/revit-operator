@@ -10,7 +10,7 @@ import { createRequire } from "module";
 xlsx.set_fs(fs);
 import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
 import { certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
-import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt } from "./lib/certifiedMoveOneRequestFamily.js";
+import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
@@ -1890,13 +1890,36 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
     previewReceipt: z.string().optional()
   },
   async (args) => {
-    let admittedRequest: Readonly<{ requestInstanceHash: string; phase: "preview" | "apply" }> | null = null;
+    let admittedRequest: import("./lib/certifiedMoveTransportFailure.js").CertifiedMoveTransportFailureBinding | null = null;
     try {
       const { admission, decision } = assertCertifiedMoveOneToolExposure({
         request: { ...args, previewReceipt: args.previewReceipt },
         channel: "typed_mcp"
       });
-      admittedRequest = { requestInstanceHash: admission.requestInstanceHash, phase: admission.request.phase };
+      const transportBinding = readCertifiedMoveOneTransportBinding(admission);
+      admittedRequest = {
+        requestInstanceHash: admission.requestInstanceHash,
+        phase: admission.request.phase,
+        familyId: admission.familyId,
+        familyHash: admission.familyHash,
+        admissionSessionId: admission.admissionSessionId,
+        documentFingerprint: admission.request.documentFingerprint,
+        documentSessionId: admission.request.documentSessionId,
+        sourceScopedId: admission.request.sourceScopedId,
+        elementId: admission.request.elementId,
+        observationId: admission.request.observationId,
+        observationBindingHash: admission.request.observationBindingHash,
+        nativeAttestationKeyId: admission.request.nativeAttestationKeyId,
+        previewInstanceHash: admission.request.previewInstanceHash ?? null,
+        previewReceiptHash: admission.request.previewReceiptHash ?? null,
+        policyHash: decision.policyHash ?? null,
+        policyRecordHash: decision.policyRecordHash ?? null,
+        evidenceRecordHash: decision.evidenceRecordHash ?? null,
+        effectHash: decision.effectHash ?? null,
+        outboundBodySha256: transportBinding.outbound_body_sha256,
+        channel: decision.channel,
+        alias: decision.alias ?? null
+      };
       // In laboratory evidence mode this remains a bounded one-element call.
       // In certified mode the ordinary call boundary still rejects it until a
       // generated L4 policy plus native family attestation are present.
