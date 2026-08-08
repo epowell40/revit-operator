@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertEpic0437DiscardArchiveFacts, publishEpic0437DiscardArchive, resolveTrustedWindowsTasklist } from "../lib/epic0437DiscardArchive.js";
 
 const PRISTINE_SNOWDON_HVAC_SHA256 = "sha256:585385991b1f8a168881c4bc36546bc90e7bfb427c263d801fe367fa2ebb0fa8";
 
@@ -20,10 +21,9 @@ function normalizedWindowsPath(value: string): string {
 }
 
 function requireRevitClosed(): void {
-  const listing = execFileSync("tasklist.exe", ["/FI", "IMAGENAME eq Revit.exe", "/FO", "CSV", "/NH"], { encoding: "utf8" });
-  if (/"Revit\.exe"/i.test(listing)) {
-    throw new Error("Revit.exe is still running. Close Revit without saving the disposable model before archiving recovery authority.");
-  }
+  const tasklistReal = resolveTrustedWindowsTasklist(process.env.SystemRoot);
+  const listing = execFileSync(tasklistReal, ["/FI", "IMAGENAME eq Revit.exe", "/FO", "CSV", "/NH"], { encoding: "utf8" });
+  if (/"Revit\.exe"/i.test(listing)) throw new Error("Revit.exe is still running. Close Revit without saving the disposable model before archiving recovery authority.");
 }
 
 function main(): void {
@@ -51,26 +51,37 @@ function main(): void {
     inspected = path.join(inspected, component);
     if (fs.lstatSync(inspected).isSymbolicLink()) throw new Error("Discard archival refuses a redirected disposable path.");
   }
-  if (digest(modelReal) !== PRISTINE_SNOWDON_HVAC_SHA256) {
-    throw new Error("Discard archival requires an exact pristine installed-sample copy after Revit is closed.");
-  }
+  const disposableHasRedirectComponent = (() => {
+    let current = rootReal;
+    for (const component of relativeModel.split(path.win32.sep)) {
+      current = path.join(current, component);
+      if (fs.lstatSync(current).isSymbolicLink()) return true;
+    }
+    return false;
+  })();
 
   const runsRoot = path.join(repoRoot, "artifacts", "certification", "epic-0437", "runs");
   const recoveryPath = path.join(runsRoot, recoveryName);
+  const requestedRecovery = path.resolve(recoveryPath);
+  const requestedStat = fs.lstatSync(requestedRecovery);
+  if (!requestedStat.isFile() || requestedStat.isSymbolicLink()) throw new Error("Recovery record must be one regular non-redirected file.");
   const recoveryReal = fs.realpathSync.native(recoveryPath);
-  if (path.dirname(recoveryReal) !== fs.realpathSync.native(runsRoot)) throw new Error("Recovery record escapes the exact runs root.");
   const state = JSON.parse(fs.readFileSync(recoveryReal, "utf8")) as Record<string, unknown>;
-  if (state.schema !== "revit-operator.epic-0437-move-recovery.v2"
-    || state.state !== "host_restart_discard_required"
-    || state.retryable !== false || state.outcome_unknown !== true
-    || normalizedWindowsPath(String(state.disposable_model_path ?? "")) !== normalizedWindowsPath(modelReal)
-    || state.disposable_model_sha256 !== PRISTINE_SNOWDON_HVAC_SHA256) {
-    throw new Error("Recovery record is not the exact non-promotable host-restart discard state for this pristine disposable copy.");
-  }
+  assertEpic0437DiscardArchiveFacts({
+    revitRunning: false,
+    requestedRecoveryPath: requestedRecovery, recoveryRealPath: recoveryReal,
+    runsRootRealPath: fs.realpathSync.native(runsRoot), recoveryIsRegularFile: requestedStat.isFile(),
+    recoveryIsRedirect: requestedStat.isSymbolicLink(), disposableModelPath: path.resolve(disposableArgument),
+    disposableModelRealPath: modelReal, disposableRootRealPath: rootReal, disposableHasRedirectComponent,
+    disposableSha256: digest(modelReal), expectedPristineSha256: PRISTINE_SNOWDON_HVAC_SHA256, state
+  });
 
   const archivePath = recoveryPath.replace(/\.recovery\.json$/, ".discarded.json");
-  if (fs.existsSync(archivePath)) throw new Error("Discard archive already exists; refusing to overwrite it.");
-  fs.renameSync(recoveryReal, archivePath);
+  // linkSync is an atomic no-clobber publication on the same volume. If the
+  // subsequent unlink is interrupted, the original recovery record remains
+  // discoverable and blocks another evidence run; no unsafe partial success is
+  // possible.
+  publishEpic0437DiscardArchive(recoveryReal, archivePath);
   process.stdout.write(`${JSON.stringify({ archived: path.basename(archivePath), model_sha256: PRISTINE_SNOWDON_HVAC_SHA256 }, null, 2)}\n`);
 }
 

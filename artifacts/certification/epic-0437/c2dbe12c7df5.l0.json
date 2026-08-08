@@ -78,6 +78,22 @@
       "sha256": "sha256:d6d6dd197aea2fda305290489b8e22048d486642f2bce7badb14eea13a420471"
     },
     {
+      "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.test.ts",
+      "sha256": "sha256:77e6704312cd971ffc7944e10250101f667aad9d548653563eec7ac91c216c55"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.ts",
+      "sha256": "sha256:b0d265c829f7820534b43eaf354de88a36808f788beac311c05ad5f8a3347e19"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/epic0437RecoveryControl.test.ts",
+      "sha256": "sha256:0465edd20c987cffca97a588a4405a73d483b2ebda6fee9d1115cf076204ec50"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/epic0437RecoveryControl.ts",
+      "sha256": "sha256:ecb73d77223b873d94c7e32a172a8ebb10bd23f981b32aca736938a5f519f208"
+    },
+    {
       "path": "apps/mcp-server/src/lib/externalAgentConfig.test.ts",
       "sha256": "sha256:55e2640557ef6c6d265a1378f847f3373bd3279c34e19346e95d4a5cb5f3866b"
     },
@@ -220,7 +236,7 @@
     },
     {
       "path": "apps/mcp-server/src/scripts/archive_epic_0437_discarded_recovery.ts",
-      "sha256": "sha256:98e66ac89154ed5e56ad9b61ceefae428c13cbeb36accefbdde6c9db729c0515"
+      "sha256": "sha256:1206aa3096568d3d77458b1dcb9496fe947076eb53b4a39666821c985384a680"
     },
     {
       "path": "apps/mcp-server/src/scripts/auto_dim_floor_plan.ts",
@@ -240,7 +256,7 @@
     },
     {
       "path": "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
-      "sha256": "sha256:b8d36062735ddc97da9765449084c8227bc64c8a9df46d9eab676f3d2f279557"
+      "sha256": "sha256:faa34a5690d4e23c1fb39215b3dfe643c11e1e2b15bc27440ae09eacfa986913"
     },
     {
       "path": "apps/mcp-server/src/scripts/run_mep_continuity_acceptance.ts",
@@ -4297,7 +4313,7 @@
       "sha256": "sha256:3fc2e8880d127f1b1418cddb0df7d1327a2d3eb21f4a3be9e08e05e8cb964d6f"
     }
   ],
-  "inputs_hash": "sha256:2a054ef5eab8f919b717492404d6fd0e76580a93fd5f8d4d92059c56adfb5981",
+  "inputs_hash": "sha256:b309132e1bfeb68dae8abe0a9981392853277a6ddf5426cf1d7968fd4c3c1be8",
   "result": {
     "passed": true,
     "checks": [

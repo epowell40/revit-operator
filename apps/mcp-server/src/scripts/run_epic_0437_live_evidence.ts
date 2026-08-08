@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { issueLaboratoryEvidenceDispatch } from "../lib/laboratoryEvidenceDispatch.js";
-import { classifyEpic0437RecoveryContinuity, verifyStoredLaboratoryExecutionResult, type LaboratoryNativeAttestationBinding } from "../lib/laboratoryMoveEvidence.js";
+import { assertNoEpic0437DiscardRequired, routeEpic0437Recovery } from "../lib/epic0437RecoveryControl.js";
+import { verifyStoredLaboratoryExecutionResult, type LaboratoryNativeAttestationBinding } from "../lib/laboratoryMoveEvidence.js";
 import { callLaboratoryMoveOneEvidence } from "../lib/laboratoryMoveEvidenceClient.js";
 import { callRevit, readRevitDirectLaboratoryEvidenceContext } from "../lib/revitClient.js";
 import { readRevitCourierLaboratoryEvidenceContext } from "../lib/revitCourier.js";
@@ -237,21 +238,20 @@ async function main(): Promise<void> {
     // inverse move. Preserve a blocking, non-promotable record and require the
     // disposable model to be closed/discarded instead. No typed move admission
     // has been issued at this point.
-    if (classifyEpic0437RecoveryContinuity(saved.preview_result, trustedNativeAttestation, bootstrapSessionId) !== "same_native_session") {
-      record.state = {
-        ...saved,
-        state: "host_restart_discard_required",
-        current_document_session_id: bootstrapSessionId,
-        current_native_attestation_key_id: trustedNativeAttestation.key_id,
-        outcome_unknown: true,
-        retryable: false,
-        updated_at_utc: new Date().toISOString()
-      };
+    const routedRecovery = routeEpic0437Recovery({
+      savedState: saved,
+      trusted: trustedNativeAttestation,
+      currentDocumentSessionId: bootstrapSessionId,
+      nowUtc: new Date().toISOString(),
+      sameSession: () => verifyStoredLaboratoryExecutionResult(saved.preview_result, trustedNativeAttestation)
+    });
+    if (routedRecovery.kind === "discard_required") {
+      record.state = routedRecovery.state;
       writeJsonAtomic(record.path, record.state);
       discardRequiredRecords.push(record);
       continue;
     }
-    const previewReceipt = verifyStoredLaboratoryExecutionResult(saved.preview_result, trustedNativeAttestation);
+    const previewReceipt = routedRecovery.value;
     const previewDispatch = previewReceipt.laboratory_evidence as Record<string, unknown> | null;
     const previewProjection = previewReceipt.laboratory_move_evidence as Record<string, unknown> | null;
     const savedStart = point(saved.start, "sealed recovery start");
@@ -294,9 +294,7 @@ async function main(): Promise<void> {
     }
     pendingRecoveryRecords.push(record);
   }
-  if (discardRequiredRecords.length > 0) {
-    throw new Error(`A prior EPIC-0437 move belongs to a rotated Revit native session and cannot authorize another mutation. Close Revit without saving, replace the exact disposable RVT with a pristine installed-sample copy, then run the discard-archive command for: ${discardRequiredRecords.map(value => value.relative).join(", ")}`);
-  }
+  assertNoEpic0437DiscardRequired(discardRequiredRecords.map(value => value.relative));
   if (pendingRecoveryRecords.length > 1) throw new Error("Multiple authenticated EPIC-0437 recovery records require manual reconciliation; refusing another run.");
   const priorRecovery = pendingRecoveryRecords[0] ?? null;
 
