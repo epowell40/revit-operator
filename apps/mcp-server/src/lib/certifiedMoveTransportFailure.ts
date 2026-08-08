@@ -25,6 +25,31 @@ export type CertifiedMoveTransportFailureBinding = Readonly<{
   alias: string | null;
 }>;
 
+function certificationBindingProjection(binding: CertifiedMoveTransportFailureBinding): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    family_id: binding.familyId,
+    family_hash: binding.familyHash,
+    request_instance_hash: binding.requestInstanceHash,
+    admission_session_id: binding.admissionSessionId,
+    document_fingerprint: binding.documentFingerprint,
+    document_session_id: binding.documentSessionId,
+    source_scoped_id: binding.sourceScopedId,
+    element_id: binding.elementId,
+    observation_id: binding.observationId,
+    observation_binding_hash: binding.observationBindingHash,
+    native_attestation_key_id: binding.nativeAttestationKeyId,
+    preview_instance_hash: binding.previewInstanceHash,
+    preview_receipt_hash: binding.previewReceiptHash,
+    policy_hash: binding.policyHash,
+    policy_record_hash: binding.policyRecordHash,
+    evidence_record_hash: binding.evidenceRecordHash,
+    effect_hash: binding.effectHash,
+    outbound_body_sha256: binding.outboundBodySha256,
+    channel: binding.channel,
+    alias: binding.alias
+  });
+}
+
 /** Preserves machine-readable mutation outcome truth at the typed MCP boundary. */
 export function certifiedMoveTransportFailurePayload(
   error: unknown,
@@ -43,30 +68,29 @@ export function certifiedMoveTransportFailurePayload(
     request_phase: binding.phase,
     dispatch_id: dispatchId,
     correlation_id: dispatchId,
-    certification_binding: Object.freeze({
-      family_id: binding.familyId,
-      family_hash: binding.familyHash,
-      request_instance_hash: binding.requestInstanceHash,
-      admission_session_id: binding.admissionSessionId,
-      document_fingerprint: binding.documentFingerprint,
-      document_session_id: binding.documentSessionId,
-      source_scoped_id: binding.sourceScopedId,
-      element_id: binding.elementId,
-      observation_id: binding.observationId,
-      observation_binding_hash: binding.observationBindingHash,
-      native_attestation_key_id: binding.nativeAttestationKeyId,
-      preview_instance_hash: binding.previewInstanceHash,
-      preview_receipt_hash: binding.previewReceiptHash,
-      policy_hash: binding.policyHash,
-      policy_record_hash: binding.policyRecordHash,
-      evidence_record_hash: binding.evidenceRecordHash,
-      effect_hash: binding.effectHash,
-      outbound_body_sha256: binding.outboundBodySha256,
-      channel: binding.channel,
-      alias: binding.alias
-    }),
+    certification_binding: certificationBindingProjection(binding),
     outcome_unknown: outcomeUnknown,
     retryable: outcomeUnknown ? false : error.retryable,
     reconciliation_required: outcomeUnknown
+  });
+}
+
+export function certifiedMovePostDispatchVerificationFailurePayload(
+  error: unknown,
+  binding: CertifiedMoveTransportFailureBinding,
+  context: Readonly<{ dispatchId: string; correlationId: string }> | null
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    code: "CERTIFICATION_EXECUTION_OUTCOME_UNKNOWN",
+    error: String(error),
+    phase: "certification_post_dispatch",
+    request_instance_hash: binding.requestInstanceHash,
+    request_phase: binding.phase,
+    dispatch_id: context?.dispatchId ?? null,
+    correlation_id: context?.correlationId ?? null,
+    certification_binding: certificationBindingProjection(binding),
+    outcome_unknown: true,
+    retryable: false,
+    reconciliation_required: true
   });
 }

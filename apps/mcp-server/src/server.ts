@@ -9,7 +9,7 @@ import { createRequire } from "module";
 
 xlsx.set_fs(fs);
 import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
-import { certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
+import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
@@ -1935,23 +1935,21 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
         channel: decision.channel,
         alias: decision.alias
       };
+      let executionContext: ReturnType<typeof readCertifiedMoveExecutionContext> | null = null;
       try {
-        assertCertifiedMoveExecutionReceipt(admission, policyBinding, data, readCertifiedMoveExecutionContext(data));
+        executionContext = readCertifiedMoveExecutionContext(data);
+        assertCertifiedMoveExecutionReceipt(admission, policyBinding, data, executionContext);
       } catch (receiptError) {
         if (admission.request.phase === "apply") {
           return {
             isError: true,
             content: [{
               type: "text" as const,
-              text: JSON.stringify({
-                code: "CERTIFICATION_EXECUTION_OUTCOME_UNKNOWN",
-                error: String(receiptError),
-                phase: "certification_post_dispatch",
-                request_instance_hash: admission.requestInstanceHash,
-                outcome_unknown: true,
-                retryable: false,
-                reconciliation_required: true
-              })
+              text: JSON.stringify(certifiedMovePostDispatchVerificationFailurePayload(
+                receiptError,
+                admittedRequest!,
+                executionContext
+              ))
             }]
           };
         }

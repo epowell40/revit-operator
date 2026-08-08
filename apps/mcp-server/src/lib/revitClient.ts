@@ -422,6 +422,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       method: upperMethod,
       path,
       status: response.status,
+      correlationId: response.certifiedExecutionContext?.dispatchId,
       bridgeDetails,
     });
   }

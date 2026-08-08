@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { RevitBridgeCallError } from "./revitClient.js";
 import { RevitCourierError } from "./revitCourier.js";
-import { certifiedMoveTransportFailurePayload } from "./certifiedMoveTransportFailure.js";
+import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./certifiedMoveTransportFailure.js";
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
 const binding = {
@@ -59,4 +59,18 @@ test("certified move transport failure preserves courier classification and reje
   assert.equal(payload.outcome_unknown, false);
   assert.equal(payload.dispatch_id, "b".repeat(64));
   assert.equal(certifiedMoveTransportFailurePayload(new Error("ordinary"), binding), null);
+});
+
+test("certified move receipt-verification failure preserves exact dispatch and sealed binding", () => {
+  const payload = certifiedMovePostDispatchVerificationFailurePayload(
+    new Error("signed receipt projection mismatch"),
+    binding,
+    { dispatchId: "6".repeat(32), correlationId: "6".repeat(32) }
+  );
+  assert.equal(payload.dispatch_id, "6".repeat(32));
+  assert.equal(payload.correlation_id, "6".repeat(32));
+  assert.equal(payload.outcome_unknown, true);
+  assert.equal(payload.retryable, false);
+  assert.equal((payload.certification_binding as Record<string, unknown>).policy_hash, binding.policyHash);
+  assert.equal((payload.certification_binding as Record<string, unknown>).preview_receipt_hash, binding.previewReceiptHash);
 });
