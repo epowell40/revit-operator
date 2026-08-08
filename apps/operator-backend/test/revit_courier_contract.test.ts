@@ -13,7 +13,8 @@ import {
   authorizeRevitToolJobExecution,
   claimNextRevitToolJob,
   completeRevitToolJob,
-  failRevitToolJob
+  failRevitToolJob,
+  readRevitToolJobTerminalOutcome
 } from "../src/courier/revit_tool_jobs.js";
 import { canonicalJson, computeRequestHash, sha256 } from "../src/capabilities/tool_certification.js";
 import {
@@ -955,6 +956,84 @@ test("failure terminal decision recovers its exact durable result after a public
   });
   assert.equal(recovered.status, "failed");
   assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), firstFailureBytes);
+});
+
+test("pre-final failure decision is recovered before any later execution authorization", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-prefinal-decision-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const job = certifiedMoveJob(policy, body, admission);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: job.session_id, executor_id: "worker-1" }).job?.id, job.id);
+  const runningJob = fs.readFileSync(path.join(dir, "job.json"), "utf8");
+  assert.equal(failRevitToolJob({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", error: "pre-final failure"
+  }).status, "failed");
+  const failureBytes = fs.readFileSync(path.join(dir, "result.json"), "utf8");
+  const terminalFence = JSON.parse(fs.readFileSync(path.join(dir, "completion-challenge-issued.v1.json"), "utf8"));
+  assert.equal(terminalFence.schema, "revit-operator.courier-completion-terminal-fence.v1");
+  fs.unlinkSync(path.join(dir, "result.json"));
+  fs.unlinkSync(path.join(dir, "completion-terminal-decision.v1.json"));
+  fs.writeFileSync(path.join(dir, "job.json"), runningJob, "utf8");
+
+  assert.throws(
+    () => authorizeRevitToolJobExecution({
+      session_id: job.session_id, job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+    }),
+    /durable terminal failure won before final dispatch authorization/
+  );
+  const dispatchFence = JSON.parse(fs.readFileSync(path.join(dir, "completion-challenge-issued.v1.json"), "utf8"));
+  assert.equal(dispatchFence.schema, "revit-operator.courier-completion-terminal-fence.v1");
+  assert.equal(dispatchFence.terminal_decision.kind, "failure");
+  assert.equal(dispatchFence.terminal_decision.completion_challenge_hash, null);
+  assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), failureBytes);
+});
+
+test("family result projection requires its exact decision and post-final failures are unknown", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-result-proof-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const job = certifiedMoveJob(policy, body, admission);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify({
+    version: "revit-operator.revit-tool-result.v1",
+    id: job.id,
+    correlation_id: job.correlation_id,
+    status: "succeeded",
+    finished_at: new Date().toISOString(),
+    result: { forged: true }
+  }), "utf8");
+  assert.equal(readRevitToolJobTerminalOutcome(job.id), null);
+  fs.unlinkSync(path.join(dir, "result.json"));
+
+  assert.equal(claimNextRevitToolJob({ session_id: job.session_id, executor_id: "worker-1" }).job?.id, job.id);
+  authorizeRevitToolJobExecution({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+  });
+  const failed = failRevitToolJob({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1",
+    error: "handler transport failed", retryable: true
+  });
+  assert.equal(failed.status, "failed");
+  const terminal = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
+  assert.equal(terminal.outcome_unknown, true);
+  assert.equal(terminal.retryable, false);
 });
 
 test("signed courier preview lineage is exact and apply receipts carry explicit null lineage", () => {

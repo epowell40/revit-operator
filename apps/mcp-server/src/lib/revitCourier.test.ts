@@ -1107,3 +1107,35 @@ test("MCP courier terminalizes a running deadline with a durable machine-readabl
     restore();
   }
 });
+
+test("certified v2 courier timeout never publishes competing terminal truth", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-certified-timeout-"));
+  const restore = saveEnv();
+  const policy = writePingPolicy("CERTIFIED_TIMEOUT_OWNER");
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    writeContext(root, { session_id: "certified-timeout-session", message_id: "certified-timeout-message" });
+
+    const pending = startCertifiedPing<{ ok: boolean }>();
+    const jobRef = await waitForJob(root);
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof RevitCourierError);
+      assert.equal(error.code, "courier_job_timed_out_before_claim");
+      assert.equal(error.retryable, true);
+      assert.equal(error.outcome_unknown, false);
+      return true;
+    });
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v2");
+    assert.equal(job.status, "pending");
+    assert.equal(fs.existsSync(path.join(jobRef.dir, "result.json")), false);
+  } finally {
+    restore();
+  }
+});

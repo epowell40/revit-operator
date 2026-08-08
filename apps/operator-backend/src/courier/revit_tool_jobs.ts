@@ -86,6 +86,11 @@ type CourierCompletionDecision = {
   decided_at_utc: string;
 };
 
+type CourierTerminalFence = {
+  schema: "revit-operator.courier-completion-terminal-fence.v1";
+  terminal_decision: CourierCompletionDecision;
+};
+
 type TerminalInput = {
   status: "succeeded" | "failed";
   result?: unknown;
@@ -237,8 +242,35 @@ function validateChallengeState(value: unknown, job: CertifiedCourierJobV2, exec
   return state as unknown as CourierCompletionChallengeState;
 }
 
+function recoverTerminalFence(job: CertifiedCourierJobV2, executorId: string | null): RevitToolJob | null {
+  const raw = readJson<Record<string, unknown>>(challengeIssuedPath(job.id));
+  if (!raw || raw.schema !== "revit-operator.courier-completion-terminal-fence.v1") return null;
+  if (Object.keys(raw).length !== 2 || !Object.prototype.hasOwnProperty.call(raw, "terminal_decision")) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_COMPLETION_FENCE_INVALID",
+      "Courier terminal fence is malformed."
+    );
+  }
+  const decision = validateCompletionDecision(raw.terminal_decision, job, executorId);
+  if (decision.kind !== "failure" || decision.completion_challenge_hash !== null) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_COMPLETION_FENCE_INVALID",
+      "Courier pre-dispatch terminal fence must contain one exact failure decision."
+    );
+  }
+  publishCompletionDecision(job, executorId, decision);
+  return recoverFamilyCompletionDecision(job);
+}
+
 function issueCompletionChallenge(job: CertifiedCourierJobV2, executorId: string): CourierCompletionChallengeState {
   if (fs.existsSync(challengeIssuedPath(job.id)) || fs.existsSync(challengeConsumedPath(job.id))) {
+    const recovered = recoverTerminalFence(job, executorId);
+    if (recovered) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_FINAL_TERMINAL_DECISION",
+        "A durable terminal failure won before final dispatch authorization."
+      );
+    }
     throw new RevitCourierCertificationError(
       "CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED",
       "Certified request-family courier final authorization has already issued its one-use completion challenge."
@@ -267,6 +299,13 @@ function issueCompletionChallenge(job: CertifiedCourierJobV2, executorId: string
   try {
     writeJsonExclusiveAtomic(challengeIssuedPath(job.id), state);
   } catch {
+    const recovered = recoverTerminalFence(job, executorId);
+    if (recovered) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_FINAL_TERMINAL_DECISION",
+        "A durable terminal failure won the final-dispatch race."
+      );
+    }
     throw new RevitCourierCertificationError(
       "CERTIFICATION_REQUEST_FAMILY_REPLAY_DENIED",
       "Certified request-family courier final authorization could not atomically issue a unique completion challenge."
@@ -395,7 +434,17 @@ function claimCompletionDecision(
   terminalResult: RevitToolResult,
   challengeHash: string | null
 ): { decision: CourierCompletionDecision; created: boolean } {
-  const decision: CourierCompletionDecision = {
+  const decision = createCompletionDecision(job, executorId, terminalResult, challengeHash);
+  return publishCompletionDecision(job, executorId, decision);
+}
+
+function createCompletionDecision(
+  job: CertifiedCourierJobV2,
+  executorId: string | null,
+  terminalResult: RevitToolResult,
+  challengeHash: string | null
+): CourierCompletionDecision {
+  return {
     schema: "revit-operator.courier-completion-terminal-decision.v1",
     kind: terminalResult.status === "succeeded" ? "success" : "failure",
     job_id: job.id,
@@ -409,6 +458,13 @@ function claimCompletionDecision(
     terminal_result: terminalResult,
     decided_at_utc: new Date().toISOString()
   };
+}
+
+function publishCompletionDecision(
+  job: CertifiedCourierJobV2,
+  executorId: string | null,
+  decision: CourierCompletionDecision
+): { decision: CourierCompletionDecision; created: boolean } {
   try {
     writeJsonExclusiveAtomic(completionDecisionPath(job.id), decision);
     return { decision, created: true };
@@ -434,11 +490,48 @@ function saveJob(job: RevitToolJob): RevitToolJob {
   return job;
 }
 
+function isCertifiedFamilyJob(job: RevitToolJob): job is CertifiedCourierJobV2 {
+  return job.version === REVIT_COURIER_V2_JOB_VERSION
+    && !!job.certification_envelope?.request_family_admission;
+}
+
 function readTerminalResult(job: RevitToolJob): RevitToolResult | null {
   const result = readJson<RevitToolResult>(resultPath(job.id));
   if (!result || result.version !== REVIT_COURIER_RESULT_VERSION || result.id !== job.id || result.correlation_id !== job.correlation_id) return null;
   if (result.status !== "succeeded" && result.status !== "failed") return null;
+  if (isCertifiedFamilyJob(job)) {
+    try {
+      const executorId = familyDecisionExecutor(job);
+      const decision = validateCompletionDecision(readJson<unknown>(completionDecisionPath(job.id)), job, executorId);
+      if (terminalResultSha256(result) !== decision.terminal_result_sha256) return null;
+      if (decision.kind === "success") {
+        const challenge = validateChallengeState(readJson<unknown>(challengeIssuedPath(job.id)), job, executorId!);
+        if (challenge.completion_challenge_hash !== decision.completion_challenge_hash) return null;
+        const executionContext = result.certified_execution_context!;
+        assertCertifiedCourierExecutionResult(job, result.result, executionContext);
+        consumeCompletionChallenge(job, challenge);
+      }
+    } catch {
+      return null;
+    }
+  }
   return result;
+}
+
+/** Returns only terminal truth that passes the durable family decision checks. */
+export function readRevitToolJobTerminalOutcome(jobId: string): Readonly<{
+  status: "succeeded" | "failed";
+  result: unknown;
+  error: string | null;
+}> | null {
+  const job = readJob(safeId(jobId, "job_id"));
+  if (!job) return null;
+  const terminal = readTerminalResult(job);
+  return terminal ? {
+    status: terminal.status,
+    result: terminal.result ?? null,
+    error: terminal.error ?? null
+  } : null;
 }
 
 function reconcileJobWithResult(job: RevitToolJob, result: RevitToolResult): RevitToolJob {
@@ -514,12 +607,54 @@ function recoverFamilyCompletionDecision(job: CertifiedCourierJobV2): RevitToolJ
   return publishDurableTerminal(job, decision.terminal_result);
 }
 
+function recoverExistingFamilyDecision(job: RevitToolJob): RevitToolJob | null {
+  return isCertifiedFamilyJob(job) && fs.existsSync(completionDecisionPath(job.id))
+    ? recoverFamilyCompletionDecision(job)
+    : null;
+}
+
 function writeTerminal(job: RevitToolJob, terminal: TerminalInput): RevitToolJob {
-  const durableResult = buildTerminalResult(job, terminal);
-  if (job.version === REVIT_COURIER_V2_JOB_VERSION && job.certification_envelope.request_family_admission) {
+  let durableResult = buildTerminalResult(job, terminal);
+  if (isCertifiedFamilyJob(job)) {
+    const executorId = familyDecisionExecutor(job);
+    if (terminal.status === "failed") {
+      const existingFenceWinner = recoverTerminalFence(job, executorId);
+      if (existingFenceWinner) return existingFenceWinner;
+      if (!fs.existsSync(challengeIssuedPath(job.id))) {
+        const decision = createCompletionDecision(job, executorId, durableResult, null);
+        const fence: CourierTerminalFence = {
+          schema: "revit-operator.courier-completion-terminal-fence.v1",
+          terminal_decision: decision
+        };
+        try {
+          writeJsonExclusiveAtomic(challengeIssuedPath(job.id), fence);
+          publishCompletionDecision(job, executorId, decision);
+          return recoverFamilyCompletionDecision(job);
+        } catch {
+          const terminalWinner = recoverTerminalFence(job, executorId);
+          if (terminalWinner) return terminalWinner;
+          // A final dispatch challenge won the same CAS. The later failure can
+          // no longer prove pre-dispatch settlement.
+        }
+      }
+      if (executorId === null) {
+        throw new RevitCourierCertificationError(
+          "CERTIFICATION_COMPLETION_FENCE_INVALID",
+          "A dispatch-bound family failure is missing its exact executor identity."
+        );
+      }
+      const challenge = validateChallengeState(readJson<unknown>(challengeIssuedPath(job.id)), job, executorId);
+      durableResult = buildTerminalResult(job, {
+        ...terminal,
+        retryable: false,
+        outcome_unknown: true
+      });
+      claimCompletionDecision(job, executorId, durableResult, challenge.completion_challenge_hash);
+      return recoverFamilyCompletionDecision(job);
+    }
     claimCompletionDecision(
       job,
-      familyDecisionExecutor(job),
+      executorId,
       durableResult,
       terminal.certified_execution_context?.completion_challenge_hash ?? null
     );
@@ -606,6 +741,32 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
     .sort((a, b) => `${a.created_at}|${a.id}`.localeCompare(`${b.created_at}|${b.id}`));
 
   for (const job of candidates) {
+    if (isCertifiedFamilyJob(job)) {
+      try {
+        const terminalFenceWinner = recoverTerminalFence(job, familyDecisionExecutor(job));
+        if (terminalFenceWinner) continue;
+      } catch (error) {
+        saveJob({
+          ...job,
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          error: error instanceof Error ? error.message : "The family dispatch/terminal fence could not be recovered."
+        });
+        continue;
+      }
+    }
+    if (isCertifiedFamilyJob(job) && fs.existsSync(completionDecisionPath(job.id))) {
+      try { recoverFamilyCompletionDecision(job); }
+      catch (error) {
+        saveJob({
+          ...job,
+          status: "failed",
+          finished_at: new Date().toISOString(),
+          error: error instanceof Error ? error.message : "The family terminal decision could not be recovered."
+        });
+      }
+      continue;
+    }
     const terminalResult = readTerminalResult(job);
     if (terminalResult) {
       reconcileJobWithResult(job, terminalResult);
@@ -674,6 +835,8 @@ function requireClaimedJob(input: FinishInput): RevitToolJob {
   if (!job) throw new Error("Revit courier job was not found.");
   if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
   if (job.claim?.executor_id !== executorId) throw new Error("Revit courier job is not claimed by this executor.");
+  const recoveredDecision = recoverExistingFamilyDecision(job);
+  if (recoveredDecision) return recoveredDecision;
   const terminalResult = readTerminalResult(job);
   if (terminalResult) return reconcileJobWithResult(job, terminalResult);
   if (fs.existsSync(resultPath(job.id))) throw new Error("Revit courier result receipt is invalid or mismatched; refusing to overwrite or replay it.");
@@ -725,7 +888,10 @@ export function completeRevitToolJob(input: FinishInput): RevitToolJob {
 
 export function failRevitToolJob(input: FinishInput): RevitToolJob {
   const job = requireClaimedJob(input);
-  if (job.status === "succeeded") throw new Error("Revit courier job is already terminally succeeded; refusing a contradictory failure.");
+  if (job.status === "succeeded") {
+    if (isCertifiedFamilyJob(job) && readTerminalResult(job)) return job;
+    throw new Error("Revit courier job is already terminally succeeded; refusing a contradictory failure.");
+  }
   if (job.status === "failed" && readTerminalResult(job)) return job;
   const error = typeof input.error === "string" && input.error.trim() ? input.error.trim().slice(0, 4000) : "Revit courier execution failed.";
   const resultRecord = input.result && typeof input.result === "object" && !Array.isArray(input.result)
@@ -736,7 +902,12 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
   // The native add-in reports execution ambiguity on the bounded, top-level
   // result contract. Only the literal boolean can promote durable receipt
   // truth; nested metadata and truthy/malformed values must not do so.
-  const outcomeUnknown = resultRecord?.outcomeUnknown === true;
+  // Once family final authorization issued a challenge, a handler-shaped
+  // failure cannot prove that dispatch did not occur. Only a signed success
+  // receipt may settle known success; every competing failure is unknown and
+  // nonretryable.
+  const outcomeUnknown = (isCertifiedFamilyJob(job) && fs.existsSync(challengeIssuedPath(job.id)))
+    || resultRecord?.outcomeUnknown === true;
   return writeTerminal(job, {
     status: "failed",
     result: input.result,
@@ -759,6 +930,12 @@ export function authorizeRevitToolJobExecution(input: AuthorizeInput): { job: Re
   const job = readJob(jobId);
   if (!job) throw new Error("Revit courier job was not found.");
   if (job.session_id !== sessionId) throw new Error("Revit courier session mismatch.");
+  const recoveredDecision = recoverExistingFamilyDecision(job);
+  if (recoveredDecision) {
+    const terminalError = new Error("Revit courier family terminal decision is already authoritative; execution authorization is denied.");
+    (terminalError as Error & { job?: RevitToolJob }).job = recoveredDecision;
+    throw terminalError;
+  }
   const terminal = readTerminalResult(job);
   if (terminal) {
     reconcileJobWithResult(job, terminal);

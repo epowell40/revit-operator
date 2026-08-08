@@ -484,7 +484,6 @@ function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, dur
   const running = supportedVersion && job?.id === id && job.status === "running";
   const pending = supportedVersion && job?.id === id && job.status === "pending";
   if (running || pending) {
-    const finishedAt = new Date().toISOString();
     const code = running
       ? "courier_execution_deadline_elapsed_outcome_unknown"
       : "courier_job_timed_out_before_claim";
@@ -493,24 +492,25 @@ function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, dur
       : "The Revit courier job timed out before a workstation claimed it.";
     const retryable = pending;
     const outcomeUnknown = running;
-    writeJsonAtomic(jobPath, {
-      ...job,
-      status: "failed",
-      finished_at: finishedAt,
-      error
-    });
-    writeJsonAtomic(resultPath, {
-      version: RESULT_VERSION,
-      id,
-      correlation_id: job?.correlation_id ?? id,
-      status: "failed",
-      finished_at: finishedAt,
-      result: null,
-      error,
-      code,
-      retryable,
-      outcome_unknown: outcomeUnknown
-    });
+    // Certified v2 terminal truth belongs exclusively to the backend's
+    // completion-decision CAS. The producer may time out locally, but it must
+    // never overwrite a signed winner or publish a competing family result.
+    if (job?.version === JOB_VERSION_V1) {
+      const finishedAt = new Date().toISOString();
+      writeJsonAtomic(jobPath, { ...job, status: "failed", finished_at: finishedAt, error });
+      writeJsonAtomic(resultPath, {
+        version: RESULT_VERSION,
+        id,
+        correlation_id: job?.correlation_id ?? id,
+        status: "failed",
+        finished_at: finishedAt,
+        result: null,
+        error,
+        code,
+        retryable,
+        outcome_unknown: outcomeUnknown
+      });
+    }
     throw new RevitCourierError({
       code,
       message: `${code}: ${error}${retryable ? " (retryable)" : ""} (job ${id}).`,
