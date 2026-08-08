@@ -48,7 +48,7 @@ import {
   runWithRevitToolAlias
 } from "./lib/toolExposurePolicy.js";
 
-import { discoverCertifiedCapabilities } from "./lib/progressiveCapabilityDiscoveryV1.js";
+import { discoverCertifiedCapabilities } from "./lib/certifiedCapabilityProjection.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
