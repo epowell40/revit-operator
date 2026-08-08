@@ -8,10 +8,12 @@ import {
   NativeTransportProtocolError
 } from "./nativeTransport.js";
 import {
+  assertCertifiedMoveOneAdmissionExposure,
   assertToolExposure,
   createCertifiedCourierAdmission,
   type ToolExposureChannel
 } from "./toolExposurePolicy.js";
+import type { CertifiedMoveOneAdmission } from "./certifiedMoveOneRequestFamily.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -177,6 +179,8 @@ function isStructuredPreDispatchRejection(details: RevitBridgeErrorDetails | und
 export type RevitCallOptions = {
   channel?: ToolExposureChannel;
   workflow?: string;
+  /** Opaque, validator-issued capability for the one-element move family. */
+  certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
 };
 
 export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown, options: RevitCallOptions = {}): Promise<T> {
@@ -187,13 +191,18 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   // Certification is the final in-process admission boundary shared by direct
   // HTTP and durable courier dispatch. A write grant only matters after this
   // exact request/effect/channel decision has passed.
-  const exposure = assertToolExposure({
-    method: upperMethod,
-    path,
-    body,
-    channel: options.channel ?? "typed_mcp",
-    workflow: options.workflow
-  });
+  const exposure = options.certifiedMoveOneAdmission
+    ? assertCertifiedMoveOneAdmissionExposure({
+      admission: options.certifiedMoveOneAdmission,
+      channel: options.channel ?? "typed_mcp"
+    })
+    : assertToolExposure({
+      method: upperMethod,
+      path,
+      body,
+      channel: options.channel ?? "typed_mcp",
+      workflow: options.workflow
+    });
 
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") {

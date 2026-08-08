@@ -759,6 +759,25 @@ export function assertCertifiedMoveOneToolExposure(input: {
   env?: NodeJS.ProcessEnv;
 }): { admission: CertifiedMoveOneAdmission; decision: ToolExposureDecision } {
   const admission = admitCertifiedMoveOneRequest(input.request);
+  return {
+    admission,
+    decision: assertCertifiedMoveOneAdmissionExposure({
+      admission,
+      channel: input.channel,
+      alias: input.alias,
+      env: input.env
+    })
+  };
+}
+
+/** Revalidates an opaque validator-issued family capability at a later hop. */
+export function assertCertifiedMoveOneAdmissionExposure(input: {
+  admission: unknown;
+  channel?: ToolExposureChannel;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  const admission = input.admission;
   if (!isCertifiedMoveOneAdmission(admission)) {
     throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_VALIDATOR_INVALID", "Certified move-one validator did not produce a local admission capability.");
   }
@@ -776,7 +795,7 @@ export function assertCertifiedMoveOneToolExposure(input: {
     },
     requestInstanceHash: admission.requestInstanceHash
   });
-  if (decision.allowed) return { admission, decision };
+  if (decision.allowed) return decision;
   throw new ToolExposurePolicyError(
     decision.reasonCodes[0] ?? "CERT_REQUEST_FAMILY_DENIED",
     `${decision.channel} exposure denied for certified move-one request family; reasons=${decision.reasonCodes.join(",")}; request_instance_hash=${admission.requestInstanceHash}; effect_hash=${decision.effectHash}.`,

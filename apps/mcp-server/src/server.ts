@@ -1898,7 +1898,10 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
       // In laboratory evidence mode this remains a bounded one-element call.
       // In certified mode the ordinary call boundary still rejects it until a
       // generated L4 policy plus native family attestation are present.
-      const data = await callRevit("/revit/move-elements", "POST", admission.outboundBody);
+      const data = await callRevit("/revit/move-elements", "POST", admission.outboundBody, {
+        channel: "typed_mcp",
+        certifiedMoveOneAdmission: admission
+      });
       return {
         content: [{
           type: "text",
