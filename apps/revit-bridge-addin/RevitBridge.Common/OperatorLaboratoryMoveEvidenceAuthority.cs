@@ -19,6 +19,7 @@ namespace RevitBridge.Common
         private static readonly TimeSpan MaximumAge = TimeSpan.FromMinutes(15);
         private static readonly object Gate = new object();
         private static readonly Dictionary<string, Entry> Issued = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        private static readonly Dictionary<string, RunFence> RunsByDocumentSession = new Dictionary<string, RunFence>(StringComparer.Ordinal);
         private static readonly HashSet<string> ProjectionKeys = new HashSet<string>(new[]
         {
             "admission_hash", "run_nonce", "request_family_id", "request_family_hash", "request_instance_hash", "admission_session_id",
@@ -47,7 +48,11 @@ namespace RevitBridge.Common
             var executionStart = new OperatorCertifiedMoveExecutionStart(
                 admission.RequestInstanceHash, admission.Phase, point.Point.X, point.Point.Y, point.Point.Z,
                 vector.X, vector.Y, vector.Z);
-            if (admission.Phase == "preview") return executionStart;
+            if (admission.Phase == "preview")
+            {
+                BeginRunFence(admission, laboratoryEvidence, executionStart);
+                return executionStart;
+            }
 
             var lineage = admission.Lineage ?? throw Denied("Laboratory move apply is missing its signed preview lineage.");
             JsonElement receipt;
@@ -96,6 +101,7 @@ namespace RevitBridge.Common
             if (entry.VectorX != vector.X || entry.VectorY != vector.Y || entry.VectorZ != vector.Z
                 || !Near(entry.StartX, executionStart.StartX) || !Near(entry.StartY, executionStart.StartY) || !Near(entry.StartZ, executionStart.StartZ))
                 throw Denied("Laboratory move target or vector changed after its rollback preview.");
+            BeginRunFence(admission, laboratoryEvidence, executionStart);
             return executionStart;
         }
 
@@ -175,6 +181,38 @@ namespace RevitBridge.Common
             }
         }
 
+        public static void RecordSuccessfulMoveReceipt(
+            OperatorLaboratoryMoveEvidenceAdmission admission,
+            OperatorLaboratoryEvidenceDispatch laboratoryEvidence)
+        {
+            lock (Gate)
+            {
+                if (!RunsByDocumentSession.TryGetValue(admission.DocumentSessionId, out var run)
+                    || run.EvidenceRunId != laboratoryEvidence.EvidenceRunId)
+                    throw Denied("Laboratory move completion lost its native document-session run fence.");
+                run.Complete(laboratoryEvidence.EvidenceStep, admission.Phase);
+            }
+        }
+
+        private static void BeginRunFence(
+            OperatorLaboratoryMoveEvidenceAdmission admission,
+            OperatorLaboratoryEvidenceDispatch laboratoryEvidence,
+            OperatorCertifiedMoveExecutionStart start)
+        {
+            lock (Gate)
+            {
+                if (!RunsByDocumentSession.TryGetValue(admission.DocumentSessionId, out var run))
+                {
+                    run = new RunFence(laboratoryEvidence.EvidenceRunId, admission.ElementId,
+                        start.StartX, start.StartY, start.StartZ, start.VectorX, start.VectorY, start.VectorZ);
+                    RunsByDocumentSession.Add(admission.DocumentSessionId, run);
+                }
+                if (run.EvidenceRunId != laboratoryEvidence.EvidenceRunId)
+                    throw Denied("This native document session is already fenced to a different evidence run; reopen the pristine disposable model before another run.");
+                run.Begin(laboratoryEvidence.EvidenceStep, admission.Phase, admission.ElementId, start);
+            }
+        }
+
         public static bool IsExactProjection(JsonElement value)
         {
             if (value.ValueKind != JsonValueKind.Object) return false;
@@ -221,6 +259,55 @@ namespace RevitBridge.Common
             public string Channel { get; } public string Alias { get; } public double VectorX { get; } public double VectorY { get; }
             public double VectorZ { get; } public double StartX { get; } public double StartY { get; } public double StartZ { get; }
             public DateTimeOffset IssuedAtUtc { get; }
+        }
+
+        internal sealed class RunFence
+        {
+            private int _state;
+            public RunFence(string evidenceRunId, long elementId, double startX, double startY, double startZ, double vectorX, double vectorY, double vectorZ)
+            {
+                EvidenceRunId = evidenceRunId; ElementId = elementId; StartX = startX; StartY = startY; StartZ = startZ;
+                VectorX = vectorX; VectorY = vectorY; VectorZ = vectorZ;
+            }
+            public string EvidenceRunId { get; }
+            public long ElementId { get; }
+            public double StartX { get; }
+            public double StartY { get; }
+            public double StartZ { get; }
+            public double VectorX { get; }
+            public double VectorY { get; }
+            public double VectorZ { get; }
+
+            public void Begin(string step, string phase, long elementId, OperatorCertifiedMoveExecutionStart start)
+            {
+                if (elementId != ElementId) throw Denied("Evidence run changed its fenced disposable target.");
+                if (step == "move-preview" && phase == "preview" && _state == 0
+                    && Same(start.StartX, StartX) && Same(start.StartY, StartY) && Same(start.StartZ, StartZ)
+                    && Same(start.VectorX, VectorX) && Same(start.VectorY, VectorY) && Same(start.VectorZ, VectorZ)) { _state = 1; return; }
+                if (step == "move-apply" && phase == "apply" && _state == 2
+                    && Same(start.StartX, StartX) && Same(start.StartY, StartY) && Same(start.StartZ, StartZ)
+                    && Same(start.VectorX, VectorX) && Same(start.VectorY, VectorY) && Same(start.VectorZ, VectorZ)) { _state = 3; return; }
+                var recoveryPreview = step == "restore-preview" || step.StartsWith("recovery-restore-preview", StringComparison.Ordinal);
+                if (recoveryPreview && phase == "preview" && (_state == 3 || _state == 4)
+                    && Same(start.StartX, StartX + VectorX) && Same(start.StartY, StartY + VectorY) && Same(start.StartZ, StartZ + VectorZ)
+                    && Same(start.VectorX, -VectorX) && Same(start.VectorY, -VectorY) && Same(start.VectorZ, -VectorZ)) { _state = 5; return; }
+                var recoveryApply = step == "restore-apply" || step.StartsWith("recovery-restore-apply", StringComparison.Ordinal);
+                if (recoveryApply && phase == "apply" && _state == 6
+                    && Same(start.StartX, StartX + VectorX) && Same(start.StartY, StartY + VectorY) && Same(start.StartZ, StartZ + VectorZ)
+                    && Same(start.VectorX, -VectorX) && Same(start.VectorY, -VectorY) && Same(start.VectorZ, -VectorZ)) { _state = 7; return; }
+                throw Denied("Laboratory move step is duplicated, out of order, or differs from the native-fenced target/vector state.");
+            }
+
+            public void Complete(string step, string phase)
+            {
+                if (step == "move-preview" && phase == "preview" && _state == 1) { _state = 2; return; }
+                if (step == "move-apply" && phase == "apply" && _state == 3) { _state = 4; return; }
+                if ((step == "restore-preview" || step.StartsWith("recovery-restore-preview", StringComparison.Ordinal)) && phase == "preview" && _state == 5) { _state = 6; return; }
+                if ((step == "restore-apply" || step.StartsWith("recovery-restore-apply", StringComparison.Ordinal)) && phase == "apply" && _state == 7) { _state = 8; return; }
+                throw Denied("Laboratory move completion is duplicated or out of order.");
+            }
+
+            private static bool Same(double left, double right) => Math.Abs(left - right) <= 1e-9;
         }
 
         private static OperatorNativeHttpAdmissionException Denied(string message)

@@ -137,13 +137,15 @@ function main(): void {
     }
     const suffix = profile.request_hash.slice("sha256:".length, "sha256:".length + 12);
     const relative = `artifacts/certification/epic-0437/${suffix}.${level.toLowerCase()}.json`;
+    const artifactInputs = [{ path: runRelative, sha256: runSha }, { path: EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, sha256: nativeBuild.sha256 }, ...transportInputs];
     const artifact = {
       schema: "revit-operator.certification-proof-artifact.v1",
       level: level as CertificationLevel,
       candidate: { method: profile.method, path: profile.path, request_hash: profile.request_hash, effect_hash: profile.effect_hash },
       status: "passed",
       producer: { kind: level === "L3" ? "live_revit" : "sidecar_workflow", command: `npm run certify:epic-0437-live -- --level ${level} --run ${runRelative} --authorization-bundle <detached-reviewed-bundle>` },
-      inputs: [{ path: runRelative, sha256: runSha }, { path: EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, sha256: nativeBuild.sha256 }, ...transportInputs],
+      inputs: artifactInputs,
+      inputs_hash: sha256NormalizedText(canonicalJson(artifactInputs as unknown as JsonValue)),
       result: {
         passed: true,
         evidence_schema: "revit-operator.epic-0437-live-evidence-run.v2",

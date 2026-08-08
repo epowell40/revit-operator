@@ -57,11 +57,19 @@ function fixture() {
     native_logic_assembly_sha256: `sha256:${"5".repeat(64)}`,
     native_bridge_assembly_path: "C:\\Operator\\RevitBridge.dll",
     native_bridge_assembly_sha256: `sha256:${"6".repeat(64)}`,
+    native_runtime_dependencies: [
+      "Microsoft.Bcl.AsyncInterfaces.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "Microsoft.Web.WebView2.Wpf.dll",
+      "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll", "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll",
+      "System.Runtime.CompilerServices.Unsafe.dll", "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
+      "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
+    ].map((name, index) => ({ name, path: `C:\\Operator\\${name}`, sha256: `sha256:${index.toString(16).padStart(64, "0")}` })),
+    native_runtime_dependencies_hash: "",
     native_attestation_algorithm: "RS256", native_attestation_key_id: keyId,
     native_attestation_modulus_base64url: modulus, native_attestation_exponent_base64url: exponent,
     result_hash: hash(canonicalJson(result)), outcome: "read_completed", outcome_unknown: false,
     issued_at_utc: "2026-08-08T12:00:00.100Z"
   };
+  receipt.native_runtime_dependencies_hash = hash(canonicalJson(receipt.native_runtime_dependencies as JsonValue));
   receipt.native_attestation_signature = sign(
     "RSA-SHA256",
     Buffer.from(canonicalJson(receipt as JsonValue), "utf8"),

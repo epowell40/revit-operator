@@ -15,6 +15,7 @@ import { observeModelV1, readCertifiedMoveTargetsV1, type SpatialObservationCall
 type Point = Readonly<{ x: number; y: number; z: number }>;
 type Level = "L3" | "L4";
 type TransportKind = "direct" | "courier";
+const REVIT_2024_SNOWDON_HVAC_SHA256 = "sha256:585385991b1f8a168881c4bc36546bc90e7bfb427c263d801fe367fa2ebb0fa8";
 type Step = {
   name: string; method: "GET" | "POST"; path: string; channel: "typed_mcp"; alias: string; workflow: string;
   request_body: Record<string, unknown> | null; canonical_body_sha256: string;
@@ -115,15 +116,23 @@ async function main(): Promise<void> {
   }
   const disposableRoot = path.join(process.env.LOCALAPPDATA ?? "", "RevitOperator", "CertificationEvidence", "DisposableModels");
   const disposableModelPath = path.resolve(disposableArgument);
-  const normalizedDisposableRoot = `${normalizedWindowsPath(disposableRoot)}\\`;
-  const disposableRelative = path.win32.relative(disposableRoot, disposableModelPath);
-  if (!normalizedWindowsPath(disposableModelPath).startsWith(normalizedDisposableRoot)
+  const disposableRootReal = fs.realpathSync.native(disposableRoot);
+  const disposableModelReal = fs.realpathSync.native(disposableModelPath);
+  const normalizedDisposableRoot = `${normalizedWindowsPath(disposableRootReal)}\\`;
+  const disposableRelative = path.win32.relative(disposableRootReal, disposableModelReal);
+  if (!normalizedWindowsPath(disposableModelReal).startsWith(normalizedDisposableRoot)
     || !/^[0-9a-f]{32}\\Snowdon Towers Sample HVAC\.rvt$/i.test(disposableRelative)) {
     throw new Error(`The evidence model must be ${disposableRoot}\\<32-hex-ceremony-id>\\Snowdon Towers Sample HVAC.rvt.`);
   }
-  const disposableStat = fs.lstatSync(disposableModelPath);
+  let inspectedDisposablePath = disposableRootReal;
+  for (const component of disposableRelative.split(path.win32.sep)) {
+    inspectedDisposablePath = path.join(inspectedDisposablePath, component);
+    if (fs.lstatSync(inspectedDisposablePath).isSymbolicLink()) throw new Error("Disposable evidence path cannot contain a symlink, junction, or reparse redirect.");
+  }
+  const disposableStat = fs.lstatSync(disposableModelReal);
   if (!disposableStat.isFile() || disposableStat.isSymbolicLink()) throw new Error("The disposable evidence model must be one regular non-symlink file.");
-  const disposableModelSha256Before = shaBytes(fs.readFileSync(disposableModelPath));
+  const disposableModelSha256Before = shaBytes(fs.readFileSync(disposableModelReal));
+  if (disposableModelSha256Before !== REVIT_2024_SNOWDON_HVAC_SHA256) throw new Error("Disposable evidence model is not an exact pristine copy of the installed Revit 2024 Snowdon HVAC sample.");
   const discoveredRecoveryRecords = recoveryRecords(repoRoot);
   const runId = randomBytes(16).toString("hex");
   const workflowPrefix = `epic-0437-${level.toLowerCase()}`;
@@ -206,6 +215,9 @@ async function main(): Promise<void> {
     modulus_base64url: bootstrapAttestation?.modulus_base64url,
     exponent_base64url: bootstrapAttestation?.exponent_base64url
   };
+  if (normalizedWindowsPath(String(trustBootstrap.document?.path ?? "")) !== normalizedWindowsPath(disposableModelReal)) {
+    throw new Error("Protected native trust bootstrap is not running against the exact real disposable model path.");
+  }
 
   const terminalRecoveryStates = new Set(["preview_only", "restored", "restored_after_failure"]);
   const pendingRecoveryRecords: typeof discoveredRecoveryRecords = [];
@@ -213,6 +225,7 @@ async function main(): Promise<void> {
     const saved = record.state;
     if (saved.schema !== "revit-operator.epic-0437-move-recovery.v2" || !/^[0-9a-f]{32}$/.test(String(saved.evidence_run_id))
       || (saved.level !== "L3" && saved.level !== "L4") || saved.source_scoped_id !== `host:${Number(saved.target_id)}`
+      || saved.disposable_model_path !== disposableModelReal || saved.disposable_model_sha256 !== disposableModelSha256Before
       || typeof saved.preview_result_sha256 !== "string" || saved.preview_result_sha256 !== sha(canonicalToolExposureJson(saved.preview_result))) {
       throw new Error(`Recovery record ${record.relative} is not sealed to one exact native-signed preview result.`);
     }
@@ -347,7 +360,7 @@ async function main(): Promise<void> {
   if (Number(initialContext.document?.activeView?.id) !== viewId) {
     throw new Error(`Live evidence requires Revit view ${viewId} to be active before the run; view activation is an operator precondition, not certification evidence.`);
   }
-  if (normalizedWindowsPath(String(initialContext.document?.path ?? "")) !== normalizedWindowsPath(disposableModelPath)) {
+  if (normalizedWindowsPath(String(initialContext.document?.path ?? "")) !== normalizedWindowsPath(disposableModelReal)) {
     throw new Error("The active Revit document is not the exact explicitly supplied disposable model copy.");
   }
 
@@ -392,6 +405,7 @@ async function main(): Promise<void> {
     schema: "revit-operator.epic-0437-move-recovery.v2", evidence_run_id: runId, level,
     document_fingerprint: initialFingerprint,
     document_session_id: initialContext.document?.sessionId, view_id: viewId, target_id: targetId, source_scoped_id: target.sourceScopedId,
+    disposable_model_path: disposableModelReal, disposable_model_sha256: disposableModelSha256Before,
     start, vector, preview_result: previewCall.result, preview_result_sha256: sha(canonicalToolExposureJson(previewCall.result)),
     state: level === "L3" ? "preview_only" : "prepared", updated_at_utc: new Date().toISOString()
   };
@@ -414,6 +428,7 @@ async function main(): Promise<void> {
       schema: "revit-operator.epic-0437-move-recovery.v2", evidence_run_id: runId, level,
       document_fingerprint: initialFingerprint,
       document_session_id: initialContext.document?.sessionId, view_id: viewId, target_id: targetId, source_scoped_id: target.sourceScopedId,
+      disposable_model_path: disposableModelReal, disposable_model_sha256: disposableModelSha256Before,
       start, vector, preview_result: previewCall.result, preview_result_sha256: sha(canonicalToolExposureJson(previewCall.result)),
       state, updated_at_utc: new Date().toISOString(), restored_point: restoredPoint,
       terminal_move_result: terminalMoveResult,
@@ -484,7 +499,7 @@ async function main(): Promise<void> {
   }
 
   const finalContext = await callStep("revit_get_context", "context-after", "/revit/context", "GET");
-  const disposableModelSha256After = shaBytes(fs.readFileSync(disposableModelPath));
+  const disposableModelSha256After = shaBytes(fs.readFileSync(disposableModelReal));
   const fingerprint = String(initialContext.document?.projectIdentity?.fingerprint ?? "");
   const normalizedFingerprint = fingerprint.startsWith("sha256:") ? fingerprint : `sha256:${fingerprint}`;
   if (initialContext.document?.sessionId !== finalContext.document?.sessionId) throw new Error("Document session changed during live evidence.");
@@ -499,7 +514,7 @@ async function main(): Promise<void> {
     runtime: { mode: "development", exposure_profile: "laboratory", protected_evidence: true, production_certified: false },
     document: { title: initialContext.document.title, path: initialContext.document.path, fingerprint: normalizedFingerprint,
       session_id: initialContext.document.sessionId, final_session_id: finalContext.document?.sessionId,
-      native_attestation: bootstrapAttestation, disposable_model_path: disposableModelPath,
+      native_attestation: bootstrapAttestation, disposable_model_path: disposableModelReal,
       disposable_model_sha256_before: disposableModelSha256Before, disposable_model_sha256_after: disposableModelSha256After },
     view: { id: viewId, name: observation.view?.name ?? observation.viewName, type: observation.view?.type ?? observation.viewType },
     observation: { alias: "revit_observe_model", observation_id: observation.observationId, count: observation.count,

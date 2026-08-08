@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { computeEffectHash, parseToolCertificationCandidates, parseToolCertificationEvidence, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
+import { canonicalJson, computeEffectHash, parseToolCertificationCandidates, parseToolCertificationEvidence, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
 import { compileArtifactBoundEvidence, parseCertificationProofIndex } from "../capabilities/tool_certification_evidence_compiler.js";
 import {
   EPIC_0437_NATIVE_BUILD_MANIFEST_PATH,
@@ -52,6 +52,8 @@ async function main(): Promise<void> {
   const builds = [
     await run(gateNode, [path.join(backendRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], backendRoot),
     await run(gateNode, [path.join(mcpRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], mcpRoot),
+    await run("dotnet", ["restore", "RevitBridge.sln", "--locked-mode"], nativeRoot),
+    await run("dotnet", ["restore", "RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj", "--locked-mode"], nativeRoot),
     await run("dotnet", ["test", "RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj", "-c", "Release", "-f", "net8.0-windows", "--no-restore"], nativeRoot),
     await run("dotnet", ["test", "RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj", "-c", "Release", "-f", "net48", "--no-restore"], nativeRoot),
     await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj", "-c", "Release", "-f", "net8.0-windows", "--no-restore"], nativeRoot),
@@ -93,6 +95,7 @@ async function main(): Promise<void> {
           command: "npm run certify:epic-0437-source"
         },
         inputs,
+        inputs_hash: sha256NormalizedText(canonicalJson(inputs as unknown as JsonValue)),
         result: {
           passed: true,
           checks: level === "L0"

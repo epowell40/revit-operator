@@ -44,6 +44,22 @@ test("artifact-bound compiler rejects proof hash tamper, missing levels, and sta
   const stale = JSON.parse(proofRaw);
   stale.candidate_source_hash = `sha256:${"0".repeat(64)}`;
   assert.throws(() => compile(stale), /stale for the candidate source/);
+
+  const reduced = JSON.parse(proofRaw);
+  const reference = reduced.records[0].artifacts[0];
+  const artifactPath = path.join(repoRoot, reference.path);
+  const originalArtifact = fs.readFileSync(artifactPath, "utf8");
+  try {
+    const artifact = JSON.parse(originalArtifact);
+    artifact.inputs = [artifact.inputs[0]];
+    artifact.inputs_hash = sha256NormalizedText(canonicalJson(artifact.inputs));
+    const rendered = `${JSON.stringify(artifact, null, 2)}\n`;
+    fs.writeFileSync(artifactPath, rendered, "utf8");
+    reference.sha256 = sha256NormalizedText(rendered);
+    assert.throws(() => compile(reduced), /exact complete current source input set/);
+  } finally {
+    fs.writeFileSync(artifactPath, originalArtifact, "utf8");
+  }
 });
 
 test("artifact-bound evidence cannot be hand-promoted without one exact proof per claimed level", () => {

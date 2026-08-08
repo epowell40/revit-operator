@@ -61,6 +61,15 @@ export const EPIC_0437_NATIVE_BINARIES = {
   bridge: "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll"
 } as const;
 
+export const EPIC_0437_NATIVE_RUNTIME_DEPENDENCY_NAMES = [
+  "Microsoft.Bcl.AsyncInterfaces.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll",
+  "Microsoft.Web.WebView2.Wpf.dll", "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll",
+  "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll", "System.Runtime.CompilerServices.Unsafe.dll",
+  "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
+  "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
+] as const;
+const EPIC_0437_NATIVE_RUNTIME_DIRECTORY = "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64";
+
 export type Epic0437NativeBuildManifest = {
   schema: "revit-operator.epic-0437-native-build-manifest.v1";
   candidate_source_hash: string;
@@ -70,6 +79,8 @@ export type Epic0437NativeBuildManifest = {
   configuration: "Release";
   target_framework: "net48";
   binaries: { common: { path: string; sha256: string }; logic: { path: string; sha256: string }; bridge: { path: string; sha256: string } };
+  runtime_dependencies: Array<{ name: string; path: string; sha256: string }>;
+  runtime_dependencies_hash: string;
   built_at_utc: string;
 };
 
@@ -113,6 +124,10 @@ export function createEpic0437NativeBuildManifest(repoRoot: string, candidateSou
   const policy = parseTrustedToolExposurePolicy(JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/operator-backend/config/tool_exposure_policy.v1.json"), "utf8")));
   if (policy.policy_hash !== BUNDLED_TOOL_EXPOSURE_POLICY_HASH) throw new Error("EPIC-0437 build manifest policy is not the current bundled trust anchor");
   const binary = (relative: string) => ({ path: relative, sha256: sha256Bytes(path.join(repoRoot, relative)) });
+  const runtimeDependencies = EPIC_0437_NATIVE_RUNTIME_DEPENDENCY_NAMES.map(name => {
+    const relative = `${EPIC_0437_NATIVE_RUNTIME_DIRECTORY}/${name}`;
+    return { name, ...binary(relative) };
+  });
   return {
     schema: "revit-operator.epic-0437-native-build-manifest.v1",
     candidate_source_hash: candidateSourceHash,
@@ -126,6 +141,8 @@ export function createEpic0437NativeBuildManifest(repoRoot: string, candidateSou
       logic: binary(EPIC_0437_NATIVE_BINARIES.logic),
       bridge: binary(EPIC_0437_NATIVE_BINARIES.bridge)
     },
+    runtime_dependencies: runtimeDependencies,
+    runtime_dependencies_hash: sha256NormalizedText(canonicalJson(runtimeDependencies as JsonValue)),
     built_at_utc: new Date().toISOString()
   };
 }
@@ -137,7 +154,7 @@ export function validateEpic0437NativeBuildManifest(repoRoot: string, expectedCa
   const exact = (value: Record<string, unknown>, keys: readonly string[], location: string) => {
     if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...keys].sort())) throw new Error(`${location} keys are not exact`);
   };
-  exact(manifest as unknown as Record<string, unknown>, ["schema", "candidate_source_hash", "policy_hash", "source_inputs_hash", "source_inputs", "configuration", "target_framework", "binaries", "built_at_utc"], "EPIC-0437 native build manifest");
+  exact(manifest as unknown as Record<string, unknown>, ["schema", "candidate_source_hash", "policy_hash", "source_inputs_hash", "source_inputs", "configuration", "target_framework", "binaries", "runtime_dependencies", "runtime_dependencies_hash", "built_at_utc"], "EPIC-0437 native build manifest");
   if (manifest.schema !== "revit-operator.epic-0437-native-build-manifest.v1" || manifest.candidate_source_hash !== expectedCandidateSourceHash
     || manifest.configuration !== "Release" || manifest.target_framework !== "net48" || !Number.isFinite(Date.parse(manifest.built_at_utc))) throw new Error("EPIC-0437 native build manifest identity is stale or invalid");
   const currentInputs = currentEpic0437SourceInputs(repoRoot);
@@ -151,5 +168,14 @@ export function validateEpic0437NativeBuildManifest(repoRoot: string, expectedCa
     exact(binding as unknown as Record<string, unknown>, ["path", "sha256"], `EPIC-0437 native build manifest ${key}`);
     if (binding.path !== EPIC_0437_NATIVE_BINARIES[key] || binding.sha256 !== sha256Bytes(path.join(repoRoot, binding.path))) throw new Error(`EPIC-0437 native ${key} build identity is stale`);
   }
+  if (!Array.isArray(manifest.runtime_dependencies) || manifest.runtime_dependencies.length !== EPIC_0437_NATIVE_RUNTIME_DEPENDENCY_NAMES.length) throw new Error("EPIC-0437 native runtime dependency closure is incomplete");
+  const currentRuntimeDependencies = EPIC_0437_NATIVE_RUNTIME_DEPENDENCY_NAMES.map((name, index) => {
+    const dependency = manifest.runtime_dependencies[index];
+    exact(dependency as unknown as Record<string, unknown>, ["name", "path", "sha256"], `EPIC-0437 runtime dependency ${name}`);
+    const relative = `${EPIC_0437_NATIVE_RUNTIME_DIRECTORY}/${name}`;
+    if (dependency.name !== name || dependency.path !== relative || dependency.sha256 !== sha256Bytes(path.join(repoRoot, relative))) throw new Error(`EPIC-0437 runtime dependency is stale: ${name}`);
+    return dependency;
+  });
+  if (manifest.runtime_dependencies_hash !== sha256NormalizedText(canonicalJson(currentRuntimeDependencies as JsonValue))) throw new Error("EPIC-0437 runtime dependency closure hash is stale");
   return { manifest, sha256: sha256NormalizedText(raw) };
 }

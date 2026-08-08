@@ -22,9 +22,17 @@ const RECEIPT_FIELDS = [
   "native_common_assembly_path", "native_common_assembly_sha256",
   "native_logic_assembly_path", "native_logic_assembly_sha256",
   "native_bridge_assembly_path", "native_bridge_assembly_sha256",
+  "native_runtime_dependencies", "native_runtime_dependencies_hash",
   "native_attestation_key_id", "native_attestation_modulus_base64url",
   "native_attestation_exponent_base64url", "result_hash", "outcome", "outcome_unknown",
   "issued_at_utc", "native_attestation_signature"
+] as const;
+const RUNTIME_DEPENDENCY_NAMES = [
+  "Microsoft.Bcl.AsyncInterfaces.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll",
+  "Microsoft.Web.WebView2.Wpf.dll", "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll",
+  "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll", "System.Runtime.CompilerServices.Unsafe.dll",
+  "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
+  "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
 ] as const;
 
 export type TrustedNativeAttestationBinding = {
@@ -140,6 +148,20 @@ export function verifyLaboratoryExecutionReceipt(
   }
   if (typeof receipt.body_present !== "boolean" || typeof receipt.outcome !== "string" || !receipt.outcome) throw new Error("Native laboratory receipt outcome/body binding is invalid.");
   for (const name of ["raw_body_sha256", "canonical_body_sha256", "effect_hash", "document_fingerprint", "native_common_assembly_sha256", "native_logic_assembly_sha256", "native_bridge_assembly_sha256"] as const) string(receipt, name, HASH);
+  if (!Array.isArray(receipt.native_runtime_dependencies) || receipt.native_runtime_dependencies.length !== RUNTIME_DEPENDENCY_NAMES.length
+    || string(receipt, "native_runtime_dependencies_hash", HASH) !== sha256Text(canonicalJson(receipt.native_runtime_dependencies as JsonValue))) {
+    throw new Error("Native laboratory runtime dependency closure is invalid.");
+  }
+  const dependencyDirectory = path.win32.dirname(string(receipt, "native_bridge_assembly_path")).toLowerCase();
+  receipt.native_runtime_dependencies.forEach((value, index) => {
+    const dependency = object(value, `native runtime dependency ${index}`);
+    exact(dependency, ["name", "path", "sha256"], `native runtime dependency ${index}`);
+    const dependencyPath = string(dependency, "path");
+    if (dependency.name !== RUNTIME_DEPENDENCY_NAMES[index] || !path.win32.isAbsolute(dependencyPath)
+      || path.win32.dirname(dependencyPath).toLowerCase() !== dependencyDirectory
+      || path.win32.basename(dependencyPath) !== dependency.name) throw new Error("Native laboratory runtime dependency path/name is invalid.");
+    string(dependency, "sha256", HASH);
+  });
   for (const name of ["request_id", "dispatch_id", "transport_request_nonce", "transport_server_epoch", "method", "path", "phase", "effect_id", "channel", "alias", "document_session_id"] as const) string(receipt, name);
   if (receipt.request_id !== receipt.dispatch_id) throw new Error("Native laboratory request/dispatch identity is inconsistent.");
   if (receipt.channel !== evidence.channel || receipt.alias !== evidence.alias) throw new Error("Native laboratory receipt channel/alias differs from its authenticated dispatch evidence.");

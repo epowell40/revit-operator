@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
@@ -251,6 +253,18 @@ namespace RevitBridge.Common.Tests
                 ["native_logic_assembly_sha256"] = "sha256:" + new string('8', 64),
                 ["native_bridge_assembly_path"] = @"C:\Operator\RevitBridge.dll",
                 ["native_bridge_assembly_sha256"] = "sha256:" + new string('9', 64),
+                ["native_runtime_dependencies"] = new[]
+                {
+                    "Microsoft.Bcl.AsyncInterfaces.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll", "Microsoft.Web.WebView2.Wpf.dll",
+                    "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll", "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll",
+                    "System.Runtime.CompilerServices.Unsafe.dll", "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
+                    "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
+                }.Select((name, index) => new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["name"] = name, ["path"] = @"C:\Operator\" + name,
+                    ["sha256"] = "sha256:" + index.ToString("x", CultureInfo.InvariantCulture).PadLeft(64, '0')
+                }).ToArray(),
+                ["native_runtime_dependencies_hash"] = "",
                 ["native_attestation_algorithm"] = OperatorNativeExecutionAttestationAuthority.Algorithm,
                 ["native_attestation_key_id"] = OperatorNativeExecutionAttestationAuthority.KeyId,
                 ["native_attestation_modulus_base64url"] = OperatorNativeExecutionAttestationAuthority.ModulusBase64Url,
@@ -263,6 +277,9 @@ namespace RevitBridge.Common.Tests
             using (var laboratoryDocument = JsonDocument.Parse(JsonSerializer.Serialize(receipt["laboratory_evidence"])))
                 receipt["laboratory_evidence_hash"] = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
                     OperatorCourierCertificationEnvelopeVerifier.Canonicalize(laboratoryDocument.RootElement));
+            using (var dependenciesDocument = JsonDocument.Parse(JsonSerializer.Serialize(receipt["native_runtime_dependencies"])))
+                receipt["native_runtime_dependencies_hash"] = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
+                    OperatorCourierCertificationEnvelopeVerifier.Canonicalize(dependenciesDocument.RootElement));
             receipt["native_attestation_signature"] =
                 OperatorNativeExecutionAttestationAuthority.SignCanonicalPayload(receipt);
             result[OperatorLaboratoryExecutionReceiptAuthority.ResultField] = receipt;

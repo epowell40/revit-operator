@@ -21,6 +21,14 @@ namespace RevitBridge.Common
         public const string Schema = "revit-operator.laboratory-execution-receipt.v1";
         public const string ResultField = "laboratory_execution_receipt";
         private static readonly string CourierProcessEpoch = RandomBase64Url(32);
+        private static readonly string[] RuntimeDependencyNames = new[]
+        {
+            "Microsoft.Bcl.AsyncInterfaces.dll", "Microsoft.Web.WebView2.Core.dll", "Microsoft.Web.WebView2.WinForms.dll",
+            "Microsoft.Web.WebView2.Wpf.dll", "RevitBridge.Common.dll", "RevitBridge.dll", "RevitBridge.Logic.dll",
+            "System.Buffers.dll", "System.Memory.dll", "System.Numerics.Vectors.dll", "System.Runtime.CompilerServices.Unsafe.dll",
+            "System.Security.Cryptography.ProtectedData.dll", "System.Text.Encodings.Web.dll", "System.Text.Json.dll",
+            "System.Threading.Tasks.Extensions.dll", "System.ValueTuple.dll", "WebView2Loader.dll"
+        };
 
         public static OperatorLaboratoryCourierReceiptContext BeginCourierExecution(
             OperatorLaboratoryEvidenceDispatch laboratoryEvidence,
@@ -149,6 +157,10 @@ namespace RevitBridge.Common
             if (string.IsNullOrWhiteSpace(processImagePath) || !File.Exists(processImagePath))
                 throw Denied("Protected laboratory evidence cannot identify the exact Revit host process image.");
 
+            var runtimeDependencies = RuntimeDependencies();
+            using var runtimeDependenciesDocument = JsonDocument.Parse(JsonSerializer.Serialize(runtimeDependencies));
+            var runtimeDependenciesHash = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
+                OperatorCourierCertificationEnvelopeVerifier.Canonicalize(runtimeDependenciesDocument.RootElement));
             var receipt = new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["schema"] = Schema,
@@ -182,6 +194,8 @@ namespace RevitBridge.Common
                 ["native_logic_assembly_sha256"] = LoadedAssemblySha256("RevitBridge.Logic"),
                 ["native_bridge_assembly_path"] = LoadedAssemblyPath("RevitBridge"),
                 ["native_bridge_assembly_sha256"] = LoadedAssemblySha256("RevitBridge"),
+                ["native_runtime_dependencies"] = runtimeDependencies,
+                ["native_runtime_dependencies_hash"] = runtimeDependenciesHash,
                 ["native_attestation_algorithm"] = OperatorNativeExecutionAttestationAuthority.Algorithm,
                 ["native_attestation_key_id"] = OperatorNativeExecutionAttestationAuthority.KeyId,
                 ["native_attestation_modulus_base64url"] = OperatorNativeExecutionAttestationAuthority.ModulusBase64Url,
@@ -197,12 +211,17 @@ namespace RevitBridge.Common
             {
                 var canonicalSignedReceipt = OperatorCourierCertificationEnvelopeVerifier.Canonicalize(receiptDocument.RootElement);
                 if (transport.LaboratoryMoveEvidenceAdmission != null)
+                {
                     OperatorLaboratoryMoveEvidenceAuthority.RecordVerifiedPreviewReceipt(
                         transport.LaboratoryMoveEvidenceAdmission,
                         transport.LaboratoryEvidence,
                         laboratoryMoveExecutionStart!,
                         canonicalSignedReceipt,
                         issuedAtUtc);
+                    OperatorLaboratoryMoveEvidenceAuthority.RecordSuccessfulMoveReceipt(
+                        transport.LaboratoryMoveEvidenceAdmission,
+                        transport.LaboratoryEvidence);
+                }
             }
 
             var attached = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -237,6 +256,27 @@ namespace RevitBridge.Common
             if (matches.Count != 1 || string.IsNullOrWhiteSpace(matches[0].Location) || !File.Exists(matches[0].Location))
                 throw Denied("Protected laboratory evidence cannot identify the exact loaded " + simpleName + " binary.");
             return Path.GetFullPath(matches[0].Location);
+        }
+
+        private static List<Dictionary<string, object?>> RuntimeDependencies()
+        {
+            var directory = Path.GetDirectoryName(LoadedAssemblyPath("RevitBridge"));
+            if (string.IsNullOrWhiteSpace(directory)) throw Denied("Protected laboratory evidence cannot identify the deployed native dependency directory.");
+            var result = new List<Dictionary<string, object?>>(RuntimeDependencyNames.Length);
+            foreach (var name in RuntimeDependencyNames)
+            {
+                var dependencyPath = Path.GetFullPath(Path.Combine(directory, name));
+                if (!File.Exists(dependencyPath)) throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
+                using var stream = File.Open(dependencyPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var algorithm = SHA256.Create();
+                result.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["name"] = name,
+                    ["path"] = dependencyPath,
+                    ["sha256"] = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant()
+                });
+            }
+            return result;
         }
 
         public static bool VerifyAttachedReceipt(object attachedResult)
@@ -319,7 +359,8 @@ namespace RevitBridge.Common
                     || !String(receipt, "native_logic_assembly_path", out _)
                     || !String(receipt, "native_logic_assembly_sha256", out _)
                     || !String(receipt, "native_bridge_assembly_path", out _)
-                    || !String(receipt, "native_bridge_assembly_sha256", out _)) return false;
+                    || !String(receipt, "native_bridge_assembly_sha256", out _)
+                    || !VerifyRuntimeDependencies(receipt)) return false;
                 if (moveEvidence.ValueKind == JsonValueKind.Null)
                 {
                     if (path == "/revit/move-elements") return false;
@@ -447,6 +488,7 @@ namespace RevitBridge.Common
                 "native_common_assembly_path", "native_common_assembly_sha256",
                 "native_logic_assembly_path", "native_logic_assembly_sha256",
                 "native_bridge_assembly_path", "native_bridge_assembly_sha256",
+                "native_runtime_dependencies", "native_runtime_dependencies_hash",
                 "native_attestation_algorithm", "native_attestation_key_id",
                 "native_attestation_modulus_base64url", "native_attestation_exponent_base64url",
                 "result_hash", "outcome", "outcome_unknown", "issued_at_utc", "native_attestation_signature"
@@ -462,6 +504,35 @@ namespace RevitBridge.Common
             return value.TryGetProperty(name, out var property)
                 && property.ValueKind == JsonValueKind.String
                 && !string.IsNullOrWhiteSpace(result = property.GetString() ?? "");
+        }
+
+        private static bool VerifyRuntimeDependencies(JsonElement receipt)
+        {
+            if (!receipt.TryGetProperty("native_runtime_dependencies", out var dependencies)
+                || dependencies.ValueKind != JsonValueKind.Array || dependencies.GetArrayLength() != RuntimeDependencyNames.Length
+                || !String(receipt, "native_runtime_dependencies_hash", out var expectedHash)
+                || expectedHash != OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
+                    OperatorCourierCertificationEnvelopeVerifier.Canonicalize(dependencies))) return false;
+            var index = 0;
+            foreach (var dependency in dependencies.EnumerateArray())
+            {
+                if (dependency.ValueKind != JsonValueKind.Object || dependency.EnumerateObject().Count() != 3
+                    || !String(dependency, "name", out var name) || name != RuntimeDependencyNames[index++]
+                    || !String(dependency, "path", out var dependencyPath) || !Path.IsPathRooted(dependencyPath)
+                    || !String(dependency, "sha256", out var dependencyHash) || !IsSha256(dependencyHash)) return false;
+            }
+            return true;
+        }
+
+        private static bool IsSha256(string value)
+        {
+            if (value.Length != 71 || !value.StartsWith("sha256:", StringComparison.Ordinal)) return false;
+            for (var index = 7; index < value.Length; index++)
+            {
+                var character = value[index];
+                if ((character < '0' || character > '9') && (character < 'a' || character > 'f')) return false;
+            }
+            return true;
         }
 
         private static bool Boolean(JsonElement value, string name, out bool result)

@@ -207,6 +207,7 @@ const RECEIPT_KEYS = [
   "native_common_assembly_path", "native_common_assembly_sha256",
   "native_logic_assembly_path", "native_logic_assembly_sha256",
   "native_bridge_assembly_path", "native_bridge_assembly_sha256",
+  "native_runtime_dependencies", "native_runtime_dependencies_hash",
   "native_attestation_algorithm", "native_attestation_key_id", "native_attestation_modulus_base64url",
   "native_attestation_exponent_base64url", "result_hash", "outcome", "outcome_unknown", "issued_at_utc",
   "native_attestation_signature"

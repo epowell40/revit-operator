@@ -62,6 +62,30 @@ namespace RevitBridge.Common.Tests
                 Assert.Throws<OperatorNativeHttpAdmissionException>(() => Parse(WithAdmissionHash(values), dispatch)).Code);
         }
 
+        [Fact]
+        public void Native_document_session_run_fence_rejects_duplicate_out_of_order_or_changed_move_graph()
+        {
+            var fence = new OperatorLaboratoryMoveEvidenceAuthority.RunFence(new string('a', 32), 42, 1, 2, 3, .25, 0, 0);
+            var forwardPreview = new OperatorCertifiedMoveExecutionStart("sha256:" + new string('1', 64), "preview", 1, 2, 3, .25, 0, 0);
+            fence.Begin("move-preview", "preview", 42, forwardPreview);
+            Assert.Throws<OperatorNativeHttpAdmissionException>(() => fence.Begin("move-preview", "preview", 42, forwardPreview));
+            fence.Complete("move-preview", "preview");
+            var forwardApply = new OperatorCertifiedMoveExecutionStart("sha256:" + new string('2', 64), "apply", 1, 2, 3, .25, 0, 0);
+            fence.Begin("move-apply", "apply", 42, forwardApply);
+            fence.Complete("move-apply", "apply");
+            var inversePreview = new OperatorCertifiedMoveExecutionStart("sha256:" + new string('3', 64), "preview", 1.25, 2, 3, -.25, 0, 0);
+            fence.Begin("restore-preview", "preview", 42, inversePreview);
+            fence.Complete("restore-preview", "preview");
+            var inverseApply = new OperatorCertifiedMoveExecutionStart("sha256:" + new string('4', 64), "apply", 1.25, 2, 3, -.25, 0, 0);
+            fence.Begin("restore-apply", "apply", 42, inverseApply);
+            fence.Complete("restore-apply", "apply");
+            Assert.Throws<OperatorNativeHttpAdmissionException>(() => fence.Begin("move-preview", "preview", 42, forwardPreview));
+
+            var changed = new OperatorLaboratoryMoveEvidenceAuthority.RunFence(new string('b', 32), 42, 1, 2, 3, .25, 0, 0);
+            var wrongTarget = new OperatorCertifiedMoveExecutionStart("sha256:" + new string('5', 64), "preview", 1, 2, 3, .5, 0, 0);
+            Assert.Throws<OperatorNativeHttpAdmissionException>(() => changed.Begin("move-preview", "preview", 42, wrongTarget));
+        }
+
         private static OperatorLaboratoryMoveEvidenceAdmission Parse(string json, OperatorLaboratoryEvidenceDispatch dispatch)
         {
             using var document = JsonDocument.Parse(json);

@@ -24,7 +24,7 @@ import {
 import { EPIC_0437_CANDIDATE_SOURCE_HASH } from "../courier/laboratory_evidence.js";
 import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } from "./trusted_tool_exposure_policy.js";
 import { parseAndVerifyEpic0437PromotionAuthorization } from "./epic_0437_promotion_authority.js";
-import { EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, epic0437SourceInputHash, validateEpic0437NativeBuildManifest } from "./epic_0437_source_provenance.js";
+import { EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, currentEpic0437SourceInputs, epic0437SourceInputHash, validateEpic0437NativeBuildManifest } from "./epic_0437_source_provenance.js";
 
 type ProofProfile = {
   method: string;
@@ -36,6 +36,7 @@ type ProofProfile = {
   visibility: ToolVisibility;
   artifacts: CertificationEvidenceArtifact[];
 };
+const REVIT_2024_SNOWDON_HVAC_SHA256 = "sha256:585385991b1f8a168881c4bc36546bc90e7bfb427c263d801fe367fa2ebb0fa8";
 
 export type CertificationProofIndex = {
   schema: "revit-operator.tool-certification-proofs.v1";
@@ -143,15 +144,19 @@ export function validateEpic0437LiveEvidenceRun(
   const document = object(run.document, `${relativeRunPath}.document`);
   exact(document, ["title", "path", "fingerprint", "session_id", "final_session_id", "native_attestation", "disposable_model_path", "disposable_model_sha256_before", "disposable_model_sha256_after"], `${relativeRunPath}.document`);
   if (document.title !== "Snowdon Towers Sample HVAC" || !shaPattern.test(String(document.fingerprint)) || !/^[0-9a-f]{32}$/.test(String(document.session_id)) || document.final_session_id !== document.session_id) throw new Error("EPIC-0437 live run document/session binding is invalid");
-  const disposableRoot = path.win32.resolve(process.env.LOCALAPPDATA ?? "", "RevitOperator", "CertificationEvidence", "DisposableModels").toLowerCase() + "\\";
-  const disposablePath = path.win32.resolve(String(document.disposable_model_path ?? "")).toLowerCase();
+  const disposableRootSource = path.win32.resolve(process.env.LOCALAPPDATA ?? "", "RevitOperator", "CertificationEvidence", "DisposableModels");
+  const disposableRoot = fs.realpathSync.native(disposableRootSource).toLowerCase() + "\\";
+  const disposablePathSource = path.win32.resolve(String(document.disposable_model_path ?? ""));
+  const disposablePath = fs.realpathSync.native(disposablePathSource).toLowerCase();
   const disposableRelative = path.win32.relative(disposableRoot, disposablePath);
   if (!disposablePath.startsWith(disposableRoot) || !/^[0-9a-f]{32}\\snowdon towers sample hvac\.rvt$/.test(disposableRelative)
     || path.win32.resolve(String(document.path ?? "")).toLowerCase() !== disposablePath
-    || !shaPattern.test(String(document.disposable_model_sha256_before))
+    || document.disposable_model_sha256_before !== REVIT_2024_SNOWDON_HVAC_SHA256
     || document.disposable_model_sha256_after !== document.disposable_model_sha256_before) {
     throw new Error("EPIC-0437 live evidence did not use one exact unsaved disposable model copy");
   }
+  const disposableActualHash = `sha256:${createHash("sha256").update(fs.readFileSync(disposablePathSource)).digest("hex")}`;
+  if (disposableActualHash !== document.disposable_model_sha256_before) throw new Error("EPIC-0437 disposable model bytes changed after the evidence run");
   const attestation = object(document.native_attestation, `${relativeRunPath}.document.native_attestation`);
   if (attestation.schema !== "revit-operator.native-execution-attestation-key.v1" || attestation.algorithm !== trustedNativeAttestation.algorithm
     || attestation.key_id !== trustedNativeAttestation.key_id || attestation.modulus_base64url !== trustedNativeAttestation.modulus_base64url
@@ -206,7 +211,7 @@ export function validateEpic0437LiveEvidenceRun(
   const recoveryRaw = fs.readFileSync(resolveInside(repoRoot, recoveryRelative), "utf8");
   if (sha256NormalizedText(recoveryRaw) !== sha(recovery.sha256, "EPIC-0437 recovery hash")) throw new Error("EPIC-0437 recovery state hash mismatch");
   const recoveryState = object(JSON.parse(recoveryRaw), "EPIC-0437 recovery state");
-  const recoveryFields = ["schema", "evidence_run_id", "level", "document_fingerprint", "document_session_id", "view_id", "target_id", "source_scoped_id",
+  const recoveryFields = ["schema", "evidence_run_id", "level", "document_fingerprint", "document_session_id", "view_id", "target_id", "source_scoped_id", "disposable_model_path", "disposable_model_sha256",
     "start", "vector", "preview_result", "preview_result_sha256", "state", "updated_at_utc",
     ...(level === "L4" ? ["restored_point", "terminal_move_result", "terminal_move_result_sha256"] : [])];
   exact(recoveryState, recoveryFields, "EPIC-0437 recovery state");
@@ -214,6 +219,7 @@ export function validateEpic0437LiveEvidenceRun(
     || recoveryState.level !== level || recoveryState.state !== expectedRecovery || recoveryState.target_id !== elementId
     || recoveryState.source_scoped_id !== `host:${elementId}` || recoveryState.document_fingerprint !== document.fingerprint
     || recoveryState.document_session_id !== document.session_id || recoveryState.view_id !== view.id
+    || recoveryState.disposable_model_path !== document.disposable_model_path || recoveryState.disposable_model_sha256 !== document.disposable_model_sha256_before
     || recoveryState.preview_result_sha256 !== sha256NormalizedText(canonicalJson(recoveryState.preview_result as JsonValue))
     || (level === "L4" && recoveryState.terminal_move_result_sha256 !== sha256NormalizedText(canonicalJson(recoveryState.terminal_move_result as JsonValue)))) {
     throw new Error("EPIC-0437 recovery state is not exactly sealed to the safe terminal run");
@@ -233,7 +239,8 @@ export function validateEpic0437LiveEvidenceRun(
   const expectedNativeBuild = {
     native_common_assembly_sha256: trustedBuild.manifest.binaries.common.sha256,
     native_logic_assembly_sha256: trustedBuild.manifest.binaries.logic.sha256,
-    native_bridge_assembly_sha256: trustedBuild.manifest.binaries.bridge.sha256
+    native_bridge_assembly_sha256: trustedBuild.manifest.binaries.bridge.sha256,
+    runtime_dependencies: trustedBuild.manifest.runtime_dependencies.map(value => ({ name: value.name, sha256: value.sha256 }))
   };
   const observationBody = { imageSize: 2200, limit: 500, includeMapping: true, includeGeometry: true };
   const moveBody = (vectorX: number, dryRun: boolean) => ({ ids: [elementId], mode: "vector", vectorX, vectorY: 0, vectorZ: 0,
@@ -289,6 +296,9 @@ export function validateEpic0437LiveEvidenceRun(
       || verified.receipt.native_common_assembly_sha256 !== expectedNativeBuild.native_common_assembly_sha256
       || verified.receipt.native_logic_assembly_sha256 !== expectedNativeBuild.native_logic_assembly_sha256
       || verified.receipt.native_bridge_assembly_sha256 !== expectedNativeBuild.native_bridge_assembly_sha256
+      || canonicalJson((verified.receipt.native_runtime_dependencies as Array<Record<string, unknown>>).map(value => ({ name: value.name, sha256: value.sha256 })) as JsonValue)
+        !== canonicalJson(expectedNativeBuild.runtime_dependencies as JsonValue)
+      || verified.receipt.native_runtime_dependencies_hash !== sha256NormalizedText(canonicalJson(verified.receipt.native_runtime_dependencies as JsonValue))
       || verified.evidence.evidence_run_id !== run.evidence_run_id || verified.evidence.evidence_step !== name
       || verified.evidence.workflow !== transport.workflow || verified.evidence.channel !== transport.channel || verified.evidence.alias !== transport.alias
       || verified.evidence.transport_kind !== (level === "L3" ? "direct" : "courier")) throw new Error("EPIC-0437 signed receipt does not bind the exact step/request/document/transport identity");
@@ -421,7 +431,8 @@ export function validateEpic0437LiveEvidenceRun(
       process_image_path: verified.receipt.revit_process_image_path,
       common_path: verified.receipt.native_common_assembly_path,
       logic_path: verified.receipt.native_logic_assembly_path,
-      bridge_path: verified.receipt.native_bridge_assembly_path
+      bridge_path: verified.receipt.native_bridge_assembly_path,
+      runtime_dependencies: verified.receipt.native_runtime_dependencies
     } as JsonValue);
     observedProcess ??= processIdentity;
     if (observedProcess !== processIdentity) throw new Error("EPIC-0437 Revit PID/start/image or loaded native module paths changed during the run");
@@ -441,6 +452,15 @@ export function validateEpic0437LiveEvidenceRun(
         || JSON.stringify(durable.result) !== JSON.stringify(JSON.parse(resultRaw))) throw new Error("EPIC-0437 courier job/result is not exact token-free signed terminal evidence");
     } else if (transport.courier_job_path !== null || transport.courier_result_path !== null) {
       throw new Error("EPIC-0437 direct evidence cannot carry courier artifacts");
+    }
+  }
+  for (const contextName of ["context-before", "context-after"] as const) {
+    const signedContext = object(signedResults.get(contextName), `EPIC-0437 ${contextName} signed result`);
+    const signedDocument = object(signedContext.document, `EPIC-0437 ${contextName}.document`);
+    if (signedDocument.title !== document.title || path.win32.resolve(String(signedDocument.path ?? "")).toLowerCase() !== disposablePath
+      || signedDocument.sessionId !== document.session_id
+      || canonicalJson(signedDocument.nativeExecutionAttestation as JsonValue) !== canonicalJson(document.native_attestation as JsonValue)) {
+      throw new Error(`EPIC-0437 ${contextName} native-signed document path/session/key is not the exact disposable model identity`);
     }
   }
   const sameResult = (left: unknown, right: unknown) => canonicalJson(left as JsonValue) === canonicalJson(right as JsonValue);
@@ -533,7 +553,7 @@ function validateArtifact(repoRoot: string, reference: CertificationEvidenceArti
   const raw = fs.readFileSync(artifactPath, "utf8");
   if (sha256NormalizedText(raw) !== reference.sha256) throw new Error(`Certification artifact hash mismatch: ${reference.path}`);
   const artifact = object(JSON.parse(raw.replace(/^\uFEFF/, "")), reference.path);
-  exact(artifact, ["schema", "level", "candidate", "status", "producer", "inputs", "result"], reference.path);
+  exact(artifact, ["schema", "level", "candidate", "status", "producer", "inputs", "inputs_hash", "result"], reference.path);
   if (artifact.schema !== reference.schema || artifact.level !== reference.level || artifact.status !== "passed") throw new Error(`Certification artifact state mismatch: ${reference.path}`);
   const candidate = object(artifact.candidate, `${reference.path}.candidate`);
   exact(candidate, ["method", "path", "request_hash", "effect_hash"], `${reference.path}.candidate`);
@@ -542,6 +562,11 @@ function validateArtifact(repoRoot: string, reference: CertificationEvidenceArti
   exact(producer, ["kind", "command"], `${reference.path}.producer`);
   if (producer.kind !== levelProducer[reference.level] || !string(producer.command, `${reference.path}.producer.command`)) throw new Error(`Certification artifact producer mismatch: ${reference.path}`);
   if (!Array.isArray(artifact.inputs) || artifact.inputs.length === 0) throw new Error(`Certification artifact has no bound inputs: ${reference.path}`);
+  if (artifact.inputs_hash !== sha256NormalizedText(canonicalJson(artifact.inputs as JsonValue))) throw new Error(`Certification artifact input-set hash is invalid: ${reference.path}`);
+  if (["L0", "L1", "L2"].includes(reference.level)
+    && canonicalJson(artifact.inputs as JsonValue) !== canonicalJson(currentEpic0437SourceInputs(repoRoot) as unknown as JsonValue)) {
+    throw new Error(`Certification artifact does not bind the exact complete current source input set: ${reference.path}`);
+  }
   for (const [index, rawInput] of artifact.inputs.entries()) {
     const input = object(rawInput, `${reference.path}.inputs[${index}]`);
     const normalization = input.normalization;
@@ -555,6 +580,15 @@ function validateArtifact(repoRoot: string, reference: CertificationEvidenceArti
   }
   const result = object(artifact.result, `${reference.path}.result`);
   if (result.passed !== true) throw new Error(`Certification artifact did not prove a pass: ${reference.path}`);
+  if (["L0", "L1", "L2"].includes(reference.level)) {
+    exact(result, ["passed", "checks"], `${reference.path}.result`);
+    if (producer.command !== "npm run certify:epic-0437-source" || !Array.isArray(result.checks) || result.checks.length === 0
+      || (reference.level === "L0" && canonicalJson(result.checks as JsonValue) !== canonicalJson(["route_present", "reviewed_typed_alias_attribution"]))
+      || (reference.level === "L1" && canonicalJson(result.checks as JsonValue) !== canonicalJson(["candidate_schema", "request_hash", "effect_hash", "request_family_hash", "artifact_contract"]))
+      || (reference.level === "L2" && !(result.checks as unknown[]).every(value => typeof value === "string"))) {
+      throw new Error(`Certification artifact source gate result contract is not exact: ${reference.path}`);
+    }
+  }
   if (reference.level === "L3" || reference.level === "L4") {
     exact(result, ["passed", "evidence_schema", "run_receipt_path", "run_receipt_sha256", "capability", "promotion_authorization"], `${reference.path}.result`);
     if (result.evidence_schema !== "revit-operator.epic-0437-live-evidence-run.v2") throw new Error(`Certification artifact live schema mismatch: ${reference.path}`);

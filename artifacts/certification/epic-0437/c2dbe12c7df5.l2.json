@@ -107,11 +107,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryMoveEvidence.test.ts",
-      "sha256": "sha256:65b24cccfbfbe5ceabdab38b6833b900a509c2ee21e3d581d75d6064e66e7472"
+      "sha256": "sha256:e2d4f056da3748fb25d856b1a9ad552fd6d24bb05e557fd18a8d5a9d02b2db98"
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryMoveEvidence.ts",
-      "sha256": "sha256:b0c715c78e77835dbf649daf32aa93a67dd5e177a4626638ea4210c0e9a0ff28"
+      "sha256": "sha256:819a56c567905328feead14998b4cbf5b8350027efda9a5c75a929b6fcd9208b"
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryMoveEvidenceClient.ts",
@@ -236,7 +236,7 @@
     },
     {
       "path": "apps/mcp-server/src/scripts/run_epic_0437_live_evidence.ts",
-      "sha256": "sha256:e038cb4067edf92023c37c64b291b84e85596e640cd7c61993519610c1eb614d"
+      "sha256": "sha256:07fb04c584d3e8568568ec13ff9ba7929496bc97a06b61384b08030aa46c0dda"
     },
     {
       "path": "apps/mcp-server/src/scripts/run_mep_continuity_acceptance.ts",
@@ -648,7 +648,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts",
-      "sha256": "sha256:dbc09e585ff4d482f4649b0d92efe3ac5ba0830be741a728131fba6aa4744061"
+      "sha256": "sha256:5b6fffad39e2178e8c102dac649160e0d218c8514029c264ff062efc5ad6125b"
     },
     {
       "path": "apps/operator-backend/src/capabilities/safe_read_attestation_authority.ts",
@@ -660,7 +660,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification_evidence_compiler.ts",
-      "sha256": "sha256:165794deaa833f550f9b84b02fd1dc380cb0c2a92a1dd0935328fcb63ecc3c57"
+      "sha256": "sha256:38f9a107388bc7a3401828307f719cd80e87b9f757a6dac85d0567451161022d"
     },
     {
       "path": "apps/operator-backend/src/capabilities/tool_certification.ts",
@@ -713,7 +713,7 @@
     },
     {
       "path": "apps/operator-backend/src/courier/laboratory_execution_receipt.ts",
-      "sha256": "sha256:5e8617e0b1620e9245564acf472dff657182823fa907011488bbf9f2e579e789"
+      "sha256": "sha256:09f72959bbeb2282ceaa2b5e7a0fd5af48fba8cf62b7eae16160bce4d22188b5"
     },
     {
       "path": "apps/operator-backend/src/courier/revit_courier_context.ts",
@@ -1401,11 +1401,11 @@
     },
     {
       "path": "apps/operator-backend/src/tools/certify_epic_0437_live.ts",
-      "sha256": "sha256:bdd62451bfd0720a2a2b99b4cf006b1ba5297914f053ad480379784bf2e38dfb"
+      "sha256": "sha256:81e974b43ebca0ebaa6ae438428973ebc60ba6c59d622b0fab9941cfdac74f59"
     },
     {
       "path": "apps/operator-backend/src/tools/certify_epic_0437_source.ts",
-      "sha256": "sha256:0433d10dfb64125ccbf13b73b2f7df9414b6e731be26678b0715a06396f02aed"
+      "sha256": "sha256:acc71fb2f67e808557ff643cdaa8777591acebef01ea23e4d1973fbb364b1664"
     },
     {
       "path": "apps/operator-backend/src/tools/check_skill_library_manifest.ts",
@@ -2125,7 +2125,7 @@
     },
     {
       "path": "apps/operator-backend/test/laboratory_execution_receipt.test.ts",
-      "sha256": "sha256:f0fe4bfd459b83bb70365855b3a56d946160750f8db102723ea644c227dc207b"
+      "sha256": "sha256:40096bc7ca6b24df6332fe68912f1efe653091bccfac1eec96d19ba3cc9531c9"
     },
     {
       "path": "apps/operator-backend/test/large_pdf_intake.test.ts",
@@ -2349,7 +2349,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_certification_evidence_compiler.test.ts",
-      "sha256": "sha256:9deb8b3aeab4938ba3d9cc170cdf2031d5204ffb6d34655ccc1dbf442e708047"
+      "sha256": "sha256:47da95799d6e151fdb178cce12da01468a25f6deccfe7b3eb837ae7d8514b0c9"
     },
     {
       "path": "apps/operator-backend/test/tool_certification.test.ts",
@@ -2573,7 +2573,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorLaboratoryMoveEvidenceAdmissionTests.cs",
-      "sha256": "sha256:75921db83016939508fceb4fdaeea737d81608dc3a054dd03b02002bceeb6faf"
+      "sha256": "sha256:b814d2c2b1fa78d57643672fdf01b1303693281a6ebd44b33d0ea318b975fd53"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeApiRuntimeSafetyTests.cs",
@@ -2581,7 +2581,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
-      "sha256": "sha256:69c4207cce2b186fc44281e5099e387b2beb1cb085965c00b05e6dc152fc4ab5"
+      "sha256": "sha256:719928245570ec51f174d36302b68ba7f8db33a15cdb5dc3a0857d0e49ca4d47"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeHttpAdmissionTests.cs",
@@ -2610,6 +2610,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorRevitHostCircuitTests.cs",
       "sha256": "sha256:ccd29208b03c761f5930627b576ddadf9d28ed0265f6a95421dea49f9e8f3524"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/packages.lock.json",
+      "sha256": "sha256:ca77fef3b9bbd540fae01ede922f1493c0cb94fde60e5f5ec0bdf11d0f9726d7"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/ParameterReadPagingPolicyTests.cs",
@@ -2941,7 +2945,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
-      "sha256": "sha256:614de8de8931410a8d66f767122d208db62e3a77d82f6b08281785aad7a0daba"
+      "sha256": "sha256:19f03605fd25b33dc73965b3ba6f2e5be1073ea4dc1707f502d72eb6276f82d9"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
@@ -2949,7 +2953,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAuthority.cs",
-      "sha256": "sha256:d8bb815bdbfc304a62736c4488e19f7590e9bd18b188344c19e1520c658b6afa"
+      "sha256": "sha256:a125345b0ef4ab868e7cd94e021bbf28231759077b8dcef984521abf27115bc5"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeExecutionAttestationAuthority.cs",
@@ -2991,6 +2995,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorWriteGrant.cs",
       "sha256": "sha256:2c6259fdda5b3f7cccf5e8e9bd2bf17a4c67c617943dd8725fe53e317f051de2"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/packages.lock.json",
+      "sha256": "sha256:2d4761d9007bcd582997c56051a5857d9c1a1fe235879cc53dd3b3a4e5427150"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/ParameterReadPagingPolicy.cs",
@@ -3733,6 +3741,10 @@
       "sha256": "sha256:85c65b8c45b21cf3d60a28674a18e843352b7ca62f79f0c06b49a13373b6828b"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Logic/packages.lock.json",
+      "sha256": "sha256:de0a106279fe64a6172e92f4cd697955c44c7495bfff31cbfdcc586366958ca1"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Profiles/DataOutlets/data_outlets.hospital_default.json",
       "sha256": "sha256:864d9094413109067d7d15717a6b5bc94fc9e33d7dcac62cc9a8110ab76930b5"
     },
@@ -4257,6 +4269,10 @@
       "sha256": "sha256:dd899ab6de513947751a31caa0b31dc4a0f5a4e1b06b2ca06d9d139189243e12"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge/packages.lock.json",
+      "sha256": "sha256:5ea0fe293745278c9c6bf882413b708798cf39f875717ab8f8207fa7e175dc2f"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge/RevitBridge.csproj",
       "sha256": "sha256:80379867278d46972ac6ed6e594105bc752af998b911c800b735ec0ffde6a83f"
     },
@@ -4277,11 +4293,14 @@
       "sha256": "sha256:3fc2e8880d127f1b1418cddb0df7d1327a2d3eb21f4a3be9e08e05e8cb964d6f"
     }
   ],
+  "inputs_hash": "sha256:151ac7f61613ada53ff64ca27776400b9c62f7610564e9773f2b92c107b08882",
   "result": {
     "passed": true,
     "checks": [
       "C:\\Program Files\\nodejs\\node.exe C:\\Users\\Eli\\source\\repos\\RevitOperatorWorkspace\\worktrees\\public-0437-progressive-discovery\\apps\\operator-backend\\node_modules\\typescript\\bin\\tsc -p tsconfig.json",
       "C:\\Program Files\\nodejs\\node.exe C:\\Users\\Eli\\source\\repos\\RevitOperatorWorkspace\\worktrees\\public-0437-progressive-discovery\\apps\\mcp-server\\node_modules\\typescript\\bin\\tsc -p tsconfig.json",
+      "dotnet restore RevitBridge.sln --locked-mode",
+      "dotnet restore RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj --locked-mode",
       "dotnet test RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj -c Release -f net8.0-windows --no-restore",
       "dotnet test RevitBridge.Common.Tests/RevitBridge.Common.Tests.csproj -c Release -f net48 --no-restore",
       "dotnet build RevitBridge/RevitBridge.csproj -c Release -f net8.0-windows --no-restore",
