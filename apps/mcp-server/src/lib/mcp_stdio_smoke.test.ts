@@ -22,6 +22,7 @@ const certifiedSafeNonRevitAliases = [
   "audit_lpd",
   "check_photometrics",
   "fire_damper_audit",
+  "operator_discover_capabilities",
   "operator_plan_semantic_mep_route",
   "operator_runtime_probe",
   "print_sheets",
@@ -220,7 +221,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 124, "Exact development laboratory mode must preserve the complete catalog plus the observation and laboratory SafeRead aliases.");
+  assert.equal(laboratoryNames.length, 125, "Exact development laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, and laboratory SafeRead aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 108, "Exact development laboratory mode must preserve all Revit aliases plus observation and laboratory SafeRead.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
 });
@@ -388,7 +389,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 124, "Laboratory mode must preserve the complete catalog plus the observation and SafeRead aliases.");
+  assert.equal(tools.tools.length, 125, "Laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, and SafeRead aliases.");
   assert.equal([...names].filter(name => name.startsWith("revit_")).length, 108, "Laboratory mode must preserve all revit_ aliases plus observation and SafeRead.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
@@ -588,7 +589,7 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   const listedNames = listed.tools.map(tool => tool.name).sort();
   assert.equal(listedNames.includes("operator_runtime_probe"), true);
   assert.deepEqual(listedNames, certifiedSafeNonRevitAliases, "Certified tools/list must expose exactly the declared safe local/diagnostic aliases.");
-  assert.equal(listedNames.length, 16);
+  assert.equal(listedNames.length, 17);
   assert.deepEqual(
     listedNames.filter(name => name.startsWith("revit_")),
     ["revit_get_context"],
