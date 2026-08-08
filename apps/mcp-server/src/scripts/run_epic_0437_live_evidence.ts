@@ -182,9 +182,10 @@ async function main(): Promise<void> {
     });
   }
 
-  async function moveStep(name: string, phase: "preview" | "apply", elementId: number, observationId: string, vector: Point, previewReceipt?: string): Promise<{ result: any; previewReceipt?: string }> {
+  async function moveStep(name: string, phase: "preview" | "apply", elementId: number, observationId: string, vector: Point,
+    previewReceipt?: string, evidenceRunId = runId): Promise<{ result: any; previewReceipt?: string }> {
     const workflow = `${workflowPrefix}-${name}`;
-    const evidenceDispatch = issueLaboratoryEvidenceDispatch({ evidenceRunId: runId, evidenceStep: name, workflow, transportKind });
+    const evidenceDispatch = issueLaboratoryEvidenceDispatch({ evidenceRunId, evidenceStep: name, workflow, transportKind });
     return runWithRevitToolAlias("revit_move_one_certified", async () => {
       const call = await callLaboratoryMoveOneEvidence<any>({ evidenceDispatch, request: { phase, elementId, observationId, vectorFeet: vector, previewReceipt } });
       const body = { ids: [elementId], mode: "vector", vectorX: vector.x, vectorY: vector.y, vectorZ: vector.z,
@@ -292,6 +293,8 @@ async function main(): Promise<void> {
     }
     const savedStart = point(state.start, "pending recovery start");
     const savedVector = point(state.vector, "pending recovery vector");
+    const savedEvidenceRunId = String(state.evidence_run_id ?? "");
+    if (!/^[0-9a-f]{32}$/.test(savedEvidenceRunId)) throw new Error("Pending recovery evidence-run identity is invalid.");
     const savedFingerprintRaw = String(state.document_fingerprint ?? "");
     const savedFingerprint = savedFingerprintRaw.startsWith("sha256:") ? savedFingerprintRaw : `sha256:${savedFingerprintRaw}`;
     if (savedFingerprint !== bootstrapFingerprint) throw new Error("Pending recovery belongs to a different active document fingerprint.");
@@ -331,9 +334,10 @@ async function main(): Promise<void> {
       }
       const inverse = minus(savedVector);
       updatePriorRecovery("restore_dispatching", { committed_point: committed, outcome_unknown: true, retryable: false });
-      const previewCall = await moveStep("recovery-restore-preview", "preview", targetId, current.observation.observationId, inverse);
+      const previewCall = await moveStep("recovery-restore-preview", "preview", targetId, current.observation.observationId, inverse, undefined, savedEvidenceRunId);
       if (!previewCall.previewReceipt) throw new Error("Pending recovery inverse preview did not issue one-use lineage.");
-      const applyCall = await moveStep("recovery-restore-apply", "apply", targetId, current.observation.observationId, inverse, previewCall.previewReceipt);
+      const applyCall = await moveStep("recovery-restore-apply", "apply", targetId, current.observation.observationId, inverse,
+        previewCall.previewReceipt, savedEvidenceRunId);
       validateMoveResult(applyCall.result, targetId, inverse, false);
       const restored = await recoveryReadback("recovery-readback-restored");
       if (!same(restored.point, savedStart)) throw new Error("Pending recovery inverse apply did not restore the exact starting point.");

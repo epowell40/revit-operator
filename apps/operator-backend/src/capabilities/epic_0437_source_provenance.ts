@@ -6,6 +6,20 @@ import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } fro
 
 export const EPIC_0437_NATIVE_BUILD_MANIFEST_PATH = "artifacts/certification/epic-0437/native-build-manifest.v1.json";
 
+export const EPIC_0437_L2_GATE_CHECKS = [
+  "backend_typescript_build",
+  "mcp_typescript_build",
+  "native_solution_locked_restore",
+  "native_tests_locked_restore",
+  "native_common_tests_net8",
+  "native_common_tests_net48",
+  "native_revit_bridge_build_net8",
+  "native_revit_bridge_build_net48",
+  "backend_certification_transport_adversarial_tests",
+  "mcp_observation_family_transport_adversarial_tests",
+  "post_generation_evidence_compiler_adversarial_tests"
+] as const;
+
 const EPIC_0437_SOURCE_ROOTS = [
   "apps/operator-backend/src",
   "apps/operator-backend/test",

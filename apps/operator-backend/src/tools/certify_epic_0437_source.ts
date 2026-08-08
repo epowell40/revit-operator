@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalJson, computeEffectHash, parseToolCertificationCandidates, parseToolCertificationEvidence, sha256NormalizedText, type CertificationLevel, type JsonValue } from "../capabilities/tool_certification.js";
 import { compileArtifactBoundEvidence, parseCertificationProofIndex } from "../capabilities/tool_certification_evidence_compiler.js";
 import {
+  EPIC_0437_L2_GATE_CHECKS,
   EPIC_0437_NATIVE_BUILD_MANIFEST_PATH,
   createEpic0437NativeBuildManifest,
   currentEpic0437SourceInputs
@@ -74,6 +75,7 @@ async function main(): Promise<void> {
   ];
   const postGenerationCompilerTest = `${gateNode} --test --test-reporter=dot --test-concurrency=1 dist/test/tool_certification_evidence_compiler.test.js`;
   const commands = [...builds, ...testCommands, { command: postGenerationCompilerTest, duration_ms: 0 }];
+  if (commands.length !== EPIC_0437_L2_GATE_CHECKS.length) throw new Error("EPIC-0437 L2 gate execution set differs from its exact artifact contract");
   const inputs = currentEpic0437SourceInputs(repoRoot);
   const artifactRoot = path.join(repoRoot, "artifacts", "certification", "epic-0437");
   fs.mkdirSync(artifactRoot, { recursive: true });
@@ -102,7 +104,7 @@ async function main(): Promise<void> {
             ? ["route_present", "reviewed_typed_alias_attribution"]
             : level === "L1"
               ? ["candidate_schema", "request_hash", "effect_hash", "request_family_hash", "artifact_contract"]
-              : commands.map(item => item.command)
+              : [...EPIC_0437_L2_GATE_CHECKS]
         } as { passed: true; [key: string]: JsonValue }
       };
       const rendered = canonical(artifact);

@@ -24,7 +24,7 @@ import {
 import { EPIC_0437_CANDIDATE_SOURCE_HASH } from "../courier/laboratory_evidence.js";
 import { BUNDLED_TOOL_EXPOSURE_POLICY_HASH, parseTrustedToolExposurePolicy } from "./trusted_tool_exposure_policy.js";
 import { parseAndVerifyEpic0437PromotionAuthorization } from "./epic_0437_promotion_authority.js";
-import { EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, currentEpic0437SourceInputs, epic0437SourceInputHash, validateEpic0437NativeBuildManifest } from "./epic_0437_source_provenance.js";
+import { EPIC_0437_L2_GATE_CHECKS, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH, currentEpic0437SourceInputs, epic0437SourceInputHash, validateEpic0437NativeBuildManifest } from "./epic_0437_source_provenance.js";
 
 type ProofProfile = {
   method: string;
@@ -585,7 +585,7 @@ function validateArtifact(repoRoot: string, reference: CertificationEvidenceArti
     if (producer.command !== "npm run certify:epic-0437-source" || !Array.isArray(result.checks) || result.checks.length === 0
       || (reference.level === "L0" && canonicalJson(result.checks as JsonValue) !== canonicalJson(["route_present", "reviewed_typed_alias_attribution"]))
       || (reference.level === "L1" && canonicalJson(result.checks as JsonValue) !== canonicalJson(["candidate_schema", "request_hash", "effect_hash", "request_family_hash", "artifact_contract"]))
-      || (reference.level === "L2" && !(result.checks as unknown[]).every(value => typeof value === "string"))) {
+      || (reference.level === "L2" && canonicalJson(result.checks as JsonValue) !== canonicalJson([...EPIC_0437_L2_GATE_CHECKS]))) {
       throw new Error(`Certification artifact source gate result contract is not exact: ${reference.path}`);
     }
   }

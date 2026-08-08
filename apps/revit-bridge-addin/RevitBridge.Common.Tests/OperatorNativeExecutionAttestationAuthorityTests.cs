@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
@@ -10,6 +12,37 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorNativeExecutionAttestationAuthorityTests
     {
+        [Fact]
+        public void Laboratory_dependency_identity_rejects_a_packaged_copy_when_another_managed_path_is_loaded()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                File.Copy(typeof(JsonDocument).Assembly.Location, Path.Combine(directory, "System.Text.Json.dll"));
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "RuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[] { directory, "System.Text.Json.dll" }));
+                Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                    Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Fact]
+        public void Laboratory_dependency_identity_rejects_an_unresolvable_in_memory_managed_assembly()
+        {
+            var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null,
+                new object[] { typeof(JsonDocument).Assembly.Location, "System.Text.Json.dll", new[] { "" } }));
+            Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+        }
+
         [Fact]
         public void Process_local_key_signs_exact_canonical_receipt_and_rejects_tamper()
         {

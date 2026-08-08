@@ -265,8 +265,7 @@ namespace RevitBridge.Common
             var result = new List<Dictionary<string, object?>>(RuntimeDependencyNames.Length);
             foreach (var name in RuntimeDependencyNames)
             {
-                var dependencyPath = Path.GetFullPath(Path.Combine(directory, name));
-                if (!File.Exists(dependencyPath)) throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
+                var dependencyPath = RuntimeDependencyPath(directory, name);
                 using var stream = File.Open(dependencyPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 using var algorithm = SHA256.Create();
                 result.Add(new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -277,6 +276,53 @@ namespace RevitBridge.Common
                 });
             }
             return result;
+        }
+
+        private static string RuntimeDependencyPath(string directory, string name)
+        {
+            var deployedPath = Path.GetFullPath(Path.Combine(directory, name));
+            if (!File.Exists(deployedPath)) throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
+
+            if (string.Equals(name, "WebView2Loader.dll", StringComparison.Ordinal))
+            {
+                var nativeMatches = Process.GetCurrentProcess().Modules.Cast<ProcessModule>()
+                    .Where(value => string.Equals(value.ModuleName, name, StringComparison.OrdinalIgnoreCase))
+                    .Select(value => Path.GetFullPath(value.FileName))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                if (nativeMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded " + name + " modules.");
+                if (nativeMatches.Count == 1 && !string.Equals(nativeMatches[0], deployedPath, StringComparison.OrdinalIgnoreCase))
+                    throw Denied("Protected laboratory evidence loaded " + name + " outside the deployed add-in dependency closure.");
+                return nativeMatches.Count == 1 ? nativeMatches[0] : deployedPath;
+            }
+
+            var simpleName = Path.GetFileNameWithoutExtension(name);
+            var managedLocations = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(value => string.Equals(value.GetName().Name, simpleName, StringComparison.Ordinal))
+                .Select(AssemblyLocationOrEmpty)
+                .ToList();
+            return SelectManagedRuntimeDependencyPath(deployedPath, name, managedLocations);
+        }
+
+        private static string AssemblyLocationOrEmpty(System.Reflection.Assembly assembly)
+        {
+            try { return assembly.Location ?? ""; }
+            catch (NotSupportedException) { return ""; }
+        }
+
+        private static string SelectManagedRuntimeDependencyPath(string deployedPath, string name, IReadOnlyCollection<string> managedLocations)
+        {
+            if (managedLocations.Any(string.IsNullOrWhiteSpace)
+                || managedLocations.Any(value => !File.Exists(value)))
+                throw Denied("Protected laboratory evidence cannot resolve every loaded " + name + " assembly location.");
+            var managedMatches = managedLocations
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded " + name + " assemblies.");
+            if (managedMatches.Count == 1 && !string.Equals(managedMatches[0], deployedPath, StringComparison.OrdinalIgnoreCase))
+                throw Denied("Protected laboratory evidence loaded " + name + " outside the deployed add-in dependency closure.");
+            return managedMatches.Count == 1 ? managedMatches[0] : deployedPath;
         }
 
         public static bool VerifyAttachedReceipt(object attachedResult)
@@ -512,13 +558,18 @@ namespace RevitBridge.Common
                 || dependencies.ValueKind != JsonValueKind.Array || dependencies.GetArrayLength() != RuntimeDependencyNames.Length
                 || !String(receipt, "native_runtime_dependencies_hash", out var expectedHash)
                 || expectedHash != OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(
-                    OperatorCourierCertificationEnvelopeVerifier.Canonicalize(dependencies))) return false;
+                    OperatorCourierCertificationEnvelopeVerifier.Canonicalize(dependencies))
+                || !String(receipt, "native_bridge_assembly_path", out var bridgePath)) return false;
+            var expectedDirectory = Path.GetDirectoryName(Path.GetFullPath(bridgePath));
+            if (string.IsNullOrWhiteSpace(expectedDirectory)) return false;
             var index = 0;
             foreach (var dependency in dependencies.EnumerateArray())
             {
                 if (dependency.ValueKind != JsonValueKind.Object || dependency.EnumerateObject().Count() != 3
                     || !String(dependency, "name", out var name) || name != RuntimeDependencyNames[index++]
                     || !String(dependency, "path", out var dependencyPath) || !Path.IsPathRooted(dependencyPath)
+                    || !string.Equals(Path.GetFileName(dependencyPath), name, StringComparison.Ordinal)
+                    || !string.Equals(Path.GetDirectoryName(Path.GetFullPath(dependencyPath)), expectedDirectory, StringComparison.OrdinalIgnoreCase)
                     || !String(dependency, "sha256", out var dependencyHash) || !IsSha256(dependencyHash)) return false;
             }
             return true;

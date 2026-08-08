@@ -60,6 +60,21 @@ test("artifact-bound compiler rejects proof hash tamper, missing levels, and sta
   } finally {
     fs.writeFileSync(artifactPath, originalArtifact, "utf8");
   }
+
+  const falseL2 = JSON.parse(proofRaw);
+  const l2Reference = falseL2.records[0].artifacts.find((value: Record<string, unknown>) => value.level === "L2");
+  const l2Path = path.join(repoRoot, l2Reference.path);
+  const originalL2 = fs.readFileSync(l2Path, "utf8");
+  try {
+    const artifact = JSON.parse(originalL2);
+    artifact.result.checks = ["not-a-real-gate"];
+    const rendered = `${JSON.stringify(artifact, null, 2)}\n`;
+    fs.writeFileSync(l2Path, rendered, "utf8");
+    l2Reference.sha256 = sha256NormalizedText(rendered);
+    assert.throws(() => compile(falseL2), /source gate result contract is not exact/);
+  } finally {
+    fs.writeFileSync(l2Path, originalL2, "utf8");
+  }
 });
 
 test("artifact-bound evidence cannot be hand-promoted without one exact proof per claimed level", () => {
