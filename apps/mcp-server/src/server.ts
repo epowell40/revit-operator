@@ -1918,9 +1918,9 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
             content: [{
               type: "text" as const,
               text: JSON.stringify({
-                code: "CERTIFICATION_DIRECT_OUTCOME_UNKNOWN",
+                code: "CERTIFICATION_EXECUTION_OUTCOME_UNKNOWN",
                 error: String(receiptError),
-                phase: "certification_direct_post_dispatch",
+                phase: "certification_post_dispatch",
                 request_instance_hash: admission.requestInstanceHash,
                 outcome_unknown: true,
                 retryable: false,

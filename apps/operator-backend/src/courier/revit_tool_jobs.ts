@@ -71,6 +71,20 @@ type CourierCompletionChallengeState = Omit<CertifiedCourierExecutionContext, "s
   issued_at_utc: string;
 };
 
+type CourierCompletionDecision = {
+  schema: "revit-operator.courier-completion-terminal-decision.v1";
+  kind: "success" | "failure";
+  job_id: string;
+  correlation_id: string;
+  session_id: string;
+  executor_id: string;
+  certification_envelope_hash: string;
+  request_instance_hash: string;
+  completion_challenge_hash: string | null;
+  completion_result_sha256: string;
+  decided_at_utc: string;
+};
+
 type ClaimInput = {
   session_id?: string | null;
   executor_id: string;
@@ -116,6 +130,10 @@ function challengeIssuedPath(jobId: string): string {
 
 function challengeConsumedPath(jobId: string): string {
   return path.join(jobDir(jobId), "completion-challenge-consumed.v1.json");
+}
+
+function completionDecisionPath(jobId: string): string {
+  return path.join(jobDir(jobId), "completion-terminal-decision.v1.json");
 }
 
 function readJson<T>(filePath: string): T | null {
@@ -245,25 +263,127 @@ function issueCompletionChallenge(job: CertifiedCourierJobV2, executorId: string
   return state;
 }
 
-function readCompletionChallenge(job: CertifiedCourierJobV2, executorId: string): CourierCompletionChallengeState {
-  if (fs.existsSync(challengeConsumedPath(job.id))) {
+function consumeCompletionChallenge(job: CertifiedCourierJobV2, state: CourierCompletionChallengeState): void {
+  const consumedPath = challengeConsumedPath(job.id);
+  const matchesExactConsumption = (existing: Record<string, unknown> | null): boolean => !!existing
+    && existing.job_id === job.id
+    && existing.dispatch_id === job.id
+    && existing.correlation_id === job.correlation_id
+    && existing.session_id === job.session_id
+    && existing.execution_session_id === job.session_id
+    && existing.executor_id === state.executor_id
+    && existing.certification_envelope_hash === job.certification_envelope.envelope_hash
+    && existing.policy_hash === job.certification_envelope.policy_hash
+    && existing.document_session_id === state.document_session_id
+    && existing.request_instance_hash === state.request_instance_hash
+    && existing.completion_challenge_hash === state.completion_challenge_hash;
+  if (fs.existsSync(consumedPath)) {
+    const existing = readJson<Record<string, unknown>>(consumedPath);
+    if (matchesExactConsumption(existing)) return;
     throw new RevitCourierCertificationError(
       "CERTIFICATION_COMPLETION_CHALLENGE_REPLAY_DENIED",
-      "Courier completion challenge has already been consumed and cannot authorize another success."
+      "Courier completion challenge was consumed by a different terminal decision."
     );
   }
-  return validateChallengeState(readJson<unknown>(challengeIssuedPath(job.id)), job, executorId);
-}
-
-function consumeCompletionChallenge(job: CertifiedCourierJobV2, state: CourierCompletionChallengeState): void {
   try {
-    writeJsonExclusiveAtomic(challengeConsumedPath(job.id), { ...state, consumed_at_utc: new Date().toISOString() });
+    writeJsonExclusiveAtomic(consumedPath, { ...state, consumed_at_utc: new Date().toISOString() });
   } catch {
+    const existing = readJson<Record<string, unknown>>(consumedPath);
+    if (matchesExactConsumption(existing)) return;
     throw new RevitCourierCertificationError(
       "CERTIFICATION_COMPLETION_CHALLENGE_REPLAY_DENIED",
       "Courier completion challenge could not be atomically consumed exactly once."
     );
   }
+}
+
+function completionResultSha256(value: unknown): string {
+  const serialized = JSON.stringify(value ?? null);
+  if (typeof serialized !== "string") {
+    throw new RevitCourierCertificationError("CERTIFICATION_EXECUTION_RECEIPT_INVALID", "Courier completion result is not serializable.");
+  }
+  return rawSha256(serialized);
+}
+
+function validateCompletionDecision(
+  value: unknown,
+  job: CertifiedCourierJobV2,
+  executorId: string
+): CourierCompletionDecision {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new RevitCourierCertificationError("CERTIFICATION_COMPLETION_DECISION_INVALID", "Courier completion terminal decision is absent or malformed.");
+  }
+  const decision = value as Record<string, unknown>;
+  const required = [
+    "schema", "kind", "job_id", "correlation_id", "session_id", "executor_id", "certification_envelope_hash",
+    "request_instance_hash", "completion_challenge_hash", "completion_result_sha256", "decided_at_utc"
+  ];
+  const admission = job.certification_envelope.request_family_admission;
+  if (Object.keys(decision).length !== required.length || required.some(key => !Object.prototype.hasOwnProperty.call(decision, key))
+    || decision.schema !== "revit-operator.courier-completion-terminal-decision.v1"
+    || (decision.kind !== "success" && decision.kind !== "failure")
+    || decision.job_id !== job.id
+    || decision.correlation_id !== job.correlation_id
+    || decision.session_id !== job.session_id
+    || decision.executor_id !== executorId
+    || decision.certification_envelope_hash !== job.certification_envelope.envelope_hash
+    || decision.request_instance_hash !== admission?.request_instance_hash
+    || (decision.completion_challenge_hash !== null && (typeof decision.completion_challenge_hash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(decision.completion_challenge_hash)))
+    || typeof decision.completion_result_sha256 !== "string" || !/^sha256:[0-9a-f]{64}$/.test(decision.completion_result_sha256)
+    || typeof decision.decided_at_utc !== "string"
+    || !Number.isFinite(Date.parse(decision.decided_at_utc))
+    || new Date(Date.parse(decision.decided_at_utc)).toISOString() !== decision.decided_at_utc) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_COMPLETION_DECISION_INVALID",
+      "Courier completion terminal decision does not match the exact durable job, executor, envelope, and request instance."
+    );
+  }
+  return decision as unknown as CourierCompletionDecision;
+}
+
+function claimCompletionDecision(
+  job: CertifiedCourierJobV2,
+  executorId: string,
+  kind: "success" | "failure",
+  resultSha256: string,
+  challengeHash: string | null
+): { decision: CourierCompletionDecision; created: boolean } {
+  const decision: CourierCompletionDecision = {
+    schema: "revit-operator.courier-completion-terminal-decision.v1",
+    kind,
+    job_id: job.id,
+    correlation_id: job.correlation_id,
+    session_id: job.session_id,
+    executor_id: executorId,
+    certification_envelope_hash: job.certification_envelope.envelope_hash,
+    request_instance_hash: job.certification_envelope.request_family_admission!.request_instance_hash,
+    completion_challenge_hash: challengeHash,
+    completion_result_sha256: resultSha256,
+    decided_at_utc: new Date().toISOString()
+  };
+  try {
+    writeJsonExclusiveAtomic(completionDecisionPath(job.id), decision);
+    return { decision, created: true };
+  } catch {
+    return {
+      decision: validateCompletionDecision(readJson<unknown>(completionDecisionPath(job.id)), job, executorId),
+      created: false
+    };
+  }
+}
+
+function waitForTerminalDecision(job: CertifiedCourierJobV2): RevitToolJob {
+  const deadline = Date.now() + 2_000;
+  const signal = new Int32Array(new SharedArrayBuffer(4));
+  do {
+    const winner = readTerminalResult(job);
+    if (winner) return reconcileJobWithResult(job, winner);
+    Atomics.wait(signal, 0, 0, 10);
+  } while (Date.now() < deadline);
+  throw new RevitCourierCertificationError(
+    "CERTIFICATION_COMPLETION_DECISION_PENDING",
+    "Another completion process owns the durable terminal decision; no competing result was published."
+  );
 }
 
 function readJob(jobId: string): RevitToolJob | null {
@@ -307,9 +427,27 @@ function writeTerminal(job: RevitToolJob, terminal: {
   outcome_unknown?: boolean;
   certified_execution_context?: CertifiedCourierExecutionContext;
 }): RevitToolJob {
+  if (job.version === REVIT_COURIER_V2_JOB_VERSION
+    && job.certification_envelope.request_family_admission
+    && fs.existsSync(completionDecisionPath(job.id))) {
+    const executorId = job.claim?.executor_id;
+    if (!executorId) return job;
+    const decision = validateCompletionDecision(readJson<unknown>(completionDecisionPath(job.id)), job, executorId);
+    const resultSha256 = completionResultSha256(terminal.result);
+    const matchesSuccess = decision.kind === "success"
+      && terminal.status === "succeeded"
+      && resultSha256 === decision.completion_result_sha256
+      && terminal.certified_execution_context?.completion_challenge_hash === decision.completion_challenge_hash;
+    const matchesFailure = decision.kind === "failure"
+      && terminal.status === "failed"
+      && resultSha256 === decision.completion_result_sha256;
+    if (!matchesSuccess && !matchesFailure) {
+      const winner = readTerminalResult(job);
+      return winner ? reconcileJobWithResult(job, winner) : job;
+    }
+  }
   const finishedAt = new Date().toISOString();
-  // The durable result is authoritative. Write it before the job summary so a crash can never expose a terminal job without its receipt.
-  writeJsonAtomic(resultPath(job.id), {
+  const durableResult: RevitToolResult = {
     version: REVIT_COURIER_RESULT_VERSION,
     id: job.id,
     correlation_id: job.correlation_id,
@@ -324,7 +462,24 @@ function writeTerminal(job: RevitToolJob, terminal: {
     ...(terminal.certified_execution_context === undefined ? {} : {
       certified_execution_context: terminal.certified_execution_context
     })
-  });
+  };
+  // Terminal truth is first-writer-wins. Exclusive publication prevents a
+  // replay/error loser from replacing a signed success (or vice versa).
+  try {
+    writeJsonExclusiveAtomic(resultPath(job.id), durableResult);
+  } catch (error) {
+    const winner = readTerminalResult(job);
+    if (winner) return reconcileJobWithResult(job, winner);
+    if (fs.existsSync(resultPath(job.id))) {
+      return saveJob({
+        ...job,
+        status: "failed",
+        finished_at: new Date().toISOString(),
+        error: "The durable Revit courier result receipt is invalid or mismatched; terminal publication was quarantined."
+      });
+    }
+    throw error;
+  }
   return saveJob({
     ...job,
     status: terminal.status,
@@ -492,10 +647,23 @@ export function completeRevitToolJob(input: FinishInput): RevitToolJob {
   if (job.status === "failed") throw new Error("Revit courier job is already terminally failed; refusing a contradictory completion.");
   if (job.status === "succeeded" && readTerminalResult(job)) return job;
   if (job.version === REVIT_COURIER_V2_JOB_VERSION && job.certification_envelope?.request_family_admission) {
+    const resultSha256 = completionResultSha256(input.result);
     try {
-      const challenge = readCompletionChallenge(job, input.executor_id);
+      const challenge = validateChallengeState(readJson<unknown>(challengeIssuedPath(job.id)), job, input.executor_id);
       const executionContext = executionContextFromState(challenge);
       assertCertifiedCourierExecutionResult(job, input.result, executionContext);
+      const claimed = claimCompletionDecision(
+        job,
+        input.executor_id,
+        "success",
+        resultSha256,
+        challenge.completion_challenge_hash
+      );
+      if (claimed.decision.kind !== "success"
+        || claimed.decision.completion_result_sha256 !== resultSha256
+        || claimed.decision.completion_challenge_hash !== challenge.completion_challenge_hash) {
+        return waitForTerminalDecision(job);
+      }
       consumeCompletionChallenge(job, challenge);
       return writeTerminal(job, {
         status: "succeeded",
@@ -504,6 +672,17 @@ export function completeRevitToolJob(input: FinishInput): RevitToolJob {
         certified_execution_context: executionContext
       });
     } catch (error) {
+      if (fs.existsSync(completionDecisionPath(job.id))) {
+        validateCompletionDecision(readJson<unknown>(completionDecisionPath(job.id)), job, input.executor_id);
+        return waitForTerminalDecision(job);
+      }
+      const challenge = readJson<Record<string, unknown>>(challengeIssuedPath(job.id));
+      const challengeHash = typeof challenge?.completion_challenge_hash === "string"
+        && /^sha256:[0-9a-f]{64}$/.test(challenge.completion_challenge_hash)
+        ? challenge.completion_challenge_hash
+        : null;
+      const claimed = claimCompletionDecision(job, input.executor_id, "failure", resultSha256, challengeHash);
+      if (!claimed.created) return waitForTerminalDecision(job);
       const message = error instanceof Error ? error.message : "Certified native execution receipt is invalid.";
       return writeTerminal(job, {
         status: "failed",

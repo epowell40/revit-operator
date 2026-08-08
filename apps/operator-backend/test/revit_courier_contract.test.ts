@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { decideCodexStreaming, revitCourierTargetFromContext } from "../src/brains/codex_brain.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
@@ -796,6 +796,12 @@ test("courier completion survives a backend process restart using only its durab
   // success receipt can be trusted. A fresh process must not replay execution.
   fs.unlinkSync(path.join(dir, "result.json"));
   fs.writeFileSync(path.join(dir, "job.json"), runningJob, "utf8");
+  const competingFailure = failRevitToolJob({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1",
+    result: { code: "late_competing_failure" }, error: "late competing failure"
+  });
+  assert.equal(competingFailure.status, "running");
+  assert.equal(fs.existsSync(path.join(dir, "result.json")), false);
   const replayed = spawnSync(process.execPath, [
     "--input-type=module",
     "-e",
@@ -803,11 +809,106 @@ test("courier completion survives a backend process restart using only its durab
     completionInputPath
   ], { cwd: process.cwd(), env: process.env, encoding: "utf8" });
   assert.equal(replayed.status, 0, `${replayed.stderr}\n${replayed.stdout}`);
-  const replayDenied = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
-  assert.equal(replayDenied.status, "failed");
-  assert.equal(replayDenied.code, "CERTIFICATION_COMPLETION_CHALLENGE_REPLAY_DENIED");
-  assert.equal(replayDenied.retryable, false);
-  assert.equal(replayDenied.outcome_unknown, true);
+  const recovered = JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8"));
+  assert.equal(recovered.status, "succeeded");
+  assert.deepEqual(recovered.certified_execution_context, context);
+  const recoveredBytes = fs.readFileSync(path.join(dir, "result.json"), "utf8");
+  assert.equal(completeRevitToolJob({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", result: { forged: true }
+  }).status, "succeeded");
+  assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), recoveredBytes);
+});
+
+test("concurrent terminal publishers use first-writer CAS and never overwrite durable truth", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-terminal-cas-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "development";
+  process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+  const id = writeJob(root);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, id);
+  const completeInputPath = path.join(root, "complete-input.json");
+  const failInputPath = path.join(root, "fail-input.json");
+  fs.writeFileSync(completeInputPath, JSON.stringify({
+    session_id: "session-a", job_id: id, executor_id: "worker-1", result: { winner: "success" }
+  }), "utf8");
+  fs.writeFileSync(failInputPath, JSON.stringify({
+    session_id: "session-a", job_id: id, executor_id: "worker-1", result: { code: "racing_failure" }, error: "racing failure"
+  }), "utf8");
+  const run = (operation: "completeRevitToolJob" | "failRevitToolJob", inputPath: string) => new Promise<number | null>(resolve => {
+    const child = spawn(process.execPath, [
+      "--input-type=module", "-e",
+      `import fs from 'node:fs'; import { ${operation} as finish } from './dist/src/courier/revit_tool_jobs.js'; const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); try { finish(input); } catch {}`,
+      inputPath
+    ], { cwd: process.cwd(), env: process.env, stdio: "ignore" });
+    child.on("exit", code => resolve(code));
+  });
+  await Promise.all([run("completeRevitToolJob", completeInputPath), run("failRevitToolJob", failInputPath)]);
+  const resultFile = path.join(root, "artifacts", "revit-courier", "jobs", id, "result.json");
+  const firstWinnerBytes = fs.readFileSync(resultFile, "utf8");
+  const firstWinner = JSON.parse(firstWinnerBytes);
+  assert.ok(firstWinner.status === "succeeded" || firstWinner.status === "failed");
+  try {
+    if (firstWinner.status === "succeeded") failRevitToolJob({
+      session_id: "session-a", job_id: id, executor_id: "worker-1", error: "late failure"
+    });
+    else completeRevitToolJob({
+      session_id: "session-a", job_id: id, executor_id: "worker-1", result: { late: "success" }
+    });
+  } catch { /* a contradictory loser may reject after reconciling terminal truth */ }
+  assert.equal(fs.readFileSync(resultFile, "utf8"), firstWinnerBytes);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+});
+
+test("concurrent invalid family completion cannot overwrite the signed-success decision", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-concurrent-success-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "local";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  const policy = certifiedMovePolicy(root);
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+  process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policy.policy_hash;
+  const body = courierMoveBody(true);
+  const admission = courierMoveAdmission("preview", null, body, null, randomUUID().replace(/-/g, ""));
+  const job = certifiedMoveJob(policy, body, admission);
+  const dir = path.join(root, "artifacts", "revit-courier", "jobs", job.id);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "job.json"), JSON.stringify(job), "utf8");
+  assert.equal(claimNextRevitToolJob({ session_id: job.session_id, executor_id: "worker-1" }).job?.id, job.id);
+  const authorization = authorizeRevitToolJobExecution({
+    session_id: job.session_id, job_id: job.id, executor_id: "worker-1", authorization_stage: "final"
+  }).authorization;
+  const context = testExecutionContext(job, {
+    completion_challenge: authorization.completion_challenge!,
+    completion_challenge_hash: authorization.completion_challenge_hash!
+  });
+  const validResult = certifiedMoveExecutionResult(job, admission, context);
+  const invalidResult = certifiedMoveExecutionResult(job, admission, context, null, "direct");
+  const validInputPath = path.join(root, "valid-completion.json");
+  const invalidInputPath = path.join(root, "invalid-completion.json");
+  const baseInput = { session_id: job.session_id, job_id: job.id, executor_id: "worker-1" };
+  fs.writeFileSync(validInputPath, JSON.stringify({ ...baseInput, result: validResult }), "utf8");
+  fs.writeFileSync(invalidInputPath, JSON.stringify({ ...baseInput, result: invalidResult }), "utf8");
+  const decisionPath = path.join(dir, "completion-terminal-decision.v1.json");
+  const runChild = (script: string, inputPath: string) => new Promise<number | null>(resolve => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", script, inputPath, decisionPath], {
+      cwd: process.cwd(), env: process.env, stdio: "ignore"
+    });
+    child.on("exit", code => resolve(code));
+  });
+  const completeScript = "import fs from 'node:fs'; import { completeRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); completeRevitToolJob(input);";
+  const invalidAfterDecisionScript = "import fs from 'node:fs'; import { completeRevitToolJob } from './dist/src/courier/revit_tool_jobs.js'; const signal=new Int32Array(new SharedArrayBuffer(4)); const deadline=Date.now()+2000; while(!fs.existsSync(process.argv[2])&&Date.now()<deadline) Atomics.wait(signal,0,0,5); const input=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); try { completeRevitToolJob(input); } catch {}";
+  await Promise.all([
+    runChild(completeScript, validInputPath),
+    runChild(invalidAfterDecisionScript, invalidInputPath)
+  ]);
+  const decision = JSON.parse(fs.readFileSync(decisionPath, "utf8"));
+  const durableBytes = fs.readFileSync(path.join(dir, "result.json"), "utf8");
+  const durable = JSON.parse(durableBytes);
+  assert.equal(decision.kind, "success");
+  assert.equal(durable.status, "succeeded");
+  assert.equal(durable.result.certified_execution_receipt.transport_kind, "courier");
+  assert.equal(durable.result.certified_execution_receipt.completion_challenge_hash, context.completion_challenge_hash);
+  assert.equal(fs.readFileSync(path.join(dir, "result.json"), "utf8"), durableBytes);
 });
 
 test("signed courier preview lineage is exact and apply receipts carry explicit null lineage", () => {
