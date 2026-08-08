@@ -45,7 +45,8 @@ import {
   isKnownToolExposureRoute,
   isToolRouteExposedForSearch,
   loadToolExposurePolicy,
-  runWithRevitToolAlias
+  runWithRevitToolAlias,
+  assertCertifiedMoveOneToolExposure
 } from "./lib/toolExposurePolicy.js";
 
 import { discoverCertifiedCapabilities } from "./lib/certifiedCapabilityProjection.js";
@@ -1871,6 +1872,44 @@ server.tool("revit_move_elements", "Move element(s) by a translation vector (sup
         ...movePayload,
       });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+// This is deliberately distinct from the broad laboratory move wrapper. Its
+// model-facing contract is validated as exactly one policy-bound family before
+// the legacy native handler body is constructed.
+server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-certified element translation with required preview lineage.",
+  {
+    phase: z.enum(["preview", "apply"]),
+    documentFingerprint: z.string(),
+    sourceScopedId: z.string(),
+    elementId: z.number().int().positive(),
+    observationId: z.string(),
+    vectorFeet: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+    previewInstanceHash: z.string().optional()
+  },
+  async (args) => {
+    try {
+      const { admission, decision } = assertCertifiedMoveOneToolExposure({
+        request: { ...args, previewInstanceHash: args.previewInstanceHash },
+        channel: "typed_mcp"
+      });
+      // In laboratory evidence mode this remains a bounded one-element call.
+      // In certified mode the ordinary call boundary still rejects it until a
+      // generated L4 policy plus native family attestation are present.
+      const data = await callRevit("/revit/move-elements", "POST", admission.outboundBody);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            family: { id: admission.familyId, hash: admission.familyHash },
+            requestInstanceHash: admission.requestInstanceHash,
+            policy: { hash: decision.policyHash, recordHash: decision.policyRecordHash },
+            result: data
+          }, null, 2)
+        }]
+      };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
 );

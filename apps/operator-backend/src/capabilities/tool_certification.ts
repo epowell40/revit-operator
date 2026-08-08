@@ -51,6 +51,17 @@ export type StandaloneExecutorSurface = {
   transport: "direct_loopback";
 };
 
+/**
+ * A reviewed parameterized request contract.  This is intentionally only a
+ * binding to a separately implemented deterministic validator: it never
+ * means that all bodies for a route are certified.
+ */
+export type RequestFamilyBinding = {
+  schema: "revit-operator.certified-request-family.v1";
+  id: string;
+  validator_hash: string;
+};
+
 const SAFE_READ_STANDALONE_BINDING = Object.freeze({
   method: "POST",
   path: "/revit/certified/sheets/count",
@@ -69,6 +80,7 @@ export type ToolCertificationRecord = {
   requested_channels: ExposureChannel[];
   visibility: ToolVisibility;
   evidence: CertificationEvidence;
+  request_family?: RequestFamilyBinding;
   execution_surface?: StandaloneExecutorSurface;
   request_hash: string;
   effect_hash: string;
@@ -87,6 +99,7 @@ export type ToolCertificationCandidate = Pick<
 > & {
   request: JsonValue;
   typed_mcp_request_fixtures: TypedMcpRequestFixture[];
+  request_family?: RequestFamilyBinding;
   execution_surface?: StandaloneExecutorSurface;
 };
 
@@ -119,6 +132,7 @@ export type ToolExposurePolicyRecord = {
   request_hash: string;
   effect_hash: string;
   evidence_record_hash: string;
+  request_family?: RequestFamilyBinding;
   highest_cumulative_level: CertificationLevel | null;
   observed_levels: CertificationLevel[];
   visibility: ToolVisibility;
@@ -193,6 +207,18 @@ function assertSha256(value: unknown, location: string): asserts value is string
   if (typeof value !== "string" || !/^sha256:[0-9a-f]{64}$/.test(value)) {
     throw new Error(`${location} must be a lowercase sha256 digest`);
   }
+}
+
+function parseRequestFamilyBinding(value: unknown, location: string): RequestFamilyBinding {
+  assertPlainObject(value, location);
+  assertExactKeys(value, ["schema", "id", "validator_hash"], location);
+  assertEnum(value.schema, ["revit-operator.certified-request-family.v1"] as const, `${location}.schema`);
+  assertString(value.id, `${location}.id`);
+  if (!/^[a-z][a-z0-9._-]*$/.test(value.id)) {
+    throw new Error(`${location}.id must be a canonical request-family identifier`);
+  }
+  assertSha256(value.validator_hash, `${location}.validator_hash`);
+  return value as unknown as RequestFamilyBinding;
 }
 
 function assertTypedMcpAliases(value: unknown, location: string): asserts value is string[] {
@@ -398,6 +424,7 @@ function parseCertificationRecord(
 ): ToolCertificationRecord {
   assertPlainObject(value, location);
   const hasExecutionSurface = Object.prototype.hasOwnProperty.call(value, "execution_surface");
+  const hasRequestFamily = Object.prototype.hasOwnProperty.call(value, "request_family");
   assertExactKeys(value, [
     "method",
     "path",
@@ -407,6 +434,7 @@ function parseCertificationRecord(
     "requested_channels",
     "visibility",
     "evidence",
+    ...(hasRequestFamily ? ["request_family"] : []),
     ...(hasExecutionSurface ? ["execution_surface"] : []),
     "request_hash",
     "effect_hash",
@@ -420,6 +448,7 @@ function parseCertificationRecord(
   assertJsonValue(value.effect, `${location}.effect`);
   assertUniqueEnumArray(value.requested_channels, EXPOSURE_CHANNELS, `${location}.requested_channels`);
   assertEnum(value.visibility, TOOL_VISIBILITIES, `${location}.visibility`);
+  if (hasRequestFamily) parseRequestFamilyBinding(value.request_family, `${location}.request_family`);
   assertPlainObject(value.evidence, `${location}.evidence`);
   assertExactKeys(value.evidence, ["levels", "state", "provenance"], `${location}.evidence`);
   assertUniqueEnumArray(value.evidence.levels, CERTIFICATION_LEVELS, `${location}.evidence.levels`, true);
@@ -480,12 +509,14 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
     const location = `candidates.candidates[${index}]`;
     assertPlainObject(candidate, location);
     const hasExecutionSurface = Object.prototype.hasOwnProperty.call(candidate, "execution_surface");
+    const hasRequestFamily = Object.prototype.hasOwnProperty.call(candidate, "request_family");
     assertExactKeys(candidate, [
       "method",
       "path",
       "typed_mcp_aliases",
       "request",
       "typed_mcp_request_fixtures",
+      ...(hasRequestFamily ? ["request_family"] : []),
       ...(hasExecutionSurface ? ["execution_surface"] : []),
       "request_hash",
       "effect_hash"
@@ -493,6 +524,7 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
     assertCanonicalMethod(candidate.method, `${location}.method`);
     assertCanonicalToolPath(candidate.path, `${location}.path`);
     assertTypedMcpAliases(candidate.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
+    if (hasRequestFamily) parseRequestFamilyBinding(candidate.request_family, `${location}.request_family`);
     assertStandaloneExecutorBinding(candidate, candidate.typed_mcp_aliases, hasExecutionSurface, location);
     if (hasExecutionSurface) {
       if (candidate.typed_mcp_aliases.length !== 1) {
@@ -535,13 +567,14 @@ export function parseToolCertificationCandidates(value: unknown): ToolCertificat
 }
 
 function certificationIdentity(
-  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash" | "execution_surface">
+  value: Pick<ToolCertificationRecord, "method" | "path" | "request_hash" | "effect_hash" | "request_family" | "execution_surface">
 ): string {
   return canonicalJson({
     method: value.method,
     path: value.path,
     request_hash: value.request_hash,
     effect_hash: value.effect_hash,
+    ...(value.request_family ? { request_family: value.request_family } : {}),
     ...(value.execution_surface ? { execution_surface: value.execution_surface } : {})
   });
 }
@@ -609,6 +642,7 @@ function recordHashPayload(record: Omit<ToolCertificationRecord, "record_hash">)
     effect: canonicalValue(record.effect),
     requested_channels: [...record.requested_channels].sort(ordinalCompare),
     visibility: record.visibility,
+    ...(record.request_family ? { request_family: canonicalValue(record.request_family as unknown as JsonValue) } : {}),
     ...(record.execution_surface
       ? { execution_surface: canonicalValue(record.execution_surface as unknown as JsonValue) }
       : {}),
@@ -751,6 +785,7 @@ export function generateToolExposurePolicy(input: ToolCertificationEvidenceFile 
       request_hash: record.request_hash,
       effect_hash: record.effect_hash,
       evidence_record_hash: record.record_hash,
+      ...(record.request_family ? { request_family: record.request_family } : {}),
       highest_cumulative_level: evidence.highest,
       observed_levels: evidence.observed,
       visibility: record.visibility,

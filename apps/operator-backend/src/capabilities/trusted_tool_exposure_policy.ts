@@ -88,10 +88,12 @@ export function parseTrustedToolExposurePolicy(value: unknown): ToolExposurePoli
   for (const [index, raw] of policy.records.entries()) {
     const record = asObject(raw, `certification policy record ${index}`);
     const hasExecutionSurface = own(record, "execution_surface");
+    const hasRequestFamily = own(record, "request_family");
     exactKeys(record, [
       "method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash",
       "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash",
-      ...(hasExecutionSurface ? ["execution_surface"] : [])
+      ...(hasExecutionSurface ? ["execution_surface"] : []),
+      ...(hasRequestFamily ? ["request_family"] : [])
     ], `certification policy record ${index}`);
     try {
       if (normalizeMethod(String(record.method ?? "")) !== record.method || normalizeToolPath(String(record.path ?? "")) !== record.path) {
@@ -102,6 +104,15 @@ export function parseTrustedToolExposurePolicy(value: unknown): ToolExposurePoli
     }
     for (const field of ["request_hash", "effect_hash", "evidence_record_hash", "policy_record_hash"] as const) {
       requiredHash(record[field], `certification policy record ${index}.${field}`);
+    }
+    if (hasRequestFamily) {
+      const family = asObject(record.request_family, `certification policy record ${index}.request_family`);
+      exactKeys(family, ["schema", "id", "validator_hash"], `certification policy record ${index}.request_family`);
+      if (family.schema !== "revit-operator.certified-request-family.v1"
+        || typeof family.id !== "string" || !/^[a-z][a-z0-9._-]*$/.test(family.id)) {
+        throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_INVALID", "Certification policy request family is invalid.");
+      }
+      requiredHash(family.validator_hash, `certification policy record ${index}.request_family.validator_hash`);
     }
     if (!Array.isArray(record.typed_mcp_aliases)
       || record.typed_mcp_aliases.some(alias => typeof alias !== "string" || !ALIAS.test(alias))) {
@@ -174,7 +185,8 @@ export function parseTrustedToolExposurePolicy(value: unknown): ToolExposurePoli
     if (recordHash !== sha256(recordPayload as never)) {
       throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_INVALID", "Certification policy record hash is invalid.");
     }
-    const identity = `${record.method}\n${record.path}\n${record.request_hash}\n${record.effect_hash}`;
+    const family = hasRequestFamily ? record.request_family as Record<string, unknown> : undefined;
+    const identity = `${record.method}\n${record.path}\n${record.request_hash}\n${record.effect_hash}\n${family?.id ?? ""}\n${family?.validator_hash ?? ""}`;
     if (identities.has(identity)) {
       throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_INVALID", "Certification policy has duplicate exact records.");
     }
@@ -261,11 +273,23 @@ export function evaluateTrustedToolExposurePolicy(input: {
   effectHash?: string;
   channel: ExposureChannel;
   alias?: string;
+  /**
+   * Present only after a local deterministic request-family validator has
+   * accepted the raw request. The request instance remains independently
+   * hash-bound; it is never substituted for a policy-wide wildcard body.
+   */
+  requestFamily?: { id: string; validatorHash: string; requestInstanceHash: string };
 }): TrustedToolExposureEvaluation {
+  if (input.requestFamily && (!SHA256.test(input.requestFamily.validatorHash) || !SHA256.test(input.requestFamily.requestInstanceHash))) {
+    throw new TrustedToolExposurePolicyError("CERTIFICATION_POLICY_DENIED", "Parameterized request-family admission is malformed.");
+  }
   const matches = input.policy.records.filter(record =>
     record.method === input.method
     && record.path === input.path
-    && record.request_hash === input.requestHash
+    && (input.requestFamily
+      ? record.request_family?.id === input.requestFamily.id
+        && record.request_family.validator_hash === input.requestFamily.validatorHash
+      : record.request_hash === input.requestHash)
     && (input.effectHash === undefined || record.effect_hash === input.effectHash)
   );
   if (matches.length !== 1) {

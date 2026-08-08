@@ -43,6 +43,10 @@ export class CertifiedMoveOneRequestError extends Error {
   constructor(readonly code: string, message: string) { super(`[${code}] ${message}`); }
 }
 
+// Admission objects are process-local capabilities. A structurally identical
+// JSON object cannot skip the reviewed validator on the execution path.
+const admittedRequests = new WeakSet<object>();
+
 const FAMILY_MATERIAL: Json = {
   family: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
   route: { method: "POST", path: "/revit/move-elements", alias: "revit_move_one_certified" },
@@ -119,5 +123,11 @@ export function admitCertifiedMoveOneRequest(input: unknown): CertifiedMoveOneAd
     options: { failOnPinned: true as const, unpinIfAllowed: false as const }
   };
   const requestInstanceHash = digest({ familyHash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, request: request as unknown as Json, outboundBody: outboundBody as unknown as Json });
-  return { familyId: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1, familyHash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, requestInstanceHash, request, outboundBody };
+  const admission = Object.freeze({ familyId: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1, familyHash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, requestInstanceHash, request, outboundBody });
+  admittedRequests.add(admission);
+  return admission;
+}
+
+export function isCertifiedMoveOneAdmission(value: unknown): value is CertifiedMoveOneAdmission {
+  return !!value && typeof value === "object" && admittedRequests.has(value as object);
 }

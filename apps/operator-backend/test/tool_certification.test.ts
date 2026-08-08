@@ -338,6 +338,27 @@ test("typed MCP aliases are hash-bound and intentional multi-route aliases use c
   assert.ok(multiRoute.bindings.some(binding => !binding.exposed));
 });
 
+test("reviewed request-family bindings are carried into evidence and policy hashes without wildcard authorization", () => {
+  const requestFamily = {
+    schema: "revit-operator.certified-request-family.v1" as const,
+    id: "move-one.v1",
+    validator_hash: `sha256:${"a".repeat(64)}`
+  };
+  const exact = record(["L0", "L1", "L2", "L3", "L4"]);
+  const family = record(["L0", "L1", "L2", "L3", "L4"], "verified", { request_family: requestFamily });
+  const policy = generateToolExposurePolicy(evidenceFile([family]));
+  assert.deepEqual(policy.records[0]?.request_family, requestFamily);
+  assert.notEqual(exact.record_hash, family.record_hash);
+  assert.notEqual(
+    generateToolExposurePolicy(evidenceFile([exact])).records[0]?.policy_record_hash,
+    policy.records[0]?.policy_record_hash
+  );
+
+  const malformed = structuredClone(family) as any;
+  malformed.request_family.validator_hash = "sha256:not-a-digest";
+  assert.throws(() => generateToolExposurePolicy(evidenceFile([malformed])), /validator_hash must be a lowercase sha256 digest/);
+});
+
 test("missing, unknown, gapped, stale, revoked, and mismatched evidence fail closed with stable reasons", () => {
   assert.ok(allDenied(record([])).includes(CERTIFICATION_REASON_CODES.missing));
   assert.ok(allDenied(record(["L0", "L1"], "unknown")).includes(CERTIFICATION_REASON_CODES.unknown));

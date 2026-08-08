@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import {
   assertToolExposure,
+  assertCertifiedMoveOneToolExposure,
   canonicalToolExposureJson,
   evaluateToolExposure,
   filterRegistryEntriesForSearch,
@@ -16,6 +17,7 @@ import {
   loadToolExposurePolicy,
   ToolExposurePolicyError
 } from "./toolExposurePolicy.js";
+import { CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1 } from "./certifiedMoveOneRequestFamily.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -241,6 +243,79 @@ test("exact body-aware policy decisions distinguish known uncertified, request m
   });
   assert.equal(workflowOnlyRaw.visibility, "workflow_only");
   assert.deepEqual(workflowOnlyRaw.reasonCodes, ["CERT_WORKFLOW_ONLY"]);
+});
+
+test("parameterized request-family admission remains validator-hash and instance-hash bound", () => {
+  const family = {
+    schema: "revit-operator.certified-request-family.v1" as const,
+    id: "revit-operator.certified-move-one.request-family.v1",
+    validator_hash: `sha256:${"a".repeat(64)}`
+  };
+  const variant = writePolicyVariant(policy => {
+    const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
+    record.method = "POST";
+    record.path = "/revit/move-elements";
+    record.typed_mcp_aliases = ["revit_move_one_certified"];
+    record.effect_hash = testDigest({ effect: { resolved_effect: "write" } });
+    record.request_family = family;
+    record.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+  });
+  const body = {
+    ids: [4821], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0,
+    dryRun: false, behavior: "allOrNothing", moveTogether: false,
+    options: { failOnPinned: true, unpinIfAllowed: false }
+  };
+  const allowed = evaluateToolExposure({
+    method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
+    requestFamily: family, requestInstanceHash: `sha256:${"b".repeat(64)}`, env: policyVariantEnv(variant)
+  });
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.requestInstanceHash, `sha256:${"b".repeat(64)}`);
+  assert.deepEqual(allowed.requestFamily, family);
+  assert.deepEqual(evaluateToolExposure({
+    method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
+    env: policyVariantEnv(variant)
+  }).reasonCodes, ["CERT_REQUEST_HASH_MISMATCH"]);
+  assert.deepEqual(evaluateToolExposure({
+    method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
+    requestFamily: { ...family, validator_hash: `sha256:${"c".repeat(64)}` }, requestInstanceHash: `sha256:${"b".repeat(64)}`,
+    env: policyVariantEnv(variant)
+  }).reasonCodes, ["CERT_REQUEST_HASH_MISMATCH"]);
+});
+
+test("certified move-one entry point rejects forged admission paths and binds validated preview input", () => {
+  const variant = writePolicyVariant(policy => {
+    const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
+    record.method = "POST";
+    record.path = "/revit/move-elements";
+    record.typed_mcp_aliases = ["revit_move_one_certified"];
+    record.effect_hash = testDigest({ effect: { resolved_effect: "write" } });
+    record.request_family = {
+      schema: "revit-operator.certified-request-family.v1",
+      id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
+      validator_hash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH
+    };
+    record.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+  });
+  const result = assertCertifiedMoveOneToolExposure({
+    request: {
+      phase: "preview", documentFingerprint: `sha256:${"a".repeat(64)}`, sourceScopedId: "host:4821",
+      elementId: 4821, observationId: "frame_01", vectorFeet: { x: 1, y: 0, z: 0 }, previewInstanceHash: undefined
+    },
+    alias: "revit_move_one_certified",
+    env: policyVariantEnv(variant)
+  });
+  assert.equal(result.decision.allowed, true);
+  assert.equal(result.admission.outboundBody.dryRun, true);
+  assert.match(result.decision.requestInstanceHash ?? "", /^sha256:[0-9a-f]{64}$/);
+  assert.throws(() => assertCertifiedMoveOneToolExposure({
+    request: {
+      phase: "preview", documentFingerprint: `sha256:${"a".repeat(64)}`, sourceScopedId: "host:4821",
+      elementId: 4821, observationId: "frame_01", vectorFeet: { x: 3, y: 0, z: 0 }, previewInstanceHash: undefined
+    },
+    alias: "revit_move_one_certified",
+    env: policyVariantEnv(variant)
+  }), /MOVE_ONE_VECTOR_OUT_OF_BOUNDS/);
 });
 
 test("certified route lookup is exact and search filtering exposes no currently uncertified route", () => {
