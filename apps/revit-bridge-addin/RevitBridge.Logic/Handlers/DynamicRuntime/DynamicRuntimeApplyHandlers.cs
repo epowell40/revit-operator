@@ -298,7 +298,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
         private static void ValidateBudgetedGraph(UIApplication app, Document document, DynamicOperationGraph graph, DynamicEffectBudgetV1 budget, long revision)
         {
-            DynamicOperationGraphAdmission.Validate(graph, budget.MaximumOperationCount, budget.MaximumAffectedElements);
+            DynamicOperationGraphAdmission.Validate(graph, budget.MaximumOperationCount, budget.MaximumModifications);
             var nodes = new List<DynamicOperationNodeV1>(); string? prior = null;
             foreach (var operation in graph.Operations)
             {
