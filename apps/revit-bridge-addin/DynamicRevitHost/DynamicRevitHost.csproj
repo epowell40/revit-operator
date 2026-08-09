@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net48;net8.0-windows</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RevitApiPathNet48 Condition="'$(RevitApiPathNet48)'==''">C:\Program Files\Autodesk\Revit 2024</RevitApiPathNet48>
+    <RevitApiPathNet8 Condition="'$(RevitApiPathNet8)'==''">C:\Program Files\Autodesk\Revit 2025</RevitApiPathNet8>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\RevitBridge.Logic\Handlers\DynamicRuntime\**\*.cs" Link="Handlers\%(RecursiveDir)%(Filename)%(Extension)" />
+    <ProjectReference Include="..\RevitBridge.Common\RevitBridge.Common.csproj" />
+    <ProjectReference Include="..\..\dynamic-revit-runtime\DynamicRevitSdk\DynamicRevitSdk.csproj" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <Reference Include="RevitAPI"><HintPath>$(RevitApiPathNet48)\RevitAPI.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitApiPathNet48)\RevitAPIUI.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)'=='net8.0-windows'">
+    <Reference Include="RevitAPI"><HintPath>$(RevitApiPathNet8)\RevitAPI.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="RevitAPIUI"><HintPath>$(RevitApiPathNet8)\RevitAPIUI.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+</Project>

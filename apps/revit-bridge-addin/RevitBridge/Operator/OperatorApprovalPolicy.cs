@@ -242,6 +242,9 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/pick-at-pixel", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/activate-view", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/query", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/register", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/snapshot", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/preview", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/resolve", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/views", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/sheets", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
