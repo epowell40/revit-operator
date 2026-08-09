@@ -18,9 +18,9 @@ public sealed class CoreOperationsTests
         Assert.All(graph.Nodes, node => Assert.Equal(node.NodeId, DynamicOperationGraphV1Admission.NodeId(node)));
         Assert.Equal("internal_revit_units", graph.Nodes[0].Attributes["value_semantics"]);
         Assert.Equal("double", graph.Nodes[0].Attributes["expected_storage_kind"]);
-        Assert.Equal("sha256:71d1571eefdc26e209240a124889067c35ec05fe24431a45a7700a18c9e43a58", graph.GraphHash);
-        Assert.Equal("sha256:9890297fa6f67027344c1b7468406605e52ab796969f7c51ed5d5038f792a2fa", DynamicCoreOperationManifestV1.ManifestHash);
-        Assert.Equal("sha256:dc9085a2a4cc594896fbc0a79766eac921470dd1a01e348c3609084e1289c04c", DynamicCoreOperationManifestV1.ContractSurfaceHash);
+        Assert.Equal("sha256:54ccd5547e936917e79bff795bf1b1ba914d528a72f42a03e5711c2d1093d4f4", graph.GraphHash);
+        Assert.Equal("sha256:f1939b669d6b424fa429c2c43299a02f320d95f4496b1e1d93800e934d4da417", DynamicCoreOperationManifestV1.ManifestHash);
+        Assert.Equal("sha256:61e31affc945becb522ed60ae8b49c3770b5a950c53999f9ee1434d957296a19", DynamicCoreOperationManifestV1.ContractSurfaceHash);
     }
 
     [Fact]
@@ -41,7 +41,7 @@ public sealed class CoreOperationsTests
     {
         var builder = Builder(4);
         builder.SetString("a", "parameter:builtin:1", "instance", "hello", H("a-state"), H("a-param"));
-        builder.SetInteger("b", "parameter:builtin:2", "type", -12, H("b-state"), H("b-param"));
+        builder.SetInteger("b", "parameter:builtin:2", "type", -12, H("b-state"), H("b-param"), "b-type");
         builder.SetDoubleInternal("c", "parameter:builtin:3", "instance", 1.25, "autodesk.spec.aec:length-2.0.0", "autodesk.unit.unit:feet-1.0.0", H("c-state"), H("c-param"));
         builder.SetElementId("d", "parameter:builtin:4", "instance", -1, H("d-state"), H("d-param"));
         var nodes = builder.Build().Nodes;
@@ -138,6 +138,78 @@ public sealed class CoreOperationsTests
         Assert.Throws<InvalidOperationException>(() => DynamicCoreOperationApplyAuthorizationPolicyV1.Validate(authorization, applyGraph, binding, H("effects"), Key, Now));
     }
 
+    [Fact]
+    public void DescriptorsAreDeeplyImmutableAndDeleteApplyTruthCannotDrift()
+    {
+        var manifest = DynamicCoreOperationManifestV1.ManifestHash;
+        var descriptor = DynamicCoreOperationManifestV1.Find("delete_element")!;
+        Assert.All(typeof(DynamicCoreOperationDescriptorV1).GetProperties(), property => Assert.Null(property.SetMethod));
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)descriptor.AllowedAttributes).Add("apply"));
+        Assert.Throws<NotSupportedException>(() => ((IList<DynamicCoreOperationDescriptorV1>)DynamicCoreOperationManifestV1.All).Add(descriptor));
+        Assert.False(descriptor.ApplySupported);
+        Assert.Equal(manifest, DynamicCoreOperationManifestV1.ManifestHash);
+    }
+
+    [Fact]
+    public void RotationNumbersHaveOneCanonicalWireRepresentation()
+    {
+        Assert.Equal("0", DynamicCoreOperationCanonicalNumberV1.Format(-0d));
+        Assert.Equal("1e20", DynamicCoreOperationCanonicalNumberV1.Format(1e20));
+        Assert.Equal(1e20, DynamicCoreOperationCanonicalNumberV1.ParseExact("1e20", "test"));
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("-0", "test"));
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("1E+20", "test"));
+
+        var node = Clone(Graph().Nodes[1]);
+        ((Dictionary<string, string>)node.Attributes)["axis_origin_feet"] = "1.0,2,3";
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationAdmissionV1.ValidateNodeShape(node, "preview"));
+    }
+
+    [Fact]
+    public void ConnectorSignatureBindsTopologyGeometrySizeAndSystem()
+    {
+        var baseline = Connector();
+        var hash = DynamicCoreOperationStateV1.ConnectorSignature(new[] { baseline });
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(originX: 1) }));
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(radius: 2) }));
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(system: "system-2") }));
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(connected: new[] { "owner-2:7" }) }));
+    }
+
+    [Fact]
+    public void TypeScopedParameterBindsActualMutationOwnerAcrossAdmissionAndEffect()
+    {
+        var builder = Builder(1);
+        builder.SetString("instance", "parameter:builtin:1", "type", "value", H("type-state"), H("parameter-state"), "type-owner");
+        var graph = builder.Build(); var budget = Budget();
+        budget.ExplicitTargetUniqueIds = new[] { "instance" }; budget.MaximumOperationCount = 1; budget.MaximumModifications = 1; budget.MaximumDeletes = 0;
+        var context = Context(graph, budget);
+        context.MutationOwnerUniqueIds = new Dictionary<string, string> { ["instance"] = "type-owner" };
+        var binding = Binding(graph, context);
+        DynamicCoreOperationAdmissionV1.Validate(graph, budget, context, binding, Key, Now, "preview");
+
+        var effect = Effect(graph.Nodes[0], 42, modified: new long[] { 42 });
+        effect.PrimaryTargetUniqueId = "type-owner"; effect.EffectHash = DynamicCoreOperationEffectPolicyV1.CanonicalHash(effect);
+        DynamicCoreOperationEffectPolicyV1.ValidateAgainstGraph(new[] { effect }, graph, budget);
+        effect.PrimaryTargetUniqueId = "instance"; effect.EffectHash = DynamicCoreOperationEffectPolicyV1.CanonicalHash(effect);
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationEffectPolicyV1.ValidateAgainstGraph(new[] { effect }, graph, budget));
+
+        context.MutationOwnerUniqueIds = new Dictionary<string, string> { ["instance"] = "substituted-type" };
+        Assert.Throws<InvalidOperationException>(() => DynamicCoreOperationAdmissionV1.Validate(graph, budget, context, binding, Key, Now, "preview"));
+    }
+
+    [Fact]
+    public void ApplyAuthorizationRequiresInjectedAtomicOneUseConsumption()
+    {
+        var graph = WithNodes(Graph(), Graph().Nodes.Take(3).Select(Clone).ToArray());
+        var context = Context(graph, Budget()); var binding = Binding(graph, context);
+        var authorization = DynamicCoreOperationApplyAuthorizationPolicyV1.Issue(graph, binding, H("effects"), Now + 60, Key, "auth-once");
+        var ledger = new MemoryAuthorizationLedger();
+        var first = DynamicCoreOperationApplyAuthorizationPolicyV1.ValidateAndConsume(authorization, graph, binding, H("effects"), Key, Now, ledger);
+        Assert.Equal(DynamicCoreOperationApplyAuthorizationPolicyV1.AuthorizationHash(authorization), first);
+        Assert.Throws<InvalidOperationException>(() => DynamicCoreOperationApplyAuthorizationPolicyV1.ValidateAndConsume(authorization, graph, binding, H("effects"), Key, Now, ledger));
+        Assert.Throws<ArgumentNullException>(() => DynamicCoreOperationApplyAuthorizationPolicyV1.ValidateAndConsume(authorization, graph, binding, H("effects"), Key, Now, null!));
+    }
+
     private static DynamicOperationGraphV1 Graph()
     {
         var builder = Builder(4);
@@ -162,6 +234,7 @@ public sealed class CoreOperationsTests
     {
         HostAdapterManifestHash = H("host"), TargetCategoryStableIds = graph.Nodes.ToDictionary(node => node.TargetUniqueIds[0], _ => "category:builtin:OST_MechanicalEquipment"),
         TargetStateHashes = graph.Nodes.ToDictionary(node => node.TargetUniqueIds[0], node => node.Attributes["expected_target_state_hash"]),
+        MutationOwnerUniqueIds = graph.Nodes.ToDictionary(node => node.TargetUniqueIds[0], node => node.Kind == "set_parameter" ? node.Attributes["expected_parameter_owner_unique_id"] : node.TargetUniqueIds[0]),
         ViewScopeHash = budget.ViewScopeHash, LevelScopeHash = budget.LevelScopeHash, WorksetScopeHash = budget.WorksetScopeHash,
         PhaseScopeHash = budget.PhaseScopeHash, FileCapabilitySetHash = budget.FileCapabilitySetHash, PlannedExecutionMilliseconds = 100, PlannedRegenerations = 4
     };
@@ -182,7 +255,8 @@ public sealed class CoreOperationsTests
 
     private static DynamicCoreOperationEffectV1 Effect(DynamicOperationNodeV1 node, long primary, long[]? modified = null, long[]? deleted = null, string[]? deletedUniqueIds = null) => new()
     {
-        NodeId = node.NodeId, Kind = node.Kind, PrimaryTargetElementId = primary, ModifiedElementIds = modified ?? Array.Empty<long>(),
+        NodeId = node.NodeId, Kind = node.Kind, PrimaryTargetElementId = primary,
+        PrimaryTargetUniqueId = node.Kind == "set_parameter" ? node.Attributes["expected_parameter_owner_unique_id"] : node.TargetUniqueIds[0], ModifiedElementIds = modified ?? Array.Empty<long>(),
         DeletedElementIds = deleted ?? Array.Empty<long>(), DeletedUniqueIds = deletedUniqueIds ?? Array.Empty<string>()
     };
 
@@ -211,4 +285,13 @@ public sealed class CoreOperationsTests
     }
 
     private static string H(string value) => DynamicWire.Sha256(value);
+
+    private static DynamicCoreConnectorSignatureEntryV1 Connector(double originX = 0, double? radius = 1, string system = "system-1", string[]? connected = null) =>
+        new("owner-1", "connector-1", "DomainHvac", "End", "Round", originX, 0, 0, 0, 0, 1, radius, null, null, system, "type-1", connected ?? new[] { "owner-2:2" });
+
+    private sealed class MemoryAuthorizationLedger : IDynamicCoreOperationApplyAuthorizationLedgerV1
+    {
+        private readonly HashSet<string> _values = new(StringComparer.Ordinal);
+        public bool TryConsume(string authorizationHash) => _values.Add(authorizationHash);
+    }
 }

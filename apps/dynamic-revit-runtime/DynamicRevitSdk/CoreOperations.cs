@@ -16,22 +16,37 @@ public static class DynamicCoreOperationsV1
     public const string EffectSchema = "dynamic-revit-core-operation-effect/v1";
     public const string PreviewSchema = "dynamic-revit-core-operation-preview/v1";
     public const string ApplyReceiptSchema = "dynamic-revit-core-operation-apply-receipt/v1";
-    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v1";
+    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v2";
     public const int MaximumOperations = 256;
     public const int MaximumAttributes = 16;
 }
 
 public sealed class DynamicCoreOperationDescriptorV1
 {
-    public string Kind { get; set; } = "";
-    public string PrimitiveVersion { get; set; } = "";
-    public string Domain { get; set; } = "";
-    public string EffectClass { get; set; } = "modify";
-    public bool ImplementedByV1Host { get; set; }
-    public bool PreviewSupported { get; set; }
-    public bool ApplySupported { get; set; }
-    public IReadOnlyList<string> RequiredAttributes { get; set; } = Array.Empty<string>();
-    public IReadOnlyList<string> AllowedAttributes { get; set; } = Array.Empty<string>();
+    internal DynamicCoreOperationDescriptorV1(string kind, string primitiveVersion, string domain, string effectClass,
+        bool implementedByV1Host, bool previewSupported, bool applySupported, IEnumerable<string> requiredAttributes,
+        IEnumerable<string> allowedAttributes)
+    {
+        Kind = kind;
+        PrimitiveVersion = primitiveVersion;
+        Domain = domain;
+        EffectClass = effectClass;
+        ImplementedByV1Host = implementedByV1Host;
+        PreviewSupported = previewSupported;
+        ApplySupported = applySupported;
+        RequiredAttributes = Array.AsReadOnly(requiredAttributes.OrderBy(value => value, StringComparer.Ordinal).ToArray());
+        AllowedAttributes = Array.AsReadOnly(allowedAttributes.OrderBy(value => value, StringComparer.Ordinal).ToArray());
+    }
+
+    public string Kind { get; }
+    public string PrimitiveVersion { get; }
+    public string Domain { get; }
+    public string EffectClass { get; }
+    public bool ImplementedByV1Host { get; }
+    public bool PreviewSupported { get; }
+    public bool ApplySupported { get; }
+    public IReadOnlyList<string> RequiredAttributes { get; }
+    public IReadOnlyList<string> AllowedAttributes { get; }
 }
 
 public static class DynamicCoreOperationManifestV1
@@ -41,13 +56,14 @@ public static class DynamicCoreOperationManifestV1
         typeof(DynamicCoreOperationDescriptorV1), typeof(DynamicCoreOperationManifestBindingV1),
         typeof(DynamicCoreOperationAdmissionContextV1), typeof(DynamicCoreOperationEffectV1),
         typeof(DynamicCoreOperationApplyAuthorizationV1), typeof(DynamicCoreOperationReadbackV1),
-        typeof(DynamicCoreOperationPreviewV1), typeof(DynamicCoreOperationApplyReceiptV1)
+        typeof(DynamicCoreOperationPreviewV1), typeof(DynamicCoreOperationApplyReceiptV1),
+        typeof(DynamicCoreConnectorSignatureEntryV1), typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1)
     };
     private static readonly DynamicCoreOperationDescriptorV1[] Descriptors =
     {
         D("set_parameter", "set_parameter/v1", "parameters", "modify", true, true,
-            new[] { "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics" },
-            new[] { "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "spec_type_id", "unit_type_id", "value_kind", "value_semantics" }),
+            new[] { "expected_parameter_owner_unique_id", "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics" },
+            new[] { "expected_parameter_owner_unique_id", "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "spec_type_id", "unit_type_id", "value_kind", "value_semantics" }),
         D("rotate_element", "rotate_element/v1", "elements", "modify", true, true,
             new[] { "angle_radians", "axis_direction", "axis_origin_feet", "expected_target_state_hash" }),
         D("change_type", "change_type/v1", "elements", "modify", true, true,
@@ -56,28 +72,35 @@ public static class DynamicCoreOperationManifestV1
             new[] { "expected_target_state_hash" })
     };
 
-    public static IReadOnlyList<DynamicCoreOperationDescriptorV1> All => Descriptors;
-    public static DynamicCoreOperationDescriptorV1? Find(string kind) => Descriptors.FirstOrDefault(value => value.Kind == kind);
-    public static string ContractSurfaceHash => DynamicWire.Sha256(string.Join("\n", ContractTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
-    public static string ManifestHash => DynamicWire.Sha256(DynamicCanonical.Join(DynamicCoreOperationsV1.ManifestSchema, ContractSurfaceHash,
+    private static readonly IReadOnlyList<DynamicCoreOperationDescriptorV1> ReadOnlyDescriptors = Array.AsReadOnly(Descriptors);
+    private static readonly string ContractSurfaceHashValue = DynamicWire.Sha256(string.Join("\n", ContractTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
+    private static readonly string ManifestHashValue = DynamicWire.Sha256(DynamicCanonical.Join(DynamicCoreOperationsV1.ManifestSchema, DynamicCoreOperationsV1.CanonicalVersion, ContractSurfaceHashValue,
         string.Join("\n", Descriptors.OrderBy(value => value.Kind, StringComparer.Ordinal).Select(Canonical))));
 
+    public static IReadOnlyList<DynamicCoreOperationDescriptorV1> All => ReadOnlyDescriptors;
+    public static DynamicCoreOperationDescriptorV1? Find(string kind) => Descriptors.FirstOrDefault(value => value.Kind == kind);
+    public static string ContractSurfaceHash => ContractSurfaceHashValue;
+    public static string ManifestHash => ManifestHashValue;
+
     private static DynamicCoreOperationDescriptorV1 D(string kind, string version, string domain, string effectClass, bool preview, bool apply, string[] required, string[]? allowed = null)
-        => new()
-        {
-            Kind = kind, PrimitiveVersion = version, Domain = domain, EffectClass = effectClass,
-            ImplementedByV1Host = true, PreviewSupported = preview, ApplySupported = apply,
-            RequiredAttributes = required.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
-            AllowedAttributes = (allowed ?? required).OrderBy(value => value, StringComparer.Ordinal).ToArray()
-        };
+        => new(kind, version, domain, effectClass, implementedByV1Host: true, preview, apply, required, allowed ?? required);
 
     private static string Canonical(DynamicCoreOperationDescriptorV1 value) => DynamicCanonical.Join(value.Kind, value.PrimitiveVersion,
         value.Domain, value.EffectClass, value.ImplementedByV1Host ? "1" : "0", value.PreviewSupported ? "1" : "0", value.ApplySupported ? "1" : "0",
         DynamicCanonical.Set(value.RequiredAttributes), DynamicCanonical.Set(value.AllowedAttributes));
 
-    private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
-        .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)
-        .OrderBy(property => property.Name, StringComparer.Ordinal).Select(property => property.Name + ":" + TypeName(property.PropertyType)));
+    private static string Surface(Type type)
+    {
+        var properties = type.GetProperties()
+            .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)
+            .Select(property => "property:" + property.Name + ":" + TypeName(property.PropertyType) +
+                (property.SetMethod == null ? ":read-only" : ":read-write"));
+        var methods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly)
+            .Where(method => !method.IsSpecialName)
+            .Select(method => "method:" + method.Name + ":" + TypeName(method.ReturnType) + "(" +
+                string.Join(",", method.GetParameters().Select(parameter => TypeName(parameter.ParameterType))) + ")");
+        return type.FullName + "\n" + string.Join("\n", properties.Concat(methods).OrderBy(value => value, StringComparer.Ordinal));
+    }
     private static string TypeName(Type type)
     {
         if (type.IsArray) return TypeName(type.GetElementType()!) + "[]";
@@ -88,6 +111,28 @@ public static class DynamicCoreOperationManifestV1
             return name + "<" + string.Join(",", type.GetGenericArguments().Select(TypeName)) + ">";
         }
         return type.FullName ?? type.Name;
+    }
+}
+
+public static class DynamicCoreOperationCanonicalNumberV1
+{
+    public static string Format(double value)
+    {
+        if (double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentException("A canonical core-operation number must be finite.", nameof(value));
+        if (value == 0d) return "0";
+        var formatted = value.ToString("R", CultureInfo.InvariantCulture);
+        var exponentIndex = formatted.IndexOfAny(new[] { 'E', 'e' });
+        if (exponentIndex < 0) return formatted;
+        var exponent = int.Parse(formatted.Substring(exponentIndex + 1), NumberStyles.Integer, CultureInfo.InvariantCulture);
+        return formatted.Substring(0, exponentIndex) + "e" + exponent.ToString(CultureInfo.InvariantCulture);
+    }
+
+    public static double ParseExact(string value, string field)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ||
+            double.IsNaN(parsed) || double.IsInfinity(parsed) || Format(parsed) != value)
+            throw new ArgumentException("Core-operation " + field + " is not a canonical finite number.");
+        return parsed;
     }
 }
 
@@ -109,23 +154,27 @@ public sealed class DynamicCoreOperationGraphBuilderV1
         _inputHash = inputHash; _documentFingerprint = documentFingerprint; _documentRevision = documentRevision; _budget = operationBudget;
     }
 
-    public string SetString(string targetUniqueId, string parameterIdentity, string scope, string value, string expectedTargetStateHash, string expectedParameterStateHash)
-        => SetParameter(targetUniqueId, parameterIdentity, scope, "string", value ?? throw new ArgumentNullException(nameof(value)), "raw", "string", null, null, expectedTargetStateHash, expectedParameterStateHash);
+    public string SetString(string targetUniqueId, string parameterIdentity, string scope, string value, string expectedTargetStateHash, string expectedParameterStateHash,
+        string? expectedParameterOwnerUniqueId = null)
+        => SetParameter(targetUniqueId, parameterIdentity, scope, "string", value ?? throw new ArgumentNullException(nameof(value)), "raw", "string", null, null, expectedTargetStateHash, expectedParameterStateHash, expectedParameterOwnerUniqueId);
 
-    public string SetInteger(string targetUniqueId, string parameterIdentity, string scope, int value, string expectedTargetStateHash, string expectedParameterStateHash)
-        => SetParameter(targetUniqueId, parameterIdentity, scope, "integer", value.ToString(CultureInfo.InvariantCulture), "raw", "integer", null, null, expectedTargetStateHash, expectedParameterStateHash);
+    public string SetInteger(string targetUniqueId, string parameterIdentity, string scope, int value, string expectedTargetStateHash, string expectedParameterStateHash,
+        string? expectedParameterOwnerUniqueId = null)
+        => SetParameter(targetUniqueId, parameterIdentity, scope, "integer", value.ToString(CultureInfo.InvariantCulture), "raw", "integer", null, null, expectedTargetStateHash, expectedParameterStateHash, expectedParameterOwnerUniqueId);
 
-    public string SetDoubleInternal(string targetUniqueId, string parameterIdentity, string scope, double internalValue, string specTypeId, string unitTypeId, string expectedTargetStateHash, string expectedParameterStateHash)
+    public string SetDoubleInternal(string targetUniqueId, string parameterIdentity, string scope, double internalValue, string specTypeId, string unitTypeId, string expectedTargetStateHash, string expectedParameterStateHash,
+        string? expectedParameterOwnerUniqueId = null)
     {
         if (!Finite(internalValue)) throw new ArgumentException("A typed Revit double must be finite.", nameof(internalValue));
         return SetParameter(targetUniqueId, parameterIdentity, scope, "double", internalValue.ToString("R", CultureInfo.InvariantCulture), "internal_revit_units", "double",
-            Required(specTypeId, 256), Required(unitTypeId, 256), expectedTargetStateHash, expectedParameterStateHash);
+            Required(specTypeId, 256), Required(unitTypeId, 256), expectedTargetStateHash, expectedParameterStateHash, expectedParameterOwnerUniqueId);
     }
 
-    public string SetElementId(string targetUniqueId, string parameterIdentity, string scope, long elementId, string expectedTargetStateHash, string expectedParameterStateHash)
+    public string SetElementId(string targetUniqueId, string parameterIdentity, string scope, long elementId, string expectedTargetStateHash, string expectedParameterStateHash,
+        string? expectedParameterOwnerUniqueId = null)
     {
         if (elementId < -1) throw new ArgumentOutOfRangeException(nameof(elementId));
-        return SetParameter(targetUniqueId, parameterIdentity, scope, "element_id", elementId.ToString(CultureInfo.InvariantCulture), "raw", "element_id", null, null, expectedTargetStateHash, expectedParameterStateHash);
+        return SetParameter(targetUniqueId, parameterIdentity, scope, "element_id", elementId.ToString(CultureInfo.InvariantCulture), "raw", "element_id", null, null, expectedTargetStateHash, expectedParameterStateHash, expectedParameterOwnerUniqueId);
     }
 
     public string RotateElement(string targetUniqueId, DynamicPointV1 axisOriginFeet, DynamicPointV1 axisDirection, double angleRadians, string expectedTargetStateHash)
@@ -137,7 +186,7 @@ public sealed class DynamicCoreOperationGraphBuilderV1
         return Add("rotate_element", targetUniqueId, new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["axis_origin_feet"] = Point(axisOriginFeet), ["axis_direction"] = Point(normalized),
-            ["angle_radians"] = angleRadians.ToString("R", CultureInfo.InvariantCulture), ["expected_target_state_hash"] = Hash(expectedTargetStateHash)
+            ["angle_radians"] = DynamicCoreOperationCanonicalNumberV1.Format(angleRadians), ["expected_target_state_hash"] = Hash(expectedTargetStateHash)
         });
     }
 
@@ -171,15 +220,19 @@ public sealed class DynamicCoreOperationGraphBuilderV1
     }
 
     private string SetParameter(string targetUniqueId, string parameterIdentity, string scope, string valueKind, string rawValue,
-        string semantics, string storage, string? spec, string? unit, string expectedTargetStateHash, string expectedParameterStateHash)
+        string semantics, string storage, string? spec, string? unit, string expectedTargetStateHash, string expectedParameterStateHash, string? expectedParameterOwnerUniqueId)
     {
         if (scope != "instance" && scope != "type") throw new ArgumentException("Parameter scope must be instance or type.", nameof(scope));
         if (rawValue.Length > 4096) throw new ArgumentException("Typed parameter raw value exceeds the bound.", nameof(rawValue));
+        var owner = scope == "instance" ? targetUniqueId : Required(expectedParameterOwnerUniqueId ?? "", 256);
+        if (scope == "instance" && expectedParameterOwnerUniqueId != null && expectedParameterOwnerUniqueId != targetUniqueId)
+            throw new ArgumentException("Instance-scoped parameter owner must be the requested target.", nameof(expectedParameterOwnerUniqueId));
         var attributes = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["parameter_identity"] = Required(parameterIdentity, 256), ["parameter_scope"] = scope, ["value_kind"] = valueKind,
             ["raw_value"] = rawValue, ["value_semantics"] = semantics, ["expected_storage_kind"] = storage,
-            ["expected_target_state_hash"] = Hash(expectedTargetStateHash), ["expected_parameter_state_hash"] = Hash(expectedParameterStateHash)
+            ["expected_target_state_hash"] = Hash(expectedTargetStateHash), ["expected_parameter_state_hash"] = Hash(expectedParameterStateHash),
+            ["expected_parameter_owner_unique_id"] = owner
         };
         if (spec != null) attributes["spec_type_id"] = spec;
         if (unit != null) attributes["unit_type_id"] = unit;
@@ -205,7 +258,8 @@ public sealed class DynamicCoreOperationGraphBuilderV1
         NodeId = value.NodeId, Kind = value.Kind, TargetUniqueIds = value.TargetUniqueIds.ToArray(), DependsOn = value.DependsOn.ToArray(),
         Attributes = value.Attributes.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
     };
-    private static string Point(DynamicPointV1 value) => value.X.ToString("R", CultureInfo.InvariantCulture) + "," + value.Y.ToString("R", CultureInfo.InvariantCulture) + "," + value.Z.ToString("R", CultureInfo.InvariantCulture);
+    private static string Point(DynamicPointV1 value) => DynamicCoreOperationCanonicalNumberV1.Format(value.X) + "," +
+        DynamicCoreOperationCanonicalNumberV1.Format(value.Y) + "," + DynamicCoreOperationCanonicalNumberV1.Format(value.Z);
     private static void ValidatePoint(DynamicPointV1 value, bool coordinate) { if (value == null || !Finite(value.X) || !Finite(value.Y) || !Finite(value.Z) || coordinate && new[] { value.X, value.Y, value.Z }.Any(component => Math.Abs(component) > 1e9)) throw new ArgumentException("Core-operation point is invalid."); }
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
     private static string Required(string value, int length) => string.IsNullOrWhiteSpace(value) || value.Length > length ? throw new ArgumentException("A bounded core-operation identity is required.") : value;
@@ -234,6 +288,7 @@ public sealed class DynamicCoreOperationAdmissionContextV1
     public string HostAdapterManifestHash { get; set; } = "";
     public IReadOnlyDictionary<string, string> TargetCategoryStableIds { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
     public IReadOnlyDictionary<string, string> TargetStateHashes { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
+    public IReadOnlyDictionary<string, string> MutationOwnerUniqueIds { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
     public string ViewScopeHash { get; set; } = "";
     public string LevelScopeHash { get; set; } = "";
     public string WorksetScopeHash { get; set; } = "";
@@ -335,7 +390,15 @@ public static class DynamicCoreOperationAdmissionV1
             var target = node.TargetUniqueIds[0];
             if (targets.Count > 0 && !targets.Contains(target)) throw new ArgumentException("Core-operation target is outside explicit scope.");
             if (!context.TargetCategoryStableIds.TryGetValue(target, out var category) || categories.Count == 0 || !categories.Contains(category)) throw new ArgumentException("Core-operation target category is outside trusted scope.");
-            if (!context.TargetStateHashes.TryGetValue(target, out var stateHash) || node.Attributes["expected_target_state_hash"] != stateHash) throw new InvalidOperationException("Core-operation target state is stale.");
+            if (!context.MutationOwnerUniqueIds.TryGetValue(target, out var mutationOwner) || string.IsNullOrWhiteSpace(mutationOwner) || mutationOwner.Length > 256)
+                throw new InvalidOperationException("Core-operation mutation owner is missing from trusted admission state.");
+            if (node.Kind == "set_parameter" && node.Attributes["expected_parameter_owner_unique_id"] != mutationOwner)
+                throw new InvalidOperationException("Typed parameter mutation owner is stale or substituted.");
+            if (node.Kind == "set_parameter" && node.Attributes["parameter_scope"] == "instance" && mutationOwner != target)
+                throw new InvalidOperationException("Instance-scoped parameter admission resolved a different mutation owner.");
+            if ((node.Kind != "set_parameter" || node.Attributes["parameter_scope"] != "type") && mutationOwner != target)
+                throw new InvalidOperationException("Core-operation admission resolved an unexpected mutation owner.");
+            if (!context.TargetStateHashes.TryGetValue(target, out var stateHash) || node.Attributes["expected_target_state_hash"] != stateHash) throw new InvalidOperationException("Core-operation mutation-owner state is stale.");
             if (descriptor.EffectClass == "delete") deletes++; else modifies++;
         }
         if (graph.Nodes.SelectMany(value => value.TargetUniqueIds).Distinct(StringComparer.Ordinal).Count() > budget.MaximumAffectedElements || modifies > budget.MaximumModifications || deletes > budget.MaximumDeletes)
@@ -368,27 +431,28 @@ public static class DynamicCoreOperationAdmissionV1
         if (kind != storage || !new[] { "string", "integer", "double", "element_id" }.Contains(kind, StringComparer.Ordinal) ||
             attributes["parameter_scope"] != "instance" && attributes["parameter_scope"] != "type" ||
             string.IsNullOrWhiteSpace(attributes["parameter_identity"]) || attributes["parameter_identity"].Length > 256 ||
+            string.IsNullOrWhiteSpace(attributes["expected_parameter_owner_unique_id"]) || attributes["expected_parameter_owner_unique_id"].Length > 256 ||
             !DynamicCanonical.Hash(attributes["expected_parameter_state_hash"]))
             throw new ArgumentException("Typed set_parameter metadata is invalid.");
         var raw = attributes["raw_value"];
         if (kind == "string")
         {
-            ExactKeys(attributes, "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics");
+            ExactKeys(attributes, "expected_parameter_owner_unique_id", "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics");
             if (attributes["value_semantics"] != "raw") throw new ArgumentException("String parameter value must use raw semantics.");
         }
         else if (kind == "integer")
         {
-            ExactKeys(attributes, "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics");
+            ExactKeys(attributes, "expected_parameter_owner_unique_id", "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics");
             if (attributes["value_semantics"] != "raw" || !int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)) throw new ArgumentException("Integer parameter value is invalid.");
         }
         else if (kind == "element_id")
         {
-            ExactKeys(attributes, "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics");
+            ExactKeys(attributes, "expected_parameter_owner_unique_id", "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "value_kind", "value_semantics");
             if (attributes["value_semantics"] != "raw" || !long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) || id < -1) throw new ArgumentException("ElementId parameter value is invalid.");
         }
         else
         {
-            ExactKeys(attributes, "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "spec_type_id", "unit_type_id", "value_kind", "value_semantics");
+            ExactKeys(attributes, "expected_parameter_owner_unique_id", "expected_parameter_state_hash", "expected_storage_kind", "expected_target_state_hash", "parameter_identity", "parameter_scope", "raw_value", "spec_type_id", "unit_type_id", "value_kind", "value_semantics");
             if (attributes["value_semantics"] != "internal_revit_units" || !double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || !Finite(value) ||
                 string.IsNullOrWhiteSpace(attributes["spec_type_id"]) || string.IsNullOrWhiteSpace(attributes["unit_type_id"])) throw new ArgumentException("Double parameter internal-unit value is invalid.");
         }
@@ -399,8 +463,8 @@ public static class DynamicCoreOperationAdmissionV1
         ExactKeys(attributes, "angle_radians", "axis_direction", "axis_origin_feet", "expected_target_state_hash");
         var origin = Vector(attributes["axis_origin_feet"]); var direction = Vector(attributes["axis_direction"]);
         var magnitude = Math.Sqrt(direction.Sum(value => value * value));
-        if (origin.Any(value => Math.Abs(value) > 1e9) || Math.Abs(magnitude - 1d) > 1e-9 ||
-            !double.TryParse(attributes["angle_radians"], NumberStyles.Float, CultureInfo.InvariantCulture, out var angle) || !Finite(angle) || Math.Abs(angle) > Math.PI * 2d)
+        var angle = DynamicCoreOperationCanonicalNumberV1.ParseExact(attributes["angle_radians"], "angle_radians");
+        if (origin.Any(value => Math.Abs(value) > 1e9) || Math.Abs(magnitude - 1d) > 1e-9 || Math.Abs(angle) > Math.PI * 2d)
             throw new ArgumentException("rotate_element axis or radians are invalid.");
     }
 
@@ -415,8 +479,8 @@ public static class DynamicCoreOperationAdmissionV1
     private static double[] Vector(string value)
     {
         var values = value.Split(',');
-        if (values.Length != 3 || values.Any(item => !double.TryParse(item, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) || !Finite(parsed))) throw new ArgumentException("Core-operation vector is invalid.");
-        return values.Select(item => double.Parse(item, CultureInfo.InvariantCulture)).ToArray();
+        if (values.Length != 3) throw new ArgumentException("Core-operation vector is invalid.");
+        return values.Select((item, index) => DynamicCoreOperationCanonicalNumberV1.ParseExact(item, "vector[" + index.ToString(CultureInfo.InvariantCulture) + "]")).ToArray();
     }
     private static void ExactKeys(IReadOnlyDictionary<string, string> value, params string[] expected) { if (value.Count != expected.Length || value.Keys.Any(key => !expected.Contains(key, StringComparer.Ordinal))) throw new ArgumentException("Core-operation attribute set is not exact."); }
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
@@ -428,6 +492,7 @@ public sealed class DynamicCoreOperationEffectV1
     public string NodeId { get; set; } = "";
     public string Kind { get; set; } = "";
     public long PrimaryTargetElementId { get; set; }
+    public string PrimaryTargetUniqueId { get; set; } = "";
     public IReadOnlyList<long> AddedElementIds { get; set; } = Array.Empty<long>();
     public IReadOnlyList<long> ModifiedElementIds { get; set; } = Array.Empty<long>();
     public IReadOnlyList<long> DeletedElementIds { get; set; } = Array.Empty<long>();
@@ -440,7 +505,7 @@ public static class DynamicCoreOperationEffectPolicyV1
     public static string CanonicalHash(DynamicCoreOperationEffectV1 value)
     {
         ValidateShape(value, requireHash: false);
-        return DynamicWire.Sha256(DynamicCanonical.Join(value.Schema, value.NodeId, value.Kind, value.PrimaryTargetElementId.ToString(CultureInfo.InvariantCulture),
+        return DynamicWire.Sha256(DynamicCanonical.Join(value.Schema, value.NodeId, value.Kind, value.PrimaryTargetElementId.ToString(CultureInfo.InvariantCulture), value.PrimaryTargetUniqueId,
             LongSet(value.AddedElementIds), LongSet(value.ModifiedElementIds), LongSet(value.DeletedElementIds), DynamicCanonical.Set(value.DeletedUniqueIds)));
     }
 
@@ -460,6 +525,8 @@ public static class DynamicCoreOperationEffectPolicyV1
             var effect = values.SingleOrDefault(value => value.NodeId == node.NodeId) ?? throw new ArgumentException("Core-operation effect is missing.");
             ValidateShape(effect, requireHash: true);
             if (effect.Kind != node.Kind || effect.AddedElementIds.Count != 0) throw new ArgumentException("Core-operation effect kind or create set is invalid.");
+            var expectedPrimaryUniqueId = node.Kind == "set_parameter" ? node.Attributes["expected_parameter_owner_unique_id"] : node.TargetUniqueIds[0];
+            if (effect.PrimaryTargetUniqueId != expectedPrimaryUniqueId) throw new ArgumentException("Core-operation effect mutation owner is invalid.");
             if (node.Kind == "delete_element")
             {
                 if (!effect.DeletedElementIds.Contains(effect.PrimaryTargetElementId) || effect.DeletedElementIds.Count != effect.DeletedUniqueIds.Count) throw new ArgumentException("Delete preview must report the exact cascade identity set.");
@@ -474,6 +541,7 @@ public static class DynamicCoreOperationEffectPolicyV1
     private static void ValidateShape(DynamicCoreOperationEffectV1 value, bool requireHash)
     {
         if (value == null || value.Schema != DynamicCoreOperationsV1.EffectSchema || !DynamicCanonical.Hash(value.NodeId) || DynamicCoreOperationManifestV1.Find(value.Kind) == null || value.PrimaryTargetElementId < 0 ||
+            string.IsNullOrWhiteSpace(value.PrimaryTargetUniqueId) || value.PrimaryTargetUniqueId.Length > 256 ||
             value.AddedElementIds == null || value.ModifiedElementIds == null || value.DeletedElementIds == null || value.DeletedUniqueIds == null ||
             new[] { value.AddedElementIds, value.ModifiedElementIds, value.DeletedElementIds }.Any(items => items.Count > 50000 || items.Any(id => id < 0) || items.Distinct().Count() != items.Count) ||
             value.DeletedUniqueIds.Count > 50000 || value.DeletedUniqueIds.Any(id => string.IsNullOrWhiteSpace(id) || id.Length > 256) || value.DeletedUniqueIds.Distinct(StringComparer.Ordinal).Count() != value.DeletedUniqueIds.Count ||
@@ -497,13 +565,83 @@ public static class DynamicCoreOperationStateV1
             value.Scope, value.Writable ? "1" : "0"));
     }
 
+    public static string ConnectorSignature(IEnumerable<DynamicCoreConnectorSignatureEntryV1> connectors)
+    {
+        var values = (connectors ?? throw new ArgumentNullException(nameof(connectors))).ToArray();
+        if (values.Length > 1024) throw new ArgumentException("Connector signature exceeds the bounded connector count.");
+        if (values.Select(value => value?.OwnerUniqueId + "\n" + value?.ConnectorId).Distinct(StringComparer.Ordinal).Count() != values.Length)
+            throw new ArgumentException("Connector signature contains duplicate stable connector identities.");
+        var canonical = values.Select(ConnectorCanonical).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        return DynamicWire.Sha256(DynamicCanonical.Join("dynamic-revit-connector-signature/v2", string.Join("\n", canonical)));
+    }
+
+    private static string ConnectorCanonical(DynamicCoreConnectorSignatureEntryV1 value)
+    {
+        if (value == null || string.IsNullOrWhiteSpace(value.OwnerUniqueId) || value.OwnerUniqueId.Length > 256 ||
+            string.IsNullOrWhiteSpace(value.ConnectorId) || value.ConnectorId.Length > 128 ||
+            string.IsNullOrWhiteSpace(value.Domain) || value.Domain.Length > 128 || string.IsNullOrWhiteSpace(value.ConnectorType) || value.ConnectorType.Length > 128 ||
+            string.IsNullOrWhiteSpace(value.Shape) || value.Shape.Length > 128 || value.ConnectedEndpointIds == null || value.ConnectedEndpointIds.Count > 1024 ||
+            value.SystemUniqueId != null && value.SystemUniqueId.Length > 256 || value.SystemTypeId != null && value.SystemTypeId.Length > 256 ||
+            new[] { value.OriginX, value.OriginY, value.OriginZ }.Any(component => Math.Abs(component) > 1e9) ||
+            Math.Abs(Math.Sqrt(value.DirectionX * value.DirectionX + value.DirectionY * value.DirectionY + value.DirectionZ * value.DirectionZ) - 1d) > 1e-9 ||
+            new[] { value.RadiusFeet, value.HeightFeet, value.WidthFeet }.Any(size => size.HasValue && size.Value < 0d) ||
+            value.ConnectedEndpointIds.Any(item => string.IsNullOrWhiteSpace(item) || item.Length > 512) ||
+            value.ConnectedEndpointIds.Distinct(StringComparer.Ordinal).Count() != value.ConnectedEndpointIds.Count)
+            throw new ArgumentException("Connector signature entry is invalid or unbounded.");
+        return DynamicCanonical.Join(value.OwnerUniqueId, value.ConnectorId, value.Domain, value.ConnectorType, value.Shape,
+            Number(value.OriginX), Number(value.OriginY), Number(value.OriginZ), Number(value.DirectionX), Number(value.DirectionY), Number(value.DirectionZ),
+            NullableNumber(value.RadiusFeet), NullableNumber(value.HeightFeet), NullableNumber(value.WidthFeet), value.SystemUniqueId ?? "", value.SystemTypeId ?? "",
+            DynamicCanonical.Set(value.ConnectedEndpointIds));
+    }
+
     private static string Nullable(long? value) => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : "null";
+    private static string Number(double value) => DynamicCoreOperationCanonicalNumberV1.Format(value);
+    private static string NullableNumber(double? value) => value.HasValue ? Number(value.Value) : "null";
     private static string NullableDouble(double? value)
     {
         if (!value.HasValue) return "null";
         if (double.IsNaN(value.Value) || double.IsInfinity(value.Value)) throw new ArgumentException("Typed parameter state contains a non-finite double.");
         return value.Value.ToString("R", CultureInfo.InvariantCulture);
     }
+}
+
+public sealed class DynamicCoreConnectorSignatureEntryV1
+{
+    public DynamicCoreConnectorSignatureEntryV1(string ownerUniqueId, string connectorId, string domain, string connectorType, string shape,
+        double originX, double originY, double originZ, double directionX, double directionY, double directionZ,
+        double? radiusFeet, double? heightFeet, double? widthFeet, string? systemUniqueId, string? systemTypeId,
+        IEnumerable<string> connectedEndpointIds)
+    {
+        OwnerUniqueId = ownerUniqueId; ConnectorId = connectorId; Domain = domain; ConnectorType = connectorType; Shape = shape;
+        OriginX = originX; OriginY = originY; OriginZ = originZ; DirectionX = directionX; DirectionY = directionY; DirectionZ = directionZ;
+        RadiusFeet = radiusFeet; HeightFeet = heightFeet; WidthFeet = widthFeet; SystemUniqueId = systemUniqueId; SystemTypeId = systemTypeId;
+        ConnectedEndpointIds = Array.AsReadOnly((connectedEndpointIds ?? throw new ArgumentNullException(nameof(connectedEndpointIds)))
+            .OrderBy(value => value, StringComparer.Ordinal).ToArray());
+    }
+
+    public string OwnerUniqueId { get; }
+    public string ConnectorId { get; }
+    public string Domain { get; }
+    public string ConnectorType { get; }
+    public string Shape { get; }
+    public double OriginX { get; }
+    public double OriginY { get; }
+    public double OriginZ { get; }
+    public double DirectionX { get; }
+    public double DirectionY { get; }
+    public double DirectionZ { get; }
+    public double? RadiusFeet { get; }
+    public double? HeightFeet { get; }
+    public double? WidthFeet { get; }
+    public string? SystemUniqueId { get; }
+    public string? SystemTypeId { get; }
+    public IReadOnlyList<string> ConnectedEndpointIds { get; }
+}
+
+/// <summary>Injected durable authority whose TryConsume operation must atomically persist first use before returning true.</summary>
+public interface IDynamicCoreOperationApplyAuthorizationLedgerV1
+{
+    bool TryConsume(string authorizationHash);
 }
 
 public sealed class DynamicCoreOperationApplyAuthorizationV1
@@ -549,6 +687,23 @@ public static class DynamicCoreOperationApplyAuthorizationPolicyV1
             value.DocumentFingerprint != graph.DocumentFingerprint || value.DocumentRevision != graph.DocumentRevision ||
             graph.Nodes.Any(node => !(DynamicCoreOperationManifestV1.Find(node.Kind)?.ApplySupported ?? false)) || value.Signature != Sign(value, trustedKey))
             throw new InvalidOperationException("Core-operation apply authorization is invalid, stale, substituted, or includes dry-run-only work.");
+    }
+
+    public static string ValidateAndConsume(DynamicCoreOperationApplyAuthorizationV1 value, DynamicOperationGraphV1 graph,
+        DynamicCoreOperationManifestBindingV1 binding, string expectedEffectSetHash, byte[] trustedKey, long nowUnixSeconds,
+        IDynamicCoreOperationApplyAuthorizationLedgerV1 consumptionLedger)
+    {
+        Validate(value, graph, binding, expectedEffectSetHash, trustedKey, nowUnixSeconds);
+        if (consumptionLedger == null) throw new ArgumentNullException(nameof(consumptionLedger));
+        var hash = AuthorizationHash(value);
+        if (!consumptionLedger.TryConsume(hash)) throw new InvalidOperationException("Core-operation apply authorization was replayed or could not be durably consumed.");
+        return hash;
+    }
+
+    public static string AuthorizationHash(DynamicCoreOperationApplyAuthorizationV1 value)
+    {
+        if (value == null || string.IsNullOrWhiteSpace(value.Signature)) throw new ArgumentException("Core-operation apply authorization is incomplete.", nameof(value));
+        return DynamicWire.Sha256(Canonical(value) + "+" + value.Signature);
     }
 
     public static string Sign(DynamicCoreOperationApplyAuthorizationV1 value, byte[] trustedKey)

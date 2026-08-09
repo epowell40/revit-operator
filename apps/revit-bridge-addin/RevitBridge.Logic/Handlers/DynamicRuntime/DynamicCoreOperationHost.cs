@@ -19,7 +19,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicCoreOperationHostV1
     {
         private const int BaselineLimit = 50000;
-        private const string AdapterSurface = "dynamic-revit-core-operation-host/v1\nset_parameter/v1\nrotate_element/v1\nchange_type/v1\ndelete_element/v1:preview-only";
+        private const string AdapterSurface = "dynamic-revit-core-operation-host/v2\nset_parameter/v1:exact-owner\nrotate_element/v1:orientation-state-v2\nchange_type/v1:connector-signature-v2\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
         private static readonly ConcurrentDictionary<string, byte> ConsumedBindings = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
 
         internal static string HostAdapterManifestHash(string revitYear) => DynamicWire.Sha256(string.Join("\n", new[]
@@ -33,11 +33,17 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var document = Document(app);
             var targets = graph.Nodes.Select(node => node.TargetUniqueIds[0]).Distinct(StringComparer.Ordinal)
                 .Select(uniqueId => document.GetElement(uniqueId) ?? throw new InvalidOperationException("Core-operation target no longer exists: " + uniqueId)).ToArray();
+            var owners = graph.Nodes.ToDictionary(node => node.TargetUniqueIds[0], node =>
+            {
+                var target = document.GetElement(node.TargetUniqueIds[0]) ?? throw new InvalidOperationException("Core-operation target no longer exists: " + node.TargetUniqueIds[0]);
+                return MutationOwner(document, node, target);
+            }, StringComparer.Ordinal);
             return new DynamicCoreOperationAdmissionContextV1
             {
                 HostAdapterManifestHash = HostAdapterManifestHash(app.Application.VersionNumber),
                 TargetCategoryStableIds = targets.ToDictionary(element => element.UniqueId, element => CategoryStableId(element.Category), StringComparer.Ordinal),
-                TargetStateHashes = targets.ToDictionary(element => element.UniqueId, DynamicRuntimePreviewHandler.TrustedElementStateHash, StringComparer.Ordinal),
+                MutationOwnerUniqueIds = owners.ToDictionary(pair => pair.Key, pair => pair.Value.UniqueId, StringComparer.Ordinal),
+                TargetStateHashes = owners.ToDictionary(pair => pair.Key, pair => CoreTrustedElementStateHash(pair.Value), StringComparer.Ordinal),
                 ViewScopeHash = DynamicRuntimeApplyState.ViewScopeHash(app),
                 LevelScopeHash = DynamicRuntimeApplyState.ElementScopeHash("level", targets, element => ElementIdCompat.GetValue(element.LevelId)),
                 WorksetScopeHash = DynamicRuntimeApplyState.ElementScopeHash("workset", targets, element => element.WorksetId.IntegerValue),
@@ -65,13 +71,15 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
         internal static DynamicCoreOperationApplyReceiptV1 Apply(UIApplication app, DynamicOperationGraphV1 graph, DynamicEffectBudgetV1 budget,
             DynamicCoreOperationManifestBindingV1 binding, DynamicCoreOperationPreviewV1 preview,
-            DynamicCoreOperationApplyAuthorizationV1 authorization, byte[] trustedKey, long nowUnixSeconds, int plannedExecutionMilliseconds)
+            DynamicCoreOperationApplyAuthorizationV1 authorization, IDynamicCoreOperationApplyAuthorizationLedgerV1 authorizationLedger,
+            byte[] trustedKey, long nowUnixSeconds, int plannedExecutionMilliseconds)
         {
             DynamicCoreOperationReceiptPolicyV1.ValidateRollback(preview);
             if (preview.GraphHash != graph.GraphHash) throw new InvalidOperationException("Core-operation preview was substituted.");
             var context = BuildAdmissionContext(app, graph, budget, plannedExecutionMilliseconds);
             DynamicCoreOperationAdmissionV1.Validate(graph, budget, context, binding, trustedKey, nowUnixSeconds, "apply");
-            DynamicCoreOperationApplyAuthorizationPolicyV1.Validate(authorization, graph, binding, preview.EffectSetHash, trustedKey, nowUnixSeconds);
+            DynamicCoreOperationApplyAuthorizationPolicyV1.ValidateAndConsume(authorization, graph, binding, preview.EffectSetHash,
+                trustedKey, nowUnixSeconds, authorizationLedger);
             var result = Execute(app, graph, budget, commit: true, expectedEffectSetHash: preview.EffectSetHash,
                 expectedReadbackSetHash: DynamicCoreOperationReceiptPolicyV1.ReadbackSetHash(preview.Readbacks));
             var observedHash = DynamicCoreOperationEffectPolicyV1.EffectSetHash(result.Effects);
@@ -131,8 +139,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 {
                     var target = document.GetElement(node.TargetUniqueIds[0]) ?? throw new InvalidOperationException("Core-operation target disappeared: " + node.TargetUniqueIds[0]);
                     if (target.Pinned || target.GroupId != ElementId.InvalidElementId) throw new InvalidOperationException("Pinned or grouped core-operation target is not eligible.");
-                    var beforeHash = DynamicRuntimePreviewHandler.TrustedElementStateHash(target);
-                    var primary = ElementIdCompat.GetValue(target.Id);
+                    var mutationOwner = MutationOwner(document, node, target);
+                    var mutationOwnerUniqueId = mutationOwner.UniqueId;
+                    var beforeHash = CoreTrustedElementStateHash(mutationOwner);
+                    var primary = ElementIdCompat.GetValue(mutationOwner.Id);
                     current = new ChangeSet();
                     DynamicCoreOperationReadbackV1 readback;
                     ICollection<ElementId>? exactDeleted = null;
@@ -154,7 +164,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     }
                     var effect = new DynamicCoreOperationEffectV1
                     {
-                        NodeId = node.NodeId, Kind = node.Kind, PrimaryTargetElementId = primary,
+                        NodeId = node.NodeId, Kind = node.Kind, PrimaryTargetElementId = primary, PrimaryTargetUniqueId = mutationOwnerUniqueId,
                         AddedElementIds = current.Added.OrderBy(value => value).ToArray(), ModifiedElementIds = current.Modified.OrderBy(value => value).ToArray(),
                         DeletedElementIds = current.Deleted.OrderBy(value => value).ToArray(),
                         DeletedUniqueIds = current.Deleted.OrderBy(value => value).Select(id => baseline.TryGetValue(id, out var prior) ? prior.UniqueId :
@@ -201,9 +211,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (node.Kind == "change_type") return ChangeType(document, node, target, beforeHash);
             if (node.Kind == "delete_element")
             {
-                var targetId = ElementIdCompat.GetValue(target.Id); exactDeleted = document.Delete(target.Id);
+                var targetUniqueId = target.UniqueId; exactDeleted = document.Delete(target.Id);
                 var deletedIds = exactDeleted.Select(ElementIdCompat.GetValue).OrderBy(value => value).ToArray();
-                return Readback(node, target.UniqueId, beforeHash, DynamicWire.Sha256("deleted/v1\n" + string.Join("\n", deletedIds.Select(value => value.ToString(CultureInfo.InvariantCulture)))),
+                return Readback(node, targetUniqueId, beforeHash, DynamicWire.Sha256("deleted/v1\n" + string.Join("\n", deletedIds.Select(value => value.ToString(CultureInfo.InvariantCulture)))),
                     new Dictionary<string, string>(StringComparer.Ordinal) { ["cascade_element_ids"] = string.Join(",", deletedIds) });
             }
             throw new InvalidOperationException("Unknown core-operation host primitive.");
@@ -212,7 +222,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private static DynamicCoreOperationReadbackV1 SetParameter(Document document, DynamicOperationNodeV1 node, Element target, string beforeHash)
         {
             var scope = node.Attributes["parameter_scope"];
-            var owner = scope == "instance" ? target : document.GetElement(target.GetTypeId()) ?? throw new InvalidOperationException("Type-scoped parameter owner no longer exists.");
+            var owner = MutationOwner(document, node, target);
             var matches = owner.Parameters.Cast<Parameter>().Where(parameter => ParameterIdentity(parameter) == node.Attributes["parameter_identity"]).ToArray();
             if (matches.Length != 1) throw new InvalidOperationException("Typed parameter identity did not resolve exactly once in its declared scope.");
             var parameter = matches[0]; var before = ParameterValue(parameter, scope);
@@ -237,10 +247,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             document.Regenerate();
             var after = ParameterValue(parameter, scope);
             if (after.StorageKind != before.StorageKind) throw new InvalidOperationException("Typed parameter storage changed during mutation.");
-            return Readback(node, target.UniqueId, beforeHash, DynamicRuntimePreviewHandler.TrustedElementStateHash(target), new Dictionary<string, string>(StringComparer.Ordinal)
+            return Readback(node, owner.UniqueId, beforeHash, CoreTrustedElementStateHash(owner), new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["parameter_before_hash"] = DynamicCoreOperationStateV1.ParameterStateHash(before), ["parameter_after_hash"] = DynamicCoreOperationStateV1.ParameterStateHash(after),
-                ["raw_before"] = Raw(before), ["raw_after"] = Raw(after), ["scope"] = scope, ["storage_kind"] = after.StorageKind
+                ["raw_before"] = Raw(before), ["raw_after"] = Raw(after), ["scope"] = scope, ["storage_kind"] = after.StorageKind,
+                ["requested_target_unique_id"] = target.UniqueId, ["mutation_owner_unique_id"] = owner.UniqueId
             });
         }
 
@@ -249,7 +260,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var origin = Vector(node.Attributes["axis_origin_feet"]); var direction = Vector(node.Attributes["axis_direction"]);
             var axis = Line.CreateUnbound(origin, direction); var angle = double.Parse(node.Attributes["angle_radians"], CultureInfo.InvariantCulture);
             ElementTransformUtils.RotateElement(document, target.Id, axis, angle); document.Regenerate();
-            return Readback(node, target.UniqueId, beforeHash, DynamicRuntimePreviewHandler.TrustedElementStateHash(target), new Dictionary<string, string>(StringComparer.Ordinal)
+            return Readback(node, target.UniqueId, beforeHash, CoreTrustedElementStateHash(target), new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["axis_origin_feet"] = node.Attributes["axis_origin_feet"], ["axis_direction"] = node.Attributes["axis_direction"], ["angle_radians"] = node.Attributes["angle_radians"]
             });
@@ -264,7 +275,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (category != node.Attributes["expected_category_stable_id"] || replacementCategory != category ||
                 sourceFamily != node.Attributes["expected_source_family_stable_id"] || replacementFamily != node.Attributes["expected_replacement_family_stable_id"] ||
                 sourceFamily != replacementFamily || connectorBefore != node.Attributes["expected_connector_signature"] ||
-                DynamicRuntimePreviewHandler.TrustedElementStateHash(replacement) != node.Attributes["expected_replacement_type_state_hash"])
+                CoreTrustedElementStateHash(replacement) != node.Attributes["expected_replacement_type_state_hash"])
                 throw new InvalidOperationException("Replacement type failed exact category, family, connector, or state compatibility preflight.");
             var changedId = target.ChangeTypeId(replacement.Id);
             if (changedId != ElementId.InvalidElementId && changedId != target.Id) throw new InvalidOperationException("change_type replaced the primary element identity; this v1 primitive only permits in-place changes.");
@@ -272,7 +283,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var current = document.GetElement(target.UniqueId) ?? throw new InvalidOperationException("Changed element identity disappeared.");
             if (CategoryStableId(current.Category) != category || FamilyStableId(current, document.GetElement(current.GetTypeId())) != replacementFamily || ConnectorSignature(current) != connectorBefore)
                 throw new InvalidOperationException("change_type postflight compatibility diverged.");
-            return Readback(node, current.UniqueId, beforeHash, DynamicRuntimePreviewHandler.TrustedElementStateHash(current), new Dictionary<string, string>(StringComparer.Ordinal)
+            return Readback(node, current.UniqueId, beforeHash, CoreTrustedElementStateHash(current), new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["replacement_type_unique_id"] = replacement.UniqueId, ["category_stable_id"] = category, ["family_stable_id"] = replacementFamily, ["connector_signature"] = connectorBefore
             });
@@ -285,7 +296,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 if (result.Count >= BaselineLimit) throw new InvalidOperationException("Core-operation exact baseline exceeds 50000 elements.");
                 var id = ElementIdCompat.GetValue(element.Id);
-                result[id] = new Baseline { UniqueId = element.UniqueId ?? "", StateHash = DynamicRuntimePreviewHandler.TrustedElementStateHash(element) };
+                result[id] = new Baseline { UniqueId = element.UniqueId ?? "", StateHash = CoreTrustedElementStateHash(element) };
             }
             return result;
         }
@@ -296,7 +307,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 var current = document.GetElement(ElementIdCompat.Create(id));
                 if (!baseline.TryGetValue(id, out var before)) { if (current != null) return false; continue; }
-                if (current == null || current.UniqueId != before.UniqueId || DynamicRuntimePreviewHandler.TrustedElementStateHash(current) != before.StateHash) return false;
+                if (current == null || current.UniqueId != before.UniqueId || CoreTrustedElementStateHash(current) != before.StateHash) return false;
             }
             return true;
         }
@@ -306,7 +317,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             foreach (var readback in readbacks.Where(value => value.Kind != "delete_element"))
             {
                 var element = document.GetElement(readback.TargetUniqueId) ?? throw new InvalidOperationException("Core-operation committed target disappeared.");
-                if (DynamicRuntimePreviewHandler.TrustedElementStateHash(element) != readback.AfterStateHash) throw new InvalidOperationException("Core-operation committed readback is stale.");
+                if (CoreTrustedElementStateHash(element) != readback.AfterStateHash) throw new InvalidOperationException("Core-operation committed readback is stale.");
             }
         }
 
@@ -361,16 +372,84 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             return family == null ? "family:none" : "revit-family:" + family.UniqueId;
         }
 
+        private static Element MutationOwner(Document document, DynamicOperationNodeV1 node, Element target)
+        {
+            if (node.Kind != "set_parameter" || node.Attributes["parameter_scope"] == "instance") return target;
+            var typeId = target.GetTypeId();
+            if (typeId == ElementId.InvalidElementId) throw new InvalidOperationException("Type-scoped parameter target has no type owner.");
+            return document.GetElement(typeId) ?? throw new InvalidOperationException("Type-scoped parameter owner no longer exists.");
+        }
+
+        private static string CoreTrustedElementStateHash(Element element)
+        {
+            var fields = new List<string> { "base:" + DynamicRuntimePreviewHandler.TrustedElementStateHash(element) };
+            try
+            {
+                if (element.Location is LocationPoint point)
+                {
+                    fields.Add("location-point:" + Coordinate(point.Point));
+                    fields.Add("location-rotation:" + DynamicCoreOperationCanonicalNumberV1.Format(point.Rotation));
+                }
+                else if (element.Location is LocationCurve locationCurve)
+                {
+                    var curve = locationCurve.Curve;
+                    fields.Add(curve != null && curve.IsBound
+                        ? "location-curve:" + Coordinate(curve.GetEndPoint(0)) + ":" + Coordinate(curve.GetEndPoint(1))
+                        : "location-curve:unbound");
+                }
+                if (element is Instance instance)
+                {
+                    var transform = instance.GetTransform();
+                    fields.Add("instance-transform:" + Coordinate(transform.Origin) + ":" + Coordinate(transform.BasisX) + ":" +
+                        Coordinate(transform.BasisY) + ":" + Coordinate(transform.BasisZ));
+                }
+            }
+            catch (Exception ex) { fields.Add("orientation-capture-error:" + ex.GetType().FullName); }
+            fields.Sort(StringComparer.Ordinal);
+            return DynamicWire.Sha256("dynamic-revit-core-trusted-element-state/v2\n" + string.Join("\n", fields));
+        }
+
         private static string ConnectorSignature(Element element)
         {
             ConnectorSet? connectors = null;
             if (element is FamilyInstance instance) connectors = instance.MEPModel?.ConnectorManager?.Connectors;
             else if (element is MEPCurve curve) connectors = curve.ConnectorManager?.Connectors;
-            if (connectors == null) return DynamicWire.Sha256("connectors/v1\nnone");
-            var values = new List<string>();
-            foreach (Connector connector in connectors) values.Add(connector.Domain + ":" + connector.ConnectorType + ":" + connector.Shape);
-            values.Sort(StringComparer.Ordinal);
-            return DynamicWire.Sha256("connectors/v1\n" + string.Join("\n", values));
+            if (connectors == null) return DynamicCoreOperationStateV1.ConnectorSignature(Array.Empty<DynamicCoreConnectorSignatureEntryV1>());
+            var values = new List<DynamicCoreConnectorSignatureEntryV1>();
+            foreach (Connector connector in connectors)
+            {
+                var origin = connector.Origin;
+                var coordinateSystem = connector.CoordinateSystem;
+                var direction = coordinateSystem?.BasisZ ?? throw new InvalidOperationException("Connector coordinate system is unavailable.");
+                var connected = new List<string>();
+                foreach (Connector reference in connector.AllRefs)
+                    connected.Add(ConnectorEndpointIdentity(reference));
+                var system = connector.MEPSystem;
+                values.Add(new DynamicCoreConnectorSignatureEntryV1(
+                    connector.Owner?.UniqueId ?? throw new InvalidOperationException("Connector owner identity is unavailable."),
+                    ConnectorId(connector), connector.Domain.ToString(), connector.ConnectorType.ToString(), connector.Shape.ToString(),
+                    origin.X, origin.Y, origin.Z, direction.X, direction.Y, direction.Z,
+                    ConnectorSize(connector, "Radius"), ConnectorSize(connector, "Height"), ConnectorSize(connector, "Width"),
+                    system?.UniqueId, system == null ? null : ElementIdCompat.GetValue(system.GetTypeId()).ToString(CultureInfo.InvariantCulture), connected));
+            }
+            return DynamicCoreOperationStateV1.ConnectorSignature(values);
+        }
+
+        private static string ConnectorEndpointIdentity(Connector connector) => (connector.Owner?.UniqueId ?? "owner:none") + ":" + ConnectorId(connector);
+        private static string ConnectorId(Connector connector)
+        {
+            var property = connector.GetType().GetProperty("Id");
+            var value = property?.GetValue(connector, null);
+            return value == null ? throw new InvalidOperationException("Connector stable id is unavailable.") : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+        }
+        private static double? ConnectorSize(Connector connector, string propertyName)
+        {
+            try
+            {
+                var value = connector.GetType().GetProperty(propertyName)?.GetValue(connector, null);
+                return value == null ? (double?)null : Convert.ToDouble(value, CultureInfo.InvariantCulture);
+            }
+            catch { return null; }
         }
 
         private static XYZ Vector(string value)
@@ -378,6 +457,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var parts = value.Split(',');
             return new XYZ(double.Parse(parts[0], CultureInfo.InvariantCulture), double.Parse(parts[1], CultureInfo.InvariantCulture), double.Parse(parts[2], CultureInfo.InvariantCulture));
         }
+        private static string Coordinate(XYZ point) => DynamicCoreOperationCanonicalNumberV1.Format(point.X) + "," +
+            DynamicCoreOperationCanonicalNumberV1.Format(point.Y) + "," + DynamicCoreOperationCanonicalNumberV1.Format(point.Z);
         private static Document Document(UIApplication app) => app?.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
         private static string? Safe(Func<string?> value) { try { return value(); } catch { return null; } }
     }
