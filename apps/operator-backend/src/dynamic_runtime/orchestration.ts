@@ -105,19 +105,24 @@ type VerifiedDynamicContextEntry = ApprovedDynamicContextEntry & { readonly [VER
 
 export type DynamicProgramContextBundleV1 = {
   schema: typeof DYNAMIC_CONTEXT_BUNDLE_SCHEMA;
-  entries: ApprovedDynamicContextEntry[];
+  entries: ReadonlyArray<Readonly<ApprovedDynamicContextEntry>>;
   bundle_hash: string;
   informs_model_reasoning_only: true;
   authorization_granted: false;
 };
 
+export type DynamicContextRevocationAuthority = {
+  revoke(revocationId: string): void;
+  isRevoked(revocationId: string): boolean;
+};
+
 export class DynamicContextApprovalAuthority {
-  private readonly revoked = new Set<string>();
   private readonly verified = new WeakSet<object>();
 
-  constructor(private readonly key: Buffer, private readonly signerKeyId: string) {
-    if (!Buffer.isBuffer(key) || key.length < 32 || !/^sha256:[0-9a-f]{64}$/.test(signerKeyId)) {
-      throw new Error("Dynamic context approval authority requires a 256-bit key and canonical key id.");
+  constructor(private readonly key: Buffer, private readonly signerKeyId: string, private readonly revocations: DynamicContextRevocationAuthority) {
+    if (!Buffer.isBuffer(key) || key.length < 32 || !/^sha256:[0-9a-f]{64}$/.test(signerKeyId)
+      || !revocations || typeof revocations.revoke !== "function" || typeof revocations.isRevoked !== "function") {
+      throw new Error("Dynamic context approval authority requires a 256-bit key, canonical key id, and trusted durable revocation authority.");
     }
   }
 
@@ -153,12 +158,12 @@ export class DynamicContextApprovalAuthority {
 
   revoke(revocationId: string): void {
     if (!boundedText(revocationId, 160)) throw new Error("Dynamic context revocation id is invalid.");
-    this.revoked.add(revocationId);
+    this.revocations.revoke(revocationId);
   }
 
   verify(record: DynamicContextApprovalV1, bindings: DynamicContextBindings, now = new Date()): VerifiedDynamicContextEntry {
     this.validateShape(record, now, true);
-    if (record.signer_key_id !== this.signerKeyId || this.revoked.has(record.revocation_id)) throw new Error("Dynamic context approval signer or revocation state is invalid.");
+    if (record.signer_key_id !== this.signerKeyId || this.revocations.isRevoked(record.revocation_id)) throw new Error("Dynamic context approval signer or revocation state is invalid.");
     const { signature, ...unsigned } = record;
     const expected = this.sign(unsigned);
     const left = Buffer.from(expected, "utf8"); const right = Buffer.from(signature, "utf8");
@@ -212,7 +217,7 @@ export class DynamicContextApprovalAuthority {
   }
 }
 
-export function buildApprovedDynamicContextBundle(_entries: ApprovedDynamicContextEntry[]): DynamicProgramContextBundleV1 {
+export function buildApprovedDynamicContextBundle(_entries: ReadonlyArray<Readonly<ApprovedDynamicContextEntry>>): DynamicProgramContextBundleV1 {
   throw new Error("Unauthenticated context entries are not accepted; verify approvals through DynamicContextApprovalAuthority first.");
 }
 
@@ -229,13 +234,21 @@ function buildVerifiedDynamicContextBundle(entries: readonly VerifiedDynamicCont
   const canonical = normalized
     .map(entry => [entry.scope, entry.content_hash, entry.provenance_hash, entry.approval_hash, entry.semantic_summary].join("\n"))
     .sort().join("\n--\n");
-  return {
+  const publicEntries = normalized.map(entry => Object.freeze({
+    scope: entry.scope,
+    semantic_summary: entry.semantic_summary,
+    content_hash: entry.content_hash,
+    provenance_hash: entry.provenance_hash,
+    approval_hash: entry.approval_hash,
+    approved_for_model_context: true as const
+  }));
+  return Object.freeze({
     schema: DYNAMIC_CONTEXT_BUNDLE_SCHEMA,
-    entries: normalized,
+    entries: Object.freeze(publicEntries),
     bundle_hash: sha256(`${DYNAMIC_CONTEXT_BUNDLE_SCHEMA}\n${canonical}`),
     informs_model_reasoning_only: true,
     authorization_granted: false
-  };
+  });
 }
 
 function canonicalContextApproval(value: Omit<DynamicContextApprovalV1, "signature"> | DynamicContextApprovalV1): string {

@@ -63,23 +63,33 @@ export type DynamicProgramReuseStoreOptions = {
   writer_key_id: string;
   verify_evidence: (hash: string, kind: "preview" | "apply") => boolean;
   is_revoked?: (recordId: string) => boolean;
+  head_authority: DynamicProgramReuseHeadAuthority;
+};
+
+export type DynamicProgramReuseLedgerHead = { entry_hash: string; record_count: number };
+export type DynamicProgramReuseHeadAuthority = {
+  read(): Readonly<DynamicProgramReuseLedgerHead> | null;
+  advance(expected: Readonly<DynamicProgramReuseLedgerHead> | null, next: Readonly<DynamicProgramReuseLedgerHead>): void;
 };
 
 export class DynamicProgramReuseStore {
   constructor(private readonly filePath: string, private readonly options: DynamicProgramReuseStoreOptions) {
     if (!Buffer.isBuffer(options.authentication_key) || options.authentication_key.length < 32 || !SHA256.test(options.writer_key_id)
-      || typeof options.verify_evidence !== "function") throw new Error("Dynamic reuse store requires trusted authentication and evidence authorities.");
+      || typeof options.verify_evidence !== "function" || !options.head_authority || typeof options.head_authority.read !== "function"
+      || typeof options.head_authority.advance !== "function") throw new Error("Dynamic reuse store requires trusted authentication, evidence, and monotonic head authorities.");
   }
 
   append(record: DynamicProgramReuseRecordV1): void {
     this.assertSafePath();
     validateRecord(record, this.options.verify_evidence);
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    const parentIdentity = this.parentIdentity();
     const lockPath = `${this.filePath}.lock`;
     let lock: number;
     try { lock = fs.openSync(lockPath, "wx"); } catch { throw new Error("Dynamic reuse ledger is locked by another writer or requires operator recovery."); }
     try {
       fs.writeFileSync(lock, `${process.pid}\n`, "utf8"); fs.fsyncSync(lock);
+      this.assertParentIdentity(parentIdentity);
       const existing = this.readLedger();
       if (existing.length >= MAX_RECORDS) throw new Error("Dynamic reuse ledger record limit is exceeded.");
       if (existing.some(value => value.record.record_id === record.record_id)) throw new Error("Dynamic reuse record id is duplicate or equivocated.");
@@ -90,7 +100,11 @@ export class DynamicProgramReuseStore {
       const currentBytes = fs.existsSync(this.filePath) ? fs.statSync(this.filePath).size : 0;
       const appendBytes = Buffer.byteLength(`${JSON.stringify(entry)}\n`, "utf8");
       if (currentBytes + appendBytes > MAX_LEDGER_BYTES) throw new Error("Dynamic reuse ledger byte limit would be exceeded.");
+      this.assertParentIdentity(parentIdentity);
       atomicAppendJsonlLine(this.filePath, entry);
+      this.assertParentIdentity(parentIdentity);
+      this.options.head_authority.advance(previous === null ? null : { entry_hash: previous, record_count: existing.length },
+        { entry_hash: entry.entry_hash, record_count: existing.length + 1 });
     } finally {
       fs.closeSync(lock);
       try { fs.unlinkSync(lockPath); } catch { /* A retained lock fails later writers closed. */ }
@@ -146,6 +160,12 @@ export class DynamicProgramReuseStore {
       } catch (error) { throw new Error(`Dynamic reuse ledger entry ${index + 1} is invalid: ${(error as Error).message}`); }
       ids.add(parsed.record.record_id); previous = parsed.entry_hash; entries.push(parsed);
     }
+    const anchored = this.options.head_authority.read();
+    const actual = previous === null ? null : { entry_hash: previous, record_count: entries.length };
+    if ((anchored === null) !== (actual === null) || (anchored && actual
+      && (anchored.entry_hash !== actual.entry_hash || anchored.record_count !== actual.record_count))) {
+      throw new Error("Dynamic reuse ledger was rolled back, truncated, or diverged from its trusted monotonic head.");
+    }
     return entries;
   }
 
@@ -154,11 +174,30 @@ export class DynamicProgramReuseStore {
   }
 
   private assertSafePath(): void {
-    for (const candidate of [path.dirname(this.filePath), this.filePath]) {
+    if (!path.isAbsolute(this.filePath) || path.resolve(this.filePath) !== this.filePath) throw new Error("Dynamic reuse ledger path must be absolute and canonical.");
+    const candidates: string[] = [this.filePath];
+    let candidate = path.dirname(this.filePath);
+    while (true) {
+      candidates.push(candidate);
+      const parent = path.dirname(candidate);
+      if (parent === candidate) break;
+      candidate = parent;
+    }
+    for (const candidate of candidates) {
       if (!fs.existsSync(candidate)) continue;
       const stat = fs.lstatSync(candidate);
       if (stat.isSymbolicLink()) throw new Error("Dynamic reuse ledger path contains a reparse or symbolic link.");
     }
+  }
+
+  private parentIdentity(): string {
+    const parent = path.dirname(this.filePath); const stat = fs.statSync(parent);
+    return `${fs.realpathSync.native(parent)}\0${stat.dev}\0${stat.ino}`;
+  }
+
+  private assertParentIdentity(expected: string): void {
+    this.assertSafePath();
+    if (this.parentIdentity() !== expected) throw new Error("Dynamic reuse ledger parent changed during use.");
   }
 }
 
