@@ -269,11 +269,14 @@ internal static class Program
             var receiptRaw = UnwrapAuthenticated(envelopeRaw, hostSessionKey, runtimeId, "observe-building-systems-v1-receipt", out var authentication);
             hostAuthentications.Add(authentication); receiptBodies.Add(receiptRaw);
             using var receiptDocument = JsonDocument.Parse(receiptRaw); var receipt = receiptDocument.RootElement;
-            if (receipt.GetProperty("schema").GetString() != "dynamic-revit-building-systems-receipt/v1" || receipt.GetProperty("authorization_granted").GetBoolean() ||
-                receipt.GetProperty("contract_manifest_hash").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestHash ||
-                receipt.GetProperty("sdk_manifest_hash").GetString() != DynamicRevitSdkProductionVersion.ManifestHash ||
-                !FixedEquals(receipt.GetProperty("worker_runtime_package_hash").GetString() ?? "", workerRuntimePackageHash))
-                throw new InvalidOperationException("Building-systems observation receipt identity is invalid or substituted.");
+            var schemaMatches = receipt.GetProperty("schema").GetString() == "dynamic-revit-building-systems-receipt/v1";
+            var nonAuthorizing = !receipt.GetProperty("authorization_granted").GetBoolean();
+            var contractMatches = receipt.GetProperty("contract_manifest_hash").GetString() == DynamicBuildingSystemsObservationContractV1.ManifestHash;
+            var sdkMatches = receipt.GetProperty("sdk_manifest_hash").GetString() == DynamicRevitSdkProductionVersion.ManifestHash;
+            var workerPackageMatches = FixedEquals(receipt.GetProperty("worker_runtime_package_hash").GetString() ?? "", workerRuntimePackageHash);
+            if (!schemaMatches || !nonAuthorizing || !contractMatches || !sdkMatches || !workerPackageMatches)
+                throw new InvalidOperationException("Building-systems observation receipt identity is invalid or substituted. Checks: schema=" + schemaMatches +
+                    ", nonAuthorizing=" + nonAuthorizing + ", contract=" + contractMatches + ", sdk=" + sdkMatches + ", workerPackage=" + workerPackageMatches + ".");
             var page = receipt.GetProperty("envelope").Deserialize<DynamicBuildingSystemsEnvelopeV1>(Json) ?? throw new InvalidOperationException("Building-systems envelope is missing.");
             DynamicBuildingSystemsObservationPolicyV1.ValidateEnvelope(page);
             if (receipt.GetProperty("envelope_hash").GetString() != page.EnvelopeHash || receipt.GetProperty("document_fingerprint").GetString() != page.DocumentFingerprint ||
