@@ -89,6 +89,17 @@ public sealed class RuntimeWorkspaceTests
     }
 
     [Fact]
+    public void PreviewModeDoesNotRequireMutationGrantButApplyDoes()
+    {
+        using var temporary = new TemporaryDirectory();
+        var tokenFile = Path.Combine(temporary.CreateDirectory("auth"), "operator_token.txt");
+        File.WriteAllText(tokenFile, new string('a', 32));
+
+        Assert.Equal("", Program.ReadWriteGrantForMode(tokenFile, apply: false));
+        Assert.Throws<InvalidOperationException>(() => Program.ReadWriteGrantForMode(tokenFile, apply: true));
+    }
+
+    [Fact]
     public void RetentionKeepsOnlyNewestBoundedTaskDirectoriesAndDeletesReadOnlyTrees()
     {
         using var temporary = new TemporaryDirectory();

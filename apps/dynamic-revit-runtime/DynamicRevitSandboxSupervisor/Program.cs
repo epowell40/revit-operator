@@ -52,7 +52,7 @@ internal static class Program
         var source = await File.ReadAllTextAsync(config.SourceFile);
         var token = (await File.ReadAllTextAsync(config.OperatorTokenFile)).Trim();
         if (token.Length < 16) throw new InvalidOperationException("Operator token file is empty or invalid.");
-        var writeGrant = ReadWriteGrant(config.OperatorTokenFile);
+        var writeGrant = ReadWriteGrantForMode(config.OperatorTokenFile, config.Apply);
         using var profile = WindowsSandboxProfile.Create(lessPrivileged: true);
         profile.GrantTaskLayout(taskRoot, workspace.RuntimeDirectory, scratch);
         var runtimeId = Guid.NewGuid().ToString("N");
@@ -247,8 +247,9 @@ internal static class Program
         return new HttpPostResult(response.IsSuccessStatusCode, (int)response.StatusCode, body);
     }
 
-    private static string ReadWriteGrant(string operatorTokenFile)
+    internal static string ReadWriteGrantForMode(string operatorTokenFile, bool apply)
     {
+        if (!apply) return "";
         var grantPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(operatorTokenFile))!, "write_grant.json");
         if (!File.Exists(grantPath)) throw new InvalidOperationException("Operator write-grant file is missing. Issue a session grant before running a live task.");
         using var document = JsonDocument.Parse(File.ReadAllText(grantPath).TrimStart('\ufeff'));

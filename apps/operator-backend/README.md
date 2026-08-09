@@ -63,7 +63,7 @@ host executes it and supplies the result on the next turn.
 
 OpenAI, Gemini, and Anthropic also share one exact, bounded `dynamic_program`
 response contract. This lane is disabled by default. When an operator explicitly
-enables the local/development laboratory runner and configures absolute supervisor,
+enables the exact development laboratory runner and configures absolute supervisor,
 worker-package, and token paths, a provider may submit source plus bounded task
 limits to the trusted Dynamic Revit supervisor. Native actions, workbench actions,
 web requests, and dev actions cannot be mixed with that lane. Provider prose and

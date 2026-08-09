@@ -72,7 +72,9 @@ test("provider dynamic_program schema is exact and bounded", () => {
     ].sort()
   );
   assert.equal(PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA.properties.source.maxLength, 65_536);
-  assert.equal(PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA.properties.parameters.maxItems, 32);
+  assert.equal(PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA.properties.parameters.maxItems, 16);
+  assert.equal(PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA.properties.limit.maximum, 1000);
+  assert.equal(PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA.properties.apply_deadline_ms.maximum, 5000);
   assert.deepEqual(normalizeProviderDynamicProgram(program()), program());
   assert.throws(
     () => normalizeProviderDynamicProgram({ ...program(), extra: true }),
@@ -82,9 +84,13 @@ test("provider dynamic_program schema is exact and bounded", () => {
     () => normalizeProviderDynamicProgram(program({ operation_budget: 257 })),
     /operation_budget/
   );
+  assert.throws(() => normalizeProviderDynamicProgram(program({ category: "Mechanical Equipment" })), /BuiltInCategory/);
+  assert.throws(() => normalizeProviderDynamicProgram(program({ limit: 1001 })), /limit/);
+  assert.throws(() => normalizeProviderDynamicProgram(program({ apply_deadline_ms: 5001 })), /apply_deadline_ms/);
+  assert.throws(() => normalizeProviderDynamicProgram(program({ parameters: Array.from({ length: 17 }, (_, i) => `P${i}`) })), /at most 16/);
 });
 
-test("dynamic provider runner stays hidden unless local/development laboratory execution is explicit", () => {
+test("dynamic provider runner requires exact development laboratory execution", () => {
   assert.equal(isTrustedDynamicProgramRunnerEnabled({ REVIT_OPERATOR_MODE: "production" }), false);
   assert.equal(isTrustedDynamicProgramRunnerEnabled({
     REVIT_OPERATOR_MODE: "development",
@@ -92,6 +98,11 @@ test("dynamic provider runner stays hidden unless local/development laboratory e
   }), false);
   assert.equal(isTrustedDynamicProgramRunnerEnabled({
     REVIT_OPERATOR_MODE: "local",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled"
+  }), false);
+  assert.equal(isTrustedDynamicProgramRunnerEnabled({
+    REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
     OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled"
   }), true);
