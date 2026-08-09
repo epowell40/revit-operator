@@ -71,9 +71,15 @@ export type DynamicProgramReuseHeadAuthority = {
 };
 
 export type DynamicProgramReusePersistenceAuthority = {
-  read(): Buffer | null;
-  append(expectedByteLength: number, line: Buffer): void;
+  read(): DynamicProgramReusePersistenceSnapshot;
+  append(expected: DynamicProgramReusePersistenceSnapshot, line: Buffer): void;
 };
+
+export type DynamicProgramReusePersistenceSnapshot = Readonly<{
+  bytes: Buffer | null;
+  content_hash: string;
+  opaque_snapshot_token: object;
+}>;
 
 export class DynamicProgramReuseStore {
   constructor(private readonly options: DynamicProgramReuseStoreOptions) {
@@ -87,8 +93,8 @@ export class DynamicProgramReuseStore {
 
   append(record: DynamicProgramReuseRecordV1): void {
     validateRecord(record, this.options.verify_evidence);
-    const before = this.options.persistence_authority.read();
-    const existing = this.readLedger(before);
+    const before = this.readPersistenceSnapshot();
+    const existing = this.readLedger(before.bytes);
     if (existing.length >= MAX_RECORDS) throw new Error("Dynamic reuse ledger record limit is exceeded.");
     if (existing.some(value => value.record.record_id === record.record_id)) throw new Error("Dynamic reuse record id is duplicate or equivocated.");
     const previous = existing.at(-1)?.entry_hash ?? null;
@@ -96,14 +102,14 @@ export class DynamicProgramReuseStore {
     const entryHash = sha256(canonicalJson(unsigned));
     const entry: LedgerEntry = { ...unsigned, entry_hash: entryHash, signature: this.sign(entryHash) };
     const line = Buffer.from(`${JSON.stringify(entry)}\n`, "utf8");
-    if ((before?.length ?? 0) + line.length > MAX_LEDGER_BYTES) throw new Error("Dynamic reuse ledger byte limit would be exceeded.");
-    this.options.persistence_authority.append(before?.length ?? 0, line);
+    if ((before.bytes?.length ?? 0) + line.length > MAX_LEDGER_BYTES) throw new Error("Dynamic reuse ledger byte limit would be exceeded.");
+    this.options.persistence_authority.append(before, line);
     this.options.head_authority.advance(previous === null ? null : { entry_hash: previous, record_count: existing.length },
       { entry_hash: entry.entry_hash, record_count: existing.length + 1 });
   }
 
   readAll(): Readonly<DynamicProgramReuseRecordV1>[] {
-    return this.readLedger(this.options.persistence_authority.read()).map(value => Object.freeze({ ...value.record }));
+    return this.readLedger(this.readPersistenceSnapshot().bytes).map(value => immutableRecord(value.record));
   }
 
   candidate(recordId: string, bindings: DynamicProgramReuseBindings): DynamicProgramReuseCandidate | null {
@@ -165,6 +171,16 @@ export class DynamicProgramReuseStore {
     return `hmac-sha256:${createHmac("sha256", this.options.authentication_key).update(entryHash, "utf8").digest("hex")}`;
   }
 
+  private readPersistenceSnapshot(): DynamicProgramReusePersistenceSnapshot {
+    const snapshot = this.options.persistence_authority.read();
+    if (!snapshot || !(snapshot.bytes === null || Buffer.isBuffer(snapshot.bytes)) || !SHA256.test(snapshot.content_hash)
+      || !snapshot.opaque_snapshot_token || typeof snapshot.opaque_snapshot_token !== "object"
+      || snapshot.content_hash !== sha256Bytes(snapshot.bytes ?? Buffer.alloc(0))) {
+      throw new Error("Dynamic reuse persistence authority returned an invalid or unauthenticated snapshot.");
+    }
+    return snapshot;
+  }
+
 }
 
 function validateRecord(record: DynamicProgramReuseRecordV1, verifyEvidence: DynamicProgramReuseStoreOptions["verify_evidence"]): void {
@@ -177,10 +193,9 @@ function validateRecord(record: DynamicProgramReuseRecordV1, verifyEvidence: Dyn
     || !["preview_verified", "apply_verified"].includes(record.verification_outcome)
     || !Number.isFinite(Date.parse(record.recorded_at_utc))) throw new Error("record shape is invalid");
   for (const value of [record.normalized_source_hash, record.input_schema_hash, record.program_hash, record.preview_evidence_hash,
-    record.failure_history_hash, record.authoring_model_identity_hash, record.applicability.company_hash,
-    record.applicability.project_hash, record.applicability.user_hash, record.apply_evidence_hash]) {
-    if (value !== null && !SHA256.test(value)) throw new Error("record hash is invalid");
-  }
+    record.failure_history_hash, record.authoring_model_identity_hash]) if (!SHA256.test(value)) throw new Error("record required hash is invalid");
+  for (const value of [record.applicability.company_hash, record.applicability.project_hash,
+    record.applicability.user_hash, record.apply_evidence_hash]) if (value !== null && !SHA256.test(value)) throw new Error("record optional hash is invalid");
   if (record.normalized_source_hash !== sha256(record.normalized_source)) throw new Error("normalized source hash is invalid");
   if (!verifyEvidence(record.preview_evidence_hash, "preview")) throw new Error("preview evidence is unavailable or unauthenticated");
   if (record.verification_outcome === "apply_verified" && (!record.apply_evidence_hash || !verifyEvidence(record.apply_evidence_hash, "apply"))) {
@@ -194,12 +209,21 @@ function validateBindings(bindings: DynamicProgramReuseBindings): void {
     || !Array.isArray(bindings.available_sdk_capabilities) || new Set(bindings.available_sdk_capabilities).size !== bindings.available_sdk_capabilities.length) {
     throw new Error("Dynamic reuse applicability bindings are invalid.");
   }
-  for (const value of [bindings.company_hash, bindings.project_hash, bindings.user_hash, bindings.input_schema_hash, bindings.model_identity_hash]) {
-    if (value !== null && !SHA256.test(value)) throw new Error("Dynamic reuse applicability hash is invalid.");
+  if (!SHA256.test(bindings.input_schema_hash) || !SHA256.test(bindings.model_identity_hash)) throw new Error("Dynamic reuse applicability required hash is invalid.");
+  for (const value of [bindings.company_hash, bindings.project_hash, bindings.user_hash]) if (value !== null && !SHA256.test(value)) {
+    throw new Error("Dynamic reuse applicability optional hash is invalid.");
   }
 }
 
 function sha256(value: string): string { return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`; }
+function sha256Bytes(value: Buffer): string { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
+function immutableRecord(record: DynamicProgramReuseRecordV1): Readonly<DynamicProgramReuseRecordV1> {
+  return Object.freeze({
+    ...record,
+    required_sdk_capabilities: Object.freeze([...record.required_sdk_capabilities]) as unknown as string[],
+    applicability: Object.freeze({ ...record.applicability })
+  });
+}
 function secureEqual(left: string, right: string): boolean {
   const a = Buffer.from(left, "utf8"); const b = Buffer.from(right, "utf8");
   return a.length === b.length && timingSafeEqual(a, b);

@@ -121,13 +121,19 @@ export type DynamicContextRevocationAuthority = {
   isRevoked(revocationId: string): boolean;
 };
 
+export type DynamicContextClock = {
+  now(): Date;
+};
+
 export class DynamicContextApprovalAuthority {
   private readonly verified = new WeakSet<object>();
 
-  constructor(private readonly key: Buffer, private readonly signerKeyId: string, private readonly revocations: DynamicContextRevocationAuthority) {
+  constructor(private readonly key: Buffer, private readonly signerKeyId: string, private readonly revocations: DynamicContextRevocationAuthority,
+    private readonly clock: DynamicContextClock) {
     if (!Buffer.isBuffer(key) || key.length < 32 || !/^sha256:[0-9a-f]{64}$/.test(signerKeyId)
-      || !revocations || typeof revocations.revoke !== "function" || typeof revocations.isRevoked !== "function") {
-      throw new Error("Dynamic context approval authority requires a 256-bit key, canonical key id, and trusted durable revocation authority.");
+      || !revocations || typeof revocations.revoke !== "function" || typeof revocations.isRevoked !== "function"
+      || !clock || typeof clock.now !== "function") {
+      throw new Error("Dynamic context approval authority requires a 256-bit key, canonical key id, trusted durable revocation authority, and trusted clock.");
     }
   }
 
@@ -166,7 +172,8 @@ export class DynamicContextApprovalAuthority {
     this.revocations.revoke(revocationId);
   }
 
-  verify(record: DynamicContextApprovalV1, bindings: DynamicContextBindings, now = new Date()): VerifiedDynamicContextEntry {
+  verify(record: DynamicContextApprovalV1, bindings: DynamicContextBindings): VerifiedDynamicContextEntry {
+    const now = this.trustedNow();
     this.validateShape(record, now, true);
     if (record.signer_key_id !== this.signerKeyId || this.revocations.isRevoked(record.revocation_id)) throw new Error("Dynamic context approval signer or revocation state is invalid.");
     const { signature, ...unsigned } = record;
@@ -198,7 +205,8 @@ export class DynamicContextApprovalAuthority {
     return entry;
   }
 
-  buildBundle(entries: readonly VerifiedDynamicContextEntry[], now = new Date()): DynamicProgramContextBundleV1 {
+  buildBundle(entries: readonly VerifiedDynamicContextEntry[]): DynamicProgramContextBundleV1 {
+    const now = this.trustedNow();
     return buildVerifiedDynamicContextBundle(entries, entry => this.verified.has(entry), entry => {
       if (this.revocations.isRevoked(entry.revocation_id) || now.getTime() >= Date.parse(entry.expires_at_utc)) {
         throw new Error("Dynamic context approval was revoked or expired before bundle construction.");
@@ -208,6 +216,12 @@ export class DynamicContextApprovalAuthority {
 
   private sign(value: Omit<DynamicContextApprovalV1, "signature">): string {
     return `hmac-sha256:${createHmac("sha256", this.key).update(canonicalContextApproval(value), "utf8").digest("hex")}`;
+  }
+
+  private trustedNow(): Date {
+    const now = this.clock.now();
+    if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error("Dynamic context trusted clock returned an invalid instant.");
+    return new Date(now.getTime());
   }
 
   private validateShape(record: Omit<DynamicContextApprovalV1, "signature"> | DynamicContextApprovalV1, now: Date, enforceTime: boolean): void {
