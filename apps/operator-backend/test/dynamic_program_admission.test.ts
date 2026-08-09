@@ -87,8 +87,7 @@ test("durable replay authority prunes expired entries without making the current
     const file = path.join(root, "state.json"); const authority = new DurableDynamicAdmissionReplayAuthority(file);
     assert.equal(authority.consume(h("old"), now() + 1, now()), true);
     assert.equal(authority.consume(h("new"), now() + 60, now() + 2), true);
-    const state = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(state.consumed[h("old")], undefined);
-    assert.equal(typeof state.consumed[h("new")], "number");
+    assert.equal(new DurableDynamicAdmissionReplayAuthority(file).consume(h("new"), now() + 90, now() + 3), false);
+    assert.equal(new DurableDynamicAdmissionReplayAuthority(file).consume(h("old"), now() + 90, now() + 3), true);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

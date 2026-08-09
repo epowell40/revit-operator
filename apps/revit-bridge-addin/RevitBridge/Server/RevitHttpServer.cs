@@ -55,6 +55,8 @@ namespace RevitBridge.Server
                 { "/revit/dynamic-runtime/register", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeRegistrationHandler() },
                 { "/revit/dynamic-runtime/snapshot", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeSnapshotHandler() },
                 { "/revit/dynamic-runtime/preview", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimePreviewHandler() },
+                { "/revit/dynamic-runtime/authorize-apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyAuthorizationHandler() },
+                { "/revit/dynamic-runtime/apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyHandler() },
                 { "/revit/native-capabilities", new NativeCapabilitiesHandler() },
                 { "/revit/views", new RevitBridge.Logic.Handlers.ListViewsHandler() },
                 { "/revit/tool-registry", new ToolRegistryHandler() },

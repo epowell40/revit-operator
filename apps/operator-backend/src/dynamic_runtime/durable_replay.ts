@@ -1,67 +1,43 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import Database from "better-sqlite3";
 import type { DynamicAdmissionReplayAuthority } from "./admission.js";
 
-const SCHEMA = "dynamic_program_replay_state/v1";
-type State = { schema: typeof SCHEMA; consumed: Record<string, number> };
-
+/**
+ * Cross-process replay authority backed by a synchronous FULL SQLite transaction.
+ * A crash before commit leaves the key reusable; a committed key is durable and
+ * can never be made reusable before its admission expiry by a stale lock file.
+ */
 export class DurableDynamicAdmissionReplayAuthority implements DynamicAdmissionReplayAuthority {
-  constructor(private readonly filePath: string, private readonly lockWaitMilliseconds = 2000) {}
+  constructor(private readonly filePath: string) {}
 
   consume(replayKey: string, expiresUnixSeconds: number, nowUnixSeconds: number): boolean {
     if (!/^sha256:[0-9a-f]{64}$/.test(replayKey) || !Number.isSafeInteger(expiresUnixSeconds) || expiresUnixSeconds <= nowUnixSeconds) return false;
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const lockPath = `${this.filePath}.lock`;
-    const deadline = Date.now() + this.lockWaitMilliseconds;
-    let descriptor: number | undefined;
-    while (descriptor === undefined) {
-      try { descriptor = fs.openSync(lockPath, "wx", 0o600); }
-      catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST" || Date.now() >= deadline) return false;
-      }
-    }
+    const directory = path.dirname(path.resolve(this.filePath));
+    fs.mkdirSync(directory, { recursive: true });
+    requireNoSymlink(directory);
+    const database = new Database(path.resolve(this.filePath));
     try {
-      const state = this.read();
-      for (const [key, expiry] of Object.entries(state.consumed)) if (expiry <= nowUnixSeconds) delete state.consumed[key];
-      if (state.consumed[replayKey] !== undefined) return false;
-      state.consumed[replayKey] = expiresUnixSeconds;
-      this.write(state);
-      return true;
+      database.pragma("journal_mode = DELETE");
+      database.pragma("synchronous = FULL");
+      database.pragma("busy_timeout = 2000");
+      database.exec("CREATE TABLE IF NOT EXISTS consumed_admission (replay_key TEXT PRIMARY KEY NOT NULL, expires_unix_seconds INTEGER NOT NULL) WITHOUT ROWID");
+      const consume = database.transaction(() => {
+        database.prepare("DELETE FROM consumed_admission WHERE expires_unix_seconds <= ?").run(nowUnixSeconds);
+        return database.prepare("INSERT OR IGNORE INTO consumed_admission(replay_key, expires_unix_seconds) VALUES (?, ?)").run(replayKey, expiresUnixSeconds).changes === 1;
+      });
+      return consume.immediate();
     } finally {
-      try { if (descriptor !== undefined) fs.closeSync(descriptor); } catch { }
-      try { fs.unlinkSync(lockPath); } catch { }
+      database.close();
     }
   }
+}
 
-  private read(): State {
-    if (!fs.existsSync(this.filePath)) return { schema: SCHEMA, consumed: {} };
-    const parsed = JSON.parse(fs.readFileSync(this.filePath, "utf8")) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Dynamic admission replay state is malformed.");
-    const record = parsed as Record<string, unknown>;
-    if (record.schema !== SCHEMA || !record.consumed || typeof record.consumed !== "object" || Array.isArray(record.consumed)) {
-      throw new Error("Dynamic admission replay state schema is invalid.");
-    }
-    const consumed: Record<string, number> = {};
-    for (const [key, value] of Object.entries(record.consumed as Record<string, unknown>)) {
-      if (!/^sha256:[0-9a-f]{64}$/.test(key) || typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error("Dynamic admission replay entry is invalid.");
-      consumed[key] = value;
-    }
-    return { schema: SCHEMA, consumed };
-  }
-
-  private write(state: State): void {
-    const temporary = `${this.filePath}.tmp-${process.pid}-${randomUUID().replaceAll("-", "")}`;
-    let descriptor: number | undefined;
-    try {
-      descriptor = fs.openSync(temporary, "wx", 0o600);
-      fs.writeFileSync(descriptor, JSON.stringify(state, null, 2) + "\n", "utf8");
-      fs.fsyncSync(descriptor);
-      fs.closeSync(descriptor); descriptor = undefined;
-      fs.renameSync(temporary, this.filePath);
-    } finally {
-      try { if (descriptor !== undefined) fs.closeSync(descriptor); } catch { }
-      try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch { }
-    }
+function requireNoSymlink(directory: string): void {
+  const resolved = path.resolve(directory); const parsed = path.parse(resolved); const parts = resolved.slice(parsed.root.length).split(path.sep).filter(Boolean);
+  let current = parsed.root;
+  for (const part of parts) {
+    current = path.join(current, part);
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error("Dynamic admission replay storage crosses a symbolic link.");
   }
 }

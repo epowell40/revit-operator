@@ -20,6 +20,11 @@ export const DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1 = {
     contract: "dynamic_program_admission/v1",
     state: "not_admitted_by_discovery",
     authorizationGranted: false
+  },
+  execution: {
+    tool: "operator_run_dynamic_revit_program",
+    availability: "local_lab_mode_gated",
+    certifiedProductionExposure: false
   }
 } as const;
 

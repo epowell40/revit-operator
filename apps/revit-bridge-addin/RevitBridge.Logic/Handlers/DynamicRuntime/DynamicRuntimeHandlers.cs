@@ -162,6 +162,25 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             DynamicWorkerAdmissionPolicy.Validate(admission, runtime.Key, runtime.LauncherHash, runtime.SandboxProfile, sourceHash, programHash, sdkHash, graphHash, documentFingerprint, documentSession, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
             if (string.IsNullOrWhiteSpace(admission.CorrelationId) || !UsedCorrelations.TryAdd(admission.RuntimeInstanceId + "\n" + admission.CorrelationId, 0)) throw new InvalidOperationException("Dynamic worker admission was replayed.");
         }
+
+        internal static DynamicRuntimeV1Identity RequireV1Identity(string runtimeId)
+        {
+            if (!Keys.TryGetValue(runtimeId ?? "", out var runtime) || runtime.ExpiresUtc <= DateTime.UtcNow)
+                throw new InvalidOperationException("Dynamic worker runtime is not registered or has expired.");
+            return new DynamicRuntimeV1Identity
+            {
+                Key = (byte[])runtime.Key.Clone(), LauncherHash = runtime.LauncherHash, WorkerHash = runtime.WorkerHash,
+                SandboxProfile = runtime.SandboxProfile, WorkerProcessId = runtime.WorkerProcessId,
+                StartupNonceHash = runtime.StartupNonceHash, TaskDirectoryIdentity = runtime.TaskDirectoryIdentity
+            };
+        }
+    }
+
+    internal sealed class DynamicRuntimeV1Identity
+    {
+        public byte[] Key = Array.Empty<byte>(); public string LauncherHash = ""; public string WorkerHash = ""; public string SandboxProfile = "";
+        public int WorkerProcessId; public string StartupNonceHash = ""; public string TaskDirectoryIdentity = "";
+        public string AuthenticatedWorkerIdentityHash => DynamicWire.Sha256(WorkerHash + "\n" + WorkerProcessId.ToString(CultureInfo.InvariantCulture) + "\n" + StartupNonceHash + "\n" + TaskDirectoryIdentity);
     }
 
     public sealed class DynamicRuntimeRegistrationHandler : IRequestHandler
@@ -420,7 +439,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 var rollbackVerifiedElementIds = changedElementIds.Concat(requestedTargetElementIds).Distinct().ToArray();
                 rollbackTruth = VerifyRollback(doc, baseline, rollbackVerifiedElementIds);
                 if (!rollbackTruth) throw new InvalidOperationException("Preview rollback verification failed.");
-                var receipt = new { schema = "dynamic-revit-preview-receipt/v0", ok = true, source_hash = request.sourceHash, program_hash = request.programHash, sdk_hash = request.sdkHash, input_hash = graph.InputHash, graph_hash = graph.GraphHash, document_fingerprint = request.documentFingerprint, document_session_id = request.documentSessionId, worker_identity = request.admission, operation_count = graph.Operations.Count, target_ids = graph.Operations.Select(operation => operation.TargetUniqueId).ToArray(), projected_changed_element_ids = changedElementIds.OrderBy(id => id).ToArray(), rollback_verified_element_ids = rollbackVerifiedElementIds.OrderBy(id => id).ToArray(), change_tracking = new { complete = true, added = addedElementIds.OrderBy(id => id).ToArray(), modified = modifiedElementIds.OrderBy(id => id).ToArray(), deleted = deletedElementIds.OrderBy(id => id).ToArray() }, projected_changes = projected, failures = failures.Take(64).ToArray(), warnings = warnings.Distinct().Take(64).ToArray(), rollback_status = rollbackStatus.ToString(), rollback_truth = true, elapsed_milliseconds = stopwatch.ElapsedMilliseconds };
+                var previewId = "preview_" + Guid.NewGuid().ToString("N");
+                var receipt = new { schema = "dynamic-revit-preview-receipt/v0", ok = true, preview_id = previewId, source_hash = request.sourceHash, program_hash = request.programHash, sdk_hash = request.sdkHash, input_hash = graph.InputHash, graph_hash = graph.GraphHash, document_fingerprint = request.documentFingerprint, document_session_id = request.documentSessionId, worker_identity = request.admission, operation_count = graph.Operations.Count, target_ids = graph.Operations.Select(operation => operation.TargetUniqueId).ToArray(), projected_changed_element_ids = changedElementIds.OrderBy(id => id).ToArray(), rollback_verified_element_ids = rollbackVerifiedElementIds.OrderBy(id => id).ToArray(), change_tracking = new { complete = true, added = addedElementIds.OrderBy(id => id).ToArray(), modified = modifiedElementIds.OrderBy(id => id).ToArray(), deleted = deletedElementIds.OrderBy(id => id).ToArray() }, projected_changes = projected, failures = failures.Take(64).ToArray(), warnings = warnings.Distinct().Take(64).ToArray(), rollback_status = rollbackStatus.ToString(), rollback_truth = true, elapsed_milliseconds = stopwatch.ElapsedMilliseconds };
+                var previewReceiptHash = DynamicWire.Sha256(JsonSerializer.Serialize(receipt));
+                DynamicRuntimeApplyState.RegisterPreview(previewId, previewReceiptHash, request.admission!.RuntimeInstanceId, request.sourceHash!, request.programHash!, graph, doc);
                 return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.admission!.RuntimeInstanceId, "preview-receipt", receipt));
             }
             catch (Exception ex)
@@ -511,6 +533,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var hash = "sha256:" + BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("\n", fields)))).Replace("-", "").ToLowerInvariant();
             return new ElementState { Id = id, UniqueId = element.UniqueId ?? "", Hash = hash };
         }
+        internal static string TrustedElementStateHash(Element element) => CaptureElementState(element).Hash;
         private static string Coordinate(XYZ point) => point.X.ToString("R", CultureInfo.InvariantCulture) + "," + point.Y.ToString("R", CultureInfo.InvariantCulture) + "," + point.Z.ToString("R", CultureInfo.InvariantCulture);
         private static bool VerifyRollback(Document doc, IReadOnlyDictionary<long, ElementState> baseline, IEnumerable<long> changedIds)
         {

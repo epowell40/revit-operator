@@ -15,6 +15,7 @@ internal static class Program
 {
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = true };
     private static readonly JsonSerializerOptions WireJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = false };
+    private static readonly JsonSerializerOptions SnakeJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = false, WriteIndented = false };
 
     public static async Task<int> Main(string[] args)
     {
@@ -148,8 +149,33 @@ internal static class Program
         hostAuthentications.Add(previewAuthentication);
         using var previewDoc = JsonDocument.Parse(previewRaw);
         var ok = previewDoc.RootElement.TryGetProperty("ok", out var okProperty) && okProperty.GetBoolean();
+        string? applyAuthorizationRaw = null; string? applyRaw = null; DynamicProgramAdmissionV1? v1Admission = null;
+        if (ok && config.Apply)
+        {
+            var previewId = previewDoc.RootElement.GetProperty("preview_id").GetString() ?? throw new InvalidOperationException("Preview did not return an apply seal.");
+            var previewReceiptHash = DynamicWire.Sha256(previewRaw);
+            var authorizationCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-apply-authorization-request/v1", runtimeInstanceId = runtimeId, previewId, previewReceiptHash, maximumExecutionMilliseconds = Math.Min(Math.Max(config.ApplyDeadlineMs, 100), 5000) }, WireJson);
+            var authorizationCorrelation = Guid.NewGuid().ToString("N"); var authorizationExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var authorizationRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-apply-authorization-request/v1", runtimeInstanceId = runtimeId, previewId, previewReceiptHash, maximumExecutionMilliseconds = Math.Min(Math.Max(config.ApplyDeadlineMs, 100), 5000), correlationId = authorizationCorrelation, authExpiresUnixSeconds = authorizationExpires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "authorize-apply", runtimeId, authorizationCorrelation, authorizationExpires, DynamicWire.Sha256(authorizationCore)) }, WireJson);
+            var authorizationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/authorize-apply", token, writeGrant, authorizationRequest, authorizationCorrelation);
+            applyAuthorizationRaw = UnwrapAuthenticated(authorizationEnvelope, hostSessionKey, runtimeId, "authorize-apply-receipt", out var authorizationAuthentication);
+            hostAuthentications.Add(authorizationAuthentication);
+            using var authorizationDocument = JsonDocument.Parse(applyAuthorizationRaw); var authorizationRoot = authorizationDocument.RootElement;
+            var authorizationId = authorizationRoot.GetProperty("authorization_id").GetString() ?? throw new InvalidOperationException("Apply authorization ID is missing.");
+            var budget = authorizationRoot.GetProperty("effect_budget").Deserialize<DynamicEffectBudgetV1>(Json) ?? throw new InvalidOperationException("Host effect budget is missing.");
+            var expectations = authorizationRoot.GetProperty("admission_expectations").Deserialize<DynamicProgramAdmissionExpectationsV1>(Json) ?? throw new InvalidOperationException("Host admission expectations are missing.");
+            v1Admission = AdmissionFrom(expectations);
+            v1Admission.AdmissionId = "admission_" + Guid.NewGuid().ToString("N"); v1Admission.CorrelationId = Guid.NewGuid().ToString("N");
+            v1Admission.ReplayNonceHash = DynamicWire.Sha256(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
+            v1Admission.IssuedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); v1Admission.ExpiresUnixSeconds = Math.Min(authorizationRoot.GetProperty("expires_unix_seconds").GetInt64(), v1Admission.IssuedUnixSeconds + 60);
+            v1Admission.AdmissionSignature = DynamicProgramAdmissionV1Policy.Sign(v1Admission, signingKey);
+            var applyRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-apply-request/v1", phase = "apply", runtime_instance_id = runtimeId, preview_id = previewId, authorization_id = authorizationId, graph, effect_budget = budget, admission = v1Admission }, SnakeJson);
+            var applyEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/apply", token, writeGrant, applyRequest, v1Admission.CorrelationId);
+            applyRaw = UnwrapAuthenticated(applyEnvelope, hostSessionKey, runtimeId, "apply-receipt", out var applyAuthentication); hostAuthentications.Add(applyAuthentication);
+            using var applyDocument = JsonDocument.Parse(applyRaw); ok = applyDocument.RootElement.GetProperty("outcome").GetString() == "committed_verified";
+        }
         HostReplayEvidence? replay = null;
-        if (ok && replayAdmission)
+        if (ok && replayAdmission && !config.Apply)
         {
             var freshSnapshotCorrelation = Guid.NewGuid().ToString("N");
             var freshSnapshotExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
@@ -181,8 +207,23 @@ internal static class Program
             };
             ok = ok && replayRejected;
         }
-        return new LiveEvidence { Schema = "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : "Revit preview returned a structured failure." };
+        return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
     }
+
+    private static DynamicProgramAdmissionV1 AdmissionFrom(DynamicProgramAdmissionExpectationsV1 value) => new()
+    {
+        NormalizedSourceHash = value.NormalizedSourceHash, CompiledArtifactHash = value.CompiledArtifactHash, CompilerRuntimeHash = value.CompilerRuntimeHash,
+        SdkVersion = value.SdkVersion, SdkManifestHash = value.SdkManifestHash, SdkArtifactHash = value.SdkArtifactHash,
+        WorkerExecutableHash = value.WorkerExecutableHash, WorkerRuntimePackageHash = value.WorkerRuntimePackageHash,
+        SandboxProfileVersion = value.SandboxProfileVersion, SandboxProfileHash = value.SandboxProfileHash,
+        AuthenticatedWorkerIdentityHash = value.AuthenticatedWorkerIdentityHash, TargetRevitVersion = value.TargetRevitVersion,
+        HostAdapterManifestHash = value.HostAdapterManifestHash, DocumentFingerprint = value.DocumentFingerprint, DocumentSessionId = value.DocumentSessionId,
+        DocumentRevision = value.DocumentRevision, ProjectContextIdentityHash = value.ProjectContextIdentityHash, CapabilityEnvelopeHash = value.CapabilityEnvelopeHash,
+        OperationFamilyEnvelopeHash = value.OperationFamilyEnvelopeHash, EffectBudgetHash = value.EffectBudgetHash, FileCapabilitySetHash = value.FileCapabilitySetHash,
+        OperationGraphHash = value.OperationGraphHash, PreviewReceiptHash = value.PreviewReceiptHash, PolicyIdentityHash = value.PolicyIdentityHash,
+        RuntimeIdentityHash = value.RuntimeIdentityHash, RequestFamilySealHash = value.RequestFamilySealHash, FinalAuthorizationHash = value.FinalAuthorizationHash,
+        PrincipalIdHash = value.PrincipalIdHash, PrincipalSessionHash = value.PrincipalSessionHash
+    };
 
     private static async Task<string> Post(string baseUrl, string path, string token, string writeGrant, string json, string correlation)
     {
@@ -438,12 +479,12 @@ internal sealed class ProbeResult { public string Action { get; set; } = ""; pub
 internal sealed class LiveTaskConfig
 {
     public string WorkerDirectory { get; set; } = ""; public string EvidencePath { get; set; } = ""; public string BridgeUrl { get; set; } = "http://127.0.0.1:5000"; public string OperatorTokenFile { get; set; } = ""; public string SourceFile { get; set; } = "";
-    public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000;
+    public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000; public bool Apply { get; set; } public int ApplyDeadlineMs { get; set; } = 5000;
 }
 internal sealed class LiveEvidence
 {
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }
-    public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
+    public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public string? ApplyAuthorizationReceipt { get; set; } public DynamicProgramAdmissionV1? V1Admission { get; set; } public string? ApplyReceipt { get; set; } public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
     public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }
     public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = "";
     public static LiveEvidence Failed(DateTimeOffset started, string profile, string task, RuntimeImage runtimeImage, string registration, string snapshot, JsonElement worker, string failure) => new() { Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile, TaskDirectory = task, RuntimeImageDirectory = runtimeImage.Directory, RuntimeImageIdentity = runtimeImage.Identity, RuntimeDependencyCount = runtimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshot, WorkerOutput = worker, Failure = failure };

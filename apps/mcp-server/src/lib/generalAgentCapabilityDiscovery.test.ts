@@ -19,6 +19,8 @@ test("general-agent discovery adds exactly one concise non-authorizing dynamic s
   assert.equal(result.executionSubstrates[0]?.semantics.externalFileEffects, "explicit_capability_required");
   assert.equal(result.executionSubstrates[0]?.admission.state, "not_admitted_by_discovery");
   assert.equal(result.executionSubstrates[0]?.admission.authorizationGranted, false);
+  assert.equal(result.executionSubstrates[0]?.execution.tool, "operator_run_dynamic_revit_program");
+  assert.equal(result.executionSubstrates[0]?.execution.certifiedProductionExposure, false);
 });
 
 test("dynamic affordance never enters certified policy membership or its discovery receipt", () => {

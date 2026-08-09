@@ -22,6 +22,8 @@ namespace RevitBridge.Logic
                 { "/revit/dynamic-runtime/register", new DynamicRuntimeRegistrationHandler() },
                 { "/revit/dynamic-runtime/snapshot", new DynamicRuntimeSnapshotHandler() },
                 { "/revit/dynamic-runtime/preview", new DynamicRuntimePreviewHandler() },
+                { "/revit/dynamic-runtime/authorize-apply", new DynamicRuntimeApplyAuthorizationHandler() },
+                { "/revit/dynamic-runtime/apply", new DynamicRuntimeApplyHandler() },
                 { "/revit/views", new ListViewsHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/query", new QueryElementsHandler() },

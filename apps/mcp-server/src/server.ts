@@ -56,6 +56,7 @@ import {
   EXECUTION_STRATEGY_EVIDENCE_V1,
   recordExecutionStrategyEvidence
 } from "./lib/executionStrategyEvidence.js";
+import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -586,6 +587,21 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
 }, async (args) => ({
   content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
 }));
+
+server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compile and execute one generated C# IDynamicRevitProgram through snapshot, sandbox, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. This tool is hidden in certified production exposure and model prose never authorizes apply.", {
+  source: z.string().min(1).max(200_000).describe("Exactly one public IDynamicRevitProgram implementation using RevitOperator.DynamicRevitSdk. Use c.Elements, c.Plan.MoveElement/SetParameter, and return c.Complete()."),
+  mode: z.enum(["preview", "apply"]),
+  target_revit_year: z.enum(["2023", "2024", "2025"]).optional(),
+  category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
+  parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
+  snapshot_limit: z.number().int().min(1).max(1000).optional(),
+  operation_budget: z.number().int().min(1).max(256).optional(),
+  worker_deadline_ms: z.number().int().min(1000).max(60_000).optional(),
+  apply_deadline_ms: z.number().int().min(100).max(5000).optional()
+}, async (args) => {
+  try { return { content: [{ type: "text", text: JSON.stringify(await runDynamicRevitProgram(args), null, 2) }] }; }
+  catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
+});
 
 server.tool("revit_ping", "Check connection to Revit Add-in.", {}, async () => {
   try {
