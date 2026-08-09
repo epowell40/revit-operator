@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 using RevitOperator.DynamicRevitSdk;
@@ -124,6 +125,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         internal string ScopeHash = "";
         internal string SnapshotHash = "";
         internal long DocumentRevision;
+        internal string DocumentStateHash = "";
         internal DateTime ExpiresUtc;
         internal readonly object EnvelopeGate = new object();
         internal readonly Dictionary<int, string> EnvelopeHashesByOffset = new Dictionary<int, string>();
@@ -135,7 +137,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     {
         private static readonly ConcurrentDictionary<string, DynamicBuildingSystemsSnapshotSealV1> Snapshots = new ConcurrentDictionary<string, DynamicBuildingSystemsSnapshotSealV1>(StringComparer.Ordinal);
 
-        internal static DynamicBuildingSystemsSnapshotSealV1 Issue(string runtimeId, string documentFingerprint, string documentSessionId,
+        internal static DynamicBuildingSystemsSnapshotSealV1 Issue(string runtimeId, Document document, string documentFingerprint, string documentSessionId,
             DynamicBuildingSystemsSelectorV1 selector)
         {
             Prune();
@@ -147,6 +149,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 SnapshotId = "buildingsnapshot_" + Guid.NewGuid().ToString("N"), RuntimeId = runtimeId,
                 DocumentFingerprint = documentFingerprint, DocumentSessionId = documentSessionId,
                 ScopeHash = scopeHash, DocumentRevision = revision,
+                DocumentStateHash = DocumentStateHash(document),
                 SnapshotHash = DynamicWire.Sha256(Convert.ToBase64String(nonce) + "\n" + documentFingerprint + "\n" + documentSessionId + "\n" + scopeHash + "\n" + revision),
                 ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
             };
@@ -163,6 +166,14 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 seal.ScopeHash != DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector))
                 throw new InvalidOperationException("Building-systems snapshot is unknown, expired, stale, or scope-substituted.");
             return seal;
+        }
+
+        internal static void RequireUnchanged(string snapshotId, Document document)
+        {
+            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow ||
+                seal.DocumentFingerprint != DynamicRuntimeSnapshotHandler.Fingerprint(document) || seal.DocumentSessionId != DynamicRuntimeSnapshotHandler.Session(document) ||
+                seal.DocumentStateHash != DocumentStateHash(document))
+                throw new InvalidOperationException("Building-systems snapshot document state changed after observation.");
         }
 
         internal static void RecordEnvelope(string snapshotId, DynamicBuildingSystemsEnvelopeV1 envelope)
@@ -208,6 +219,20 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         {
             foreach (var key in Snapshots.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Snapshots.TryRemove(key, out _);
         }
+
+        private static string DocumentStateHash(Document document)
+        {
+            const int maximum = 50000;
+            var values = new List<string>();
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsNotElementType())
+            {
+                if (values.Count >= maximum) throw new InvalidOperationException("Building-systems snapshot document exceeds the 50000-element exact revision bound.");
+                values.Add(ElementIdCompat.GetValue(element.Id).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n" +
+                    (element.UniqueId ?? "") + "\n" + DynamicAnnotationRevitStateV1.StateHash(element));
+            }
+            values.Sort(StringComparer.Ordinal);
+            return DynamicWire.Sha256("dynamic-revit-building-systems-document-state/v1\n" + string.Join("\n", values));
+        }
     }
 
     public sealed class DynamicBuildingSystemsObservationV1Handler : IRequestHandler
@@ -240,8 +265,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var fingerprint = DynamicRuntimeSnapshotHandler.Fingerprint(document);
             var session = DynamicRuntimeSnapshotHandler.Session(document);
             var snapshot = string.IsNullOrWhiteSpace(request.SnapshotId)
-                ? DynamicBuildingSystemsSnapshotAuthorityV1.Issue(request.RuntimeInstanceId ?? "", fingerprint, session, request.Selector)
+                ? DynamicBuildingSystemsSnapshotAuthorityV1.Issue(request.RuntimeInstanceId ?? "", document, fingerprint, session, request.Selector)
                 : DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", fingerprint, session, request.Selector);
+            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
             var envelope = DynamicBuildingSystemsObservationAdapterV1.Observe(document, request.Selector, snapshot.DocumentRevision, snapshot.SnapshotHash);
             DynamicBuildingSystemsSnapshotAuthorityV1.RecordEnvelope(snapshot.SnapshotId, envelope);
             var receipt = new
