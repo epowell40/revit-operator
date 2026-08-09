@@ -18,7 +18,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicMepResultReferenceMutationHostV1
     {
         private const int BaselineLimit = 50000;
-        private static readonly string[] Kinds = { "create_mep_curve", "connect_mep", "create_elbow_fitting", "create_transition_fitting" };
+        private static readonly string[] Kinds = { "create_mep_curve", "set_mep_curve_size", "connect_mep", "create_elbow_fitting", "create_transition_fitting" };
 
         internal static DynamicMepMutationPreviewV1 Preview(UIApplication application, DynamicResultReferenceGraphV1 graph,
             DynamicEffectBudgetV1 budget, IReadOnlyDictionary<string, DynamicTrustedElementFactV1> admissionTargets, long trustedDocumentRevision)
@@ -137,6 +137,12 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     }
                     if (current.Added.Any(id => baseline.ContainsKey(id) || createdDuringGraph.Contains(id)))
                         throw new InvalidOperationException("MEP DocumentChanged creation classification contradicts the exact pre-graph baseline.");
+                    if (node.Kind == "set_mep_curve_size")
+                    {
+                        var exactTarget = resolved.Single();
+                        if (current.Added.Count != 0 || current.Deleted.Count != 0 || !current.Modified.SetEquals(new[] { exactTarget.ElementId }))
+                            throw new InvalidOperationException("MEP curve sizing modified collateral elements outside its exact target.");
+                    }
                     foreach (var addedId in current.Added)
                     {
                         var addedElement = document.GetElement(ElementIdCompat.Create(addedId)) ??

@@ -55,6 +55,7 @@ public static class DynamicMepMutationManifestV1
     private static readonly DynamicMepMutationDescriptorV1[] Descriptors =
     {
         new("create_mep_curve", "create_mep_curve/v2", "create", 0, 0, 0, 0, 1, "curve", "size", "system_type", "type_identity"),
+        new("set_mep_curve_size", "set_mep_curve_size/v1", "modify", 0, 1, 0, 1, 0, "size"),
         new("connect_mep", "connect_mep/v1", "modify", 0, 2, 0, 2, 0, "connector_a", "connector_b"),
         new("create_elbow_fitting", "create_elbow_fitting/v1", "create", 0, 2, 0, 2, 1, "connector_a", "connector_b", "expected_fitting_type"),
         new("create_transition_fitting", "create_transition_fitting/v1", "create", 0, 2, 0, 2, 1, "connector_a", "connector_b", "expected_fitting_type")
@@ -241,6 +242,24 @@ public static class DynamicMepResultReferenceBuilderV1
         DynamicMepConnectorSelectorV1 connectorA, DynamicMepConnectorSelectorV1 connectorB)
         => AddConnectorOperation(builder, "connect_mep", externalTargets, resultReferences, connectorA, connectorB, null, null, null);
 
+    /// <summary>Set the exact connector dimensions of one existing or previously-created MEP curve.</summary>
+    public static DynamicResultOperationHandleV1 SetMepCurveSize(DynamicResultReferenceGraphBuilderV1 builder,
+        IEnumerable<DynamicExternalTargetReferenceV1>? externalTargets, IEnumerable<DynamicSymbolicResultReferenceV1>? resultReferences,
+        DynamicMepCurveSizeV1 size)
+    {
+        if (builder == null) throw new ArgumentNullException(nameof(builder)); size.Validate();
+        var external = (externalTargets ?? Array.Empty<DynamicExternalTargetReferenceV1>()).ToArray();
+        var results = (resultReferences ?? Array.Empty<DynamicSymbolicResultReferenceV1>()).ToArray();
+        if (external.Length + results.Length != 1) throw new ArgumentException("A general MEP size operation requires exactly one element target.");
+        var categories = external.Select(value => value.ExpectedCategoryStableId).Concat(results.Select(value => value.ExpectedCategoryStableId)).ToArray();
+        if (categories.Any(value => value != "category:builtin:OST_PipeCurves" && value != "category:builtin:OST_DuctCurves"))
+            throw new ArgumentException("A general MEP size operation requires an exact pipe-curve or duct-curve target.");
+        if (categories[0] == "category:builtin:OST_PipeCurves" && size.Shape != "Round")
+            throw new ArgumentException("Pipe curves require an exact round size.");
+        return builder.AddOperation("set_mep_curve_size", external, results, null,
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["size"] = size.Canonical() });
+    }
+
     public static DynamicResultOperationHandleV1 CreateTransitionFitting(DynamicResultReferenceGraphBuilderV1 builder,
         IEnumerable<DynamicExternalTargetReferenceV1>? externalTargets, IEnumerable<DynamicSymbolicResultReferenceV1>? resultReferences,
         DynamicMepConnectorSelectorV1 connectorA, DynamicMepConnectorSelectorV1 connectorB, string expectedFittingTypeUniqueId,
@@ -400,7 +419,7 @@ public static class DynamicMepMutationPolicyV1
             DynamicResultReferencePolicyV1.ValidateNodeShape(node);
             if (node.ExternalTargets.Count < descriptor.ExternalTargetMinimum || node.ExternalTargets.Count > descriptor.ExternalTargetMaximum ||
                 node.ResultReferences.Count < descriptor.ResultReferenceMinimum || node.ResultReferences.Count > descriptor.ResultReferenceMaximum ||
-                node.ExternalTargets.Count + node.ResultReferences.Count != (node.Kind == "create_mep_curve" ? 0 : 2) || node.Outputs.Count != descriptor.OutputCount ||
+                node.ExternalTargets.Count + node.ResultReferences.Count != TargetCount(node.Kind) || node.Outputs.Count != descriptor.OutputCount ||
                 !node.Attributes.Keys.OrderBy(value => value, StringComparer.Ordinal).SequenceEqual(descriptor.RequiredAttributes, StringComparer.Ordinal))
                 throw new ArgumentException("MEP primitive target, output, or exact attribute shape is invalid.");
             if (node.Kind == "create_mep_curve")
@@ -413,6 +432,15 @@ public static class DynamicMepMutationPolicyV1
                     node.Outputs[0].ExpectedTypeUniqueId != node.Attributes["type_identity"])
                     throw new ArgumentException("MEP curve semantic declaration is invalid.");
             }
+            else if (node.Kind == "set_mep_curve_size")
+            {
+                var size = DynamicMepCurveSizeV1.ParseCanonical(node.Attributes["size"]);
+                var categories = node.ExternalTargets.Select(value => value.ExpectedCategoryStableId)
+                    .Concat(node.ResultReferences.Select(value => value.ExpectedCategoryStableId)).ToArray();
+                if (categories.Length != 1 || categories[0] != "category:builtin:OST_PipeCurves" && categories[0] != "category:builtin:OST_DuctCurves" ||
+                    categories[0] == "category:builtin:OST_PipeCurves" && size.Shape != "Round")
+                    throw new ArgumentException("MEP curve size target category or shape is invalid.");
+            }
             else
             {
                 DynamicMepConnectorSelectorV1.ParseCanonical(node.Attributes["connector_a"]);
@@ -424,6 +452,7 @@ public static class DynamicMepMutationPolicyV1
             }
         }
     }
+    private static int TargetCount(string kind) => kind == "create_mep_curve" ? 0 : kind == "set_mep_curve_size" ? 1 : 2;
     public static string SemanticEffectHash(DynamicMepSemanticEffectV1 value)
     {
         ValidateSemanticEffect(value, false);

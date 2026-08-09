@@ -17,7 +17,7 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Equal(DynamicMepMutationManifestV1.ContractSurfaceHash, root.GetProperty("contractSurfaceHash").GetString());
         Assert.Equal(DynamicPrimitiveManifestV1.ManifestHash, root.GetProperty("primitiveManifestHash").GetString());
         Assert.False(root.GetProperty("productionExposed").GetBoolean());
-        Assert.Equal(new[] { "connect_mep", "create_elbow_fitting", "create_mep_curve", "create_transition_fitting" }, DynamicMepMutationManifestV1.All.Select(value => value.Kind).Order().ToArray());
+        Assert.Equal(new[] { "connect_mep", "create_elbow_fitting", "create_mep_curve", "create_transition_fitting", "set_mep_curve_size" }, DynamicMepMutationManifestV1.All.Select(value => value.Kind).Order().ToArray());
         Assert.All(DynamicMepMutationManifestV1.All, value => Assert.True(DynamicPrimitiveManifestV1.Find(value.Kind)!.ImplementedByV1Host));
     }
 
@@ -47,6 +47,27 @@ public sealed class MepResultReferenceOperationsTests
 
         graph.Nodes[2].Outputs[0].ExpectedTypeUniqueId = "type:substituted";
         Assert.Throws<ArgumentException>(() => DynamicMepMutationPolicyV1.ValidateGraphShape(graph));
+    }
+
+    [Fact]
+    public void BuilderSetsExactSizeOnExistingOrCreatedMepCurveOnly()
+    {
+        var existingBuilder = Builder();
+        DynamicMepResultReferenceBuilderV1.SetMepCurveSize(existingBuilder, new[] { External("category:builtin:OST_PipeCurves") }, null, Round(1.5));
+        var existing = existingBuilder.Build(); DynamicMepMutationPolicyV1.ValidateGraphShape(existing);
+        Assert.Equal("set_mep_curve_size", existing.Nodes[0].Kind); Assert.Single(existing.Nodes[0].ExternalTargets);
+        Assert.Empty(existing.Nodes[0].Outputs); Assert.Equal(Round(1.5).Canonical(), existing.Nodes[0].Attributes["size"]);
+
+        var createdBuilder = Builder();
+        var created = DynamicMepResultReferenceBuilderV1.CreateMepCurve(createdBuilder, Curve(0, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
+        DynamicMepResultReferenceBuilderV1.SetMepCurveSize(createdBuilder, null, new[] { created.Reference("curve") }, Round(0.75));
+        var createdGraph = createdBuilder.Build(); DynamicMepMutationPolicyV1.ValidateGraphShape(createdGraph);
+        Assert.Equal(created.NodeId, Assert.Single(createdGraph.Nodes[1].DependsOn)); Assert.Single(createdGraph.Nodes[1].ResultReferences);
+
+        Assert.Throws<ArgumentException>(() => DynamicMepResultReferenceBuilderV1.SetMepCurveSize(Builder(), new[] { External("category:builtin:OST_MechanicalEquipment") }, null, Round(1)));
+        Assert.Throws<ArgumentException>(() => DynamicMepResultReferenceBuilderV1.SetMepCurveSize(Builder(), new[] { External("category:builtin:OST_PipeCurves") }, null,
+            new DynamicMepCurveSizeV1 { Shape = "Rectangular", WidthFeet = 1, HeightFeet = 1 }));
+        Assert.Throws<ArgumentException>(() => DynamicMepResultReferenceBuilderV1.SetMepCurveSize(Builder(), Array.Empty<DynamicExternalTargetReferenceV1>(), null, Round(1)));
     }
 
     [Fact]
@@ -107,6 +128,8 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Contains("ResolveFittingCounterparts", executor); Assert.Contains("exactly one live counterpart", executor);
         Assert.Contains("\"create_elbow_fitting\"", host);
         Assert.Contains("ApplyExactSize", executor); Assert.Contains("Created MEP curve dimensions differ", executor);
+        Assert.Contains("SetCurveSize", executor); Assert.Contains("topology, type, level, or system identity", executor);
+        Assert.Contains("set_mep_curve_size", host); Assert.Contains("modified collateral elements outside its exact target", host);
         Assert.Contains("mep-result-reference-pair/v1", executor); Assert.DoesNotContain("value.SourceKind + \":\" + value.SourceIdentity", executor);
     }
 
@@ -132,6 +155,8 @@ public sealed class MepResultReferenceOperationsTests
     private static DynamicMepCurveSpecV1 Curve(double start, double end) => new() { CurveKind = "pipe", StartFeet = new DynamicPointV1 { X = start }, EndFeet = new DynamicPointV1 { X = end }, LevelUniqueId = "level-1" };
     private static DynamicMepCurveSizeV1 Round(double diameter) => new() { Shape = "Round", DiameterFeet = diameter };
     private static DynamicMepConnectorSelectorV1 Connector(DynamicSymbolicResultReferenceV1 reference, double x) => new() { SourceIdentityHash = H(reference.ResultId + "\n" + reference.OutputSlot), ExpectedOriginFeet = new DynamicPointV1 { X = x }, ExpectedDomain = "DomainPiping", ExpectedShape = "Round" };
+    private static DynamicExternalTargetReferenceV1 External(string category) => new() { TargetUniqueId = "existing-curve", TargetElementId = 42,
+        DocumentFingerprint = Document, ExpectedCategoryStableId = category, ExpectedTypeUniqueId = "type:pipe-a", ExpectedStateHash = H("state") };
     private static DynamicEffectBudgetV1 Budget() => new() { BudgetId = "mep-budget", TargetDocumentFingerprints = new[] { Document }, AllowedCategories = new[] { "category:builtin:OST_PipeCurves" }, AllowedSdkDomains = new[] { "mep" }, MaximumOperationCount = 8, MaximumAffectedElements = 8, MaximumCreates = 4, MaximumModifications = 4, MaximumOutputCount = 4, MaximumRegenerations = 8, FileCapabilitySetHash = H("none") };
     private static string H(string value) => DynamicWire.Sha256(value);
     private sealed class Ledger : IDynamicCoreOperationApplyAuthorizationLedgerV1 { private readonly HashSet<string> _used = new(StringComparer.Ordinal); public bool TryConsume(string authorizationHash) => _used.Add(authorizationHash); }

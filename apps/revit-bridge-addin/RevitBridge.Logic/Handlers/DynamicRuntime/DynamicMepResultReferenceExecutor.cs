@@ -32,6 +32,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             IReadOnlyList<DynamicResolvedElementTargetV1> resolvedTargets)
         {
             if (node.Kind == "create_mep_curve") return CreateCurve(document, node, resolvedTargets);
+            if (node.Kind == "set_mep_curve_size") return SetCurveSize(document, node, resolvedTargets);
             if (node.Kind == "connect_mep") return Connect(document, node, resolvedTargets, "connect");
             if (node.Kind == "create_transition_fitting") return Connect(document, node, resolvedTargets, "transition");
             if (node.Kind == "create_elbow_fitting") return Connect(document, node, resolvedTargets, "elbow");
@@ -65,6 +66,40 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var readback = Readback(node, "result:" + node.Outputs[0].ResultId + ":curve", AbsentHash(), ElementState(created),
                 new Dictionary<string, string>(StringComparer.Ordinal) { ["size"] = observedSize.Canonical() });
             return Result(node, new[] { Output("curve", created) }, new[] { readback }, created);
+        }
+
+        private DynamicMepLabExecutionV1 SetCurveSize(Document document, DynamicResultReferenceNodeV1 node,
+            IReadOnlyList<DynamicResolvedElementTargetV1> resolvedTargets)
+        {
+            if (resolvedTargets.Count != 1 || node.Outputs.Count != 0) throw new InvalidOperationException("MEP curve size shape was substituted.");
+            var target = resolvedTargets[0];
+            var element = document.GetElement(ElementIdCompat.Create(target.ElementId));
+            if (!(element is MEPCurve curve) || element.UniqueId != target.UniqueId ||
+                DynamicRuntimePreviewHandler.TrustedElementStateHash(element) != target.StateHash)
+                throw new InvalidOperationException("Exact MEP curve size target is missing, recycled, or stale.");
+            var category = CategoryId(element.Category);
+            if (category != target.CategoryStableId || category != "category:builtin:OST_PipeCurves" && category != "category:builtin:OST_DuctCurves")
+                throw new InvalidOperationException("MEP curve size target is not an exact pipe or duct curve.");
+            var requested = DynamicMepCurveSizeV1.ParseCanonical(node.Attributes["size"]);
+            if (element is Pipe && requested.Shape != "Round") throw new InvalidOperationException("Pipe curves require an exact round size.");
+            var beforeState = ElementState(element); var beforeSize = ReadExactSize(element); var beforeCenterline = Centerline(curve); var beforeTopology = TopologyMembership(curve);
+            var beforeType = TypeUniqueId(document, element); var beforeLevel = curve.ReferenceLevel?.UniqueId ?? "level:none";
+            var beforeSystem = SystemTypeUniqueId(document, curve); var beforeOffset = ParameterDouble(curve, BuiltInParameter.RBS_OFFSET_PARAM);
+            ApplyExactSize(element, requested); document.Regenerate();
+            var afterSize = ReadExactSize(element); var afterCenterline = Centerline(curve); var afterTopology = TopologyMembership(curve);
+            if (afterSize.Canonical() != requested.Canonical()) throw new InvalidOperationException("Modified MEP curve dimensions differ from the exact requested internal-unit size.");
+            if (afterCenterline != beforeCenterline || afterTopology != beforeTopology || TypeUniqueId(document, element) != beforeType ||
+                (curve.ReferenceLevel?.UniqueId ?? "level:none") != beforeLevel || SystemTypeUniqueId(document, curve) != beforeSystem ||
+                ParameterDouble(curve, BuiltInParameter.RBS_OFFSET_PARAM) != beforeOffset)
+                throw new InvalidOperationException("MEP curve sizing changed centerline, topology, type, level, or system identity.");
+            var readback = Readback(node, target.SourceKind + ":" + DynamicWire.Sha256(target.SourceIdentity), beforeState, ElementState(element),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["size_before"] = beforeSize.Canonical(), ["size_after"] = afterSize.Canonical(), ["centerline"] = afterCenterline,
+                    ["topology_membership"] = afterTopology, ["topology_preserved"] = "1", ["type_unique_id"] = beforeType,
+                    ["level_unique_id"] = beforeLevel, ["system_type_unique_id"] = beforeSystem, ["offset_feet"] = beforeOffset
+                });
+            return Result(node, Array.Empty<DynamicRevitLabCreatedOutputV1>(), new[] { readback }, element);
         }
 
         private static void ApplyExactSize(Element element, DynamicMepCurveSizeV1 size)
@@ -219,6 +254,30 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         {
             ConnectorSet? set = element is MEPCurve curve ? curve.ConnectorManager?.Connectors : element is FamilyInstance family ? family.MEPModel?.ConnectorManager?.Connectors : null;
             if (set == null) return "none"; return string.Join("\n", set.Cast<Connector>().Select(ConnectorState).OrderBy(value => value, StringComparer.Ordinal));
+        }
+        private static string Centerline(MEPCurve curve)
+        {
+            if (!(curve.Location is LocationCurve location)) throw new InvalidOperationException("MEP curve centerline is unavailable.");
+            return PointText(location.Curve.GetEndPoint(0)) + "|" + PointText(location.Curve.GetEndPoint(1));
+        }
+        private static string TopologyMembership(MEPCurve curve)
+        {
+            var connectors = curve.ConnectorManager?.Connectors?.Cast<Connector>().ToArray() ?? Array.Empty<Connector>();
+            if (connectors.Length < 2) throw new InvalidOperationException("MEP curve topology is unavailable.");
+            return DynamicWire.Sha256("mep-topology-membership/v1\n" + string.Join("\n", connectors.Select(connector => PointText(connector.Origin) + ":" +
+                string.Join(",", connector.AllRefs.Cast<Connector>().Where(value => value.Owner != null && value.Owner.Id != curve.Id)
+                    .Select(value => value.Owner.UniqueId).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal))).OrderBy(value => value, StringComparer.Ordinal)));
+        }
+        private static string SystemTypeUniqueId(Document document, MEPCurve curve)
+        {
+            var parameter = curve.get_Parameter(curve is Pipe ? BuiltInParameter.RBS_PIPING_SYSTEM_TYPE_PARAM : BuiltInParameter.RBS_DUCT_SYSTEM_TYPE_PARAM);
+            if (parameter == null || parameter.StorageType != StorageType.ElementId) return "system:none";
+            var id = parameter.AsElementId(); return id == ElementId.InvalidElementId ? "system:none" : document.GetElement(id)?.UniqueId ?? "system:missing";
+        }
+        private static string ParameterDouble(Element element, BuiltInParameter parameterId)
+        {
+            var parameter = element.get_Parameter(parameterId);
+            return parameter == null || parameter.StorageType != StorageType.Double ? "value:none" : DynamicCoreOperationCanonicalNumberV1.Format(parameter.AsDouble());
         }
         private static string TypeUniqueId(Document document, Element element) { var id = element.GetTypeId(); return id == ElementId.InvalidElementId ? "type:none" : document.GetElement(id)?.UniqueId ?? "type:missing"; }
         private static string CategoryId(Category? category) { if (category == null) return "category:none"; var id = ElementIdCompat.GetValue(category.Id); var name = id < 0 ? Enum.GetName(typeof(BuiltInCategory), (int)id) : null; return name == null ? "category:element:" + id.ToString(CultureInfo.InvariantCulture) : "category:builtin:" + name; }

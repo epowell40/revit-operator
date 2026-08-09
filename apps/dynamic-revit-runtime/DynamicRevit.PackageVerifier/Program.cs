@@ -21,7 +21,8 @@ if (args.Length == 1 && args[0] == "--sdk-manifest-components")
         resultReferences = DynamicResultReferenceManifestV1.ManifestHash,
         annotations = DynamicAnnotationOperationManifestV1.ManifestHash,
         annotationSurface = DynamicAnnotationOperationManifestV1.ContractSurfaceHash,
-        mepMutations = DynamicMepMutationManifestV1.ManifestHash
+        mepMutations = DynamicMepMutationManifestV1.ManifestHash,
+        mepMutationSurface = DynamicMepMutationManifestV1.ContractSurfaceHash
     }));
     return 0;
 }

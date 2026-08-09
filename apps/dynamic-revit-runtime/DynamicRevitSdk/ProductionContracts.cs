@@ -399,6 +399,7 @@ public static class DynamicPrimitiveManifestV1
         D("create_family_instance", "families", "create", false, "family_type_identity", "placement"),
         D("create_model_curve", "geometry", "create", false, "curve"),
         D("create_mep_curve", "mep", "create", true, "curve", "size", "system_type", "type_identity"),
+        D("set_mep_curve_size", "mep", "modify", true, "size"),
         D("connect_mep", "mep", "modify", true, "connector_a", "connector_b"),
         D("create_elbow_fitting", "mep", "create", true, "connector_a", "connector_b", "expected_fitting_type"),
         D("create_transition_fitting", "mep", "create", true, "connector_a", "connector_b", "expected_fitting_type"),
