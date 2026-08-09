@@ -105,6 +105,8 @@ export class CodexMcpToolRuntime {
     const listed = await client.listTools(undefined, { timeout, maxTotalTimeout: timeout });
     const eager = new Set([
       "operator_runtime_probe",
+      "operator_discover_capabilities",
+      "operator_record_execution_strategy",
       "revit_ping",
       "revit_get_context",
       "revit_list_sheets",
@@ -122,7 +124,7 @@ export class CodexMcpToolRuntime {
     this.dynamicNamespace = {
       type: "namespace",
       name: "revit_operator",
-      description: "Revit Operator MCP tools. Search the registry first when the exact primitive is unknown; writes remain enforced by the Revit bridge grant.",
+      description: "Revit Operator MCP tools. Start with concise semantic capability/substrate discovery when the representation is unclear; inspect exact typed contracts only after choosing a path. Discovery and strategy telemetry never authorize execution.",
       tools: listed.tools.map(tool => ({
         type: "function",
         name: tool.name,

@@ -76,6 +76,14 @@ export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  execution_strategy_evidence?: {
+    schema: "revit-operator.execution-strategy-evidence.v1";
+    selected_substrate: "typed_capability" | "typed_capability_composition" | "dynamic_revit_program";
+    reason: string;
+    recorded_at_utc: string;
+    authority: "telemetry_only";
+    authorization_granted: false;
+  };
   certified_capability_limitations?: Array<{
     code: "CERTIFIED_ACTION_DENIED";
     action_ids: string[];

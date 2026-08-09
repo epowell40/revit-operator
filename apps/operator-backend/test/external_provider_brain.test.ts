@@ -93,6 +93,11 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
                 {
                   text: JSON.stringify({
                     assistant_message: "I will dry-run one explicit pipe segment.",
+                    execution_strategy: {
+                      schema: "revit-operator.execution-strategy-evidence.v1",
+                      selected_substrate: "typed_capability",
+                      reason: "One exact typed primitive covers this bounded segment."
+                    },
                     actions: [
                       {
                         action_id: "pipe-1",
@@ -130,6 +135,11 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
     assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.actions.type, "array");
     assert.equal(requestedBody.generationConfig.responseJsonSchema.properties.workbench_actions.type, "array");
     assert.ok(requestedBody.generationConfig.responseJsonSchema.required.includes("workbench_actions"));
+    assert.ok(requestedBody.generationConfig.responseJsonSchema.required.includes("execution_strategy"));
+    assert.deepEqual(
+      requestedBody.generationConfig.responseJsonSchema.properties.execution_strategy.properties.selected_substrate.enum,
+      ["typed_capability", "typed_capability_composition", "dynamic_revit_program"]
+    );
     const workbenchSchema = requestedBody.generationConfig.responseJsonSchema.properties.workbench_actions.items;
     assert.ok(workbenchSchema.properties.type.enum.includes("compile_existing_conditions_sheet_interpretation"));
     assert.ok(workbenchSchema.properties.type.enum.includes("register_existing_conditions_source_disposition"));
@@ -142,6 +152,9 @@ test("Gemini brain uses structured output and normalizes action body_json", asyn
     );
     assert.equal(response.actions.length, 1);
     assert.equal(response.actions[0]?.path, "/revit/create-pipe");
+    assert.equal(response.execution_strategy_evidence?.selected_substrate, "typed_capability");
+    assert.equal(response.execution_strategy_evidence?.authority, "telemetry_only");
+    assert.equal(response.execution_strategy_evidence?.authorization_granted, false);
     assert.deepEqual(response.actions[0]?.body, {
       startX: 1,
       startY: 2,

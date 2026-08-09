@@ -51,7 +51,11 @@ import {
   assertCertifiedMoveOneToolExposure
 } from "./lib/toolExposurePolicy.js";
 
-import { discoverCertifiedCapabilities } from "./lib/certifiedCapabilityProjection.js";
+import { discoverGeneralAgentCapabilities } from "./lib/generalAgentCapabilityDiscovery.js";
+import {
+  EXECUTION_STRATEGY_EVIDENCE_V1,
+  recordExecutionStrategyEvidence
+} from "./lib/executionStrategyEvidence.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -109,6 +113,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_plan_semantic_mep_route",
   "operator_runtime_probe",
   "operator_discover_capabilities",
+  "operator_record_execution_strategy",
   "print_sheets",
   "read_excel",
   "read_pdf_text",
@@ -569,10 +574,18 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
   };
 });
 
-server.tool("operator_discover_capabilities", "Discover a bounded set of currently certified Revit capabilities for a stated need. This does not execute Revit actions.", {
+server.tool("operator_discover_capabilities", "Discover a bounded set of currently certified Revit capabilities plus the concise dynamic-program substrate affordance. Discovery does not admit or authorize execution.", {
   need: z.string().min(1).max(480).describe("A concise semantic capability need, not a tool name or route."),
   maxResults: z.number().int().min(1).max(8).optional().describe("Maximum certified capability descriptions to return (default 4).")
-}, async (args) => ({ content: [{ type: "text", text: JSON.stringify(discoverCertifiedCapabilities(args), null, 2) }] }));
+}, async (args) => ({ content: [{ type: "text", text: JSON.stringify(discoverGeneralAgentCapabilities(args), null, 2) }] }));
+
+server.tool("operator_record_execution_strategy", "Record the model's bounded execution-representation choice as telemetry/evidence. This never admits or authorizes execution.", {
+  schema: z.literal(EXECUTION_STRATEGY_EVIDENCE_V1),
+  selected_substrate: z.enum(["typed_capability", "typed_capability_composition", "dynamic_revit_program"]),
+  reason: z.string().min(1).max(320).describe("One concise task-specific reason for this representation choice.")
+}, async (args) => ({
+  content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
+}));
 
 server.tool("revit_ping", "Check connection to Revit Add-in.", {}, async () => {
   try {
