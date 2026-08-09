@@ -400,6 +400,7 @@ public static class DynamicPrimitiveManifestV1
         D("create_model_curve", "geometry", "create", false, "curve"),
         D("create_mep_curve", "mep", "create", true, "curve", "size", "system_type", "type_identity"),
         D("connect_mep", "mep", "modify", true, "connector_a", "connector_b"),
+        D("create_elbow_fitting", "mep", "create", true, "connector_a", "connector_b", "expected_fitting_type"),
         D("create_transition_fitting", "mep", "create", true, "connector_a", "connector_b", "expected_fitting_type"),
         D("create_view", "views", "create", false, "view_kind"),
         D("duplicate_view", "views", "create", false, "duplicate_mode"),

@@ -32,8 +32,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             IReadOnlyList<DynamicResolvedElementTargetV1> resolvedTargets)
         {
             if (node.Kind == "create_mep_curve") return CreateCurve(document, node, resolvedTargets);
-            if (node.Kind == "connect_mep") return Connect(document, node, resolvedTargets, false);
-            if (node.Kind == "create_transition_fitting") return Connect(document, node, resolvedTargets, true);
+            if (node.Kind == "connect_mep") return Connect(document, node, resolvedTargets, "connect");
+            if (node.Kind == "create_transition_fitting") return Connect(document, node, resolvedTargets, "transition");
+            if (node.Kind == "create_elbow_fitting") return Connect(document, node, resolvedTargets, "elbow");
             throw new InvalidOperationException("The laboratory MEP executor received an unknown primitive.");
         }
 
@@ -103,9 +104,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         }
 
         private DynamicMepLabExecutionV1 Connect(Document document, DynamicResultReferenceNodeV1 node,
-            IReadOnlyList<DynamicResolvedElementTargetV1> resolvedTargets, bool transition)
+            IReadOnlyList<DynamicResolvedElementTargetV1> resolvedTargets, string mode)
         {
-            if (resolvedTargets.Count != 2 || node.Outputs.Count != (transition ? 1 : 0)) throw new InvalidOperationException("MEP connector operation shape was substituted.");
+            var createsFitting = mode == "transition" || mode == "elbow";
+            if (resolvedTargets.Count != 2 || node.Outputs.Count != (createsFitting ? 1 : 0) || mode != "connect" && !createsFitting)
+                throw new InvalidOperationException("MEP connector operation shape was substituted.");
             var aSelector = DynamicMepConnectorSelectorV1.ParseCanonical(node.Attributes["connector_a"]);
             var bSelector = DynamicMepConnectorSelectorV1.ParseCanonical(node.Attributes["connector_b"]);
             var aTarget = ExactSelectorTarget(resolvedTargets, aSelector); var bTarget = ExactSelectorTarget(resolvedTargets, bSelector);
@@ -117,12 +120,13 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 .OrderBy(value => value, StringComparer.Ordinal)));
             var before = PairState(a, b);
             Element? fitting = null;
-            if (transition)
+            if (createsFitting)
             {
-                fitting = document.Create.NewTransitionFitting(a, b) ?? throw new InvalidOperationException("Revit did not create the exact transition fitting.");
+                fitting = mode == "transition" ? document.Create.NewTransitionFitting(a, b) : document.Create.NewElbowFitting(a, b);
+                if (fitting == null) throw new InvalidOperationException("Revit did not create the exact requested fitting.");
                 document.Regenerate();
                 if (TypeUniqueId(document, fitting) != node.Attributes["expected_fitting_type"])
-                    throw new InvalidOperationException("Routing preferences produced a different transition fitting type.");
+                    throw new InvalidOperationException("Routing preferences produced a different fitting type.");
             }
             else { a.ConnectTo(b); document.Regenerate(); }
             if (!Connected(a, b, fitting)) throw new InvalidOperationException("MEP topology readback does not prove the requested connection.");

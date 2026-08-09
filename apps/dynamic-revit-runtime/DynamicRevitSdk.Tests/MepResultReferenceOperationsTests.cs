@@ -17,7 +17,7 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Equal(DynamicMepMutationManifestV1.ContractSurfaceHash, root.GetProperty("contractSurfaceHash").GetString());
         Assert.Equal(DynamicPrimitiveManifestV1.ManifestHash, root.GetProperty("primitiveManifestHash").GetString());
         Assert.False(root.GetProperty("productionExposed").GetBoolean());
-        Assert.Equal(new[] { "connect_mep", "create_mep_curve", "create_transition_fitting" }, DynamicMepMutationManifestV1.All.Select(value => value.Kind).Order().ToArray());
+        Assert.Equal(new[] { "connect_mep", "create_elbow_fitting", "create_mep_curve", "create_transition_fitting" }, DynamicMepMutationManifestV1.All.Select(value => value.Kind).Order().ToArray());
         Assert.All(DynamicMepMutationManifestV1.All, value => Assert.True(DynamicPrimitiveManifestV1.Find(value.Kind)!.ImplementedByV1Host));
     }
 
@@ -31,6 +31,22 @@ public sealed class MepResultReferenceOperationsTests
         var graph = builder.Build(); DynamicMepMutationPolicyV1.ValidateGraphShape(graph);
         Assert.Equal(new[] { "create_mep_curve", "create_mep_curve", "connect_mep" }, graph.Nodes.Select(value => value.Kind));
         Assert.Equal(2, graph.Nodes[2].ResultReferences.Count); Assert.Empty(graph.Nodes[2].Outputs);
+    }
+
+    [Fact]
+    public void BuilderCreatesExactElbowOutputAndRejectsFittingSubstitution()
+    {
+        var builder = Builder();
+        var first = DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
+        var second = DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(20, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
+        var elbow = DynamicMepResultReferenceBuilderV1.CreateElbowFitting(builder, null, new[] { first.Reference("curve"), second.Reference("curve") },
+            Connector(first.Reference("curve"), 10), Connector(second.Reference("curve"), 10), "type:elbow-a", "category:builtin:OST_PipeFitting");
+        var graph = builder.Build(); DynamicMepMutationPolicyV1.ValidateGraphShape(graph);
+        Assert.Equal("create_elbow_fitting", graph.Nodes[2].Kind);
+        Assert.Equal("type:elbow-a", elbow.Reference("fitting").ExpectedTypeUniqueId);
+
+        graph.Nodes[2].Outputs[0].ExpectedTypeUniqueId = "type:substituted";
+        Assert.Throws<ArgumentException>(() => DynamicMepMutationPolicyV1.ValidateGraphShape(graph));
     }
 
     [Fact]
@@ -86,6 +102,7 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Contains("DocumentChanged", host); Assert.Contains("ValidateAndConsumeAuthorization", host); Assert.Contains("group.RollBack()", host); Assert.Contains("group.Assimilate()", host);
         Assert.Contains("diverged from preview", host); Assert.Contains("VerifyLiveOutputs", host); Assert.Contains("Pipe.Create", executor); Assert.Contains("Duct.Create", executor);
         Assert.Contains("ConnectTo", executor); Assert.Contains("NewTransitionFitting", executor);
+        Assert.Contains("NewElbowFitting", executor);
         Assert.Contains("ApplyExactSize", executor); Assert.Contains("Created MEP curve dimensions differ", executor);
         Assert.Contains("mep-result-reference-pair/v1", executor); Assert.DoesNotContain("value.SourceKind + \":\" + value.SourceIdentity", executor);
     }

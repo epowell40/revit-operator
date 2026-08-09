@@ -20,9 +20,35 @@ public sealed class ResultReferenceGraphTests
         Assert.Equal(first.Nodes[0].Outputs[0].ResultId, first.Nodes[1].ResultReferences[0].ResultId);
         Assert.Equal(first.Nodes[0].Outputs[0].OutputSlot, first.Nodes[1].ResultReferences[0].OutputSlot);
         Assert.Equal(new[] { first.Nodes[0].NodeId }, first.Nodes[1].DependsOn);
-        Assert.Equal("sha256:36ee7595d686be786bd4b2cc4833c4939bca5a992b4753add6154663fdd5c803", first.GraphHash);
-        Assert.Equal("sha256:0230fdf6954c0128c8eb87afe559643196e53651037eb7a7980a2f369cc429f5", DynamicResultReferenceManifestV1.ManifestHash);
-        Assert.Equal("sha256:8d0670abe703212c58a57f92745f04f77541f1d05d0b1fca45623d74952fb273", DynamicResultReferenceManifestV1.ContractSurfaceHash);
+        Assert.Equal("sha256:0f3c2ab74f7296c3022de84fc50d048f65ffccb8bd7aebbdd31dfa747c2924e9", first.GraphHash);
+        Assert.Equal("sha256:03a7a296eb10044416078851fa5f30a3048fda1e50316a9d9ae0785536f97701", DynamicResultReferenceManifestV1.ManifestHash);
+        Assert.Equal("sha256:72f6f0015f2796f12befb2f94b3421ca61a8022e94e75ed3790dbef8af73f55d", DynamicResultReferenceManifestV1.ContractSurfaceHash);
+    }
+
+    [Fact]
+    public void Resolver_refresh_rotates_only_live_state_and_clones_caller_values()
+    {
+        var graph = Graph();
+        var resolver = new DynamicResultReferenceHostResolverV1(graph);
+        var producer = graph.Nodes[0];
+        var output = Created(producer, producer.Outputs[0], 101);
+        output.StateHash = "sha256:" + new string('1', 64);
+        output.OutputHash = DynamicResultReferencePolicyV1.OutputHash(output);
+        resolver.RegisterSuccessfulOutputs(producer, new[] { output });
+        output.StateHash = "sha256:" + new string('2', 64);
+        Assert.NotEqual(output.StateHash, resolver.SnapshotSuccessfulOutputs().Single().StateHash);
+
+        var refreshed = resolver.SnapshotSuccessfulOutputs().Single();
+        refreshed.StateHash = "sha256:" + new string('3', 64);
+        refreshed.OutputHash = DynamicResultReferencePolicyV1.OutputHash(refreshed);
+        resolver.RefreshSuccessfulOutputs(new[] { refreshed });
+        var resolved = resolver.Resolve(graph.Nodes[1], _ => null).Single();
+        Assert.Equal(refreshed.StateHash, resolved.StateHash);
+
+        var substituted = resolver.SnapshotSuccessfulOutputs().Single();
+        substituted.CreatedElementId++;
+        substituted.OutputHash = DynamicResultReferencePolicyV1.OutputHash(substituted);
+        Assert.Throws<InvalidOperationException>(() => resolver.RefreshSuccessfulOutputs(new[] { substituted }));
     }
 
     [Fact]

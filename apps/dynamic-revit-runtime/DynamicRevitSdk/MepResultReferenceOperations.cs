@@ -56,6 +56,7 @@ public static class DynamicMepMutationManifestV1
     {
         new("create_mep_curve", "create_mep_curve/v2", "create", 0, 0, 0, 0, 1, "curve", "size", "system_type", "type_identity"),
         new("connect_mep", "connect_mep/v1", "modify", 0, 2, 0, 2, 0, "connector_a", "connector_b"),
+        new("create_elbow_fitting", "create_elbow_fitting/v1", "create", 0, 2, 0, 2, 1, "connector_a", "connector_b", "expected_fitting_type"),
         new("create_transition_fitting", "create_transition_fitting/v1", "create", 0, 2, 0, 2, 1, "connector_a", "connector_b", "expected_fitting_type")
     };
     private static readonly IReadOnlyList<DynamicMepMutationDescriptorV1> ReadOnlyDescriptors = Array.AsReadOnly(Descriptors);
@@ -248,6 +249,14 @@ public static class DynamicMepResultReferenceBuilderV1
             Require(expectedFittingTypeUniqueId), Require(expectedFittingCategoryStableId),
             new[] { new DynamicResultOutputSpecV1 { OutputSlot = "fitting", ExpectedCategoryStableId = expectedFittingCategoryStableId, ExpectedTypeUniqueId = expectedFittingTypeUniqueId } });
 
+    public static DynamicResultOperationHandleV1 CreateElbowFitting(DynamicResultReferenceGraphBuilderV1 builder,
+        IEnumerable<DynamicExternalTargetReferenceV1>? externalTargets, IEnumerable<DynamicSymbolicResultReferenceV1>? resultReferences,
+        DynamicMepConnectorSelectorV1 connectorA, DynamicMepConnectorSelectorV1 connectorB, string expectedFittingTypeUniqueId,
+        string expectedFittingCategoryStableId)
+        => AddConnectorOperation(builder, "create_elbow_fitting", externalTargets, resultReferences, connectorA, connectorB,
+            Require(expectedFittingTypeUniqueId), Require(expectedFittingCategoryStableId),
+            new[] { new DynamicResultOutputSpecV1 { OutputSlot = "fitting", ExpectedCategoryStableId = expectedFittingCategoryStableId, ExpectedTypeUniqueId = expectedFittingTypeUniqueId } });
+
     private static DynamicResultOperationHandleV1 AddConnectorOperation(DynamicResultReferenceGraphBuilderV1 builder, string kind,
         IEnumerable<DynamicExternalTargetReferenceV1>? externalTargets, IEnumerable<DynamicSymbolicResultReferenceV1>? resultReferences,
         DynamicMepConnectorSelectorV1 a, DynamicMepConnectorSelectorV1 b, string? fittingType, string? fittingCategory,
@@ -408,8 +417,10 @@ public static class DynamicMepMutationPolicyV1
             {
                 DynamicMepConnectorSelectorV1.ParseCanonical(node.Attributes["connector_a"]);
                 DynamicMepConnectorSelectorV1.ParseCanonical(node.Attributes["connector_b"]);
-                if (node.Kind == "create_transition_fitting" && (!DynamicCanonical.Id(node.Attributes["expected_fitting_type"], 256) || node.Outputs[0].ExpectedTypeUniqueId != node.Attributes["expected_fitting_type"]))
-                    throw new ArgumentException("MEP transition type declaration is invalid.");
+                if ((node.Kind == "create_transition_fitting" || node.Kind == "create_elbow_fitting") &&
+                    (!DynamicCanonical.Id(node.Attributes["expected_fitting_type"], 256) || node.Outputs[0].ExpectedTypeUniqueId != node.Attributes["expected_fitting_type"] ||
+                     (node.Outputs[0].ExpectedCategoryStableId != "category:builtin:OST_DuctFitting" && node.Outputs[0].ExpectedCategoryStableId != "category:builtin:OST_PipeFitting")))
+                    throw new ArgumentException("MEP fitting type or category declaration is invalid.");
             }
         }
     }

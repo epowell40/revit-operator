@@ -596,9 +596,36 @@ public sealed class DynamicResultReferenceHostResolverV1
                 throw new InvalidOperationException("Host output producer, type, category, document, status, or visibility is invalid.");
             var key = DynamicResultReferencePolicyV1.Key(fact.ResultId, fact.OutputSlot);
             if (_created.ContainsKey(key)) throw new InvalidOperationException("Host returned a duplicate symbolic output.");
-            _created.Add(key, fact);
+            _created.Add(key, Clone(fact));
         }
         _executed.Add(node.NodeId);
+    }
+
+    public IReadOnlyList<DynamicCreatedResultFactV1> SnapshotSuccessfulOutputs()
+    {
+        if (_closed) throw new InvalidOperationException("Result-reference resolver is already closed.");
+        return _created.Values.OrderBy(value => value.ResultId, StringComparer.Ordinal).ThenBy(value => value.OutputSlot, StringComparer.Ordinal).Select(Clone).ToArray();
+    }
+
+    public void RefreshSuccessfulOutputs(IEnumerable<DynamicCreatedResultFactV1> outputs)
+    {
+        if (_closed) throw new InvalidOperationException("Result-reference resolver is already closed.");
+        var values = (outputs ?? throw new ArgumentNullException(nameof(outputs))).ToArray();
+        if (values.Length != _created.Count || values.Select(value => DynamicResultReferencePolicyV1.Key(value.ResultId, value.OutputSlot)).Distinct(StringComparer.Ordinal).Count() != values.Length)
+            throw new InvalidOperationException("Refreshed symbolic outputs do not exactly cover the successful output set.");
+        foreach (var pair in _created.ToArray())
+        {
+            var current = pair.Value;
+            var refreshed = values.SingleOrDefault(value => DynamicResultReferencePolicyV1.Key(value.ResultId, value.OutputSlot) == pair.Key)
+                ?? throw new InvalidOperationException("A successful symbolic output is missing from live refresh.");
+            DynamicResultReferencePolicyV1.ValidateCreatedFactShape(refreshed, requireHash: true);
+            if (refreshed.ProducerNodeId != current.ProducerNodeId || refreshed.ResultId != current.ResultId || refreshed.OutputSlot != current.OutputSlot ||
+                refreshed.CreatedUniqueId != current.CreatedUniqueId || refreshed.CreatedElementId != current.CreatedElementId ||
+                refreshed.DocumentFingerprint != current.DocumentFingerprint || refreshed.CategoryStableId != current.CategoryStableId ||
+                refreshed.TypeUniqueId != current.TypeUniqueId || refreshed.Status != "created_verified" || !refreshed.Verified || !refreshed.Visible)
+                throw new InvalidOperationException("Live symbolic output refresh changed stable identity, provenance, type, category, or verification state.");
+            _created[pair.Key] = Clone(refreshed);
+        }
     }
 
     public IReadOnlyList<DynamicCreatedResultFactV1> CloseAndSnapshot()

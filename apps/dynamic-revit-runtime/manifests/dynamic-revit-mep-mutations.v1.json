@@ -1,10 +1,10 @@
 {
   "schema": "dynamic-revit-mep-mutation-manifest/v1",
-  "manifestVersion": "1.1.0",
-  "contractManifestHash": "sha256:a7026687f84e13c4b8407a109be1e946ab8d0033e7dd48eab043afa6b8143911",
-  "contractSurfaceHash": "sha256:2b65ee8a4f87bc1e8d29892e76d1211da84d4936153892f4ca62222524699433",
-  "primitiveManifestHash": "sha256:2249c982d95a92d4659f1016f99bbd72c77c57d496476e60703b980a6d550658",
-  "resultReferenceManifestHash": "sha256:0230fdf6954c0128c8eb87afe559643196e53651037eb7a7980a2f369cc429f5",
+  "manifestVersion": "1.2.0",
+  "contractManifestHash": "sha256:a9d718b1d5e324d239323c6b64f947b71b19b13dd5e4bb51f201d875d40d2c56",
+  "contractSurfaceHash": "sha256:362a5de06ff332be35ae2df911ae7396a784981ee4c9ea3029869fafa6ba5a7b",
+  "primitiveManifestHash": "sha256:3c557720a756e7424634484d247f49ee70aa5fad655082569dbe146af00f52ce",
+  "resultReferenceManifestHash": "sha256:03a7a296eb10044416078851fa5f30a3048fda1e50316a9d9ae0785536f97701",
   "canonicalVersion": "dynamic-revit-mep-mutation-canonical/v1",
   "maximumOperations": 64,
   "maximumEffects": 64,
@@ -12,6 +12,7 @@
   "primitives": [
     { "kind": "create_mep_curve", "version": "create_mep_curve/v2", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 0, "resultReferenceMinimum": 0, "resultReferenceMaximum": 0, "outputs": 1, "attributes": ["curve", "size", "system_type", "type_identity"] },
     { "kind": "connect_mep", "version": "connect_mep/v1", "effectClass": "modify", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 0, "attributes": ["connector_a", "connector_b"] },
+    { "kind": "create_elbow_fitting", "version": "create_elbow_fitting/v1", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 1, "attributes": ["connector_a", "connector_b", "expected_fitting_type"] },
     { "kind": "create_transition_fitting", "version": "create_transition_fitting/v1", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 1, "attributes": ["connector_a", "connector_b", "expected_fitting_type"] }
   ],
   "productionExposed": false

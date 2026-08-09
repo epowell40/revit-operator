@@ -147,6 +147,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     var observed = new DynamicMepObservedEffectV1 { NodeId = node.NodeId, Kind = node.Kind, AddedElementIds = current.Added.OrderBy(value => value).ToArray(),
                         ModifiedElementIds = current.Modified.OrderBy(value => value).ToArray(), DeletedElementIds = Array.Empty<long>(), SemanticEffectHash = effect.EffectHash };
                     observed.EffectHash = DynamicMepMutationPolicyV1.ObservedEffectHash(observed); observedEffects.Add(observed); readbacks.AddRange(executed.Readbacks);
+                    resolver.RefreshSuccessfulOutputs(RefreshCreatedFacts(document, application, resolver.SnapshotSuccessfulOutputs()));
                     allChanged.UnionWith(current.Added); allChanged.UnionWith(current.Modified); current = null;
                 }
                 var created = RefreshCreatedFacts(document, application, resolver.CloseAndSnapshot());
