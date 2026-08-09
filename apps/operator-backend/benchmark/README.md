@@ -1,5 +1,7 @@
 # Operator Benchmark Harness
 
+EPIC-0439 adds a paired typed-capability versus Dynamic Runtime usefulness/anti-demo package. See `docs/epics/EPIC-0439_general-agent-dynamic-runtime/usefulness_benchmark.md`; it deliberately keeps source-only, mocked, and live Revit evidence distinct and ships no claimed live outcomes.
+
 This harness lives under `operator-backend` and compares Operator routing setups with latency and verified workflow success as primary metrics.
 
 ## Scope
