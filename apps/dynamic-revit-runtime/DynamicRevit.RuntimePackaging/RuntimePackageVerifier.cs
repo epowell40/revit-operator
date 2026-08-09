@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using RevitOperator.DynamicRevitSdk;
 
 namespace RevitOperator.DynamicRevit.RuntimePackaging;
 
@@ -166,23 +167,7 @@ public static class RuntimePackageVerifier
 
     public static string ComputeDirectorySha256(string directory)
     {
-        var root = Path.GetFullPath(directory);
-        if (!Directory.Exists(root)) throw new DirectoryNotFoundException(root);
-        if (ContainsReparsePoint(root, root)) throw new InvalidDataException("Package directories may not use reparse points.");
-        var canonical = new System.Text.StringBuilder();
-        var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .Select(path => new { Path = path, Relative = NormalizeRelativePath(Path.GetRelativePath(root, path)) })
-            .OrderBy(file => file.Relative, StringComparer.Ordinal)
-            .ToArray();
-        if (files.Length == 0) throw new InvalidDataException("Package directory identity has no files.");
-        foreach (var file in files)
-        {
-            if (ContainsReparsePoint(root, file.Path)) throw new InvalidDataException($"Package directory file may not use a reparse point: {file.Relative}");
-            var fileHash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file.Path))).ToLowerInvariant();
-            var relativeByteCount = System.Text.Encoding.UTF8.GetByteCount(file.Relative);
-            canonical.Append(relativeByteCount).Append(':').Append(file.Relative).Append(':').Append(fileHash).Append('\n');
-        }
-        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(canonical.ToString()))).ToLowerInvariant();
+        return DynamicRuntimePackageDirectoryIdentity.Compute(directory);
     }
 
     private static void VerifySandboxPolicy(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)

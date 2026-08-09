@@ -381,10 +381,7 @@ internal static class Program
 
     private static string LauncherPackageHash()
     {
-        var directory = AppContext.BaseDirectory;
-        var files = Directory.EnumerateFiles(directory, "DynamicRevitSandboxSupervisor.*", SearchOption.TopDirectoryOnly)
-            .Concat(new[] { Path.Combine(directory, "DynamicRevitSdk.dll") }.Where(File.Exists));
-        return PackageHash(files);
+        return DynamicRuntimePackageDirectoryIdentity.Compute(AppContext.BaseDirectory);
     }
     private static string PackageHash(IEnumerable<string> files)
     {

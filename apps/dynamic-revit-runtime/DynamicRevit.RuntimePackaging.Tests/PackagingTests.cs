@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using RevitOperator.DynamicRevit.RuntimePackaging;
+using RevitOperator.DynamicRevitSdk;
 using Xunit;
 
 namespace RevitOperator.DynamicRevit.RuntimePackaging.Tests;
@@ -43,6 +44,7 @@ public sealed class PackagingTests : IDisposable
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
         Assert.Equal(9, result.VerifiedArtifacts.Count);
+        Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(Path.Combine(_root, package.Supervisor.RelativePath)), package.Supervisor.Sha256);
     }
 
     [Fact]

@@ -86,11 +86,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             using var process = Process.GetProcessById(processId);
             var executable = process.MainModule?.FileName ?? throw new InvalidOperationException("Dynamic bootstrap launcher image is unavailable.");
             var directory = Path.GetDirectoryName(Path.GetFullPath(executable)) ?? throw new InvalidOperationException("Dynamic bootstrap launcher directory is unavailable.");
-            var files = Directory.EnumerateFiles(directory, "DynamicRevitSandboxSupervisor.*", SearchOption.TopDirectoryOnly)
-                .Concat(new[] { Path.Combine(directory, "DynamicRevitSdk.dll") }.Where(File.Exists));
-            var canonical = string.Join("\n", files.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).Select(path => Path.GetFileName(path) + ":" + DynamicWire.Sha256(File.ReadAllBytes(path))));
-            if (canonical.Length == 0) throw new InvalidOperationException("Dynamic bootstrap launcher package identity has no files.");
-            return DynamicWire.Sha256(canonical);
+            return DynamicRuntimePackageDirectoryIdentity.Compute(directory);
         }
         private static bool FixedEquals(string? left, string? right)
         {
