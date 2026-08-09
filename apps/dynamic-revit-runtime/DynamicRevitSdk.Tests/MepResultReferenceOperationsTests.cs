@@ -100,6 +100,7 @@ public sealed class MepResultReferenceOperationsTests
         var host = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicMepResultReferenceMutationHost.cs")));
         var executor = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicMepResultReferenceExecutor.cs")));
         Assert.Contains("DocumentChanged", host); Assert.Contains("ValidateAndConsumeAuthorization", host); Assert.Contains("group.RollBack()", host); Assert.Contains("group.Assimilate()", host);
+        Assert.Contains("DynamicFailureHandlingUtil.ConfigureFailureCapture", host); Assert.Contains("failed without a modal dialog", host);
         Assert.Contains("diverged from preview", host); Assert.Contains("VerifyLiveOutputs", host); Assert.Contains("Pipe.Create", executor); Assert.Contains("Duct.Create", executor);
         Assert.Contains("ConnectTo", executor); Assert.Contains("NewTransitionFitting", executor);
         Assert.Contains("NewElbowFitting", executor);

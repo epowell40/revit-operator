@@ -108,7 +108,15 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     using (var transaction = new Transaction(document, "Dynamic MEP " + node.Kind))
                     {
                         if (transaction.Start() != TransactionStatus.Started) throw new InvalidOperationException("Unable to start MEP node transaction.");
-                        try { executed = executor.ExecuteWithEvidence(document, node, resolved); if (transaction.Commit() != TransactionStatus.Committed) throw new InvalidOperationException("MEP node transaction did not commit inside its group."); }
+                        var failures = new List<DynamicCapturedFailure>();
+                        transaction.SetFailureHandlingOptions(DynamicFailureHandlingUtil.ConfigureFailureCapture(transaction, failures));
+                        try
+                        {
+                            executed = executor.ExecuteWithEvidence(document, node, resolved);
+                            if (transaction.Commit() != TransactionStatus.Committed)
+                                throw new InvalidOperationException("MEP node transaction failed without a modal dialog: node=" + node.NodeId + ", kind=" + node.Kind + ", failures=" +
+                                    string.Join(" | ", failures.Select(value => value.severity + ":" + value.failureDefinitionId + ":" + value.message)));
+                        }
                         catch { if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack(); throw; }
                     }
                     if (trackingFailure != null) throw new InvalidOperationException("MEP DocumentChanged capture failed.", trackingFailure);
