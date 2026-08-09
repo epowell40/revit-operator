@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { callRevitViaCourier, RevitCourierError, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
+import { callRevitViaCourier, readRevitCourierLaboratoryEvidenceContext, RevitCourierError, REVIT_COURIER_CONTEXT_STRING_LIMITS } from "./revitCourier.js";
 import { callRevit } from "./revitClient.js";
 import {
   canonicalToolExposureJson,
@@ -12,6 +12,16 @@ import {
   runWithRevitToolAlias,
   type CertifiedCourierAdmission
 } from "./toolExposurePolicy.js";
+import {
+  admitCertifiedMoveOneRequest,
+  CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH,
+  CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1
+} from "./certifiedMoveOneRequestFamily.js";
+import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
+import { revitRouteEffect } from "./revitRouteEffect.js";
+import { issueLaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
+import { admitLaboratoryMoveEvidenceRequest } from "./laboratoryMoveEvidence.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -44,6 +54,47 @@ function writePingPolicy(reason = "CERTIFIED"): { policyPath: string; policyHash
   const { policy_hash: _oldPolicyHash, ...policyPayload } = policy;
   policy.policy_hash = policyDigest(policyPayload);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-policy-"));
+  const policyPath = path.join(root, "tool_exposure_policy.v1.json");
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`, "utf8");
+  return { policyPath, policyHash: policy.policy_hash };
+}
+
+function writeMoveFamilyPolicy(): { policyPath: string; policyHash: string } {
+  const policy = JSON.parse(fs.readFileSync(sourcePolicyPath, "utf8"));
+  const template = structuredClone(policy.records[0]);
+  const previewBody = {
+    ids: [4821], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0, dryRun: true,
+    behavior: "allOrNothing", moveTogether: false, options: { failOnPinned: true, unpinIfAllowed: false }
+  };
+  const routeEffect = revitRouteEffect("/revit/move-elements", "POST", previewBody);
+  Object.assign(template, {
+    method: "POST",
+    path: "/revit/move-elements",
+    request_hash: `sha256:${"0".repeat(64)}`,
+    effect_hash: policyDigest({ effect: { resolved_effect: routeEffect === "apply" ? "write" : routeEffect } }),
+    request_family: {
+      schema: "revit-operator.certified-request-family.v1",
+      id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
+      validator_hash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH
+    },
+    highest_cumulative_level: "L4",
+    observed_levels: ["L0", "L1", "L2", "L3", "L4"],
+    visibility: "candidate",
+    typed_mcp_aliases: ["revit_move_one_certified"],
+    channels: {
+      search: { exposed: false, required_level: "L3", reason_codes: ["CERT_CHANNEL_NOT_APPROVED"] },
+      generic_call: { exposed: false, required_level: "L4", reason_codes: ["CERT_CHANNEL_NOT_APPROVED"] },
+      typed_mcp: { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED_REQUEST_FAMILY"] },
+      deterministic_workflow: { exposed: false, required_level: "L4", reason_codes: ["CERT_CHANNEL_NOT_APPROVED"] }
+    }
+  });
+  delete template.execution_surface;
+  const { policy_record_hash: _oldRecordHash, ...recordPayload } = template;
+  template.policy_record_hash = policyDigest(recordPayload);
+  policy.records = [template];
+  const { policy_hash: _oldPolicyHash, ...policyPayload } = policy;
+  policy.policy_hash = policyDigest(policyPayload);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-family-policy-"));
   const policyPath = path.join(root, "tool_exposure_policy.v1.json");
   fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`, "utf8");
   return { policyPath, policyHash: policy.policy_hash };
@@ -111,13 +162,14 @@ async function waitForJobs(root: string, expected: number): Promise<Array<{ id: 
   throw new Error(`Timed out waiting for ${expected} courier test jobs.`);
 }
 
-function writeSucceededResult(job: { id: string; dir: string }, result: unknown): void {
+function writeSucceededResult(job: { id: string; dir: string }, result: unknown, certifiedExecutionContext?: unknown): void {
   fs.writeFileSync(path.join(job.dir, "result.json"), JSON.stringify({
     version: "revit-operator.revit-tool-result.v1",
     id: job.id,
     correlation_id: job.id,
     status: "succeeded",
     result,
+    ...(certifiedExecutionContext === undefined ? {} : { certified_execution_context: certifiedExecutionContext }),
     retryable: false
   }), "utf8");
 }
@@ -251,7 +303,20 @@ test("MCP courier publishes a correlated job and resolves its durable result", a
     retryable: false
   }), "utf8");
   try {
-    assert.deepEqual(await pending, { status: "ok" });
+    const result = await pending;
+    assert.deepEqual(result, { status: "ok" });
+    assert.deepEqual(readRevitCourierLaboratoryEvidenceContext(result), {
+      schema: "revit-operator.courier-laboratory-evidence-context.v1",
+      transportKind: "courier",
+      jobId: jobRef.id,
+      correlationId: jobRef.id,
+      sessionId: "session-a",
+      executorId: "workstation-revit-courier-24024",
+      jobPath: path.join(jobRef.dir, "job.json"),
+      resultPath: path.join(jobRef.dir, "result.json"),
+      jobSha256: `sha256:${createHash("sha256").update(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"), "utf8").digest("hex")}`,
+      resultSha256: `sha256:${createHash("sha256").update(fs.readFileSync(path.join(jobRef.dir, "result.json"), "utf8"), "utf8").digest("hex")}`
+    });
   } finally {
     restore();
   }
@@ -369,6 +434,335 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
     assert.deepEqual(await Promise.all([first, second]), [{ status: "certified-ok" }, { status: "certified-ok" }]);
   } finally {
     restore();
+  }
+});
+
+test("protected laboratory courier persists exact source/run/step/channel/alias and job identity", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-evidence-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY = "1";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    writeContext(root, { session_id: "evidence-session", message_id: "evidence-message", token: "laboratory-bearer-must-not-persist" });
+    const workflow = "epic-0437-l4-context-before";
+    const dispatch = issueLaboratoryEvidenceDispatch({
+      evidenceRunId: "a".repeat(32), evidenceStep: "context-before", workflow, transportKind: "courier"
+    });
+    const pending = runWithRevitToolAlias("revit_get_context", () => callRevit<{ ok: boolean }>(
+      "/revit/context", "GET", undefined, { workflow, laboratoryEvidenceDispatch: dispatch }
+    ));
+    const jobRef = await waitForJob(root);
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v1");
+    const policy = JSON.parse(fs.readFileSync(sourcePolicyPath, "utf8"));
+    const contextRecord = policy.records.find((record: any) => record.method === "GET" && record.path === "/revit/context");
+    assert.deepEqual(job.laboratory_evidence, {
+      schema: "revit-operator.laboratory-evidence-dispatch.v2",
+      candidate_source_hash: "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
+      policy_hash: policy.policy_hash, policy_record_hash: contextRecord.policy_record_hash,
+      evidence_record_hash: contextRecord.evidence_record_hash, effect_hash: contextRecord.effect_hash,
+      evidence_run_id: "a".repeat(32), evidence_step: "context-before", transport_kind: "courier",
+      job_id: jobRef.id, correlation_id: jobRef.id, workflow, channel: "typed_mcp",
+      alias: "revit_get_context", production_certified: false
+    });
+    assert.equal(job.certification_envelope, undefined);
+    assert.equal(job.turn_token, undefined);
+    assert.equal(job.turn_token_sha256, `sha256:${createHash("sha256").update("laboratory-bearer-must-not-persist", "utf8").digest("hex")}`);
+    assert.equal(JSON.stringify(job).includes("laboratory-bearer-must-not-persist"), false);
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+      version: "revit-operator.revit-tool-result.v1", id: jobRef.id, correlation_id: jobRef.id,
+      status: "succeeded", result: { ok: true }, retryable: false
+    }), "utf8");
+    assert.deepEqual(await pending, { ok: true });
+  } finally { restore(); }
+});
+
+test("protected laboratory courier persists the opaque move-family admission separately from production certification", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-move-evidence-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY = "1";
+    writeContext(root, { session_id: "move-evidence-session", message_id: "move-evidence-message" });
+    clearCertifiedMoveTargetLedgerForTests();
+    registerCertifiedSpatialObservation(
+      { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+      { observationId: "move-evidence-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+    );
+    const workflow = "epic-0437-l4-move-preview";
+    const dispatch = issueLaboratoryEvidenceDispatch({ evidenceRunId: "b".repeat(32), evidenceStep: "move-preview", workflow, transportKind: "courier" });
+    const move = admitLaboratoryMoveEvidenceRequest({ evidenceDispatch: dispatch, request: {
+      phase: "preview", elementId: 4821, observationId: "move-evidence-frame", vectorFeet: { x: 0.25, y: 0, z: 0 }, previewReceipt: undefined
+    } });
+    const bodyJson = canonicalToolExposureJson(move.outboundBody);
+    const certifiedAdmission = runWithRevitToolAlias("revit_move_one_certified", () => createCertifiedCourierAdmission({
+      method: "POST", path: "/revit/move-elements", body: bodyJson, channel: "typed_mcp", workflow,
+      laboratoryMoveEvidenceAdmission: move.request
+    }));
+    const pending = runWithRevitToolAlias("revit_move_one_certified", () => callRevitViaCourier("/revit/move-elements", "POST", bodyJson, {
+      certifiedAdmission, laboratoryEvidenceDispatch: dispatch, laboratoryMoveEvidenceAdmission: move
+    }));
+    const jobRef = await waitForJob(root);
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v1");
+    assert.equal(job.certification_envelope, undefined);
+    assert.equal(job.laboratory_move_evidence_admission.schema, "revit-operator.laboratory-move-evidence-admission.v1");
+    assert.equal(job.laboratory_move_evidence_admission.production_certified, false);
+    assert.equal(job.laboratory_move_evidence_admission.request_instance_hash, move.request.requestInstanceHash);
+    assert.equal(job.laboratory_move_evidence_admission.outbound_body_sha256, `sha256:${createHash("sha256").update(bodyJson, "utf8").digest("hex")}`);
+    assert.equal(job.laboratory_evidence.job_id, jobRef.id);
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+      version: "revit-operator.revit-tool-result.v1", id: jobRef.id, correlation_id: jobRef.id,
+      status: "failed", error: "test terminal rejection", code: "TEST", retryable: false, outcome_unknown: false
+    }), "utf8");
+    await assert.rejects(pending, /test terminal rejection/);
+  } finally { restore(); }
+});
+
+test("certified move family publishes one sealed v2 envelope and binds it into courier idempotency", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-"));
+  const restore = saveEnv();
+  const policy = writeMoveFamilyPolicy();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    writeContext(root, {
+      session_id: "family-session",
+      message_id: "family-message",
+      token: "family-turn-token",
+      target_executor_id: "family-workstation",
+      target_document_title: "family-model",
+      target_document_path: "C:\\models\\family-model.rvt"
+    });
+    clearCertifiedMoveTargetLedgerForTests();
+    registerCertifiedSpatialObservation(
+      { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+      { observationId: "family-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+    );
+    const admission = admitCertifiedMoveOneRequest({
+      phase: "preview", elementId: 4821, observationId: "family-frame",
+      vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
+    });
+    const pending = runWithRevitToolAlias("revit_move_one_certified", async () => await callRevit(
+      "/revit/move-elements", "POST", admission.outboundBody,
+      { channel: "typed_mcp", certifiedMoveOneAdmission: admission }
+    ));
+    const jobRef = await waitForJob(root);
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    const envelope = job.certification_envelope;
+    assert.equal(envelope.schema, "revit-operator.revit-tool-certification-envelope.v2");
+    assert.equal(envelope.version, 2);
+    assert.equal(envelope.request_hash, admission.requestInstanceHash);
+    assert.equal(envelope.request_family_admission.request_instance_hash, admission.requestInstanceHash);
+    assert.equal(envelope.request_family_admission.family_hash, CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH);
+    assert.equal(envelope.request_family_admission.document_session_id, "123e4567e89b42d3a456426614174000");
+    assert.equal(envelope.request_family_admission.preview_receipt, null);
+    assert.equal(envelope.request_family_admission.outbound_body_sha256, envelope.body_sha256);
+    assert.equal(job.id, job.idempotency_key);
+    assert.equal(job.correlation_id, job.id);
+    const familyResult = {
+      rolledBack: true,
+      certified_execution_receipt: { completion_challenge_hash: `sha256:${"9".repeat(64)}` }
+    };
+    const completionChallenge = `cmcc1_${"A".repeat(43)}`;
+    const completionChallengeHash = `sha256:${createHash("sha256").update(completionChallenge, "utf8").digest("hex")}`;
+    const executionContext = {
+      schema: "revit-operator.certified-courier-execution-context.v1",
+      transport_kind: "courier",
+      dispatch_id: job.id,
+      correlation_id: job.correlation_id,
+      execution_session_id: job.session_id,
+      executor_id: job.target_executor_id,
+      certification_envelope_hash: envelope.envelope_hash,
+      completion_challenge_hash: completionChallengeHash
+    };
+    const terminalResult = {
+      version: "revit-operator.revit-tool-result.v1",
+      id: job.id,
+      correlation_id: job.id,
+      status: "succeeded",
+      result: familyResult,
+      certified_execution_context: executionContext,
+      retryable: false
+    };
+    const challenge = {
+      schema: "revit-operator.courier-completion-challenge.v1",
+      transport_kind: "courier",
+      dispatch_id: job.id,
+      correlation_id: job.correlation_id,
+      execution_session_id: job.session_id,
+      executor_id: job.target_executor_id,
+      certification_envelope_hash: envelope.envelope_hash,
+      completion_challenge_hash: completionChallengeHash,
+      job_id: job.id,
+      session_id: job.session_id,
+      completion_challenge: completionChallenge,
+      policy_hash: envelope.policy_hash,
+      document_session_id: envelope.request_family_admission.document_session_id,
+      request_instance_hash: envelope.request_family_admission.request_instance_hash,
+      issued_at_utc: new Date().toISOString()
+    };
+    const decision = {
+      schema: "revit-operator.courier-completion-terminal-decision.v1",
+      kind: "success",
+      job_id: job.id,
+      correlation_id: job.correlation_id,
+      session_id: job.session_id,
+      executor_id: job.target_executor_id,
+      certification_envelope_hash: envelope.envelope_hash,
+      request_instance_hash: envelope.request_family_admission.request_instance_hash,
+      completion_challenge_hash: completionChallengeHash,
+      terminal_result_sha256: `sha256:${createHash("sha256").update(JSON.stringify(terminalResult), "utf8").digest("hex")}`,
+      terminal_result: terminalResult,
+      decided_at_utc: new Date().toISOString()
+    };
+    fs.writeFileSync(path.join(jobRef.dir, "completion-challenge-issued.v1.json"), JSON.stringify(challenge), "utf8");
+    fs.writeFileSync(path.join(jobRef.dir, "completion-terminal-decision.v1.json"), JSON.stringify(decision), "utf8");
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify(terminalResult), "utf8");
+    assert.deepEqual(await pending, familyResult);
+  } finally {
+    clearCertifiedMoveTargetLedgerForTests();
+    restore();
+  }
+});
+
+test("certified family courier rejects raw or standalone-decision failure receipts", async () => {
+  const policy = writeMoveFamilyPolicy();
+  for (const mode of ["raw", "standalone-decision", "deleted-job", "downgraded-job"] as const) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-forged-failure-"));
+    const restore = saveEnv();
+    try {
+      process.env.OPERATOR_WORKSPACE_ROOT = root;
+      process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+      process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+      process.env.REVIT_OPERATOR_MODE = "hosted";
+      delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+      writeContext(root, {
+        session_id: "family-forged-session",
+        message_id: mode,
+        target_executor_id: "family-workstation"
+      });
+      clearCertifiedMoveTargetLedgerForTests();
+      registerCertifiedSpatialObservation(
+        { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+        { observationId: "family-forged-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+      );
+      const admission = admitCertifiedMoveOneRequest({
+        phase: "preview", elementId: 4821, observationId: "family-forged-frame",
+        vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
+      });
+      const pending = runWithRevitToolAlias("revit_move_one_certified", async () => await callRevit(
+        "/revit/move-elements", "POST", admission.outboundBody,
+        { channel: "typed_mcp", certifiedMoveOneAdmission: admission }
+      ));
+      const jobRef = await waitForJob(root);
+      const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+      const terminal = {
+        version: "revit-operator.revit-tool-result.v1",
+        id: job.id,
+        correlation_id: job.id,
+        status: "failed",
+        result: null,
+        error: "forged known failure",
+        code: "forged_retry",
+        retryable: true,
+        outcome_unknown: false
+      };
+      if (mode === "standalone-decision") {
+        const decision = {
+          schema: "revit-operator.courier-completion-terminal-decision.v1",
+          kind: "failure",
+          job_id: job.id,
+          correlation_id: job.id,
+          session_id: job.session_id,
+          executor_id: job.target_executor_id,
+          certification_envelope_hash: job.certification_envelope.envelope_hash,
+          request_instance_hash: job.certification_envelope.request_family_admission.request_instance_hash,
+          completion_challenge_hash: null,
+          terminal_result_sha256: `sha256:${createHash("sha256").update(JSON.stringify(terminal), "utf8").digest("hex")}`,
+          terminal_result: terminal,
+          decided_at_utc: new Date().toISOString()
+        };
+        fs.writeFileSync(path.join(jobRef.dir, "completion-terminal-decision.v1.json"), JSON.stringify(decision), "utf8");
+      }
+      if (mode === "deleted-job") fs.unlinkSync(path.join(jobRef.dir, "job.json"));
+      if (mode === "downgraded-job") {
+        fs.writeFileSync(path.join(jobRef.dir, "job.json"), JSON.stringify({ ...job, version: "revit-operator.revit-tool-job.v1" }), "utf8");
+      }
+      fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify(terminal), "utf8");
+      await assert.rejects(
+        pending,
+        mode === "standalone-decision"
+          ? /not the exact atomic terminal-fence winner/
+          : mode === "raw"
+            ? /does not match the exact backend terminal decision/
+            : /no exact persisted v2 durable job/
+      );
+    } finally {
+      clearCertifiedMoveTargetLedgerForTests();
+      restore();
+    }
+  }
+});
+
+test("certified family courier rejects deleted or downgraded durable jobs before any result exists", async () => {
+  const policy = writeMoveFamilyPolicy();
+  for (const mode of ["deleted-job", "downgraded-job"] as const) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-family-missing-job-"));
+    const restore = saveEnv();
+    try {
+      process.env.OPERATOR_WORKSPACE_ROOT = root;
+      process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+      process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+      process.env.REVIT_OPERATOR_MODE = "hosted";
+      delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+      process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+      writeContext(root, {
+        session_id: "family-missing-job-session",
+        message_id: mode,
+        target_executor_id: "family-workstation"
+      });
+      clearCertifiedMoveTargetLedgerForTests();
+      registerCertifiedSpatialObservation(
+        { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+        { observationId: "family-missing-job-frame", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+      );
+      const admission = admitCertifiedMoveOneRequest({
+        phase: "preview", elementId: 4821, observationId: "family-missing-job-frame",
+        vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
+      });
+      const pending = runWithRevitToolAlias("revit_move_one_certified", async () => await callRevit(
+        "/revit/move-elements", "POST", admission.outboundBody,
+        { channel: "typed_mcp", certifiedMoveOneAdmission: admission }
+      ));
+      const jobRef = await waitForJob(root);
+      const jobPath = path.join(jobRef.dir, "job.json");
+      if (mode === "deleted-job") fs.unlinkSync(jobPath);
+      else {
+        const job = JSON.parse(fs.readFileSync(jobPath, "utf8"));
+        fs.writeFileSync(jobPath, JSON.stringify({ ...job, version: "revit-operator.revit-tool-job.v1" }), "utf8");
+      }
+      await assert.rejects(pending, /no exact persisted v2 durable job/);
+      assert.equal(fs.existsSync(path.join(jobRef.dir, "result.json")), false);
+    } finally {
+      clearCertifiedMoveTargetLedgerForTests();
+      restore();
+    }
   }
 });
 
@@ -986,6 +1380,38 @@ test("MCP courier terminalizes a running deadline with a durable machine-readabl
     assert.equal(result.code, "courier_execution_deadline_elapsed_outcome_unknown");
     assert.equal(result.retryable, false);
     assert.equal(result.outcome_unknown, true);
+  } finally {
+    restore();
+  }
+});
+
+test("certified v2 courier timeout never publishes competing terminal truth", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-certified-timeout-"));
+  const restore = saveEnv();
+  const policy = writePingPolicy("CERTIFIED_TIMEOUT_OWNER");
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
+    process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
+    writeContext(root, { session_id: "certified-timeout-session", message_id: "certified-timeout-message" });
+
+    const pending = startCertifiedPing<{ ok: boolean }>();
+    const jobRef = await waitForJob(root);
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof RevitCourierError);
+      assert.equal(error.code, "courier_job_timed_out_before_claim");
+      assert.equal(error.retryable, true);
+      assert.equal(error.outcome_unknown, false);
+      return true;
+    });
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v2");
+    assert.equal(job.status, "pending");
+    assert.equal(fs.existsSync(path.join(jobRef.dir, "result.json")), false);
   } finally {
     restore();
   }

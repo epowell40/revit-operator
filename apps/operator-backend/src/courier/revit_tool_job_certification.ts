@@ -1,10 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import {
   canonicalJson,
   computeRequestHash,
   normalizeMethod,
   normalizeToolPath,
   type ExposureChannel,
+  type JsonValue,
 } from "../capabilities/tool_certification.js";
 import {
   evaluateTrustedToolExposurePolicy,
@@ -12,10 +13,22 @@ import {
   TrustedToolExposurePolicyError,
   type TrustedToolExposurePolicy
 } from "../capabilities/trusted_tool_exposure_policy.js";
+import {
+  CertifiedRequestFamilyAdmissionError,
+  certifiedRequestFamilyEffectHash,
+  finalizeCertifiedRequestFamilyAdmission,
+  validateCertifiedRequestFamilyAdmission,
+  type CertifiedRequestFamilyAdmission,
+  type ValidatedCertifiedRequestFamilyAdmission
+} from "../capabilities/certified_request_family_admission.js";
 
 export const REVIT_COURIER_V2_JOB_VERSION = "revit-operator.revit-tool-job.v2";
-export const REVIT_COURIER_CERTIFICATION_ENVELOPE_SCHEMA = "revit-operator.revit-tool-certification-envelope.v1";
-export const REVIT_COURIER_FINAL_AUTHORIZATION_VERSION = "revit-operator.revit-tool-final-authorization.v1";
+export const REVIT_COURIER_CERTIFICATION_ENVELOPE_V1_SCHEMA = "revit-operator.revit-tool-certification-envelope.v1";
+export const REVIT_COURIER_CERTIFICATION_ENVELOPE_V2_SCHEMA = "revit-operator.revit-tool-certification-envelope.v2";
+export const REVIT_COURIER_CERTIFICATION_ENVELOPE_SCHEMA = REVIT_COURIER_CERTIFICATION_ENVELOPE_V1_SCHEMA;
+export const REVIT_COURIER_FINAL_AUTHORIZATION_V1_VERSION = "revit-operator.revit-tool-final-authorization.v1";
+export const REVIT_COURIER_FINAL_AUTHORIZATION_V2_VERSION = "revit-operator.revit-tool-final-authorization.v2";
+export const REVIT_COURIER_FINAL_AUTHORIZATION_VERSION = REVIT_COURIER_FINAL_AUTHORIZATION_V1_VERSION;
 export const REVIT_COURIER_CANONICALIZATION = "revit-operator.canonical-json.nfc-key-sorted.v1";
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -24,8 +37,8 @@ const ALIAS = /^[a-z][a-z0-9_]*$/;
 const CHANNELS: readonly ExposureChannel[] = ["search", "generic_call", "typed_mcp", "deterministic_workflow"];
 
 export type RevitCourierCertificationEnvelope = {
-  schema: typeof REVIT_COURIER_CERTIFICATION_ENVELOPE_SCHEMA;
-  version: 1;
+  schema: typeof REVIT_COURIER_CERTIFICATION_ENVELOPE_V1_SCHEMA | typeof REVIT_COURIER_CERTIFICATION_ENVELOPE_V2_SCHEMA;
+  version: 1 | 2;
   canonicalization: typeof REVIT_COURIER_CANONICALIZATION;
   policy_hash: string;
   policy_record_hash: string;
@@ -42,6 +55,7 @@ export type RevitCourierCertificationEnvelope = {
   runtime_mode: string;
   exposure_profile: "certified";
   policy_trust_source: "bundled" | "deployment";
+  request_family_admission?: CertifiedRequestFamilyAdmission;
   envelope_hash: string;
 };
 
@@ -75,7 +89,7 @@ export type CertifiedCourierJobV2 = {
 };
 
 export type CertifiedCourierFinalAuthorization = {
-  version: typeof REVIT_COURIER_FINAL_AUTHORIZATION_VERSION;
+  version: typeof REVIT_COURIER_FINAL_AUTHORIZATION_V1_VERSION | typeof REVIT_COURIER_FINAL_AUTHORIZATION_V2_VERSION;
   phase: "certification_final_execution";
   authorized_at: string;
   job_id: string;
@@ -100,7 +114,27 @@ export type CertifiedCourierFinalAuthorization = {
   runtime_mode: string;
   exposure_profile: "certified";
   policy_trust_source: "bundled" | "deployment";
+  authorization_stage?: "preflight" | "final";
+  request_family_admission?: CertifiedRequestFamilyAdmission;
   certification_envelope_hash: string;
+  completion_challenge?: string | null;
+  completion_challenge_hash?: string | null;
+};
+
+export type CertifiedCourierCompletionChallenge = {
+  completion_challenge: string | null;
+  completion_challenge_hash: string | null;
+};
+
+export type CertifiedCourierExecutionContext = {
+  schema: "revit-operator.certified-courier-execution-context.v1";
+  transport_kind: "courier";
+  dispatch_id: string;
+  correlation_id: string;
+  execution_session_id: string;
+  executor_id: string;
+  certification_envelope_hash: string;
+  completion_challenge_hash: string;
 };
 
 export class RevitCourierCertificationError extends Error {
@@ -204,12 +238,15 @@ function assertCurrentCertifiedRuntime(envelope: RevitCourierCertificationEnvelo
 
 function parseEnvelope(value: unknown, job: Record<string, unknown>): RevitCourierCertificationEnvelope {
   const envelope = asObject(value, "certification_envelope");
+  const isFamilyEnvelope = envelope.schema === REVIT_COURIER_CERTIFICATION_ENVELOPE_V2_SCHEMA;
   exactKeys(envelope, [
     "schema", "version", "canonicalization", "policy_hash", "policy_record_hash", "evidence_record_hash",
     "request_hash", "effect_hash", "method", "path", "body_present", "body_sha256", "channel", "alias",
-    "runtime_mode", "exposure_profile", "policy_trust_source", "envelope_hash"
+    "runtime_mode", "exposure_profile", "policy_trust_source", "envelope_hash",
+    ...(isFamilyEnvelope ? ["request_family_admission"] : [])
   ], ["workflow"], "certification_envelope");
-  if (envelope.schema !== REVIT_COURIER_CERTIFICATION_ENVELOPE_SCHEMA || envelope.version !== 1
+  if ((!isFamilyEnvelope && (envelope.schema !== REVIT_COURIER_CERTIFICATION_ENVELOPE_V1_SCHEMA || envelope.version !== 1))
+    || (isFamilyEnvelope && envelope.version !== 2)
     || envelope.canonicalization !== REVIT_COURIER_CANONICALIZATION) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certification envelope schema is unsupported.");
   }
@@ -255,6 +292,31 @@ function parseEnvelope(value: unknown, job: Record<string, unknown>): RevitCouri
   }
   if (envelope.policy_trust_source !== "bundled" && envelope.policy_trust_source !== "deployment") {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Certification envelope policy trust source is invalid.");
+  }
+  if (isFamilyEnvelope) {
+    let parsedBody: JsonValue;
+    try { parsedBody = JSON.parse(job.body_json as string) as JsonValue; }
+    catch { throw new RevitCourierCertificationError("CERTIFICATION_JOB_MALFORMED", "Request-family courier body is not valid JSON."); }
+    try {
+      const familyAdmission = validateCertifiedRequestFamilyAdmission(envelope.request_family_admission, {
+        method: envelope.method as string,
+        path: envelope.path as string,
+        body: parsedBody,
+        bodyJson: job.body_json as string
+      });
+      envelope.request_family_admission = familyAdmission;
+      if (envelope.effect_hash !== certifiedRequestFamilyEffectHash(familyAdmission)) {
+        throw new RevitCourierCertificationError(
+          "CERTIFICATION_REQUEST_FAMILY_DENIED",
+          "Courier request-family phase does not bind the exact reviewed preview/apply effect."
+        );
+      }
+    } catch (error) {
+      if (error instanceof CertifiedRequestFamilyAdmissionError) {
+        throw new RevitCourierCertificationError(error.code, error.message);
+      }
+      throw error;
+    }
   }
   const { envelope_hash: declaredHash, ...payload } = envelope;
   if (declaredHash !== canonicalSha256Text(canonicalJson(payload as never))) {
@@ -346,7 +408,9 @@ export function parseCertifiedCourierJobV2(value: unknown): CertifiedCourierJobV
   const requestForHash = method === "GET"
     ? {}
     : job.body_present ? JSON.parse(job.body_json) : {};
-  if (envelope.request_hash !== computeRequestHash(method, toolPath, requestForHash as never)) {
+  const expectedRequestHash = envelope.request_family_admission?.request_instance_hash
+    ?? computeRequestHash(method, toolPath, requestForHash as never);
+  if (envelope.request_hash !== expectedRequestHash) {
     throw new RevitCourierCertificationError("CERTIFICATION_JOB_MISMATCH", "Certification request hash does not match the authoritative raw body.");
   }
   const expectedIdempotency = hashV2Idempotency({
@@ -378,9 +442,14 @@ function policyAllowsEnvelope(trusted: TrustedToolExposurePolicy, job: Certified
   if (envelope.policy_hash !== policy.policy_hash || envelope.policy_trust_source !== trustSource) {
     throw new RevitCourierCertificationError("CERTIFICATION_POLICY_CHANGED", "Courier policy identity changed after durable publication.");
   }
+  const requestFamilyAdmission = envelope.request_family_admission as ValidatedCertifiedRequestFamilyAdmission | undefined;
   const matches = policy.records.filter(record =>
     record.method === envelope.method && record.path === envelope.path
-    && record.request_hash === envelope.request_hash && record.effect_hash === envelope.effect_hash
+    && (requestFamilyAdmission
+      ? record.request_family?.id === requestFamilyAdmission.family_id
+        && record.request_family.validator_hash === requestFamilyAdmission.family_hash
+      : record.request_hash === envelope.request_hash)
+    && record.effect_hash === envelope.effect_hash
   );
   if (matches.length !== 1) {
     throw new RevitCourierCertificationError(
@@ -402,7 +471,8 @@ function policyAllowsEnvelope(trusted: TrustedToolExposurePolicy, job: Certified
       requestHash: envelope.request_hash,
       effectHash: envelope.effect_hash,
       channel: envelope.channel,
-      alias: envelope.alias
+      alias: envelope.alias,
+      requestFamilyAdmission
     }).record;
   } catch (error) {
     if (error instanceof TrustedToolExposurePolicyError) {
@@ -413,7 +483,12 @@ function policyAllowsEnvelope(trusted: TrustedToolExposurePolicy, job: Certified
 }
 
 /** Revalidates the persisted v2 envelope against the current trusted policy immediately before Revit execution. */
-export function authorizeCertifiedCourierFinalExecution(value: unknown, executorId: string): CertifiedCourierFinalAuthorization {
+export function authorizeCertifiedCourierFinalExecution(
+  value: unknown,
+  executorId: string,
+  authorizationStage?: "preflight" | "final",
+  completionChallenge?: CertifiedCourierCompletionChallenge
+): CertifiedCourierFinalAuthorization {
   const job = parseCertifiedCourierJobV2(value);
   const executor = requiredContextIdentity(executorId, "executor_id");
   if (job.target_executor_id && job.target_executor_id !== executor) {
@@ -430,8 +505,59 @@ export function authorizeCertifiedCourierFinalExecution(value: unknown, executor
   }
   policyAllowsEnvelope(trusted, job);
   const envelope = job.certification_envelope;
+  if (!envelope.request_family_admission && authorizationStage !== undefined) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_JOB_MALFORMED",
+      "Exact courier authorization cannot carry a request-family authorization_stage."
+    );
+  }
+  if (envelope.request_family_admission && authorizationStage !== "preflight" && authorizationStage !== "final") {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_JOB_MALFORMED",
+      "Certified request-family courier authorization requires a preflight or final authorization_stage."
+    );
+  }
+  if (envelope.request_family_admission) {
+    const challenge = completionChallenge?.completion_challenge ?? null;
+    const challengeHash = completionChallenge?.completion_challenge_hash ?? null;
+    if (authorizationStage === "preflight") {
+      if (challenge !== null || challengeHash !== null) {
+        throw new RevitCourierCertificationError(
+          "CERTIFICATION_JOB_MALFORMED",
+          "Certified request-family courier preflight cannot carry a completion challenge."
+        );
+      }
+    } else if (typeof challenge !== "string"
+      || !/^cmcc1_[A-Za-z0-9_-]{43}$/.test(challenge)
+      || challengeHash !== canonicalSha256Text(challenge)) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_JOB_MALFORMED",
+        "Certified request-family courier final authorization requires an exact backend-issued completion challenge."
+      );
+    }
+  } else if (completionChallenge !== undefined) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_JOB_MALFORMED",
+      "Exact courier authorization cannot carry a request-family completion challenge."
+    );
+  }
+  if (envelope.request_family_admission && authorizationStage === "final") {
+    try {
+      finalizeCertifiedRequestFamilyAdmission(
+        envelope.request_family_admission as ValidatedCertifiedRequestFamilyAdmission,
+        job.body_json
+      );
+    } catch (error) {
+      if (error instanceof CertifiedRequestFamilyAdmissionError) {
+        throw new RevitCourierCertificationError(error.code, error.message);
+      }
+      throw error;
+    }
+  }
   return {
-    version: REVIT_COURIER_FINAL_AUTHORIZATION_VERSION,
+    version: envelope.request_family_admission
+      ? REVIT_COURIER_FINAL_AUTHORIZATION_V2_VERSION
+      : REVIT_COURIER_FINAL_AUTHORIZATION_V1_VERSION,
     phase: "certification_final_execution",
     authorized_at: new Date().toISOString(),
     job_id: job.id,
@@ -456,6 +582,269 @@ export function authorizeCertifiedCourierFinalExecution(value: unknown, executor
     runtime_mode: envelope.runtime_mode,
     exposure_profile: envelope.exposure_profile,
     policy_trust_source: envelope.policy_trust_source,
-    certification_envelope_hash: envelope.envelope_hash
+    ...(envelope.request_family_admission === undefined ? {} : { authorization_stage: authorizationStage! }),
+    ...(envelope.request_family_admission === undefined ? {} : { request_family_admission: envelope.request_family_admission }),
+    certification_envelope_hash: envelope.envelope_hash,
+    ...(envelope.request_family_admission === undefined ? {} : {
+      completion_challenge: completionChallenge?.completion_challenge ?? null,
+      completion_challenge_hash: completionChallenge?.completion_challenge_hash ?? null
+    })
   };
+}
+
+const FAMILY_EXECUTION_RECEIPT_KEYS = [
+  "schema", "phase", "request_instance_hash", "family_id", "family_hash", "document_fingerprint",
+  "document_session_id", "source_scoped_id", "element_id", "observation_id", "observation_binding_hash",
+  "admission_session_id", "policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash",
+  "channel", "alias", "transport_kind", "dispatch_id", "correlation_id", "execution_session_id",
+  "executor_id", "certification_envelope_hash", "completion_challenge_hash",
+  "preview_receipt_schema", "preview_receipt_hash", "preview_instance_hash",
+  "preview_admission_session_id", "preview_issued_at_utc",
+  "outcome", "affected_element_ids", "outcome_unknown", "result_hash",
+  "native_attestation_key_id", "native_attestation_signature"
+] as const;
+
+const CERTIFIED_MOVE_RESULT_KEYS = [
+  "status", "movedIds", "skipped", "warnings", "snapshots", "movedTogether", "rolledBack",
+  "certified_execution_receipt"
+] as const;
+
+function doubleBits(value: unknown, location: string): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_ATTESTATION_INVALID",
+      `${location} must be a finite number.`
+    );
+  }
+  const buffer = Buffer.allocUnsafe(8);
+  buffer.writeDoubleBE(value, 0);
+  return buffer.toString("hex");
+}
+
+function certifiedMoveResultProjection(
+  result: Record<string, unknown>,
+  admission: CertifiedRequestFamilyAdmission
+): Record<string, unknown> {
+  exactKeys(
+    result,
+    admission.phase === "preview"
+      ? [...CERTIFIED_MOVE_RESULT_KEYS, "certified_preview_receipt"]
+      : CERTIFIED_MOVE_RESULT_KEYS,
+    [],
+    "certified courier execution result"
+  );
+  const expectedStatus = admission.phase === "preview" ? "Dry Run" : "Moved";
+  const expectedRolledBack = admission.phase === "preview";
+  if (result.status !== expectedStatus
+    || result.movedTogether !== false
+    || result.rolledBack !== expectedRolledBack
+    || !Array.isArray(result.movedIds)
+    || result.movedIds.length !== 1
+    || result.movedIds[0] !== admission.element_id
+    || !Array.isArray(result.skipped)
+    || result.skipped.length !== 0
+    || !Array.isArray(result.warnings)
+    || result.warnings.some(item => typeof item !== "string")
+    || !Array.isArray(result.snapshots)
+    || result.snapshots.length !== 1) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_ATTESTATION_INVALID",
+      "Native move result does not prove the exact certified one-element outcome."
+    );
+  }
+  const snapshot = asObject(result.snapshots[0], "certified move snapshot");
+  exactKeys(snapshot, ["id", "before", "after"], [], "certified move snapshot");
+  if (snapshot.id !== admission.element_id) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_ATTESTATION_INVALID",
+      "Native move snapshot does not match the certified target."
+    );
+  }
+  const projectPoint = (value: unknown, location: string): Record<string, unknown> => {
+    const point = asObject(value, location);
+    exactKeys(point, ["kind", "pointXyz"], [], location);
+    if (point.kind !== "LocationPoint" || !Array.isArray(point.pointXyz) || point.pointXyz.length !== 3) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_EXECUTION_ATTESTATION_INVALID",
+        `${location} must be an exact LocationPoint snapshot.`
+      );
+    }
+    return {
+      kind: "LocationPoint",
+      point_bits: point.pointXyz.map((coordinate, index) => doubleBits(coordinate, `${location}.pointXyz[${index}]`))
+    };
+  };
+  return {
+    status: result.status,
+    movedIds: result.movedIds,
+    skipped: [],
+    warnings: result.warnings,
+    snapshots: [{
+      id: snapshot.id,
+      before: projectPoint(snapshot.before, "certified move snapshot.before"),
+      after: projectPoint(snapshot.after, "certified move snapshot.after")
+    }],
+    movedTogether: false,
+    rolledBack: expectedRolledBack
+  };
+}
+
+/**
+ * Verifies the native Revit-thread outcome receipt before a courier job may be
+ * durably marked succeeded. The job id already binds the envelope; this check
+ * binds the returned outcome and exact affected target back to that envelope.
+ */
+export function assertCertifiedCourierExecutionResult(
+  value: unknown,
+  resultValue: unknown,
+  executionContext?: CertifiedCourierExecutionContext
+): void {
+  const job = parseCertifiedCourierJobV2(value);
+  const envelope = job.certification_envelope;
+  const admission = envelope.request_family_admission;
+  if (!admission) return;
+  const result = asObject(resultValue, "certified courier execution result");
+  const receipt = asObject(result.certified_execution_receipt, "certified_execution_receipt");
+  exactKeys(receipt, FAMILY_EXECUTION_RECEIPT_KEYS, [], "certified_execution_receipt");
+  if (!executionContext) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_RECEIPT_INVALID",
+      "Courier completion is missing its backend-issued execution context."
+    );
+  }
+  const expectedContext: CertifiedCourierExecutionContext = {
+    schema: "revit-operator.certified-courier-execution-context.v1",
+    transport_kind: "courier",
+    dispatch_id: job.id,
+    correlation_id: job.correlation_id,
+    execution_session_id: job.session_id,
+    executor_id: executionContext.executor_id,
+    certification_envelope_hash: envelope.envelope_hash,
+    completion_challenge_hash: executionContext.completion_challenge_hash
+  };
+  if (canonicalJson(executionContext as never) !== canonicalJson(expectedContext as never)
+    || !SHA256.test(executionContext.completion_challenge_hash)) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_RECEIPT_INVALID",
+      "Backend courier execution context does not match the exact durable job and completion challenge."
+    );
+  }
+  let expectedPreviewBindings: {
+    schema: string | null;
+    hash: string | null;
+    instanceHash: string | null;
+    admissionSessionId: string | null;
+    issuedAtUtc: string | null;
+  };
+  if (admission.phase === "preview") {
+    const preview = asObject(result.certified_preview_receipt, "certified_preview_receipt");
+    exactKeys(preview, [
+      "schema", "preview_receipt", "preview_receipt_hash", "preview_instance_hash", "admission_session_id", "issued_at_utc"
+    ], [], "certified_preview_receipt");
+    if (preview.schema !== "revit-operator.certified-move-preview-receipt.v1"
+      || typeof preview.preview_receipt !== "string" || !/^cmpr1_[A-Za-z0-9_-]{43}$/.test(preview.preview_receipt)
+      || preview.preview_receipt_hash !== canonicalSha256Text(preview.preview_receipt)
+      || preview.preview_instance_hash !== admission.request_instance_hash
+      || preview.admission_session_id !== admission.admission_session_id
+      || !isCanonicalIsoInstant(preview.issued_at_utc)) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_EXECUTION_RECEIPT_INVALID",
+        "Native rollback preview receipt is absent or does not match the exact certified preview lineage."
+      );
+    }
+    expectedPreviewBindings = {
+      schema: preview.schema as string,
+      hash: preview.preview_receipt_hash as string,
+      instanceHash: preview.preview_instance_hash as string,
+      admissionSessionId: preview.admission_session_id as string,
+      issuedAtUtc: preview.issued_at_utc as string
+    };
+  } else {
+    if (own(result, "certified_preview_receipt")) {
+      throw new RevitCourierCertificationError(
+        "CERTIFICATION_EXECUTION_RECEIPT_INVALID",
+        "Committed apply result cannot carry a rollback preview receipt."
+      );
+    }
+    expectedPreviewBindings = { schema: null, hash: null, instanceHash: null, admissionSessionId: null, issuedAtUtc: null };
+  }
+  const expectedOutcome = admission.phase === "preview" ? "rolled_back" : "committed";
+  const exactBindings: Array<[unknown, unknown]> = [
+    [receipt.schema, "revit-operator.certified-family-execution-receipt.v1"],
+    [receipt.phase, admission.phase],
+    [receipt.request_instance_hash, admission.request_instance_hash],
+    [receipt.family_id, admission.family_id],
+    [receipt.family_hash, admission.family_hash],
+    [receipt.document_fingerprint, admission.document_fingerprint],
+    [receipt.document_session_id, admission.document_session_id],
+    [receipt.source_scoped_id, admission.source_scoped_id],
+    [receipt.element_id, admission.element_id],
+    [receipt.observation_id, admission.observation_id],
+    [receipt.observation_binding_hash, admission.observation_binding_hash],
+    [receipt.admission_session_id, admission.admission_session_id],
+    [receipt.policy_hash, envelope.policy_hash],
+    [receipt.policy_record_hash, envelope.policy_record_hash],
+    [receipt.evidence_record_hash, envelope.evidence_record_hash],
+    [receipt.effect_hash, envelope.effect_hash],
+    [receipt.channel, envelope.channel],
+    [receipt.alias, envelope.alias],
+    [receipt.transport_kind, "courier"],
+    [receipt.dispatch_id, job.id],
+    [receipt.correlation_id, job.correlation_id],
+    [receipt.execution_session_id, job.session_id],
+    [receipt.executor_id, executionContext.executor_id],
+    [receipt.certification_envelope_hash, envelope.envelope_hash],
+    [receipt.completion_challenge_hash, executionContext.completion_challenge_hash],
+    [receipt.preview_receipt_schema, expectedPreviewBindings.schema],
+    [receipt.preview_receipt_hash, expectedPreviewBindings.hash],
+    [receipt.preview_instance_hash, expectedPreviewBindings.instanceHash],
+    [receipt.preview_admission_session_id, expectedPreviewBindings.admissionSessionId],
+    [receipt.preview_issued_at_utc, expectedPreviewBindings.issuedAtUtc],
+    [receipt.outcome, expectedOutcome],
+    [receipt.outcome_unknown, false],
+    [receipt.native_attestation_key_id, admission.native_attestation_key_id]
+  ];
+  if (exactBindings.some(([actual, expected]) => actual !== expected)
+    || !Array.isArray(receipt.affected_element_ids)
+    || receipt.affected_element_ids.length !== 1
+    || receipt.affected_element_ids[0] !== admission.element_id) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_RECEIPT_INVALID",
+      "Native execution receipt does not match the exact certified family, request, document, target, policy, effect, channel, or outcome."
+    );
+  }
+
+  const expectedResultHash = canonicalSha256Text(canonicalJson(certifiedMoveResultProjection(result, admission) as never));
+  if (receipt.result_hash !== expectedResultHash
+    || typeof receipt.native_attestation_signature !== "string"
+    || !/^[A-Za-z0-9_-]+$/.test(receipt.native_attestation_signature)) {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_ATTESTATION_INVALID",
+      "Native execution result hash or attestation signature is invalid."
+    );
+  }
+  const { native_attestation_signature: _signature, ...signedReceipt } = receipt;
+  try {
+    const key = createPublicKey({
+      key: {
+        kty: "RSA",
+        alg: "RS256",
+        n: admission.native_attestation_modulus_base64url,
+        e: admission.native_attestation_exponent_base64url
+      },
+      format: "jwk"
+    });
+    if (!verify(
+      "sha256",
+      Buffer.from(canonicalJson(signedReceipt as never), "utf8"),
+      key,
+      Buffer.from(receipt.native_attestation_signature, "base64url")
+    )) throw new Error("signature mismatch");
+  } catch {
+    throw new RevitCourierCertificationError(
+      "CERTIFICATION_EXECUTION_ATTESTATION_INVALID",
+      "Courier completion is not signed by the exact native authority observed for this request."
+    );
+  }
+
 }

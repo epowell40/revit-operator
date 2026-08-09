@@ -1,5 +1,6 @@
+import { randomBytes } from "node:crypto";
 import { getOrCreateOperatorToken, getWriteGrantToken } from "./workspace.js";
-import { callRevitViaCourier } from "./revitCourier.js";
+import { callRevitViaCourier, readCertifiedCourierExecutionContext } from "./revitCourier.js";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import {
@@ -8,10 +9,22 @@ import {
   NativeTransportProtocolError
 } from "./nativeTransport.js";
 import {
+  assertCertifiedMoveOneAdmissionExposure,
+  assertLaboratoryMoveEvidenceAdmissionExposure,
+  assertProtectedLaboratoryEvidenceExposure,
   assertToolExposure,
+  canonicalToolExposureJson,
   createCertifiedCourierAdmission,
   type ToolExposureChannel
 } from "./toolExposurePolicy.js";
+import {
+  issueCertifiedMoveExecutionContext,
+  type CertifiedMoveExecutionContext,
+  type CertifiedMoveOneAdmission
+} from "./certifiedMoveOneRequestFamily.js";
+import { createCertificationEnvelope, type FamilyCertificationEnvelope } from "./certifiedExecutionEnvelope.js";
+import type { LaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
+import type { LaboratoryMoveEvidenceAdmission } from "./laboratoryMoveEvidence.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -53,6 +66,7 @@ export class RevitBridgeCallError extends Error {
     method: string;
     path: string;
     status?: number;
+    correlationId?: string;
     bridgeDetails?: RevitBridgeErrorDetails;
     cause?: unknown;
   }) {
@@ -76,7 +90,7 @@ export class RevitBridgeCallError extends Error {
     this.phase = stringField(details, "phase");
     this.host_health = stringField(details, "host_health");
     this.opens_circuit = booleanField(details, "opens_circuit");
-    this.correlation_id = stringField(details, "correlation_id");
+    this.correlation_id = input.correlationId ?? stringField(details, "correlation_id");
     this.deadline_class = stringField(details, "deadline_class");
     this.deadline_ms = numberField(details, "deadline_ms");
   }
@@ -177,60 +191,167 @@ function isStructuredPreDispatchRejection(details: RevitBridgeErrorDetails | und
 export type RevitCallOptions = {
   channel?: ToolExposureChannel;
   workflow?: string;
+  /** Opaque, validator-issued capability for the one-element move family. */
+  certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
+  /** Opaque one-use provenance for an exact protected certification-evidence step. */
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  /** Distinct evidence-only wrapper capability; never production authority. */
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
 };
+
+const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
+export type RevitDirectLaboratoryEvidenceContext = Readonly<{
+  schema: "revit-operator.direct-laboratory-evidence-context.v1";
+  transportKind: "direct_protected_native";
+  dispatchId: string;
+  correlationId: string;
+  receiptPath: string;
+  receiptSha256: string;
+}>;
+const laboratoryEvidenceContexts = new WeakMap<object, RevitDirectLaboratoryEvidenceContext>();
+
+export function readRevitDirectLaboratoryEvidenceContext(result: unknown): RevitDirectLaboratoryEvidenceContext {
+  if (!result || typeof result !== "object") throw new Error("Direct laboratory result has no protected evidence context.");
+  const context = laboratoryEvidenceContexts.get(result as object);
+  if (!context) throw new Error("Direct laboratory result has no protected evidence context.");
+  return context;
+}
+
+/** Returns only transport-issued context attached to this exact parsed result object. */
+export function readCertifiedMoveExecutionContext(result: unknown): CertifiedMoveExecutionContext {
+  if (!result || typeof result !== "object") throw new Error("Certified move result has no authenticated execution context.");
+  const context = certifiedExecutionContexts.get(result as object);
+  if (!context) throw new Error("Certified move result has no authenticated execution context.");
+  return context;
+}
 
 export async function callRevit<T = unknown>(path: string, method: string = "GET", body?: unknown, options: RevitCallOptions = {}): Promise<T> {
   const upperMethod = String(method || "GET").trim().toUpperCase();
+  if (options.certifiedMoveOneAdmission && options.laboratoryMoveEvidenceAdmission) {
+    throw new Error("Production and laboratory move-family admissions are mutually exclusive.");
+  }
   if (isSafeReadReservedPath(path)) {
     throw new Error("Certified SafeRead routes are reserved for the direct attested SafeRead microhost client.");
   }
   // Certification is the final in-process admission boundary shared by direct
   // HTTP and durable courier dispatch. A write grant only matters after this
   // exact request/effect/channel decision has passed.
-  const exposure = assertToolExposure({
-    method: upperMethod,
-    path,
-    body,
-    channel: options.channel ?? "typed_mcp",
-    workflow: options.workflow
-  });
-
-  const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
-  if (transport === "courier") {
-    const certifiedAdmission = createCertifiedCourierAdmission({
+  const familyAdmission = options.certifiedMoveOneAdmission ?? options.laboratoryMoveEvidenceAdmission?.request;
+  const exposure = options.laboratoryMoveEvidenceAdmission
+    ? assertLaboratoryMoveEvidenceAdmissionExposure({
+      admission: options.laboratoryMoveEvidenceAdmission.request,
+      channel: options.channel ?? "typed_mcp"
+    })
+    : options.laboratoryEvidenceDispatch
+    ? assertProtectedLaboratoryEvidenceExposure({
+      method: upperMethod,
+      path,
+      body,
+      channel: options.channel ?? "typed_mcp",
+      workflow: options.workflow
+    })
+    : familyAdmission
+    ? assertCertifiedMoveOneAdmissionExposure({
+      admission: familyAdmission,
+      channel: options.channel ?? "typed_mcp"
+    })
+    : assertToolExposure({
       method: upperMethod,
       path,
       body,
       channel: options.channel ?? "typed_mcp",
       workflow: options.workflow
     });
-    return await callRevitViaCourier<T>(path, upperMethod, body, { certifiedAdmission });
-  }
-  if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
 
-  const token = getOrCreateOperatorToken();
-  const serializedBody =
-    body === undefined
+  // Family execution bytes are canonical at the first transport boundary so
+  // direct, courier, backend, and native recomputation all see one exact body.
+  const serializedBody = familyAdmission
+    ? canonicalToolExposureJson(familyAdmission.outboundBody)
+    : body === undefined
       ? undefined
       : typeof body === "string"
         ? body
         : JSON.stringify(body);
-  const requestEffect = revitRouteEffect(path, upperMethod, body);
-  const mutating = requestEffect === "apply";
-  const laboratoryBypass = isExactDevelopmentLaboratory();
+  const transportBody = familyAdmission ? serializedBody : body;
 
-  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string> }> => {
+  const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
+  if (transport === "courier") {
+    const certifiedAdmission = createCertifiedCourierAdmission({
+      method: upperMethod,
+      path,
+      body: transportBody,
+      channel: options.channel ?? "typed_mcp",
+      workflow: options.workflow,
+      certifiedMoveOneAdmission: options.certifiedMoveOneAdmission,
+      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission?.request
+      , laboratoryEvidence: options.laboratoryEvidenceDispatch !== undefined
+    });
+    const result = await callRevitViaCourier<T>(path, upperMethod, transportBody, {
+      certifiedAdmission,
+      laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
+      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission
+    });
+    if (options.certifiedMoveOneAdmission) {
+      try {
+        if (!result || typeof result !== "object") throw new Error("Certified courier returned a non-object result.");
+        certifiedExecutionContexts.set(result as object, readCertifiedCourierExecutionContext(result));
+      } catch (error) {
+        throw new RevitBridgeCallError({
+          code: "revit_bridge_invalid_response",
+          message: `${upperMethod} ${path} completed without an authenticated courier execution context. Reconcile the Revit outcome before any retry.`,
+          retryable: false,
+          outcomeUnknown: true,
+          method: upperMethod,
+          path,
+          cause: error
+        });
+      }
+    }
+    return result;
+  }
+  if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
+
+  const token = getOrCreateOperatorToken();
+  const requestEffect = revitRouteEffect(path, upperMethod, body);
+  // A rollback preview still enters a native mutation transaction. If dispatch
+  // status is unknown, it must be reconciled instead of retried automatically.
+  const mutating = requestEffect !== "read";
+  const laboratoryBypass = isExactDevelopmentLaboratory();
+  const protectedLaboratoryEvidence = laboratoryBypass
+    && process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
+  if (protectedLaboratoryEvidence && options.certifiedMoveOneAdmission) {
+    throw new Error("Protected laboratory evidence transport cannot manufacture certified request-family admission; use the exact generic candidate body until L4 policy is generated.");
+  }
+  if (options.laboratoryMoveEvidenceAdmission && !protectedLaboratoryEvidence) {
+    throw new Error("Laboratory move-family evidence admission is forbidden outside exact protected development/laboratory mode.");
+  }
+  if (options.laboratoryEvidenceDispatch && !protectedLaboratoryEvidence) {
+    throw new Error("Laboratory evidence dispatch is forbidden outside exact protected development/laboratory mode.");
+  }
+
+  const doFetch = async (): Promise<{ ok: boolean; status: number; text(): Promise<string>; certifiedExecutionContext?: CertifiedMoveExecutionContext; laboratoryEvidenceContext?: RevitDirectLaboratoryEvidenceContext }> => {
     const controller = new AbortController();
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
+    const certifiedDirectDispatchId = !laboratoryBypass && options.certifiedMoveOneAdmission
+      ? randomBytes(16).toString("hex")
+      : undefined;
 
     try {
-      if (!laboratoryBypass) {
+      if (!laboratoryBypass || protectedLaboratoryEvidence) {
         const nativeChannel = exposure.channel;
         if (nativeChannel === "deterministic_workflow") {
           throw new Error("Deterministic workflow certification requires the durable courier transport.");
         }
+        const certificationEnvelope = options.certifiedMoveOneAdmission
+          ? createCertificationEnvelope({
+            decision: exposure,
+            bodyPresent: serializedBody !== undefined,
+            bodyJson: serializedBody ?? "",
+            certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
+          }) as FamilyCertificationEnvelope
+          : undefined;
         const result = await callNativeTransport({
           operatorToken: token,
           method: upperMethod,
@@ -239,12 +360,43 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           writeGrant,
           channel: nativeChannel,
           alias: exposure.alias,
+          certificationEnvelope,
+          laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
+          laboratoryPolicyBinding: options.laboratoryEvidenceDispatch ? {
+            policyHash: exposure.policyHash ?? "",
+            policyRecordHash: exposure.policyRecordHash ?? "",
+            evidenceRecordHash: exposure.evidenceRecordHash ?? "",
+            effectHash: exposure.effectHash
+          } : undefined,
+          laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
+          requestId: certifiedDirectDispatchId,
           signal: controller.signal
         });
         return {
           ok: result.statusCode >= 200 && result.statusCode <= 299,
           status: result.statusCode,
-          async text() { return result.bodyJson; }
+          async text() { return result.bodyJson; },
+          ...(options.certifiedMoveOneAdmission && certificationEnvelope ? {
+            certifiedExecutionContext: issueCertifiedMoveExecutionContext({
+              transportKind: "direct",
+              dispatchId: result.requestId,
+              correlationId: result.requestId,
+              executionSessionId: options.certifiedMoveOneAdmission.admissionSessionId,
+              executorId: options.certifiedMoveOneAdmission.request.nativeAttestationKeyId,
+              certificationEnvelopeHash: certificationEnvelope.envelope_hash,
+              completionChallengeHash: null
+            })
+          } : {}),
+          ...(protectedLaboratoryEvidence ? {
+            laboratoryEvidenceContext: Object.freeze({
+              schema: "revit-operator.direct-laboratory-evidence-context.v1" as const,
+              transportKind: "direct_protected_native" as const,
+              dispatchId: result.requestId,
+              correlationId: result.requestId,
+              receiptPath: result.receiptPath,
+              receiptSha256: result.receiptSha256
+            })
+          } : {})
         };
       }
 
@@ -260,6 +412,9 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       });
       return response;
     } catch (error) {
+      const protectedRequestId = error instanceof NativeTransportProtocolError
+        ? (error.requestId ?? certifiedDirectDispatchId)
+        : certifiedDirectDispatchId;
       if (controller.signal.aborted) {
         const outcomeUnknown = mutating;
         throw new RevitBridgeCallError({
@@ -269,6 +424,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           outcomeUnknown,
           method: upperMethod,
           path,
+          correlationId: protectedRequestId,
           cause: error,
         });
       }
@@ -281,6 +437,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           outcomeUnknown,
           method: upperMethod,
           path,
+          correlationId: protectedRequestId,
           cause: error,
         });
       }
@@ -306,6 +463,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         outcomeUnknown,
         method: upperMethod,
         path,
+        correlationId: protectedRequestId,
         cause: error,
       });
     } finally {
@@ -340,11 +498,22 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       method: upperMethod,
       path,
       status: response.status,
+      correlationId: response.certifiedExecutionContext?.dispatchId,
       bridgeDetails,
     });
   }
   try {
-    return JSON.parse(await response.text()) as T;
+    const parsed = JSON.parse(await response.text()) as T;
+    if (options.certifiedMoveOneAdmission) {
+      if (!parsed || typeof parsed !== "object" || !response.certifiedExecutionContext) {
+        throw new Error("Certified native response omitted its authenticated execution context.");
+      }
+      certifiedExecutionContexts.set(parsed as object, response.certifiedExecutionContext);
+    }
+    if (response.laboratoryEvidenceContext && parsed && typeof parsed === "object") {
+      laboratoryEvidenceContexts.set(parsed as object, response.laboratoryEvidenceContext);
+    }
+    return parsed;
   } catch (error) {
     const outcomeUnknown = mutating;
     throw new RevitBridgeCallError({
@@ -354,6 +523,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       outcomeUnknown,
       method: upperMethod,
       path,
+      correlationId: response.certifiedExecutionContext?.dispatchId,
       cause: error,
     });
   }

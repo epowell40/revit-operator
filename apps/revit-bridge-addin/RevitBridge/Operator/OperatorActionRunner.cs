@@ -287,6 +287,17 @@ namespace RevitBridge.Operator
 
             OperatorActionSchemaValidator.ValidateOrThrow(action);
 
+            if (action.LaboratoryEvidenceDispatch != null && action.CourierVerifiedClaim != null)
+                throw new InvalidOperationException("Laboratory evidence and production certification authority are mutually exclusive.");
+            var laboratoryCourierContext = action.LaboratoryEvidenceDispatch == null
+                ? null
+                : OperatorLaboratoryExecutionReceiptAuthority.BeginCourierExecution(
+                    action.LaboratoryEvidenceDispatch,
+                    action.LaboratoryMoveEvidenceAdmission,
+                    method,
+                    path,
+                    jsonBody);
+
             if (string.Equals(path, "/revit/ping", StringComparison.OrdinalIgnoreCase))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
@@ -361,7 +372,59 @@ namespace RevitBridge.Operator
                         path,
                         correlationId,
                         localDeadline.Token);
-                    var handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
+                    var executionContext = action.CourierVerifiedClaim?.Envelope?.RequestFamilyAdmission == null
+                        ? null
+                        : OperatorCertifiedFamilyExecutionContext.Courier(
+                            action.CourierFinalExecutionAuthorization
+                            ?? throw new OperatorCourierFinalExecutionRejectedException("Courier family execution lost its final authorization."));
+                    var executionStart = OperatorCertifiedMovePreviewAuthority.CaptureStartAndConsumeApplyReceipt(
+                        app,
+                        action.CourierVerifiedClaim?.Envelope,
+                        jsonBody,
+                        executionContext);
+                    var laboratoryExecutionStart = laboratoryCourierContext == null
+                        ? null
+                        : OperatorLaboratoryMoveEvidenceAuthority.CaptureStartAndConsumeApplyReceipt(
+                            app,
+                            action.LaboratoryMoveEvidenceAdmission,
+                            action.LaboratoryEvidenceDispatch!,
+                            jsonBody);
+                    object handlerResult;
+                    try
+                    {
+                        handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
+                    }
+                    catch (Exception error) when (executionStart?.Phase == "apply" || laboratoryExecutionStart?.Phase == "apply")
+                    {
+                        throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                            "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
+                            error);
+                    }
+                    handlerResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
+                        app,
+                        handlerResult,
+                        action.CourierVerifiedClaim?.Envelope,
+                        jsonBody,
+                        executionStart,
+                        executionContext);
+                    if (laboratoryCourierContext != null)
+                    {
+                        try
+                        {
+                            handlerResult = OperatorLaboratoryExecutionReceiptAuthority.AttachAfterRevitThreadCompletion(
+                                app,
+                                handlerResult,
+                                laboratoryCourierContext,
+                                DateTimeOffset.UtcNow,
+                                laboratoryExecutionStart);
+                        }
+                        catch (Exception error) when (laboratoryExecutionStart?.Phase == "apply")
+                        {
+                            throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                                "Committed laboratory move outcome could not be independently certified after handler dispatch.",
+                                error);
+                        }
+                    }
 
                     // Best-effort UI refresh after actions that likely modified the model. This reduces "it worked but I can't see it"
                     // confusion due to view redraw / regeneration lag.
@@ -397,6 +460,9 @@ namespace RevitBridge.Operator
 
             if (recoveredDialog != null)
             {
+                if (action.CourierVerifiedClaim?.Envelope?.RequestFamilyAdmission != null
+                    && OperatorCertifiedMovePreviewAuthority.IsIndependentlyVerifiedCertifiedFamilyResult(result))
+                    return result;
                 throw new OperatorRecoveredDialogException(recoveredDialog, result);
             }
 
@@ -407,7 +473,8 @@ namespace RevitBridge.Operator
             OperatorActionCall action,
             string method,
             string path,
-            string correlationId)
+            string correlationId,
+            bool requireFinalFamilyStage = false)
         {
             var authorization = action.CourierFinalExecutionAuthorization;
             if (authorization == null)
@@ -423,6 +490,9 @@ namespace RevitBridge.Operator
                 || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToExecutor(
                     authorization,
                     action.CourierLocalExecutorId)
+                || (requireFinalFamilyStage
+                    && authorization.RequestFamilyAdmission != null
+                    && !string.Equals(authorization.AuthorizationStage, "final", StringComparison.Ordinal))
                 || !TryGetActionBody(action, out var bodyPresent, out var bodyJson)
                 || !OperatorCourierFinalExecutionAuthorizationBinder.IsBoundToAction(
                     authorization,
@@ -491,7 +561,7 @@ namespace RevitBridge.Operator
             CancellationToken cancellationToken)
         {
             RefreshCourierFinalExecutionAuthorization(action, cancellationToken);
-            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);
+            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, requireFinalFamilyStage: true);
         }
 
         private static bool TryGetActionBody(OperatorActionCall action, out bool bodyPresent, out string bodyJson)

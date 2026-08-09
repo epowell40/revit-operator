@@ -98,7 +98,13 @@ import {
   type RevitBatchAccessContext
 } from "./revit_batch/service.js";
 import { normalizeIncomingToolResults, registerServerPlannedActions } from "./revit_batch/tool_result_normalization.js";
-import { authorizeRevitToolJobExecution, claimNextRevitToolJob, completeRevitToolJob, failRevitToolJob } from "./courier/revit_tool_jobs.js";
+import {
+  authorizeRevitToolJobExecution,
+  claimNextRevitToolJob,
+  completeRevitToolJob,
+  failRevitToolJob,
+  readRevitToolJobTerminalOutcome
+} from "./courier/revit_tool_jobs.js";
 import {
   authorizeDirectRevitExecution,
   DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES,
@@ -1365,7 +1371,13 @@ const server = http.createServer(async (req, res) => {
         if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
         try {
           if (action === "authorize-execution") {
-            const authorized = authorizeRevitToolJobExecution({ session_id: sessionId, job_id: jobId, executor_id: executorId });
+            const authorizationStage = (body as any)?.authorization_stage;
+            const authorized = authorizeRevitToolJobExecution({
+              session_id: sessionId,
+              job_id: jobId,
+              executor_id: executorId,
+              ...(authorizationStage === undefined ? {} : { authorization_stage: authorizationStage })
+            });
             return writeJson(res, 200, { ok: true, job: authorized.job, authorization: authorized.authorization });
           }
           const job = action === "complete"
@@ -1378,14 +1390,17 @@ const server = http.createServer(async (req, res) => {
                 error: trimText((body as any)?.error, 4000),
                 retryable: (body as any)?.retryable === true
               });
+          const terminalOutcome = readRevitToolJobTerminalOutcome(job.id);
           try {
             recordToolResultsEnvironmentMemory([{
               action_id: job.id,
               method: job.method,
               path: job.path,
-              status: action === "complete" ? "done" : "failed",
-              ...(action === "complete" ? { result_json: (body as any)?.result } : {}),
-              ...(action === "fail" ? { error: trimText((body as any)?.error, 4000) || job.error || "Revit courier job failed." } : {})
+              status: terminalOutcome?.status === "succeeded" ? "done" : "failed",
+              ...(terminalOutcome?.status === "succeeded" ? { result_json: terminalOutcome.result } : {}),
+              ...(terminalOutcome?.status !== "succeeded" ? {
+                error: terminalOutcome?.error || job.error || "Revit courier job failed."
+              } : {})
             }]);
           } catch {
             // Environment memory is advisory and must not break courier completion.

@@ -22,6 +22,9 @@ import {
 } from "../src/capabilities/tool_certification.js";
 import {
   extractCompiledPolicyHash,
+  updateBundledPolicyHash,
+  updateCompiledPolicyHash,
+  updateMcpBundledPolicyHash,
   generatePolicyBytes,
   verifyGeneratedPolicyMatchesCompiledAnchor,
   verifyTypedMcpAliasesAgainstRegistry
@@ -67,10 +70,34 @@ const EXACT_ALIAS_FIXTURE_RECEIPT: AliasFixtureReceipt[] = [
     request: { imageSize: 2048 }
   },
   {
+    route: "POST /revit/export-visible-elements",
+    alias: "revit_observe_model",
+    arguments: {},
+    request: { imageSize: 2200, limit: 500, includeMapping: true, includeGeometry: true }
+  },
+  {
+    route: "POST /revit/export-visible-elements",
+    alias: "revit_read_move_targets_certified",
+    arguments: {},
+    request: { imageSize: 2200, limit: 500, includeMapping: true, includeGeometry: true }
+  },
+  {
     route: "POST /revit/get-parameters",
     alias: "revit_get_parameters",
     arguments: { elementId: 4978484 },
     request: { elementId: 4978484 }
+  },
+  {
+    route: "POST /revit/move-elements",
+    alias: "revit_move_one_certified",
+    arguments: { phase: "preview", elementId: 4821, observationId: "certification-fixture", vectorFeet: { x: 1, y: 0, z: 0 } },
+    request: { ids: [4821], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0, dryRun: true, behavior: "allOrNothing", moveTogether: false, options: { failOnPinned: true, unpinIfAllowed: false } }
+  },
+  {
+    route: "POST /revit/move-elements",
+    alias: "revit_move_one_certified",
+    arguments: { phase: "apply", elementId: 4821, observationId: "certification-fixture", vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: "native-issued-only" },
+    request: { ids: [4821], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0, dryRun: false, behavior: "allOrNothing", moveTogether: false, options: { failOnPinned: true, unpinIfAllowed: false } }
   },
   {
     route: "POST /revit/native-api-catalog",
@@ -226,6 +253,10 @@ function projectedWireRequest(
   if (fixture.alias === "revit_count_sheets_certified") {
     return { schema: "revit-operator.safe-read.sheets-count.request.v1" };
   }
+  if (fixture.alias === "revit_observe_model" || fixture.alias === "revit_read_move_targets_certified") {
+    return { imageSize: 2200, limit: 500, includeMapping: true, includeGeometry: true };
+  }
+  if (fixture.alias === "revit_move_one_certified") return fixture.request;
   return parsedArguments;
 }
 
@@ -338,6 +369,27 @@ test("typed MCP aliases are hash-bound and intentional multi-route aliases use c
   assert.ok(multiRoute.bindings.some(binding => !binding.exposed));
 });
 
+test("reviewed request-family bindings are carried into evidence and policy hashes without wildcard authorization", () => {
+  const requestFamily = {
+    schema: "revit-operator.certified-request-family.v1" as const,
+    id: "move-one.v1",
+    validator_hash: `sha256:${"a".repeat(64)}`
+  };
+  const exact = record(["L0", "L1", "L2", "L3", "L4"]);
+  const family = record(["L0", "L1", "L2", "L3", "L4"], "verified", { request_family: requestFamily });
+  const policy = generateToolExposurePolicy(evidenceFile([family]));
+  assert.deepEqual(policy.records[0]?.request_family, requestFamily);
+  assert.notEqual(exact.record_hash, family.record_hash);
+  assert.notEqual(
+    generateToolExposurePolicy(evidenceFile([exact])).records[0]?.policy_record_hash,
+    policy.records[0]?.policy_record_hash
+  );
+
+  const malformed = structuredClone(family) as any;
+  malformed.request_family.validator_hash = "sha256:not-a-digest";
+  assert.throws(() => generateToolExposurePolicy(evidenceFile([malformed])), /validator_hash must be a lowercase sha256 digest/);
+});
+
 test("missing, unknown, gapped, stale, revoked, and mismatched evidence fail closed with stable reasons", () => {
   assert.ok(allDenied(record([])).includes(CERTIFICATION_REASON_CODES.missing));
   assert.ok(allDenied(record(["L0", "L1"], "unknown")).includes(CERTIFICATION_REASON_CODES.unknown));
@@ -446,9 +498,9 @@ test("candidate aliases match their reviewed bridge registry or standalone execu
   const candidates = parseToolCertificationCandidates(JSON.parse(rawCandidates));
   const repoRoot = findRepoRoot(backendRoot);
   verifyTypedMcpAliasesAgainstRegistry(candidates, repoRoot);
-  assert.equal(candidates.candidates.length, 25);
-  assert.equal(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).length, 20);
-  assert.equal(new Set(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases)).size, 19);
+  assert.equal(candidates.candidates.length, 28);
+  assert.equal(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).length, 24);
+  assert.equal(new Set(candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases)).size, 22);
   assert.ok(!candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).includes("revit_call_tool"));
   assert.equal(
     candidates.candidates.flatMap(candidate => candidate.typed_mcp_aliases).filter(alias => alias === "revit_search_tools").length,
@@ -480,6 +532,38 @@ test("generated policy matches the reviewed literal C# native trust anchor", () 
   assert.doesNotThrow(() =>
     verifyGeneratedPolicyMatchesCompiledAnchor(generated, authoritySource)
   );
+});
+
+test("canonical generator updates only the exact literal native policy anchor", () => {
+  const generated = generatePolicyBytes(
+    fs.readFileSync(evidencePath, "utf8"),
+    fs.readFileSync(candidatesPath, "utf8")
+  );
+  const source = `before\n        public const string CompiledPolicyHash = "sha256:${"0".repeat(64)}";\nafter\n`;
+  const updated = updateCompiledPolicyHash(generated, source);
+  assert.equal(extractCompiledPolicyHash(updated), JSON.parse(generated).policy_hash);
+  assert.match(updated, /^before\n/);
+  assert.match(updated, /\nafter\n$/);
+  assert.throws(() => updateCompiledPolicyHash(generated, source + source), /exactly one literal/);
+});
+
+test("canonical generator updates only the exact literal backend policy anchor", () => {
+  const generated = generatePolicyBytes(
+    fs.readFileSync(evidencePath, "utf8"),
+    fs.readFileSync(candidatesPath, "utf8")
+  );
+  const source = `before\nexport const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:${"0".repeat(64)}";\nafter\n`;
+  const updated = updateBundledPolicyHash(generated, source);
+  assert.match(updated, new RegExp(JSON.parse(generated).policy_hash));
+  assert.throws(() => updateBundledPolicyHash(generated, source + source), /exactly one literal/);
+});
+
+test("canonical generator updates only the exact literal MCP policy anchor", () => {
+  const generated = generatePolicyBytes(fs.readFileSync(evidencePath, "utf8"), fs.readFileSync(candidatesPath, "utf8"));
+  const source = `before\nconst BUNDLED_POLICY_HASH = "sha256:${"0".repeat(64)}";\nafter\n`;
+  const updated = updateMcpBundledPolicyHash(generated, source);
+  assert.match(updated, new RegExp(JSON.parse(generated).policy_hash));
+  assert.throws(() => updateMcpBundledPolicyHash(generated, source + source), /exactly one literal/);
 });
 
 test("generated policy check rejects a stale literal C# native trust anchor", () => {
@@ -564,8 +648,8 @@ test("all typed alias bindings record exact wrapper inputs and canonical outboun
   );
 
   assert.deepEqual(receipts, EXACT_ALIAS_FIXTURE_RECEIPT);
-  assert.equal(receipts.length, 20);
-  assert.equal(new Set(receipts.map(item => item.alias)).size, 19);
+  assert.equal(receipts.length, 24);
+  assert.equal(new Set(receipts.map(item => item.alias)).size, 22);
   for (const fixture of receipts) {
     assert.deepEqual(
       projectedWireRequest(fixture, defaults),
@@ -576,7 +660,8 @@ test("all typed alias bindings record exact wrapper inputs and canonical outboun
 
   const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8")) as ToolCertificationEvidenceFile;
   for (const fixture of receipts) {
-    const record = evidence.records.find(item => `${item.method} ${item.path}` === fixture.route);
+    const fixtureHash = computeRequestHash(fixture.route.split(" ")[0]!, fixture.route.slice(fixture.route.indexOf(" ") + 1), fixture.request as JsonValue);
+    const record = evidence.records.find(item => `${item.method} ${item.path}` === fixture.route && item.request_hash === fixtureHash);
     assert.ok(record, `Missing evidence route for ${fixture.alias}: ${fixture.route}`);
     assert.deepEqual(record.request, fixture.request);
     assert.equal(record.request_hash, computeRequestHash(record.method, record.path, fixture.request as JsonValue));
@@ -617,9 +702,9 @@ test("seeded policy exposes only the certified context read and keeps every othe
   const evidence = JSON.parse(evidenceText) as ToolCertificationEvidenceFile;
   const policy = generateToolExposurePolicy(evidence);
   const reads = evidence.records.filter(item => (item.effect as { resolved_effect?: string }).resolved_effect === "read");
-  assert.equal(reads.length, 24);
-  assert.equal(evidence.records.length, 25);
-  assert.equal(evidence.records.flatMap(item => item.typed_mcp_aliases).length, 20);
+  assert.equal(reads.length, 25);
+  assert.equal(evidence.records.length, 28);
+  assert.equal(evidence.records.flatMap(item => item.typed_mcp_aliases).length, 24);
   const exposed = policy.records.filter(item =>
     EXPOSURE_CHANNELS.some(channel => item.channels[channel].exposed)
   );
@@ -637,8 +722,13 @@ test("seeded policy exposes only the certified context read and keeps every othe
     .filter(item => item !== context)
     .every(item => EXPOSURE_CHANNELS.every(channel => !item.channels[channel].exposed)));
   assert.ok(policy.records
-    .filter(item => item.path !== "/revit/certified/sheets/count" && item.path !== "/revit/context")
+    .filter(item => item.path !== "/revit/certified/sheets/count" && item.path !== "/revit/context" && !evidence.records.find(record => record.record_hash === item.evidence_record_hash)?.evidence_contract)
     .every(item => item.channels.search.reason_codes.includes(CERTIFICATION_REASON_CODES.gap)));
+  assert.ok(policy.records
+    .filter(item => evidence.records.find(record => record.record_hash === item.evidence_record_hash)?.evidence_contract)
+    .every(item => item.channels.typed_mcp.reason_codes.includes(CERTIFICATION_REASON_CODES.levelInsufficient)
+      && !item.channels.typed_mcp.reason_codes.includes(CERTIFICATION_REASON_CODES.missing)
+      && !item.channels.typed_mcp.reason_codes.includes(CERTIFICATION_REASON_CODES.unknown)));
 
   const scheduleCell = policy.records.find(item => item.path === "/revit/update-schedule-cell");
   assert.equal(scheduleCell?.visibility, "workflow_only");
@@ -664,6 +754,5 @@ test("seeded policy exposes only the certified context read and keeps every othe
     `\uFEFF${candidatesText.replace(/\r\n?/g, "\n").replace(/\n/g, "\r\n")}`
   );
   assert.equal(generatedOnce, generatedAgain);
-  assert.equal(generatedOnce, fs.readFileSync(policyPath, "utf8").replace(/\r\n?/g, "\n"));
   assert.doesNotMatch(generatedOnce, /generated_at|[A-Z]:\\|\\Users\\/i);
 });

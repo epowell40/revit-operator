@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
@@ -86,6 +88,7 @@ namespace RevitBridge.Logic.Handlers
                 var stem = $"Revit_{ElementIdCompat.GetValue(view.Id)}_{frameId}_inventory";
                 var path = SelectionUtil.ExportViewImage(doc, view, p.imageSize, folder, stem);
                 var (widthPx, heightPx) = SelectionUtil.ReadImageSize(path);
+                var imageSha256 = ComputeFileSha256(path);
                 RasterAffineFrame frame;
                 try
                 {
@@ -272,13 +275,28 @@ namespace RevitBridge.Logic.Handlers
                             : "Per-element pixel/image coordinates use the CropBox fallback because View.Outline mapping was unavailable.");
                 }
 
+                string? projectUniqueId = null;
+                try { projectUniqueId = doc.ProjectInformation?.UniqueId; } catch { }
+                var projectFingerprint = "sha256:" + OperatorRevitBatchBinding.ComputeProjectFingerprint(
+                    doc.Title,
+                    doc.PathName,
+                    projectUniqueId);
+
                 return Task.FromResult<object>(new
                 {
+                    document = new
+                    {
+                        sessionId = OperatorNativeDocumentSessionAuthority.GetSessionId(doc),
+                        nativeExecutionAttestation = OperatorNativeExecutionAttestationAuthority.PublicBinding(),
+                        projectIdentity = new { fingerprint = projectFingerprint },
+                        activeView = new { id = ElementIdCompat.GetValue(doc.ActiveView.Id) }
+                    },
                     frameId,
                     viewId = ElementIdCompat.GetValue(view.Id),
                     viewType = view.ViewType.ToString(),
                     viewName = view.Name,
                     path,
+                    imageSha256,
                     widthPx,
                     heightPx,
                     targetLevel = SelectionUtil.BuildTargetLevelPayload(view),
@@ -303,6 +321,14 @@ namespace RevitBridge.Logic.Handlers
                     TryRestoreCropBoxActive(doc, view, warnings);
                 }
             }
+        }
+
+        private static string ComputeFileSha256(string path)
+        {
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var algorithm = SHA256.Create();
+            var hash = algorithm.ComputeHash(stream);
+            return "sha256:" + BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
         private static Dictionary<string, object?> BuildVisibleElementPayload(
@@ -347,6 +373,24 @@ namespace RevitBridge.Logic.Handlers
             payload["geometry"] = geometry;
             payload["categoryToken"] = SelectionUtil.GetCategoryToken(element);
             payload["orientation"] = BuildOrientationPayload(element, linkInstance);
+            if (linkInstance == null)
+            {
+                try { payload["pinned"] = element.Pinned; }
+                catch { payload["pinned"] = null; }
+                try
+                {
+                    var groupId = element.GroupId;
+                    payload["groupId"] = groupId == null || groupId == ElementId.InvalidElementId
+                        ? null
+                        : ElementIdCompat.GetValue(groupId);
+                    payload["groupIdReadSucceeded"] = true;
+                }
+                catch
+                {
+                    payload["groupId"] = null;
+                    payload["groupIdReadSucceeded"] = false;
+                }
+            }
             ApplyReadableAnnotationPayload(payload, element, linkInstance);
             ApplyHostProvenance(payload);
 
@@ -762,6 +806,7 @@ namespace RevitBridge.Logic.Handlers
             XYZ? basisYVector = null;
             XYZ? basisZVector = null;
             XYZ? transformOrigin = null;
+            XYZ? locationPointVector = null;
             double? rotationRadians = null;
             bool? mirrored = null;
             bool? handFlipped = null;
@@ -809,6 +854,7 @@ namespace RevitBridge.Logic.Handlers
                 if (e.Location is LocationPoint lp)
                 {
                     locationKind = "point";
+                    locationPointVector = TransformPointToHost(linkInstance, lp.Point);
                     rotationRadians = lp.Rotation;
                 }
                 else if (e.Location is LocationCurve lc && lc.Curve != null)
@@ -860,6 +906,7 @@ namespace RevitBridge.Logic.Handlers
             var basisY = BuildVectorOrNull(basisYVector);
             var basisZ = BuildVectorOrNull(basisZVector);
             var origin = BuildVectorOrNull(transformOrigin);
+            var locationPoint = BuildVectorOrNull(locationPointVector);
             var rotationDegrees = rotationRadians.HasValue ? rotationRadians.Value * (180.0 / Math.PI) : (double?)null;
             var planAzimuthDegrees = planAzimuthRadians.HasValue ? planAzimuthRadians.Value * (180.0 / Math.PI) : (double?)null;
             var sourceToHostTransform = BuildLinkTransformPayload(linkInstance);
@@ -871,6 +918,7 @@ namespace RevitBridge.Logic.Handlers
                 basisY == null &&
                 basisZ == null &&
                 origin == null &&
+                locationPoint == null &&
                 rotationRadians == null &&
                 mirrored == null &&
                 handFlipped == null &&
@@ -897,6 +945,7 @@ namespace RevitBridge.Logic.Handlers
                     basisZ
                 },
                 sourceToHostTransform,
+                locationPoint,
                 rotationRadians,
                 rotationDegrees,
                 planAzimuthRadians,

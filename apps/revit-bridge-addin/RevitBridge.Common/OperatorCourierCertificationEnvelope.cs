@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -18,6 +19,7 @@ namespace RevitBridge.Common
     public sealed class OperatorCourierCertificationEnvelope
     {
         public const string Schema = "revit-operator.revit-tool-certification-envelope.v1";
+        public const string FamilySchema = "revit-operator.revit-tool-certification-envelope.v2";
         public const string Canonicalization = "revit-operator.canonical-json.nfc-key-sorted.v1";
         public const string JobVersion = "revit-operator.revit-tool-job.v2";
         public const string IdempotencySchema = "revit-operator.revit-tool-job-idempotency.v2";
@@ -40,6 +42,7 @@ namespace RevitBridge.Common
         public string RuntimeMode { get; internal set; } = "";
         public string ExposureProfile { get; internal set; } = "certified";
         public string PolicyTrustSource { get; internal set; } = "";
+        public OperatorCertifiedRequestFamilyAdmission? RequestFamilyAdmission { get; internal set; }
         public string EnvelopeHash { get; internal set; } = "";
     }
 
@@ -143,12 +146,16 @@ namespace RevitBridge.Common
         {
             "search", "generic_call", "typed_mcp", "deterministic_workflow"
         };
-        private static readonly HashSet<string> EnvelopeKeys = new HashSet<string>(StringComparer.Ordinal)
+        private static readonly HashSet<string> ExactEnvelopeKeys = new HashSet<string>(StringComparer.Ordinal)
         {
             "schema", "version", "canonicalization", "policy_hash", "policy_record_hash",
             "evidence_record_hash", "request_hash", "effect_hash", "method", "path",
             "body_present", "body_sha256", "channel", "alias", "workflow", "runtime_mode",
             "exposure_profile", "policy_trust_source", "envelope_hash"
+        };
+        private static readonly HashSet<string> FamilyEnvelopeKeys = new HashSet<string>(ExactEnvelopeKeys, StringComparer.Ordinal)
+        {
+            "request_family_admission"
         };
         // The signed envelope is not sufficient if an unrecognized top-level
         // job field can later be interpreted by a newer worker. Keep the v2
@@ -357,6 +364,22 @@ namespace RevitBridge.Common
                     }
                 }
 
+                if (envelope.RequestFamilyAdmission != null)
+                {
+                    try
+                    {
+                        OperatorCertifiedRequestFamilyAdmissionVerifier.RequireValidEffectiveBody(
+                            envelope.RequestFamilyAdmission,
+                            bodyJson);
+                    }
+                    catch (InvalidDataException invalid)
+                    {
+                        return OperatorCourierCertificationEnvelopeValidationResult.Invalid(
+                            "CERT_COURIER_REQUEST_FAMILY_INVALID",
+                            invalid.Message);
+                    }
+                }
+
                 return OperatorCourierCertificationEnvelopeValidationResult.Valid(envelope, verifiedJob, parsedBody, computedIdempotencyKey);
             }
             catch (OperatorCourierCanonicalizationException error)
@@ -476,6 +499,46 @@ namespace RevitBridge.Common
             return "sha256:" + Sha256Hex(value);
         }
 
+        /// <summary>
+        /// Validates the same closed certification envelope when it arrives in
+        /// the authenticated direct native transport instead of a durable job.
+        /// It is intentionally not a policy decision; final native authority
+        /// still compares every binding to the current embedded policy.
+        /// </summary>
+        public static OperatorCourierCertificationEnvelope VerifyDirectEnvelope(
+            JsonElement envelopeElement,
+            string method,
+            string path,
+            bool bodyPresent,
+            string bodyJson,
+            string channel,
+            string alias)
+        {
+            if (!TryReadEnvelope(envelopeElement, out var envelope, out var error))
+                throw OperatorNativeHttpAdmissionException.InvalidRequest(error?.Error ?? "Direct certification envelope is invalid.");
+            if (!string.Equals(envelope.Method, method, StringComparison.Ordinal)
+                || !string.Equals(envelope.Path, path, StringComparison.Ordinal)
+                || envelope.BodyPresent != bodyPresent
+                || !string.Equals(envelope.BodySha256, Sha256Prefixed(bodyJson ?? ""), StringComparison.Ordinal)
+                || !string.Equals(envelope.Channel, channel, StringComparison.Ordinal)
+                || !string.Equals(envelope.Alias, alias, StringComparison.Ordinal))
+                throw OperatorNativeHttpAdmissionException.InvalidRequest("Direct certification envelope does not bind the exact request.");
+            var computedEnvelopeHash = Sha256Prefixed(CanonicalizeEnvelopePayload(envelopeElement));
+            if (!string.Equals(envelope.EnvelopeHash, computedEnvelopeHash, StringComparison.Ordinal))
+                throw OperatorNativeHttpAdmissionException.InvalidRequest("Direct certification envelope hash is invalid.");
+            if (envelope.RequestFamilyAdmission == null)
+                throw OperatorNativeHttpAdmissionException.InvalidRequest("Direct parameterized certification envelope is missing request-family admission.");
+            try
+            {
+                OperatorCertifiedRequestFamilyAdmissionVerifier.RequireValidEffectiveBody(envelope.RequestFamilyAdmission, bodyJson);
+            }
+            catch (InvalidDataException invalid)
+            {
+                throw OperatorNativeHttpAdmissionException.InvalidRequest(invalid.Message);
+            }
+            return envelope;
+        }
+
         private static bool TryReadEnvelope(
             JsonElement element,
             out OperatorCourierCertificationEnvelope envelope,
@@ -487,7 +550,7 @@ namespace RevitBridge.Common
             foreach (var property in element.EnumerateObject())
             {
                 var normalizedName = NormalizeText(property.Name);
-                if (!EnvelopeKeys.Contains(normalizedName))
+                if (!FamilyEnvelopeKeys.Contains(normalizedName))
                 {
                     error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_ENVELOPE_UNKNOWN_FIELD", "Certification envelope contains an unknown field: " + normalizedName + ".");
                     return false;
@@ -500,15 +563,26 @@ namespace RevitBridge.Common
                 fields.Add(normalizedName, property.Value);
             }
 
+            var hasFamilyAdmission = fields.ContainsKey("request_family_admission");
+            var expectedKeys = hasFamilyAdmission ? FamilyEnvelopeKeys : ExactEnvelopeKeys;
+            var missingRequired = expectedKeys.Where(key => key != "workflow" && !fields.ContainsKey(key)).ToList();
+            if (missingRequired.Count != 0 || fields.Keys.Any(key => !expectedKeys.Contains(key)))
+            {
+                error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_ENVELOPE_FIELD_MISSING", "Certification envelope is missing a required field.");
+                return false;
+            }
+
             if (!TryEnvelopeString(fields, "schema", out var schema, out error)) return false;
-            if (!string.Equals(schema, OperatorCourierCertificationEnvelope.Schema, StringComparison.Ordinal))
+            var expectedSchema = hasFamilyAdmission ? OperatorCourierCertificationEnvelope.FamilySchema : OperatorCourierCertificationEnvelope.Schema;
+            var expectedVersion = hasFamilyAdmission ? 2 : 1;
+            if (!string.Equals(schema, expectedSchema, StringComparison.Ordinal))
             {
                 error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_ENVELOPE_SCHEMA_INVALID", "Certification envelope schema is invalid.");
                 return false;
             }
-            if (!fields.TryGetValue("version", out var versionElement) || versionElement.ValueKind != JsonValueKind.Number || !versionElement.TryGetInt32(out var version) || version != 1)
+            if (!fields.TryGetValue("version", out var versionElement) || versionElement.ValueKind != JsonValueKind.Number || !versionElement.TryGetInt32(out var version) || version != expectedVersion)
             {
-                error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_ENVELOPE_VERSION_INVALID", "Certification envelope version must be the integer 1.");
+                error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_ENVELOPE_VERSION_INVALID", "Certification envelope version does not match its closed schema.");
                 return false;
             }
             if (!TryEnvelopeString(fields, "canonicalization", out var canonicalization, out error)) return false;
@@ -567,6 +641,23 @@ namespace RevitBridge.Common
                 workflow = NormalizeText(workflowElement.GetString() ?? "");
             }
 
+            OperatorCertifiedRequestFamilyAdmission? requestFamilyAdmission = null;
+            if (hasFamilyAdmission)
+            {
+                var familyElement = fields["request_family_admission"];
+                if (familyElement.ValueKind != JsonValueKind.Object)
+                {
+                    error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_REQUEST_FAMILY_INVALID", "Certification envelope request_family_admission must be an object.");
+                    return false;
+                }
+                try { requestFamilyAdmission = OperatorCertifiedRequestFamilyAdmissionVerifier.Parse(familyElement); }
+                catch (InvalidDataException invalid)
+                {
+                    error = OperatorCourierCertificationEnvelopeValidationResult.Invalid("CERT_COURIER_REQUEST_FAMILY_INVALID", invalid.Message);
+                    return false;
+                }
+            }
+
             envelope = new OperatorCourierCertificationEnvelope
             {
                 EnvelopeSchema = schema,
@@ -587,6 +678,7 @@ namespace RevitBridge.Common
                 RuntimeMode = runtimeMode,
                 ExposureProfile = exposureProfile,
                 PolicyTrustSource = policyTrustSource,
+                RequestFamilyAdmission = requestFamilyAdmission,
                 EnvelopeHash = envelopeHash
             };
             return true;

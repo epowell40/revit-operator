@@ -12,11 +12,22 @@ import {
   loadTrustedToolExposurePolicy,
   TrustedToolExposurePolicyError
 } from "./trusted_tool_exposure_policy.js";
+import {
+  CertifiedRequestFamilyAdmissionError,
+  certifiedRequestFamilyEffectHash,
+  finalizeCertifiedRequestFamilyAdmission,
+  validateCertifiedRequestFamilyAdmission,
+  type CertifiedRequestFamilyAdmission,
+  type ValidatedCertifiedRequestFamilyAdmission
+} from "./certified_request_family_admission.js";
 
-export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION = "revit-operator.revit-direct-final-authorization.v1";
+export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION = "revit-operator.revit-direct-final-authorization.v1";
+export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_V2_VERSION = "revit-operator.revit-direct-final-authorization.v2";
+export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION = DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION;
 export const DIRECT_REVIT_ADMISSION_REQUEST_V1_SCHEMA = "revit-operator.revit-direct-admission-request.v1";
 export const DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA = "revit-operator.revit-direct-admission-request.v2";
-export const DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA = DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA;
+export const DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA = "revit-operator.revit-direct-admission-request.v3";
+export const DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA = DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA;
 export const DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS = 5_000;
 export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
 // body_json is itself JSON-escaped in the authorization request wrapper. The
@@ -26,12 +37,17 @@ export const DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES = (DIRECT_REVIT_AUTHORIZA
 
 const DIRECT_REQUEST_V1_KEYS = ["schema", "request_id", "method", "path", "body_present", "body_json", "channel", "alias"] as const;
 const DIRECT_REQUEST_V2_KEYS = [...DIRECT_REQUEST_V1_KEYS, "runtime_mode"] as const;
+const DIRECT_REQUEST_V3_KEYS = [
+  ...DIRECT_REQUEST_V2_KEYS,
+  "policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash", "authorization_stage", "request_family_admission"
+] as const;
 const REQUEST_ID = /^(?:[0-9a-f]{32}|[0-9a-f]{64})$/;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const TOOL_ALIAS = /^[a-z][a-z0-9_]*$/;
 type DirectRevitExecutionChannel = "search" | "generic_call" | "typed_mcp";
 
 export type DirectRevitExecutionAuthorization = {
-  version: typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION;
+  version: typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION | typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_V2_VERSION;
   phase: "certification_native_direct_admission";
   authorized_at: string;
   valid_for_ms: typeof DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS;
@@ -52,6 +68,8 @@ export type DirectRevitExecutionAuthorization = {
   runtime_mode: string;
   exposure_profile: "certified";
   policy_trust_source: "bundled" | "deployment";
+  authorization_stage?: "preflight" | "final";
+  request_family_admission?: CertifiedRequestFamilyAdmission;
   authorization_hash: string;
 };
 
@@ -118,6 +136,8 @@ export function authorizeDirectRevitExecution(
     expectedKeys = DIRECT_REQUEST_V1_KEYS;
   } else if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA) {
     expectedKeys = DIRECT_REQUEST_V2_KEYS;
+  } else if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA) {
+    expectedKeys = DIRECT_REQUEST_V3_KEYS;
   } else {
     malformed("Direct Revit authorization request schema is unsupported.");
   }
@@ -206,6 +226,39 @@ export function authorizeDirectRevitExecution(
     );
   }
 
+  let requestFamilyAdmission: ValidatedCertifiedRequestFamilyAdmission | undefined;
+  if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA) {
+    for (const field of ["policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash"] as const) {
+      if (typeof request[field] !== "string" || !SHA256.test(request[field] as string)) {
+        malformed(`Direct Revit authorization ${field} must be a canonical SHA-256 digest.`);
+      }
+    }
+    if (request.authorization_stage !== "preflight" && request.authorization_stage !== "final") {
+      malformed("Direct request-family authorization_stage must be preflight or final.");
+    }
+    try {
+      requestFamilyAdmission = validateCertifiedRequestFamilyAdmission(request.request_family_admission, {
+        method,
+        path: toolPath,
+        body: parsedBody,
+        bodyJson
+      });
+      if (request.effect_hash !== certifiedRequestFamilyEffectHash(requestFamilyAdmission)) {
+        throw new DirectRevitExecutionAuthorizationError(
+          "CERTIFICATION_REQUEST_FAMILY_DENIED",
+          "Direct request-family phase does not bind the exact reviewed preview/apply effect.",
+          403,
+          false
+        );
+      }
+    } catch (error) {
+      if (error instanceof CertifiedRequestFamilyAdmissionError) {
+        throw new DirectRevitExecutionAuthorizationError(error.code, error.message, 403, false);
+      }
+      throw error;
+    }
+  }
+
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   try {
     const trusted = loadTrustedToolExposurePolicy(env);
@@ -214,12 +267,38 @@ export function authorizeDirectRevitExecution(
       method,
       path: toolPath,
       requestHash,
+      effectHash: requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA ? request.effect_hash as string : undefined,
       channel,
-      alias
+      alias,
+      requestFamilyAdmission
     });
     const record = evaluation.record;
+    if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA
+      && (request.policy_hash !== trusted.policy.policy_hash
+        || request.policy_record_hash !== record.policy_record_hash
+        || request.evidence_record_hash !== record.evidence_record_hash
+        || request.effect_hash !== record.effect_hash)) {
+      throw new DirectRevitExecutionAuthorizationError(
+        "CERTIFICATION_POLICY_CHANGED",
+        "Direct request-family policy, record, evidence, or effect identity changed before final authorization.",
+        403,
+        false
+      );
+    }
+    if (requestFamilyAdmission && request.authorization_stage === "final") {
+      try { finalizeCertifiedRequestFamilyAdmission(requestFamilyAdmission, bodyJson); }
+      catch (error) {
+        if (error instanceof CertifiedRequestFamilyAdmissionError) {
+          throw new DirectRevitExecutionAuthorizationError(error.code, error.message, 403, false);
+        }
+        throw error;
+      }
+    }
+    const authorizationVersion: DirectRevitExecutionAuthorization["version"] = requestFamilyAdmission
+        ? DIRECT_REVIT_EXECUTION_AUTHORIZATION_V2_VERSION
+        : DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION;
     const payload = {
-      version: DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION as typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_VERSION,
+      version: authorizationVersion,
       phase: "certification_native_direct_admission" as const,
       authorized_at: now.toISOString(),
       valid_for_ms: DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS as typeof DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS,
@@ -228,18 +307,20 @@ export function authorizeDirectRevitExecution(
       path: toolPath,
       body_present: bodyPresent,
       source_body_sha256: bodySha256(bodyJson),
-      canonical_body_json: canonicalBodyJson,
-      body_sha256: bodySha256(canonicalBodyJson),
+      canonical_body_json: requestFamilyAdmission ? bodyJson : canonicalBodyJson,
+      body_sha256: bodySha256(requestFamilyAdmission ? bodyJson : canonicalBodyJson),
       policy_hash: trusted.policy.policy_hash,
       policy_record_hash: record.policy_record_hash,
       evidence_record_hash: record.evidence_record_hash,
-      request_hash: record.request_hash,
+      request_hash: requestFamilyAdmission?.request_instance_hash ?? record.request_hash,
       effect_hash: record.effect_hash,
       channel,
       alias,
       runtime_mode: runtimeMode,
       exposure_profile: "certified" as const,
-      policy_trust_source: trusted.trustSource
+      policy_trust_source: trusted.trustSource,
+      ...(requestFamilyAdmission ? { authorization_stage: request.authorization_stage as "preflight" | "final" } : {}),
+      ...(requestFamilyAdmission ? { request_family_admission: requestFamilyAdmission } : {})
     };
     return { ...payload, authorization_hash: sha256(payload as never) };
   } catch (error) {

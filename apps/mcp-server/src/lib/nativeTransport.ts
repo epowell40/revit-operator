@@ -2,6 +2,19 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import {
+  assertIssuedFamilyEnvelopeForDispatch,
+  type FamilyCertificationEnvelope
+} from "./certifiedExecutionEnvelope.js";
+import {
+  consumeLaboratoryEvidenceDispatch,
+  type LaboratoryEvidenceDispatch
+  , type LaboratoryPolicyBinding
+} from "./laboratoryEvidenceDispatch.js";
+import {
+  consumeLaboratoryMoveEvidenceAdmission,
+  type LaboratoryMoveEvidenceAdmission
+} from "./laboratoryMoveEvidence.js";
 
 export const NATIVE_TRANSPORT_VERSION = "revit-operator.native-transport.v1";
 export const NATIVE_TRANSPORT_ALGORITHM = "A256CBC-HS512";
@@ -41,15 +54,21 @@ type ProtectedRequest = Readonly<{
 export type NativeTransportResult = Readonly<{
   statusCode: number;
   bodyJson: string;
+  /** Locally generated identity authenticated by the protected response. */
+  requestId: string;
+  receiptPath: string;
+  receiptSha256: string;
 }>;
 
 export class NativeTransportProtocolError extends Error {
   readonly phase: "pre_dispatch" | "response";
+  readonly requestId?: string;
 
-  constructor(message: string, phase: "pre_dispatch" | "response", cause?: unknown) {
+  constructor(message: string, phase: "pre_dispatch" | "response", cause?: unknown, requestId?: string) {
     super(message, { cause });
     this.name = "NativeTransportProtocolError";
     this.phase = phase;
+    this.requestId = requestId;
   }
 }
 
@@ -69,7 +88,7 @@ export function nativeTransportReceiptPath(env: NodeJS.ProcessEnv = process.env)
   return path.join(localAppData, "RevitOperator", "bridge_transport.v1.json");
 }
 
-export function readNativeTransportReceipt(env: NodeJS.ProcessEnv = process.env): NativeTransportReceipt {
+function readNativeTransportReceiptSnapshot(env: NodeJS.ProcessEnv): Readonly<{ receipt: NativeTransportReceipt; path: string; raw: string }> {
   const receiptPath = nativeTransportReceiptPath(env);
   let bytes: Buffer;
   try {
@@ -96,7 +115,11 @@ export function readNativeTransportReceipt(env: NodeJS.ProcessEnv = process.env)
   }
   requireLoopbackOrigin(receipt.url);
   decodeCanonicalBase64Url(receipt.server_epoch, 32, "server epoch", "pre_dispatch");
-  return receipt as NativeTransportReceipt;
+  return Object.freeze({ receipt: receipt as NativeTransportReceipt, path: receiptPath, raw });
+}
+
+export function readNativeTransportReceipt(env: NodeJS.ProcessEnv = process.env): NativeTransportReceipt {
+  return readNativeTransportReceiptSnapshot(env).receipt;
 }
 
 export function protectNativeTransportRequest(input: {
@@ -108,10 +131,15 @@ export function protectNativeTransportRequest(input: {
   writeGrant?: string;
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
+  certificationEnvelope?: FamilyCertificationEnvelope;
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  laboratoryPolicyBinding?: LaboratoryPolicyBinding;
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
   issuedAtUnixMs?: number;
   requestId?: string;
   requestNonce?: Buffer;
   iv?: Buffer;
+  env?: NodeJS.ProcessEnv;
 }): ProtectedRequest {
   const method = input.method;
   validateRequest(method, input.path, input.bodyJson);
@@ -139,6 +167,49 @@ export function protectNativeTransportRequest(input: {
     || (channel !== "generic_call" && alias === "revit_call_tool")) {
     throw new NativeTransportProtocolError("Protected native request channel or alias is invalid.", "pre_dispatch");
   }
+  let certificationEnvelope: FamilyCertificationEnvelope | undefined;
+  try {
+    certificationEnvelope = input.certificationEnvelope
+      ? assertIssuedFamilyEnvelopeForDispatch({
+        envelope: input.certificationEnvelope,
+        method,
+        path: input.path,
+        bodyJson: input.bodyJson,
+        channel,
+        alias
+      })
+      : undefined;
+  } catch (error) {
+    throw new NativeTransportProtocolError("Protected native request-family admission is invalid.", "pre_dispatch", error);
+  }
+  if (certificationEnvelope && (input.laboratoryEvidenceDispatch || input.laboratoryMoveEvidenceAdmission)) {
+    throw new NativeTransportProtocolError("Production certification and laboratory evidence dispatch are mutually exclusive.", "pre_dispatch");
+  }
+  const laboratoryEvidence = input.laboratoryEvidenceDispatch
+    ? consumeLaboratoryEvidenceDispatch(input.laboratoryEvidenceDispatch, {
+      transportKind: "direct",
+      jobId: null,
+      correlationId: null,
+      channel,
+      alias,
+      policy: input.laboratoryPolicyBinding ?? { policyHash: "", policyRecordHash: "", evidenceRecordHash: "", effectHash: "" }
+    }, input.env ?? process.env)
+    : undefined;
+  const laboratoryMoveEvidenceAdmission = input.laboratoryMoveEvidenceAdmission
+    ? consumeLaboratoryMoveEvidenceAdmission({
+      admission: input.laboratoryMoveEvidenceAdmission,
+      method,
+      path: input.path,
+      bodyJson: input.bodyJson ?? "",
+      channel,
+      alias,
+      policy: input.laboratoryPolicyBinding ?? { policyHash: "", policyRecordHash: "", evidenceRecordHash: "", effectHash: "" }
+    }, input.env ?? process.env)
+    : undefined;
+  if (laboratoryMoveEvidenceAdmission
+    && (!laboratoryEvidence || laboratoryMoveEvidenceAdmission.evidence_run_id !== laboratoryEvidence.evidence_run_id)) {
+    throw new NativeTransportProtocolError("Move-family evidence admission requires the exact same laboratory evidence dispatch run.", "pre_dispatch");
+  }
 
   const inner = JSON.stringify({
     request_id: requestId,
@@ -150,6 +221,9 @@ export function protectNativeTransportRequest(input: {
     body_json: input.bodyJson ?? "",
     channel,
     alias,
+    ...(certificationEnvelope ? { certification_envelope: certificationEnvelope } : {}),
+    ...(laboratoryEvidence ? { laboratory_evidence: laboratoryEvidence } : {}),
+    ...(laboratoryMoveEvidenceAdmission ? { laboratory_move_evidence_admission: laboratoryMoveEvidenceAdmission } : {}),
     write_grant: writeGrant
   });
   const epoch = encodeBase64Url(decodeCanonicalBase64Url(input.serverEpoch, 32, "server epoch", "pre_dispatch"));
@@ -172,7 +246,7 @@ export function openNativeTransportResponse(input: {
   request: ProtectedRequest;
   envelopeBytes: Uint8Array;
   nowUnixMs?: number;
-}): NativeTransportResult {
+}): Omit<NativeTransportResult, "receiptPath" | "receiptSha256"> {
   const envelopeBytes = Buffer.from(input.envelopeBytes);
   if (envelopeBytes.length === 0 || envelopeBytes.length > MAXIMUM_RESPONSE_ENVELOPE_BYTES) {
     throw new NativeTransportProtocolError("Protected native response envelope size is invalid.", "response");
@@ -205,7 +279,7 @@ export function openNativeTransportResponse(input: {
     || encodeUtf8(inner.body_json, "protected native response body", "response").length > MAXIMUM_RESPONSE_BODY_BYTES) {
     throw new NativeTransportProtocolError("Protected native response body exceeds its limit.", "response");
   }
-  return { statusCode: inner.status_code, bodyJson: inner.body_json };
+  return { statusCode: inner.status_code, bodyJson: inner.body_json, requestId: input.request.requestId };
 }
 
 export async function callNativeTransport(input: {
@@ -216,10 +290,19 @@ export async function callNativeTransport(input: {
   writeGrant?: string;
   channel?: "search" | "generic_call" | "typed_mcp";
   alias?: string;
+  certificationEnvelope?: FamilyCertificationEnvelope;
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  laboratoryPolicyBinding?: LaboratoryPolicyBinding;
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
+  requestId?: string;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
-  const receipt = readNativeTransportReceipt(input.env ?? process.env);
+  const environment = input.env ?? process.env;
+  const snapshot = readNativeTransportReceiptSnapshot(environment);
+  const receiptPath = snapshot.path;
+  const receiptRaw = snapshot.raw;
+  const receipt = snapshot.receipt;
   const request = protectNativeTransportRequest({
     operatorToken: input.operatorToken,
     serverEpoch: receipt.server_epoch,
@@ -228,30 +311,51 @@ export async function callNativeTransport(input: {
     bodyJson: input.bodyJson,
     writeGrant: input.writeGrant,
     channel: input.channel,
-    alias: input.alias
+    alias: input.alias,
+    certificationEnvelope: input.certificationEnvelope,
+    laboratoryEvidenceDispatch: input.laboratoryEvidenceDispatch,
+    laboratoryPolicyBinding: input.laboratoryPolicyBinding,
+    laboratoryMoveEvidenceAdmission: input.laboratoryMoveEvidenceAdmission,
+    requestId: input.requestId,
+    env: environment
   });
 
-  const response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {
-    method: "POST",
-    signal: input.signal,
-    headers: { "Content-Type": NATIVE_TRANSPORT_CONTENT_TYPE },
-    body: request.envelopeJson
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {
+      method: "POST",
+      signal: input.signal,
+      headers: { "Content-Type": NATIVE_TRANSPORT_CONTENT_TYPE },
+      body: request.envelopeJson
+    });
+  } catch (error) {
+    throw new NativeTransportProtocolError("Protected native transport response was unavailable.", "response", error, request.requestId);
+  }
   if (response.status !== 200) {
     try { await response.body?.cancel(); } catch { /* best effort */ }
-    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated outer HTTP status.", "response");
+    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated outer HTTP status.", "response", undefined, request.requestId);
   }
   const responseContentType = (response.headers.get("content-type") ?? "").split(";", 1)[0]?.trim();
   if (responseContentType !== NATIVE_TRANSPORT_CONTENT_TYPE) {
     try { await response.body?.cancel(); } catch { /* best effort */ }
-    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated content type.", "response");
+    throw new NativeTransportProtocolError("Protected native transport returned an unauthenticated content type.", "response", undefined, request.requestId);
   }
-  const bytes = await readLimitedResponse(response, MAXIMUM_RESPONSE_ENVELOPE_BYTES);
-  return openNativeTransportResponse({
-    operatorToken: input.operatorToken,
-    request,
-    envelopeBytes: bytes
-  });
+  try {
+    const bytes = await readLimitedResponse(response, MAXIMUM_RESPONSE_ENVELOPE_BYTES);
+    const opened = openNativeTransportResponse({
+      operatorToken: input.operatorToken,
+      request,
+      envelopeBytes: bytes
+    });
+    return Object.freeze({
+      ...opened,
+      receiptPath,
+      receiptSha256: `sha256:${crypto.createHash("sha256").update(receiptRaw, "utf8").digest("hex")}`
+    });
+  } catch (error) {
+    if (error instanceof NativeTransportProtocolError && error.requestId === request.requestId) throw error;
+    throw new NativeTransportProtocolError("Protected native transport response could not be authenticated.", "response", error, request.requestId);
+  }
 }
 
 function validateRequest(method: string, requestPath: string, bodyJson: string | undefined): void {

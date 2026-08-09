@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import {
   assertToolExposure,
+  assertCertifiedMoveOneToolExposure,
   canonicalToolExposureJson,
   evaluateToolExposure,
   filterRegistryEntriesForSearch,
@@ -16,6 +17,9 @@ import {
   loadToolExposurePolicy,
   ToolExposurePolicyError
 } from "./toolExposurePolicy.js";
+import { CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH, CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1 } from "./certifiedMoveOneRequestFamily.js";
+import { clearCertifiedMoveTargetLedgerForTests, registerCertifiedSpatialObservation } from "./certifiedMoveTargetLedger.js";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -139,9 +143,9 @@ test("assertToolExposure returns the exact certified record provenance and bound
 test("current policy validates all record hashes and exposes only the certified typed context alias", () => {
   const { policy, policyPath } = loadToolExposurePolicy(certifiedEnv());
   assert.equal(policyPath, sourcePolicyPath);
-  assert.equal(policy.records.length * 4, 100);
+  assert.equal(policy.records.length * 4, 112);
   const decisions = policy.records.flatMap(record => Object.values(record.channels));
-  assert.equal(decisions.length, 100);
+  assert.equal(decisions.length, 112);
   const exposed = policy.records.flatMap(record =>
     Object.entries(record.channels)
       .filter(([, decision]) => decision.exposed)
@@ -243,6 +247,73 @@ test("exact body-aware policy decisions distinguish known uncertified, request m
   assert.deepEqual(workflowOnlyRaw.reasonCodes, ["CERT_WORKFLOW_ONLY"]);
 });
 
+test("general exact evaluator rejects caller-authored request-family metadata", () => {
+  const family = {
+    schema: "revit-operator.certified-request-family.v1" as const,
+    id: "revit-operator.certified-move-one.request-family.v1",
+    validator_hash: `sha256:${"a".repeat(64)}`
+  };
+  const variant = writePolicyVariant(policy => {
+    policy.records = policy.records.filter((candidate: any) => !(candidate.method === "POST" && candidate.path === "/revit/move-elements"));
+    const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
+    record.method = "POST";
+    record.path = "/revit/move-elements";
+    record.typed_mcp_aliases = ["revit_move_one_certified"];
+    record.effect_hash = testDigest({ effect: { resolved_effect: "write" } });
+    record.request_family = family;
+    record.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+  });
+  const body = {
+    ids: [4821], mode: "vector", vectorX: 1, vectorY: 0, vectorZ: 0,
+    dryRun: false, behavior: "allOrNothing", moveTogether: false,
+    options: { failOnPinned: true, unpinIfAllowed: false }
+  };
+  const callerAuthored = (evaluateToolExposure as unknown as (input: Record<string, unknown>) => any)({
+    method: "POST", path: "/revit/move-elements", body, channel: "typed_mcp", alias: "revit_move_one_certified",
+    requestFamily: family, requestInstanceHash: `sha256:${"b".repeat(64)}`, env: policyVariantEnv(variant)
+  });
+  assert.deepEqual(callerAuthored.reasonCodes, ["CERT_REQUEST_HASH_MISMATCH"]);
+});
+
+test("certified move-one entry point rejects forged admission paths and binds validated preview input", () => {
+  clearCertifiedMoveTargetLedgerForTests();
+  registerCertifiedSpatialObservation(
+    { document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } } },
+    { observationId: "frame_01", viewId: 42, items: [{ elementId: 4821, sourceScopedId: "host:4821", groundingStatus: "anchored", pinned: false, groupId: null, groupIdReadSucceeded: true, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }] }
+  );
+  const variant = writePolicyVariant(policy => {
+    policy.records = policy.records.filter((candidate: any) => !(candidate.method === "POST" && candidate.path === "/revit/move-elements"));
+    const record = policy.records.find((candidate: any) => candidate.method === "GET" && candidate.path === "/revit/ping");
+    record.method = "POST";
+    record.path = "/revit/move-elements";
+    record.typed_mcp_aliases = ["revit_move_one_certified"];
+    record.effect_hash = testDigest({ effect: { resolved_effect: "preview" } });
+    record.request_family = {
+      schema: "revit-operator.certified-request-family.v1",
+      id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
+      validator_hash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH
+    };
+    record.channels.typed_mcp = { exposed: true, required_level: "L4", reason_codes: ["CERTIFIED"] };
+  });
+  const result = assertCertifiedMoveOneToolExposure({
+    request: {
+      phase: "preview", elementId: 4821, observationId: "frame_01", vectorFeet: { x: 1, y: 0, z: 0 }, previewReceipt: undefined
+    },
+    alias: "revit_move_one_certified",
+    env: policyVariantEnv(variant)
+  });
+  assert.equal(result.decision.allowed, true);
+  assert.equal(result.admission.outboundBody.dryRun, true);
+  assert.match(result.decision.requestInstanceHash ?? "", /^sha256:[0-9a-f]{64}$/);
+  assert.throws(() => assertCertifiedMoveOneToolExposure({
+    request: {
+      phase: "preview", elementId: 4821, observationId: "frame_01", vectorFeet: { x: 3, y: 0, z: 0 }, previewReceipt: undefined
+    },
+    alias: "revit_move_one_certified",
+    env: policyVariantEnv(variant)
+  }), /MOVE_ONE_VECTOR_OUT_OF_BOUNDS/);
+});
+
 test("certified route lookup is exact and search filtering exposes no currently uncertified route", () => {
   const env = certifiedEnv();
   assert.equal(isKnownToolExposureRoute("POST", "/revit/schedules", env), true);
@@ -324,7 +395,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   const packagedConfig = path.join(root, "operator-backend", "config");
   fs.mkdirSync(packagedLib, { recursive: true });
   fs.mkdirSync(packagedConfig, { recursive: true });
-  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js"]) {
+  for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js", "certifiedMoveTargetLedger.js"]) {
     fs.copyFileSync(path.resolve(process.cwd(), "dist", "lib", file), path.join(packagedLib, file));
   }
   fs.copyFileSync(sourcePolicyPath, path.join(packagedConfig, "tool_exposure_policy.v1.json"));

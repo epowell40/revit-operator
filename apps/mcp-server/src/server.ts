@@ -8,8 +8,10 @@ import mammoth from "mammoth";
 import { createRequire } from "module";
 
 xlsx.set_fs(fs);
-import { callRevit } from "./lib/revitClient.js";
-import { observeModelV1 } from "./spatialObservationV1.js";
+import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
+import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
+import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
+import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
 import { countSheetsViaSafeRead, safeReadFailurePayload, SafeReadCallError } from "./lib/safeReadClient.js";
 import { getWorkspaceRoot, resolveExistingFileUnderWorkspace, resolveFileUnderWorkspace } from "./lib/workspace.js";
 import { auditLog, summarize } from "./lib/audit.js";
@@ -45,9 +47,11 @@ import {
   isKnownToolExposureRoute,
   isToolRouteExposedForSearch,
   loadToolExposurePolicy,
-  runWithRevitToolAlias
+  runWithRevitToolAlias,
+  assertCertifiedMoveOneToolExposure
 } from "./lib/toolExposurePolicy.js";
 
+import { discoverCertifiedCapabilities } from "./lib/certifiedCapabilityProjection.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -104,6 +108,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "fire_damper_audit",
   "operator_plan_semantic_mep_route",
   "operator_runtime_probe",
+  "operator_discover_capabilities",
   "print_sheets",
   "read_excel",
   "read_pdf_text",
@@ -563,6 +568,11 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
     }]
   };
 });
+
+server.tool("operator_discover_capabilities", "Discover a bounded set of currently certified Revit capabilities for a stated need. This does not execute Revit actions.", {
+  need: z.string().min(1).max(480).describe("A concise semantic capability need, not a tool name or route."),
+  maxResults: z.number().int().min(1).max(8).optional().describe("Maximum certified capability descriptions to return (default 4).")
+}, async (args) => ({ content: [{ type: "text", text: JSON.stringify(discoverCertifiedCapabilities(args), null, 2) }] }));
 
 server.tool("revit_ping", "Check connection to Revit Add-in.", {}, async () => {
   try {
@@ -1536,6 +1546,19 @@ server.tool(
   }
 );
 
+server.tool(
+  "revit_read_move_targets_certified",
+  "Read a bounded set of point-located host targets and exact XYZ locations from one fresh native-attested spatial observation. Takes no element identifiers.",
+  {},
+  async () => {
+    try {
+      return await readCertifiedMoveTargetsV1(callRevit);
+    } catch (e) {
+      return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
+  }
+);
+
 server.tool("revit_export_view_region", "Export an image + deterministic pixel-to-model mapping for a specified region of a view (works even when view crop is disabled/locked).",
   {
     viewId: z.number().optional(),
@@ -1865,6 +1888,114 @@ server.tool("revit_move_elements", "Move element(s) by a translation vector (sup
       });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
+  }
+);
+
+// This is deliberately distinct from the broad laboratory move wrapper. Its
+// model-facing contract is validated as exactly one policy-bound family before
+// the legacy native handler body is constructed.
+server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-certified element translation with required preview lineage.",
+  {
+    phase: z.enum(["preview", "apply"]),
+    elementId: z.number().int().positive(),
+    observationId: z.string(),
+    vectorFeet: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+    previewReceipt: z.string().optional()
+  },
+  async (args) => {
+    let admittedRequest: import("./lib/certifiedMoveTransportFailure.js").CertifiedMoveTransportFailureBinding | null = null;
+    try {
+      const { admission, decision } = assertCertifiedMoveOneToolExposure({
+        request: { ...args, previewReceipt: args.previewReceipt },
+        channel: "typed_mcp"
+      });
+      const transportBinding = readCertifiedMoveOneTransportBinding(admission);
+      admittedRequest = {
+        requestInstanceHash: admission.requestInstanceHash,
+        phase: admission.request.phase,
+        familyId: admission.familyId,
+        familyHash: admission.familyHash,
+        admissionSessionId: admission.admissionSessionId,
+        documentFingerprint: admission.request.documentFingerprint,
+        documentSessionId: admission.request.documentSessionId,
+        sourceScopedId: admission.request.sourceScopedId,
+        elementId: admission.request.elementId,
+        observationId: admission.request.observationId,
+        observationBindingHash: admission.request.observationBindingHash,
+        nativeAttestationKeyId: admission.request.nativeAttestationKeyId,
+        previewInstanceHash: admission.request.previewInstanceHash ?? null,
+        previewReceiptHash: admission.request.previewReceiptHash ?? null,
+        policyHash: decision.policyHash ?? null,
+        policyRecordHash: decision.policyRecordHash ?? null,
+        evidenceRecordHash: decision.evidenceRecordHash ?? null,
+        effectHash: decision.effectHash ?? null,
+        outboundBodySha256: transportBinding.outbound_body_sha256,
+        channel: decision.channel,
+        alias: decision.alias ?? null
+      };
+      // In laboratory evidence mode this remains a bounded one-element call.
+      // In certified mode the ordinary call boundary still rejects it until a
+      // generated L4 policy plus native family attestation are present.
+      const data = await callRevit("/revit/move-elements", "POST", admission.outboundBody, {
+        channel: "typed_mcp",
+        certifiedMoveOneAdmission: admission
+      });
+      const policyBinding = {
+        policyHash: decision.policyHash,
+        policyRecordHash: decision.policyRecordHash,
+        evidenceRecordHash: decision.evidenceRecordHash,
+        effectHash: decision.effectHash,
+        channel: decision.channel,
+        alias: decision.alias
+      };
+      let executionContext: ReturnType<typeof readCertifiedMoveExecutionContext> | null = null;
+      try {
+        executionContext = readCertifiedMoveExecutionContext(data);
+        assertCertifiedMoveExecutionReceipt(admission, policyBinding, data, executionContext);
+      } catch (receiptError) {
+        // Both apply and rollback preview cross the native mutation boundary.
+        // If the signed native result cannot be verified, rollback is not
+        // independently proven either, so neither phase may be retried.
+        return {
+          isError: true,
+          content: [{
+            type: "text" as const,
+            text: JSON.stringify(certifiedMovePostDispatchVerificationFailurePayload(
+              receiptError,
+              admittedRequest!,
+              executionContext
+            ))
+          }]
+        };
+      }
+      const previewReceipt = admission.request.phase === "preview"
+        ? issueCertifiedMovePreviewReceipt(admission, policyBinding, data)
+        : undefined;
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            family: { id: admission.familyId, hash: admission.familyHash },
+            requestInstanceHash: admission.requestInstanceHash,
+            ...(previewReceipt ? { previewReceipt } : {}),
+            policy: { hash: decision.policyHash, recordHash: decision.policyRecordHash },
+            result: data
+          }, null, 2)
+        }]
+      };
+    } catch (e) {
+      const transportFailure = admittedRequest ? certifiedMoveTransportFailurePayload(e, admittedRequest) : null;
+      if (transportFailure) {
+        return {
+          isError: true,
+          content: [{
+            type: "text",
+            text: JSON.stringify(transportFailure)
+          }]
+        };
+      }
+      return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
   }
 );
 

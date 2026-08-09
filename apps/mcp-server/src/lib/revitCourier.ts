@@ -5,19 +5,41 @@ import {
   assertToolExposure,
   canonicalToolExposureJson,
   getToolExposureRuntimeDecision,
-  readCertifiedCourierAdmission,
+  assertCertifiedMoveOneAdmissionExposure,
+  readCertifiedCourierAdmissionBinding,
   TOOL_EXPOSURE_CANONICALIZATION,
   type CertifiedCourierAdmission,
   type ToolExposureChannel,
   type ToolExposureDecision
 } from "./toolExposurePolicy.js";
+import {
+  createCertificationEnvelope,
+  type CertificationEnvelope
+} from "./certifiedExecutionEnvelope.js";
+import {
+  issueCertifiedMoveExecutionContext,
+  type CertifiedMoveExecutionContext,
+  type CertifiedMoveOneAdmission
+} from "./certifiedMoveOneRequestFamily.js";
 import { isSafeReadReservedPath } from "./safeReadDiscovery.js";
 import { getWorkspaceRoot } from "./workspace.js";
+import { isExactDevelopmentLaboratory } from "./nativeTransport.js";
+import {
+  consumeLaboratoryEvidenceDispatch,
+  readLaboratoryEvidenceDispatchBinding,
+  type LaboratoryEvidenceDispatch,
+  type LaboratoryEvidenceDispatchDto
+} from "./laboratoryEvidenceDispatch.js";
+import {
+  consumeLaboratoryMoveEvidenceAdmission,
+  isLaboratoryMoveEvidenceAdmission,
+  type LaboratoryMoveEvidenceAdmission,
+  type LaboratoryMoveEvidenceAdmissionDto
+} from "./laboratoryMoveEvidence.js";
 
 const JOB_VERSION_V1 = "revit-operator.revit-tool-job.v1";
 const JOB_VERSION_V2 = "revit-operator.revit-tool-job.v2";
 const RESULT_VERSION = "revit-operator.revit-tool-result.v1";
-const CERTIFICATION_ENVELOPE_SCHEMA = "revit-operator.revit-tool-certification-envelope.v1";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const EXPOSURE_CHANNELS: readonly ToolExposureChannel[] = ["search", "generic_call", "typed_mcp", "deterministic_workflow"];
 const UNSAFE_CONTEXT_CONTROL = /[\u0000-\u001F\u007F]/u;
@@ -45,13 +67,46 @@ type CourierContext = {
 type CourierResult = {
   version?: string;
   id?: string;
+  correlation_id?: string;
   status?: string;
   result?: unknown;
   error?: string | null;
   code?: string | null;
   retryable?: boolean;
   outcome_unknown?: boolean;
+  certified_execution_context?: unknown;
 };
+
+const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
+export type RevitCourierLaboratoryEvidenceContext = Readonly<{
+  schema: "revit-operator.courier-laboratory-evidence-context.v1";
+  transportKind: "courier";
+  jobId: string;
+  correlationId: string;
+  sessionId: string;
+  executorId: string | null;
+  jobPath: string;
+  resultPath: string;
+  jobSha256: string;
+  resultSha256: string;
+}>;
+const laboratoryEvidenceContexts = new WeakMap<object, RevitCourierLaboratoryEvidenceContext>();
+
+/** Returns provenance issued only after a successful exact laboratory courier result. */
+export function readRevitCourierLaboratoryEvidenceContext(result: unknown): RevitCourierLaboratoryEvidenceContext {
+  if (!result || typeof result !== "object") throw new Error("Courier laboratory result has no durable evidence context.");
+  const context = laboratoryEvidenceContexts.get(result as object);
+  if (!context) throw new Error("Courier laboratory result has no durable evidence context.");
+  return context;
+}
+
+/** Reads context derived from the exact durable job and its authenticated completion. */
+export function readCertifiedCourierExecutionContext(result: unknown): CertifiedMoveExecutionContext {
+  if (!result || typeof result !== "object") throw new Error("Certified courier result has no authenticated execution context.");
+  const context = certifiedExecutionContexts.get(result as object);
+  if (!context) throw new Error("Certified courier result has no authenticated execution context.");
+  return context;
+}
 
 export class RevitCourierError extends Error {
   readonly code: string;
@@ -101,29 +156,9 @@ type CourierJob = {
   body_json?: string;
   body_present?: boolean;
   certification_envelope?: CertificationEnvelope;
+  laboratory_evidence?: LaboratoryEvidenceDispatchDto;
+  laboratory_move_evidence_admission?: LaboratoryMoveEvidenceAdmissionDto;
   [key: string]: unknown;
-};
-
-type CertificationEnvelope = {
-  schema: typeof CERTIFICATION_ENVELOPE_SCHEMA;
-  version: 1;
-  canonicalization: typeof TOOL_EXPOSURE_CANONICALIZATION;
-  policy_hash: string;
-  policy_record_hash: string;
-  evidence_record_hash: string;
-  request_hash: string;
-  effect_hash: string;
-  method: string;
-  path: string;
-  body_present: boolean;
-  body_sha256: string;
-  channel: ToolExposureChannel;
-  alias: string;
-  workflow?: string;
-  runtime_mode: string;
-  exposure_profile: "certified";
-  policy_trust_source: "bundled" | "deployment";
-  envelope_hash: string;
 };
 
 export type RevitCourierCallOptions = {
@@ -133,6 +168,8 @@ export type RevitCourierCallOptions = {
    * the durable job is written.
    */
   certifiedAdmission?: CertifiedCourierAdmission;
+  laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
+  laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
 };
 
 function timeoutMs(): number {
@@ -217,6 +254,94 @@ function sha256(value: string): string {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 }
 
+function readAuthoritativeResult(
+  resultPath: string,
+  jobPath: string,
+  id: string,
+  expectedEnvelope?: CertificationEnvelope
+): CourierResult | null {
+  const job = readJsonObject(jobPath);
+  if (expectedEnvelope?.version === 2 && (!job || job.version !== JOB_VERSION_V2)) {
+    throw new Error("Certified family courier result has no exact persisted v2 durable job.");
+  }
+  const envelope = job?.certification_envelope as CertificationEnvelope | undefined;
+  if (expectedEnvelope?.version === 2) {
+    if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
+    if (envelope.version !== 2 || envelope.envelope_hash !== expectedEnvelope.envelope_hash) {
+      throw new Error("Certified family courier result does not match the exact in-process certification envelope.");
+    }
+    if (!job || job.id !== id || job.correlation_id !== id || job.idempotency_key !== id
+      || job.method !== envelope.method || job.path !== envelope.path
+      || job.body_present !== envelope.body_present
+      || typeof job.body_json !== "string" || sha256(job.body_json) !== envelope.body_sha256) {
+      throw new Error("Certified family courier result does not match the exact immutable durable job identity.");
+    }
+  }
+  const receipt = readResult(resultPath, id);
+  if (!receipt) return null;
+  if (job?.version !== JOB_VERSION_V2) return receipt;
+  if (!envelope) throw new Error("Certified courier result has no exact persisted certification envelope.");
+  if (envelope.version !== 2) return receipt;
+  if (expectedEnvelope?.version !== 2
+    && (job.id !== id || job.correlation_id !== id || job.idempotency_key !== id
+      || job.method !== envelope.method || job.path !== envelope.path
+      || job.body_present !== envelope.body_present
+      || typeof job.body_json !== "string" || sha256(job.body_json) !== envelope.body_sha256)) {
+    throw new Error("Certified family courier result does not match the exact immutable durable job identity.");
+  }
+  const jobDir = path.dirname(jobPath);
+  const decision = readJsonObject(path.join(jobDir, "completion-terminal-decision.v1.json"));
+  const decisionKeys = [
+    "schema", "kind", "job_id", "correlation_id", "session_id", "executor_id", "certification_envelope_hash",
+    "request_instance_hash", "completion_challenge_hash", "terminal_result_sha256", "terminal_result", "decided_at_utc"
+  ] as const;
+  if (!decision || !hasExactKeys(decision, decisionKeys)
+    || decision.schema !== "revit-operator.courier-completion-terminal-decision.v1"
+    || decision.job_id !== id
+    || decision.correlation_id !== job.correlation_id
+    || decision.session_id !== job.session_id
+    || decision.certification_envelope_hash !== envelope.envelope_hash
+    || decision.request_instance_hash !== envelope.request_family_admission.request_instance_hash
+    || (decision.kind !== "success" && decision.kind !== "failure")
+    || (decision.kind === "success") !== (receipt.status === "succeeded")
+    || decision.terminal_result_sha256 !== sha256(JSON.stringify(receipt))
+    || JSON.stringify(decision.terminal_result) !== JSON.stringify(receipt)) {
+    throw new Error("Certified family courier result does not match the exact backend terminal decision.");
+  }
+  const issued = readJsonObject(path.join(jobDir, "completion-challenge-issued.v1.json"));
+  if (decision.completion_challenge_hash === null) {
+    if (decision.kind !== "failure" || !issued
+      || issued.schema !== "revit-operator.courier-completion-terminal-fence.v1"
+      || !hasExactKeys(issued, ["schema", "terminal_decision"])
+      || JSON.stringify(issued.terminal_decision) !== JSON.stringify(decision)) {
+      throw new Error("Certified family pre-dispatch failure is not the exact atomic terminal-fence winner.");
+    }
+    return receipt;
+  }
+  const challengeKeys = [
+    "schema", "transport_kind", "dispatch_id", "correlation_id", "execution_session_id", "executor_id",
+    "certification_envelope_hash", "completion_challenge_hash", "job_id", "session_id", "completion_challenge",
+    "policy_hash", "document_session_id", "request_instance_hash", "issued_at_utc"
+  ] as const;
+  if (!issued || !hasExactKeys(issued, challengeKeys)
+    || issued.schema !== "revit-operator.courier-completion-challenge.v1"
+    || issued.transport_kind !== "courier"
+    || issued.job_id !== id || issued.dispatch_id !== id || issued.correlation_id !== job.correlation_id
+    || issued.session_id !== job.session_id || issued.execution_session_id !== job.session_id
+    || issued.executor_id !== decision.executor_id
+    || issued.certification_envelope_hash !== envelope.envelope_hash
+    || issued.completion_challenge_hash !== decision.completion_challenge_hash
+    || issued.policy_hash !== envelope.policy_hash
+    || issued.document_session_id !== envelope.request_family_admission.document_session_id
+    || issued.request_instance_hash !== envelope.request_family_admission.request_instance_hash
+    || typeof issued.completion_challenge !== "string"
+    || sha256(issued.completion_challenge) !== issued.completion_challenge_hash
+    || (decision.kind === "failure" && (receipt.outcome_unknown !== true || receipt.retryable !== false))) {
+    throw new Error("Certified family dispatch-bound result does not match the exact completion challenge and nonretryable outcome truth.");
+  }
+  return receipt;
+}
+
 function exactJson(value: unknown): string {
   return JSON.stringify(value);
 }
@@ -246,8 +371,9 @@ function assertExactCertifiedAdmission(
   method: string,
   revitPath: string,
   body: unknown
-): ToolExposureDecision {
-  const decision = readCertifiedCourierAdmission(capability);
+): { decision: ToolExposureDecision; certifiedMoveOneAdmission?: CertifiedMoveOneAdmission } {
+  const binding = readCertifiedCourierAdmissionBinding(capability);
+  const { decision } = binding;
   if (decision.allowed !== true || decision.mode !== "certified") {
     throw new Error("Certified Revit courier publication requires an allowed certified MCP admission decision.");
   }
@@ -274,14 +400,20 @@ function assertExactCertifiedAdmission(
   // The immutable result has to match the earlier decision exactly; a policy
   // rotation or changed binding is a typed fail-closed condition, never a
   // reason to enqueue a broadened job.
-  const recomputed = assertToolExposure({
-    method,
-    path: revitPath,
-    body,
-    channel: decision.channel,
-    workflow: decision.workflow,
-    alias: decision.alias
-  });
+  const recomputed = binding.certifiedMoveOneAdmission
+    ? assertCertifiedMoveOneAdmissionExposure({
+      admission: binding.certifiedMoveOneAdmission,
+      channel: decision.channel,
+      alias: decision.alias
+    })
+    : assertToolExposure({
+      method,
+      path: revitPath,
+      body,
+      channel: decision.channel,
+      workflow: decision.workflow,
+      alias: decision.alias
+    });
   const immutableFields: Array<keyof ToolExposureDecision> = [
     "allowed",
     "mode",
@@ -303,36 +435,27 @@ function assertExactCertifiedAdmission(
       throw new Error(`Certified Revit courier admission decision changed at ${field}; refusing durable publication.`);
     }
   }
-  return recomputed;
+  return { decision: recomputed, ...(binding.certifiedMoveOneAdmission ? { certifiedMoveOneAdmission: binding.certifiedMoveOneAdmission } : {}) };
 }
 
-function createCertificationEnvelope(decision: ToolExposureDecision, rawBody: { present: boolean; json: string }): CertificationEnvelope {
-  const payload = {
-    schema: CERTIFICATION_ENVELOPE_SCHEMA as typeof CERTIFICATION_ENVELOPE_SCHEMA,
-    version: 1 as const,
-    canonicalization: TOOL_EXPOSURE_CANONICALIZATION as typeof TOOL_EXPOSURE_CANONICALIZATION,
-    policy_hash: decision.policyHash!,
-    policy_record_hash: decision.policyRecordHash!,
-    evidence_record_hash: decision.evidenceRecordHash!,
-    request_hash: decision.requestHash,
-    effect_hash: decision.effectHash,
-    method: decision.method,
-    path: decision.path,
-    body_present: rawBody.present,
-    body_sha256: sha256(rawBody.json),
-    channel: decision.channel,
-    alias: decision.alias!,
-    ...(decision.workflow === undefined ? {} : { workflow: decision.workflow }),
-    runtime_mode: decision.runtimeMode,
-    exposure_profile: "certified" as const,
-    policy_trust_source: decision.policyTrustSource!
-  };
-  return { ...payload, envelope_hash: sha256(canonicalToolExposureJson(payload)) };
+function readJsonObject(filePath: string): Record<string, unknown> | null {
+  try {
+    const value = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
-function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierContext, "session_id">>, method: string, revitPath: string, bodyJson: string): string {
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function legacyIdempotencyKey(context: CourierContext & Required<Pick<CourierContext, "session_id">>, method: string, revitPath: string, bodyJson: string, laboratoryDiscriminator = ""): string {
+  const laboratoryLine = laboratoryDiscriminator ? `${laboratoryDiscriminator}\n` : "";
   return createHash("sha256")
-    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${context.target_executor_id ?? ""}\n${context.target_document_title ?? ""}\n${context.target_document_path ?? ""}\n${method}\n${revitPath}\n${bodyJson}`)
+    .update(`${context.session_id}\n${context.message_id ?? ""}\n${context.token ?? ""}\n${context.target_executor_id ?? ""}\n${context.target_document_title ?? ""}\n${context.target_document_path ?? ""}\n${laboratoryLine}${method}\n${revitPath}\n${bodyJson}`)
     .digest("hex");
 }
 
@@ -444,22 +567,91 @@ function resolveResult<T>(receipt: CourierResult): T {
   });
 }
 
-function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number): T {
-  const receipt = readResult(resultPath, id);
-  if (receipt) return resolveResult<T>(receipt);
+function bindCertifiedExecutionContext<T>(result: T, receipt: CourierResult, job: CourierJob, envelope: CertificationEnvelope): T {
+  if (envelope.version !== 2) return result;
+  if (!result || typeof result !== "object") throw new Error("Certified family courier returned a non-object result.");
+  const rawContext = receipt.certified_execution_context;
+  if (!rawContext || typeof rawContext !== "object" || Array.isArray(rawContext)) {
+    throw new Error("Certified family courier result omitted its backend-authenticated execution context.");
+  }
+  const persisted = rawContext as Record<string, unknown>;
+  const contextKeys = [
+    "schema", "transport_kind", "dispatch_id", "correlation_id", "execution_session_id",
+    "executor_id", "certification_envelope_hash", "completion_challenge_hash"
+  ];
+  if (Object.keys(persisted).length !== contextKeys.length
+    || contextKeys.some(key => !Object.prototype.hasOwnProperty.call(persisted, key))) {
+    throw new Error("Certified family courier execution context is malformed.");
+  }
+  const sessionId = job.session_id;
+  const executorId = job.target_executor_id;
+  if (typeof sessionId !== "string" || !sessionId || typeof executorId !== "string" || !executorId) {
+    throw new Error("Certified family courier job omitted its bound execution session or executor identity.");
+  }
+  const context = issueCertifiedMoveExecutionContext({
+    transportKind: "courier",
+    dispatchId: String(persisted.dispatch_id),
+    correlationId: String(persisted.correlation_id),
+    executionSessionId: sessionId,
+    executorId,
+    certificationEnvelopeHash: envelope.envelope_hash,
+    completionChallengeHash: typeof persisted.completion_challenge_hash === "string" ? persisted.completion_challenge_hash : null
+  });
+  if (receipt.id !== job.id
+    || persisted.schema !== "revit-operator.certified-courier-execution-context.v1"
+    || persisted.transport_kind !== "courier"
+    || persisted.dispatch_id !== job.id
+    || persisted.correlation_id !== job.correlation_id
+    || persisted.execution_session_id !== sessionId
+    || persisted.executor_id !== executorId
+    || persisted.certification_envelope_hash !== envelope.envelope_hash) {
+    throw new Error("Certified family courier result does not bind the exact durable job, session, executor, and envelope.");
+  }
+  certifiedExecutionContexts.set(result as object, context);
+  return result;
+}
 
+function bindLaboratoryEvidenceContext<T>(result: T, receipt: CourierResult, job: CourierJob, jobPath: string, resultPath: string): T {
+  if (!isExactDevelopmentLaboratory() || !result || typeof result !== "object") return result;
+  if (job.version !== JOB_VERSION_V1 || receipt.status !== "succeeded" || receipt.id !== job.id || receipt.correlation_id !== job.correlation_id) {
+    throw new Error("Laboratory courier result does not bind the exact durable job.");
+  }
+  const context = Object.freeze({
+    schema: "revit-operator.courier-laboratory-evidence-context.v1" as const,
+    transportKind: "courier" as const,
+    jobId: String(job.id),
+    correlationId: String(job.correlation_id),
+    sessionId: String(job.session_id),
+    executorId: typeof job.target_executor_id === "string" ? job.target_executor_id : null,
+    jobPath,
+    resultPath,
+    jobSha256: sha256(fs.readFileSync(jobPath, "utf8")),
+    resultSha256: sha256(fs.readFileSync(resultPath, "utf8"))
+  });
+  laboratoryEvidenceContexts.set(result as object, context);
+  return result;
+}
+
+function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, durationMs: number, envelope?: CertificationEnvelope): T {
   let job: CourierJob | null = null;
   try {
     job = JSON.parse(fs.readFileSync(jobPath, "utf8")) as CourierJob;
   } catch {
     // The timeout error below remains authoritative when the pending receipt is unreadable.
   }
+  const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
+  if (receipt) {
+    const result = resolveResult<T>(receipt);
+    if (!job) throw new Error("Courier result exists without its exact durable job.");
+    return envelope
+      ? bindCertifiedExecutionContext(result, receipt, job, envelope)
+      : bindLaboratoryEvidenceContext(result, receipt, job, jobPath, resultPath);
+  }
 
   const supportedVersion = job?.version === JOB_VERSION_V1 || job?.version === JOB_VERSION_V2;
   const running = supportedVersion && job?.id === id && job.status === "running";
   const pending = supportedVersion && job?.id === id && job.status === "pending";
   if (running || pending) {
-    const finishedAt = new Date().toISOString();
     const code = running
       ? "courier_execution_deadline_elapsed_outcome_unknown"
       : "courier_job_timed_out_before_claim";
@@ -468,24 +660,25 @@ function finalizeTimeout<T>(jobPath: string, resultPath: string, id: string, dur
       : "The Revit courier job timed out before a workstation claimed it.";
     const retryable = pending;
     const outcomeUnknown = running;
-    writeJsonAtomic(jobPath, {
-      ...job,
-      status: "failed",
-      finished_at: finishedAt,
-      error
-    });
-    writeJsonAtomic(resultPath, {
-      version: RESULT_VERSION,
-      id,
-      correlation_id: job?.correlation_id ?? id,
-      status: "failed",
-      finished_at: finishedAt,
-      result: null,
-      error,
-      code,
-      retryable,
-      outcome_unknown: outcomeUnknown
-    });
+    // Certified v2 terminal truth belongs exclusively to the backend's
+    // completion-decision CAS. The producer may time out locally, but it must
+    // never overwrite a signed winner or publish a competing family result.
+    if (job?.version === JOB_VERSION_V1) {
+      const finishedAt = new Date().toISOString();
+      writeJsonAtomic(jobPath, { ...job, status: "failed", finished_at: finishedAt, error });
+      writeJsonAtomic(resultPath, {
+        version: RESULT_VERSION,
+        id,
+        correlation_id: job?.correlation_id ?? id,
+        status: "failed",
+        finished_at: finishedAt,
+        result: null,
+        error,
+        code,
+        retryable,
+        outcome_unknown: outcomeUnknown
+      });
+    }
     throw new RevitCourierError({
       code,
       message: `${code}: ${error}${retryable ? " (retryable)" : ""} (job ${id}).`,
@@ -516,20 +709,88 @@ export async function callRevitViaCourier<T>(
   const now = Date.now();
   const runtime = getToolExposureRuntimeDecision();
   const certified = runtime.certified;
-  const rawBody = certified ? rawJsonBody(body) : undefined;
+  const laboratoryDecision = !certified && isExactDevelopmentLaboratory() && options.certifiedAdmission
+    ? readCertifiedCourierAdmissionBinding(options.certifiedAdmission).decision
+    : undefined;
+  if (laboratoryDecision && (laboratoryDecision.allowed !== true
+    || laboratoryDecision.mode !== "laboratory"
+    || laboratoryDecision.method !== normalizedMethod
+    || laboratoryDecision.path !== revitPath
+    || !laboratoryDecision.alias)) {
+    throw new Error("Laboratory courier publication requires the exact locally admitted alias, request, and workflow.");
+  }
+  const laboratoryDispatchBinding = options.laboratoryEvidenceDispatch
+    ? readLaboratoryEvidenceDispatchBinding(options.laboratoryEvidenceDispatch)
+    : undefined;
+  if (laboratoryDispatchBinding && (!laboratoryDecision
+    || process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1"
+    || laboratoryDispatchBinding.transportKind !== "courier"
+    || laboratoryDispatchBinding.workflow !== laboratoryDecision.workflow)) {
+    throw new Error("Courier laboratory evidence dispatch does not match the exact locally admitted workflow and protected lane.");
+  }
+  if (options.laboratoryMoveEvidenceAdmission && (!laboratoryDispatchBinding
+    || !isLaboratoryMoveEvidenceAdmission(options.laboratoryMoveEvidenceAdmission)
+    || options.laboratoryMoveEvidenceAdmission.evidenceRunId !== laboratoryDispatchBinding.evidenceRunId)) {
+    throw new Error("Courier move-family evidence requires one matching opaque laboratory dispatch and admission.");
+  }
+  const laboratoryDiscriminator = laboratoryDecision
+    ? canonicalToolExposureJson({
+      alias: laboratoryDecision.alias,
+      workflow: laboratoryDecision.workflow ?? null,
+      evidence_run_id: laboratoryDispatchBinding?.evidenceRunId ?? null,
+      evidence_step: laboratoryDispatchBinding?.evidenceStep ?? null
+    })
+    : "";
+  const rawBody = certified || options.laboratoryMoveEvidenceAdmission ? rawJsonBody(body) : undefined;
   const legacyBodyJson = JSON.stringify(body) ?? "null";
   const bodyForSizeCheck = rawBody?.json ?? legacyBodyJson;
   if (Buffer.byteLength(bodyForSizeCheck, "utf8") > 2 * 1024 * 1024) throw new Error("Revit courier request body exceeds 2 MiB.");
 
-  const decision = certified
+  const binding = certified
     ? assertExactCertifiedAdmission(options.certifiedAdmission, normalizedMethod, revitPath, body)
     : undefined;
-  const envelope = decision && rawBody ? createCertificationEnvelope(decision, rawBody) : undefined;
+  const envelope = binding && rawBody ? createCertificationEnvelope({
+    decision: binding.decision,
+    bodyPresent: rawBody.present,
+    bodyJson: rawBody.json,
+    certifiedMoveOneAdmission: binding.certifiedMoveOneAdmission
+  }) : undefined;
   const idempotencyKey = envelope && rawBody
     ? v2IdempotencyKey(context, normalizedMethod, revitPath, rawBody, envelope)
-    : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson);
+    : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson, laboratoryDiscriminator);
   // A stable job id makes a transport retry resume the same durable operation instead of publishing a duplicate write.
   const id = idempotencyKey;
+  const laboratoryEvidence = options.laboratoryEvidenceDispatch
+    ? consumeLaboratoryEvidenceDispatch(options.laboratoryEvidenceDispatch, {
+      transportKind: "courier",
+      jobId: id,
+      correlationId: id,
+      channel: laboratoryDecision?.channel ?? "",
+      alias: laboratoryDecision?.alias ?? "",
+      policy: {
+        policyHash: laboratoryDecision?.policyHash ?? "",
+        policyRecordHash: laboratoryDecision?.policyRecordHash ?? "",
+        evidenceRecordHash: laboratoryDecision?.evidenceRecordHash ?? "",
+        effectHash: laboratoryDecision?.effectHash ?? ""
+      }
+    })
+    : undefined;
+  const laboratoryMoveEvidenceAdmission = options.laboratoryMoveEvidenceAdmission && rawBody
+    ? consumeLaboratoryMoveEvidenceAdmission({
+      admission: options.laboratoryMoveEvidenceAdmission,
+      method: normalizedMethod,
+      path: revitPath,
+      bodyJson: rawBody.json,
+      channel: laboratoryDecision?.channel ?? "",
+      alias: laboratoryDecision?.alias ?? "",
+      policy: {
+        policyHash: laboratoryDecision?.policyHash ?? "",
+        policyRecordHash: laboratoryDecision?.policyRecordHash ?? "",
+        evidenceRecordHash: laboratoryDecision?.evidenceRecordHash ?? "",
+        effectHash: laboratoryDecision?.effectHash ?? ""
+      }
+    })
+    : undefined;
   const jobDir = path.join(getWorkspaceRoot(), "artifacts", "revit-courier", "jobs", id);
   const jobPath = path.join(jobDir, "job.json");
   const resultPath = path.join(jobDir, "result.json");
@@ -542,7 +803,7 @@ export async function callRevitViaCourier<T>(
     id,
     session_id: context.session_id,
     message_id: context.message_id ?? null,
-    ...(envelope
+    ...((envelope || laboratoryEvidence)
       ? { turn_token_sha256: context.token ? sha256(context.token) : null }
       : { turn_token: context.token ?? null }),
     correlation_id: id,
@@ -555,6 +816,8 @@ export async function callRevitViaCourier<T>(
     ...(body === undefined ? {} : { body }),
     ...(rawBody ? { body_json: rawBody.json, body_present: rawBody.present } : {}),
     ...(envelope ? { certification_envelope: envelope } : {}),
+    ...(laboratoryEvidence ? { laboratory_evidence: laboratoryEvidence } : {}),
+    ...(laboratoryMoveEvidenceAdmission ? { laboratory_move_evidence_admission: laboratoryMoveEvidenceAdmission } : {}),
     created_at: new Date(now).toISOString(),
     expires_at: envelope ? context.expires_at : new Date(now + durationMs).toISOString(),
     status: "pending",
@@ -564,9 +827,14 @@ export async function callRevitViaCourier<T>(
   const persistedExpiry = Date.parse(job.expires_at ?? "");
   const deadline = Number.isFinite(persistedExpiry) ? Math.min(now + durationMs, persistedExpiry) : now + durationMs;
   while (Date.now() < deadline) {
-    const receipt = readResult(resultPath, id);
-    if (receipt) return resolveResult<T>(receipt);
+    const receipt = readAuthoritativeResult(resultPath, jobPath, id, envelope);
+    if (receipt) {
+      const result = resolveResult<T>(receipt);
+      return envelope
+        ? bindCertifiedExecutionContext(result, receipt, job, envelope)
+        : bindLaboratoryEvidenceContext(result, receipt, job, jobPath, resultPath);
+    }
     await delay(200);
   }
-  return finalizeTimeout<T>(jobPath, resultPath, id, durationMs);
+  return finalizeTimeout<T>(jobPath, resultPath, id, durationMs, envelope);
 }

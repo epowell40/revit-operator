@@ -37,7 +37,9 @@ namespace RevitBridge.Server
         private bool _isRunning;
         private string _activeUrl = "";
         private string _nativeTransportEpoch = "";
+        private bool _ownsActiveDiscoveryReceipt;
         private const string DefaultUrl = "http://127.0.0.1:5000/";
+        private const string DiscoveryMutexName = @"Local\RevitOperator.BridgeDiscovery.v1";
         private readonly Dictionary<string, HandlerRequest> _handlers;
 
         public RevitHttpServer(RevitEventService eventService, IOperatorNativeHttpAuthorizer nativeHttpAuthorizer)
@@ -287,10 +289,11 @@ namespace RevitBridge.Server
                     _listener = listener;
                     _activeUrl = candidateUrl;
                     _isRunning = true;
-                    WriteActiveUrlFile(candidateUrl);
-                    WriteActiveTransportReceipt(candidateUrl, _nativeTransportEpoch);
-                    ClearActiveListenerIdentityReceipt();
-                    WriteActiveListenerIdentityReceipt(candidateUrl, _nativeTransportEpoch);
+                    _ownsActiveDiscoveryReceipt = TryPublishActiveDiscoveryReceipts(candidateUrl, _nativeTransportEpoch);
+                    if (!_ownsActiveDiscoveryReceipt)
+                    {
+                        WriteStartupLog("A live Revit bridge already owns the global discovery receipts; this fallback listener will not replace them.");
+                    }
                     WriteStartupLog($"HTTP listener started at {candidateUrl}");
                     Task.Run(() => HandleIncomingConnections());
                     return;
@@ -302,20 +305,22 @@ namespace RevitBridge.Server
                 }
             }
 
-            WriteActiveUrlFile("");
-            WriteActiveTransportReceipt("", "");
-            ClearActiveListenerIdentityReceipt();
-            WriteStartupLog("HTTP listener failed for every candidate URL; wrote empty bridge_url.txt.");
+            WriteStartupLog("HTTP listener failed for every candidate URL; preserved any discovery receipts owned by another Revit process.");
         }
 
         public void Stop()
         {
+            var activeUrl = _activeUrl;
+            var nativeTransportEpoch = _nativeTransportEpoch;
             _isRunning = false;
             try { _listener?.Stop(); } catch { }
             try { _listener?.Close(); } catch { }
+            if (_ownsActiveDiscoveryReceipt)
+            {
+                ClearActiveDiscoveryReceiptsIfOwned(activeUrl, nativeTransportEpoch);
+            }
+            _ownsActiveDiscoveryReceipt = false;
             _nativeTransportEpoch = "";
-            WriteActiveTransportReceipt("", "");
-            ClearActiveListenerIdentityReceipt();
         }
 
         private static IEnumerable<string> ResolveCandidateUrls()
@@ -433,17 +438,126 @@ namespace RevitBridge.Server
             catch { }
         }
 
-        private static void ClearActiveListenerIdentityReceipt()
+        private static bool TryPublishActiveDiscoveryReceipts(string url, string serverEpoch)
         {
+            var ownsMutex = false;
+            Mutex? mutex = null;
             try
             {
                 var root = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                     "RevitOperator");
-                File.Delete(Path.Combine(root, "bridge_listener_identity.v1.json"));
-                File.Delete(Path.Combine(root, "bridge_listener_identity.v1.json.pending"));
+                Directory.CreateDirectory(root);
+                mutex = new Mutex(false, DiscoveryMutexName);
+                try
+                {
+                    ownsMutex = mutex.WaitOne(TimeSpan.FromSeconds(5));
+                }
+                catch (AbandonedMutexException)
+                {
+                    ownsMutex = true;
+                }
+                if (!ownsMutex) return false;
+
+                var listenerPath = Path.Combine(root, "bridge_listener_identity.v1.json");
+                if (HasLiveForeignDiscoveryOwner(listenerPath)) return false;
+
+                WriteActiveUrlFile(url);
+                WriteActiveTransportReceipt(url, serverEpoch);
+                WriteActiveListenerIdentityReceipt(url, serverEpoch);
+                return true;
+            }
+            catch { return false; }
+            finally
+            {
+                if (ownsMutex)
+                {
+                    try { mutex?.ReleaseMutex(); } catch { }
+                }
+                mutex?.Dispose();
+            }
+        }
+
+        private static void ClearActiveDiscoveryReceiptsIfOwned(string url, string serverEpoch)
+        {
+            var ownsMutex = false;
+            Mutex? mutex = null;
+            try
+            {
+                mutex = new Mutex(false, DiscoveryMutexName);
+                try
+                {
+                    ownsMutex = mutex.WaitOne(TimeSpan.FromSeconds(5));
+                }
+                catch (AbandonedMutexException)
+                {
+                    ownsMutex = true;
+                }
+                if (!ownsMutex) return;
+
+                var root = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "RevitOperator");
+                var listenerPath = Path.Combine(root, "bridge_listener_identity.v1.json");
+                if (!IsExactDiscoveryOwner(listenerPath, url, serverEpoch)) return;
+
+                File.Delete(Path.Combine(root, "bridge_url.txt"));
+                File.Delete(Path.Combine(root, "bridge_transport.v1.json"));
+                File.Delete(Path.Combine(root, "bridge_transport.v1.json.pending"));
+                File.Delete(listenerPath);
+                File.Delete(listenerPath + ".pending");
             }
             catch { }
+            finally
+            {
+                if (ownsMutex)
+                {
+                    try { mutex?.ReleaseMutex(); } catch { }
+                }
+                mutex?.Dispose();
+            }
+        }
+
+        private static bool HasLiveForeignDiscoveryOwner(string listenerPath)
+        {
+            try
+            {
+                using (var document = JsonDocument.Parse(File.ReadAllText(listenerPath)))
+                {
+                    var root = document.RootElement;
+                    var pid = root.GetProperty("pid").GetInt32();
+                    if (pid == Process.GetCurrentProcess().Id) return false;
+                    var createdUtc = root.GetProperty("created_utc").GetString() ?? "";
+                    if (!DateTimeOffset.TryParseExact(
+                        createdUtc,
+                        "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+                        CultureInfo.InvariantCulture,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                        out var expectedStart)) return false;
+                    using (var process = Process.GetProcessById(pid))
+                    {
+                        var actualStart = process.StartTime.ToUniversalTime();
+                        return Math.Abs((actualStart - expectedStart.UtcDateTime).TotalMilliseconds) < 1000;
+                    }
+                }
+            }
+            catch { return false; }
+        }
+
+        private static bool IsExactDiscoveryOwner(string listenerPath, string url, string serverEpoch)
+        {
+            try
+            {
+                using (var document = JsonDocument.Parse(File.ReadAllText(listenerPath)))
+                {
+                    var root = document.RootElement;
+                    return string.Equals(root.GetProperty("version").GetString(), "revit-operator.bridge-listener-identity.v1", StringComparison.Ordinal)
+                        && root.GetProperty("pid").GetInt32() == Process.GetCurrentProcess().Id
+                        && string.Equals(root.GetProperty("url").GetString(), (url ?? "").TrimEnd('/'), StringComparison.Ordinal)
+                        && string.Equals(root.GetProperty("server_epoch").GetString(), serverEpoch ?? "", StringComparison.Ordinal);
+                }
+            }
+            catch { return false; }
         }
         private static void WriteStartupLog(string message)
         {
@@ -504,11 +618,19 @@ namespace RevitBridge.Server
                 var queryIndex = rawUrl.IndexOf('?');
                 var rawPath = queryIndex >= 0 ? rawUrl.Substring(0, queryIndex) : rawUrl;
                 var hasQuery = queryIndex >= 0;
+                var protectedLaboratoryEvidence = laboratoryBypass
+                    && string.Equals(
+                        Environment.GetEnvironmentVariable("OPERATOR_CERTIFICATION_PROTECTED_LABORATORY"),
+                        "1",
+                        StringComparison.Ordinal)
+                    && string.Equals(req.HttpMethod, "POST", StringComparison.Ordinal)
+                    && string.Equals(rawPath, OperatorNativeTransportProtocol.TransportPath, StringComparison.Ordinal)
+                    && string.Equals(req.ContentType, OperatorNativeTransportProtocol.ContentType, StringComparison.Ordinal);
 
                 OperatorNativeHttpRequest? effectiveRequest = null;
                 string path;
                 string requestBody;
-                if (laboratoryBypass)
+                if (laboratoryBypass && !protectedLaboratoryEvidence)
                 {
                     correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
                     resp.Headers["X-Operator-Correlation-Id"] = correlationId;
@@ -551,14 +673,82 @@ namespace RevitBridge.Server
                         req.Headers.AllKeys,
                         DateTimeOffset.UtcNow,
                         _nativeTransportReplayCache);
+                    if (protectedLaboratoryEvidence)
+                    {
+                        if (protectedTransportRequest.LaboratoryEvidence == null)
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_EVIDENCE_DISPATCH_REQUIRED",
+                                "Protected laboratory evidence requires exact authenticated evidence dispatch metadata.",
+                                403,
+                                false,
+                                "healthy");
+                        if (protectedTransportRequest.Request.Channel != protectedTransportRequest.LaboratoryEvidence.Channel
+                            || protectedTransportRequest.Request.Alias != protectedTransportRequest.LaboratoryEvidence.Alias)
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_EVIDENCE_CHANNEL_MISMATCH",
+                                "Protected laboratory evidence does not bind the exact authenticated channel and alias.",
+                                403,
+                                false,
+                                "healthy");
+                        var isMove = string.Equals(protectedTransportRequest.Request.Method, "POST", StringComparison.Ordinal)
+                            && string.Equals(protectedTransportRequest.Request.Path, "/revit/move-elements", StringComparison.Ordinal);
+                        if (isMove != (protectedTransportRequest.LaboratoryMoveEvidenceAdmission != null))
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_MOVE_EVIDENCE_ADMISSION_REQUIRED",
+                                isMove
+                                    ? "Protected laboratory move evidence requires its exact reviewed family admission."
+                                    : "Laboratory move evidence admission is forbidden for every other route.",
+                                403,
+                                false,
+                                "healthy");
+                        if (isMove && (protectedTransportRequest.Request.Channel != protectedTransportRequest.LaboratoryMoveEvidenceAdmission!.Channel
+                            || protectedTransportRequest.Request.Alias != protectedTransportRequest.LaboratoryMoveEvidenceAdmission.Alias))
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_MOVE_EVIDENCE_CHANNEL_MISMATCH",
+                                "Protected laboratory move evidence does not bind the exact typed channel and alias.",
+                                403,
+                                false,
+                                "healthy");
+                    }
+                    else if (protectedTransportRequest.LaboratoryEvidence != null
+                        || protectedTransportRequest.LaboratoryMoveEvidenceAdmission != null)
+                    {
+                        throw new OperatorNativeHttpAdmissionException(
+                            "CERTIFICATION_LABORATORY_EVIDENCE_DISPATCH_FORBIDDEN",
+                            "Laboratory evidence dispatch metadata is forbidden outside the exact protected laboratory lane.",
+                            403,
+                            false,
+                            "healthy");
+                    }
                     correlationId = protectedTransportRequest.Request.RequestId;
                     var sourceRequest = protectedTransportRequest.Request;
-                    var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None);
-                    var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
-                        earlyReceipt,
-                        sourceRequest,
-                        DateTimeOffset.UtcNow);
-                    effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                    if (protectedLaboratoryEvidence)
+                    {
+                        // This is an explicitly selected evidence-generation lane,
+                        // not certified production admission. It retains encrypted,
+                        // replay-protected transport and all ordinary write grants,
+                        // but does not manufacture an L4 policy decision.
+                        if (sourceRequest.CertificationEnvelope != null)
+                            throw new OperatorNativeHttpAdmissionException(
+                                "CERTIFICATION_LABORATORY_FAMILY_ADMISSION_FORBIDDEN",
+                                "Protected laboratory evidence cannot carry a certification envelope or request-family admission.",
+                                403,
+                                false,
+                                "healthy");
+                        OperatorLaboratoryExecutionReceiptAuthority.RequireNoCallerAuthoredReceipt(
+                            sourceRequest.BodyPresent,
+                            sourceRequest.BodyJson);
+                        effectiveRequest = sourceRequest;
+                    }
+                    else
+                    {
+                        var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None, "preflight");
+                        var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+                            earlyReceipt,
+                            sourceRequest,
+                            DateTimeOffset.UtcNow);
+                        effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                    }
                     path = effectiveRequest.Path;
                     requestBody = effectiveRequest.BodyJson;
                 }
@@ -625,19 +815,19 @@ namespace RevitBridge.Server
                 
                 if (path == "/revit/ping")
                 {
-                    if (effectiveRequest != null)
+                    if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     responseText = JsonSerializer.Serialize(new { status = "ok", timestamp = DateTime.Now });
                 }
                 else if (path == "/revit/capabilities")
                 {
-                    if (effectiveRequest != null)
+                    if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     responseText = JsonSerializer.Serialize(RevitBridge.Operator.OperatorCapabilities.Get());
                 }
                 else if (path == "/revit/write-grant-status")
                 {
-                    if (effectiveRequest != null)
+                    if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                     var status = OperatorWriteGrant.ReadStatus();
                     responseText = JsonSerializer.Serialize(new
@@ -671,7 +861,7 @@ namespace RevitBridge.Server
                     object result;
                     if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))
                     {
-                        if (effectiveRequest != null)
+                        if (effectiveRequest != null && !protectedLaboratoryEvidence)
                             body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
                         result = handler is NativeApiPolicyHandler nativeApiPolicyHandler
                             ? await nativeApiPolicyHandler.HandleForMethod(null!, body, effectiveMethod)
@@ -685,19 +875,76 @@ namespace RevitBridge.Server
                         try
                         {
                             var capturedEffectiveRequest = effectiveRequest;
+                            var capturedRequiresCertifiedAuthorization = !protectedLaboratoryEvidence;
                             var capturedBody = body;
                             result = await _eventService.Run(
                                 app =>
                                 {
                                     var dispatchBody = capturedBody;
-                                    if (capturedEffectiveRequest != null)
+                                    OperatorCertifiedMoveExecutionStart? executionStart = null;
+                                    OperatorCertifiedMoveExecutionStart? laboratoryMoveExecutionStart = null;
+                                    OperatorCertifiedFamilyExecutionContext? executionContext = null;
+                                    if (capturedEffectiveRequest != null && capturedRequiresCertifiedAuthorization)
                                     {
                                         dispatchBody = RequireFinalNativeAuthorizationAsync(
                                             capturedEffectiveRequest,
                                             capturedBody,
                                             localDeadline.Token).GetAwaiter().GetResult();
+                                        executionContext = capturedEffectiveRequest.CertificationEnvelope?.RequestFamilyAdmission == null
+                                            ? null
+                                            : OperatorCertifiedFamilyExecutionContext.Direct(capturedEffectiveRequest);
+                                        executionStart = OperatorCertifiedMovePreviewAuthority.CaptureStartAndConsumeApplyReceipt(
+                                            app,
+                                            capturedEffectiveRequest.CertificationEnvelope,
+                                            dispatchBody,
+                                            executionContext);
                                     }
-                                    return handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                    else if (capturedEffectiveRequest != null && protectedLaboratoryEvidence)
+                                    {
+                                        laboratoryMoveExecutionStart = OperatorLaboratoryMoveEvidenceAuthority.CaptureStartAndConsumeApplyReceipt(
+                                            app,
+                                            protectedTransportRequest!.LaboratoryMoveEvidenceAdmission,
+                                            protectedTransportRequest.LaboratoryEvidence!,
+                                            dispatchBody);
+                                    }
+                                    object nativeResult;
+                                    try
+                                    {
+                                        nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
+                                    }
+                                    catch (Exception error) when (executionStart?.Phase == "apply"
+                                        || laboratoryMoveExecutionStart?.Phase == "apply")
+                                    {
+                                        throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                                            "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
+                                            error);
+                                    }
+                                    var certifiedResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
+                                        app,
+                                        nativeResult,
+                                        capturedEffectiveRequest?.CertificationEnvelope,
+                                        dispatchBody,
+                                        executionStart,
+                                        executionContext);
+                                    if (capturedEffectiveRequest != null && protectedLaboratoryEvidence)
+                                    {
+                                        try
+                                        {
+                                            return OperatorLaboratoryExecutionReceiptAuthority.AttachAfterRevitThreadCompletion(
+                                                app,
+                                                certifiedResult,
+                                                protectedTransportRequest!,
+                                                DateTimeOffset.UtcNow,
+                                                laboratoryMoveExecutionStart);
+                                        }
+                                        catch (Exception error) when (laboratoryMoveExecutionStart?.Phase == "apply")
+                                        {
+                                            throw new OperatorCertifiedFamilyOutcomeUnknownException(
+                                                "Committed laboratory move outcome could not be independently certified after handler dispatch.",
+                                                error);
+                                        }
+                                    }
+                                    return certifiedResult;
                                 },
                                 localDeadline.Token,
                                 correlationId);
@@ -868,7 +1115,7 @@ namespace RevitBridge.Server
             string expectedCanonicalBody,
             CancellationToken cancellationToken)
         {
-            var finalReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken).ConfigureAwait(false);
+            var finalReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
             return OperatorNativeHttpDispatchFence.RequireFreshOneUse(
                 finalReceipt,
                 effectiveRequest,

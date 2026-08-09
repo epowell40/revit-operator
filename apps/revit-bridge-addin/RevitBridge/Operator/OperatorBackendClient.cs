@@ -590,21 +590,46 @@ namespace RevitBridge.Operator
         /// </summary>
         public async Task<OperatorNativeHttpAuthorizationReceipt> AuthorizeAsync(
             OperatorNativeHttpRequest request,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            string authorizationStage = "final")
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
-            var body = JsonSerializer.Serialize(new
+            JsonElement? certificationEnvelope = null;
+            if (request.CertificationEnvelopeJson != null)
             {
-                schema = "revit-operator.revit-direct-admission-request.v2",
-                request_id = request.RequestId,
-                method = request.Method,
-                path = request.Path,
-                body_present = request.BodyPresent,
-                body_json = request.BodyJson,
-                channel = request.Channel,
-                alias = request.Alias,
-                runtime_mode = OperatorNativeHttpRuntimeProfile.NormalizeCertifiedRuntimeMode(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"))
-            }, OperatorUiProtocol.JsonOptions);
+                using var envelopeDocument = JsonDocument.Parse(request.CertificationEnvelopeJson);
+                certificationEnvelope = envelopeDocument.RootElement.Clone();
+            }
+            // The exact effective-body binding remains: body_json = request.BodyJson.
+            // A family request only adds its already native-verified envelope.
+            var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["schema"] = certificationEnvelope == null
+                    ? "revit-operator.revit-direct-admission-request.v2"
+                    : "revit-operator.revit-direct-admission-request.v3",
+                ["request_id"] = request.RequestId,
+                ["method"] = request.Method,
+                ["path"] = request.Path,
+                ["body_present"] = request.BodyPresent,
+                ["body_json"] = request.BodyJson,
+                ["channel"] = request.Channel,
+                ["alias"] = request.Alias,
+                ["runtime_mode"] = OperatorNativeHttpRuntimeProfile.NormalizeCertifiedRuntimeMode(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"))
+            };
+            if (certificationEnvelope != null)
+            {
+                if (authorizationStage != "preflight" && authorizationStage != "final")
+                    throw new ArgumentException("Family authorization stage must be preflight or final.", nameof(authorizationStage));
+                payload["authorization_stage"] = authorizationStage;
+                var sealedEnvelope = request.CertificationEnvelope
+                    ?? throw new InvalidOperationException("Native family certification envelope was not retained after validation.");
+                payload["policy_hash"] = sealedEnvelope.PolicyHash;
+                payload["policy_record_hash"] = sealedEnvelope.PolicyRecordHash;
+                payload["evidence_record_hash"] = sealedEnvelope.EvidenceRecordHash;
+                payload["effect_hash"] = sealedEnvelope.EffectHash;
+                payload["request_family_admission"] = certificationEnvelope.Value.GetProperty("request_family_admission").Clone();
+            }
+            var body = JsonSerializer.Serialize(payload, OperatorUiProtocol.JsonOptions);
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromSeconds(3));
@@ -648,7 +673,8 @@ namespace RevitBridge.Operator
                     request,
                     Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),
                     DateTimeOffset.UtcNow,
-                    roundTrip.Elapsed);
+                    roundTrip.Elapsed,
+                    authorizationStage);
             }
             catch (OperatorNativeHttpAdmissionException)
             {
@@ -682,12 +708,23 @@ namespace RevitBridge.Operator
             string sessionId,
             string jobId,
             string executorId,
+            string? authorizationStage,
             CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(sessionId)) throw new ArgumentException("sessionId is required.");
             if (string.IsNullOrWhiteSpace(jobId)) throw new ArgumentException("jobId is required.");
             if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
-            var body = JsonSerializer.Serialize(new { session_id = sessionId, executor_id = executorId }, OperatorUiProtocol.JsonOptions);
+            if (authorizationStage != null
+                && !string.Equals(authorizationStage, "preflight", StringComparison.Ordinal)
+                && !string.Equals(authorizationStage, "final", StringComparison.Ordinal))
+                throw new ArgumentException("authorizationStage must be preflight or final.");
+            var payload = new Dictionary<string, object?>
+            {
+                ["session_id"] = sessionId,
+                ["executor_id"] = executorId
+            };
+            if (authorizationStage != null) payload["authorization_stage"] = authorizationStage;
+            var body = JsonSerializer.Serialize(payload, OperatorUiProtocol.JsonOptions);
             using var resp = await SendWithAuthAsync(
                 () => new HttpRequestMessage(HttpMethod.Post, $"api/revit-courier/jobs/{Uri.EscapeDataString(jobId)}/authorize-execution")
                 {

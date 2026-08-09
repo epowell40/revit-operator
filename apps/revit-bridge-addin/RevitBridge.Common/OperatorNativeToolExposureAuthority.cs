@@ -27,7 +27,8 @@ namespace RevitBridge.Common
             string requestHash,
             string effectHash,
             string channel,
-            string alias)
+            string alias,
+            OperatorCertifiedRequestFamilyAdmission? requestFamilyAdmission = null)
         {
             Method = method;
             Path = path;
@@ -39,6 +40,7 @@ namespace RevitBridge.Common
             EffectHash = effectHash;
             Channel = channel;
             Alias = alias;
+            RequestFamilyAdmission = requestFamilyAdmission;
         }
 
         public string Method { get; }
@@ -51,6 +53,7 @@ namespace RevitBridge.Common
         public string EffectHash { get; }
         public string Channel { get; }
         public string Alias { get; }
+        public OperatorCertifiedRequestFamilyAdmission? RequestFamilyAdmission { get; }
     }
 
     /// <summary>
@@ -137,7 +140,7 @@ namespace RevitBridge.Common
 
     public sealed class OperatorNativeToolExposureEmbeddedAuthority : IOperatorNativeToolExposureAuthority
     {
-        public const string CompiledPolicyHash = "sha256:6e85fc33a142914fa1e9ab94afd25a2e23ffab2cf757c1c7ef66548f3a982a27";
+        public const string CompiledPolicyHash = "sha256:18f0dfb746a72d4abb5d0e59cbabfe40bb5079b14f4a4d224d258acbc2eab339";
         public const string ResourceName = "RevitBridge.Common.tool_exposure_policy.v1.json";
 
         private static readonly Regex Sha256 = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -149,7 +152,10 @@ namespace RevitBridge.Common
         private static readonly HashSet<string> RootKeys = Set("schema", "hash_algorithm", "evidence_schema", "evidence_source_hash", "records", "policy_hash");
         private static readonly HashSet<string> RecordKeys = Set("method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash", "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash");
         private static readonly HashSet<string> StandaloneRecordKeys = Set("method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash", "execution_surface", "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash");
+        private static readonly HashSet<string> FamilyRecordKeys = Set("method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash", "request_family", "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash");
+        private static readonly HashSet<string> StandaloneFamilyRecordKeys = Set("method", "path", "typed_mcp_aliases", "request_hash", "effect_hash", "evidence_record_hash", "execution_surface", "request_family", "highest_cumulative_level", "observed_levels", "visibility", "channels", "policy_record_hash");
         private static readonly HashSet<string> ExecutionSurfaceKeys = Set("kind", "executor_id", "route_id", "transport");
+        private static readonly HashSet<string> RequestFamilyKeys = Set("schema", "id", "validator_hash");
         private static readonly HashSet<string> DecisionKeys = Set("exposed", "required_level", "reason_codes");
         public static readonly OperatorNativeToolExposureEmbeddedAuthority Instance = Load();
         private readonly IReadOnlyList<Record> _records;
@@ -177,10 +183,31 @@ namespace RevitBridge.Common
                 && record.Path == binding.Path
                 && record.PolicyRecordHash == binding.PolicyRecordHash
                 && record.EvidenceRecordHash == binding.EvidenceRecordHash
-                && record.RequestHash == binding.RequestHash
-                && record.EffectHash == binding.EffectHash).ToList();
+                && record.EffectHash == binding.EffectHash
+                && (record.RequestFamily == null
+                    ? binding.RequestFamilyAdmission == null && record.RequestHash == binding.RequestHash
+                    : binding.RequestFamilyAdmission != null
+                        && binding.RequestHash == binding.RequestFamilyAdmission.RequestInstanceHash
+                        && record.RequestFamily.Id == binding.RequestFamilyAdmission.FamilyId
+                        && record.RequestFamily.ValidatorHash == binding.RequestFamilyAdmission.FamilyHash)).ToList();
             if (matches.Count != 1 || matches[0].Visibility == "workflow_only") Deny();
             var record = matches[0];
+            if (binding.RequestFamilyAdmission != null)
+            {
+                try
+                {
+                    OperatorCertifiedRequestFamilyAdmissionVerifier.RequireValidEffectiveBody(
+                        binding.RequestFamilyAdmission,
+                        binding.CanonicalBodyJson);
+                }
+                catch (InvalidDataException)
+                {
+                    Deny();
+                }
+                var expectedEffectHash = OperatorCertifiedRequestFamilyAdmissionVerifier.ExpectedEffectHash(
+                    binding.RequestFamilyAdmission);
+                if (!string.Equals(binding.EffectHash, expectedEffectHash, StringComparison.Ordinal)) Deny();
+            }
             var authorized = binding.Channel == "generic_call"
                 ? record.GenericCallExposed && binding.Alias == "revit_call_tool"
                 : (binding.Channel == "typed_mcp" && record.TypedMcpExposed
@@ -232,13 +259,19 @@ namespace RevitBridge.Common
                 foreach (var element in recordsElement.EnumerateArray())
                 {
                     var hasExecutionSurface = element.EnumerateObject().Any(property => property.Name == "execution_surface");
-                    RequireExactKeys(element, hasExecutionSurface ? StandaloneRecordKeys : RecordKeys, "policy record");
+                    var hasRequestFamily = element.EnumerateObject().Any(property => property.Name == "request_family");
+                    RequireExactKeys(element,
+                        hasExecutionSurface
+                            ? (hasRequestFamily ? StandaloneFamilyRecordKeys : StandaloneRecordKeys)
+                            : (hasRequestFamily ? FamilyRecordKeys : RecordKeys),
+                        "policy record");
                     var method = RequireOneOf(element, "method", "GET", "POST");
                     var path = RequireString(element, "path");
                     if (!Path.IsMatch(path) || path.EndsWith("/", StringComparison.Ordinal) || path.Contains("//") || HasDotSegment(path))
                         throw new InvalidDataException("Embedded certification policy path is noncanonical.");
                     var typedMcpAliases = RequireAliases(element);
                     if (hasExecutionSurface) RequireExecutionSurface(element);
+                    var requestFamily = hasRequestFamily ? RequireRequestFamily(element) : null;
                     var requestHash = RequireHash(element, "request_hash");
                     var effectHash = RequireHash(element, "effect_hash");
                     var evidenceRecordHash = RequireHash(element, "evidence_record_hash");
@@ -263,9 +296,10 @@ namespace RevitBridge.Common
                     var recordHash = RequireHash(element, "policy_record_hash");
                     if (HashCanonicalObjectWithout(element, "policy_record_hash") != recordHash)
                         throw new InvalidDataException("Embedded certification policy record hash is invalid.");
-                    var identity = method + "\n" + path + "\n" + requestHash + "\n" + effectHash;
+                    var identity = method + "\n" + path + "\n" + requestHash + "\n" + effectHash
+                        + "\n" + (requestFamily?.Id ?? "") + "\n" + (requestFamily?.ValidatorHash ?? "");
                     if (!identities.Add(identity)) throw new InvalidDataException("Embedded certification policy has duplicate exact records.");
-                    records.Add(new Record(method, path, requestHash, effectHash, evidenceRecordHash, recordHash, visibility, genericCallExposed, searchExposed, typedMcpExposed, typedMcpAliases));
+                    records.Add(new Record(method, path, requestHash, effectHash, evidenceRecordHash, recordHash, visibility, genericCallExposed, searchExposed, typedMcpExposed, typedMcpAliases, requestFamily));
                 }
                 if (records.Count == 0) throw new InvalidDataException("Embedded certification policy has no records.");
                 return new OperatorNativeToolExposureEmbeddedAuthority(policyHash, evidenceSourceHash, records);
@@ -423,6 +457,47 @@ namespace RevitBridge.Common
             RequireExecutorIdentifier(surface, "route_id");
         }
 
+        public void RequireLaboratoryEvidenceAuthorized(
+            OperatorLaboratoryEvidenceDispatch evidence,
+            string method,
+            string path,
+            string channel,
+            string alias,
+            OperatorLaboratoryMoveEvidenceAdmission? moveAdmission)
+        {
+            if (evidence == null || evidence.PolicyHash != PolicyHash || evidence.Channel != channel || evidence.Alias != alias) Deny();
+            var matches = _records.Where(record => record.Method == method && record.Path == path
+                && record.PolicyRecordHash == evidence.PolicyRecordHash
+                && record.EvidenceRecordHash == evidence.EvidenceRecordHash
+                && record.EffectHash == evidence.EffectHash
+                && record.Visibility != "workflow_only"
+                && record.TypedMcpAliases.Contains(alias)).ToList();
+            if (matches.Count != 1) Deny();
+            var record = matches[0];
+            if (moveAdmission == null)
+            {
+                if (record.RequestFamily != null) Deny();
+                return;
+            }
+            if (moveAdmission.PolicyHash != evidence.PolicyHash
+                || moveAdmission.PolicyRecordHash != evidence.PolicyRecordHash
+                || moveAdmission.EvidenceRecordHash != evidence.EvidenceRecordHash
+                || moveAdmission.EffectHash != evidence.EffectHash
+                || record.RequestFamily == null
+                || record.RequestFamily.Id != moveAdmission.RequestFamilyId
+                || record.RequestFamily.ValidatorHash != moveAdmission.RequestFamilyHash) Deny();
+        }
+
+        private static RequestFamily RequireRequestFamily(JsonElement record)
+        {
+            var family = Unique(record, "request_family", JsonValueKind.Object);
+            RequireExactKeys(family, RequestFamilyKeys, "policy request family");
+            RequireString(family, "schema", "revit-operator.certified-request-family.v1");
+            var id = RequireString(family, "id");
+            if (!ExecutorIdentifier.IsMatch(id)) throw new InvalidDataException("Embedded certification policy request family identifier is invalid.");
+            return new RequestFamily(id, RequireHash(family, "validator_hash"));
+        }
+
         private static void RequireExecutorIdentifier(JsonElement surface, string name)
         {
             var value = RequireString(surface, name);
@@ -475,7 +550,7 @@ namespace RevitBridge.Common
 
         private sealed class Record
         {
-            public Record(string method, string path, string requestHash, string effectHash, string evidenceRecordHash, string policyRecordHash, string visibility, bool genericCallExposed, bool searchExposed, bool typedMcpExposed, HashSet<string> typedMcpAliases)
+            public Record(string method, string path, string requestHash, string effectHash, string evidenceRecordHash, string policyRecordHash, string visibility, bool genericCallExposed, bool searchExposed, bool typedMcpExposed, HashSet<string> typedMcpAliases, RequestFamily? requestFamily)
             {
                 Method = method;
                 Path = path;
@@ -488,6 +563,7 @@ namespace RevitBridge.Common
                 SearchExposed = searchExposed;
                 TypedMcpExposed = typedMcpExposed;
                 TypedMcpAliases = typedMcpAliases;
+                RequestFamily = requestFamily;
             }
 
             public string Method { get; }
@@ -501,6 +577,14 @@ namespace RevitBridge.Common
             public bool SearchExposed { get; }
             public bool TypedMcpExposed { get; }
             public HashSet<string> TypedMcpAliases { get; }
+            public RequestFamily? RequestFamily { get; }
+        }
+
+        private sealed class RequestFamily
+        {
+            public RequestFamily(string id, string validatorHash) { Id = id; ValidatorHash = validatorHash; }
+            public string Id { get; }
+            public string ValidatorHash { get; }
         }
     }
 }

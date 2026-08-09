@@ -13,6 +13,7 @@ import {
   NATIVE_TRANSPORT_PATH,
   NATIVE_TRANSPORT_VERSION
 } from "./nativeTransport.js";
+import { TEST_NATIVE_EXECUTION_ATTESTATION } from "./certifiedMoveNativeAttestation.testSupport.js";
 
 const certifiedPolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -22,6 +23,7 @@ const certifiedSafeNonRevitAliases = [
   "audit_lpd",
   "check_photometrics",
   "fire_damper_audit",
+  "operator_discover_capabilities",
   "operator_plan_semantic_mep_route",
   "operator_runtime_probe",
   "print_sheets",
@@ -220,8 +222,8 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 124, "Exact development laboratory mode must preserve the complete catalog plus the observation and laboratory SafeRead aliases.");
-  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 108, "Exact development laboratory mode must preserve all Revit aliases plus observation and laboratory SafeRead.");
+  assert.equal(laboratoryNames.length, 127, "Exact development laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 110, "Exact development laboratory mode must preserve all Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
 });
 
@@ -274,7 +276,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       return;
     }
     if (requestUrl.pathname === "/revit/context") {
-      res.end(JSON.stringify({ document: "Snowdon", view: "L4 - Power" }));
+      res.end(JSON.stringify({
+        document: {
+          title: "Snowdon",
+          sessionId: "123e4567e89b42d3a456426614174000",
+          projectIdentity: { fingerprint: "a".repeat(64) },
+          activeView: { id: 42, name: "L4 - Power" }
+        }
+      }));
       return;
     }
     if (requestUrl.pathname === "/revit/export-visible-elements") {
@@ -291,7 +300,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
         count: 1,
         scanned: 1,
         truncated: false,
-        items: [{ elementId: 12, sourceScopedId: "host:12", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } } }]
+        document: { sessionId: "123e4567e89b42d3a456426614174000", nativeExecutionAttestation: TEST_NATIVE_EXECUTION_ATTESTATION, projectIdentity: { fingerprint: "a".repeat(64) }, activeView: { id: 42 } },
+        items: [{ elementId: 12, sourceScopedId: "host:12", anchor: { image: { normalizedX: 0.2, normalizedY: 0.3 } }, orientation: { locationKind: "point", locationPoint: { x: 1, y: 2, z: 3 } } }]
       }));
       return;
     }
@@ -388,8 +398,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 124, "Laboratory mode must preserve the complete catalog plus the observation and SafeRead aliases.");
-  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 108, "Laboratory mode must preserve all revit_ aliases plus observation and SafeRead.");
+  assert.equal(tools.tools.length, 127, "Laboratory mode must preserve the complete catalog plus bootstrap discovery, observation, target readback, SafeRead, and bounded move-family aliases.");
+  assert.equal([...names].filter(name => name.startsWith("revit_")).length, 110, "Laboratory mode must preserve all revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
   for (const name of [
@@ -588,7 +598,7 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
   const listedNames = listed.tools.map(tool => tool.name).sort();
   assert.equal(listedNames.includes("operator_runtime_probe"), true);
   assert.deepEqual(listedNames, certifiedSafeNonRevitAliases, "Certified tools/list must expose exactly the declared safe local/diagnostic aliases.");
-  assert.equal(listedNames.length, 16);
+  assert.equal(listedNames.length, 17);
   assert.deepEqual(
     listedNames.filter(name => name.startsWith("revit_")),
     ["revit_get_context"],

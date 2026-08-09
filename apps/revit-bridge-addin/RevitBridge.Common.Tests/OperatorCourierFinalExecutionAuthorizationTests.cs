@@ -341,7 +341,11 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("refreshTimeout.CancelAfter(CourierFinalExecutionRefreshTimeout);", source);
             Assert.Contains("TimeSpan.FromSeconds(5)", source);
             Assert.Contains("RefreshCourierFinalExecutionAuthorization(action, cancellationToken);\n" +
-                "            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId);", source);
+                "            ValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, requireFinalFamilyStage: true);", source);
+            Assert.Contains("authorization.RequestFamilyAdmission != null\n" +
+                "                    && !string.Equals(authorization.AuthorizationStage, \"final\", StringComparison.Ordinal)", source);
+            Assert.Contains("OperatorCertifiedMovePreviewAuthority.IsIndependentlyVerifiedCertifiedFamilyResult(result)", source);
+            Assert.Contains("return result;\n                throw new OperatorRecoveredDialogException", source);
         }
 
         [Theory]
@@ -454,6 +458,26 @@ namespace RevitBridge.Common.Tests
             bool expected)
         {
             Assert.Equal(expected, OperatorCourierRuntimeProfile.IsExactDevelopmentLaboratory(runtimeMode, exposureProfile));
+        }
+
+        [Fact]
+        public void Family_completion_challenge_is_null_at_preflight_and_exact_at_final()
+        {
+            const string challenge = "cmcc1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+            var challengeHash = OperatorCourierCertificationEnvelopeVerifier.Sha256Prefixed(challenge);
+
+            Assert.True(OperatorCourierFinalExecutionAuthorizationBinder.ValidateCompletionChallenge(
+                "preflight", null, null));
+            Assert.False(OperatorCourierFinalExecutionAuthorizationBinder.ValidateCompletionChallenge(
+                "preflight", challenge, challengeHash));
+            Assert.True(OperatorCourierFinalExecutionAuthorizationBinder.ValidateCompletionChallenge(
+                "final", challenge, challengeHash));
+            Assert.False(OperatorCourierFinalExecutionAuthorizationBinder.ValidateCompletionChallenge(
+                "final", challenge, Hash1));
+            Assert.False(OperatorCourierFinalExecutionAuthorizationBinder.ValidateCompletionChallenge(
+                "final", "cmcc1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB", challengeHash));
+            Assert.False(OperatorCourierFinalExecutionAuthorizationBinder.ValidateCompletionChallenge(
+                "final", "cmcc1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", challengeHash));
         }
 
         private static string CreateValidJob(string bodyJson, string? targetExecutorId = "executor-a")

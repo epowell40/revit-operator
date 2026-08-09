@@ -17,6 +17,7 @@ import {
   protectNativeTransportRequest,
   readNativeTransportReceipt
 } from "./nativeTransport.js";
+import { issueLaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 const EPOCH = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
@@ -133,7 +134,8 @@ test("Node request and response exactly match the executable C# ROSB/1 vector", 
   });
   assert.deepEqual(response, {
     statusCode: 403,
-    bodyJson: "{\"ok\":false,\"error\":\"approval required\"}"
+    bodyJson: "{\"ok\":false,\"error\":\"approval required\"}",
+    requestId: REQUEST_ID
   });
 });
 
@@ -145,6 +147,41 @@ test("only exact raw development plus laboratory enables legacy transport", () =
     { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "LABORATORY" },
     { REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }
   ]) assert.equal(isExactDevelopmentLaboratory(env), false);
+});
+
+test("protected request carries only a locally issued one-use laboratory evidence dispatch", () => {
+  const env = { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_CERTIFICATION_PROTECTED_LABORATORY: "1" };
+  const capability = issueLaboratoryEvidenceDispatch({
+    evidenceRunId: "a".repeat(32), evidenceStep: "observation", workflow: "epic-0437-l3-observation", transportKind: "direct"
+  }, env);
+  const request = protectNativeTransportRequest({
+    operatorToken: TOKEN, serverEpoch: EPOCH, method: "POST", path: "/revit/export-visible-elements",
+    bodyJson: "{}", channel: "typed_mcp", alias: "revit_observe_model", laboratoryEvidenceDispatch: capability,
+    laboratoryPolicyBinding: { policyHash: `sha256:${"1".repeat(64)}`, policyRecordHash: `sha256:${"2".repeat(64)}`, evidenceRecordHash: `sha256:${"3".repeat(64)}`, effectHash: `sha256:${"4".repeat(64)}` },
+    env
+  });
+  const inner = testProtectedResponse(request.envelopeJson, 200, "{}").innerRequest;
+  assert.deepEqual(inner.laboratory_evidence, {
+    schema: "revit-operator.laboratory-evidence-dispatch.v2",
+    candidate_source_hash: "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
+    policy_hash: `sha256:${"1".repeat(64)}`, policy_record_hash: `sha256:${"2".repeat(64)}`,
+    evidence_record_hash: `sha256:${"3".repeat(64)}`, effect_hash: `sha256:${"4".repeat(64)}`,
+    evidence_run_id: "a".repeat(32), evidence_step: "observation", transport_kind: "direct",
+    job_id: null, correlation_id: null, workflow: "epic-0437-l3-observation",
+    channel: "typed_mcp", alias: "revit_observe_model", production_certified: false
+  });
+  assert.equal(inner.certification_envelope, undefined);
+  assert.throws(() => protectNativeTransportRequest({
+    operatorToken: TOKEN, serverEpoch: EPOCH, method: "POST", path: "/revit/export-visible-elements",
+    bodyJson: "{}", channel: "typed_mcp", alias: "revit_observe_model", laboratoryEvidenceDispatch: capability, env
+  }), /consumed/);
+  assert.throws(() => protectNativeTransportRequest({
+    operatorToken: TOKEN, serverEpoch: EPOCH, method: "POST", path: "/revit/export-visible-elements",
+    bodyJson: "{}", channel: "typed_mcp", alias: "revit_observe_model",
+    laboratoryEvidenceDispatch: { evidenceRunId: "a".repeat(32), evidenceStep: "observation", workflow: "epic-0437-l3-observation", transportKind: "direct" } as never,
+    laboratoryPolicyBinding: { policyHash: `sha256:${"1".repeat(64)}`, policyRecordHash: `sha256:${"2".repeat(64)}`, evidenceRecordHash: `sha256:${"3".repeat(64)}`, effectHash: `sha256:${"4".repeat(64)}` },
+    env
+  }), /not issued/);
 });
 
 test("request protection mirrors the native request fence for strict JSON, normalization, depth, and size", () => {

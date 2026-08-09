@@ -5,6 +5,14 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 import {
+  admitCertifiedMoveOneRequest,
+  CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH,
+  CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
+  assertCertifiedMoveApplyPolicyLineage,
+  isCertifiedMoveOneAdmission,
+  type CertifiedMoveOneAdmission
+} from "./certifiedMoveOneRequestFamily.js";
+import {
   SAFE_READ_EXECUTOR_ID,
   SAFE_READ_SHEETS_COUNT_PATH,
   SAFE_READ_SHEETS_COUNT_ROUTE_ID
@@ -36,12 +44,19 @@ type StandaloneExecutorSurface = {
   transport: "direct_loopback";
 };
 
+export type RequestFamilyBinding = {
+  schema: "revit-operator.certified-request-family.v1";
+  id: string;
+  validator_hash: string;
+};
+
 export type ToolExposurePolicyRecord = {
   method: string;
   path: string;
   request_hash: string;
   effect_hash: string;
   evidence_record_hash: string;
+  request_family?: RequestFamilyBinding;
   highest_cumulative_level: string | null;
   observed_levels: string[];
   visibility: "candidate" | "workflow_only";
@@ -84,6 +99,9 @@ export type ToolExposureDecision = {
   policyHash?: string;
   policyRecordHash?: string;
   evidenceRecordHash?: string;
+  requestFamily?: RequestFamilyBinding;
+  /** Hash of the independently normalized parameterized request instance. */
+  requestInstanceHash?: string;
   policyTrustSource?: "bundled" | "deployment";
   visibility?: ToolExposurePolicyRecord["visibility"];
   /** The MCP surface that was actually bound at admission, never a caller-supplied display name. */
@@ -109,13 +127,14 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:6e85fc33a142914fa1e9ab94afd25a2e23ffab2cf757c1c7ef66548f3a982a27";
+const BUNDLED_POLICY_HASH = "sha256:18f0dfb746a72d4abb5d0e59cbabfe40bb5079b14f4a4d224d258acbc2eab339";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {
   readonly [certifiedCourierAdmissionBrand]: true;
 };
 const courierAdmissionDecisions = new WeakMap<object, ToolExposureDecision>();
+const courierMoveAdmissions = new WeakMap<object, CertifiedMoveOneAdmission>();
 
 function normalizeRuntimeMode(value: unknown): string {
   return String(value ?? "local").trim().toLowerCase().replace(/-/g, "_") || "local";
@@ -286,14 +305,27 @@ function parseStandaloneExecutorSurface(value: unknown, location: string): Stand
   return value as unknown as StandaloneExecutorSurface;
 }
 
+function parseRequestFamilyBinding(value: unknown, location: string): RequestFamilyBinding {
+  assertObject(value, location);
+  assertExactKeys(value, ["schema", "id", "validator_hash"], [], location);
+  if (value.schema !== "revit-operator.certified-request-family.v1") throw new Error(`${location}.schema is invalid`);
+  if (typeof value.id !== "string" || !/^[a-z][a-z0-9._-]*$/.test(value.id)) throw new Error(`${location}.id is invalid`);
+  if (typeof value.validator_hash !== "string" || !SHA256.test(value.validator_hash)) throw new Error(`${location}.validator_hash is invalid`);
+  return value as unknown as RequestFamilyBinding;
+}
+
 function parsePolicyRecord(value: unknown, index: number): ToolExposurePolicyRecord {
   const location = `policy.records[${index}]`;
   assertObject(value, location);
   const hasExecutionSurface = Object.prototype.hasOwnProperty.call(value, "execution_surface");
+  const hasRequestFamily = Object.prototype.hasOwnProperty.call(value, "request_family");
   assertExactKeys(value, [
     "method", "path", "request_hash", "effect_hash", "evidence_record_hash", "highest_cumulative_level",
     "observed_levels", "visibility", "typed_mcp_aliases", "channels", "policy_record_hash"
-  ], hasExecutionSurface ? ["execution_surface"] : [], location);
+  ], [
+    ...(hasExecutionSurface ? ["execution_surface"] : []),
+    ...(hasRequestFamily ? ["request_family"] : [])
+  ], location);
   if (typeof value.method !== "string" || value.method !== value.method.trim().toUpperCase()) throw new Error(`${location}.method must be canonical`);
   if (typeof value.path !== "string" || !/^\/revit\/[A-Za-z0-9][A-Za-z0-9._~/-]*$/.test(value.path) || value.path.endsWith("/")) {
     throw new Error(`${location}.path must be an exact canonical Revit path`);
@@ -306,6 +338,7 @@ function parsePolicyRecord(value: unknown, index: number): ToolExposurePolicyRec
   }
   assertStringArray(value.observed_levels, `${location}.observed_levels`);
   if (value.visibility !== "candidate" && value.visibility !== "workflow_only") throw new Error(`${location}.visibility is invalid`);
+  if (hasRequestFamily) parseRequestFamilyBinding(value.request_family, `${location}.request_family`);
   assertCanonicalAliasArray(value.typed_mcp_aliases, `${location}.typed_mcp_aliases`);
   if (value.typed_mcp_aliases.includes("revit_call_tool")) throw new Error(`${location}.typed_mcp_aliases cannot bind the generic revit_call_tool surface`);
   const referencesSafeRead = value.path === SAFE_READ_SHEETS_COUNT_PATH
@@ -351,7 +384,7 @@ export function parseToolExposurePolicy(value: unknown): ToolExposurePolicy {
   const records = value.records.map(parsePolicyRecord);
   const identities = new Set<string>();
   for (const [index, record] of records.entries()) {
-    const identity = `${record.method}\n${record.path}\n${record.request_hash}\n${record.effect_hash}`;
+    const identity = `${record.method}\n${record.path}\n${record.request_hash}\n${record.effect_hash}\n${record.request_family?.id ?? ""}\n${record.request_family?.validator_hash ?? ""}`;
     if (identities.has(identity)) throw new Error(`policy.records[${index}] duplicates an exact policy identity`);
     identities.add(identity);
   }
@@ -474,7 +507,7 @@ function effectHash(toolPath: string, method: string, body: unknown, workflow?: 
   return digest({ effect });
 }
 
-export function evaluateToolExposure(input: {
+function evaluateToolExposureInternal(input: {
   method: string;
   path: string;
   body?: unknown;
@@ -482,6 +515,10 @@ export function evaluateToolExposure(input: {
   workflow?: string;
   alias?: string;
   env?: NodeJS.ProcessEnv;
+  /** Internal-only bridge from a reviewed deterministic family validator. */
+  requestFamily?: RequestFamilyBinding;
+  /** The independently canonicalized, validator-produced request instance. */
+  requestInstanceHash?: string;
 }): ToolExposureDecision {
   const env = input.env ?? process.env;
   const runtime = getToolExposureRuntimeDecision(env);
@@ -492,7 +529,10 @@ export function evaluateToolExposure(input: {
   if (!(TOOL_EXPOSURE_CHANNELS as readonly string[]).includes(channel)) {
     throw new ToolExposurePolicyError("TOOL_EXPOSURE_CHANNEL_INVALID", `Unsupported tool exposure channel: ${String(channel)}.`);
   }
-  const reqHash = requestHash(method, input.path, input.body, runtime.certified);
+  if (input.requestFamily && (!input.requestInstanceHash || !SHA256.test(input.requestInstanceHash))) {
+    throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_INSTANCE_INVALID", "Parameterized certification requires a validator-produced request instance hash.");
+  }
+  const reqHash = input.requestFamily ? input.requestInstanceHash! : requestHash(method, input.path, input.body, runtime.certified);
   const effHash = effectHash(input.path, method, input.body, input.workflow);
   if (runtime.mode === "laboratory") {
     return {
@@ -507,13 +547,18 @@ export function evaluateToolExposure(input: {
       knownRoute: false,
       reasonCodes: ["LABORATORY_MODE_ACTIVE"],
       ...(alias ? { alias } : {}),
+      ...(input.requestFamily ? { requestFamily: input.requestFamily, requestInstanceHash: reqHash } : {}),
       ...(workflow === undefined ? {} : { workflow })
     };
   }
 
   const { policy, policyPath, trustSource } = loadToolExposurePolicy(env);
   const routeRecords = policy.records.filter(record => record.method === method && record.path === input.path);
-  const requestRecords = routeRecords.filter(record => record.request_hash === reqHash);
+  const requestRecords = routeRecords.filter(record => input.requestFamily
+    ? record.request_family?.schema === input.requestFamily.schema
+      && record.request_family.id === input.requestFamily.id
+      && record.request_family.validator_hash === input.requestFamily.validator_hash
+    : record.request_hash === reqHash);
   const record = requestRecords.find(candidate => candidate.effect_hash === effHash);
   if (!record) {
     return {
@@ -535,6 +580,7 @@ export function evaluateToolExposure(input: {
       policyHash: policy.policy_hash,
       policyTrustSource: trustSource,
       ...(alias ? { alias } : {}),
+      ...(input.requestFamily ? { requestFamily: input.requestFamily, requestInstanceHash: reqHash } : {}),
       ...(workflow === undefined ? {} : { workflow })
     };
   }
@@ -559,6 +605,7 @@ export function evaluateToolExposure(input: {
       policyTrustSource: trustSource,
       visibility: record.visibility,
       ...(alias ? { alias } : {}),
+      ...(input.requestFamily ? { requestFamily: input.requestFamily, requestInstanceHash: reqHash } : {}),
       ...(workflow === undefined ? {} : { workflow })
     };
   }
@@ -633,6 +680,7 @@ export function evaluateToolExposure(input: {
         policyTrustSource: trustSource,
         visibility: record.visibility,
         ...(alias ? { alias } : {}),
+        ...(input.requestFamily ? { requestFamily: input.requestFamily, requestInstanceHash: reqHash } : {}),
         ...(workflow === undefined ? {} : { workflow })
       };
     }
@@ -655,6 +703,7 @@ export function evaluateToolExposure(input: {
     policyTrustSource: trustSource,
     visibility: record.visibility,
     alias,
+    ...(input.requestFamily ? { requestFamily: input.requestFamily, requestInstanceHash: reqHash } : {}),
     ...(workflow === undefined ? {} : { workflow })
   };
 }
@@ -677,6 +726,180 @@ export function assertToolExposure(input: {
   );
 }
 
+/** Exact-body policy evaluation. Parameterized family admission is deliberately
+ * unavailable here; only the sealed family entry point below may use it. */
+export function evaluateToolExposure(input: {
+  method: string;
+  path: string;
+  body?: unknown;
+  channel?: ToolExposureChannel;
+  workflow?: string;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  return evaluateToolExposureInternal({
+    method: input.method,
+    path: input.path,
+    body: input.body,
+    channel: input.channel,
+    workflow: input.workflow,
+    alias: input.alias,
+    env: input.env
+  });
+}
+
+/**
+ * The sole entry point for the first parameterized edit profile. It validates
+ * the model-facing input before looking up a policy family binding and keeps
+ * the resulting instance hash on the authorization receipt. Callers must use
+ * the returned native body; they never supply a raw /move-elements body.
+ */
+export function assertCertifiedMoveOneToolExposure(input: {
+  request: unknown;
+  channel?: ToolExposureChannel;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): { admission: CertifiedMoveOneAdmission; decision: ToolExposureDecision } {
+  const admission = admitCertifiedMoveOneRequest(input.request);
+  return {
+    admission,
+    decision: assertCertifiedMoveOneAdmissionExposure({
+      admission,
+      channel: input.channel,
+      alias: input.alias,
+      env: input.env
+    })
+  };
+}
+
+/** Revalidates an opaque validator-issued family capability at a later hop. */
+export function assertCertifiedMoveOneAdmissionExposure(input: {
+  admission: unknown;
+  channel?: ToolExposureChannel;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  const admission = input.admission;
+  if (!isCertifiedMoveOneAdmission(admission)) {
+    throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_VALIDATOR_INVALID", "Certified move-one validator did not produce a local admission capability.");
+  }
+  const decision = evaluateToolExposureInternal({
+    method: "POST",
+    path: "/revit/move-elements",
+    body: admission.outboundBody,
+    channel: input.channel ?? "typed_mcp",
+    alias: input.alias,
+    env: input.env,
+    requestFamily: {
+      schema: "revit-operator.certified-request-family.v1",
+      id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1,
+      validator_hash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH
+    },
+    requestInstanceHash: admission.requestInstanceHash
+  });
+  if (decision.allowed) {
+    assertCertifiedMoveApplyPolicyLineage(admission, {
+      policyHash: decision.policyHash,
+      policyRecordHash: decision.policyRecordHash,
+      evidenceRecordHash: decision.evidenceRecordHash,
+      effectHash: decision.effectHash,
+      channel: decision.channel,
+      alias: decision.alias
+    });
+    return decision;
+  }
+  throw new ToolExposurePolicyError(
+    decision.reasonCodes[0] ?? "CERT_REQUEST_FAMILY_DENIED",
+    `${decision.channel} exposure denied for certified move-one request family; reasons=${decision.reasonCodes.join(",")}; request_instance_hash=${admission.requestInstanceHash}; effect_hash=${decision.effectHash}.`,
+    decision
+  );
+}
+
+/** Distinct evidence-only family evaluator; it can never return certified mode authority. */
+export function assertLaboratoryMoveEvidenceAdmissionExposure(input: {
+  admission: unknown;
+  channel?: ToolExposureChannel;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  const env = input.env ?? process.env;
+  if (env.REVIT_OPERATOR_MODE !== "development"
+    || env.OPERATOR_TOOL_EXPOSURE_PROFILE !== "laboratory"
+    || env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1"
+    || !isCertifiedMoveOneAdmission(input.admission)) {
+    throw new ToolExposurePolicyError("CERT_LABORATORY_FAMILY_DENIED", "Move-family evidence admission requires an opaque validator admission in the exact protected laboratory lane.");
+  }
+  const admission = input.admission;
+  const decision = evaluateToolExposureInternal({
+    method: "POST", path: "/revit/move-elements", body: admission.outboundBody,
+    channel: input.channel ?? "typed_mcp", alias: input.alias, env,
+    requestFamily: { schema: "revit-operator.certified-request-family.v1", id: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_V1, validator_hash: CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH },
+    requestInstanceHash: admission.requestInstanceHash
+  });
+  if (!decision.allowed || decision.mode !== "laboratory") {
+    throw new ToolExposurePolicyError("CERT_LABORATORY_FAMILY_DENIED", "Move-family evidence admission did not resolve to exact laboratory authority.", decision);
+  }
+  return bindProtectedLaboratoryDecisionToCurrentPolicy(decision, env);
+}
+
+function bindProtectedLaboratoryDecisionToCurrentPolicy(
+  decision: ToolExposureDecision,
+  env: NodeJS.ProcessEnv,
+  policyIdentity: { requestHash: string; effectHash: string } = { requestHash: decision.requestHash, effectHash: decision.effectHash }
+): ToolExposureDecision {
+  const { policy, policyPath, trustSource } = loadToolExposurePolicy(env);
+  const record = policy.records.find(candidate => candidate.method === decision.method
+    && candidate.path === decision.path
+    && candidate.effect_hash === policyIdentity.effectHash
+    && (decision.requestFamily
+      ? candidate.request_family?.schema === decision.requestFamily.schema
+        && candidate.request_family.id === decision.requestFamily.id
+        && candidate.request_family.validator_hash === decision.requestFamily.validator_hash
+      : candidate.request_hash === policyIdentity.requestHash));
+  if (!record || !decision.alias || !record.typed_mcp_aliases.includes(decision.alias)) {
+    throw new ToolExposurePolicyError(
+      "CERT_LABORATORY_POLICY_BINDING_DENIED",
+      "Protected laboratory evidence requires one exact reviewed candidate record and typed alias in the current trusted policy.",
+      decision
+    );
+  }
+  return Object.freeze({
+    ...decision,
+    policyPath,
+    policyHash: policy.policy_hash,
+    policyRecordHash: record.policy_record_hash,
+    evidenceRecordHash: record.evidence_record_hash,
+    requestHash: decision.requestFamily ? decision.requestHash : record.request_hash,
+    effectHash: record.effect_hash,
+    policyTrustSource: trustSource,
+    visibility: record.visibility
+  });
+}
+
+/** Binds generic protected-laboratory evidence to an exact current candidate record. */
+export function assertProtectedLaboratoryEvidenceExposure(input: {
+  method: string;
+  path: string;
+  body?: unknown;
+  channel?: ToolExposureChannel;
+  workflow?: string;
+  alias?: string;
+  env?: NodeJS.ProcessEnv;
+}): ToolExposureDecision {
+  const env = input.env ?? process.env;
+  if (env.REVIT_OPERATOR_MODE !== "development"
+    || env.OPERATOR_TOOL_EXPOSURE_PROFILE !== "laboratory"
+    || env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY !== "1") {
+    throw new ToolExposurePolicyError("CERT_LABORATORY_POLICY_BINDING_DENIED", "Protected laboratory evidence lane is not exact.");
+  }
+  const decision = assertToolExposure(input);
+  if (decision.mode !== "laboratory") throw new ToolExposurePolicyError("CERT_LABORATORY_POLICY_BINDING_DENIED", "Laboratory policy binding resolved outside laboratory mode.", decision);
+  return bindProtectedLaboratoryDecisionToCurrentPolicy(decision, env, {
+    requestHash: requestHash(decision.method, decision.path, input.body, true),
+    effectHash: effectHash(decision.path, decision.method, input.body)
+  });
+}
+
 /**
  * Creates a process-local, non-serializable courier capability from the
  * active MCP alias. Callers cannot supply an alias here: the AsyncLocalStorage
@@ -688,10 +911,16 @@ export function createCertifiedCourierAdmission(input: {
   body?: unknown;
   channel?: ToolExposureChannel;
   workflow?: string;
+  certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
+  laboratoryMoveEvidenceAdmission?: CertifiedMoveOneAdmission;
+  laboratoryEvidence?: boolean;
   env?: NodeJS.ProcessEnv;
 }): CertifiedCourierAdmission | undefined {
   const env = input.env ?? process.env;
-  if (!isCertifiedToolExposureMode(env)) return undefined;
+  const runtime = getToolExposureRuntimeDecision(env);
+  const protectedLaboratory = runtime.mode === "laboratory"
+    && env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
+  if (!runtime.certified && !protectedLaboratory) return undefined;
   const alias = String(invokedMcpAlias.getStore() ?? "").trim();
   if (!alias) {
     throw new ToolExposurePolicyError(
@@ -699,10 +928,58 @@ export function createCertifiedCourierAdmission(input: {
       "Certified courier publication requires an active MCP tool alias binding."
     );
   }
-  const decision = assertToolExposure({ ...input, alias, env });
+  if (input.certifiedMoveOneAdmission && input.laboratoryMoveEvidenceAdmission) {
+    throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_VALIDATOR_INVALID", "Production and laboratory family admissions are mutually exclusive.");
+  }
+  const familyAdmission = input.certifiedMoveOneAdmission ?? input.laboratoryMoveEvidenceAdmission;
+  let decision = input.laboratoryMoveEvidenceAdmission
+    ? assertLaboratoryMoveEvidenceAdmissionExposure({ admission: input.laboratoryMoveEvidenceAdmission, channel: input.channel, alias, env })
+    : input.certifiedMoveOneAdmission
+    ? assertCertifiedMoveOneAdmissionExposure({ admission: input.certifiedMoveOneAdmission, channel: input.channel, alias, env })
+    : input.laboratoryEvidence
+    ? assertProtectedLaboratoryEvidenceExposure({
+      method: input.method,
+      path: input.path,
+      body: input.body,
+      channel: input.channel,
+      workflow: input.workflow,
+      alias,
+      env
+    })
+    : assertToolExposure({
+      method: input.method,
+      path: input.path,
+      body: input.body,
+      channel: input.channel,
+      workflow: input.workflow,
+      alias,
+      env
+    });
+  if (protectedLaboratory && input.laboratoryMoveEvidenceAdmission && input.workflow !== undefined) {
+    decision = Object.freeze({ ...decision, workflow: input.workflow });
+  }
+  if (decision.method !== input.method || decision.path !== input.path) {
+    throw new ToolExposurePolicyError("CERT_REQUEST_FAMILY_ROUTE_MISMATCH", "Certified request-family admission does not bind the requested route.");
+  }
   const capability = Object.freeze({}) as unknown as CertifiedCourierAdmission;
   courierAdmissionDecisions.set(capability, decision);
+  if (familyAdmission) courierMoveAdmissions.set(capability, familyAdmission);
   return capability;
+}
+
+export function readCertifiedCourierAdmissionBinding(capability: unknown): {
+  decision: ToolExposureDecision;
+  certifiedMoveOneAdmission?: CertifiedMoveOneAdmission;
+} {
+  const certifiedMoveOneAdmission = courierMoveAdmissions.get(capability as object);
+  try {
+    const decision = readCertifiedCourierAdmission(capability);
+    return { decision, ...(certifiedMoveOneAdmission ? { certifiedMoveOneAdmission } : {}) };
+  } finally {
+    if (capability && (typeof capability === "object" || typeof capability === "function")) {
+      courierMoveAdmissions.delete(capability as object);
+    }
+  }
 }
 
 /**
@@ -727,6 +1004,7 @@ export function readCertifiedCourierAdmission(capability: unknown): ToolExposure
   // Consume before inspecting the context or returning. A failed replay from a
   // different execution context cannot leave a usable capability behind.
   courierAdmissionDecisions.delete(capability as object);
+  courierMoveAdmissions.delete(capability as object);
   const activeAlias = String(invokedMcpAlias.getStore() ?? "").trim();
   if (!activeAlias) {
     throw new ToolExposurePolicyError(

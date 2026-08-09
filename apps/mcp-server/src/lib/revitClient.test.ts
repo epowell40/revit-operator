@@ -76,6 +76,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
     localAppData: process.env.LOCALAPPDATA,
     exposurePolicyPath: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH,
     exposurePolicyHash: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256,
+    protectedLaboratory: process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY,
   };
   process.env.REVIT_BRIDGE_URL = url;
   process.env.OPERATOR_REVIT_REQUEST_TIMEOUT_MS = String(timeoutMs);
@@ -98,6 +99,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
       LOCALAPPDATA: previous.localAppData,
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: previous.exposurePolicyPath,
       OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: previous.exposurePolicyHash,
+      OPERATOR_CERTIFICATION_PROTECTED_LABORATORY: previous.protectedLaboratory,
     })) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -251,6 +253,34 @@ test("callRevit admits only the actual bound typed alias before direct dispatch"
     restore();
     await close(server);
     fs.rmSync(path.dirname(variant.policyPath), { recursive: true, force: true });
+  }
+});
+
+test("explicit certification laboratory evidence uses protected native transport without claiming certified policy", async () => {
+  let observed: http.IncomingMessage | undefined;
+  const server = http.createServer((request, response) => {
+    observed = request;
+    response.setHeader("content-type", "application/json");
+    response.end("{}");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY = "1";
+  writeNativeTransportReceipt(`http://127.0.0.1:${port}`);
+  try {
+    await assert.rejects(
+      runWithRevitToolAlias("revit_ping", async () => await callRevit("/revit/ping", "GET")),
+      (error: unknown) => error instanceof RevitBridgeCallError
+        && error.code === "revit_bridge_invalid_response"
+    );
+    assert.equal(observed?.method, "POST");
+    assert.equal(observed?.url, NATIVE_TRANSPORT_PATH);
+    assert.equal(observed?.headers["content-type"], "application/vnd.revit-operator.native-transport+json");
+    assert.equal(observed?.headers["x-operator-token"], undefined);
+    assert.equal(observed?.headers["x-operator-write-grant"], undefined);
+  } finally {
+    restore();
+    await close(server);
   }
 });
 
@@ -573,7 +603,7 @@ test("callRevit treats native API policy GET as read and POST as mutating", asyn
   }
 });
 
-test("callRevit classifies conditional POST bodies as read or apply", async () => {
+test("callRevit classifies conditional POST bodies and never retries an unknown rollback preview", async () => {
   const server = http.createServer((_request, response) => {
     response.statusCode = 503;
     response.end("bridge unavailable");
@@ -587,6 +617,15 @@ test("callRevit classifies conditional POST bodies as read or apply", async () =
         assert.ok(error instanceof RevitBridgeCallError);
         assert.equal(error.retryable, true);
         assert.equal(error.outcome_unknown, false);
+        return true;
+      },
+    );
+    await assert.rejects(
+      callRevit("/revit/move-elements", "POST", { dryRun: true }),
+      (error: unknown) => {
+        assert.ok(error instanceof RevitBridgeCallError);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
         return true;
       },
     );
@@ -612,8 +651,8 @@ test("callRevit classifies conditional POST bodies as read or apply", async () =
       callRevit("/revit/list-element-types", "POST", { action: "rename_types", dryRun: true }),
       (error: unknown) => {
         assert.ok(error instanceof RevitBridgeCallError);
-        assert.equal(error.retryable, true);
-        assert.equal(error.outcome_unknown, false);
+        assert.equal(error.retryable, false);
+        assert.equal(error.outcome_unknown, true);
         return true;
       },
     );
