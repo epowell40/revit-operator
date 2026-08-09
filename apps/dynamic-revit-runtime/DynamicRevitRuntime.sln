@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DynamicRevit.RuntimePackagi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DynamicRevit.PackageVerifier", "DynamicRevit.PackageVerifier\DynamicRevit.PackageVerifier.csproj", "{FB9C11C5-37E6-42E3-83D6-4AF56EC1149D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DynamicRevitSandboxSupervisor.Tests", "DynamicRevitSandboxSupervisor.Tests\DynamicRevitSandboxSupervisor.Tests.csproj", "{967DA071-F3C6-4F29-A7D6-36241F630B14}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -111,6 +113,18 @@ Global
 		{FB9C11C5-37E6-42E3-83D6-4AF56EC1149D}.Release|x64.Build.0 = Release|Any CPU
 		{FB9C11C5-37E6-42E3-83D6-4AF56EC1149D}.Release|x86.ActiveCfg = Release|Any CPU
 		{FB9C11C5-37E6-42E3-83D6-4AF56EC1149D}.Release|x86.Build.0 = Release|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Debug|x64.Build.0 = Debug|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Debug|x86.Build.0 = Debug|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Release|Any CPU.Build.0 = Release|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Release|x64.ActiveCfg = Release|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Release|x64.Build.0 = Release|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Release|x86.ActiveCfg = Release|Any CPU
+		{967DA071-F3C6-4F29-A7D6-36241F630B14}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
