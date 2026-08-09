@@ -143,7 +143,6 @@ internal static class SandboxPipe
 
 internal static class SandboxPipeExecution
 {
-    private sealed class InputEnvelope { public string Nonce { get; set; } = ""; public string Correlation { get; set; } = ""; public string ChannelKeyBase64 { get; set; } = ""; public WorkerInput Request { get; set; } = new(); }
     public static int Run(string inputPipeName, string outputPipeName)
     {
         var nonce = "";
@@ -155,12 +154,14 @@ internal static class SandboxPipeExecution
             using var reader = new StreamReader(inputPipe, Encoding.UTF8, false, 64 * 1024, leaveOpen: false);
             var raw = reader.ReadLine() ?? throw new InvalidOperationException("Worker input channel is empty.");
             if (Encoding.UTF8.GetByteCount(raw) > 4 * 1024 * 1024) throw new InvalidOperationException("Worker input exceeds the 4 MiB limit.");
-            var envelope = JsonSerializer.Deserialize<InputEnvelope>(raw, Compiler.Json) ?? throw new InvalidOperationException("Worker input envelope is empty.");
-            nonce = envelope.Nonce;
-            correlation = envelope.Correlation;
-            channelKey = Convert.FromBase64String(envelope.ChannelKeyBase64);
+            using var envelope = JsonDocument.Parse(raw);
+            if (envelope.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("Worker input envelope is invalid.");
+            nonce = envelope.RootElement.GetProperty("nonce").GetString() ?? throw new InvalidOperationException("Worker nonce is missing.");
+            correlation = envelope.RootElement.GetProperty("correlation").GetString() ?? throw new InvalidOperationException("Worker correlation is missing.");
+            channelKey = Convert.FromBase64String(envelope.RootElement.GetProperty("channelKeyBase64").GetString() ?? "");
             if (channelKey.Length != 32) throw new InvalidOperationException("Worker channel key must be 256 bits.");
-            var output = WorkerExecutor.Execute(envelope.Request);
+            var request = envelope.RootElement.GetProperty("request").Deserialize<WorkerInput>(Compiler.Json) ?? throw new InvalidOperationException("Worker request is missing.");
+            var output = WorkerExecutor.Execute(request);
             SandboxPipe.SendNamed(outputPipeName, nonce, correlation, channelKey, output);
             return output.Ok ? 0 : 1;
         }
