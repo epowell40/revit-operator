@@ -46,7 +46,7 @@ public static class DynamicRevitSdkProductionVersion
         DynamicRevitProductionSchemas.ReuseRecordV1, DynamicRevitProductionSchemas.StrategyEvidenceV1,
         ContractSurfaceHash, DynamicPrimitiveManifestV1.ManifestHash, DynamicObservationContractV1.ManifestHash,
         DynamicBuildingSystemsObservationContractV1.ManifestHash, DynamicCoreOperationManifestV1.ManifestHash,
-        DynamicResultReferenceManifestV1.ManifestHash));
+        DynamicResultReferenceManifestV1.ManifestHash, DynamicAnnotationOperationManifestV1.ManifestHash));
 
     private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
         .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)

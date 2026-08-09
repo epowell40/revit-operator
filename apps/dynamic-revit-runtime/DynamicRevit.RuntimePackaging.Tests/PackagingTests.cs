@@ -43,7 +43,7 @@ public sealed class PackagingTests : IDisposable
         var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
-        Assert.Equal(13, result.VerifiedArtifacts.Count);
+        Assert.Equal(14, result.VerifiedArtifacts.Count);
         Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(Path.Combine(_root, package.Supervisor.RelativePath)), package.Supervisor.Sha256);
     }
 
@@ -141,6 +141,19 @@ public sealed class PackagingTests : IDisposable
         Assert.Contains(result.Errors, error => error.Contains("Result-reference contract manifest content is invalid", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Package_verifier_binds_annotation_operations_to_exact_sdk_surface()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest(); var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.AnnotationOperationsContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace(DynamicAnnotationOperationManifestV1.ContractSurfaceHash, "sha256:" + new string('0', 64), StringComparison.Ordinal));
+        package.AnnotationOperationsContract.Sha256 = HashFile(path);
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("Annotation operations contract manifest content is invalid", StringComparison.Ordinal));
+    }
+
     private DynamicRuntimePackageManifest WritePackage(string capabilitiesPath, string sdkManifestHash)
     {
         PackageArtifactIdentity Artifact(string path, string content)
@@ -170,6 +183,7 @@ public sealed class PackagingTests : IDisposable
             BuildingSystemsObservationContract = Artifact("manifests/dynamic-revit-building-systems-observations.v1.json", BuildingSystemsObservationContractManifest()),
             CoreOperationsContract = Artifact("manifests/dynamic-revit-operations-core.v1.json", CoreOperationsContractManifest()),
             ResultReferenceContract = Artifact("manifests/dynamic-revit-result-reference-graph.v1.json", ResultReferenceContractManifest()),
+            AnnotationOperationsContract = Artifact("manifests/dynamic-revit-annotation-operations.v1.json", AnnotationOperationsContractManifest()),
             SandboxProfile = "windows-lpac-v1-zero-capabilities",
             SandboxProfileVersion = "1.0.0",
             HostCapabilitiesManifestSha256 = HashFile(capabilitiesPath),
@@ -263,6 +277,16 @@ public sealed class PackagingTests : IDisposable
         maximumReferencesPerNode = DynamicResultReferenceContractV1.MaximumReferencesPerNode,
         maximumAttributesPerNode = DynamicResultReferenceContractV1.MaximumAttributesPerNode,
         productionExposed = false
+    });
+
+    private static string AnnotationOperationsContractManifest() => JsonSerializer.Serialize(new
+    {
+        schema = DynamicAnnotationOperationsV1.ManifestSchema, manifestVersion = "1.0.0",
+        contractManifestHash = DynamicAnnotationOperationManifestV1.ManifestHash, contractSurfaceHash = DynamicAnnotationOperationManifestV1.ContractSurfaceHash,
+        resultReferenceManifestHash = DynamicResultReferenceManifestV1.ManifestHash, readbackSchema = DynamicAnnotationOperationsV1.ReadbackSchema,
+        previewSchema = DynamicAnnotationOperationsV1.PreviewSchema, canonicalVersion = DynamicAnnotationOperationsV1.CanonicalVersion,
+        maximumTextLength = DynamicAnnotationOperationsV1.MaximumTextLength, productionExposed = false,
+        primitives = DynamicAnnotationOperationManifestV1.All.Select(value => new { kind = value.Kind, version = value.PrimitiveVersion, effectClass = value.EffectClass, externalTargetCount = value.ExternalTargetCount, outputCount = value.OutputCount, requiredAttributes = value.RequiredAttributes })
     });
 
     private string WriteCapabilitiesManifest()

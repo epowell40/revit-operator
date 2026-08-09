@@ -1,0 +1,30 @@
+{
+  "schema": "dynamic-revit-annotation-operation-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractManifestHash": "sha256:c466a88fbdeb266901959385fd79955bfc67ca490674dd35c02560c0dd20f6dd",
+  "contractSurfaceHash": "sha256:7b479e5fd71a5f89b307cf64d5be7003657699923a147b51ce8a9458e156a5ea",
+  "resultReferenceManifestHash": "sha256:7cae08e13785f18f1d69978bd5d94133014cc01233fd38026534468b2ab7977f",
+  "readbackSchema": "dynamic-revit-annotation-operation-readback/v1",
+  "previewSchema": "dynamic-revit-annotation-operation-preview/v1",
+  "canonicalVersion": "dynamic-revit-annotation-operation-canonical/v1",
+  "maximumTextLength": 4096,
+  "productionExposed": false,
+  "primitives": [
+    {
+      "kind": "edit_text_note",
+      "version": "edit_text_note/v1",
+      "effectClass": "modify",
+      "externalTargetCount": 1,
+      "outputCount": 0,
+      "requiredAttributes": ["expected_owner_view_unique_id", "expected_text", "expected_text_type_unique_id", "replacement_text"]
+    },
+    {
+      "kind": "create_tag",
+      "version": "create_tag/v1",
+      "effectClass": "create",
+      "externalTargetCount": 1,
+      "outputCount": 1,
+      "requiredAttributes": ["expected_tag_type_state_hash", "expected_view_state_hash", "head_position_feet", "leader_elbow_feet", "leader_enabled", "leader_end_feet", "output_slot", "tag_orientation", "tag_type_unique_id", "target_unique_id", "view_unique_id"]
+    }
+  ]
+}

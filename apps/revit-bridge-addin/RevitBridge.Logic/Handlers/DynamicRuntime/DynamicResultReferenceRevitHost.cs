@@ -37,6 +37,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private readonly Document _document;
         private readonly IDynamicResultReferenceRevitLabExecutorV1 _executor;
         private readonly List<string> _createdUniqueIds = new List<string>();
+        private readonly Dictionary<string, string> _externalStates = new Dictionary<string, string>(StringComparer.Ordinal);
         private TransactionGroup? _group;
         private bool _finished;
 
@@ -59,6 +60,14 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         public IReadOnlyList<DynamicCreatedResultFactV1> ExecuteNode(DynamicResultReferenceNodeV1 node, IReadOnlyList<DynamicResolvedElementTargetV1> resolvedTargets)
         {
             if (_group == null || _finished || node == null || resolvedTargets == null) throw new InvalidOperationException("Result-reference transaction is not active.");
+            foreach (var resolved in resolvedTargets.Where(value => value.SourceKind == "external"))
+            {
+                var element = _document.GetElement(resolved.UniqueId) ?? throw new InvalidOperationException("Result-reference external target disappeared before mutation.");
+                var state = DynamicAnnotationRevitStateV1.StateHash(element);
+                if (state != resolved.StateHash || _externalStates.TryGetValue(resolved.UniqueId, out var prior) && prior != state)
+                    throw new InvalidOperationException("Result-reference external target exact state is stale or changed twice.");
+                _externalStates[resolved.UniqueId] = state;
+            }
             using (var transaction = new Transaction(_document, "Dynamic Result Reference " + node.Kind))
             {
                 if (transaction.Start() != TransactionStatus.Started) throw new InvalidOperationException("Unable to start result-reference node transaction.");
@@ -91,7 +100,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             _group.Dispose();
             _group = null;
             if (status != TransactionStatus.RolledBack) return false;
-            return _createdUniqueIds.All(uniqueId => _document.GetElement(uniqueId) == null);
+            return _createdUniqueIds.All(uniqueId => _document.GetElement(uniqueId) == null) && _externalStates.All(pair =>
+            {
+                var element = _document.GetElement(pair.Key);
+                return element != null && DynamicAnnotationRevitStateV1.StateHash(element) == pair.Value;
+            });
         }
 
         internal DynamicTrustedElementFactV1? LiveExternalTarget(string uniqueId)
@@ -102,7 +115,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 UniqueId = element.UniqueId, ElementId = ElementIdCompat.GetValue(element.Id),
                 DocumentFingerprint = DynamicRuntimeSnapshotHandler.Fingerprint(_document), CategoryStableId = CategoryStableId(element.Category),
-                TypeUniqueId = TypeUniqueId(element), StateHash = DynamicRuntimePreviewHandler.TrustedElementStateHash(element),
+                TypeUniqueId = TypeUniqueId(element), StateHash = DynamicAnnotationRevitStateV1.StateHash(element),
                 Exists = true, Verified = true, Visible = IsVisible(element)
             };
         }
@@ -122,7 +135,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 ProducerNodeId = node.NodeId, ResultId = declaration.ResultId, OutputSlot = declaration.OutputSlot,
                 CreatedUniqueId = element.UniqueId, CreatedElementId = ElementIdCompat.GetValue(element.Id),
                 DocumentFingerprint = declaration.ExpectedDocumentFingerprint, CategoryStableId = category, TypeUniqueId = type,
-                StateHash = DynamicRuntimePreviewHandler.TrustedElementStateHash(element), Status = "created_verified", Verified = true, Visible = true
+                StateHash = DynamicAnnotationRevitStateV1.StateHash(element), Status = "created_verified", Verified = true, Visible = true
             };
             fact.OutputHash = DynamicResultReferencePolicyV1.OutputHash(fact);
             return fact;

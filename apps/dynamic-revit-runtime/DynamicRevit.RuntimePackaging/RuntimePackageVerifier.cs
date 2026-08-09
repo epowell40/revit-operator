@@ -20,6 +20,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity BuildingSystemsObservationContract { get; set; } = new();
     public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
     public PackageArtifactIdentity ResultReferenceContract { get; set; } = new();
+    public PackageArtifactIdentity AnnotationOperationsContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
     public string HostCapabilitiesManifestSha256 { get; set; } = "";
@@ -94,11 +95,13 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "building-systems observation contract", package.BuildingSystemsObservationContract, result);
         VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
         VerifyArtifact(root, "result-reference contract", package.ResultReferenceContract, result);
+        VerifyArtifact(root, "annotation operations contract", package.AnnotationOperationsContract, result);
         VerifySandboxPolicy(root, package, result);
         VerifyObservationContract(root, package, result);
         VerifyBuildingSystemsObservationContract(root, package, result);
         VerifyCoreOperationsContract(root, package, result);
         VerifyResultReferenceContract(root, package, result);
+        VerifyAnnotationOperationsContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
             var packagedCapabilitiesPath = Path.Combine(root, relativeCapabilitiesPath.Replace('/', Path.DirectorySeparatorChar));
@@ -127,7 +130,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract, package.ResultReferenceContract }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract, package.ResultReferenceContract, package.AnnotationOperationsContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -370,6 +373,40 @@ public static class RuntimePackageVerifier
         {
             result.Errors.Add("Result-reference contract manifest content is invalid: " + ex.Message);
         }
+    }
+
+    private static void VerifyAnnotationOperationsContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.AnnotationOperationsContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.AnnotationOperationsContract.RelativePath, "annotation operations contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.AnnotationOperationsContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path)); var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "resultReferenceManifestHash", "readbackSchema", "previewSchema", "canonicalVersion", "maximumTextLength", "productionExposed", "primitives" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicAnnotationOperationsV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicAnnotationOperationManifestV1.ManifestHash || value.GetProperty("contractSurfaceHash").GetString() != DynamicAnnotationOperationManifestV1.ContractSurfaceHash ||
+                value.GetProperty("resultReferenceManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash || value.GetProperty("readbackSchema").GetString() != DynamicAnnotationOperationsV1.ReadbackSchema ||
+                value.GetProperty("previewSchema").GetString() != DynamicAnnotationOperationsV1.PreviewSchema || value.GetProperty("canonicalVersion").GetString() != DynamicAnnotationOperationsV1.CanonicalVersion ||
+                value.GetProperty("maximumTextLength").GetInt32() != DynamicAnnotationOperationsV1.MaximumTextLength || value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Annotation operations manifest identity or field set is invalid.");
+            var primitives = value.GetProperty("primitives").EnumerateArray().ToArray();
+            if (primitives.Length != DynamicAnnotationOperationManifestV1.All.Count) throw new InvalidDataException("Annotation primitive count is invalid.");
+            foreach (var descriptor in DynamicAnnotationOperationManifestV1.All)
+            {
+                var primitive = primitives.Single(item => item.GetProperty("kind").GetString() == descriptor.Kind);
+                var primitiveFields = primitive.EnumerateObject().Select(property => property.Name).ToArray();
+                if (primitiveFields.Length != 6 || primitiveFields.Any(field => !new[] { "kind", "version", "effectClass", "externalTargetCount", "outputCount", "requiredAttributes" }.Contains(field, StringComparer.Ordinal)) ||
+                    primitive.GetProperty("version").GetString() != descriptor.PrimitiveVersion || primitive.GetProperty("effectClass").GetString() != descriptor.EffectClass ||
+                    primitive.GetProperty("externalTargetCount").GetInt32() != descriptor.ExternalTargetCount || primitive.GetProperty("outputCount").GetInt32() != descriptor.OutputCount ||
+                    !primitive.GetProperty("requiredAttributes").EnumerateArray().Select(item => item.GetString()).SequenceEqual(descriptor.RequiredAttributes, StringComparer.Ordinal))
+                    throw new InvalidDataException("Annotation primitive descriptor does not match the SDK.");
+            }
+        }
+        catch (Exception ex) { result.Errors.Add("Annotation operations contract manifest content is invalid: " + ex.Message); }
     }
 
     private static string NormalizeRelativePath(string? path) => (path ?? "").Replace('\\', '/').TrimStart('/');
