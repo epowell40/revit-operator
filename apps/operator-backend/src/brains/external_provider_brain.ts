@@ -21,6 +21,13 @@ import {
   EXECUTION_STRATEGY_EVIDENCE_V1,
   recordExecutionStrategyEvidence
 } from "../execution_strategy.js";
+import {
+  PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA,
+  dynamicProgramProviderPrompt,
+  executeProviderDynamicProgramLane,
+  type TrustedDynamicProgramRunner
+} from "../dynamic_runtime/provider_dynamic_program.js";
+import { isCertifiedSidecarRequest } from "../capabilities/certified_sidecar_capability.js";
 
 type ExternalProvider = "gemini" | "anthropic";
 type FetchLike = typeof fetch;
@@ -28,6 +35,7 @@ type FetchLike = typeof fetch;
 export type ExternalProviderDependencies = {
   fetchImpl?: FetchLike;
   existingConditionsWorkbenchExecutor?: typeof executeExistingConditionsProviderWorkbenchActions;
+  dynamicProgramRunner?: TrustedDynamicProgramRunner;
 };
 
 type ProviderImage = {
@@ -40,6 +48,7 @@ type ProviderDecision = {
   actions?: unknown;
   workbench_actions?: unknown;
   execution_strategy?: unknown;
+  dynamic_program?: unknown;
 };
 
 const EXECUTION_STRATEGY_SCHEMA = {
@@ -117,7 +126,7 @@ const EXISTING_CONDITIONS_WORKBENCH_SCHEMA = {
 const RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["assistant_message", "actions", "workbench_actions", "execution_strategy"],
+  required: ["assistant_message", "actions", "workbench_actions", "execution_strategy", "dynamic_program"],
   properties: {
     assistant_message: {
       type: "string",
@@ -143,7 +152,8 @@ const RESPONSE_SCHEMA = {
       }
     },
     workbench_actions: EXISTING_CONDITIONS_WORKBENCH_SCHEMA,
-    execution_strategy: EXECUTION_STRATEGY_SCHEMA
+    execution_strategy: EXECUTION_STRATEGY_SCHEMA,
+    dynamic_program: PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA
   }
 } as const;
 
@@ -154,7 +164,7 @@ const RESPONSE_SCHEMA = {
 const ANTHROPIC_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["assistant_message", "actions", "workbench_actions", "execution_strategy"],
+  required: ["assistant_message", "actions", "workbench_actions", "execution_strategy", "dynamic_program"],
   properties: {
     assistant_message: RESPONSE_SCHEMA.properties.assistant_message,
     actions: {
@@ -176,7 +186,8 @@ const ANTHROPIC_RESPONSE_SCHEMA = {
       }
     },
     workbench_actions: EXISTING_CONDITIONS_WORKBENCH_SCHEMA,
-    execution_strategy: EXECUTION_STRATEGY_SCHEMA
+    execution_strategy: EXECUTION_STRATEGY_SCHEMA,
+    dynamic_program: PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA
   }
 } as const;
 
@@ -437,6 +448,7 @@ function buildPrompt(req: ChatRequest, provider: ExternalProvider): string {
         ]
       : []),
     getOperatorAgentBaseInstructions(),
+    dynamicProgramProviderPrompt(process.env, !isCertifiedSidecarRequest(req)),
     "",
     ...(turnContract ? [turnContract, ""] : []),
     `You are running as the Operator ${provider} brain. You do not call MCP directly in this process.`,
@@ -699,10 +711,23 @@ async function finalizeProviderDecision(
   raw: ProviderDecision,
   dependencies: ExternalProviderDependencies
 ): Promise<ChatResponse> {
-  const normalized = normalizeProviderDecision(raw);
   const strategyEvidence = recordExecutionStrategyEvidence(raw.execution_strategy, evidence => {
     appendEvent(req.session_id, "assistant", "execution.strategy.selected", evidence);
   });
+  const selectedSubstrate = strategyEvidence?.selected_substrate ?? null;
+  const dynamicLane = await executeProviderDynamicProgramLane({
+    req,
+    selectedSubstrate,
+    dynamicProgram: raw.dynamic_program,
+    otherLaneItemCount:
+      (Array.isArray(raw.actions) ? raw.actions.length : 0)
+      + (Array.isArray(raw.workbench_actions) ? raw.workbench_actions.length : 0),
+    strategyEvidence: strategyEvidence ?? undefined,
+    runner: dependencies.dynamicProgramRunner,
+    requestEligible: !isCertifiedSidecarRequest(req)
+  });
+  if (dynamicLane) return dynamicLane;
+  const normalized = normalizeProviderDecision(raw);
   const withStrategy = (response: ChatResponse): ChatResponse => strategyEvidence
     ? { ...response, execution_strategy_evidence: strategyEvidence }
     : response;

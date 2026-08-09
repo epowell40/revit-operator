@@ -110,6 +110,11 @@ import {
   recordExecutionStrategyEvidence,
   type RecordedExecutionStrategyEvidence
 } from "../execution_strategy.js";
+import {
+  PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA,
+  dynamicProgramProviderPrompt,
+  executeProviderDynamicProgramLane
+} from "../dynamic_runtime/provider_dynamic_program.js";
 type OpenAiDecision = {
   assistant_message: string;
   execution_strategy?: {
@@ -118,6 +123,7 @@ type OpenAiDecision = {
     reason: string;
   } | null;
   recorded_execution_strategy?: RecordedExecutionStrategyEvidence;
+  dynamic_program?: unknown;
   actions: Array<{
     action_id: string;
     method: "GET" | "POST";
@@ -18850,6 +18856,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   lines.push(...(certifiedDirectSidecar ? CERTIFIED_SIDECAR_PROMPT_LINES : [process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt(), ""]));
   const turnContract = formatAgentTurnContract(req.user_text, req.context);
   if (turnContract) lines.push(turnContract, "");
+  lines.push(dynamicProgramProviderPrompt(process.env, !certifiedDirectSidecar), "");
   if (speedSettings.speed_mode) {
     lines.push(
       `Speed mode: enabled; planner=${speedSettings.planner_model}/${speedSettings.planner_reasoning_effort}; executor=${speedSettings.executor_model}/${speedSettings.executor_reasoning_effort}; context_diet=${speedSettings.context_diet ? "on" : "off"}.`
@@ -22568,7 +22575,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     type: "object",
     additionalProperties: false,
     // OpenAI strict schema requires all declared properties to be required.
-    required: ["assistant_message", "execution_strategy", "actions", "web_requests", "dev_actions", "workbench_actions"],
+    required: ["assistant_message", "execution_strategy", "dynamic_program", "actions", "web_requests", "dev_actions", "workbench_actions"],
     properties: {
       assistant_message: { type: "string" },
       execution_strategy: {
@@ -22584,6 +22591,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
           reason: { type: "string", minLength: 1, maxLength: 320 }
         }
       },
+      dynamic_program: PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA,
       actions: {
         type: "array",
         items: {
@@ -23244,6 +23252,20 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     if (round === 0) noteRedlineFastPathPhase(req.session_id, "planner_end");
 
     lastDecision = d;
+
+    const dynamicLane = await executeProviderDynamicProgramLane({
+      req,
+      selectedSubstrate: d.recorded_execution_strategy?.selected_substrate ?? null,
+      dynamicProgram: d.dynamic_program,
+      otherLaneItemCount:
+        (Array.isArray(d.actions) ? d.actions.length : 0)
+        + (Array.isArray(d.workbench_actions) ? d.workbench_actions.length : 0)
+        + (Array.isArray(d.web_requests) ? d.web_requests.length : 0)
+        + (Array.isArray(d.dev_actions) ? d.dev_actions.length : 0),
+      strategyEvidence: d.recorded_execution_strategy,
+      requestEligible: !isCertifiedSidecarRequest(req)
+    });
+    if (dynamicLane) return finishResponse(dynamicLane);
 
     let wbActions = normalizeWorkbenchActions(d.workbench_actions);
     const workbenchNamespaceCorrection = buildWorkbenchNamespaceCorrection(d, wbActions);

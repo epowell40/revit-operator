@@ -512,6 +512,24 @@ function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_l
 export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   const state = stateFor(req);
   ingestToolResults(state, req.tool_results);
+  const dynamicReceipt = decision.dynamic_program_execution_receipt;
+  if (dynamicReceipt) {
+    if (dynamicReceipt.status === "completed") {
+      state.blocked_reason = null;
+      if (dynamicReceipt.apply_requested) {
+        state.apply_attempts = 1;
+        state.apply_succeeded = true;
+        state.verified = true;
+        state.contract.stage = "report";
+      } else {
+        state.contract.stage = "preview";
+      }
+    } else {
+      state.blocked_reason = dynamicReceipt.failure || `dynamic_program_${dynamicReceipt.status}`;
+      state.contract.stage = "blocked";
+    }
+    return { ...decision, actions: [], teammate_loop_receipt: receipt(state) };
+  }
   const actions: ActionCall[] = [];
   const blocked: string[] = [];
   for (const action of Array.isArray(decision.actions) ? decision.actions : []) {

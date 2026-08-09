@@ -84,6 +84,17 @@ export type ChatResponse = {
     authority: "telemetry_only";
     authorization_granted: false;
   };
+  dynamic_program_execution_receipt?: {
+    schema: "revit-operator.provider-dynamic-program-execution-receipt.v1";
+    status: "completed" | "failed" | "blocked";
+    apply_requested: boolean;
+    supervisor_exit_code: number | null;
+    evidence_path: string | null;
+    evidence_sha256: string | null;
+    authority: "trusted_supervisor_receipt";
+    provider_prose_authorized: false;
+    failure: string | null;
+  };
   certified_capability_limitations?: Array<{
     code: "CERTIFIED_ACTION_DENIED";
     action_ids: string[];
