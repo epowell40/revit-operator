@@ -16,7 +16,7 @@ public static class DynamicCoreOperationsV1
     public const string EffectSchema = "dynamic-revit-core-operation-effect/v1";
     public const string PreviewSchema = "dynamic-revit-core-operation-preview/v1";
     public const string ApplyReceiptSchema = "dynamic-revit-core-operation-apply-receipt/v1";
-    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v3";
+    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v4";
     public const int MaximumOperations = 256;
     public const int MaximumAttributes = 16;
 }
@@ -121,7 +121,11 @@ public static class DynamicCoreOperationCanonicalNumberV1
     {
         if (double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentException("A canonical core-operation number must be finite.", nameof(value));
         if (value == 0d) return "0";
-        var formatted = value.ToString("R", CultureInfo.InvariantCulture);
+        // G17 is stable for an IEEE-754 double across the .NET Framework host and
+        // the .NET 8 worker. The legacy R formatter can choose different shortest
+        // spellings for the same bits on those runtimes, which makes an otherwise
+        // authentic operation graph fail exact admission.
+        var formatted = value.ToString("G17", CultureInfo.InvariantCulture);
         var exponentIndex = formatted.IndexOfAny(new[] { 'E', 'e' });
         if (exponentIndex < 0) return formatted;
         var exponent = int.Parse(formatted.Substring(exponentIndex + 1), NumberStyles.Integer, CultureInfo.InvariantCulture);

@@ -1,10 +1,10 @@
 {
   "schema": "dynamic-revit-core-operation-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:2e4f3ffb7f73a824dd4a5765919a66759ad60a57c28881b35da89cbcfdedc70b",
+  "contractManifestHash": "sha256:8520f1d4497949cca57938e7d6209257e452f14f57a3da9bee9c82f91d7e1191",
   "contractSurfaceHash": "sha256:fd5077423276e9d15271ab98567d7459ce52f2591bf12e757ef3c719bd74c717",
   "primitiveManifestHash": "sha256:6794bf78b3d65e7e9ec8bbe65a68c7ee51250848a05c8cd4971f7bc53fff5024",
-  "canonicalVersion": "dynamic-revit-core-operation-canonical/v3",
+  "canonicalVersion": "dynamic-revit-core-operation-canonical/v4",
   "maximumOperations": 256,
   "maximumAttributes": 16,
   "productionExposed": false,

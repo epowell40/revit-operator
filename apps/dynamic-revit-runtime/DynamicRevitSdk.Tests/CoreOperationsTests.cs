@@ -19,7 +19,7 @@ public sealed class CoreOperationsTests
         Assert.Equal("internal_revit_units", graph.Nodes[0].Attributes["value_semantics"]);
         Assert.Equal("double", graph.Nodes[0].Attributes["expected_storage_kind"]);
         Assert.Equal("sha256:54ccd5547e936917e79bff795bf1b1ba914d528a72f42a03e5711c2d1093d4f4", graph.GraphHash);
-        Assert.Equal("sha256:2e4f3ffb7f73a824dd4a5765919a66759ad60a57c28881b35da89cbcfdedc70b", DynamicCoreOperationManifestV1.ManifestHash);
+        Assert.Equal("sha256:8520f1d4497949cca57938e7d6209257e452f14f57a3da9bee9c82f91d7e1191", DynamicCoreOperationManifestV1.ManifestHash);
         Assert.Equal("sha256:fd5077423276e9d15271ab98567d7459ce52f2591bf12e757ef3c719bd74c717", DynamicCoreOperationManifestV1.ContractSurfaceHash);
     }
 
@@ -155,9 +155,12 @@ public sealed class CoreOperationsTests
     {
         Assert.Equal("0", DynamicCoreOperationCanonicalNumberV1.Format(-0d));
         Assert.Equal("1e20", DynamicCoreOperationCanonicalNumberV1.Format(1e20));
+        Assert.Equal("-9.3926755249342779", DynamicCoreOperationCanonicalNumberV1.Format(-9.392675524934278d));
+        Assert.Equal(-9.392675524934278d, DynamicCoreOperationCanonicalNumberV1.ParseExact("-9.3926755249342779", "redline_coordinate"));
         Assert.Equal(1e20, DynamicCoreOperationCanonicalNumberV1.ParseExact("1e20", "test"));
         Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("-0", "test"));
         Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("1E+20", "test"));
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("-9.392675524934278", "redline_coordinate"));
 
         var node = Clone(Graph().Nodes[1]);
         ((Dictionary<string, string>)node.Attributes)["axis_origin_feet"] = "1.0,2,3";
