@@ -221,6 +221,9 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("\"/revit/dynamic-runtime/mep-result-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/mep-result-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/mep-result-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/annotation-result-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/annotation-result-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/annotation-result-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
@@ -235,10 +238,37 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void DynamicAnnotationActivationIsLabBoundAuthenticatedAndRollbackVerified()
+        {
+            var root = FindRepositoryRoot();
+            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            Assert.Contains("/revit/dynamic-runtime/annotation-result-preview-v1", server);
+            Assert.Contains("/revit/dynamic-runtime/annotation-result-authorize-v1", server);
+            Assert.Contains("/revit/dynamic-runtime/annotation-result-apply-v1", server);
+
+            var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceActivationHandlers.cs"));
+            Assert.Equal(3, activation.Split("DynamicRuntimeV1LaboratoryBoundary.Require();").Length - 1);
+            Assert.Contains("DynamicRuntimeBootstrapRegistry.VerifyRequest", activation);
+            Assert.Contains("DynamicRuntimeAdmissionRegistry.RequireV1Identity", activation);
+            Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged", activation);
+            Assert.Contains("Authorizations.TryRemove", activation);
+            Assert.Contains("ledger.TryConsume(seal.AuthorizationHash)", activation);
+            Assert.Contains("retry_permitted = false", activation);
+
+            var host = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceMutationHost.cs"));
+            Assert.Contains("DynamicAnnotationOperationPolicyV1.ValidatePreviewAgainstGraph", host);
+            Assert.Contains("DynamicResultReferencePolicyV1.Validate(graph, budget, Kinds, admissionTargets)", host);
+            Assert.Contains("DocumentChanged += changed", host);
+            Assert.Contains("VerifyRollback(document, baseline", host);
+            Assert.Contains("VerifyLive(document, application, outputs, readbacks)", host);
+            Assert.Contains("host.Commit()", host);
+        }
+
+        [Fact]
         public void DynamicRollbackBaselinesApplyExplicitRevitCollectorFilters()
         {
             var root = FindRepositoryRoot();
-            foreach (var file in new[] { "DynamicCoreOperationHost.cs", "DynamicMepResultReferenceMutationHost.cs" })
+            foreach (var file in new[] { "DynamicCoreOperationHost.cs", "DynamicMepResultReferenceMutationHost.cs", "DynamicAnnotationResultReferenceMutationHost.cs" })
             {
                 var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", file));
                 Assert.Contains("foreach (var element in AllElements(document))", source);

@@ -47,6 +47,38 @@ public sealed class AnnotationOperationsTests
     }
 
     [Fact]
+    public void General_result_reference_admission_resolves_exact_annotation_manifest_descriptors()
+    {
+        var builder = new DynamicResultReferenceGraphBuilderV1(H("input"), Document, "session", 7);
+        var note = External("note", "category:builtin:OST_TextNotes", "text-type", H("note-state"));
+        var target = External("target", "category:builtin:OST_Doors", "door-type", H("door-state"));
+        builder.EditTextNote(note, "old", "new", "text-type", "view");
+        builder.CreateTag(target, "view", H("view-state"), "tag-type", H("tag-type-state"), "category:builtin:OST_DoorTags",
+            Point(1, 2, 0), "horizontal", false, null, null, "tag");
+        var graph = builder.Build();
+        DynamicResultReferencePolicyV1.ValidateWorkerOutput(graph, graph.InputHash, Document, "session", 7);
+
+        var facts = new Dictionary<string, DynamicTrustedElementFactV1>(StringComparer.Ordinal)
+        {
+            ["note"] = Fact(note), ["target"] = Fact(target)
+        };
+        var budget = new DynamicEffectBudgetV1
+        {
+            BudgetId = "annotation-admission", TargetDocumentFingerprints = new[] { Document }, ExplicitTargetUniqueIds = new[] { "note", "target" },
+            AllowedCategories = new[] { "category:builtin:OST_TextNotes", "category:builtin:OST_Doors", "category:builtin:OST_DoorTags" },
+            AllowedSdkDomains = new[] { "annotation" }, MaximumOperationCount = 2, MaximumAffectedElements = 2,
+            MaximumCreates = 1, MaximumModifications = 1, MaximumDeletes = 0, MaximumOutputCount = 1, FileCapabilitySetHash = H("none")
+        };
+        DynamicResultReferencePolicyV1.Validate(graph, budget, new[] { "edit_text_note", "create_tag" }, facts);
+
+        var invalid = builder.Build();
+        invalid.Nodes[1].Attributes = invalid.Nodes[1].Attributes.Concat(new[] { new KeyValuePair<string, string>("tag_type", "legacy-placeholder") })
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        invalid.Nodes[1].NodeId = DynamicResultReferencePolicyV1.NodeId(invalid.Nodes[1]); invalid.GraphHash = DynamicResultReferencePolicyV1.GraphHash(invalid);
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ValidateWorkerOutput(invalid, invalid.InputHash, Document, "session", 7));
+    }
+
+    [Fact]
     public void Readback_hashes_bind_semantic_values_and_preview_identity()
     {
         var value = new DynamicAnnotationOperationReadbackV1
@@ -108,6 +140,9 @@ public sealed class AnnotationOperationsTests
 
     private static DynamicExternalTargetReferenceV1 External(string id, string category, string type, string state) => new()
     { TargetUniqueId = id, TargetElementId = 1, DocumentFingerprint = Document, ExpectedCategoryStableId = category, ExpectedTypeUniqueId = type, ExpectedStateHash = state };
+    private static DynamicTrustedElementFactV1 Fact(DynamicExternalTargetReferenceV1 value) => new()
+    { UniqueId = value.TargetUniqueId, ElementId = value.TargetElementId, DocumentFingerprint = value.DocumentFingerprint, CategoryStableId = value.ExpectedCategoryStableId,
+        TypeUniqueId = value.ExpectedTypeUniqueId, StateHash = value.ExpectedStateHash, Exists = true, Verified = true, Visible = true };
     private static DynamicPointV1 Point(double x, double y, double z) => new() { X = x, Y = y, Z = z };
     private static string H(string value) => DynamicWire.Sha256(value);
 }

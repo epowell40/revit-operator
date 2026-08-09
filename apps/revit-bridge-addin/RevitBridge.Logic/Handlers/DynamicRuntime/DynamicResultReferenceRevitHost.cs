@@ -107,6 +107,16 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             });
         }
 
+        internal bool Commit()
+        {
+            if (_group == null || _finished) return false;
+            _finished = true;
+            var status = _group.Assimilate();
+            _group.Dispose();
+            _group = null;
+            return status == TransactionStatus.Committed;
+        }
+
         internal DynamicTrustedElementFactV1? LiveExternalTarget(string uniqueId)
         {
             var element = _document.GetElement(uniqueId);

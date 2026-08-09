@@ -256,6 +256,9 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/dynamic-runtime/mep-result-preview-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/mep-result-authorize-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/mep-result-apply-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/dynamic-runtime/annotation-result-preview-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/annotation-result-authorize-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/annotation-result-apply-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/dynamic-runtime/core-preview-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/core-authorize-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/core-apply-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

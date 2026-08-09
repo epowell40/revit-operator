@@ -351,7 +351,7 @@ public static class DynamicResultReferencePolicyV1
             ValidateNodeShape(node);
             if (node.NodeId != NodeId(node) || !seenNodes.Add(node.NodeId) || node.DependsOn.Any(dependency => !seenNodes.Contains(dependency)))
                 throw new ArgumentException("Result-reference worker node identity or dependency is invalid, forward, or cyclic.");
-            var descriptor = DynamicPrimitiveManifestV1.Find(node.Kind) ?? throw new ArgumentException("Result-reference worker primitive is unknown.");
+            var descriptor = ResultReferencePrimitive(node.Kind) ?? throw new ArgumentException("Result-reference worker primitive is unknown.");
             if (descriptor.RequiredAttributes.Any(required => !node.Attributes.ContainsKey(required)) ||
                 node.Attributes.Keys.Any(attribute => !descriptor.RequiredAttributes.Contains(attribute, StringComparer.Ordinal)))
                 throw new ArgumentException("Result-reference worker primitive attributes are missing, unknown, or extra.");
@@ -398,7 +398,7 @@ public static class DynamicResultReferencePolicyV1
             ValidateNodeShape(node);
             if (node.NodeId != NodeId(node) || !seenNodes.Add(node.NodeId)) throw new ArgumentException("Result-reference node identity is invalid or duplicated.");
             if (node.DependsOn.Any(dependency => !seenNodes.Contains(dependency))) throw new ArgumentException("Result-reference dependency is missing, forward, or cyclic.");
-            var descriptor = DynamicPrimitiveManifestV1.Find(node.Kind);
+            var descriptor = ResultReferencePrimitive(node.Kind);
             if (descriptor == null || !kinds.Contains(node.Kind) || !(budget.AllowedSdkDomains ?? Array.Empty<string>()).Contains(descriptor.Domain, StringComparer.Ordinal))
                 throw new ArgumentException("Result-reference primitive kind or domain is not authorized.");
             if (descriptor.RequiredAttributes.Any(required => !node.Attributes.ContainsKey(required)))
@@ -536,6 +536,20 @@ public static class DynamicResultReferencePolicyV1
     private static string OutputCanonical(DynamicResultOutputDeclarationV1 value) => DynamicCanonical.Join(value.ResultId, value.OutputSlot, value.ExpectedDocumentFingerprint, value.ExpectedCategoryStableId, value.ExpectedTypeUniqueId);
     private static bool ReferenceMatches(DynamicSymbolicResultReferenceV1 value, DynamicResultOutputDeclarationV1 output) => ReferenceCanonical(value) == OutputCanonical(output);
     internal static string Key(string resultId, string slot) => resultId + "\n" + slot;
+    private static DynamicPrimitiveDescriptorV1? ResultReferencePrimitive(string kind)
+    {
+        var annotation = DynamicAnnotationOperationManifestV1.Find(kind);
+        if (annotation != null)
+            return new DynamicPrimitiveDescriptorV1
+            {
+                Kind = annotation.Kind,
+                Domain = "annotation",
+                EffectClass = annotation.EffectClass,
+                RequiredAttributes = annotation.RequiredAttributes,
+                ImplementedByV1Host = true
+            };
+        return DynamicPrimitiveManifestV1.Find(kind);
+    }
     private static void RequireDistinct(IEnumerable<string> values, string name) { var array = values.ToArray(); if (array.Any(value => !DynamicCanonical.Hash(value)) || array.Distinct(StringComparer.Ordinal).Count() != array.Length) throw new ArgumentException("Result-reference " + name + " identities are invalid or duplicated."); }
 }
 

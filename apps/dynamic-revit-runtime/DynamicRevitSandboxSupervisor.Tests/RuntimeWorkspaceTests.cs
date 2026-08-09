@@ -8,6 +8,17 @@ namespace DynamicRevitSandboxSupervisor.Tests;
 public sealed class RuntimeWorkspaceTests
 {
     [Fact]
+    public void ResultReferenceLaneSelectsOnlyOneActivatedPrimitiveFamily()
+    {
+        var annotation = new DynamicResultReferenceGraphV1 { Nodes = new[] { new DynamicResultReferenceNodeV1 { Kind = "create_tag" } } };
+        var mep = new DynamicResultReferenceGraphV1 { Nodes = new[] { new DynamicResultReferenceNodeV1 { Kind = "create_mep_curve" } } };
+        var mixed = new DynamicResultReferenceGraphV1 { Nodes = new[] { new DynamicResultReferenceNodeV1 { Kind = "create_tag" }, new DynamicResultReferenceNodeV1 { Kind = "create_mep_curve" } } };
+        Assert.Equal("annotation", Program.ResultReferenceFamily(annotation));
+        Assert.Equal("mep", Program.ResultReferenceFamily(mep));
+        Assert.Throws<InvalidOperationException>(() => Program.ResultReferenceFamily(mixed));
+    }
+
+    [Fact]
     public void RuntimeImageHashesTheExactPackagedDependencySet()
     {
         using var temporary = new TemporaryDirectory();

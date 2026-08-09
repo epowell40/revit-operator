@@ -345,57 +345,59 @@ internal static class Program
             result.Graph.DocumentRevision != observation.DocumentRevision)
             throw new InvalidOperationException("Result-reference graph does not bind the authenticated observation document/session/revision.");
         var budget = config.ResultReferenceEffectBudget ?? throw new InvalidOperationException("Result-reference effect budget is missing.");
+        var resultFamily = ResultReferenceFamily(result.Graph);
+        var resultPrefix = resultFamily == "annotation" ? "annotation-result" : "mep-result";
         var envelopeHashes = observation.Pages.Select(value => value.EnvelopeHash).ToArray();
         var previewCore = JsonSerializer.Serialize(new
         {
-            schema = "dynamic-revit-mep-result-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
+            schema = "dynamic-revit-" + resultPrefix + "-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
             selector = observation.Selector, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget
         }, WireJson);
         var previewCorrelation = Guid.NewGuid().ToString("N"); var previewExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
         var previewRequest = JsonSerializer.Serialize(new
         {
-            schema = "dynamic-revit-mep-result-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
+            schema = "dynamic-revit-" + resultPrefix + "-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
             selector = observation.Selector, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget,
             correlationId = previewCorrelation, authExpiresUnixSeconds = previewExpires,
-            requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "mep-result-preview-v1", runtimeId, previewCorrelation, previewExpires, DynamicWire.Sha256(previewCore))
+            requestMac = DynamicWire.SignSessionMessage(hostSessionKey, resultPrefix + "-preview-v1", runtimeId, previewCorrelation, previewExpires, DynamicWire.Sha256(previewCore))
         }, WireJson);
-        var previewEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/mep-result-preview-v1", token, writeGrant, previewRequest, previewCorrelation);
-        var previewRaw = UnwrapAuthenticated(previewEnvelope, hostSessionKey, runtimeId, "mep-result-preview-v1-receipt", out var previewAuthentication);
+        var previewEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/" + resultPrefix + "-preview-v1", token, writeGrant, previewRequest, previewCorrelation);
+        var previewRaw = UnwrapAuthenticated(previewEnvelope, hostSessionKey, runtimeId, resultPrefix + "-preview-v1-receipt", out var previewAuthentication);
         hostAuthentications.Add(previewAuthentication);
         using var previewDocument = JsonDocument.Parse(previewRaw); var preview = previewDocument.RootElement;
-        var ok = preview.GetProperty("schema").GetString() == "dynamic-revit-mep-result-preview-receipt/v1" &&
+        var ok = preview.GetProperty("schema").GetString() == "dynamic-revit-" + resultPrefix + "-preview-receipt/v1" &&
             preview.GetProperty("outcome").GetString() == "preview_rolled_back_verified" && !preview.GetProperty("authorization_granted").GetBoolean() &&
             preview.GetProperty("graph_hash").GetString() == result.Graph.GraphHash && preview.GetProperty("source_hash").GetString() == sourceHash &&
             preview.GetProperty("program_hash").GetString() == programHash && preview.GetProperty("sdk_hash").GetString() == sdkHash;
         string? authorizationRaw = null; string? applyRaw = null;
         if (ok && config.Apply)
         {
-            var previewId = preview.GetProperty("preview_id").GetString() ?? throw new InvalidOperationException("MEP result preview ID is missing.");
-            var previewHash = preview.GetProperty("preview_hash").GetString() ?? throw new InvalidOperationException("MEP result preview hash is missing.");
-            var authorizationCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-mep-result-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash }, WireJson);
+            var previewId = preview.GetProperty("preview_id").GetString() ?? throw new InvalidOperationException("Result-reference preview ID is missing.");
+            var previewHash = preview.GetProperty("preview_hash").GetString() ?? throw new InvalidOperationException("Result-reference preview hash is missing.");
+            var authorizationCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-" + resultPrefix + "-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash }, WireJson);
             var authorizationCorrelation = Guid.NewGuid().ToString("N"); var authorizationExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
             var authorizationRequest = JsonSerializer.Serialize(new
             {
-                schema = "dynamic-revit-mep-result-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash,
+                schema = "dynamic-revit-" + resultPrefix + "-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash,
                 correlationId = authorizationCorrelation, authExpiresUnixSeconds = authorizationExpires,
-                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "mep-result-authorize-v1", runtimeId, authorizationCorrelation, authorizationExpires, DynamicWire.Sha256(authorizationCore))
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, resultPrefix + "-authorize-v1", runtimeId, authorizationCorrelation, authorizationExpires, DynamicWire.Sha256(authorizationCore))
             }, WireJson);
-            var authorizationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/mep-result-authorize-v1", token, writeGrant, authorizationRequest, authorizationCorrelation);
-            authorizationRaw = UnwrapAuthenticated(authorizationEnvelope, hostSessionKey, runtimeId, "mep-result-authorize-v1-receipt", out var authorizationAuthentication);
+            var authorizationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/" + resultPrefix + "-authorize-v1", token, writeGrant, authorizationRequest, authorizationCorrelation);
+            authorizationRaw = UnwrapAuthenticated(authorizationEnvelope, hostSessionKey, runtimeId, resultPrefix + "-authorize-v1-receipt", out var authorizationAuthentication);
             hostAuthentications.Add(authorizationAuthentication);
             using var authorizationDocument = JsonDocument.Parse(authorizationRaw); var authorization = authorizationDocument.RootElement;
-            if (!authorization.GetProperty("authorization_granted").GetBoolean()) throw new InvalidOperationException("MEP result apply authorization was not granted.");
-            var authorizationId = authorization.GetProperty("authorization_id").GetString() ?? throw new InvalidOperationException("MEP result authorization ID is missing.");
-            var applyCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-mep-result-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId }, WireJson);
+            if (!authorization.GetProperty("authorization_granted").GetBoolean()) throw new InvalidOperationException("Result-reference apply authorization was not granted.");
+            var authorizationId = authorization.GetProperty("authorization_id").GetString() ?? throw new InvalidOperationException("Result-reference authorization ID is missing.");
+            var applyCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-" + resultPrefix + "-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId }, WireJson);
             var applyCorrelation = Guid.NewGuid().ToString("N"); var applyExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
             var applyRequest = JsonSerializer.Serialize(new
             {
-                schema = "dynamic-revit-mep-result-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId,
+                schema = "dynamic-revit-" + resultPrefix + "-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId,
                 correlationId = applyCorrelation, authExpiresUnixSeconds = applyExpires,
-                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "mep-result-apply-v1", runtimeId, applyCorrelation, applyExpires, DynamicWire.Sha256(applyCore))
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, resultPrefix + "-apply-v1", runtimeId, applyCorrelation, applyExpires, DynamicWire.Sha256(applyCore))
             }, WireJson);
-            var applyEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/mep-result-apply-v1", token, writeGrant, applyRequest, applyCorrelation);
-            applyRaw = UnwrapAuthenticated(applyEnvelope, hostSessionKey, runtimeId, "mep-result-apply-v1-receipt", out var applyAuthentication);
+            var applyEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/" + resultPrefix + "-apply-v1", token, writeGrant, applyRequest, applyCorrelation);
+            applyRaw = UnwrapAuthenticated(applyEnvelope, hostSessionKey, runtimeId, resultPrefix + "-apply-v1-receipt", out var applyAuthentication);
             hostAuthentications.Add(applyAuthentication);
             using var applyDocument = JsonDocument.Parse(applyRaw); var apply = applyDocument.RootElement;
             ok = apply.GetProperty("outcome").GetString() == "committed_verified" && apply.GetProperty("graph_hash").GetString() == result.Graph.GraphHash &&
@@ -410,8 +412,16 @@ internal static class Program
             ResultReferenceFactsReceipt = observation.FactsReceiptBody, WorkerOutput = output, PreviewReceipt = previewRaw,
             ApplyAuthorizationReceipt = authorizationRaw, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications,
             TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage,
-            Failure = ok ? null : config.Apply ? "Authorized MEP result-reference apply did not produce committed verification." : "MEP result-reference preview did not produce rollback truth."
+            Failure = ok ? null : config.Apply ? "Authorized " + resultFamily + " result-reference apply did not produce committed verification." : resultFamily + " result-reference preview did not produce rollback truth."
         };
+    }
+
+    internal static string ResultReferenceFamily(DynamicResultReferenceGraphV1 graph)
+    {
+        if (graph == null || graph.Nodes == null || graph.Nodes.Count == 0) throw new InvalidOperationException("Result-reference graph is empty.");
+        if (graph.Nodes.All(node => DynamicAnnotationOperationManifestV1.Find(node.Kind) != null)) return "annotation";
+        if (graph.Nodes.All(node => DynamicMepMutationManifestV1.Find(node.Kind) != null)) return "mep";
+        throw new InvalidOperationException("Result-reference graph must contain one activated primitive family only.");
     }
 
     private static string TrustedFactsHash(IEnumerable<DynamicTrustedElementFactV1> facts) => DynamicWire.Sha256(
