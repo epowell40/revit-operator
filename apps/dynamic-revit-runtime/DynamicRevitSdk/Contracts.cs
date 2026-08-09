@@ -298,14 +298,14 @@ public static class DynamicOperationGraphAdmission
         var operationIds = new HashSet<string>(StringComparer.Ordinal);
         var targetIds = new HashSet<string>(StringComparer.Ordinal);
         var parameterMutations = 0;
-        foreach (var operation in graph.Operations)
+        foreach (var operation in graph.Operations!)
         {
             if (string.IsNullOrWhiteSpace(operation.TargetUniqueId) || operation.TargetUniqueId.Length > 256 || (allowed != null && !allowed.Contains(operation.TargetUniqueId)) || operation.OperationId != DynamicWire.OperationId(operation) || !operationIds.Add(operation.OperationId) || !targetIds.Add(operation.TargetUniqueId)) throw new ArgumentException("Dynamic operation identity or target scope is invalid; Phase-2 preview permits at most one operation per target.");
             if (operation.Kind == "move_element" && (operation.VectorFeet == null || operation.VectorFeet.Length != 3 || operation.VectorFeet.Any(v => double.IsNaN(v) || double.IsInfinity(v) || Math.Abs(v) > 100d) || Math.Sqrt(operation.VectorFeet.Sum(v => v * v)) > 150d)) throw new ArgumentException("Move operation is invalid.");
             if (operation.Kind == "set_parameter")
             {
                 parameterMutations++;
-                if (string.IsNullOrWhiteSpace(operation.Parameter) || operation.Parameter.Length > 128 || operation.Value == null || operation.Value.Length > 512) throw new ArgumentException("Set parameter operation is invalid.");
+                if (string.IsNullOrWhiteSpace(operation.Parameter) || operation.Parameter!.Length > 128 || operation.Value == null || operation.Value!.Length > 512) throw new ArgumentException("Set parameter operation is invalid.");
             }
             if (operation.Kind != "move_element" && operation.Kind != "set_parameter") throw new ArgumentException("Unsupported dynamic operation kind.");
         }
