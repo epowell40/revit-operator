@@ -11,7 +11,7 @@
     "task_id": { "type": "string", "minLength": 1 },
     "config_id": { "enum": ["epic0439_typed_v1", "epic0439_dynamic_v1"] },
     "representation": { "enum": ["typed_capability_chain", "dynamic_program"] },
-    "evidence_tier": { "enum": ["source_only", "mocked", "live_revit"] },
+    "evidence_tier": { "enum": ["source_only", "mocked", "live_revit_unverified"] },
     "metrics": {
       "type": "object",
       "additionalProperties": false,
@@ -63,13 +63,28 @@
         "apply_receipt_hash": { "type": "string", "minLength": 1 },
         "verification_receipt_hash": { "type": "string", "minLength": 1 }
       }
+    },
+    "scorer_evidence_receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "evidence_file_sha256", "canonical_binding_sha256", "receipt_schema", "authenticated_campaign_binding"],
+      "properties": {
+        "schema_version": { "const": "epic0439_scorer_evidence_receipt/v1" },
+        "evidence_file_sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "canonical_binding_sha256": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "receipt_schema": { "enum": ["dynamic-revit-live-evidence/v1", "dynamic-revit-phase2-live-evidence/v0"] },
+        "authenticated_campaign_binding": { "const": false }
+      }
     }
   },
   "allOf": [
     {
-      "if": { "properties": { "evidence_tier": { "const": "live_revit" } } },
-      "then": { "required": ["live_revit_receipt"] },
-      "else": { "not": { "required": ["live_revit_receipt"] } }
+      "if": { "properties": { "evidence_tier": { "const": "live_revit_unverified" } } },
+      "then": { "required": ["scorer_evidence_receipt"] },
+      "else": { "not": { "required": ["scorer_evidence_receipt"] } }
+    },
+    {
+      "not": { "required": ["live_revit_receipt"] }
     }
   ]
 }

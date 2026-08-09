@@ -3,7 +3,7 @@
   "suite_id": "epic0439-general-agent-usefulness-v1",
   "purpose": "Paired typed-capability and Dynamic Runtime evaluation across representative Revit work; the suite is intended to learn when each execution representation is useful, not to prove a predetermined winner.",
   "truth_policy": {
-    "permitted_evidence_tiers": ["source_only", "mocked", "live_revit"],
+    "permitted_evidence_tiers": ["source_only", "mocked", "live_revit_unverified", "live_revit"],
     "live_claim_requires_receipt": true,
     "source_and_mock_are_not_live_acceptance": true
   },

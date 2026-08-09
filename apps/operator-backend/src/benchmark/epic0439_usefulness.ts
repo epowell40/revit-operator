@@ -23,7 +23,7 @@ export const EPIC0439_REQUIRED_DOMAINS = [
 
 export type Epic0439Domain = (typeof EPIC0439_REQUIRED_DOMAINS)[number];
 export type Epic0439Representation = "typed_capability_chain" | "dynamic_program";
-export type Epic0439EvidenceTier = "source_only" | "mocked" | "live_revit";
+export type Epic0439EvidenceTier = "source_only" | "mocked" | "live_revit_unverified" | "live_revit";
 export type Epic0439RecoveryOutcome = "not_needed" | "recovered" | "failed" | "outcome_uncertain";
 
 export type Epic0439ExecutionConfig = {
@@ -148,6 +148,14 @@ export type Epic0439LiveReceipt = {
   verification_receipt_hash: string;
 };
 
+export type Epic0439ScorerEvidenceReceipt = {
+  schema_version: "epic0439_scorer_evidence_receipt/v1";
+  evidence_file_sha256: string;
+  canonical_binding_sha256: string;
+  receipt_schema: "dynamic-revit-live-evidence/v1" | "dynamic-revit-phase2-live-evidence/v0";
+  authenticated_campaign_binding: false;
+};
+
 export type Epic0439Result = {
   schema_version: "epic0439_result/v1";
   case_id: string;
@@ -163,6 +171,7 @@ export type Epic0439Result = {
   };
   notes: string[];
   live_revit_receipt?: Epic0439LiveReceipt;
+  scorer_evidence_receipt?: Epic0439ScorerEvidenceReceipt;
 };
 
 type Aggregate = {
@@ -194,6 +203,7 @@ export type Epic0439UsefulnessReport = {
   live_revit_result_count: number;
   source_only_result_count: number;
   mocked_result_count: number;
+  unverified_live_result_count: number;
   live_acceptance_claimable: boolean;
   evidence_warning: string | null;
   aggregates: Aggregate[];
@@ -225,6 +235,14 @@ export function validateEpic0439UsefulnessManifest(manifest: Epic0439UsefulnessM
   if (manifest.randomization.algorithm !== "xorshift32") throw new Error("EPIC-0439 randomization algorithm must be xorshift32.");
   if (manifest.tasks.length !== EPIC0439_REQUIRED_DOMAINS.length) {
     throw new Error(`EPIC-0439 usefulness suite requires exactly ${EPIC0439_REQUIRED_DOMAINS.length} tasks.`);
+  }
+  const knownEvidenceTiers: Epic0439EvidenceTier[] = ["source_only", "mocked", "live_revit_unverified", "live_revit"];
+  if (
+    manifest.truth_policy.permitted_evidence_tiers.length !== knownEvidenceTiers.length ||
+    knownEvidenceTiers.some((tier) => !manifest.truth_policy.permitted_evidence_tiers.includes(tier)) ||
+    manifest.truth_policy.permitted_evidence_tiers.some((tier) => !knownEvidenceTiers.includes(tier))
+  ) {
+    throw new Error("EPIC-0439 truth policy must enumerate the supported evidence tiers exactly.");
   }
   const taskIds = new Set<string>();
   const domains = new Set<Epic0439Domain>();
@@ -423,6 +441,9 @@ function bounded(value: number, field: string): void {
 
 export function validateEpic0439Result(result: Epic0439Result, manifest: Epic0439UsefulnessManifest): void {
   if (result.schema_version !== "epic0439_result/v1") throw new Error("Unsupported EPIC-0439 result schema.");
+  if (!manifest.truth_policy.permitted_evidence_tiers.includes(result.evidence_tier)) {
+    throw new Error(`Unsupported EPIC-0439 evidence tier '${String(result.evidence_tier)}'.`);
+  }
   const config = manifest.execution_configs.find((entry) => entry.config_id === result.config_id);
   if (!config) throw new Error(`Unknown EPIC-0439 config '${result.config_id}'.`);
   if (!manifest.tasks.some((entry) => entry.task_id === result.task_id)) throw new Error(`Unknown EPIC-0439 task '${result.task_id}'.`);
@@ -445,13 +466,27 @@ export function validateEpic0439Result(result: Epic0439Result, manifest: Epic043
   if (result.metrics.completion && result.failure) throw new Error("A completed result cannot carry a terminal failure.");
   if (!result.metrics.completion && !result.failure) throw new Error("An incomplete result must describe its terminal failure.");
   if (result.evidence_tier === "live_revit") {
-    const receipt = result.live_revit_receipt;
-    if (!receipt) throw new Error("A live_revit result requires a live Revit receipt.");
-    for (const [field, value] of Object.entries(receipt)) {
-      if (!String(value).trim()) throw new Error(`Live Revit receipt field '${field}' is required.`);
-    }
-  } else if (result.live_revit_receipt) {
+    throw new Error("live_revit results cannot be accepted from caller-authored result JSON; use authenticated scorer evidence.");
+  }
+  if (result.live_revit_receipt) {
     throw new Error(`${result.evidence_tier} results must not carry a live Revit receipt.`);
+  }
+  if (result.evidence_tier === "live_revit_unverified") {
+    const receipt = result.scorer_evidence_receipt;
+    if (!receipt || receipt.schema_version !== "epic0439_scorer_evidence_receipt/v1") {
+      throw new Error("A live_revit_unverified result requires a scorer evidence receipt.");
+    }
+    if (!/^sha256:[a-f0-9]{64}$/.test(receipt.evidence_file_sha256) || !/^sha256:[a-f0-9]{64}$/.test(receipt.canonical_binding_sha256)) {
+      throw new Error("Scorer evidence receipt hashes must be canonical sha256 values.");
+    }
+    if (receipt.authenticated_campaign_binding !== false) {
+      throw new Error("Unverified live evidence must not claim an authenticated campaign binding.");
+    }
+    if (result.metrics.correctness !== 0 || result.metrics.changed_element_precision !== 0 || result.metrics.verification_quality !== 0) {
+      throw new Error("Unverified live evidence cannot claim correctness, precision, or verification credit.");
+    }
+  } else if (result.scorer_evidence_receipt) {
+    throw new Error(`${result.evidence_tier} results must not carry a scorer evidence receipt.`);
   }
 }
 
@@ -520,6 +555,7 @@ export function buildEpic0439UsefulnessReport(
   const liveCount = results.filter((entry) => entry.evidence_tier === "live_revit").length;
   const sourceCount = results.filter((entry) => entry.evidence_tier === "source_only").length;
   const mockCount = results.filter((entry) => entry.evidence_tier === "mocked").length;
+  const unverifiedLiveCount = results.filter((entry) => entry.evidence_tier === "live_revit_unverified").length;
   const liveResults = results.filter((entry) => entry.evidence_tier === "live_revit");
   const completeLivePairs = manifest.tasks.every((task) => {
     const taskResults = liveResults.filter((entry) => entry.task_id === task.task_id);
@@ -541,12 +577,15 @@ export function buildEpic0439UsefulnessReport(
     live_revit_result_count: liveCount,
     source_only_result_count: sourceCount,
     mocked_result_count: mockCount,
-    live_acceptance_claimable: completeLivePairs && sourceCount === 0 && mockCount === 0,
+    unverified_live_result_count: unverifiedLiveCount,
+    live_acceptance_claimable: completeLivePairs && sourceCount === 0 && mockCount === 0 && unverifiedLiveCount === 0,
     evidence_warning:
       liveCount === 0
-        ? "No live Revit outcomes are present. Source-only and mocked results are development evidence, not live acceptance."
-        : sourceCount > 0 || mockCount > 0
-          ? "Mixed evidence tiers are reported separately; source-only and mocked outcomes do not count as live Revit acceptance."
+        ? unverifiedLiveCount > 0
+          ? "Live Revit receipts were structurally verified, but no authenticated campaign binding was present. They do not count as live acceptance."
+          : "No live Revit outcomes are present. Source-only and mocked results are development evidence, not live acceptance."
+        : sourceCount > 0 || mockCount > 0 || unverifiedLiveCount > 0
+          ? "Mixed evidence tiers are reported separately; source-only, mocked, and unverified live outcomes do not count as live Revit acceptance."
           : null,
     aggregates,
     paired_deltas: pairedDeltas.sort((a, b) => a.case_id.localeCompare(b.case_id))
@@ -573,6 +612,7 @@ export function writeEpic0439ReportArtifacts(
     `- Results: ${report.result_count}`,
     `- Live Revit: ${report.live_revit_result_count}`,
     `- Mocked: ${report.mocked_result_count}`,
+    `- Live Revit (unverified campaign binding): ${report.unverified_live_result_count}`,
     `- Source-only: ${report.source_only_result_count}`,
     `- Live acceptance claimable: ${report.live_acceptance_claimable ? "yes" : "no"}`,
     ...(report.evidence_warning ? [`- Warning: ${report.evidence_warning}`] : []),

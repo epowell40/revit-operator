@@ -6,6 +6,7 @@ import {
   validateEpic0439UsefulnessManifest,
   writeEpic0439ReportArtifacts
 } from "../benchmark/epic0439_usefulness.js";
+import { ingestEpic0439EvidenceCampaign } from "../benchmark/epic0439_evidence.js";
 import { readJsonFile, writeJsonFile } from "../benchmark/files.js";
 
 function flag(name: string): string | undefined {
@@ -20,6 +21,7 @@ function usage(): never {
     "  npm run benchmark:epic0439 -- validate",
     "  npm run benchmark:epic0439 -- materialize --seed <seed> --output <cases.json> [--variants 1] [--holdout] [--reviewer-wording <json>]",
     "  npm run benchmark:epic0439 -- report --results <results.json> --output-dir <dir>",
+    "  npm run benchmark:epic0439 -- report-evidence --cases <cases.json> --manifest <evidence.json> --evidence-root <dir> --output-dir <dir>",
     "",
     "Materialization creates task cases only. It does not execute Revit or fabricate outcomes."
   ].join("\n"));
@@ -74,6 +76,28 @@ if (command === "validate") {
     output_dir: path.resolve(outputDir),
     result_count: report.result_count,
     live_revit_result_count: report.live_revit_result_count,
+    live_acceptance_claimable: report.live_acceptance_claimable,
+    evidence_warning: report.evidence_warning
+  }, null, 2));
+} else if (command === "report-evidence") {
+  const casesPath = flag("--cases");
+  const evidenceManifestPath = flag("--manifest");
+  const evidenceRoot = flag("--evidence-root");
+  const outputDir = flag("--output-dir");
+  if (!casesPath || !evidenceManifestPath || !evidenceRoot || !outputDir) usage();
+  const resolvedOutput = path.resolve(outputDir);
+  const results = ingestEpic0439EvidenceCampaign({
+    manifest,
+    caseSetPath: path.resolve(casesPath),
+    evidenceManifestPath: path.resolve(evidenceManifestPath),
+    evidenceRoot: path.resolve(evidenceRoot)
+  });
+  writeJsonFile(path.join(resolvedOutput, "epic0439_scorer_owned_results.json"), results);
+  const report = writeEpic0439ReportArtifacts(resolvedOutput, manifest, results);
+  console.log(JSON.stringify({
+    output_dir: resolvedOutput,
+    result_count: report.result_count,
+    unverified_live_result_count: report.unverified_live_result_count,
     live_acceptance_claimable: report.live_acceptance_claimable,
     evidence_warning: report.evidence_warning
   }, null, 2));
