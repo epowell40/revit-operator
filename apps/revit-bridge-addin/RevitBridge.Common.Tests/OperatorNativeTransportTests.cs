@@ -247,7 +247,11 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("/revit/dynamic-runtime/annotation-result-apply-v1", server);
 
             var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceActivationHandlers.cs"));
-            Assert.Equal(3, activation.Split("DynamicRuntimeV1LaboratoryBoundary.Require();").Length - 1);
+            Assert.Equal(
+                3,
+                activation.Split(
+                    new[] { "DynamicRuntimeV1LaboratoryBoundary.Require();" },
+                    StringSplitOptions.None).Length - 1);
             Assert.Contains("DynamicRuntimeBootstrapRegistry.VerifyRequest", activation);
             Assert.Contains("DynamicRuntimeAdmissionRegistry.RequireV1Identity", activation);
             Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged", activation);
