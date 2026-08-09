@@ -9308,6 +9308,12 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "regex", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "max", out error)) return false;
+                if (obj.Value.TryGetProperty("max", out var findTextMaximum) && findTextMaximum.ValueKind != JsonValueKind.Null &&
+                    (!findTextMaximum.TryGetInt32(out var findTextMaximumValue) || findTextMaximumValue < 1 || findTextMaximumValue > 500))
+                {
+                    error = "find-text-notes max must be between 1 and 500.";
+                    return false;
+                }
                 return true;
             }
 

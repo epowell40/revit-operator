@@ -113,6 +113,7 @@ internal static class Program
                 throw new InvalidOperationException("Result-reference execution requires an exact building-systems selector and effect budget.");
             config.ResultReferenceEffectBudget.Validate();
             resultReferenceInput = await CollectResultReferenceInputs(config, runtimeId, hostSessionKey, token, writeGrant, workerRuntimePackageHash, hostAuthentications);
+            ValidateResultReferenceObservationContext(taskInput, resultReferenceInput);
             workerInput = JsonSerializer.Serialize(new
             {
                 schema = "dynamic-revit-worker-input/v0",
@@ -245,6 +246,14 @@ internal static class Program
             ok = ok && replayRejected;
         }
         return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
+    }
+
+    internal static void ValidateResultReferenceObservationContext(DynamicTaskInput input, ResultReferenceObservationInput observation)
+    {
+        if (input == null || observation == null) throw new ArgumentNullException(input == null ? nameof(input) : nameof(observation));
+        var context = new DynamicResultReferenceProgramContextV1(input, observation.DocumentRevision, observation.SnapshotHash,
+            observation.ScopeHash, observation.Pages, observation.TrustedExternalTargets);
+        foreach (var target in observation.TrustedExternalTargets) _ = context.ExternalTarget(target.UniqueId);
     }
 
     private static async Task<ResultReferenceObservationInput> CollectResultReferenceInputs(LiveTaskConfig config, string runtimeId,

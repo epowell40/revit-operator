@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 
 namespace RevitOperator.DynamicRevitSdk;
 
@@ -13,24 +14,27 @@ public static class DynamicBuildingSystemsObservationContractV1
     public const string SelectorSchema = "dynamic-revit-building-systems-selector/v1";
     public const string EnvelopeSchema = "dynamic-revit-building-systems-envelope/v1";
     public const string CursorSchema = "dynamic-revit-building-systems-cursor/v1";
-    public const string CanonicalVersion = "dynamic-revit-building-systems-canonical/v3";
+    public const string CanonicalVersion = "dynamic-revit-building-systems-canonical/v4";
     public const int MaximumRequestBytes = 64 * 1024;
     public const int MaximumPageSize = 128;
     public const int MaximumObservedFacts = 2048;
     public const int MaximumElementSelectors = 256;
     public const int MaximumCategorySelectors = 32;
-    public const int MaximumKindSelectors = 5;
+    public const int MaximumKindSelectors = 7;
     public const int MaximumParameterSelectors = 32;
     public const int MaximumParametersPerFact = 64;
     public const int MaximumConnectorsPerFact = 64;
     public const int MaximumConnectionsPerConnector = 64;
     public const int MaximumSystemMembers = 2048;
+    public const int MaximumAnnotationTextBytes = 4096;
+    public const int MaximumTaggedTargets = 16;
 
     private static readonly Type[] WireTypes =
     {
         typeof(DynamicBuildingSystemsSelectorV1), typeof(DynamicBuildingSystemsEnvelopeV1),
         typeof(DynamicBuildingSystemsFactV1), typeof(DynamicBuildingConnectorV1),
-        typeof(DynamicMepCurveFactV1), typeof(DynamicBuildingAssetFactV1), typeof(DynamicBuildingSystemFactV1)
+        typeof(DynamicMepCurveFactV1), typeof(DynamicBuildingAssetFactV1), typeof(DynamicBuildingSystemFactV1),
+        typeof(DynamicAnnotationObservationFactV1), typeof(DynamicIndependentTagObservationFactV1)
     };
 
     public static string ContractSurfaceHash => DynamicWire.Sha256(string.Join("\n", WireTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
@@ -40,7 +44,8 @@ public static class DynamicBuildingSystemsObservationContractV1
         MaximumCategorySelectors.ToString(CultureInfo.InvariantCulture), MaximumKindSelectors.ToString(CultureInfo.InvariantCulture),
         MaximumParameterSelectors.ToString(CultureInfo.InvariantCulture), MaximumParametersPerFact.ToString(CultureInfo.InvariantCulture),
         MaximumConnectorsPerFact.ToString(CultureInfo.InvariantCulture), MaximumConnectionsPerConnector.ToString(CultureInfo.InvariantCulture),
-        MaximumSystemMembers.ToString(CultureInfo.InvariantCulture), ContractSurfaceHash, "read-only", "snapshot-bound", "development-laboratory-only", "no-revit-handles"));
+        MaximumSystemMembers.ToString(CultureInfo.InvariantCulture), MaximumAnnotationTextBytes.ToString(CultureInfo.InvariantCulture), MaximumTaggedTargets.ToString(CultureInfo.InvariantCulture),
+        ContractSurfaceHash, "read-only", "snapshot-bound", "development-laboratory-only", "no-revit-handles"));
 
     private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
         .Where(property => property.GetMethod != null).OrderBy(property => property.Name, StringComparer.Ordinal)
@@ -100,6 +105,8 @@ public sealed class DynamicBuildingSystemsFactV1
     public DynamicMepCurveFactV1? Curve { get; set; }
     public DynamicBuildingAssetFactV1? Asset { get; set; }
     public DynamicBuildingSystemFactV1? System { get; set; }
+    public DynamicAnnotationObservationFactV1? Annotation { get; set; }
+    public DynamicIndependentTagObservationFactV1? Tag { get; set; }
     public IReadOnlyList<DynamicBuildingConnectorV1> Connectors { get; set; } = Array.Empty<DynamicBuildingConnectorV1>();
     public IReadOnlyList<DynamicParameterValueV1> Parameters { get; set; } = Array.Empty<DynamicParameterValueV1>();
 }
@@ -160,11 +167,36 @@ public sealed class DynamicBuildingSystemFactV1
     public IReadOnlyList<DynamicStableReferenceV1> Members { get; set; } = Array.Empty<DynamicStableReferenceV1>();
 }
 
+public sealed class DynamicAnnotationObservationFactV1
+{
+    public string AnnotationClass { get; set; } = "";
+    public DynamicStableReferenceV1 TextType { get; set; } = new();
+    public DynamicStableReferenceV1 OwnerView { get; set; } = new();
+    public string Text { get; set; } = "";
+    public string StateHash { get; set; } = "";
+}
+
+public sealed class DynamicIndependentTagObservationFactV1
+{
+    public DynamicStableReferenceV1 TagType { get; set; } = new();
+    public string TagTypeStateHash { get; set; } = "";
+    public DynamicStableReferenceV1 OwnerView { get; set; } = new();
+    public string OwnerViewStateHash { get; set; } = "";
+    public IReadOnlyList<DynamicStableReferenceV1> TaggedTargets { get; set; } = Array.Empty<DynamicStableReferenceV1>();
+    public DynamicPointV1 HeadPosition { get; set; } = new();
+    public string Orientation { get; set; } = "";
+    public bool HasLeader { get; set; }
+    public string LeaderEndCondition { get; set; } = "";
+    public DynamicPointV1? LeaderEnd { get; set; }
+    public DynamicPointV1? LeaderElbow { get; set; }
+    public string StateHash { get; set; } = "";
+}
+
 public static class DynamicBuildingSystemsObservationPolicyV1
 {
     private const int MaximumText = 512;
     private const double MaximumCoordinate = 1_000_000_000d;
-    private static readonly string[] Kinds = { "mep_curve", "equipment", "device", "accessory", "system" };
+    private static readonly string[] Kinds = { "mep_curve", "equipment", "device", "accessory", "system", "text_note", "independent_tag" };
 
     public static string ConnectorStableId(string snapshotHash, string ownerUniqueId, string connectorIdentity)
     {
@@ -268,9 +300,11 @@ public static class DynamicBuildingSystemsObservationPolicyV1
         if (value.Parameters == null || value.Parameters.Count > DynamicBuildingSystemsObservationContractV1.MaximumParametersPerFact) throw new ArgumentException("Building-systems parameter set is unbounded.");
         foreach (var parameter in value.Parameters) Parameter(parameter);
         if (value.Parameters.Select(parameter => parameter.Scope + "\n" + parameter.Identity).Distinct(StringComparer.Ordinal).Count() != value.Parameters.Count) throw new ArgumentException("Building-systems parameters are duplicated.");
-        if (value.Kind == "mep_curve") { if (value.Curve == null || value.Asset != null || value.System != null) throw new ArgumentException("MEP curve fact shape is invalid."); Curve(value.Curve); }
-        else if (value.Kind == "system") { if (value.System == null || value.Curve != null || value.Asset != null || value.Connectors.Count != 0) throw new ArgumentException("System fact shape is invalid."); System(value.System); }
-        else { if (value.Asset == null || value.Curve != null || value.System != null) throw new ArgumentException("Building asset fact shape is invalid."); Asset(value.Asset, value.Kind); }
+        if (value.Kind == "mep_curve") { if (value.Curve == null || value.Asset != null || value.System != null || value.Annotation != null || value.Tag != null) throw new ArgumentException("MEP curve fact shape is invalid."); Curve(value.Curve); }
+        else if (value.Kind == "system") { if (value.System == null || value.Curve != null || value.Asset != null || value.Annotation != null || value.Tag != null || value.Connectors.Count != 0) throw new ArgumentException("System fact shape is invalid."); System(value.System); }
+        else if (value.Kind == "text_note") { if (value.Annotation == null || value.Curve != null || value.Asset != null || value.System != null || value.Tag != null || value.Connectors.Count != 0) throw new ArgumentException("Text-note fact shape is invalid."); Annotation(value.Annotation, value.Type, value.Location); }
+        else if (value.Kind == "independent_tag") { if (value.Tag == null || value.Curve != null || value.Asset != null || value.System != null || value.Annotation != null || value.Connectors.Count != 0) throw new ArgumentException("Independent-tag fact shape is invalid."); Tag(value.Tag, value.Type, value.Location); }
+        else { if (value.Asset == null || value.Curve != null || value.System != null || value.Annotation != null || value.Tag != null) throw new ArgumentException("Building asset fact shape is invalid."); Asset(value.Asset, value.Kind); }
     }
 
     public static string FactCanonical(DynamicBuildingSystemsFactV1 value)
@@ -286,7 +320,7 @@ public static class DynamicBuildingSystemsObservationPolicyV1
     }
 
     private static string FactCanonicalUnchecked(DynamicBuildingSystemsFactV1 value) => DynamicCanonical.Join(value.Kind, Ref(value.Element), Ref(value.Category), Ref(value.Family), Ref(value.Type), Ref(value.Host), Ref(value.Level), Ref(value.Workset),
-        Pt(value.Location), Tx(value.Orientation), CurveCanonical(value.Curve), AssetCanonical(value.Asset), SystemCanonical(value.System),
+        Pt(value.Location), Tx(value.Orientation), CurveCanonical(value.Curve), AssetCanonical(value.Asset), SystemCanonical(value.System), AnnotationCanonical(value.Annotation), TagCanonical(value.Tag),
         DynamicCanonical.Join(value.Connectors.OrderBy(item => item.StableWithinSnapshotId, StringComparer.Ordinal).Select(ConnectorCanonical).ToArray()),
         DynamicCanonical.Join(value.Parameters.OrderBy(item => item.Scope, StringComparer.Ordinal).ThenBy(item => item.Identity, StringComparer.Ordinal).Select(ParameterCanonical).ToArray()));
 
@@ -315,10 +349,36 @@ public static class DynamicBuildingSystemsObservationPolicyV1
     }
     private static void Asset(DynamicBuildingAssetFactV1 value, string expected) { if (value == null || value.AssetClass != expected) throw new ArgumentException("Building asset classification is invalid."); Point(value.Location, true); Transform(value.Orientation, true); Reference(value.Family, true, "family"); Reference(value.Type, true, "type"); Reference(value.Host, false, "host"); Reference(value.Level, false, "level"); Reference(value.Workset, false, "workset"); }
     private static void System(DynamicBuildingSystemFactV1 value) { RequireText(value.Domain, 128, "system domain"); RequireText(value.Classification, 512, "system classification"); Reference(value.Type, true, "type"); if (value.Members == null || value.Members.Count > DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers) throw new ArgumentException("System member set is unbounded."); foreach (var member in value.Members) Reference(member, true, "element"); if (value.Members.Select(Ref).Distinct(StringComparer.Ordinal).Count() != value.Members.Count) throw new ArgumentException("System members are duplicated."); }
+    private static void Annotation(DynamicAnnotationObservationFactV1 value, DynamicStableReferenceV1? type, DynamicPointV1? location)
+    {
+        if (value == null || value.AnnotationClass != "text_note") throw new ArgumentException("Annotation classification is invalid.");
+        Reference(value.TextType, true, "type"); Reference(value.OwnerView, true, "view"); Point(location, true); RequireHash(value.StateHash, "annotation state");
+        if (type == null || Ref(type) != Ref(value.TextType)) throw new ArgumentException("Annotation type identity is inconsistent.");
+        var normalized = value.Text?.Replace("\r\n", "\n").Replace('\r', '\n').Normalize(NormalizationForm.FormC);
+        if (normalized == null || normalized.Length == 0) throw new ArgumentException("Annotation text is empty, non-canonical, malformed, or unbounded.");
+        if (normalized != value.Text || Encoding.UTF8.GetByteCount(normalized) > DynamicBuildingSystemsObservationContractV1.MaximumAnnotationTextBytes || normalized.IndexOf('\0') >= 0)
+            throw new ArgumentException("Annotation text is empty, non-canonical, malformed, or unbounded.");
+    }
+    private static void Tag(DynamicIndependentTagObservationFactV1 value, DynamicStableReferenceV1? type, DynamicPointV1? location)
+    {
+        Reference(value.TagType, true, "type"); Reference(value.OwnerView, true, "view"); RequireHash(value.TagTypeStateHash, "tag type state"); RequireHash(value.OwnerViewStateHash, "tag owner-view state"); RequireHash(value.StateHash, "tag state");
+        if (type == null || Ref(type) != Ref(value.TagType) || Pt(location) != Pt(value.HeadPosition)) throw new ArgumentException("Independent-tag type or head identity is inconsistent.");
+        if (value.TaggedTargets == null || value.TaggedTargets.Count < 1 || value.TaggedTargets.Count > DynamicBuildingSystemsObservationContractV1.MaximumTaggedTargets)
+            throw new ArgumentException("Independent-tag target set is empty or unbounded.");
+        foreach (var target in value.TaggedTargets) Reference(target, true, "element");
+        if (value.TaggedTargets.Select(Ref).Distinct(StringComparer.Ordinal).Count() != value.TaggedTargets.Count) throw new ArgumentException("Independent-tag targets are duplicated.");
+        Point(value.HeadPosition, true); Point(value.LeaderEnd); Point(value.LeaderElbow); RequireText(value.LeaderEndCondition, 64, "tag leader condition");
+        if (!new[] { "horizontal", "vertical" }.Contains(value.Orientation, StringComparer.Ordinal) ||
+            !value.HasLeader && (value.LeaderEnd != null || value.LeaderElbow != null) || (value.LeaderEnd == null) != (value.LeaderElbow == null))
+            throw new ArgumentException("Independent-tag orientation or leader geometry is invalid.");
+    }
 
     private static string CurveCanonical(DynamicMepCurveFactV1? value) => value == null ? "" : DynamicCanonical.Join(Pt(value.Start), Pt(value.End), value.CurveKind, value.Shape, Num(value.DiameterFeet), Num(value.HeightFeet), Num(value.WidthFeet), Num(value.OffsetFeet), Num(value.Slope), Ref(value.Level), Ref(value.Type), DynamicCanonical.Set(value.Systems.Select(Ref)));
     private static string AssetCanonical(DynamicBuildingAssetFactV1? value) => value == null ? "" : DynamicCanonical.Join(value.AssetClass, Pt(value.Location), Tx(value.Orientation), Ref(value.Family), Ref(value.Type), Ref(value.Host), Ref(value.Level), Ref(value.Workset));
     private static string SystemCanonical(DynamicBuildingSystemFactV1? value) => value == null ? "" : DynamicCanonical.Join(value.Domain, value.Classification, Ref(value.Type), DynamicCanonical.Set(value.Members.Select(Ref)));
+    private static string AnnotationCanonical(DynamicAnnotationObservationFactV1? value) => value == null ? "" : DynamicCanonical.Join(value.AnnotationClass, Ref(value.TextType), Ref(value.OwnerView), value.Text, value.StateHash);
+    private static string TagCanonical(DynamicIndependentTagObservationFactV1? value) => value == null ? "" : DynamicCanonical.Join(Ref(value.TagType), value.TagTypeStateHash, Ref(value.OwnerView), value.OwnerViewStateHash,
+        DynamicCanonical.Set(value.TaggedTargets.Select(Ref)), Pt(value.HeadPosition), value.Orientation, value.HasLeader ? "1" : "0", value.LeaderEndCondition, Pt(value.LeaderEnd), Pt(value.LeaderElbow), value.StateHash);
     private static string ConnectorCanonical(DynamicBuildingConnectorV1 value) => DynamicCanonical.Join(value.StableWithinSnapshotId, Pt(value.Origin), Pt(value.BasisX), Pt(value.BasisY), Pt(value.BasisZ), value.Domain, value.ConnectorType, value.Shape, value.FlowDirection, value.SystemClassification, Num(value.RadiusFeet), Num(value.HeightFeet), Num(value.WidthFeet), Ref(value.System), value.IsPhysicallyConnected ? "1" : "0", DynamicCanonical.Set(value.ConnectedCounterpartIds));
     private static string ParameterCanonical(DynamicParameterValueV1 value) => DynamicCanonical.Join(value.Identity, value.Name, value.StorageKind, value.HasValue ? "1" : "0", value.RawString, value.RawInteger?.ToString(CultureInfo.InvariantCulture), Num(value.RawDouble), value.RawElementId?.ToString(CultureInfo.InvariantCulture), value.FormattedValue, value.SpecTypeId, value.UnitTypeId, value.Scope, value.Writable ? "1" : "0");
     private static void Parameter(DynamicParameterValueV1 value)

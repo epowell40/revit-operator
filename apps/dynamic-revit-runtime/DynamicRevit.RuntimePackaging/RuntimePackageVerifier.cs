@@ -289,7 +289,9 @@ public static class RuntimePackageVerifier
                 ["maximumParametersPerFact"] = DynamicBuildingSystemsObservationContractV1.MaximumParametersPerFact,
                 ["maximumConnectorsPerFact"] = DynamicBuildingSystemsObservationContractV1.MaximumConnectorsPerFact,
                 ["maximumConnectionsPerConnector"] = DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector,
-                ["maximumSystemMembers"] = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers
+                ["maximumSystemMembers"] = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers,
+                ["maximumAnnotationTextBytes"] = DynamicBuildingSystemsObservationContractV1.MaximumAnnotationTextBytes,
+                ["maximumTaggedTargets"] = DynamicBuildingSystemsObservationContractV1.MaximumTaggedTargets
             };
             var limits = value.GetProperty("limits"); var observed = limits.ValueKind == JsonValueKind.Object ? limits.EnumerateObject().ToArray() : [];
             if (observed.Length != expectedLimits.Count || observed.Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() != observed.Length ||

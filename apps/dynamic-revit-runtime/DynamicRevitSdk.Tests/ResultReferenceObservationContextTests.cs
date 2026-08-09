@@ -57,6 +57,77 @@ public sealed class ResultReferenceObservationContextTests
         Assert.Throws<ArgumentException>(() => new DynamicResultReferenceProgramContextV1(Input(), 7, "", "", Array.Empty<DynamicBuildingSystemsEnvelopeV1>(), facts));
     }
 
+    [Fact]
+    public void TextNoteObservationCarriesExactTextTypeViewAndStateIntoTrustedContext()
+    {
+        var state = H("text-note-exact-state"); var type = Ref("type", "text-type", 31); var view = Ref("view", "owner-view", 32);
+        var category = new DynamicStableReferenceV1 { Kind = "category", StableId = "category:builtin:OST_TextNotes", ElementId = -2000300 };
+        var observed = new DynamicBuildingSystemsFactV1
+        {
+            Kind = "text_note", Element = Ref("element", "text-note-a", 30), Category = category, Type = type, Location = Point(4, 5, 0),
+            Annotation = new DynamicAnnotationObservationFactV1
+            {
+                AnnotationClass = "text_note", TextType = type, OwnerView = view, Text = "PANELBOARD - SEE SCHEDULE", StateHash = state
+            }
+        };
+        var selector = new DynamicBuildingSystemsSelectorV1 { ElementUniqueIds = new[] { "text-note-a" }, Kinds = new[] { "text_note" }, PageSize = 1 };
+        var page = DynamicBuildingSystemsObservationPolicyV1.BuildPage(selector, Document, "context-session", 7, Snapshot, new[] { observed });
+        var trusted = new DynamicTrustedElementFactV1
+        {
+            UniqueId = "text-note-a", ElementId = 30, DocumentFingerprint = Document,
+            CategoryStableId = category.StableId, TypeUniqueId = "text-type", StateHash = state, Exists = true, Verified = true, Visible = true
+        };
+
+        var context = new DynamicResultReferenceProgramContextV1(Input(), 7, Snapshot, page.ScopeHash, new[] { page }, new[] { trusted });
+
+        Assert.Equal("text_note", Assert.Single(context.BuildingSystemsFacts).Kind);
+        Assert.Equal("PANELBOARD - SEE SCHEDULE", context.BuildingSystemsFacts[0].Annotation!.Text);
+        Assert.Equal("text-type", context.BuildingSystemsFacts[0].Annotation!.TextType.UniqueId);
+        Assert.Equal("owner-view", context.BuildingSystemsFacts[0].Annotation!.OwnerView.UniqueId);
+        Assert.Equal(state, context.ExternalTarget("text-note-a").ExpectedStateHash);
+
+        trusted.StateHash = H("substituted-state");
+        Assert.Throws<ArgumentException>(() => new DynamicResultReferenceProgramContextV1(Input(), 7, Snapshot, page.ScopeHash, new[] { page }, new[] { trusted }));
+    }
+
+    [Fact]
+    public void CreateTagProgramDerivesEveryHostBindingFromObservedNeighborFacts()
+    {
+        var target = Asset("equipment-a", 11); var tagType = Ref("type", "equipment-tag-type", 51); var ownerView = Ref("view", "electrical-plan", 52);
+        var tagCategory = new DynamicStableReferenceV1 { Kind = "category", StableId = "category:builtin:OST_ElectricalEquipmentTags", ElementId = -2005000 };
+        var head = Point(8, 9, 0); var leaderEnd = Point(6, 7, 0); var leaderElbow = Point(7, 8, 0);
+        var observedTag = new DynamicBuildingSystemsFactV1
+        {
+            Kind = "independent_tag", Element = Ref("element", "neighbor-tag", 50), Category = tagCategory, Type = tagType, Location = head,
+            Tag = new DynamicIndependentTagObservationFactV1
+            {
+                TagType = tagType, TagTypeStateHash = H("tag-type-state"), OwnerView = ownerView, OwnerViewStateHash = H("owner-view-state"),
+                TaggedTargets = new[] { target.Element }, HeadPosition = head, Orientation = "horizontal", HasLeader = true, LeaderEndCondition = "Free",
+                LeaderEnd = leaderEnd, LeaderElbow = leaderElbow, StateHash = H("neighbor-tag-state")
+            }
+        };
+        var selector = new DynamicBuildingSystemsSelectorV1 { ElementUniqueIds = new[] { "equipment-a", "neighbor-tag" }, Kinds = new[] { "equipment", "independent_tag" }, PageSize = 8 };
+        var page = DynamicBuildingSystemsObservationPolicyV1.BuildPage(selector, Document, "context-session", 7, Snapshot, new[] { target, observedTag });
+        var trusted = Trusted("equipment-a", 11);
+        var context = new DynamicResultReferenceProgramContextV1(Input(), 7, Snapshot, page.ScopeHash, new[] { page }, new[] { trusted });
+
+        var neighborFact = context.BuildingSystemsFacts.Single(fact => fact.Kind == "independent_tag");
+        var neighbor = neighborFact.Tag!; var targetUniqueId = Assert.Single(neighbor.TaggedTargets).UniqueId!;
+        var leaderEnabled = neighbor.HasLeader && neighbor.LeaderEnd != null && neighbor.LeaderElbow != null;
+        context.Plan.CreateTag(context.ExternalTarget(targetUniqueId), neighbor.OwnerView.UniqueId!, neighbor.OwnerViewStateHash,
+            neighbor.TagType.UniqueId!, neighbor.TagTypeStateHash, neighborFact.Category!.StableId, neighbor.HeadPosition, neighbor.Orientation,
+            leaderEnabled, leaderEnabled ? neighbor.LeaderElbow : null, leaderEnabled ? neighbor.LeaderEnd : null, "created-tag");
+        var node = Assert.Single(context.Plan.Build().Nodes);
+
+        Assert.Equal(neighbor.OwnerView.UniqueId, node.Attributes["view_unique_id"]);
+        Assert.Equal(neighbor.OwnerViewStateHash, node.Attributes["expected_view_state_hash"]);
+        Assert.Equal(neighbor.TagType.UniqueId, node.Attributes["tag_type_unique_id"]);
+        Assert.Equal(neighbor.TagTypeStateHash, node.Attributes["expected_tag_type_state_hash"]);
+        Assert.Equal(targetUniqueId, node.Attributes["target_unique_id"]);
+        Assert.Equal(neighbor.Orientation, node.Attributes["tag_orientation"]);
+        Assert.Equal(neighborFact.Category.StableId, node.Outputs[0].ExpectedCategoryStableId);
+    }
+
     private static (DynamicBuildingSystemsEnvelopeV1[] Pages, DynamicTrustedElementFactV1[] Facts) ContextData()
     {
         var observed = new[] { Asset("equipment-a", 11), Asset("equipment-b", 12) };

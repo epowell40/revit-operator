@@ -275,7 +275,9 @@ public sealed class PackagingTests : IDisposable
             maximumParametersPerFact = DynamicBuildingSystemsObservationContractV1.MaximumParametersPerFact,
             maximumConnectorsPerFact = DynamicBuildingSystemsObservationContractV1.MaximumConnectorsPerFact,
             maximumConnectionsPerConnector = DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector,
-            maximumSystemMembers = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers
+            maximumSystemMembers = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers,
+            maximumAnnotationTextBytes = DynamicBuildingSystemsObservationContractV1.MaximumAnnotationTextBytes,
+            maximumTaggedTargets = DynamicBuildingSystemsObservationContractV1.MaximumTaggedTargets
         }
     });
 

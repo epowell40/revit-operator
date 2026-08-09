@@ -269,6 +269,26 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void FindTextNotesHydratesBoundedStableAnnotationSelectorFactsWithoutChangingRisk()
+        {
+            var root = FindRepositoryRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "FindTextNotesHandler.cs"));
+            Assert.Contains("MaximumResultCount = 500", handler);
+            Assert.Contains("MaximumTextUtf8Bytes = 4096", handler);
+            Assert.Contains("uniqueId = RequiredUniqueId(tn, \"TextNote\")", handler);
+            Assert.Contains("textTypeUniqueId", handler);
+            Assert.Contains("ownerViewUniqueId", handler);
+            Assert.Contains("location = Point(coord)", handler);
+            Assert.Contains("boundingBox", handler);
+            Assert.Contains("TimeSpan.FromMilliseconds(250)", handler);
+
+            var schema = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("find-text-notes max must be between 1 and 500", schema);
+            var risk = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+            Assert.Contains("\"/revit/find-text-notes\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", risk);
+        }
+
+        [Fact]
         public void DynamicRollbackBaselinesApplyExplicitRevitCollectorFilters()
         {
             var root = FindRepositoryRoot();

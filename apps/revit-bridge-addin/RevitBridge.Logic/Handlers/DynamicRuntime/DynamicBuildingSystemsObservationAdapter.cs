@@ -47,7 +47,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var workset = Workset(document, element);
             var transform = familyInstance == null ? null : TransformValue(Safe(() => familyInstance.GetTransform()));
             var point = element.Location as LocationPoint;
-            var location = point == null ? transform?.Origin : Point(Safe(() => point.Point));
+            var textNote = element as TextNote;
+            var independentTag = element as IndependentTag;
+            var location = textNote != null ? Point(Safe(() => textNote.Coord)) : independentTag != null ? Point(Safe(() => independentTag.TagHeadPosition)) :
+                point == null ? transform?.Origin : Point(Safe(() => point.Point));
             var fact = new DynamicBuildingSystemsFactV1
             {
                 Kind = kind,
@@ -65,6 +68,42 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             };
             if (kind == "mep_curve") fact.Curve = Curve(document, (MEPCurve)element, type, level, fact.Connectors);
             else if (kind == "system") fact.System = SystemFact(document, (MEPSystem)element);
+            else if (kind == "text_note")
+            {
+                var note = textNote ?? throw new InvalidOperationException("Text-note observation target changed type during projection.");
+                var ownerView = Element(document, Safe(() => note.OwnerViewId));
+                if (type == null || ownerView == null || location == null) throw new InvalidOperationException("TextNote lacks exact type, owner-view, or location facts.");
+                fact.Annotation = new DynamicAnnotationObservationFactV1
+                {
+                    AnnotationClass = "text_note", TextType = Reference(type, "type"), OwnerView = Reference(ownerView, "view"),
+                    Text = DynamicAnnotationOperationPolicyV1.NormalizeText(note.Text), StateHash = DynamicAnnotationRevitStateV1.StateHash(note)
+                };
+            }
+            else if (kind == "independent_tag")
+            {
+                var tag = independentTag ?? throw new InvalidOperationException("Independent-tag observation target changed type during projection.");
+                var ownerView = Element(document, Safe(() => tag.OwnerViewId));
+                var targets = tag.GetTaggedLocalElementIds().Select(id => Element(document, id) ?? throw new InvalidOperationException("IndependentTag target disappeared."))
+                    .Select(target => Reference(target, "element")).OrderBy(target => target.StableId, StringComparer.Ordinal).ToArray();
+                if (type == null || ownerView == null || location == null || targets.Length < 1 || targets.Length > DynamicBuildingSystemsObservationContractV1.MaximumTaggedTargets)
+                    throw new InvalidOperationException("IndependentTag lacks exact bounded type, owner-view, head, or target-edge facts.");
+                var leaderEnd = (DynamicPointV1?)null; var leaderElbow = (DynamicPointV1?)null;
+                var references = Safe(() => tag.GetTaggedReferences());
+                if (tag.HasLeader && tag.LeaderEndCondition == LeaderEndCondition.Free && references != null && references.Count == 1)
+                {
+                    var end = Safe(() => tag.GetLeaderEnd(references[0]));
+                    var elbow = Safe(() => tag.HasLeaderElbow(references[0]) ? tag.GetLeaderElbow(references[0]) : null);
+                    if (end != null && elbow != null) { leaderEnd = Point(end); leaderElbow = Point(elbow); }
+                }
+                fact.Tag = new DynamicIndependentTagObservationFactV1
+                {
+                    TagType = Reference(type, "type"), TagTypeStateHash = DynamicAnnotationRevitStateV1.StateHash(type),
+                    OwnerView = Reference(ownerView, "view"), OwnerViewStateHash = DynamicAnnotationRevitStateV1.StateHash(ownerView), TaggedTargets = targets,
+                    HeadPosition = location, Orientation = tag.TagOrientation == TagOrientation.Horizontal ? "horizontal" : "vertical", HasLeader = tag.HasLeader,
+                    LeaderEndCondition = tag.HasLeader ? tag.LeaderEndCondition.ToString() : "none", LeaderEnd = leaderEnd, LeaderElbow = leaderElbow,
+                    StateHash = DynamicAnnotationRevitStateV1.StateHash(tag)
+                };
+            }
             else
             {
                 if (family == null || type == null || transform == null || location == null)
@@ -78,6 +117,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
         private static string? Kind(Element element)
         {
+            if (element is TextNote) return "text_note";
+            if (element is IndependentTag tag && (tag.TagOrientation == TagOrientation.Horizontal || tag.TagOrientation == TagOrientation.Vertical)) return "independent_tag";
             if (element is MEPSystem) return "system";
             if (element is MEPCurve) return "mep_curve";
             if (!(element is FamilyInstance)) return null;

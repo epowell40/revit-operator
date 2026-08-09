@@ -117,7 +117,8 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
             ValidateTrusted(trusted, documentFingerprint);
             if (!trustedIds.Add(trusted.UniqueId) || !trustedElementIds.Add(trusted.ElementId) || !observedByUniqueId.TryGetValue(trusted.UniqueId, out var fact) ||
                 fact.Element.ElementId != trusted.ElementId || (fact.Category?.StableId ?? "category:none") != trusted.CategoryStableId ||
-                (fact.Type?.UniqueId ?? "type:none") != trusted.TypeUniqueId)
+                (fact.Type?.UniqueId ?? "type:none") != trusted.TypeUniqueId || fact.Annotation != null && fact.Annotation.StateHash != trusted.StateHash ||
+                fact.Tag != null && fact.Tag.StateHash != trusted.StateHash)
                 throw new ArgumentException("Trusted external target is duplicated or does not exactly match an observed Building Systems fact.");
         }
         return new Validated
@@ -154,7 +155,7 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
     {
         Kind = value.Kind, Element = Clone(value.Element)!, Category = Clone(value.Category), Family = Clone(value.Family), Type = Clone(value.Type),
         Host = Clone(value.Host), Level = Clone(value.Level), Workset = Clone(value.Workset), Location = Clone(value.Location),
-        Orientation = Clone(value.Orientation), Curve = Clone(value.Curve), Asset = Clone(value.Asset), System = Clone(value.System),
+        Orientation = Clone(value.Orientation), Curve = Clone(value.Curve), Asset = Clone(value.Asset), System = Clone(value.System), Annotation = Clone(value.Annotation), Tag = Clone(value.Tag),
         Connectors = value.Connectors.Select(Clone).ToArray(), Parameters = value.Parameters.Select(Clone).ToArray()
     };
 
@@ -183,6 +184,18 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
     private static DynamicBuildingSystemFactV1? Clone(DynamicBuildingSystemFactV1? value) => value == null ? null : new DynamicBuildingSystemFactV1
     {
         Domain = value.Domain, Classification = value.Classification, Type = Clone(value.Type)!, Members = value.Members.Select(item => Clone(item)!).ToArray()
+    };
+
+    private static DynamicAnnotationObservationFactV1? Clone(DynamicAnnotationObservationFactV1? value) => value == null ? null : new DynamicAnnotationObservationFactV1
+    {
+        AnnotationClass = value.AnnotationClass, TextType = Clone(value.TextType)!, OwnerView = Clone(value.OwnerView)!, Text = value.Text, StateHash = value.StateHash
+    };
+
+    private static DynamicIndependentTagObservationFactV1? Clone(DynamicIndependentTagObservationFactV1? value) => value == null ? null : new DynamicIndependentTagObservationFactV1
+    {
+        TagType = Clone(value.TagType)!, TagTypeStateHash = value.TagTypeStateHash, OwnerView = Clone(value.OwnerView)!, OwnerViewStateHash = value.OwnerViewStateHash,
+        TaggedTargets = value.TaggedTargets.Select(item => Clone(item)!).ToArray(), HeadPosition = Clone(value.HeadPosition)!, Orientation = value.Orientation,
+        HasLeader = value.HasLeader, LeaderEndCondition = value.LeaderEndCondition, LeaderEnd = Clone(value.LeaderEnd), LeaderElbow = Clone(value.LeaderElbow), StateHash = value.StateHash
     };
 
     private static DynamicStableReferenceV1? Clone(DynamicStableReferenceV1? value) => value == null ? null : new DynamicStableReferenceV1

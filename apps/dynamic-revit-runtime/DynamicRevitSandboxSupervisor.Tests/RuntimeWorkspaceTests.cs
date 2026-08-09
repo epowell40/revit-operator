@@ -8,6 +8,50 @@ namespace DynamicRevitSandboxSupervisor.Tests;
 public sealed class RuntimeWorkspaceTests
 {
     [Fact]
+    public void HostTextNoteSelectorProjectionIsAcceptedBySupervisorObservationContext()
+    {
+        var adapterPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicBuildingSystemsObservationAdapter.cs"));
+        var adapter = File.ReadAllText(adapterPath);
+        Assert.Contains("if (element is TextNote) return \"text_note\";", adapter);
+        Assert.Contains("Annotation = new DynamicAnnotationObservationFactV1", adapter);
+        Assert.Contains("StateHash = DynamicAnnotationRevitStateV1.StateHash(note)", adapter);
+        Assert.Contains("element is IndependentTag", adapter);
+        Assert.Contains("TagTypeStateHash = DynamicAnnotationRevitStateV1.StateHash(type)", adapter);
+        Assert.Contains("OwnerViewStateHash = DynamicAnnotationRevitStateV1.StateHash(ownerView)", adapter);
+
+        var documentHash = DynamicWire.Sha256("text-note-document"); var snapshotHash = DynamicWire.Sha256("text-note-snapshot");
+        var stateHash = DynamicWire.Sha256("text-note-state");
+        var element = Reference("element", "text-note-a", 41); var type = Reference("type", "text-type-a", 42); var view = Reference("view", "owner-view-a", 43);
+        var category = new DynamicStableReferenceV1 { Kind = "category", StableId = "category:builtin:OST_TextNotes", ElementId = -2000300 };
+        var fact = new DynamicBuildingSystemsFactV1
+        {
+            Kind = "text_note", Element = element, Category = category, Type = type, Location = new DynamicPointV1 { X = 1, Y = 2, Z = 0 },
+            Annotation = new DynamicAnnotationObservationFactV1
+            {
+                AnnotationClass = "text_note", TextType = type, OwnerView = view, Text = "REVISE CIRCUIT DESIGNATION", StateHash = stateHash
+            }
+        };
+        var selector = new DynamicBuildingSystemsSelectorV1 { ElementUniqueIds = new[] { "text-note-a" }, Kinds = new[] { "text_note" }, PageSize = 1 };
+        var page = DynamicBuildingSystemsObservationPolicyV1.BuildPage(selector, documentHash, "text-note-session", 12, snapshotHash, new[] { fact });
+        var trusted = new DynamicTrustedElementFactV1
+        {
+            UniqueId = "text-note-a", ElementId = 41, DocumentFingerprint = documentHash, CategoryStableId = category.StableId,
+            TypeUniqueId = "text-type-a", StateHash = stateHash, Exists = true, Verified = true, Visible = true
+        };
+        var observation = new ResultReferenceObservationInput
+        {
+            SnapshotHash = snapshotHash, ScopeHash = page.ScopeHash, DocumentRevision = 12, Selector = selector,
+            Pages = new[] { page }, TrustedExternalTargets = new[] { trusted }
+        };
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = documentHash, SessionId = "text-note-session" } };
+
+        Program.ValidateResultReferenceObservationContext(input, observation);
+
+        trusted.StateHash = DynamicWire.Sha256("substituted-state");
+        Assert.Throws<ArgumentException>(() => Program.ValidateResultReferenceObservationContext(input, observation));
+    }
+
+    [Fact]
     public void ResultReferenceLaneSelectsOnlyOneActivatedPrimitiveFamily()
     {
         var annotation = new DynamicResultReferenceGraphV1 { Nodes = new[] { new DynamicResultReferenceNodeV1 { Kind = "create_tag" } } };
@@ -174,6 +218,11 @@ public sealed class RuntimeWorkspaceTests
         Directory.SetCreationTimeUtc(path, createdUtc);
         return path;
     }
+
+    private static DynamicStableReferenceV1 Reference(string kind, string uniqueId, long elementId) => new()
+    {
+        Kind = kind, StableId = "revit-element:" + uniqueId, UniqueId = uniqueId, ElementId = elementId
+    };
 
     private sealed class TemporaryDirectory : IDisposable
     {

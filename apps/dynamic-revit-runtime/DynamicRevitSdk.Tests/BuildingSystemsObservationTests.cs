@@ -106,6 +106,8 @@ public sealed class BuildingSystemsObservationTests
         DynamicBuildingSystemsObservationPolicyV1.ValidateFact(AssetFact("device"), Snapshot);
         DynamicBuildingSystemsObservationPolicyV1.ValidateFact(AssetFact("accessory"), Snapshot);
         DynamicBuildingSystemsObservationPolicyV1.ValidateFact(SystemFact("system"), Snapshot);
+        DynamicBuildingSystemsObservationPolicyV1.ValidateFact(TextNoteFact("note", H("note-state")), Snapshot);
+        DynamicBuildingSystemsObservationPolicyV1.ValidateFact(TagFact("tag"), Snapshot);
     }
 
     [Fact]
@@ -132,7 +134,7 @@ public sealed class BuildingSystemsObservationTests
         var adjacent = DynamicBuildingSystemsObservationPolicyV1.RevisionHash(Fingerprint, "session", 9, Snapshot, new[] { fact });
 
         Assert.NotEqual(first, adjacent);
-        Assert.Equal("dynamic-revit-building-systems-canonical/v3", DynamicBuildingSystemsObservationContractV1.CanonicalVersion);
+        Assert.Equal("dynamic-revit-building-systems-canonical/v4", DynamicBuildingSystemsObservationContractV1.CanonicalVersion);
         var source = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "DynamicRevitSdk", "BuildingSystemsObservationContracts.cs")));
         Assert.Contains("BitConverter.DoubleToInt64Bits", source);
         Assert.DoesNotContain("value.ToString(\"R\"", source);
@@ -174,6 +176,38 @@ public sealed class BuildingSystemsObservationTests
         return new DynamicBuildingSystemsFactV1 { Kind = "system", Element = Ref(id, "system"),
             System = new DynamicBuildingSystemFactV1 { Domain = "MechanicalSystem", Classification = "SystemType=SupplyAir", Type = type,
                 Members = new[] { Ref("member-" + id, "element") } } };
+    }
+
+    private static DynamicBuildingSystemsFactV1 TextNoteFact(string id, string stateHash)
+    {
+        var type = Ref("text-type", "type"); var view = Ref("view", "view");
+        return new DynamicBuildingSystemsFactV1
+        {
+            Kind = "text_note", Element = Ref(id, "element"),
+            Category = new DynamicStableReferenceV1 { Kind = "category", StableId = "category:builtin:OST_TextNotes", ElementId = -2000300 },
+            Type = type, Location = Point(1, 2, 0),
+            Annotation = new DynamicAnnotationObservationFactV1
+            {
+                AnnotationClass = "text_note", TextType = type, OwnerView = view, Text = "ELECTRICAL EQUIPMENT", StateHash = stateHash
+            }
+        };
+    }
+
+    private static DynamicBuildingSystemsFactV1 TagFact(string id)
+    {
+        var type = Ref("tag-type", "type"); var view = Ref("tag-view", "view"); var head = Point(4, 5, 0);
+        return new DynamicBuildingSystemsFactV1
+        {
+            Kind = "independent_tag", Element = Ref(id, "element"),
+            Category = new DynamicStableReferenceV1 { Kind = "category", StableId = "category:builtin:OST_ElectricalEquipmentTags", ElementId = -2005000 },
+            Type = type, Location = head,
+            Tag = new DynamicIndependentTagObservationFactV1
+            {
+                TagType = type, TagTypeStateHash = H("tag-type-state"), OwnerView = view, OwnerViewStateHash = H("tag-view-state"),
+                TaggedTargets = new[] { Ref("equipment", "element") }, HeadPosition = head, Orientation = "horizontal", HasLeader = true,
+                LeaderEndCondition = "Free", LeaderEnd = Point(3, 4, 0), LeaderElbow = Point(3.5, 4.5, 0), StateHash = H("tag-state")
+            }
+        };
     }
 
     private static DynamicStableReferenceV1 Ref(string id, string kind) => new() { Kind = kind, StableId = "revit-element:" + id, UniqueId = id, ElementId = 1 };
