@@ -25,6 +25,43 @@ public static class DynamicRevitProductionSchemas
     public const string PrimitiveManifestV1 = "dynamic_revit_primitive_manifest/v1";
 }
 
+/// <summary>A versioned identity over the complete public v1 wire surface and primitive manifest.</summary>
+public static class DynamicRevitSdkProductionVersion
+{
+    public const string Value = "dynamic-revit-sdk/v1";
+    public const string GraphSchema = DynamicRevitProductionSchemas.OperationGraphV1;
+    private static readonly Type[] WireTypes =
+    {
+        typeof(DynamicProgramAdmissionV1), typeof(DynamicEffectBudgetV1), typeof(DynamicFileCapabilityV1),
+        typeof(DynamicFileCapabilitySetV1), typeof(DynamicOperationGraphV1), typeof(DynamicOperationNodeV1),
+        typeof(DynamicExternalEffectV1), typeof(DynamicProgramRepairFeedbackV1), typeof(DynamicProgramReuseRecordV1),
+        typeof(DynamicExecutionStrategyEvidenceV1), typeof(DynamicPrimitiveDescriptorV1)
+    };
+
+    public static string ContractSurfaceHash => DynamicWire.Sha256(string.Join("\n", WireTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
+    public static string ManifestHash => DynamicWire.Sha256(DynamicCanonical.Join(Value, GraphSchema,
+        DynamicRevitProductionSchemas.AdmissionV1, DynamicRevitProductionSchemas.EffectBudgetV1,
+        DynamicRevitProductionSchemas.FileCapabilityV1, DynamicRevitProductionSchemas.FileCapabilitySetV1,
+        DynamicRevitProductionSchemas.ExternalEffectV1, DynamicRevitProductionSchemas.RepairFeedbackV1,
+        DynamicRevitProductionSchemas.ReuseRecordV1, DynamicRevitProductionSchemas.StrategyEvidenceV1,
+        ContractSurfaceHash, DynamicPrimitiveManifestV1.ManifestHash));
+
+    private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
+        .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)
+        .OrderBy(property => property.Name, StringComparer.Ordinal).Select(property => property.Name + ":" + TypeName(property.PropertyType)));
+    private static string TypeName(Type type)
+    {
+        if (type.IsArray) return TypeName(type.GetElementType()!) + "[]";
+        if (type.IsGenericType)
+        {
+            var name = type.GetGenericTypeDefinition().FullName ?? type.Name;
+            var tick = name.IndexOf('`'); if (tick >= 0) name = name.Substring(0, tick);
+            return name + "<" + string.Join(",", type.GetGenericArguments().Select(TypeName)) + ">";
+        }
+        return type.FullName ?? type.Name;
+    }
+}
+
 public sealed class DynamicProgramAdmissionV1
 {
     public string Schema { get; set; } = DynamicRevitProductionSchemas.AdmissionV1;
@@ -387,6 +424,21 @@ public static class DynamicPrimitiveManifestV1
 
 public static class DynamicOperationGraphV1Admission
 {
+    public sealed class TrustedValidationContext
+    {
+        public IReadOnlyDictionary<string, string> TargetCategories { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
+        public string ViewScopeHash { get; set; } = "";
+        public string LevelScopeHash { get; set; } = "";
+        public string WorksetScopeHash { get; set; } = "";
+        public string PhaseScopeHash { get; set; } = "";
+        public string FileCapabilitySetHash { get; set; } = "";
+        public IReadOnlyList<string> AuthorizedFileCapabilityIds { get; set; } = Array.Empty<string>();
+        public int PlannedExecutionMilliseconds { get; set; }
+        public int PlannedRegenerations { get; set; }
+        public int PlannedOutputCount { get; set; }
+        public long PlannedOutputBytes { get; set; }
+    }
+
     public static string NodeId(DynamicOperationNodeV1 node)
     {
         if (node == null) throw new ArgumentNullException(nameof(node));
@@ -402,19 +454,32 @@ public static class DynamicOperationGraphV1Admission
             string.Join("\n", graph.Nodes.Select(NodeId).OrderBy(value => value, StringComparer.Ordinal))));
     }
 
-    public static void Validate(DynamicOperationGraphV1 graph, DynamicEffectBudgetV1 budget, IEnumerable<string> allowedKinds)
+    public static void Validate(DynamicOperationGraphV1 graph, DynamicEffectBudgetV1 budget, IEnumerable<string> allowedKinds, TrustedValidationContext context)
     {
-        if (graph == null || budget == null || allowedKinds == null || graph.Schema != DynamicRevitProductionSchemas.OperationGraphV1 ||
+        if (graph == null || budget == null || allowedKinds == null || context == null || graph.Schema != DynamicRevitProductionSchemas.OperationGraphV1 ||
             graph.DocumentRevision < 0 || graph.Nodes == null || graph.Nodes.Count < 1)
             throw new ArgumentException("Dynamic operation graph v1 is invalid.");
         DynamicCanonical.RequireHashes(graph.InputHash, graph.DocumentFingerprint, graph.GraphHash);
         budget.Validate();
         if (!budget.TargetDocumentFingerprints.Contains(graph.DocumentFingerprint, StringComparer.Ordinal) || graph.Nodes.Count > budget.MaximumOperationCount)
             throw new ArgumentException("Dynamic operation graph exceeds its document or operation budget.");
+        DynamicCanonical.RequireHashes(context.ViewScopeHash, context.LevelScopeHash, context.WorksetScopeHash, context.PhaseScopeHash, context.FileCapabilitySetHash);
+        if (!DynamicCanonical.FixedEquals(context.ViewScopeHash, budget.ViewScopeHash) || !DynamicCanonical.FixedEquals(context.LevelScopeHash, budget.LevelScopeHash) ||
+            !DynamicCanonical.FixedEquals(context.WorksetScopeHash, budget.WorksetScopeHash) || !DynamicCanonical.FixedEquals(context.PhaseScopeHash, budget.PhaseScopeHash) ||
+            !DynamicCanonical.FixedEquals(context.FileCapabilitySetHash, budget.FileCapabilitySetHash))
+            throw new ArgumentException("Dynamic operation graph trusted scope or file-capability identity changed.");
+        if (context.PlannedExecutionMilliseconds < 0 || context.PlannedExecutionMilliseconds > budget.MaximumExecutionMilliseconds ||
+            context.PlannedRegenerations < 0 || context.PlannedRegenerations > budget.MaximumRegenerations ||
+            context.PlannedOutputCount < 0 || context.PlannedOutputCount > budget.MaximumOutputCount ||
+            context.PlannedOutputBytes < 0 || context.PlannedOutputBytes > budget.MaximumOutputBytes)
+            throw new ArgumentException("Dynamic operation graph exceeds an execution, regeneration, or output budget.");
 
         var permittedKinds = new HashSet<string>(allowedKinds, StringComparer.Ordinal);
         var permittedDomains = new HashSet<string>(budget.AllowedSdkDomains, StringComparer.Ordinal);
         var permittedTargets = new HashSet<string>(budget.ExplicitTargetUniqueIds ?? Array.Empty<string>(), StringComparer.Ordinal);
+        var permittedCategories = new HashSet<string>(budget.AllowedCategories ?? Array.Empty<string>(), StringComparer.Ordinal);
+        var permittedExternalEffects = new HashSet<string>(budget.AllowedExternalEffectClasses ?? Array.Empty<string>(), StringComparer.Ordinal);
+        var permittedFileCapabilities = new HashSet<string>(context.AuthorizedFileCapabilityIds ?? Array.Empty<string>(), StringComparer.Ordinal);
         var ids = new HashSet<string>(StringComparer.Ordinal);
         var nodes = new Dictionary<string, DynamicOperationNodeV1>(StringComparer.Ordinal);
         var affected = new HashSet<string>(StringComparer.Ordinal);
@@ -433,14 +498,23 @@ public static class DynamicOperationGraphV1Admission
                 throw new ArgumentException("Dynamic operation attributes are invalid.");
             if (descriptor.RequiredAttributes.Any(required => !node.Attributes.ContainsKey(required)))
                 throw new ArgumentException("Dynamic operation is missing a required primitive attribute.");
+            ValidateTypedAttributes(node);
             foreach (var target in node.TargetUniqueIds)
             {
                 if (permittedTargets.Count > 0 && !permittedTargets.Contains(target)) throw new ArgumentException("Dynamic operation target is outside explicit scope.");
+                if (!context.TargetCategories.TryGetValue(target, out var category) || permittedCategories.Count < 1 || !permittedCategories.Contains(category))
+                    throw new ArgumentException("Dynamic operation target category is outside the trusted effect budget.");
                 affected.Add(target);
             }
             if (descriptor.EffectClass == "create") creates++;
             else if (descriptor.EffectClass == "modify") modifies++;
             else if (descriptor.EffectClass == "delete") deletes++;
+            else if (descriptor.EffectClass == "external")
+            {
+                if (!permittedExternalEffects.Contains(node.Kind)) throw new ArgumentException("Dynamic external-effect class is not authorized.");
+                if (node.Attributes.TryGetValue("file_capability_id", out var fileCapabilityId) && !permittedFileCapabilities.Contains(fileCapabilityId))
+                    throw new ArgumentException("Dynamic external effect references an unauthorized file capability.");
+            }
             nodes.Add(node.NodeId, node);
         }
         if (affected.Count > budget.MaximumAffectedElements || creates > budget.MaximumCreates || modifies > budget.MaximumModifications || deletes > budget.MaximumDeletes)
@@ -450,6 +524,27 @@ public static class DynamicOperationGraphV1Admission
         RejectCycles(nodes);
         RejectConflicts(graph.Nodes);
         if (graph.GraphHash != GraphHash(graph)) throw new ArgumentException("Dynamic operation graph v1 hash is invalid.");
+    }
+
+    private static void ValidateTypedAttributes(DynamicOperationNodeV1 node)
+    {
+        if (node.Kind == "move_element")
+        {
+            var values = node.Attributes["vector_feet"].Split(',');
+            if (values.Length != 3 || values.Any(value => !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) || double.IsNaN(parsed) || double.IsInfinity(parsed)))
+                throw new ArgumentException("move_element vector_feet must contain three finite invariant numbers.");
+        }
+        else if (node.Kind == "set_parameter")
+        {
+            var kind = node.Attributes["value_kind"];
+            var value = node.Attributes["value"];
+            var valid = kind == "string" ||
+                (kind == "integer" && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)) ||
+                (kind == "double" && double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var number) && !double.IsNaN(number) && !double.IsInfinity(number)) ||
+                (kind == "boolean" && (value == "true" || value == "false")) ||
+                (kind == "element_id" && long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _));
+            if (!valid || string.IsNullOrWhiteSpace(node.Attributes["parameter_identity"])) throw new ArgumentException("set_parameter attributes are not typed canonical values.");
+        }
     }
 
     private static void RejectCycles(IReadOnlyDictionary<string, DynamicOperationNodeV1> nodes)
@@ -614,23 +709,17 @@ public sealed class DynamicProgramReuseRecordV1
 
 public sealed class DynamicExecutionStrategyEvidenceV1
 {
+    public const bool AuthorizationGranted = false;
     public string Schema { get; set; } = DynamicRevitProductionSchemas.StrategyEvidenceV1;
-    public string ObjectiveHash { get; set; } = "";
     public string SelectedSubstrate { get; set; } = "";
-    public string ReasonCode { get; set; } = "";
-    public string ReasonSummary { get; set; } = "";
-    public string ModelIdentityHash { get; set; } = "";
-    public long RecordedUnixSeconds { get; set; }
-    public bool IsAuthorization => false;
+    public string Reason { get; set; } = "";
 
     public void Validate()
     {
         var substrates = new[] { "typed_capability", "typed_capability_composition", "dynamic_revit_program" };
-        var reasons = new[] { "exact_primitive", "few_deterministic_calls", "custom_loop", "custom_branching", "large_repetition", "geometry_algorithm", "graph_algorithm", "novel_composition", "contextual_rules", "model_judgment" };
         if (Schema != DynamicRevitProductionSchemas.StrategyEvidenceV1 || !substrates.Contains(SelectedSubstrate, StringComparer.Ordinal) ||
-            !reasons.Contains(ReasonCode, StringComparer.Ordinal) || string.IsNullOrWhiteSpace(ReasonSummary) || ReasonSummary.Length > 512)
+            string.IsNullOrWhiteSpace(Reason) || Reason.Length > 320)
             throw new ArgumentException("Dynamic execution-strategy evidence is invalid.");
-        DynamicCanonical.RequireHashes(ObjectiveHash, ModelIdentityHash);
     }
 }
 

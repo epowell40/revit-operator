@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using RevitOperator.DynamicRevitSdk;
+using System.Text.Json;
 using Xunit;
 
 namespace DynamicRevitSdk.Tests;
@@ -41,6 +42,25 @@ public sealed class ProductionContractsTests
     }
 
     [Fact]
+    public void AdmissionV1SnakeCaseWireShapeMatchesBackendContract()
+    {
+        var json = JsonSerializer.Serialize(AdmissionGoldenVector(), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        using var document = JsonDocument.Parse(json);
+        var observed = document.RootElement.EnumerateObject().Select(property => property.Name).OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        var expected = new[]
+        {
+            "schema", "admission_id", "normalized_source_hash", "compiled_artifact_hash", "compiler_runtime_hash", "sdk_version",
+            "sdk_manifest_hash", "sdk_artifact_hash", "worker_executable_hash", "worker_runtime_package_hash", "sandbox_profile_version",
+            "sandbox_profile_hash", "authenticated_worker_identity_hash", "target_revit_version", "host_adapter_manifest_hash",
+            "document_fingerprint", "document_session_id", "document_revision", "project_context_identity_hash", "capability_envelope_hash",
+            "operation_family_envelope_hash", "effect_budget_hash", "file_capability_set_hash", "operation_graph_hash", "preview_receipt_hash",
+            "policy_identity_hash", "runtime_identity_hash", "request_family_seal_hash", "final_authorization_hash", "principal_id_hash",
+            "principal_session_hash", "correlation_id", "replay_nonce_hash", "issued_unix_seconds", "expires_unix_seconds", "admission_signature"
+        }.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        Assert.Equal(expected, observed);
+    }
+
+    [Fact]
     public void EffectBudgetHashIsOrderIndependentButScopeSensitive()
     {
         var first = Budget(); first.AllowedSdkDomains = new[] { "parameters", "elements" };
@@ -67,7 +87,7 @@ public sealed class ProductionContractsTests
         var first = Node("set_parameter", new[] { "a" }, Array.Empty<string>(), ("parameter_identity", "Comments"), ("value", "one"), ("value_kind", "string"));
         var second = Node("set_parameter", new[] { "a" }, new[] { first.NodeId }, ("parameter_identity", "Comments"), ("value", "two"), ("value_kind", "string"));
         var graph = Graph(first, second); var budget = Budget(); budget.MaximumModifications = 2;
-        DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" });
+        DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, Context(budget));
     }
 
     [Fact]
@@ -76,10 +96,10 @@ public sealed class ProductionContractsTests
         var one = Node("set_parameter", new[] { "a" }, Array.Empty<string>(), ("parameter_identity", "Comments"), ("value", "one"), ("value_kind", "string"));
         var two = Node("set_parameter", new[] { "a" }, Array.Empty<string>(), ("parameter_identity", "Comments"), ("value", "two"), ("value_kind", "string"));
         var graph = Graph(one, two); var budget = Budget(); budget.MaximumModifications = 2;
-        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }));
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, Context(budget)));
 
         one.DependsOn = new[] { H("missing-node") }; one.NodeId = DynamicOperationGraphV1Admission.NodeId(one); graph = Graph(one);
-        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }));
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, Context(budget)));
     }
 
     [Fact]
@@ -87,8 +107,27 @@ public sealed class ProductionContractsTests
     {
         var node = Node("create_sheet", Array.Empty<string>(), Array.Empty<string>(), ("number", "A101"), ("name", "Plan"), ("titleblock_type", "tb"));
         var graph = Graph(node); var budget = Budget(); budget.AllowedSdkDomains = new[] { "elements", "parameters", "sheets" }; budget.MaximumCreates = 1; budget.MaximumModifications = 3;
-        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "move_element", "set_parameter" }));
-        DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "create_sheet" });
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "move_element", "set_parameter" }, Context(budget)));
+        DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "create_sheet" }, Context(budget));
+    }
+
+    [Fact]
+    public void GraphV1EnforcesTrustedScopeCategoryRuntimeOutputAndTypedAttributes()
+    {
+        var budget = Budget(); var node = Node("set_parameter", new[] { "a" }, Array.Empty<string>(),
+            ("parameter_identity", "Comments"), ("value", "not-an-integer"), ("value_kind", "integer"));
+        var graph = Graph(node); var context = Context(budget);
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, context));
+
+        node = Node("set_parameter", new[] { "a" }, Array.Empty<string>(), ("parameter_identity", "Comments"), ("value", "7"), ("value_kind", "integer"));
+        graph = Graph(node); context = Context(budget); context.TargetCategories = new Dictionary<string, string> { ["a"] = "Walls" };
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, context));
+        context = Context(budget); context.ViewScopeHash = H("changed-view");
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, context));
+        context = Context(budget); context.PlannedExecutionMilliseconds = budget.MaximumExecutionMilliseconds + 1;
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, context));
+        context = Context(budget); context.PlannedOutputCount = 1;
+        Assert.Throws<ArgumentException>(() => DynamicOperationGraphV1Admission.Validate(graph, budget, new[] { "set_parameter" }, context));
     }
 
     [Fact]
@@ -126,9 +165,9 @@ public sealed class ProductionContractsTests
     [Fact]
     public void StrategyEvidenceIsExplicitlyNonAuthoritative()
     {
-        var evidence = new DynamicExecutionStrategyEvidenceV1 { ObjectiveHash = H("objective"), SelectedSubstrate = "dynamic_revit_program", ReasonCode = "custom_loop", ReasonSummary = "A bounded loop avoids many equivalent calls.", ModelIdentityHash = H("model"), RecordedUnixSeconds = Now() };
+        var evidence = new DynamicExecutionStrategyEvidenceV1 { SelectedSubstrate = "dynamic_revit_program", Reason = "A bounded loop avoids many equivalent calls." };
         evidence.Validate();
-        Assert.False(evidence.IsAuthorization);
+        Assert.False(DynamicExecutionStrategyEvidenceV1.AuthorizationGranted);
     }
 
     [Fact]
@@ -138,6 +177,16 @@ public sealed class ProductionContractsTests
         Assert.True(DynamicPrimitiveManifestV1.Find("move_element")!.ImplementedByV1Host);
         Assert.False(DynamicPrimitiveManifestV1.Find("create_sheet")!.ImplementedByV1Host);
         Assert.Null(DynamicPrimitiveManifestV1.Find("layout_receptacles_like_room"));
+    }
+
+    [Fact]
+    public void ProductionSdkManifestBindsV1ContractSurfaceAndPrimitiveManifest()
+    {
+        Assert.Equal("dynamic-revit-sdk/v1", DynamicRevitSdkProductionVersion.Value);
+        Assert.StartsWith("sha256:", DynamicRevitSdkProductionVersion.ContractSurfaceHash);
+        Assert.StartsWith("sha256:", DynamicRevitSdkProductionVersion.ManifestHash);
+        Assert.NotEqual(DynamicRevitSdkVersion.ManifestHash, DynamicRevitSdkProductionVersion.ManifestHash);
+        Assert.Contains(nameof(DynamicProgramAdmissionV1.CompilerRuntimeHash), typeof(DynamicProgramAdmissionV1).GetProperties().Select(property => property.Name));
     }
 
     private static DynamicProgramAdmissionV1 Admission()
@@ -191,6 +240,15 @@ public sealed class ProductionContractsTests
         ExplicitTargetUniqueIds = new[] { "a", "b" }, AllowedSdkDomains = new[] { "elements", "parameters" }, AllowedExternalEffectClasses = Array.Empty<string>(),
         MaximumOperationCount = 4, MaximumAffectedElements = 4, MaximumCreates = 0, MaximumModifications = 4, MaximumDeletes = 0,
         MaximumExecutionMilliseconds = 30000, MaximumRegenerations = 4, MaximumOutputCount = 0, MaximumOutputBytes = 0, FileCapabilitySetHash = H("file-set")
+    };
+
+    private static DynamicOperationGraphV1Admission.TrustedValidationContext Context(DynamicEffectBudgetV1 budget) => new()
+    {
+        TargetCategories = new Dictionary<string, string>(StringComparer.Ordinal) { ["a"] = "Mechanical Equipment", ["b"] = "Mechanical Equipment" },
+        ViewScopeHash = budget.ViewScopeHash, LevelScopeHash = budget.LevelScopeHash, WorksetScopeHash = budget.WorksetScopeHash,
+        PhaseScopeHash = budget.PhaseScopeHash, FileCapabilitySetHash = budget.FileCapabilitySetHash,
+        AuthorizedFileCapabilityIds = Array.Empty<string>(), PlannedExecutionMilliseconds = 100, PlannedRegenerations = 0,
+        PlannedOutputCount = 0, PlannedOutputBytes = 0
     };
 
     private static DynamicFileCapabilityV1 Capability(string id, string program) => new()
