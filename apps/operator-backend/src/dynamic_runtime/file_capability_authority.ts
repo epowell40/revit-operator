@@ -47,6 +47,8 @@ export class DynamicFileCapabilityAuthority {
   private readonly grants = new Map<string, Grant>();
   constructor(private readonly clock: () => number = () => Math.floor(Date.now() / 1000)) {}
 
+  hasCapability(capabilityId: string): boolean { return this.grants.has(capabilityId); }
+
   issue(request: DynamicFileCapabilityIssueRequest): DynamicFileCapabilityPublicV1 {
     validateIssue(request, this.clock());
     const canonicalRoot = canonicalizeCapabilityRoot(request.absolute_path, request.scope, request.access);
@@ -238,10 +240,29 @@ type Effect = {
 
 type FileIdentity = { relative: string; bytes: number; hash: string };
 type PublicationBindings = { task: string; program: string; document: string; principal: string };
-type LedgerRecord = { schema: "dynamic_external_effect_ledger_record/v1"; sequence: number; effect: Effect; checksum: string };
+type LedgerRecord = { schema: "dynamic_external_effect_ledger_record/v2"; sequence: number; previous_record_hash: string | null; effect: Effect; record_hash: string; checksum: string };
 const LEDGER_NAME = ".dynamic-external-effect-ledger-v1.ndjson";
 const MAX_LEDGER_BYTES = 8 * 1024 * 1024;
 const MAX_LEDGER_RECORDS = 10_000;
+
+export type DynamicExternalEffectJournalHead = { sequence: number; record_hash: string | null };
+/** Trusted storage contract. advance must atomically compare-and-swap the head and consume the nonce durably. */
+export interface DynamicExternalEffectJournalHeadAuthority {
+  initialize(ledgerId: string): void;
+  readHead(ledgerId: string): Readonly<DynamicExternalEffectJournalHead>;
+  advance(args: { ledger_id: string; expected: DynamicExternalEffectJournalHead; next: DynamicExternalEffectJournalHead; consume_nonce: string | null }): void;
+  hasConsumedNonce(nonce: string): boolean;
+}
+
+/** Trusted capability registry contract. Returning null is terminal uncertainty; callers must never synthesize a grant from ledger paths. */
+export interface DynamicExternalEffectCapabilityRestorer {
+  restore(args: { capability_id: string; destination_capability_id_hash: string; bindings_hash: string }): DynamicFileCapabilityAuthority | null;
+}
+
+export type DynamicExternalEffectRecovery = {
+  journal_authority: DynamicExternalEffectJournalHeadAuthority;
+  capability_restorer?: DynamicExternalEffectCapabilityRestorer;
+};
 export const DYNAMIC_PUBLICATION_AUTHORIZATION_SCHEMA = "dynamic_external_effect_publication_authorization/v1" as const;
 export type DynamicPublicationAuthorizationV1 = {
   schema: typeof DYNAMIC_PUBLICATION_AUTHORIZATION_SCHEMA;
@@ -280,11 +301,18 @@ export class DynamicExternalEffectCoordinator {
   private readonly effects = new Map<string, Effect>();
   private readonly consumedNonces = new Set<string>();
   private readonly ledgerPath: string;
+  private readonly ledgerId: string;
+  private readonly restoredAuthorities = new Map<string, DynamicFileCapabilityAuthority>();
   private ledgerBytes = 0;
   private sequence = 0;
-  constructor(private readonly stagingRoot: string, private readonly files: DynamicFileCapabilityAuthority, private readonly authorizations: DynamicPublicationAuthorizationAuthority) {
+  private lastRecordHash: string | null = null;
+  constructor(private readonly stagingRoot: string, private readonly files: DynamicFileCapabilityAuthority,
+    private readonly authorizations: DynamicPublicationAuthorizationAuthority, private readonly recovery: DynamicExternalEffectRecovery) {
+    if (!recovery?.journal_authority) throw new Error("External-effect recovery requires a trusted journal-head authority.");
     fs.mkdirSync(stagingRoot, { recursive: true }); requireNoReparse(stagingRoot, true);
     this.ledgerPath = path.join(fs.realpathSync.native(stagingRoot), LEDGER_NAME);
+    this.ledgerId = sha256(`${DYNAMIC_EXTERNAL_EFFECT_SCHEMA}\n${fs.realpathSync.native(stagingRoot)}`);
+    recovery.journal_authority.initialize(this.ledgerId);
     this.loadLedger();
   }
 
@@ -344,7 +372,14 @@ export class DynamicExternalEffectCoordinator {
     if (effect.authorized_destination_hash !== sha256(destinationCapabilityId) || effect.authorized_bindings_hash !== bindingsHash(bindings)) {
       throw new Error("External-effect publication destination or identity binding changed.");
     }
-    if (this.consumedNonces.has(effect.publication_authorization.nonce)) throw new Error("External-effect publication authorization nonce was already consumed.");
+    if (this.consumedNonces.has(effect.publication_authorization.nonce) || this.recovery.journal_authority.hasConsumedNonce(effect.publication_authorization.nonce)) {
+      throw new Error("External-effect publication authorization nonce was already consumed.");
+    }
+    const publicationFiles = this.capabilityAuthority(effect);
+    if (!publicationFiles) {
+      this.transition(effect, "outcome_uncertain");
+      throw new Error("External-effect destination capability cannot be restored; publication remains outcome uncertain.");
+    }
     const staged = snapshotFiles(effect.staging_directory);
     const actualIdentities = staged.map(({ relative, bytes, hash }) => ({ relative, bytes, hash }));
     if (manifestHash(actualIdentities) !== effect.manifest_hash || JSON.stringify(actualIdentities) !== JSON.stringify(effect.inspected_files)) {
@@ -355,7 +390,7 @@ export class DynamicExternalEffectCoordinator {
     try {
       const created: CreatedFileIdentity[] = [];
       for (const file of staged) {
-        created.push(this.files.createFile({ capability_id: destinationCapabilityId, relative_path: file.relative,
+        created.push(publicationFiles.createFile({ capability_id: destinationCapabilityId, relative_path: file.relative,
           expected_task_id_hash: bindings.task, expected_program_hash: bindings.program, expected_document_fingerprint: bindings.document,
           expected_principal_id_hash: bindings.principal, bytes: file.buffer }));
       }
@@ -373,8 +408,13 @@ export class DynamicExternalEffectCoordinator {
     const effect = this.effects.get(effectId);
     if (!effect || (effect.state !== "published" && effect.state !== "verified")) throw new Error("External-effect state transition is invalid.");
     if (effect.receipt_hash !== expectedReceiptHash) throw new Error("External-effect publication receipt did not verify.");
+    const capabilityFiles = this.capabilityAuthority(effect);
+    if (!capabilityFiles) {
+      this.transition(effect, "outcome_uncertain");
+      throw new Error("External-effect destination capability cannot be restored; verification remains outcome uncertain.");
+    }
     try {
-      this.verifyDestination(effect);
+      this.verifyDestination(effect, capabilityFiles);
     } catch (error) {
       effect.state = "failed"; this.persist(effect); throw error;
     }
@@ -395,13 +435,15 @@ export class DynamicExternalEffectCoordinator {
       } else if (effect.state === "inspected" || effect.state === "authorized") {
         this.verifyStaging(effect);
         if (effect.state === "authorized" && effect.publication_authorization) this.authorizations.verify(effect.publication_authorization);
+        if (effect.state === "authorized" && !this.capabilityAuthority(effect)) return this.transition(effect, "outcome_uncertain");
       } else if (effect.state === "publishing") {
         // The create could have committed before the process stopped, but the held file identity was not durably recorded.
         // Inspecting matching bytes cannot distinguish that file from a replacement, so recovery deliberately stays uncertain.
-        this.inspectExpectedDestination(effect);
         return this.transition(effect, "outcome_uncertain");
       } else if (effect.state === "published" || effect.state === "verified") {
-        this.verifyDestination(effect);
+        const capabilityFiles = this.capabilityAuthority(effect);
+        if (!capabilityFiles) return this.transition(effect, "outcome_uncertain");
+        this.verifyDestination(effect, capabilityFiles);
         if (effect.state === "published") return this.transition(effect, "verified");
       }
       return publicEffect(effect);
@@ -421,17 +463,27 @@ export class DynamicExternalEffectCoordinator {
     }
   }
 
-  private inspectExpectedDestination(effect: Effect): CreatedFileIdentity[] {
+  private capabilityAuthority(effect: Effect): DynamicFileCapabilityAuthority | null {
+    if (!effect.destination_capability_id || !effect.authorized_destination_hash || !effect.authorized_bindings_hash) return null;
+    if (this.files.hasCapability(effect.destination_capability_id)) return this.files;
+    const cached = this.restoredAuthorities.get(effect.destination_capability_id); if (cached?.hasCapability(effect.destination_capability_id)) return cached;
+    const restored = this.recovery.capability_restorer?.restore({ capability_id: effect.destination_capability_id,
+      destination_capability_id_hash: effect.authorized_destination_hash, bindings_hash: effect.authorized_bindings_hash }) ?? null;
+    if (!restored?.hasCapability(effect.destination_capability_id)) return null;
+    this.restoredAuthorities.set(effect.destination_capability_id, restored); return restored;
+  }
+
+  private inspectExpectedDestination(effect: Effect, capabilityFiles: DynamicFileCapabilityAuthority): CreatedFileIdentity[] {
     if (!effect.destination_capability_id || !effect.publication_bindings || !effect.inspected_files) throw new Error("External-effect durable publication context is incomplete.");
     const capabilityId = effect.destination_capability_id; const publicationBindings = effect.publication_bindings;
-    return effect.inspected_files.map(file => this.files.inspectCreatedFile({ capability_id: capabilityId, relative_path: file.relative,
+    return effect.inspected_files.map(file => capabilityFiles.inspectCreatedFile({ capability_id: capabilityId, relative_path: file.relative,
       expected_task_id_hash: publicationBindings.task, expected_program_hash: publicationBindings.program,
       expected_document_fingerprint: publicationBindings.document, expected_principal_id_hash: publicationBindings.principal }));
   }
 
-  private verifyDestination(effect: Effect): void {
+  private verifyDestination(effect: Effect, capabilityFiles: DynamicFileCapabilityAuthority): void {
     if (!effect.published_files || !effect.inspected_files) throw new Error("External-effect published identity is missing.");
-    const actual = this.inspectExpectedDestination(effect);
+    const actual = this.inspectExpectedDestination(effect, capabilityFiles);
     if (actual.length !== effect.published_files.length || actual.length !== effect.inspected_files.length) throw new Error("External-effect destination file count changed.");
     for (let index = 0; index < actual.length; index += 1) {
       const observed = actual[index]!; const published = effect.published_files[index]!; const staged = effect.inspected_files[index]!;
@@ -448,8 +500,10 @@ export class DynamicExternalEffectCoordinator {
 
   private persist(effect: Effect): void {
     const effectCopy = JSON.parse(JSON.stringify(effect)) as Effect;
-    const sequence = this.sequence + 1; const checksum = this.authorizations.signTrustedLedgerRecord(JSON.stringify({ sequence, effect: effectCopy }));
-    const record: LedgerRecord = { schema: "dynamic_external_effect_ledger_record/v1", sequence, effect: effectCopy, checksum };
+    const sequence = this.sequence + 1; const previousRecordHash = this.lastRecordHash;
+    const unsigned = { schema: "dynamic_external_effect_ledger_record/v2" as const, sequence, previous_record_hash: previousRecordHash, effect: effectCopy };
+    const recordHash = sha256(JSON.stringify(unsigned)); const checksum = this.authorizations.signTrustedLedgerRecord(recordHash);
+    const record: LedgerRecord = { ...unsigned, record_hash: recordHash, checksum };
     const bytes = Buffer.from(`${JSON.stringify(record)}\n`, "utf8");
     if (sequence > MAX_LEDGER_RECORDS || this.ledgerBytes + bytes.length > MAX_LEDGER_BYTES) throw new Error("External-effect durable ledger bound would be exceeded.");
     requireNoReparse(path.dirname(this.ledgerPath), true);
@@ -460,11 +514,19 @@ export class DynamicExternalEffectCoordinator {
       fs.writeFileSync(descriptor, bytes); fs.fsyncSync(descriptor);
       assertHeldOutputIsAnchored(descriptor, this.ledgerPath, path.dirname(this.ledgerPath));
     } finally { fs.closeSync(descriptor); }
-    this.sequence = sequence; this.ledgerBytes += bytes.length;
+    const expected = { sequence: this.sequence, record_hash: this.lastRecordHash };
+    const next = { sequence, record_hash: recordHash };
+    this.recovery.journal_authority.advance({ ledger_id: this.ledgerId, expected, next,
+      consume_nonce: effect.state === "publishing" ? effect.publication_authorization?.nonce ?? null : null });
+    this.sequence = sequence; this.lastRecordHash = recordHash; this.ledgerBytes += bytes.length;
   }
 
   private loadLedger(): void {
-    if (!fs.existsSync(this.ledgerPath)) return;
+    const trustedHead = this.recovery.journal_authority.readHead(this.ledgerId);
+    if (!fs.existsSync(this.ledgerPath)) {
+      if (trustedHead.sequence !== 0 || trustedHead.record_hash !== null) throw new Error("External-effect durable ledger rollback was detected.");
+      return;
+    }
     requireNoReparse(this.ledgerPath, true); const stat = fs.statSync(this.ledgerPath);
     if (!stat.isFile() || stat.size > MAX_LEDGER_BYTES) throw new Error("External-effect durable ledger is invalid or exceeds its bound.");
     let bytes = fs.readFileSync(this.ledgerPath); const validLength = bytes.lastIndexOf(0x0a) + 1;
@@ -480,12 +542,28 @@ export class DynamicExternalEffectCoordinator {
     const text = bytes.toString("utf8"); const lines = text.split("\n");
     const records = lines.filter(Boolean);
     if (records.length > MAX_LEDGER_RECORDS) throw new Error("External-effect durable ledger record bound was exceeded.");
+    const parsedRecords: LedgerRecord[] = []; let previousRecordHash: string | null = null;
     for (const line of records) {
       const record = JSON.parse(line) as LedgerRecord;
-      if (record.schema !== "dynamic_external_effect_ledger_record/v1" || record.sequence !== this.sequence + 1) throw new Error("External-effect durable ledger integrity check failed.");
-      this.authorizations.verifyTrustedLedgerRecord(JSON.stringify({ sequence: record.sequence, effect: record.effect }), record.checksum);
+      if (record.schema !== "dynamic_external_effect_ledger_record/v2" || record.sequence !== parsedRecords.length + 1
+        || record.previous_record_hash !== previousRecordHash || !SHA256.test(record.record_hash)) throw new Error("External-effect durable ledger integrity check failed.");
+      const unsigned = { schema: record.schema, sequence: record.sequence, previous_record_hash: record.previous_record_hash, effect: record.effect };
+      if (record.record_hash !== sha256(JSON.stringify(unsigned))) throw new Error("External-effect durable ledger integrity check failed.");
+      this.authorizations.verifyTrustedLedgerRecord(record.record_hash, record.checksum);
       validateLedgerEffect(record.effect, this.stagingRoot);
-      this.sequence = record.sequence; this.effects.set(record.effect.effect_id, record.effect);
+      parsedRecords.push(record); previousRecordHash = record.record_hash;
+    }
+    if (trustedHead.sequence > parsedRecords.length || (trustedHead.sequence > 0 && parsedRecords[trustedHead.sequence - 1]!.record_hash !== trustedHead.record_hash)
+      || (trustedHead.sequence === 0 && trustedHead.record_hash !== null)) throw new Error("External-effect durable ledger rollback was detected.");
+    let currentHead = { ...trustedHead };
+    for (let index = trustedHead.sequence; index < parsedRecords.length; index += 1) {
+      const record = parsedRecords[index]!; const next = { sequence: record.sequence, record_hash: record.record_hash };
+      this.recovery.journal_authority.advance({ ledger_id: this.ledgerId, expected: currentHead, next,
+        consume_nonce: record.effect.state === "publishing" ? record.effect.publication_authorization?.nonce ?? null : null });
+      currentHead = next;
+    }
+    for (const record of parsedRecords) {
+      this.sequence = record.sequence; this.lastRecordHash = record.record_hash; this.effects.set(record.effect.effect_id, record.effect);
     }
     for (const effect of this.effects.values()) if (effect.publication_authorization && ["publishing", "published", "verified", "failed", "outcome_uncertain"].includes(effect.state)) {
       this.consumedNonces.add(effect.publication_authorization.nonce);

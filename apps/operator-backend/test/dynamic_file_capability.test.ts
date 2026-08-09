@@ -4,12 +4,38 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { DynamicExternalEffectCoordinator, DynamicFileCapabilityAuthority, DynamicPublicationAuthorizationAuthority } from "../src/dynamic_runtime/file_capability_authority.js";
+import { DynamicExternalEffectCoordinator as TrustedDynamicExternalEffectCoordinator, DynamicFileCapabilityAuthority, DynamicPublicationAuthorizationAuthority,
+  type DynamicExternalEffectJournalHead, type DynamicExternalEffectJournalHeadAuthority, type DynamicExternalEffectRecovery } from "../src/dynamic_runtime/file_capability_authority.js";
 
 const h = (value: string) => `sha256:${value.padEnd(64, value[0] || "0").slice(0, 64).toLowerCase().replace(/[^0-9a-f]/g, "a")}`;
 const bindings = { task: h("1"), program: h("2"), document: h("3"), principal: h("4") };
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const authorizationKey = Buffer.alloc(32, 7);
+
+class TestJournalAuthority implements DynamicExternalEffectJournalHeadAuthority {
+  private readonly heads = new Map<string, DynamicExternalEffectJournalHead>();
+  private readonly nonces = new Set<string>();
+  initialize(ledgerId: string): void { if (!this.heads.has(ledgerId)) this.heads.set(ledgerId, { sequence: 0, record_hash: null }); }
+  readHead(ledgerId: string): Readonly<DynamicExternalEffectJournalHead> { return { ...this.heads.get(ledgerId)! }; }
+  advance(args: { ledger_id: string; expected: DynamicExternalEffectJournalHead; next: DynamicExternalEffectJournalHead; consume_nonce: string | null }): void {
+    const current = this.heads.get(args.ledger_id)!;
+    if (current.sequence !== args.expected.sequence || current.record_hash !== args.expected.record_hash
+      || args.next.sequence !== current.sequence + 1 || !/^sha256:[0-9a-f]{64}$/.test(args.next.record_hash ?? "")
+      || (args.consume_nonce !== null && this.nonces.has(args.consume_nonce))) throw new Error("trusted journal monotonicity or nonce check failed");
+    if (args.consume_nonce !== null) this.nonces.add(args.consume_nonce);
+    this.heads.set(args.ledger_id, { ...args.next });
+  }
+  hasConsumedNonce(nonce: string): boolean { return this.nonces.has(nonce); }
+}
+
+const journalAuthorities = new Map<string, TestJournalAuthority>();
+class DynamicExternalEffectCoordinator extends TrustedDynamicExternalEffectCoordinator {
+  constructor(stage: string, files: DynamicFileCapabilityAuthority, authorizations: DynamicPublicationAuthorizationAuthority, recovery?: DynamicExternalEffectRecovery) {
+    let journal = journalAuthorities.get(path.resolve(stage));
+    if (!journal) { journal = new TestJournalAuthority(); journalAuthorities.set(path.resolve(stage), journal); }
+    super(stage, files, authorizations, recovery ?? { journal_authority: journal });
+  }
+}
 
 function issue(authority: DynamicFileCapabilityAuthority, root: string, overrides: Record<string, unknown> = {}) {
   return authority.issue({ kind: "export_destination", absolute_path: root, access: ["create"], scope: "directory", allowed_extensions: [".pdf"],
@@ -162,21 +188,38 @@ test("durable coordinator reconciles every completed boundary and never republis
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("crash after publication intent is outcome_uncertain and is never republished", () => {
+test("restoring an authentic authorized prefix is rejected as rollback and never republished", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-crash-intent-")); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
   try {
     fs.mkdirSync(destination); const files = new DynamicFileCapabilityAuthority(() => 1000); const capability = issue(files, destination);
     const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000); let coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
     const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
     const inspected = coordinator.inspect(plan.effect_id); coordinator.authorize(plan.effect_id, publicationAuthorization(auth, inspected, capability.capability_id), capability.capability_id, bindings);
+    const ledger = path.join(stage, ".dynamic-external-effect-ledger-v1.ndjson"); const authorizedPrefix = fs.readFileSync(ledger);
     coordinator.publish(plan.effect_id, capability.capability_id, bindings);
-    const ledger = path.join(stage, ".dynamic-external-effect-ledger-v1.ndjson"); const records = fs.readFileSync(ledger, "utf8").trimEnd().split("\n");
-    fs.writeFileSync(ledger, `${records.slice(0, -1).join("\n")}\n`); // durable publication-intent record, but no durable create receipt
-    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
-    assert.equal(coordinator.reconcile(plan.effect_id).state, "outcome_uncertain");
+    fs.writeFileSync(ledger, authorizedPrefix);
+    assert.throws(() => new DynamicExternalEffectCoordinator(stage, files, auth), /rollback/);
     assert.equal(fs.readFileSync(path.join(destination, "a.pdf"), "utf8"), "AUTHORIZED");
-    assert.throws(() => coordinator.publish(plan.effect_id, capability.capability_id, bindings), /state transition/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("fresh capability authority requires trusted restoration or reconciles outcome_uncertain", () => {
+  for (const restorable of [false, true]) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `external-fresh-authority-${restorable}-`)); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
+    try {
+      fs.mkdirSync(destination); const originalFiles = new DynamicFileCapabilityAuthority(() => 1000); const capability = issue(originalFiles, destination);
+      const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000); let coordinator = new DynamicExternalEffectCoordinator(stage, originalFiles, auth);
+      const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+      const inspected = coordinator.inspect(plan.effect_id); coordinator.authorize(plan.effect_id, publicationAuthorization(auth, inspected, capability.capability_id), capability.capability_id, bindings);
+      coordinator.publish(plan.effect_id, capability.capability_id, bindings);
+      const journal = journalAuthorities.get(path.resolve(stage))!; const freshFiles = new DynamicFileCapabilityAuthority(() => 1000);
+      coordinator = new DynamicExternalEffectCoordinator(stage, freshFiles, auth, { journal_authority: journal,
+        ...(restorable ? { capability_restorer: { restore: (args: { capability_id: string }) => args.capability_id === capability.capability_id ? originalFiles : null } } : {}) });
+      assert.equal(coordinator.reconcile(plan.effect_id).state, restorable ? "verified" : "outcome_uncertain");
+      assert.equal(fs.readFileSync(path.join(destination, "a.pdf"), "utf8"), "AUTHORIZED");
+      assert.throws(() => coordinator.publish(plan.effect_id, capability.capability_id, bindings), /state transition/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
 });
 
 test("restart discards a torn final ledger append and can persist the next boundary", () => {
