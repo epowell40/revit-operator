@@ -94,6 +94,10 @@ export type ChatResponse = {
     authority: "trusted_supervisor_receipt";
     provider_prose_authorized: false;
     failure: string | null;
+    supervisor_package_sha256?: string | null;
+    worker_runtime_package_sha256?: string | null;
+    evidence_binding_sha256?: string | null;
+    target_revit_year?: "2023" | "2024" | "2025" | null;
   };
   certified_capability_limitations?: Array<{
     code: "CERTIFIED_ACTION_DENIED";

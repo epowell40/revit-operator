@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -55,6 +56,82 @@ function strategy() {
   };
 }
 
+function sha256(value: string | Buffer): string {
+  return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
+}
+
+function supervisorEvidence(args: {
+  source: string;
+  supervisorPackageSha256: string;
+  workerRuntimePackageSha256: string;
+  targetRevitYear?: "2023" | "2024" | "2025";
+}): Record<string, unknown> {
+  const runtimeId = "runtime-1";
+  const sessionId = "session-1";
+  const fingerprint = `sha256:${"6".repeat(64)}`;
+  const inputHash = `sha256:${"4".repeat(64)}`;
+  const graphHash = `sha256:${"5".repeat(64)}`;
+  const sourceHash = sha256(args.source);
+  const programHash = `sha256:${"2".repeat(64)}`;
+  const sdkHash = `sha256:${"3".repeat(64)}`;
+  const registrationReceipt = JSON.stringify({
+    schema: "dynamic-revit-runtime-registration-receipt/v0", ok: true,
+    runtime_instance_id: runtimeId, expires_unix_seconds: 4_000_000_000
+  });
+  const snapshotReceipt = JSON.stringify({
+    schema: "dynamic-revit-snapshot/v0", sdk: "dynamic-revit-sdk/v0", input_hash: inputHash,
+    document: { ProjectFingerprint: fingerprint, SessionId: sessionId, Title: "Fixture", ActiveViewId: 1, ActiveViewName: "View" },
+    snapshot_token: "fixture-token", elements: []
+  });
+  const workerOutput = {
+    schema: "dynamic-revit-worker-output/v0", ok: true, sourceHash, programHash, sdkHash,
+    graph: { schema: "dynamic-revit-operation-graph/v0", inputHash, operations: [{ kind: "fixture" }], graphHash },
+    logs: [], report: {}, diagnostics: []
+  };
+  const admission = {
+    schema: "dynamic-revit-worker-admission/v0", runtimeInstanceId: runtimeId,
+    launcherExecutableHash: args.supervisorPackageSha256, workerExecutableHash: `sha256:${"7".repeat(64)}`,
+    sandboxProfile: "windows-lpac-v1-zero-capabilities", workerProcessId: 10,
+    startupNonceHash: `sha256:${"8".repeat(64)}`, taskDirectoryIdentity: `sha256:${"9".repeat(64)}`,
+    sourceHash, programHash, sdkVersion: "dynamic-revit-sdk/v0", sdkHash, operationGraphHash: graphHash,
+    documentFingerprint: fingerprint, documentSessionId: sessionId, correlationId: "correlation-1",
+    expiresUnixSeconds: 4_000_000_000, signature: `hmac-sha256:${"a".repeat(64)}`
+  };
+  const previewReceipt = JSON.stringify({
+    schema: "dynamic-revit-preview-receipt/v0", ok: true, preview_id: "preview-1",
+    source_hash: sourceHash, program_hash: programHash, sdk_hash: sdkHash, input_hash: inputHash,
+    graph_hash: graphHash, document_fingerprint: fingerprint, document_session_id: sessionId,
+    worker_identity: admission, operation_count: 1, target_ids: ["target-1"],
+    projected_changed_element_ids: [1], rollback_verified_element_ids: [1], change_tracking: {},
+    projected_changes: [], failures: [], warnings: [], rollback_status: "rolled_back",
+    rollback_truth: true, elapsed_milliseconds: 1
+  });
+  const authenticated = (purpose: string, raw: string) => JSON.stringify({
+    schema: "dynamic-revit-authenticated-receipt/v0", runtime_instance_id: runtimeId, purpose,
+    expires_unix_seconds: 4_000_000_000, receipt_hash: sha256(raw),
+    host_receipt_mac: `hmac-sha256:${"b".repeat(64)}`, receipt: JSON.parse(raw)
+  });
+  const bootstrap = JSON.stringify({
+    schema: "dynamic-revit-bootstrap-receipt/v0", ok: true, runtimeInstanceId: runtimeId,
+    launcherProcessId: 20, revitProcessId: 30, expiresUnixSeconds: 4_000_000_000,
+    launcherExecutableHash: args.supervisorPackageSha256, proofHash: `sha256:${"c".repeat(64)}`,
+    hostProofMac: `hmac-sha256:${"d".repeat(64)}`
+  });
+  const target = args.targetRevitYear ?? "2024";
+  const host = `C:\\Program Files\\Autodesk\\Revit ${target}\\Revit.exe`;
+  return {
+    schema: "dynamic-revit-phase2-live-evidence/v0", ok: true,
+    startedUtc: "2026-08-09T10:00:00.000Z", completedUtc: "2026-08-09T10:00:01.000Z",
+    sandboxProfile: "windows-lpac-v1-zero-capabilities", taskDirectory: "C:\\fixture\\task",
+    registrationReceipt, snapshotReceipt, workerOutput, admission, previewReceipt,
+    applyAuthorizationReceipt: null, v1Admission: null, applyReceipt: null,
+    hostAuthenticationReceipts: [bootstrap, authenticated("snapshot-receipt", snapshotReceipt), authenticated("register-worker-receipt", registrationReceipt), authenticated("preview-receipt", previewReceipt)],
+    replayEvidence: null, failure: null, runtimeImageDirectory: "C:\\fixture\\runtime",
+    runtimeImageIdentity: args.workerRuntimePackageSha256, runtimeDependencyCount: 5,
+    targetRevitYear: target, expectedHostExecutable: host, observedHostExecutable: host
+  };
+}
+
 function restoreEnvironment(snapshot: Record<string, string | undefined>): void {
   for (const [name, value] of Object.entries(snapshot)) {
     if (value === undefined) delete process.env[name];
@@ -105,6 +182,13 @@ test("dynamic provider runner requires exact development laboratory execution", 
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
     OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled"
+  }), false);
+  assert.equal(isTrustedDynamicProgramRunnerEnabled({
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: `sha256:${"1".repeat(64)}`,
+    OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: `sha256:${"2".repeat(64)}`
   }), true);
 });
 
@@ -199,14 +283,19 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
   let captured: any = null;
   let capturedArgs: string[] = [];
   let supervisorEnvironment: NodeJS.ProcessEnv = {};
+  const supervisorPackageSha256 = sha256(fs.readFileSync(supervisor));
+  const workerRuntimePackageSha256 = `sha256:${"e".repeat(64)}`;
   try {
-    const response = await runTrustedProviderDynamicProgram(request("runner"), program({ apply: true }), {
+    const selectedProgram = program({ apply: false });
+    const response = await runTrustedProviderDynamicProgram(request("runner"), selectedProgram, {
       env: {
         REVIT_OPERATOR_MODE: "development",
         OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
         OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
         OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH: supervisor,
+        OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: supervisorPackageSha256,
         OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers,
+        OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: workerRuntimePackageSha256,
         OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token,
         OPERATOR_DYNAMIC_REVIT_BRIDGE_URL: "http://127.0.0.1:5000",
         OPERATOR_OPENAI_API_KEY: "must-not-cross-supervisor-boundary"
@@ -216,7 +305,11 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
         capturedArgs = args;
         supervisorEnvironment = options.env;
         captured = JSON.parse(fs.readFileSync(args[1]!, "utf8")) as Record<string, unknown>;
-        fs.writeFileSync(String(captured.evidencePath), JSON.stringify({ ok: true, schema: "test-evidence" }));
+        fs.writeFileSync(String(captured.evidencePath), JSON.stringify(supervisorEvidence({
+          source: selectedProgram.source,
+          supervisorPackageSha256,
+          workerRuntimePackageSha256
+        })));
         return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, outputExceeded: false };
       }
     });
@@ -226,13 +319,115 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
       "targetRevitYear", "category", "limit", "parameters", "operationBudget",
       "workerDeadlineMs", "apply", "applyDeadlineMs"
     ].sort());
-    assert.equal(captured?.apply, true);
+    assert.equal(captured?.apply, false);
     assert.equal(captured?.targetRevitYear, "2024");
     assert.equal(captured?.operationBudget, 16);
     assert.equal(supervisorEnvironment.OPERATOR_OPENAI_API_KEY, undefined);
+    assert.equal(supervisorEnvironment.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256, undefined);
+    assert.equal(supervisorEnvironment.OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256, undefined);
     assert.equal(response.dynamic_program_execution_receipt?.status, "completed");
     assert.match(response.dynamic_program_execution_receipt?.evidence_sha256 ?? "", /^[0-9a-f]{64}$/);
     assert.equal(response.dynamic_program_execution_receipt?.provider_prose_authorized, false);
+    assert.equal(response.dynamic_program_execution_receipt?.supervisor_package_sha256, supervisorPackageSha256);
+    assert.equal(response.dynamic_program_execution_receipt?.worker_runtime_package_sha256, workerRuntimePackageSha256);
+    assert.match(response.dynamic_program_execution_receipt?.evidence_binding_sha256 ?? "", /^sha256:[0-9a-f]{64}$/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("provider supervisor evidence rejects fake ok, wrong schema, target, apply, package, session, and embedded receipt tamper", async () => {
+  const cases: Array<{ name: string; mutate: (evidence: Record<string, unknown>) => Record<string, unknown> }> = [
+    { name: "fake ok", mutate: () => ({ ok: true }) },
+    { name: "wrong schema", mutate: evidence => ({ ...evidence, schema: "test-evidence/v1" }) },
+    { name: "wrong target", mutate: evidence => ({ ...evidence, targetRevitYear: "2025" }) },
+    { name: "wrong apply", mutate: evidence => ({ ...evidence, schema: "dynamic-revit-live-evidence/v1" }) },
+    { name: "wrong package", mutate: evidence => ({ ...evidence, runtimeImageIdentity: `sha256:${"f".repeat(64)}` }) },
+    { name: "wrong session", mutate: evidence => {
+      const snapshot = JSON.parse(String(evidence.snapshotReceipt)) as Record<string, any>;
+      snapshot.document.SessionId = "other-session";
+      return { ...evidence, snapshotReceipt: JSON.stringify(snapshot) };
+    } },
+    { name: "tampered embedded receipt", mutate: evidence => {
+      const preview = JSON.parse(String(evidence.previewReceipt)) as Record<string, unknown>;
+      preview.graph_hash = `sha256:${"f".repeat(64)}`;
+      return { ...evidence, previewReceipt: JSON.stringify(preview) };
+    } }
+  ];
+  for (const item of cases) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-evidence-"));
+    const supervisor = path.join(root, "DynamicRevitSandboxSupervisor.exe");
+    const workers = path.join(root, "workers");
+    const token = path.join(root, "operator-token.txt");
+    fs.mkdirSync(workers);
+    fs.writeFileSync(supervisor, "test-supervisor");
+    fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "test-worker");
+    fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
+    const supervisorPackageSha256 = sha256(fs.readFileSync(supervisor));
+    const workerRuntimePackageSha256 = `sha256:${"e".repeat(64)}`;
+    const selectedProgram = program();
+    try {
+      const response = await runTrustedProviderDynamicProgram(request(`adversarial-${item.name}`), selectedProgram, {
+        env: {
+          REVIT_OPERATOR_MODE: "development",
+          OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+          OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
+          OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH: supervisor,
+          OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: supervisorPackageSha256,
+          OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers,
+          OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: workerRuntimePackageSha256,
+          OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token,
+          OPERATOR_DYNAMIC_REVIT_BRIDGE_URL: "http://127.0.0.1:5000"
+        },
+        runsSessionsDirectory: path.join(root, "runs"),
+        executeSupervisor: async (_executable, supervisorArgs) => {
+          const config = JSON.parse(fs.readFileSync(supervisorArgs[1]!, "utf8")) as Record<string, unknown>;
+          const evidence = item.mutate(supervisorEvidence({
+            source: selectedProgram.source,
+            supervisorPackageSha256,
+            workerRuntimePackageSha256
+          }));
+          fs.writeFileSync(String(config.evidencePath), JSON.stringify(evidence));
+          return { exitCode: 0, stdout: "ok", stderr: "", timedOut: false, outputExceeded: false };
+        }
+      });
+      assert.equal(response.dynamic_program_execution_receipt?.status, "blocked", item.name);
+      assert.notEqual(response.dynamic_program_execution_receipt?.failure, null, item.name);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("provider supervisor executable must match its explicit trusted package pin before launch", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-pin-"));
+  const supervisor = path.join(root, "DynamicRevitSandboxSupervisor.exe");
+  const workers = path.join(root, "workers");
+  const token = path.join(root, "operator-token.txt");
+  fs.mkdirSync(workers);
+  fs.writeFileSync(supervisor, "test-supervisor");
+  fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "test-worker");
+  fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
+  let invoked = false;
+  try {
+    const response = await runTrustedProviderDynamicProgram(request("wrong-pin"), program(), {
+      env: {
+        REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+        OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled", OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH: supervisor,
+        OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: `sha256:${"0".repeat(64)}`,
+        OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers,
+        OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: `sha256:${"e".repeat(64)}`,
+        OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token
+      },
+      runsSessionsDirectory: path.join(root, "runs"),
+      executeSupervisor: async () => {
+        invoked = true;
+        throw new Error("must not launch");
+      }
+    });
+    assert.equal(invoked, false);
+    assert.equal(response.dynamic_program_execution_receipt?.status, "blocked");
+    assert.match(response.dynamic_program_execution_receipt?.failure ?? "", /does not match its trusted pin/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

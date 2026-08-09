@@ -8,6 +8,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import type { RecordedExecutionStrategyEvidence } from "../execution_strategy.js";
 import { buildTeammateTurnContract } from "../teammate_loop_runtime.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import { normalizeProviderSupervisorEvidence } from "./provider_supervisor_evidence.js";
 
 export const PROVIDER_DYNAMIC_PROGRAM_V1 = "revit-operator.provider-dynamic-program.v1" as const;
 export const PROVIDER_DYNAMIC_PROGRAM_EXECUTION_RECEIPT_V1 =
@@ -76,6 +77,10 @@ export type ProviderDynamicProgramExecutionReceipt = {
   authority: "trusted_supervisor_receipt";
   provider_prose_authorized: false;
   failure: string | null;
+  supervisor_package_sha256?: string | null;
+  worker_runtime_package_sha256?: string | null;
+  evidence_binding_sha256?: string | null;
+  target_revit_year?: "2023" | "2024" | "2025" | null;
 };
 
 type SupervisorExecution = {
@@ -174,7 +179,9 @@ export function normalizeProviderDynamicProgram(value: unknown): ProviderDynamic
 export function isTrustedDynamicProgramRunnerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.REVIT_OPERATOR_MODE === "development"
     && env.OPERATOR_TOOL_EXPOSURE_PROFILE === "laboratory"
-    && env.OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER === "enabled";
+    && env.OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER === "enabled"
+    && /^sha256:[a-f0-9]{64}$/.test(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256 ?? "")
+    && /^sha256:[a-f0-9]{64}$/.test(env.OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256 ?? "");
 }
 
 export function dynamicProgramProviderPrompt(
@@ -224,6 +231,16 @@ function trustedDirectory(raw: string | undefined, label: string): string {
   const stat = fs.lstatSync(configured);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`${label} must be a regular non-link directory`);
   return fs.realpathSync(configured);
+}
+
+function trustedHashPin(raw: string | undefined, label: string): string {
+  const value = (raw ?? "").trim();
+  if (!/^sha256:[a-f0-9]{64}$/.test(value)) throw new Error(`${label} must be an explicit canonical sha256 pin`);
+  return value;
+}
+
+function fileHash(filePath: string): string {
+  return `sha256:${createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")}`;
 }
 
 function loopbackBridgeUrl(raw: string | undefined): string {
@@ -323,7 +340,11 @@ function receipt(args: Partial<ProviderDynamicProgramExecutionReceipt> & Pick<Pr
     evidence_sha256: args.evidence_sha256 ?? null,
     authority: "trusted_supervisor_receipt",
     provider_prose_authorized: false,
-    failure: args.failure ?? null
+    failure: args.failure ?? null,
+    ...(args.supervisor_package_sha256 !== undefined ? { supervisor_package_sha256: args.supervisor_package_sha256 } : {}),
+    ...(args.worker_runtime_package_sha256 !== undefined ? { worker_runtime_package_sha256: args.worker_runtime_package_sha256 } : {}),
+    ...(args.evidence_binding_sha256 !== undefined ? { evidence_binding_sha256: args.evidence_binding_sha256 } : {}),
+    ...(args.target_revit_year !== undefined ? { target_revit_year: args.target_revit_year } : {})
   };
 }
 
@@ -356,6 +377,9 @@ export async function runTrustedProviderDynamicProgram(
 
   try {
     const supervisorPath = trustedFile(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH, "Dynamic Revit supervisor");
+    const supervisorPackagePin = trustedHashPin(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256, "Dynamic Revit supervisor package");
+    if (fileHash(supervisorPath) !== supervisorPackagePin) throw new Error("Dynamic Revit supervisor package does not match its trusted pin");
+    const workerRuntimePackagePin = trustedHashPin(env.OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256, "Dynamic Revit worker runtime package");
     const workerDirectory = trustedDirectory(env.OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY, "Dynamic Revit worker directory");
     const tokenFile = trustedFile(env.OPERATOR_DYNAMIC_REVIT_TOKEN_FILE, "Operator token file");
     trustedFile(path.join(workerDirectory, "DynamicRevitWorker.exe"), "Dynamic Revit worker executable");
@@ -403,20 +427,28 @@ export async function runTrustedProviderDynamicProgram(
     }
     const evidence = fs.readFileSync(evidencePath);
     if (!evidence.length || evidence.length > MAX_EVIDENCE_BYTES) throw new Error("trusted supervisor evidence size is invalid");
-    const parsed = JSON.parse(evidence.toString("utf8")) as Record<string, unknown>;
+    if (launched.exitCode !== 0) throw new Error(`trusted supervisor returned exit ${launched.exitCode ?? "unknown"}`);
+    const normalizedEvidence = normalizeProviderSupervisorEvidence(evidence, {
+      applyRequested: program.apply,
+      targetRevitYear: program.target_revit_year,
+      source: program.source,
+      supervisorPackageSha256: supervisorPackagePin,
+      workerRuntimePackageSha256: workerRuntimePackagePin
+    });
     const evidenceHash = createHash("sha256").update(evidence).digest("hex");
-    const completed = launched.exitCode === 0 && parsed.ok === true;
     return executionResponse(
-      completed
-        ? `The trusted Dynamic Revit supervisor completed the bounded ${program.apply ? "apply" : "preview"}; its structured receipt is authoritative, not provider prose.`
-        : "The trusted Dynamic Revit supervisor returned a failed receipt; no provider narration can override that result.",
+      `The pinned Dynamic Revit supervisor completed the bounded ${program.apply ? "apply" : "preview"}; its normalized receipt chain is authoritative, not provider prose.`,
       receipt({
-        status: completed ? "completed" : "failed",
+        status: "completed",
         apply_requested: program.apply,
         supervisor_exit_code: launched.exitCode,
         evidence_path: evidencePath,
         evidence_sha256: evidenceHash,
-        failure: completed ? null : "supervisor_receipt_failed"
+        failure: null,
+        supervisor_package_sha256: normalizedEvidence.supervisor_package_sha256,
+        worker_runtime_package_sha256: normalizedEvidence.worker_runtime_package_sha256,
+        evidence_binding_sha256: normalizedEvidence.binding_sha256,
+        target_revit_year: normalizedEvidence.target_revit_year
       })
     );
   } catch (error) {
