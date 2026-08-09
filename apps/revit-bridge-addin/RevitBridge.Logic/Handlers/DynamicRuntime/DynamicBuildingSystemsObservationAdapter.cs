@@ -110,10 +110,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     var counterpartOwner = counterpart.Owner?.UniqueId ?? throw new InvalidOperationException("Connected connector owner lacks a stable identity.");
                     connected.Add(DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(snapshotHash, counterpartOwner, ConnectorId(counterpart)));
                 }
+                var frame = CanonicalFrame(coordinate);
                 result.Add(new DynamicBuildingConnectorV1
                 {
                     StableWithinSnapshotId = identity,
-                    Origin = Point(connector.Origin)!, BasisX = Point(coordinate.BasisX)!, BasisY = Point(coordinate.BasisY)!, BasisZ = Point(coordinate.BasisZ)!,
+                    Origin = Point(connector.Origin)!, BasisX = frame.BasisX, BasisY = frame.BasisY, BasisZ = frame.BasisZ,
                     Domain = connector.Domain.ToString(), ConnectorType = connector.ConnectorType.ToString(), Shape = connector.Shape.ToString(),
                     FlowDirection = RequiredProperty(connector, "Direction"), SystemClassification = Classification(connector),
                     RadiusFeet = NumberProperty(connector, "Radius"), HeightFeet = NumberProperty(connector, "Height"), WidthFeet = NumberProperty(connector, "Width"),
@@ -244,7 +245,20 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             try { var workset = document.GetWorksetTable().GetWorkset(element.WorksetId); if (workset == null) return null; var id = WorksetIdValue(workset.Id); return new DynamicStableReferenceV1 { Kind = "workset", StableId = "workset:" + id.ToString(CultureInfo.InvariantCulture), ElementId = id, Name = Optional(workset.Name) }; } catch { return null; }
         }
         private static DynamicPointV1? Point(XYZ? point) => point == null ? null : new DynamicPointV1 { X = point.X, Y = point.Y, Z = point.Z };
-        private static DynamicTransformV1? TransformValue(Transform? transform) => transform == null ? null : new DynamicTransformV1 { Origin = Point(transform.Origin)!, BasisX = Point(transform.BasisX)!, BasisY = Point(transform.BasisY)!, BasisZ = Point(transform.BasisZ)! };
+        private static DynamicTransformV1? TransformValue(Transform? transform) => transform == null ? null : CanonicalFrame(transform);
+        private static DynamicTransformV1 CanonicalFrame(Transform transform)
+        {
+            var z = transform.BasisZ.Normalize();
+            var projectedX = transform.BasisX - z.Multiply(transform.BasisX.DotProduct(z));
+            if (projectedX.GetLength() <= 1e-12)
+            {
+                var fallback = Math.Abs(z.X) < 0.9 ? XYZ.BasisX : XYZ.BasisY;
+                projectedX = fallback - z.Multiply(fallback.DotProduct(z));
+            }
+            var x = projectedX.Normalize();
+            var y = z.CrossProduct(x).Normalize();
+            return new DynamicTransformV1 { Origin = Point(transform.Origin)!, BasisX = Point(x)!, BasisY = Point(y)!, BasisZ = Point(z)! };
+        }
         private static Element? Element(Document document, ElementId? id) => id == null || Id(id) < 0 ? null : Safe(() => document.GetElement(id));
         private static long Id(ElementId? id) => ElementIdCompat.GetValue(id);
         private static long WorksetIdValue(WorksetId id) { var value = id.GetType().GetProperty("Value")?.GetValue(id) ?? id.GetType().GetProperty("IntegerValue")?.GetValue(id); return value == null ? -1 : Convert.ToInt64(value, CultureInfo.InvariantCulture); }

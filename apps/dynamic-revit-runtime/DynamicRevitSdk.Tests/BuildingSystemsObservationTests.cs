@@ -104,6 +104,16 @@ public sealed class BuildingSystemsObservationTests
         DynamicBuildingSystemsObservationPolicyV1.ValidateFact(SystemFact("system"), Snapshot);
     }
 
+    [Fact]
+    public void RevitAdapterCanonicalizesReflectedConnectorFramesBeforeValidation()
+    {
+        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicBuildingSystemsObservationAdapter.cs"));
+        var source = File.ReadAllText(path);
+        Assert.Contains("var frame = CanonicalFrame(coordinate);", source);
+        Assert.Contains("transform.BasisX - z.Multiply(transform.BasisX.DotProduct(z))", source);
+        Assert.Contains("var y = z.CrossProduct(x).Normalize();", source);
+    }
+
     private static DynamicBuildingSystemsSelectorV1 Selector(int page) => new() { PageSize = page };
 
     private static DynamicBuildingSystemsFactV1 CurveFact(string id)
