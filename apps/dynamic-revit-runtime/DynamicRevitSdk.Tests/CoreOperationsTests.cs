@@ -19,8 +19,8 @@ public sealed class CoreOperationsTests
         Assert.Equal("internal_revit_units", graph.Nodes[0].Attributes["value_semantics"]);
         Assert.Equal("double", graph.Nodes[0].Attributes["expected_storage_kind"]);
         Assert.Equal("sha256:54ccd5547e936917e79bff795bf1b1ba914d528a72f42a03e5711c2d1093d4f4", graph.GraphHash);
-        Assert.Equal("sha256:f1939b669d6b424fa429c2c43299a02f320d95f4496b1e1d93800e934d4da417", DynamicCoreOperationManifestV1.ManifestHash);
-        Assert.Equal("sha256:61e31affc945becb522ed60ae8b49c3770b5a950c53999f9ee1434d957296a19", DynamicCoreOperationManifestV1.ContractSurfaceHash);
+        Assert.Equal("sha256:2e4f3ffb7f73a824dd4a5765919a66759ad60a57c28881b35da89cbcfdedc70b", DynamicCoreOperationManifestV1.ManifestHash);
+        Assert.Equal("sha256:fd5077423276e9d15271ab98567d7459ce52f2591bf12e757ef3c719bd74c717", DynamicCoreOperationManifestV1.ContractSurfaceHash);
     }
 
     [Fact]
@@ -173,6 +173,31 @@ public sealed class CoreOperationsTests
         Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(radius: 2) }));
         Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(system: "system-2") }));
         Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(connected: new[] { "owner-2:7" }) }));
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(transverseRoll: true) }));
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(flowDirection: "In") }));
+        Assert.NotEqual(hash, DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(classification: "PipeSystemType=DomesticHotWater") }));
+    }
+
+    [Fact]
+    public void ExactCurveOrientationBindsLongitudinalRollAndArcInteriorFacts()
+    {
+        var line = new[] { 0d, 0, 0, 10, 0, 0 };
+        var identityFrame = new[] { 0d, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+        var rolledFrame = new[] { 0d, 0, 0, 0, 1, 0, -1, 0, 0, 0, 0, 1 };
+        var baseline = DynamicCoreOperationStateV1.ExactOrientationStateHash(new DynamicCoreExactOrientationStateV1("line", line, identityFrame, null));
+        Assert.NotEqual(baseline, DynamicCoreOperationStateV1.ExactOrientationStateHash(new DynamicCoreExactOrientationStateV1("line", line, rolledFrame, null)));
+
+        var connector = DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector() });
+        var rolledConnector = DynamicCoreOperationStateV1.ConnectorSignature(new[] { Connector(transverseRoll: true) });
+        var mepBaseline = DynamicCoreOperationStateV1.ExactOrientationStateHash(new DynamicCoreExactOrientationStateV1("line", line, Array.Empty<double>(), connector));
+        Assert.NotEqual(mepBaseline, DynamicCoreOperationStateV1.ExactOrientationStateHash(new DynamicCoreExactOrientationStateV1("line", line, Array.Empty<double>(), rolledConnector)));
+
+        var arc = new[] { 1d, 0, 0, -1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, Math.PI };
+        var arcHash = DynamicCoreOperationStateV1.ExactOrientationStateHash(new DynamicCoreExactOrientationStateV1("arc", arc, identityFrame, null));
+        var changedInterior = arc.ToArray(); changedInterior[8] = 0.25;
+        Assert.NotEqual(arcHash, DynamicCoreOperationStateV1.ExactOrientationStateHash(new DynamicCoreExactOrientationStateV1("arc", changedInterior, identityFrame, null)));
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationStateV1.ExactOrientationStateHash(
+            new DynamicCoreExactOrientationStateV1("nurbs", line, identityFrame, null)));
     }
 
     [Fact]
@@ -286,8 +311,11 @@ public sealed class CoreOperationsTests
 
     private static string H(string value) => DynamicWire.Sha256(value);
 
-    private static DynamicCoreConnectorSignatureEntryV1 Connector(double originX = 0, double? radius = 1, string system = "system-1", string[]? connected = null) =>
-        new("owner-1", "connector-1", "DomainHvac", "End", "Round", originX, 0, 0, 0, 0, 1, radius, null, null, system, "type-1", connected ?? new[] { "owner-2:2" });
+    private static DynamicCoreConnectorSignatureEntryV1 Connector(double originX = 0, double? radius = 1, string system = "system-1", string[]? connected = null,
+        bool transverseRoll = false, string flowDirection = "Out", string classification = "DuctSystemType=SupplyAir") =>
+        new("owner-1", "connector-1", "DomainHvac", "End", "Round", originX, 0, 0,
+            transverseRoll ? 0 : 1, transverseRoll ? 1 : 0, 0, transverseRoll ? -1 : 0, transverseRoll ? 0 : 1, 0, 0, 0, 1,
+            flowDirection, classification, radius, null, null, system, "type-1", connected ?? new[] { "owner-2:2" });
 
     private sealed class MemoryAuthorizationLedger : IDynamicCoreOperationApplyAuthorizationLedgerV1
     {

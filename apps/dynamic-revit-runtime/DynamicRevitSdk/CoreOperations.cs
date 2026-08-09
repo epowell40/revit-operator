@@ -16,7 +16,7 @@ public static class DynamicCoreOperationsV1
     public const string EffectSchema = "dynamic-revit-core-operation-effect/v1";
     public const string PreviewSchema = "dynamic-revit-core-operation-preview/v1";
     public const string ApplyReceiptSchema = "dynamic-revit-core-operation-apply-receipt/v1";
-    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v2";
+    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v3";
     public const int MaximumOperations = 256;
     public const int MaximumAttributes = 16;
 }
@@ -57,7 +57,8 @@ public static class DynamicCoreOperationManifestV1
         typeof(DynamicCoreOperationAdmissionContextV1), typeof(DynamicCoreOperationEffectV1),
         typeof(DynamicCoreOperationApplyAuthorizationV1), typeof(DynamicCoreOperationReadbackV1),
         typeof(DynamicCoreOperationPreviewV1), typeof(DynamicCoreOperationApplyReceiptV1),
-        typeof(DynamicCoreConnectorSignatureEntryV1), typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1)
+        typeof(DynamicCoreConnectorSignatureEntryV1), typeof(DynamicCoreExactOrientationStateV1),
+        typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1)
     };
     private static readonly DynamicCoreOperationDescriptorV1[] Descriptors =
     {
@@ -572,7 +573,7 @@ public static class DynamicCoreOperationStateV1
         if (values.Select(value => value?.OwnerUniqueId + "\n" + value?.ConnectorId).Distinct(StringComparer.Ordinal).Count() != values.Length)
             throw new ArgumentException("Connector signature contains duplicate stable connector identities.");
         var canonical = values.Select(ConnectorCanonical).OrderBy(value => value, StringComparer.Ordinal).ToArray();
-        return DynamicWire.Sha256(DynamicCanonical.Join("dynamic-revit-connector-signature/v2", string.Join("\n", canonical)));
+        return DynamicWire.Sha256(DynamicCanonical.Join("dynamic-revit-connector-signature/v3", string.Join("\n", canonical)));
     }
 
     private static string ConnectorCanonical(DynamicCoreConnectorSignatureEntryV1 value)
@@ -581,17 +582,52 @@ public static class DynamicCoreOperationStateV1
             string.IsNullOrWhiteSpace(value.ConnectorId) || value.ConnectorId.Length > 128 ||
             string.IsNullOrWhiteSpace(value.Domain) || value.Domain.Length > 128 || string.IsNullOrWhiteSpace(value.ConnectorType) || value.ConnectorType.Length > 128 ||
             string.IsNullOrWhiteSpace(value.Shape) || value.Shape.Length > 128 || value.ConnectedEndpointIds == null || value.ConnectedEndpointIds.Count > 1024 ||
+            string.IsNullOrWhiteSpace(value.FlowDirection) || value.FlowDirection.Length > 128 ||
+            string.IsNullOrWhiteSpace(value.SystemClassification) || value.SystemClassification.Length > 512 ||
             value.SystemUniqueId != null && value.SystemUniqueId.Length > 256 || value.SystemTypeId != null && value.SystemTypeId.Length > 256 ||
             new[] { value.OriginX, value.OriginY, value.OriginZ }.Any(component => Math.Abs(component) > 1e9) ||
-            Math.Abs(Math.Sqrt(value.DirectionX * value.DirectionX + value.DirectionY * value.DirectionY + value.DirectionZ * value.DirectionZ) - 1d) > 1e-9 ||
+            !Orthonormal(value.BasisXx, value.BasisXy, value.BasisXz, value.BasisYx, value.BasisYy, value.BasisYz, value.BasisZx, value.BasisZy, value.BasisZz) ||
             new[] { value.RadiusFeet, value.HeightFeet, value.WidthFeet }.Any(size => size.HasValue && size.Value < 0d) ||
             value.ConnectedEndpointIds.Any(item => string.IsNullOrWhiteSpace(item) || item.Length > 512) ||
             value.ConnectedEndpointIds.Distinct(StringComparer.Ordinal).Count() != value.ConnectedEndpointIds.Count)
             throw new ArgumentException("Connector signature entry is invalid or unbounded.");
         return DynamicCanonical.Join(value.OwnerUniqueId, value.ConnectorId, value.Domain, value.ConnectorType, value.Shape,
-            Number(value.OriginX), Number(value.OriginY), Number(value.OriginZ), Number(value.DirectionX), Number(value.DirectionY), Number(value.DirectionZ),
+            Number(value.OriginX), Number(value.OriginY), Number(value.OriginZ),
+            Number(value.BasisXx), Number(value.BasisXy), Number(value.BasisXz), Number(value.BasisYx), Number(value.BasisYy), Number(value.BasisYz),
+            Number(value.BasisZx), Number(value.BasisZy), Number(value.BasisZz), value.FlowDirection, value.SystemClassification,
             NullableNumber(value.RadiusFeet), NullableNumber(value.HeightFeet), NullableNumber(value.WidthFeet), value.SystemUniqueId ?? "", value.SystemTypeId ?? "",
             DynamicCanonical.Set(value.ConnectedEndpointIds));
+    }
+
+    public static string ExactOrientationStateHash(DynamicCoreExactOrientationStateV1 value)
+    {
+        if (value == null || value.GeometryValues == null || value.FrameValues == null ||
+            !new[] { "point", "line", "arc", "transform" }.Contains(value.GeometryKind, StringComparer.Ordinal))
+            throw new ArgumentException("Exact orientation state is invalid.");
+        var expectedGeometryCount = value.GeometryKind == "point" ? 4 : value.GeometryKind == "line" ? 6 : value.GeometryKind == "arc" ? 21 : 0;
+        if (value.GeometryValues.Count != expectedGeometryCount || value.FrameValues.Count != 0 && value.FrameValues.Count != 12 ||
+            value.GeometryKind == "transform" && value.FrameValues.Count != 12 ||
+            (value.GeometryKind == "line" || value.GeometryKind == "arc") && value.FrameValues.Count == 0 && string.IsNullOrEmpty(value.ConnectorSignature) ||
+            !string.IsNullOrEmpty(value.ConnectorSignature) && !DynamicCanonical.Hash(value.ConnectorSignature))
+            throw new ArgumentException("Exact orientation geometry/frame coverage is incomplete.");
+        var geometry = value.GeometryValues.Select(Number).ToArray();
+        var frame = value.FrameValues.Select(Number).ToArray();
+        if (value.FrameValues.Count == 12 && !Orthonormal(value.FrameValues[3], value.FrameValues[4], value.FrameValues[5],
+            value.FrameValues[6], value.FrameValues[7], value.FrameValues[8], value.FrameValues[9], value.FrameValues[10], value.FrameValues[11]))
+            throw new ArgumentException("Exact orientation transform frame is not orthonormal.");
+        return DynamicWire.Sha256(DynamicCanonical.Join("dynamic-revit-exact-orientation-state/v1", value.GeometryKind,
+            DynamicCanonical.Join(geometry), DynamicCanonical.Join(frame), value.ConnectorSignature ?? ""));
+    }
+
+    private static bool Orthonormal(double xx, double xy, double xz, double yx, double yy, double yz, double zx, double zy, double zz)
+    {
+        var xLength = xx * xx + xy * xy + xz * xz; var yLength = yx * yx + yy * yy + yz * yz; var zLength = zx * zx + zy * zy + zz * zz;
+        var xyDot = xx * yx + xy * yy + xz * yz; var xzDot = xx * zx + xy * zy + xz * zz; var yzDot = yx * zx + yy * zy + yz * zz;
+        var crossX = xy * yz - xz * yy; var crossY = xz * yx - xx * yz; var crossZ = xx * yy - xy * yx;
+        return new[] { xx, xy, xz, yx, yy, yz, zx, zy, zz }.All(item => !double.IsNaN(item) && !double.IsInfinity(item)) &&
+            Math.Abs(xLength - 1d) <= 1e-9 && Math.Abs(yLength - 1d) <= 1e-9 && Math.Abs(zLength - 1d) <= 1e-9 &&
+            Math.Abs(xyDot) <= 1e-9 && Math.Abs(xzDot) <= 1e-9 && Math.Abs(yzDot) <= 1e-9 &&
+            Math.Abs(crossX - zx) <= 1e-9 && Math.Abs(crossY - zy) <= 1e-9 && Math.Abs(crossZ - zz) <= 1e-9;
     }
 
     private static string Nullable(long? value) => value.HasValue ? value.Value.ToString(CultureInfo.InvariantCulture) : "null";
@@ -608,12 +644,16 @@ public static class DynamicCoreOperationStateV1
 public sealed class DynamicCoreConnectorSignatureEntryV1
 {
     public DynamicCoreConnectorSignatureEntryV1(string ownerUniqueId, string connectorId, string domain, string connectorType, string shape,
-        double originX, double originY, double originZ, double directionX, double directionY, double directionZ,
+        double originX, double originY, double originZ,
+        double basisXx, double basisXy, double basisXz, double basisYx, double basisYy, double basisYz, double basisZx, double basisZy, double basisZz,
+        string flowDirection, string systemClassification,
         double? radiusFeet, double? heightFeet, double? widthFeet, string? systemUniqueId, string? systemTypeId,
         IEnumerable<string> connectedEndpointIds)
     {
         OwnerUniqueId = ownerUniqueId; ConnectorId = connectorId; Domain = domain; ConnectorType = connectorType; Shape = shape;
-        OriginX = originX; OriginY = originY; OriginZ = originZ; DirectionX = directionX; DirectionY = directionY; DirectionZ = directionZ;
+        OriginX = originX; OriginY = originY; OriginZ = originZ;
+        BasisXx = basisXx; BasisXy = basisXy; BasisXz = basisXz; BasisYx = basisYx; BasisYy = basisYy; BasisYz = basisYz; BasisZx = basisZx; BasisZy = basisZy; BasisZz = basisZz;
+        FlowDirection = flowDirection; SystemClassification = systemClassification;
         RadiusFeet = radiusFeet; HeightFeet = heightFeet; WidthFeet = widthFeet; SystemUniqueId = systemUniqueId; SystemTypeId = systemTypeId;
         ConnectedEndpointIds = Array.AsReadOnly((connectedEndpointIds ?? throw new ArgumentNullException(nameof(connectedEndpointIds)))
             .OrderBy(value => value, StringComparer.Ordinal).ToArray());
@@ -627,15 +667,38 @@ public sealed class DynamicCoreConnectorSignatureEntryV1
     public double OriginX { get; }
     public double OriginY { get; }
     public double OriginZ { get; }
-    public double DirectionX { get; }
-    public double DirectionY { get; }
-    public double DirectionZ { get; }
+    public double BasisXx { get; }
+    public double BasisXy { get; }
+    public double BasisXz { get; }
+    public double BasisYx { get; }
+    public double BasisYy { get; }
+    public double BasisYz { get; }
+    public double BasisZx { get; }
+    public double BasisZy { get; }
+    public double BasisZz { get; }
+    public string FlowDirection { get; }
+    public string SystemClassification { get; }
     public double? RadiusFeet { get; }
     public double? HeightFeet { get; }
     public double? WidthFeet { get; }
     public string? SystemUniqueId { get; }
     public string? SystemTypeId { get; }
     public IReadOnlyList<string> ConnectedEndpointIds { get; }
+}
+
+public sealed class DynamicCoreExactOrientationStateV1
+{
+    public DynamicCoreExactOrientationStateV1(string geometryKind, IEnumerable<double> geometryValues, IEnumerable<double> frameValues, string? connectorSignature)
+    {
+        GeometryKind = geometryKind;
+        GeometryValues = Array.AsReadOnly((geometryValues ?? throw new ArgumentNullException(nameof(geometryValues))).ToArray());
+        FrameValues = Array.AsReadOnly((frameValues ?? throw new ArgumentNullException(nameof(frameValues))).ToArray());
+        ConnectorSignature = connectorSignature;
+    }
+    public string GeometryKind { get; }
+    public IReadOnlyList<double> GeometryValues { get; }
+    public IReadOnlyList<double> FrameValues { get; }
+    public string? ConnectorSignature { get; }
 }
 
 /// <summary>Injected durable authority whose TryConsume operation must atomically persist first use before returning true.</summary>

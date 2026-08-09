@@ -19,7 +19,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicCoreOperationHostV1
     {
         private const int BaselineLimit = 50000;
-        private const string AdapterSurface = "dynamic-revit-core-operation-host/v2\nset_parameter/v1:exact-owner\nrotate_element/v1:orientation-state-v2\nchange_type/v1:connector-signature-v2\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
+        private const string AdapterSurface = "dynamic-revit-core-operation-host/v3\nset_parameter/v1:exact-owner\nrotate_element/v1:exact-orientation-state-v1\nchange_type/v1:connector-signature-v3\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
         private static readonly ConcurrentDictionary<string, byte> ConsumedBindings = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
 
         internal static string HostAdapterManifestHash(string revitYear) => DynamicWire.Sha256(string.Join("\n", new[]
@@ -38,12 +38,14 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 var target = document.GetElement(node.TargetUniqueIds[0]) ?? throw new InvalidOperationException("Core-operation target no longer exists: " + node.TargetUniqueIds[0]);
                 return MutationOwner(document, node, target);
             }, StringComparer.Ordinal);
+            var ownerStates = graph.Nodes.ToDictionary(node => node.TargetUniqueIds[0], node =>
+                CoreTrustedElementStateHash(owners[node.TargetUniqueIds[0]], requireExactOrientation: node.Kind == "rotate_element"), StringComparer.Ordinal);
             return new DynamicCoreOperationAdmissionContextV1
             {
                 HostAdapterManifestHash = HostAdapterManifestHash(app.Application.VersionNumber),
                 TargetCategoryStableIds = targets.ToDictionary(element => element.UniqueId, element => CategoryStableId(element.Category), StringComparer.Ordinal),
                 MutationOwnerUniqueIds = owners.ToDictionary(pair => pair.Key, pair => pair.Value.UniqueId, StringComparer.Ordinal),
-                TargetStateHashes = owners.ToDictionary(pair => pair.Key, pair => CoreTrustedElementStateHash(pair.Value), StringComparer.Ordinal),
+                TargetStateHashes = ownerStates,
                 ViewScopeHash = DynamicRuntimeApplyState.ViewScopeHash(app),
                 LevelScopeHash = DynamicRuntimeApplyState.ElementScopeHash("level", targets, element => ElementIdCompat.GetValue(element.LevelId)),
                 WorksetScopeHash = DynamicRuntimeApplyState.ElementScopeHash("workset", targets, element => element.WorksetId.IntegerValue),
@@ -141,7 +143,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     if (target.Pinned || target.GroupId != ElementId.InvalidElementId) throw new InvalidOperationException("Pinned or grouped core-operation target is not eligible.");
                     var mutationOwner = MutationOwner(document, node, target);
                     var mutationOwnerUniqueId = mutationOwner.UniqueId;
-                    var beforeHash = CoreTrustedElementStateHash(mutationOwner);
+                    var beforeHash = CoreTrustedElementStateHash(mutationOwner, requireExactOrientation: node.Kind == "rotate_element");
                     var primary = ElementIdCompat.GetValue(mutationOwner.Id);
                     current = new ChangeSet();
                     DynamicCoreOperationReadbackV1 readback;
@@ -260,7 +262,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var origin = Vector(node.Attributes["axis_origin_feet"]); var direction = Vector(node.Attributes["axis_direction"]);
             var axis = Line.CreateUnbound(origin, direction); var angle = double.Parse(node.Attributes["angle_radians"], CultureInfo.InvariantCulture);
             ElementTransformUtils.RotateElement(document, target.Id, axis, angle); document.Regenerate();
-            return Readback(node, target.UniqueId, beforeHash, CoreTrustedElementStateHash(target), new Dictionary<string, string>(StringComparer.Ordinal)
+            return Readback(node, target.UniqueId, beforeHash, CoreTrustedElementStateHash(target, requireExactOrientation: true), new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["axis_origin_feet"] = node.Attributes["axis_origin_feet"], ["axis_direction"] = node.Attributes["axis_direction"], ["angle_radians"] = node.Attributes["angle_radians"]
             });
@@ -380,47 +382,72 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             return document.GetElement(typeId) ?? throw new InvalidOperationException("Type-scoped parameter owner no longer exists.");
         }
 
-        private static string CoreTrustedElementStateHash(Element element)
+        private static string CoreTrustedElementStateHash(Element element, bool requireExactOrientation = false)
         {
             var fields = new List<string> { "base:" + DynamicRuntimePreviewHandler.TrustedElementStateHash(element) };
             try
             {
-                if (element.Location is LocationPoint point)
-                {
-                    fields.Add("location-point:" + Coordinate(point.Point));
-                    fields.Add("location-rotation:" + DynamicCoreOperationCanonicalNumberV1.Format(point.Rotation));
-                }
-                else if (element.Location is LocationCurve locationCurve)
-                {
-                    var curve = locationCurve.Curve;
-                    fields.Add(curve != null && curve.IsBound
-                        ? "location-curve:" + Coordinate(curve.GetEndPoint(0)) + ":" + Coordinate(curve.GetEndPoint(1))
-                        : "location-curve:unbound");
-                }
-                if (element is Instance instance)
-                {
-                    var transform = instance.GetTransform();
-                    fields.Add("instance-transform:" + Coordinate(transform.Origin) + ":" + Coordinate(transform.BasisX) + ":" +
-                        Coordinate(transform.BasisY) + ":" + Coordinate(transform.BasisZ));
-                }
+                fields.Add("exact-orientation:" + DynamicCoreOperationStateV1.ExactOrientationStateHash(ExactOrientationState(element)));
             }
-            catch (Exception ex) { fields.Add("orientation-capture-error:" + ex.GetType().FullName); }
+            catch (Exception ex)
+            {
+                if (requireExactOrientation) throw new InvalidOperationException("rotate_element target lacks exact supported geometry/orientation state.", ex);
+                fields.Add("exact-orientation:unsupported:" + ex.GetType().FullName);
+            }
             fields.Sort(StringComparer.Ordinal);
-            return DynamicWire.Sha256("dynamic-revit-core-trusted-element-state/v2\n" + string.Join("\n", fields));
+            return DynamicWire.Sha256("dynamic-revit-core-trusted-element-state/v3\n" + string.Join("\n", fields));
         }
 
-        private static string ConnectorSignature(Element element)
+        private static DynamicCoreExactOrientationStateV1 ExactOrientationState(Element element)
+        {
+            var frame = element is Instance instance ? TransformValues(instance.GetTransform()) : Array.Empty<double>();
+            var connectorSignature = element is MEPCurve ? ConnectorSignature(element, requireConnectors: true) : null;
+            if (element.Location is LocationPoint point)
+            {
+                return new DynamicCoreExactOrientationStateV1("point", new[] { point.Point.X, point.Point.Y, point.Point.Z, point.Rotation }, frame, connectorSignature);
+            }
+            if (element.Location is LocationCurve locationCurve)
+            {
+                var curve = locationCurve.Curve ?? throw new InvalidOperationException("LocationCurve geometry is unavailable.");
+                if (!curve.IsBound) throw new InvalidOperationException("Unbound LocationCurve geometry is not supported.");
+                if (curve is Line line)
+                {
+                    return new DynamicCoreExactOrientationStateV1("line", PointPairValues(line.GetEndPoint(0), line.GetEndPoint(1)), frame, connectorSignature);
+                }
+                if (curve is Arc arc)
+                {
+                    var values = PointPairValues(arc.GetEndPoint(0), arc.GetEndPoint(1)).Concat(PointValues(arc.Center))
+                        .Concat(PointValues(arc.Normal)).Concat(PointValues(arc.XDirection)).Concat(PointValues(arc.YDirection))
+                        .Concat(new[] { arc.Radius, arc.GetEndParameter(0), arc.GetEndParameter(1) }).ToArray();
+                    return new DynamicCoreExactOrientationStateV1("arc", values, frame, connectorSignature);
+                }
+                throw new InvalidOperationException("Non-linear LocationCurve type is not in the exact supported set: " + curve.GetType().FullName);
+            }
+            if (frame.Length == 12) return new DynamicCoreExactOrientationStateV1("transform", Array.Empty<double>(), frame, connectorSignature);
+            throw new InvalidOperationException("Element has no exact supported rotation orientation state.");
+        }
+
+        private static double[] PointValues(XYZ value) => new[] { value.X, value.Y, value.Z };
+        private static double[] PointPairValues(XYZ start, XYZ end) => PointValues(start).Concat(PointValues(end)).ToArray();
+        private static double[] TransformValues(Transform value) => PointValues(value.Origin).Concat(PointValues(value.BasisX))
+            .Concat(PointValues(value.BasisY)).Concat(PointValues(value.BasisZ)).ToArray();
+
+        private static string ConnectorSignature(Element element, bool requireConnectors = false)
         {
             ConnectorSet? connectors = null;
             if (element is FamilyInstance instance) connectors = instance.MEPModel?.ConnectorManager?.Connectors;
             else if (element is MEPCurve curve) connectors = curve.ConnectorManager?.Connectors;
-            if (connectors == null) return DynamicCoreOperationStateV1.ConnectorSignature(Array.Empty<DynamicCoreConnectorSignatureEntryV1>());
+            if (connectors == null)
+            {
+                if (requireConnectors) throw new InvalidOperationException("Exact connector orientation state is unavailable.");
+                return DynamicCoreOperationStateV1.ConnectorSignature(Array.Empty<DynamicCoreConnectorSignatureEntryV1>());
+            }
             var values = new List<DynamicCoreConnectorSignatureEntryV1>();
             foreach (Connector connector in connectors)
             {
                 var origin = connector.Origin;
                 var coordinateSystem = connector.CoordinateSystem;
-                var direction = coordinateSystem?.BasisZ ?? throw new InvalidOperationException("Connector coordinate system is unavailable.");
+                if (coordinateSystem == null) throw new InvalidOperationException("Connector coordinate system is unavailable.");
                 var connected = new List<string>();
                 foreach (Connector reference in connector.AllRefs)
                     connected.Add(ConnectorEndpointIdentity(reference));
@@ -428,11 +455,43 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 values.Add(new DynamicCoreConnectorSignatureEntryV1(
                     connector.Owner?.UniqueId ?? throw new InvalidOperationException("Connector owner identity is unavailable."),
                     ConnectorId(connector), connector.Domain.ToString(), connector.ConnectorType.ToString(), connector.Shape.ToString(),
-                    origin.X, origin.Y, origin.Z, direction.X, direction.Y, direction.Z,
+                    origin.X, origin.Y, origin.Z,
+                    coordinateSystem.BasisX.X, coordinateSystem.BasisX.Y, coordinateSystem.BasisX.Z,
+                    coordinateSystem.BasisY.X, coordinateSystem.BasisY.Y, coordinateSystem.BasisY.Z,
+                    coordinateSystem.BasisZ.X, coordinateSystem.BasisZ.Y, coordinateSystem.BasisZ.Z,
+                    RequiredConnectorProperty(connector, "Direction"), ConnectorSystemClassification(connector),
                     ConnectorSize(connector, "Radius"), ConnectorSize(connector, "Height"), ConnectorSize(connector, "Width"),
                     system?.UniqueId, system == null ? null : ElementIdCompat.GetValue(system.GetTypeId()).ToString(CultureInfo.InvariantCulture), connected));
             }
+            if (requireConnectors && values.Count == 0) throw new InvalidOperationException("MEPCurve has no connectors to bind longitudinal orientation.");
             return DynamicCoreOperationStateV1.ConnectorSignature(values);
+        }
+
+        private static string RequiredConnectorProperty(Connector connector, string propertyName)
+        {
+            try
+            {
+                var value = connector.GetType().GetProperty(propertyName)?.GetValue(connector, null);
+                return value == null ? throw new InvalidOperationException("Connector " + propertyName + " is unavailable.") : Convert.ToString(value, CultureInfo.InvariantCulture) ?? "";
+            }
+            catch (Exception ex) { throw new InvalidOperationException("Connector " + propertyName + " is unavailable.", ex); }
+        }
+
+        private static string ConnectorSystemClassification(Connector connector)
+        {
+            var values = new List<string>();
+            foreach (var propertyName in new[] { "DuctSystemType", "PipeSystemType", "ElectricalSystemType" })
+            {
+                try
+                {
+                    var value = connector.GetType().GetProperty(propertyName)?.GetValue(connector, null);
+                    if (value != null) values.Add(propertyName + "=" + Convert.ToString(value, CultureInfo.InvariantCulture));
+                }
+                catch { }
+            }
+            if (values.Count == 0) throw new InvalidOperationException("Connector system classification is unavailable.");
+            values.Sort(StringComparer.Ordinal);
+            return string.Join(";", values);
         }
 
         private static string ConnectorEndpointIdentity(Connector connector) => (connector.Owner?.UniqueId ?? "owner:none") + ":" + ConnectorId(connector);
