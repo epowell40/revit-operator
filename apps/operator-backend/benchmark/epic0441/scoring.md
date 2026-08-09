@@ -3,11 +3,11 @@
 Run the frozen 30-task, paired scoreboard with:
 
 ```text
-npm run benchmark:epic0441 -- init --campaign-seed <seed> --reviewer-packet <private-file> --output <evidence.json>
+npm run benchmark:epic0441 -- init --campaign-seed <seed> --reviewer-packet <private-file> --output <evidence.json> [--baseline-current-runtime]
 npm run benchmark:epic0441 -- score --manifest <evidence.json> --evidence-root <dir> --reviewer-packet <private-file> --output-dir <dir>
 ```
 
-`init` creates an intentionally conservative 60-row source-calibration skeleton with the balanced ordering and reviewer-packet hash already bound. Reviewer JSON is hashed as valid UTF-8 with line endings canonically normalized to LF, so the private seal survives Git's Windows checkout conversion. Replace a row only when the corresponding evidence or honest unsupported/blocked classification is available; the scorer still owns every accepted classification and rejects invented live tiers.
+`init` creates an intentionally conservative 60-row source-calibration skeleton with the balanced ordering and reviewer-packet hash already bound. `--baseline-current-runtime` marks Dynamic Runtime arms unsupported unless the frozen task can be expressed through the currently packaged move/string-parameter substrate (`r04` and `r12`); it does not turn source feasibility into live evidence. Reviewer JSON is hashed as valid UTF-8 with line endings canonically normalized to LF, so the private seal survives Git's Windows checkout conversion. Replace a row only when the corresponding evidence or honest unsupported/blocked classification is available; the scorer still owns every accepted classification and rejects invented live tiers.
 
 The input must contain exactly 60 unique task/config rows. Pair order is derived from the suite ID, campaign seed, and task ID; it is deterministically balanced to 15 typed-first and 15 dynamic-first tasks. The scorer rejects caller scores and invented live tiers.
 

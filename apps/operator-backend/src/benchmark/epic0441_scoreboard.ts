@@ -135,6 +135,7 @@ export function createEpic0441EvidenceManifestSkeleton(args: {
   campaign: Epic0441Campaign;
   campaignSeed: string;
   reviewerPacketSha256: string;
+  dynamicSupportedTaskIds?: readonly string[];
 }): Epic0441EvidenceManifest {
   validateEpic0441Campaign(args.campaign);
   if (args.campaign.tasks.length !== 30 || args.campaign.execution_configs.length !== 2 || !hashPattern.test(args.reviewerPacketSha256)) {
@@ -150,15 +151,19 @@ export function createEpic0441EvidenceManifestSkeleton(args: {
     rows: args.campaign.tasks.flatMap((task) => args.campaign.execution_configs.map((config) => {
       const taskOrdering = ordering.get(task.task_id)!;
       const sealed = task.wave === "novel_post_freeze";
+      const unsupported = !sealed && config.representation === "dynamic_program" && args.dynamicSupportedTaskIds !== undefined
+        && !args.dynamicSupportedTaskIds.includes(task.task_id);
       return {
         task_id: task.task_id,
         config_id: config.config_id,
         representation: config.representation,
         pair_order: (config.representation === taskOrdering.first_representation ? 1 : 2) as 1 | 2,
         ordering_key: taskOrdering.ordering_key,
-        classification: sealed ? "sealed_not_yet_run" as const : "source_only" as const,
+        classification: sealed ? "sealed_not_yet_run" as const : unsupported ? "unsupported" as const : "source_only" as const,
         reason: sealed
           ? "Independent post-freeze task remains sealed from this source-calibration manifest."
+          : unsupported
+            ? "Current packaged Dynamic Runtime lacks the observation and/or operation primitive required by this task; the arm was blocked before execution."
           : "No scorer-authenticated task/config receipt is attached; source-level campaign calibration only."
       };
     }))

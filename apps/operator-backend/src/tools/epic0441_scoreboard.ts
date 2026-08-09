@@ -27,7 +27,8 @@ if (process.argv[2] === "init") {
   const reviewerBytes = fs.readFileSync(path.resolve(reviewerPacketPath));
   const manifest = createEpic0441EvidenceManifestSkeleton({
     campaign: loadEpic0441Campaign(), campaignSeed,
-    reviewerPacketSha256: epic0441ReviewerPacketSha256(reviewerBytes)
+    reviewerPacketSha256: epic0441ReviewerPacketSha256(reviewerBytes),
+    ...(process.argv.includes("--baseline-current-runtime") ? { dynamicSupportedTaskIds: ["r04_bulk_status_rule", "r12_move_device"] } : {})
   });
   writeJsonFile(path.resolve(outputPath), manifest);
   console.log(JSON.stringify({ output: path.resolve(outputPath), row_count: manifest.rows.length, reviewer_packet_sha256: manifest.reviewer_packet_sha256 }, null, 2));

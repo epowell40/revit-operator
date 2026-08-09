@@ -36,6 +36,14 @@ test("EPIC-0441 reviewer packet seal is stable across Git LF and Windows CRLF ch
   assert.throws(() => epic0441ReviewerPacketSha256(Buffer.from([0xff, 0xfe])), /UTF-8/);
 });
 
+test("EPIC-0441 current-runtime baseline blocks unsupported dynamic arms without inflating evidence", () => {
+  const manifest = createEpic0441EvidenceManifestSkeleton({ campaign, campaignSeed: "baseline", reviewerPacketSha256: hash("packet"),
+    dynamicSupportedTaskIds: ["r04_bulk_status_rule", "r12_move_device"] });
+  assert.equal(manifest.rows.filter(row => row.representation === "dynamic_program" && row.classification === "unsupported").length, 25);
+  assert.equal(manifest.rows.find(row => row.task_id === "r12_move_device" && row.representation === "dynamic_program")?.classification, "source_only");
+  assert.equal(manifest.rows.find(row => row.task_id === "n28_novel_holdout" && row.representation === "dynamic_program")?.classification, "sealed_not_yet_run");
+});
+
 test("EPIC-0441 freezes thirty paired, redline-led task slots", () => {
   assert.equal(campaign.tasks.length, 30);
   assert.equal(campaign.tasks.filter((task) => task.wave === "redline_primary").length, 21);
