@@ -1,8 +1,8 @@
 {
   "schema": "dynamic-revit-annotation-operation-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:b781b1050961f9bd7b4762d2b1a25f9b25f18467ab29ecd9352248571d63caa2",
-  "contractSurfaceHash": "sha256:7b479e5fd71a5f89b307cf64d5be7003657699923a147b51ce8a9458e156a5ea",
+  "contractManifestHash": "sha256:67e0dc5ed1b48f672be07782cb8cb961bbc9fca9bd22d0ce5c38fbf7e28bfd90",
+  "contractSurfaceHash": "sha256:93578da9d429efa81124a551fccdefe1e4fae4ce9aaaa12c82d1f62bfff8932a",
   "resultReferenceManifestHash": "sha256:0230fdf6954c0128c8eb87afe559643196e53651037eb7a7980a2f369cc429f5",
   "readbackSchema": "dynamic-revit-annotation-operation-readback/v1",
   "previewSchema": "dynamic-revit-annotation-operation-preview/v1",

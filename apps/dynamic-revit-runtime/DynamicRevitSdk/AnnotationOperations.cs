@@ -52,8 +52,16 @@ public static class DynamicAnnotationOperationManifestV1
     public static string ManifestHash => Manifest;
     private static string SurfaceOf(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
         .Where(property => property.GetMethod?.IsPublic == true && !property.GetMethod.IsStatic)
-        .Select(property => property.Name + ":" + property.PropertyType.FullName + (property.SetMethod == null ? ":read-only" : ":read-write"))
+        .Select(property => property.Name + ":" + TypeName(property.PropertyType) + (property.SetMethod == null ? ":read-only" : ":read-write"))
         .OrderBy(value => value, StringComparer.Ordinal));
+    private static string TypeName(Type type)
+    {
+        if (type.IsArray) return TypeName(type.GetElementType()!) + "[]";
+        if (!type.IsGenericType) return type.FullName ?? type.Name;
+        var name = type.GetGenericTypeDefinition().FullName ?? type.Name;
+        var tick = name.IndexOf('`'); if (tick >= 0) name = name.Substring(0, tick);
+        return name + "<" + string.Join(",", type.GetGenericArguments().Select(TypeName)) + ">";
+    }
     private static string DescriptorCanonical(DynamicAnnotationOperationDescriptorV1 value) => DynamicCanonical.Join(value.Kind, value.PrimitiveVersion,
         value.EffectClass, value.ExternalTargetCount.ToString(CultureInfo.InvariantCulture), value.OutputCount.ToString(CultureInfo.InvariantCulture), DynamicCanonical.Set(value.RequiredAttributes));
 }

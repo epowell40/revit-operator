@@ -101,6 +101,9 @@ public sealed class AnnotationOperationsTests
         Assert.Equal(DynamicAnnotationOperationManifestV1.ManifestHash, document.RootElement.GetProperty("contractManifestHash").GetString());
         Assert.Equal(DynamicAnnotationOperationManifestV1.ContractSurfaceHash, document.RootElement.GetProperty("contractSurfaceHash").GetString());
         Assert.False(document.RootElement.GetProperty("productionExposed").GetBoolean());
+        var source = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "DynamicRevitSdk", "AnnotationOperations.cs")));
+        Assert.Contains("TypeName(property.PropertyType)", source);
+        Assert.DoesNotContain("property.PropertyType.FullName", source);
     }
 
     private static DynamicExternalTargetReferenceV1 External(string id, string category, string type, string state) => new()
