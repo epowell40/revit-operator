@@ -122,6 +122,115 @@ test("publication rechecks signed authorization expiry at the publish boundary",
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("verification rejects destination mutation, truncation, and same-byte replacement", () => {
+  for (const attack of ["mutate", "truncate", "replace"] as const) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `external-destination-${attack}-`)); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
+    try {
+      fs.mkdirSync(destination); const files = new DynamicFileCapabilityAuthority(() => 1000); const capability = issue(files, destination);
+      const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000); const coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
+      const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+      const inspected = coordinator.inspect(plan.effect_id); coordinator.authorize(plan.effect_id, publicationAuthorization(auth, inspected, capability.capability_id), capability.capability_id, bindings);
+      const published = coordinator.publish(plan.effect_id, capability.capability_id, bindings); const leaf = path.join(destination, "a.pdf");
+      if (attack === "mutate") fs.writeFileSync(leaf, "SUBSTITUTED");
+      else if (attack === "truncate") fs.truncateSync(leaf, 3);
+      else { fs.unlinkSync(leaf); fs.writeFileSync(leaf, "AUTHORIZED"); }
+      assert.throws(() => coordinator.verify(plan.effect_id, published.receipt_hash!), /identity|content|changed/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("durable coordinator reconciles every completed boundary and never republishes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-restart-")); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
+  try {
+    fs.mkdirSync(destination); const files = new DynamicFileCapabilityAuthority(() => 1000); const capability = issue(files, destination);
+    const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000);
+    let coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); const planned = coordinator.plan("export");
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(planned.effect_id).state, "planned");
+    coordinator.stage(planned.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(planned.effect_id).state, "staged");
+    const inspected = coordinator.inspect(planned.effect_id);
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(planned.effect_id).state, "inspected");
+    coordinator.authorize(planned.effect_id, publicationAuthorization(auth, inspected, capability.capability_id), capability.capability_id, bindings);
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(planned.effect_id).state, "authorized");
+    const published = coordinator.publish(planned.effect_id, capability.capability_id, bindings);
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(planned.effect_id).state, "verified");
+    assert.equal(fs.readFileSync(path.join(destination, "a.pdf"), "utf8"), "AUTHORIZED");
+    assert.throws(() => coordinator.publish(planned.effect_id, capability.capability_id, bindings), /state transition/);
+    assert.equal(coordinator.verify(planned.effect_id, published.receipt_hash!).state, "verified");
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(planned.effect_id).state, "verified");
+    fs.truncateSync(path.join(destination, "a.pdf"), 2); assert.equal(coordinator.reconcile(planned.effect_id).state, "failed");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("crash after publication intent is outcome_uncertain and is never republished", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-crash-intent-")); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
+  try {
+    fs.mkdirSync(destination); const files = new DynamicFileCapabilityAuthority(() => 1000); const capability = issue(files, destination);
+    const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000); let coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
+    const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+    const inspected = coordinator.inspect(plan.effect_id); coordinator.authorize(plan.effect_id, publicationAuthorization(auth, inspected, capability.capability_id), capability.capability_id, bindings);
+    coordinator.publish(plan.effect_id, capability.capability_id, bindings);
+    const ledger = path.join(stage, ".dynamic-external-effect-ledger-v1.ndjson"); const records = fs.readFileSync(ledger, "utf8").trimEnd().split("\n");
+    fs.writeFileSync(ledger, `${records.slice(0, -1).join("\n")}\n`); // durable publication-intent record, but no durable create receipt
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
+    assert.equal(coordinator.reconcile(plan.effect_id).state, "outcome_uncertain");
+    assert.equal(fs.readFileSync(path.join(destination, "a.pdf"), "utf8"), "AUTHORIZED");
+    assert.throws(() => coordinator.publish(plan.effect_id, capability.capability_id, bindings), /state transition/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("restart discards a torn final ledger append and can persist the next boundary", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-torn-ledger-")); const stage = path.join(root, "stage");
+  try {
+    const files = new DynamicFileCapabilityAuthority(() => 1000); const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000);
+    let coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); const plan = coordinator.plan("export");
+    const ledger = path.join(stage, ".dynamic-external-effect-ledger-v1.ndjson"); fs.appendFileSync(ledger, '{"schema":"torn');
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(plan.effect_id).state, "planned");
+    coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(plan.effect_id).state, "staged");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("authorization expiry and replay remain terminal across coordinator restart", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-restart-expiry-")); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
+  try {
+    let time = 1000; fs.mkdirSync(destination); const files = new DynamicFileCapabilityAuthority(() => time); const capability = issue(files, destination, { expires_unix_seconds: 1200 });
+    const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => time); let coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
+    const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+    const inspected = coordinator.inspect(plan.effect_id); const authorization = auth.issue({ effect_id: inspected.effect_id, effect_class: inspected.effect_class,
+      manifest_hash: inspected.manifest_hash!, destination_capability_id_hash: sha256(capability.capability_id),
+      bindings_hash: sha256(`${bindings.task}\n${bindings.program}\n${bindings.document}\n${bindings.principal}`), expires_unix_seconds: 1005 });
+    coordinator.authorize(plan.effect_id, authorization, capability.capability_id, bindings); time = 1006;
+    coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); assert.equal(coordinator.reconcile(plan.effect_id).state, "failed");
+    assert.throws(() => coordinator.authorize(plan.effect_id, authorization, capability.capability_id, bindings), /state transition/);
+    assert.equal(fs.existsSync(path.join(destination, "a.pdf")), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("durable ledger rejects forged state and a reparse leaf", { skip: process.platform !== "win32" }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-ledger-integrity-")); const stage = path.join(root, "stage");
+  try {
+    const files = new DynamicFileCapabilityAuthority(() => 1000); const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000);
+    const coordinator = new DynamicExternalEffectCoordinator(stage, files, auth); coordinator.plan("export");
+    const ledger = path.join(stage, ".dynamic-external-effect-ledger-v1.ndjson"); const forged = fs.readFileSync(ledger, "utf8").replace('"state":"planned"', '"state":"verified"');
+    fs.writeFileSync(ledger, forged); assert.throws(() => new DynamicExternalEffectCoordinator(stage, files, auth), /integrity/);
+    fs.unlinkSync(ledger); const outside = path.join(root, "outside-ledger"); fs.writeFileSync(outside, "{}"); fs.symlinkSync(outside, ledger, "file");
+    assert.throws(() => new DynamicExternalEffectCoordinator(stage, files, auth), /reparse|symbolic/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("destination verification rejects a post-publication reparse leaf", { skip: process.platform !== "win32" }, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-verify-reparse-")); const stage = path.join(root, "stage"); const destination = path.join(root, "out"); const outside = path.join(root, "outside.pdf");
+  try {
+    fs.mkdirSync(destination); fs.writeFileSync(outside, "AUTHORIZED"); const files = new DynamicFileCapabilityAuthority(() => 1000); const capability = issue(files, destination);
+    const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000); const coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
+    const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+    const inspected = coordinator.inspect(plan.effect_id); coordinator.authorize(plan.effect_id, publicationAuthorization(auth, inspected, capability.capability_id), capability.capability_id, bindings);
+    const published = coordinator.publish(plan.effect_id, capability.capability_id, bindings); fs.unlinkSync(path.join(destination, "a.pdf")); fs.symlinkSync(outside, path.join(destination, "a.pdf"), "file");
+    assert.throws(() => coordinator.verify(plan.effect_id, published.receipt_hash!), /reparse|symbolic/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("v1 rejects nested and multi-file staging before publication can become partial", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-bounded-"));
   try {
