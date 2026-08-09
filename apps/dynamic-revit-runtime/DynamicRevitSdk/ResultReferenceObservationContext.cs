@@ -163,7 +163,8 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
         StableWithinSnapshotId = value.StableWithinSnapshotId, Origin = Clone(value.Origin)!, BasisX = Clone(value.BasisX)!, BasisY = Clone(value.BasisY)!, BasisZ = Clone(value.BasisZ)!,
         Domain = value.Domain, ConnectorType = value.ConnectorType, Shape = value.Shape, FlowDirection = value.FlowDirection,
         SystemClassification = value.SystemClassification, RadiusFeet = value.RadiusFeet, HeightFeet = value.HeightFeet, WidthFeet = value.WidthFeet,
-        System = Clone(value.System), ConnectedCounterpartIds = value.ConnectedCounterpartIds.ToArray()
+        System = Clone(value.System), IsPhysicallyConnected = value.IsPhysicallyConnected,
+        ConnectedCounterpartIds = value.ConnectedCounterpartIds.ToArray()
     };
 
     private static DynamicMepCurveFactV1? Clone(DynamicMepCurveFactV1? value) => value == null ? null : new DynamicMepCurveFactV1

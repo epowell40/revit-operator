@@ -21,6 +21,8 @@ public sealed class ResultReferenceObservationContextTests
         Assert.Equal(2, context.BuildingSystemsPages.Count);
         Assert.Equal(2, context.BuildingSystemsFacts.Count);
         Assert.Equal(2, context.TrustedExternalTargets.Count);
+        Assert.True(context.BuildingSystemsFacts[0].Connectors[0].IsPhysicallyConnected);
+        Assert.Single(context.BuildingSystemsFacts[0].Connectors[0].ConnectedCounterpartIds);
 
         pages[0].EnvelopeHash = H("mutated-source-page"); facts[0].StateHash = H("mutated-source-target");
         var exposedPages = context.BuildingSystemsPages; var exposedTargets = context.TrustedExternalTargets;
@@ -72,7 +74,14 @@ public sealed class ResultReferenceObservationContextTests
         return new DynamicBuildingSystemsFactV1
         {
             Kind = "equipment", Element = element, Category = category, Family = family, Type = type, Location = origin, Orientation = transform,
-            Asset = new DynamicBuildingAssetFactV1 { AssetClass = "equipment", Location = origin, Orientation = transform, Family = family, Type = type }
+            Asset = new DynamicBuildingAssetFactV1 { AssetClass = "equipment", Location = origin, Orientation = transform, Family = family, Type = type },
+            Connectors = new[] { new DynamicBuildingConnectorV1 {
+                StableWithinSnapshotId = DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(Snapshot, uniqueId, "1"),
+                Origin = origin, BasisX = Point(1, 0, 0), BasisY = Point(0, 1, 0), BasisZ = Point(0, 0, 1),
+                Domain = "DomainHvac", ConnectorType = "End", Shape = "Round", FlowDirection = "Out",
+                SystemClassification = "DuctSystemType=SupplyAir", RadiusFeet = 0.25, IsPhysicallyConnected = true,
+                ConnectedCounterpartIds = new[] { DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(Snapshot, "counterpart-" + uniqueId, "2") }
+            } }
         };
     }
 
