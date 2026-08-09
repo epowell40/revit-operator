@@ -67,6 +67,71 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Laboratory_dependency_identity_allows_an_exact_deployed_identity_beside_an_unrelated_version()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-unrelated-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var deployed = typeof(JsonDocument).Assembly.Location;
+                var unrelated = Path.Combine(directory, "System.Text.Json.dll");
+                File.Copy(deployed, unrelated);
+                var identity = AssemblyName.GetAssemblyName(deployed).FullName!;
+                var selected = method.Invoke(null, new object[]
+                {
+                    deployed,
+                    "System.Text.Json.dll",
+                    new[]
+                    {
+                        new KeyValuePair<string, string>(identity, deployed),
+                        new KeyValuePair<string, string>(
+                            "System.Text.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51",
+                            unrelated)
+                    }
+                });
+                Assert.Equal(Path.GetFullPath(deployed), selected);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Fact]
+        public void Laboratory_dependency_identity_rejects_duplicate_paths_for_the_reviewed_identity()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-duplicate-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "SelectManagedRuntimeDependencyPath", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var deployed = typeof(JsonDocument).Assembly.Location;
+                var duplicate = Path.Combine(directory, "System.Text.Json.dll");
+                File.Copy(deployed, duplicate);
+                var identity = AssemblyName.GetAssemblyName(deployed).FullName!;
+                var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[]
+                {
+                    deployed,
+                    "System.Text.Json.dll",
+                    new[]
+                    {
+                        new KeyValuePair<string, string>(identity, deployed),
+                        new KeyValuePair<string, string>(identity, duplicate)
+                    }
+                }));
+                Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                    Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Fact]
         public void Laboratory_dependency_identity_rejects_when_only_an_unrelated_version_is_loaded()
         {
             var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(

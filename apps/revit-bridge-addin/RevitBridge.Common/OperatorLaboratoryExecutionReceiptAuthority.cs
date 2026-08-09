@@ -382,26 +382,36 @@ namespace RevitBridge.Common
             if (managedAssemblies.Any(value => string.IsNullOrWhiteSpace(value.Value))
                 || managedAssemblies.Any(value => !File.Exists(value.Value)))
                 throw Denied("Protected laboratory evidence cannot resolve every loaded " + name + " assembly location.");
-            var managedMatches = managedAssemblies
+            var deployedIdentity = AssemblyName.GetAssemblyName(deployedPath).FullName ?? "";
+            var reviewedIdentities = new HashSet<string>(StringComparer.Ordinal) { deployedIdentity };
+            if (!string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)) reviewedIdentities.Add(approvedHostAssemblyFullName!);
+            var identityMatches = managedAssemblies
+                .Where(value => reviewedIdentities.Contains(value.Key))
+                .ToList();
+            if (identityMatches.Count == 0)
+            {
+                if (managedAssemblies.Count > 0)
+                    throw Denied("Protected laboratory evidence loaded only unreviewed identities for " + name + ".");
+                return deployedPath;
+            }
+            var managedMatches = identityMatches
                 .Select(value => Path.GetFullPath(value.Value))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded copies of " + name + ".");
-            if (managedMatches.Count == 0) return deployedPath;
+            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded reviewed-identity copies of " + name + ".");
 
             var selected = managedMatches[0];
             if (string.Equals(selected, deployedPath, StringComparison.OrdinalIgnoreCase))
             {
-                var deployedIdentity = AssemblyName.GetAssemblyName(deployedPath).FullName ?? "";
-                if (managedAssemblies.Any(value => !string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal)))
+                if (identityMatches.Any(value => !string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal)))
                     throw Denied("Protected laboratory evidence loaded a different identity from the deployed " + name + ".");
                 return selected;
             }
             if (string.IsNullOrWhiteSpace(approvedHostPath) || string.IsNullOrWhiteSpace(approvedHostSha256)
                 || string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)
                 || !string.Equals(selected, Path.GetFullPath(approvedHostPath), StringComparison.OrdinalIgnoreCase)
-                || managedAssemblies.Any(value => !string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal))
-                || !FileHashMatches(selected, approvedHostSha256))
+                || identityMatches.Any(value => !string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal))
+                || !FileHashMatches(selected, approvedHostSha256!))
                 throw Denied("Protected laboratory evidence loaded " + name + " outside the reviewed add-in/host dependency closure.");
             return selected;
         }
