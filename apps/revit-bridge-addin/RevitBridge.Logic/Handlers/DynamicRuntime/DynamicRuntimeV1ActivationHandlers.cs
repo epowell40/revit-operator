@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -124,6 +125,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         internal string SnapshotHash = "";
         internal long DocumentRevision;
         internal DateTime ExpiresUtc;
+        internal readonly object EnvelopeGate = new object();
+        internal readonly Dictionary<int, string> EnvelopeHashesByOffset = new Dictionary<int, string>();
+        internal int? ObservedTotalCount;
+        internal int? ObservedPageSize;
     }
 
     internal static class DynamicBuildingSystemsSnapshotAuthorityV1
@@ -158,6 +163,45 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 seal.ScopeHash != DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector))
                 throw new InvalidOperationException("Building-systems snapshot is unknown, expired, stale, or scope-substituted.");
             return seal;
+        }
+
+        internal static void RecordEnvelope(string snapshotId, DynamicBuildingSystemsEnvelopeV1 envelope)
+        {
+            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow)
+                throw new InvalidOperationException("Building-systems snapshot expired before its observation envelope was recorded.");
+            DynamicBuildingSystemsObservationPolicyV1.ValidateEnvelope(envelope);
+            if (envelope.SnapshotHash != seal.SnapshotHash || envelope.ScopeHash != seal.ScopeHash || envelope.DocumentRevision != seal.DocumentRevision ||
+                envelope.DocumentFingerprint != seal.DocumentFingerprint || envelope.DocumentSessionId != seal.DocumentSessionId)
+                throw new InvalidOperationException("Building-systems envelope does not bind the sealed snapshot.");
+            lock (seal.EnvelopeGate)
+            {
+                if (seal.ObservedTotalCount.HasValue && (seal.ObservedTotalCount.Value != envelope.TotalCount || seal.ObservedPageSize != envelope.PageSize))
+                    throw new InvalidOperationException("Building-systems snapshot page totals or page size changed.");
+                if (seal.EnvelopeHashesByOffset.TryGetValue(envelope.PageOffset, out var prior) && prior != envelope.EnvelopeHash)
+                    throw new InvalidOperationException("Building-systems snapshot page was equivocally replaced.");
+                seal.ObservedTotalCount = envelope.TotalCount;
+                seal.ObservedPageSize = envelope.PageSize;
+                seal.EnvelopeHashesByOffset[envelope.PageOffset] = envelope.EnvelopeHash;
+            }
+        }
+
+        internal static void RequireCompleteEnvelopeSet(string snapshotId, IEnumerable<string> envelopeHashes)
+        {
+            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow)
+                throw new InvalidOperationException("Building-systems snapshot is unavailable for result-reference admission.");
+            var supplied = (envelopeHashes ?? throw new ArgumentNullException(nameof(envelopeHashes))).ToArray();
+            if (supplied.Length < 1 || supplied.Length > 64 || supplied.Any(value => !DynamicRuntimePreviewHandler.IsHash(value)) || supplied.Distinct(StringComparer.Ordinal).Count() != supplied.Length)
+                throw new ArgumentException("Building-systems envelope identity set is invalid or unbounded.");
+            lock (seal.EnvelopeGate)
+            {
+                if (!seal.ObservedTotalCount.HasValue || !seal.ObservedPageSize.HasValue)
+                    throw new InvalidOperationException("Building-systems snapshot has no authenticated observation pages.");
+                var expectedPageCount = Math.Max(1, (seal.ObservedTotalCount.Value + seal.ObservedPageSize.Value - 1) / seal.ObservedPageSize.Value);
+                var expectedOffsets = Enumerable.Range(0, expectedPageCount).Select(index => index * seal.ObservedPageSize.Value).ToArray();
+                if (seal.EnvelopeHashesByOffset.Count != expectedPageCount || expectedOffsets.Any(offset => !seal.EnvelopeHashesByOffset.ContainsKey(offset)) ||
+                    !new HashSet<string>(supplied, StringComparer.Ordinal).SetEquals(seal.EnvelopeHashesByOffset.Values))
+                    throw new InvalidOperationException("Building-systems observation page set is incomplete, duplicated, or substituted.");
+            }
         }
 
         private static void Prune()
@@ -199,6 +243,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 ? DynamicBuildingSystemsSnapshotAuthorityV1.Issue(request.RuntimeInstanceId ?? "", fingerprint, session, request.Selector)
                 : DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", fingerprint, session, request.Selector);
             var envelope = DynamicBuildingSystemsObservationAdapterV1.Observe(document, request.Selector, snapshot.DocumentRevision, snapshot.SnapshotHash);
+            DynamicBuildingSystemsSnapshotAuthorityV1.RecordEnvelope(snapshot.SnapshotId, envelope);
             var receipt = new
             {
                 schema = "dynamic-revit-building-systems-receipt/v1",

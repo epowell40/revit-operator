@@ -80,7 +80,9 @@ internal static class Program
         var elements = snapshotRoot.GetProperty("elements").Deserialize<List<DynamicElementDto>>(Json) ?? throw new InvalidOperationException("Snapshot element DTOs are missing.");
         var snapshotToken = snapshotRoot.GetProperty("snapshot_token").GetString() ?? throw new InvalidOperationException("Snapshot capability is missing.");
         var snapshotInputHash = snapshotRoot.GetProperty("input_hash").GetString() ?? throw new InvalidOperationException("Snapshot input binding is missing.");
-        var workerInput = JsonSerializer.Serialize(new { schema = "dynamic-revit-worker-input/v0", source, input = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = config.OperationBudget }, deadlineMs = config.WorkerDeadlineMs }, Json);
+        var taskInput = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = config.OperationBudget };
+        string workerInput;
+        ResultReferenceObservationInput? resultReferenceInput = null;
 
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var correlation = Guid.NewGuid().ToString("N");
@@ -105,6 +107,29 @@ internal static class Program
         var registrationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/register", token, writeGrant, registrationRequest, registrationCorrelation);
         registration = UnwrapAuthenticated(registrationEnvelope, hostSessionKey, runtimeId, "register-worker-receipt", out var registrationAuthentication);
         hostAuthentications.Add(registrationAuthentication);
+        if (config.ResultReference)
+        {
+            if (config.BuildingSystemsSelector == null || config.ResultReferenceEffectBudget == null)
+                throw new InvalidOperationException("Result-reference execution requires an exact building-systems selector and effect budget.");
+            config.ResultReferenceEffectBudget.Validate();
+            resultReferenceInput = await CollectResultReferenceInputs(config, runtimeId, hostSessionKey, token, writeGrant, workerRuntimePackageHash, hostAuthentications);
+            workerInput = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-worker-input/v0",
+                source,
+                input = taskInput,
+                deadlineMs = config.WorkerDeadlineMs,
+                resultReferenceDocumentRevision = resultReferenceInput.DocumentRevision,
+                resultReferenceSnapshotHash = resultReferenceInput.SnapshotHash,
+                resultReferenceScopeHash = resultReferenceInput.ScopeHash,
+                buildingSystemsPages = resultReferenceInput.Pages,
+                trustedExternalTargets = resultReferenceInput.TrustedExternalTargets
+            }, Json);
+        }
+        else
+        {
+            workerInput = JsonSerializer.Serialize(new { schema = "dynamic-revit-worker-input/v0", source, input = taskInput, deadlineMs = config.WorkerDeadlineMs }, Json);
+        }
         inputPipe.DisposeLocalCopyOfClientHandle();
         using (var inputWriter = new StreamWriter(inputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true }) await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new { nonce, correlation, channelKeyBase64 = Convert.ToBase64String(channelKey), request = JsonDocument.Parse(workerInput).RootElement }, WireJson));
         inputPipe.Close();
@@ -130,6 +155,14 @@ internal static class Program
         var sourceHash = output.GetProperty("sourceHash").GetString()!;
         var programHash = output.GetProperty("programHash").GetString()!;
         var sdkHash = output.GetProperty("sdkHash").GetString()!;
+        if (config.ResultReference)
+        {
+            if (resultReferenceInput == null) throw new InvalidOperationException("Result-reference observation state is missing.");
+            return await CompleteResultReferenceTask(config, started, taskRoot, workspace, profile, selectedHost, bootstrap, runtimeId, hostSessionKey,
+                token, writeGrant, registration, snapshotRaw, output.Clone(), sourceHash, programHash, sdkHash, snapshotInputHash, resultReferenceInput, hostAuthentications);
+        }
+        if (output.TryGetProperty("resultReferenceProgramResult", out var unexpectedResult) && unexpectedResult.ValueKind != JsonValueKind.Null)
+            throw new InvalidOperationException("A result-reference program was returned on the legacy execution lane.");
         var graph = output.GetProperty("graph").Clone();
         var graphHash = graph.GetProperty("graphHash").GetString()!;
         if (!FixedEquals(snapshotInputHash, graph.GetProperty("inputHash").GetString() ?? "")) throw new InvalidOperationException("Worker graph is not bound to the exact issued snapshot DTO input.");
@@ -213,6 +246,186 @@ internal static class Program
         }
         return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
     }
+
+    private static async Task<ResultReferenceObservationInput> CollectResultReferenceInputs(LiveTaskConfig config, string runtimeId,
+        byte[] hostSessionKey, string token, string writeGrant, string workerRuntimePackageHash, List<string> hostAuthentications)
+    {
+        var selector = Clone(config.BuildingSystemsSelector ?? throw new InvalidOperationException("Building-systems selector is missing."));
+        DynamicBuildingSystemsObservationPolicyV1.ValidateSelector(selector);
+        var pages = new List<DynamicBuildingSystemsEnvelopeV1>();
+        var receiptBodies = new List<string>();
+        string? snapshotId = null; string? snapshotHash = null; string? scopeHash = null; long? revision = null;
+        for (var pageIndex = 0; pageIndex < 64; pageIndex++)
+        {
+            var core = JsonSerializer.Serialize(new { schema = "dynamic-revit-building-systems-request/v1", runtimeInstanceId = runtimeId, selector, snapshotId }, WireJson);
+            var correlation = Guid.NewGuid().ToString("N"); var expires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var request = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-building-systems-request/v1", runtimeInstanceId = runtimeId, selector, snapshotId,
+                correlationId = correlation, authExpiresUnixSeconds = expires,
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "observe-building-systems-v1", runtimeId, correlation, expires, DynamicWire.Sha256(core))
+            }, WireJson);
+            var envelopeRaw = await Post(config.BridgeUrl, "/revit/dynamic-runtime/observe-building-systems-v1", token, writeGrant, request, correlation);
+            var receiptRaw = UnwrapAuthenticated(envelopeRaw, hostSessionKey, runtimeId, "observe-building-systems-v1-receipt", out var authentication);
+            hostAuthentications.Add(authentication); receiptBodies.Add(receiptRaw);
+            using var receiptDocument = JsonDocument.Parse(receiptRaw); var receipt = receiptDocument.RootElement;
+            if (receipt.GetProperty("schema").GetString() != "dynamic-revit-building-systems-receipt/v1" || receipt.GetProperty("authorization_granted").GetBoolean() ||
+                receipt.GetProperty("contract_manifest_hash").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestHash ||
+                receipt.GetProperty("sdk_manifest_hash").GetString() != DynamicRevitSdkProductionVersion.ManifestHash ||
+                !FixedEquals(receipt.GetProperty("worker_runtime_package_hash").GetString() ?? "", workerRuntimePackageHash))
+                throw new InvalidOperationException("Building-systems observation receipt identity is invalid or substituted.");
+            var page = receipt.GetProperty("envelope").Deserialize<DynamicBuildingSystemsEnvelopeV1>(Json) ?? throw new InvalidOperationException("Building-systems envelope is missing.");
+            DynamicBuildingSystemsObservationPolicyV1.ValidateEnvelope(page);
+            if (receipt.GetProperty("envelope_hash").GetString() != page.EnvelopeHash || receipt.GetProperty("document_fingerprint").GetString() != page.DocumentFingerprint ||
+                receipt.GetProperty("document_session_id").GetString() != page.DocumentSessionId || receipt.GetProperty("document_revision").GetInt64() != page.DocumentRevision)
+                throw new InvalidOperationException("Building-systems receipt and envelope bindings differ.");
+            var receivedSnapshotId = receipt.GetProperty("snapshot_id").GetString() ?? throw new InvalidOperationException("Building-systems snapshot ID is missing.");
+            if (snapshotId == null)
+            {
+                snapshotId = receivedSnapshotId; snapshotHash = page.SnapshotHash; scopeHash = page.ScopeHash; revision = page.DocumentRevision;
+            }
+            else if (snapshotId != receivedSnapshotId || snapshotHash != page.SnapshotHash || scopeHash != page.ScopeHash || revision != page.DocumentRevision)
+                throw new InvalidOperationException("Building-systems pages do not share one exact snapshot/revision/scope.");
+            if (page.PageOffset != pages.Sum(value => value.Facts.Count) || pages.Count > 0 && page.PageSize != pages[0].PageSize ||
+                pages.Count > 0 && page.TotalCount != pages[0].TotalCount)
+                throw new InvalidOperationException("Building-systems pages are not contiguous or canonical.");
+            pages.Add(page);
+            if (page.NextCursor == null) break;
+            selector.Cursor = page.NextCursor;
+        }
+        if (pages.Count == 0 || pages[^1].NextCursor != null || pages.Sum(value => value.Facts.Count) != pages[0].TotalCount)
+            throw new InvalidOperationException("Building-systems observation did not produce a complete bounded page set.");
+
+        selector.Cursor = null;
+        var targetIds = (config.ResultReferenceTargetUniqueIds.Length == 0 ? selector.ElementUniqueIds : config.ResultReferenceTargetUniqueIds).ToArray();
+        var factsCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-result-reference-facts-request/v1", runtimeInstanceId = runtimeId,
+            snapshotId, selector, targetUniqueIds = targetIds }, WireJson);
+        var factsCorrelation = Guid.NewGuid().ToString("N"); var factsExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+        var factsRequest = JsonSerializer.Serialize(new
+        {
+            schema = "dynamic-revit-result-reference-facts-request/v1", runtimeInstanceId = runtimeId, snapshotId, selector, targetUniqueIds = targetIds,
+            correlationId = factsCorrelation, authExpiresUnixSeconds = factsExpires,
+            requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "result-reference-facts-v1", runtimeId, factsCorrelation, factsExpires, DynamicWire.Sha256(factsCore))
+        }, WireJson);
+        var factsEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/result-reference-facts-v1", token, writeGrant, factsRequest, factsCorrelation);
+        var factsRaw = UnwrapAuthenticated(factsEnvelope, hostSessionKey, runtimeId, "result-reference-facts-v1-receipt", out var factsAuthentication);
+        hostAuthentications.Add(factsAuthentication);
+        using var factsDocument = JsonDocument.Parse(factsRaw); var factsReceipt = factsDocument.RootElement;
+        var facts = factsReceipt.GetProperty("facts").Deserialize<List<DynamicTrustedElementFactV1>>(Json) ?? throw new InvalidOperationException("Trusted result-reference facts are missing.");
+        if (factsReceipt.GetProperty("schema").GetString() != "dynamic-revit-result-reference-facts-receipt/v1" || factsReceipt.GetProperty("authorization_granted").GetBoolean() ||
+            factsReceipt.GetProperty("snapshot_id").GetString() != snapshotId || factsReceipt.GetProperty("snapshot_hash").GetString() != snapshotHash ||
+            factsReceipt.GetProperty("scope_hash").GetString() != scopeHash || factsReceipt.GetProperty("document_revision").GetInt64() != revision ||
+            factsReceipt.GetProperty("result_reference_manifest_hash").GetString() != DynamicResultReferenceManifestV1.ManifestHash ||
+            factsReceipt.GetProperty("facts_hash").GetString() != TrustedFactsHash(facts))
+            throw new InvalidOperationException("Trusted result-reference fact receipt is invalid or substituted.");
+        return new ResultReferenceObservationInput
+        {
+            SnapshotId = snapshotId!, SnapshotHash = snapshotHash!, ScopeHash = scopeHash!, DocumentRevision = revision!.Value,
+            Selector = selector, Pages = pages, TrustedExternalTargets = facts, ObservationReceiptBodies = receiptBodies, FactsReceiptBody = factsRaw
+        };
+    }
+
+    private static async Task<LiveEvidence> CompleteResultReferenceTask(LiveTaskConfig config, DateTimeOffset started, string taskRoot,
+        TaskWorkspace workspace, WindowsSandboxProfile profile, RevitHostCapability selectedHost, BootstrapCompletion bootstrap, string runtimeId,
+        byte[] hostSessionKey, string token, string writeGrant, string registration, string snapshotRaw, JsonElement output, string sourceHash,
+        string programHash, string sdkHash, string snapshotInputHash, ResultReferenceObservationInput observation, List<string> hostAuthentications)
+    {
+        if (output.TryGetProperty("graph", out var legacyGraph) && legacyGraph.ValueKind != JsonValueKind.Null)
+            throw new InvalidOperationException("Worker returned both legacy and result-reference graph lanes.");
+        if (!output.TryGetProperty("resultReferenceProgramResult", out var resultElement) || resultElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("Worker did not return a result-reference program result.");
+        var result = resultElement.Deserialize<DynamicResultReferenceProgramResultV1>(Json) ?? throw new InvalidOperationException("Result-reference program result is malformed.");
+        if (result.Schema != DynamicResultReferenceContractV1.ProgramResultSchema || result.ContractManifestHash != DynamicResultReferenceManifestV1.ManifestHash)
+            throw new InvalidOperationException("Result-reference program result contract was substituted.");
+        DynamicResultReferencePolicyV1.ValidateWorkerOutput(result.Graph, snapshotInputHash, result.Graph.DocumentFingerprint, result.Graph.DocumentSessionId, observation.DocumentRevision);
+        if (result.Graph.DocumentFingerprint != observation.Pages[0].DocumentFingerprint || result.Graph.DocumentSessionId != observation.Pages[0].DocumentSessionId ||
+            result.Graph.DocumentRevision != observation.DocumentRevision)
+            throw new InvalidOperationException("Result-reference graph does not bind the authenticated observation document/session/revision.");
+        var budget = config.ResultReferenceEffectBudget ?? throw new InvalidOperationException("Result-reference effect budget is missing.");
+        var envelopeHashes = observation.Pages.Select(value => value.EnvelopeHash).ToArray();
+        var previewCore = JsonSerializer.Serialize(new
+        {
+            schema = "dynamic-revit-mep-result-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
+            selector = observation.Selector, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget
+        }, WireJson);
+        var previewCorrelation = Guid.NewGuid().ToString("N"); var previewExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+        var previewRequest = JsonSerializer.Serialize(new
+        {
+            schema = "dynamic-revit-mep-result-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
+            selector = observation.Selector, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget,
+            correlationId = previewCorrelation, authExpiresUnixSeconds = previewExpires,
+            requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "mep-result-preview-v1", runtimeId, previewCorrelation, previewExpires, DynamicWire.Sha256(previewCore))
+        }, WireJson);
+        var previewEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/mep-result-preview-v1", token, writeGrant, previewRequest, previewCorrelation);
+        var previewRaw = UnwrapAuthenticated(previewEnvelope, hostSessionKey, runtimeId, "mep-result-preview-v1-receipt", out var previewAuthentication);
+        hostAuthentications.Add(previewAuthentication);
+        using var previewDocument = JsonDocument.Parse(previewRaw); var preview = previewDocument.RootElement;
+        var ok = preview.GetProperty("schema").GetString() == "dynamic-revit-mep-result-preview-receipt/v1" &&
+            preview.GetProperty("outcome").GetString() == "preview_rolled_back_verified" && !preview.GetProperty("authorization_granted").GetBoolean() &&
+            preview.GetProperty("graph_hash").GetString() == result.Graph.GraphHash && preview.GetProperty("source_hash").GetString() == sourceHash &&
+            preview.GetProperty("program_hash").GetString() == programHash && preview.GetProperty("sdk_hash").GetString() == sdkHash;
+        string? authorizationRaw = null; string? applyRaw = null;
+        if (ok && config.Apply)
+        {
+            var previewId = preview.GetProperty("preview_id").GetString() ?? throw new InvalidOperationException("MEP result preview ID is missing.");
+            var previewHash = preview.GetProperty("preview_hash").GetString() ?? throw new InvalidOperationException("MEP result preview hash is missing.");
+            var authorizationCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-mep-result-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash }, WireJson);
+            var authorizationCorrelation = Guid.NewGuid().ToString("N"); var authorizationExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var authorizationRequest = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-mep-result-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash,
+                correlationId = authorizationCorrelation, authExpiresUnixSeconds = authorizationExpires,
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "mep-result-authorize-v1", runtimeId, authorizationCorrelation, authorizationExpires, DynamicWire.Sha256(authorizationCore))
+            }, WireJson);
+            var authorizationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/mep-result-authorize-v1", token, writeGrant, authorizationRequest, authorizationCorrelation);
+            authorizationRaw = UnwrapAuthenticated(authorizationEnvelope, hostSessionKey, runtimeId, "mep-result-authorize-v1-receipt", out var authorizationAuthentication);
+            hostAuthentications.Add(authorizationAuthentication);
+            using var authorizationDocument = JsonDocument.Parse(authorizationRaw); var authorization = authorizationDocument.RootElement;
+            if (!authorization.GetProperty("authorization_granted").GetBoolean()) throw new InvalidOperationException("MEP result apply authorization was not granted.");
+            var authorizationId = authorization.GetProperty("authorization_id").GetString() ?? throw new InvalidOperationException("MEP result authorization ID is missing.");
+            var applyCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-mep-result-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId }, WireJson);
+            var applyCorrelation = Guid.NewGuid().ToString("N"); var applyExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var applyRequest = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-mep-result-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId,
+                correlationId = applyCorrelation, authExpiresUnixSeconds = applyExpires,
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "mep-result-apply-v1", runtimeId, applyCorrelation, applyExpires, DynamicWire.Sha256(applyCore))
+            }, WireJson);
+            var applyEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/mep-result-apply-v1", token, writeGrant, applyRequest, applyCorrelation);
+            applyRaw = UnwrapAuthenticated(applyEnvelope, hostSessionKey, runtimeId, "mep-result-apply-v1-receipt", out var applyAuthentication);
+            hostAuthentications.Add(applyAuthentication);
+            using var applyDocument = JsonDocument.Parse(applyRaw); var apply = applyDocument.RootElement;
+            ok = apply.GetProperty("outcome").GetString() == "committed_verified" && apply.GetProperty("graph_hash").GetString() == result.Graph.GraphHash &&
+                apply.GetProperty("source_hash").GetString() == sourceHash && apply.GetProperty("program_hash").GetString() == programHash && apply.GetProperty("sdk_hash").GetString() == sdkHash;
+        }
+        return new LiveEvidence
+        {
+            Schema = "dynamic-revit-result-reference-live-evidence/v1", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
+            SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory,
+            RuntimeImageIdentity = workspace.RuntimeImage.Identity, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count,
+            RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, BuildingSystemsObservationReceipts = observation.ObservationReceiptBodies,
+            ResultReferenceFactsReceipt = observation.FactsReceiptBody, WorkerOutput = output, PreviewReceipt = previewRaw,
+            ApplyAuthorizationReceipt = authorizationRaw, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications,
+            TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage,
+            Failure = ok ? null : config.Apply ? "Authorized MEP result-reference apply did not produce committed verification." : "MEP result-reference preview did not produce rollback truth."
+        };
+    }
+
+    private static string TrustedFactsHash(IEnumerable<DynamicTrustedElementFactV1> facts) => DynamicWire.Sha256(
+        "dynamic-result-reference-trusted-facts/v1\n" + string.Join("\n", facts.OrderBy(value => value.UniqueId, StringComparer.Ordinal).Select(value =>
+            CanonicalJoin(value.UniqueId, value.ElementId.ToString(System.Globalization.CultureInfo.InvariantCulture), value.DocumentFingerprint,
+                value.CategoryStableId, value.TypeUniqueId, value.StateHash, value.Exists ? "1" : "0", value.Verified ? "1" : "0", value.Visible ? "1" : "0"))));
+
+    private static string CanonicalJoin(params string?[] values)
+    {
+        var builder = new StringBuilder();
+        foreach (var value in values)
+            if (value == null) builder.Append("-\n"); else builder.Append('+').Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(value))).Append('\n');
+        return builder.ToString();
+    }
+
+    private static T Clone<T>(T value) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value, Json), Json)
+        ?? throw new InvalidOperationException("Dynamic runtime configuration could not be cloned.");
 
     private static DynamicProgramAdmissionV1 AdmissionFrom(DynamicProgramAdmissionExpectationsV1 value) => new()
     {
@@ -494,12 +707,22 @@ internal sealed class LiveTaskConfig
 {
     public string WorkerDirectory { get; set; } = ""; public string EvidencePath { get; set; } = ""; public string BridgeUrl { get; set; } = "http://127.0.0.1:5000"; public string OperatorTokenFile { get; set; } = ""; public string SourceFile { get; set; } = "";
     public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000; public bool Apply { get; set; } public int ApplyDeadlineMs { get; set; } = 5000;
+    public bool ResultReference { get; set; } public DynamicBuildingSystemsSelectorV1? BuildingSystemsSelector { get; set; }
+    public string[] ResultReferenceTargetUniqueIds { get; set; } = Array.Empty<string>(); public DynamicEffectBudgetV1? ResultReferenceEffectBudget { get; set; }
+}
+internal sealed class ResultReferenceObservationInput
+{
+    public string SnapshotId { get; set; } = ""; public string SnapshotHash { get; set; } = ""; public string ScopeHash { get; set; } = ""; public long DocumentRevision { get; set; }
+    public DynamicBuildingSystemsSelectorV1 Selector { get; set; } = new(); public IReadOnlyList<DynamicBuildingSystemsEnvelopeV1> Pages { get; set; } = Array.Empty<DynamicBuildingSystemsEnvelopeV1>();
+    public IReadOnlyList<DynamicTrustedElementFactV1> TrustedExternalTargets { get; set; } = Array.Empty<DynamicTrustedElementFactV1>();
+    public List<string> ObservationReceiptBodies { get; set; } = new(); public string FactsReceiptBody { get; set; } = "";
 }
 internal sealed class LiveEvidence
 {
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }
     public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public string? ApplyAuthorizationReceipt { get; set; } public DynamicProgramAdmissionV1? V1Admission { get; set; } public string? ApplyReceipt { get; set; } public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
     public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }
+    public List<string> BuildingSystemsObservationReceipts { get; set; } = new(); public string? ResultReferenceFactsReceipt { get; set; }
     public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = "";
     public static LiveEvidence Failed(DateTimeOffset started, string profile, string task, RuntimeImage runtimeImage, string registration, string snapshot, JsonElement worker, string failure) => new() { Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile, TaskDirectory = task, RuntimeImageDirectory = runtimeImage.Directory, RuntimeImageIdentity = runtimeImage.Identity, RuntimeDependencyCount = runtimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshot, WorkerOutput = worker, Failure = failure };
 }

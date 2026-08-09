@@ -217,6 +217,10 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("\"/revit/dynamic-runtime/apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
             Assert.Contains("\"/revit/dynamic-runtime/observe-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/observe-building-systems-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/result-reference-facts-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/mep-result-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/mep-result-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/mep-result-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
