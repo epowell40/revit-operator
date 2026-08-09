@@ -71,7 +71,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (aTarget.SourceKind == bTarget.SourceKind && aTarget.SourceIdentity == bTarget.SourceIdentity) throw new InvalidOperationException("MEP connector selectors resolved the same source.");
             var a = ResolveConnector(document, aTarget, aSelector); var b = ResolveConnector(document, bTarget, bSelector);
             if (a.Owner.Id == b.Owner.Id || a.Domain != b.Domain || a.Shape != b.Shape) throw new InvalidOperationException("MEP connectors are self, cross-domain, or cross-shape.");
-            var subject = "pair:" + string.Join("|", resolvedTargets.Select(value => value.SourceKind + ":" + value.SourceIdentity).OrderBy(value => value, StringComparer.Ordinal));
+            var subject = "pair:" + DynamicWire.Sha256("mep-result-reference-pair/v1\n" + string.Join("\n", resolvedTargets
+                .Select(value => value.SourceKind + ":" + DynamicWire.Sha256(value.SourceIdentity))
+                .OrderBy(value => value, StringComparer.Ordinal)));
             var before = PairState(a, b);
             Element? fitting = null;
             if (transition)

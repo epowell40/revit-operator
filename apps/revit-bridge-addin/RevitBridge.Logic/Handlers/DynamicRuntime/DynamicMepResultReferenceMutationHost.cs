@@ -82,6 +82,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var semanticEffects = new List<DynamicMepSemanticEffectV1>(); var observedEffects = new List<DynamicMepObservedEffectV1>();
             var semanticOutputs = new List<DynamicMepSemanticOutputV1>(); var readbacks = new List<DynamicResultReferenceMutationReadbackV1>();
             var symbolicByElementId = new Dictionary<long, string>();
+            var createdDuringGraph = new HashSet<long>();
+            var addedCategoriesDuringGraph = new Dictionary<string, int>(StringComparer.Ordinal);
             var allChanged = new HashSet<long>(); ChangeSet? current = null; Exception? trackingFailure = null;
             EventHandler<DocumentChangedEventArgs> changed = (sender, args) =>
             {
@@ -111,13 +113,37 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     }
                     if (trackingFailure != null) throw new InvalidOperationException("MEP DocumentChanged capture failed.", trackingFailure);
                     if (current.Deleted.Count != 0) throw new InvalidOperationException("Bounded MEP primitives may not delete collateral elements.");
+                    foreach (var id in current.Modified.Where(id => !baseline.ContainsKey(id) && !createdDuringGraph.Contains(id)).ToArray())
+                    {
+                        current.Modified.Remove(id);
+                        current.Added.Add(id);
+                    }
+                    var scannedElementCount = 0;
+                    foreach (var element in AllElements(document))
+                    {
+                        scannedElementCount++;
+                        if (scannedElementCount > BaselineLimit + 256)
+                            throw new InvalidOperationException("Live MEP element reconciliation exceeded its bounded 50256-element scan.");
+                        var id = ElementIdCompat.GetValue(element.Id);
+                        if (!baseline.ContainsKey(id) && !createdDuringGraph.Contains(id)) current.Added.Add(id);
+                    }
+                    if (current.Added.Any(id => baseline.ContainsKey(id) || createdDuringGraph.Contains(id)))
+                        throw new InvalidOperationException("MEP DocumentChanged creation classification contradicts the exact pre-graph baseline.");
+                    foreach (var addedId in current.Added)
+                    {
+                        var addedElement = document.GetElement(ElementIdCompat.Create(addedId)) ??
+                            throw new InvalidOperationException("An added MEP collateral element disappeared before per-node classification.");
+                        var addedCategory = CategoryId(addedElement.Category);
+                        addedCategoriesDuringGraph[addedCategory] = addedCategoriesDuringGraph.TryGetValue(addedCategory, out var categoryCount) ? categoryCount + 1 : 1;
+                    }
                     var facts = CreateFacts(document, application, node, executed);
                     var outputIds = new HashSet<long>(facts.Select(value => value.CreatedElementId));
-                    if (!outputIds.SetEquals(current.Added)) throw new InvalidOperationException("MEP executor outputs do not exactly equal DocumentChanged additions.");
+                    if (!outputIds.IsSubsetOf(current.Added)) throw new InvalidOperationException("MEP executor outputs are not proven members of the exact event-and-baseline addition set.");
                     foreach (var fact in facts) symbolicByElementId.Add(fact.CreatedElementId, "result:" + fact.ResultId + ":" + fact.OutputSlot);
+                    createdDuringGraph.UnionWith(current.Added);
                     resolver.RegisterSuccessfulOutputs(node, facts);
                     var nodeSemanticOutputs = node.Outputs.Select(declaration => SemanticOutput(node, declaration, executed.SemanticOutputStateHashes[declaration.OutputSlot])).ToArray(); semanticOutputs.AddRange(nodeSemanticOutputs);
-                    var effect = SemanticEffect(node, resolved, current, nodeSemanticOutputs, executed.TopologyHash, baseline, symbolicByElementId); semanticEffects.Add(effect);
+                    var effect = SemanticEffect(document, node, resolved, current, executed.TopologyHash, baseline, symbolicByElementId); semanticEffects.Add(effect);
                     var observed = new DynamicMepObservedEffectV1 { NodeId = node.NodeId, Kind = node.Kind, AddedElementIds = current.Added.OrderBy(value => value).ToArray(),
                         ModifiedElementIds = current.Modified.OrderBy(value => value).ToArray(), DeletedElementIds = Array.Empty<long>(), SemanticEffectHash = effect.EffectHash };
                     observed.EffectHash = DynamicMepMutationPolicyV1.ObservedEffectHash(observed); observedEffects.Add(observed); readbacks.AddRange(executed.Readbacks);
@@ -131,8 +157,17 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     output.OutputHash = DynamicMepMutationPolicyV1.SemanticOutputHash(output);
                 }
                 budget.Validate();
-                if (allChanged.Count > budget.MaximumAffectedElements || observedEffects.Sum(value => value.AddedElementIds.Count) > budget.MaximumCreates || observedEffects.Sum(value => value.ModifiedElementIds.Count) > budget.MaximumModifications)
-                    throw new InvalidOperationException("Observed MEP collateral exceeded the exact effect budget.");
+                var addedIds = observedEffects.SelectMany(value => value.AddedElementIds).Distinct().ToArray();
+                var addedCategories = addedCategoriesDuringGraph.OrderBy(pair => pair.Key, StringComparer.Ordinal).ToArray();
+                var allowedCategories = new HashSet<string>(budget.AllowedCategories ?? Array.Empty<string>(), StringComparer.Ordinal);
+                if (addedCategories.Any(pair => !allowedCategories.Contains(pair.Key)))
+                    throw new InvalidOperationException("Observed MEP collateral exceeded the exact category budget: added_categories=" +
+                        string.Join(",", addedCategories.Select(pair => pair.Key + "=" + pair.Value.ToString(CultureInfo.InvariantCulture))) + ".");
+                if (allChanged.Count > budget.MaximumAffectedElements || addedIds.Length > budget.MaximumCreates || observedEffects.Sum(value => value.ModifiedElementIds.Count) > budget.MaximumModifications)
+                    throw new InvalidOperationException("Observed MEP collateral exceeded the exact effect budget: affected=" + allChanged.Count.ToString(CultureInfo.InvariantCulture) +
+                        ", creates=" + addedIds.Length.ToString(CultureInfo.InvariantCulture) +
+                        ", modifications=" + observedEffects.Sum(value => value.ModifiedElementIds.Count).ToString(CultureInfo.InvariantCulture) +
+                        ", added_categories=" + string.Join(",", addedCategories.Select(pair => pair.Key + "=" + pair.Value.ToString(CultureInfo.InvariantCulture))) + ".");
                 var topologyHash = DynamicWire.Sha256("mep-graph-topology/v1\n" + string.Join("\n", semanticEffects.Select(value => value.TopologyHash).OrderBy(value => value, StringComparer.Ordinal)));
                 if (expected != null && (DynamicMepMutationPolicyV1.SemanticEffectSetHash(semanticEffects) != expected.SemanticEffectSetHash || DynamicMepMutationPolicyV1.SemanticOutputSetHash(semanticOutputs) != expected.SemanticOutputSetHash || DynamicMepMutationPolicyV1.ReadbackSetHash(readbacks) != expected.ReadbackSetHash || topologyHash != expected.TopologyHash))
                     throw new InvalidOperationException("MEP apply semantics, topology, effects, or readbacks diverged from preview.");
@@ -153,7 +188,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             }
         }
 
-        private static DynamicMepSemanticEffectV1 SemanticEffect(DynamicResultReferenceNodeV1 node, IReadOnlyList<DynamicResolvedElementTargetV1> resolved, ChangeSet changes, IReadOnlyList<DynamicMepSemanticOutputV1> outputs, string topology,
+        private static DynamicMepSemanticEffectV1 SemanticEffect(Document document, DynamicResultReferenceNodeV1 node, IReadOnlyList<DynamicResolvedElementTargetV1> resolved, ChangeSet changes, string topology,
             IReadOnlyDictionary<long, Baseline> baseline, IReadOnlyDictionary<long, string> symbolicByElementId)
         {
             var modifiedSources = changes.Modified.Select(id =>
@@ -164,8 +199,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 if (baseline.TryGetValue(id, out var prior)) return "collateral:" + prior.UniqueId;
                 throw new InvalidOperationException("Modified MEP collateral has no stable semantic identity.");
             });
+            var addedCategoryTypes = changes.Added.Select(id => document.GetElement(ElementIdCompat.Create(id)) ??
+                throw new InvalidOperationException("DocumentChanged reported an added MEP element that is unavailable for exact collateral classification."))
+                .Select(element => CategoryId(element.Category) + "\n" + TypeUniqueId(document, element));
             var result = new DynamicMepSemanticEffectV1 { NodeId = node.NodeId, Kind = node.Kind, AddedCount = changes.Added.Count, ModifiedCount = changes.Modified.Count, DeletedCount = changes.Deleted.Count,
-                AddedCategoryTypeSetHash = DynamicWire.Sha256("mep-added-types/v1\n" + string.Join("\n", outputs.Select(value => value.CategoryStableId + "\n" + value.TypeUniqueId).OrderBy(value => value, StringComparer.Ordinal))),
+                AddedCategoryTypeSetHash = DynamicWire.Sha256("mep-added-types/v1\n" + string.Join("\n", addedCategoryTypes.OrderBy(value => value, StringComparer.Ordinal))),
                 ModifiedSourceSetHash = DynamicWire.Sha256("mep-modified-sources/v1\n" + string.Join("\n", modifiedSources.OrderBy(value => value, StringComparer.Ordinal))), TopologyHash = topology };
             result.EffectHash = DynamicMepMutationPolicyV1.SemanticEffectHash(result); return result;
         }

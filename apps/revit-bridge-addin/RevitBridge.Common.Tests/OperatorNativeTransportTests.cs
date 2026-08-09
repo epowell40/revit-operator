@@ -249,6 +249,24 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void DynamicMepOutputsRemainProvenWhileRevitCollateralIsFullyAccounted()
+        {
+            var root = FindRepositoryRoot();
+            var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicMepResultReferenceMutationHost.cs"));
+            Assert.Contains("outputIds.IsSubsetOf(current.Added)", source);
+            Assert.Contains("!baseline.ContainsKey(id) && !createdDuringGraph.Contains(id)", source);
+            Assert.Contains("scannedElementCount > BaselineLimit + 256", source);
+            Assert.Contains("foreach (var element in AllElements(document))", source);
+            Assert.Contains("createdDuringGraph.UnionWith(current.Added)", source);
+            Assert.Contains("changes.Added.Select(id => document.GetElement", source);
+            Assert.Contains("AddedCount = changes.Added.Count", source);
+            Assert.Contains("addedCategoriesDuringGraph[addedCategory]", source);
+            Assert.Contains("addedCategories.Any(pair => !allowedCategories.Contains(pair.Key))", source);
+            Assert.Contains("addedIds.Length > budget.MaximumCreates", source);
+            Assert.DoesNotContain("outputIds.SetEquals(current.Added)", source);
+        }
+
+        [Fact]
         public void NativeServerDiscoveryReceiptsAreOwnedAndFailClosedAcrossRevitProcesses()
         {
             var root = FindRepositoryRoot();

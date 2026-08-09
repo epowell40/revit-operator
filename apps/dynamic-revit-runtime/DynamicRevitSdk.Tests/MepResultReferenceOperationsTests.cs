@@ -82,6 +82,7 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Contains("DocumentChanged", host); Assert.Contains("ValidateAndConsumeAuthorization", host); Assert.Contains("group.RollBack()", host); Assert.Contains("group.Assimilate()", host);
         Assert.Contains("diverged from preview", host); Assert.Contains("VerifyLiveOutputs", host); Assert.Contains("Pipe.Create", executor); Assert.Contains("Duct.Create", executor);
         Assert.Contains("ConnectTo", executor); Assert.Contains("NewTransitionFitting", executor);
+        Assert.Contains("mep-result-reference-pair/v1", executor); Assert.DoesNotContain("value.SourceKind + \":\" + value.SourceIdentity", executor);
     }
 
     private static DynamicMepMutationPreviewV1 Preview(DynamicEffectBudgetV1 budget)
