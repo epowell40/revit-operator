@@ -17,6 +17,7 @@ import {
 import { decideAnthropic, decideGemini } from "../src/brains/external_provider_brain.js";
 import { decideOpenAi } from "../src/brains/openai_brain.js";
 import { guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
+import { computeDynamicRuntimePackageDirectoryIdentity } from "../src/dynamic_runtime/runtime_package_directory_identity.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ChatRequest,
@@ -58,6 +59,26 @@ function strategy() {
 
 function sha256(value: string | Buffer): string {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
+}
+
+function supervisorPackage(root: string) {
+  const directory = path.join(root, "supervisor"); const executable = path.join(directory, "DynamicRevitSandboxSupervisor.exe");
+  fs.mkdirSync(path.join(directory, "manifests"), { recursive: true });
+  fs.writeFileSync(executable, "test-supervisor"); fs.writeFileSync(path.join(directory, "DynamicRevitSandboxSupervisor.dll"), "managed-supervisor");
+  fs.writeFileSync(path.join(directory, "DynamicRevitSandboxSupervisor.deps.json"), "deps");
+  fs.writeFileSync(path.join(directory, "manifests", "sandbox-policy.v1.json"), "policy");
+  return { directory, executable, executableSha256: sha256(fs.readFileSync(executable)), directorySha256: computeDynamicRuntimePackageDirectoryIdentity(directory) };
+}
+
+function runnerEnvironment(pkg: ReturnType<typeof supervisorPackage>, workers: string, token: string, workerPackageSha256: string): NodeJS.ProcessEnv {
+  return {
+    REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_PATH: pkg.executable,
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_SHA256: pkg.executableSha256,
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_DIRECTORY_SHA256: pkg.directorySha256,
+    OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers, OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: workerPackageSha256,
+    OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token, OPERATOR_DYNAMIC_REVIT_BRIDGE_URL: "http://127.0.0.1:5000"
+  };
 }
 
 function supervisorEvidence(args: {
@@ -167,6 +188,18 @@ test("provider dynamic_program schema is exact and bounded", () => {
   assert.throws(() => normalizeProviderDynamicProgram(program({ parameters: Array.from({ length: 17 }, (_, i) => `P${i}`) })), /at most 16/);
 });
 
+test("TypeScript launcher directory identity matches the canonical C# byte stream and normalizes nested paths", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-package-identity-"));
+  try {
+    fs.mkdirSync(path.join(root, "nested")); fs.writeFileSync(path.join(root, "z.dll"), "z"); fs.writeFileSync(path.join(root, "nested", "a.json"), "a");
+    const baseline = computeDynamicRuntimePackageDirectoryIdentity(root);
+    assert.equal(baseline, "sha256:0cdfea16eceb6c63d23e8408902a74718ab52732e8c09b7e870bf3721afacf77");
+    fs.appendFileSync(path.join(root, "z.dll"), "-mutated"); assert.notEqual(computeDynamicRuntimePackageDirectoryIdentity(root), baseline);
+    fs.writeFileSync(path.join(root, "z.dll"), "z"); assert.equal(computeDynamicRuntimePackageDirectoryIdentity(root), baseline);
+    fs.appendFileSync(path.join(root, "nested", "a.json"), "-mutated"); assert.notEqual(computeDynamicRuntimePackageDirectoryIdentity(root), baseline);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("dynamic provider runner requires exact development laboratory execution", () => {
   assert.equal(isTrustedDynamicProgramRunnerEnabled({ REVIT_OPERATOR_MODE: "production" }), false);
   assert.equal(isTrustedDynamicProgramRunnerEnabled({
@@ -184,10 +217,15 @@ test("dynamic provider runner requires exact development laboratory execution", 
     OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled"
   }), false);
   assert.equal(isTrustedDynamicProgramRunnerEnabled({
+    REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: `sha256:${"1".repeat(64)}`, OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: `sha256:${"2".repeat(64)}`
+  }), false);
+  assert.equal(isTrustedDynamicProgramRunnerEnabled({
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
     OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
-    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: `sha256:${"1".repeat(64)}`,
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_SHA256: `sha256:${"1".repeat(64)}`,
+    OPERATOR_DYNAMIC_REVIT_SUPERVISOR_DIRECTORY_SHA256: `sha256:${"3".repeat(64)}`,
     OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: `sha256:${"2".repeat(64)}`
   }), true);
 });
@@ -272,36 +310,29 @@ test("trusted dynamic completion advances the teammate lifecycle without inventi
 
 test("trusted runner writes the exact LiveTaskConfig and invokes supervisor without a shell", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-runner-"));
-  const supervisor = path.join(root, "DynamicRevitSandboxSupervisor.exe");
+  const supervisor = supervisorPackage(root);
   const workers = path.join(root, "workers");
   const token = path.join(root, "operator-token.txt");
   const runs = path.join(root, "runs");
   fs.mkdirSync(workers);
-  fs.writeFileSync(supervisor, "test-supervisor");
   fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "test-worker");
   fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
   let captured: any = null;
   let capturedArgs: string[] = [];
   let supervisorEnvironment: NodeJS.ProcessEnv = {};
-  const supervisorPackageSha256 = sha256(fs.readFileSync(supervisor));
+  const supervisorPackageSha256 = supervisor.directorySha256;
   const workerRuntimePackageSha256 = `sha256:${"e".repeat(64)}`;
   try {
     const selectedProgram = program({ apply: false });
     const response = await runTrustedProviderDynamicProgram(request("runner"), selectedProgram, {
       env: {
-        REVIT_OPERATOR_MODE: "development",
-        OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
-        OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
-        OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH: supervisor,
-        OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: supervisorPackageSha256,
-        OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers,
-        OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: workerRuntimePackageSha256,
-        OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token,
-        OPERATOR_DYNAMIC_REVIT_BRIDGE_URL: "http://127.0.0.1:5000",
+        ...runnerEnvironment(supervisor, workers, token, workerRuntimePackageSha256),
         OPERATOR_OPENAI_API_KEY: "must-not-cross-supervisor-boundary"
       },
       runsSessionsDirectory: runs,
-      executeSupervisor: async (_executable, args, options) => {
+      executeSupervisor: async (executable, args, options) => {
+        assert.notEqual(executable, supervisor.executable); assert.equal(path.dirname(executable), options.cwd);
+        assert.equal(computeDynamicRuntimePackageDirectoryIdentity(options.cwd), supervisorPackageSha256);
         capturedArgs = args;
         supervisorEnvironment = options.env;
         captured = JSON.parse(fs.readFileSync(args[1]!, "utf8")) as Record<string, unknown>;
@@ -323,11 +354,13 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
     assert.equal(captured?.targetRevitYear, "2024");
     assert.equal(captured?.operationBudget, 16);
     assert.equal(supervisorEnvironment.OPERATOR_OPENAI_API_KEY, undefined);
-    assert.equal(supervisorEnvironment.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256, undefined);
+    assert.equal(supervisorEnvironment.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_SHA256, undefined);
+    assert.equal(supervisorEnvironment.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_DIRECTORY_SHA256, undefined);
     assert.equal(supervisorEnvironment.OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256, undefined);
     assert.equal(response.dynamic_program_execution_receipt?.status, "completed");
     assert.match(response.dynamic_program_execution_receipt?.evidence_sha256 ?? "", /^[0-9a-f]{64}$/);
     assert.equal(response.dynamic_program_execution_receipt?.provider_prose_authorized, false);
+    assert.equal(response.dynamic_program_execution_receipt?.supervisor_executable_sha256, supervisor.executableSha256);
     assert.equal(response.dynamic_program_execution_receipt?.supervisor_package_sha256, supervisorPackageSha256);
     assert.equal(response.dynamic_program_execution_receipt?.worker_runtime_package_sha256, workerRuntimePackageSha256);
     assert.match(response.dynamic_program_execution_receipt?.evidence_binding_sha256 ?? "", /^sha256:[0-9a-f]{64}$/);
@@ -356,29 +389,18 @@ test("provider supervisor evidence rejects fake ok, wrong schema, target, apply,
   ];
   for (const item of cases) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-evidence-"));
-    const supervisor = path.join(root, "DynamicRevitSandboxSupervisor.exe");
+    const supervisor = supervisorPackage(root);
     const workers = path.join(root, "workers");
     const token = path.join(root, "operator-token.txt");
     fs.mkdirSync(workers);
-    fs.writeFileSync(supervisor, "test-supervisor");
     fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "test-worker");
     fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
-    const supervisorPackageSha256 = sha256(fs.readFileSync(supervisor));
+    const supervisorPackageSha256 = supervisor.directorySha256;
     const workerRuntimePackageSha256 = `sha256:${"e".repeat(64)}`;
     const selectedProgram = program();
     try {
       const response = await runTrustedProviderDynamicProgram(request(`adversarial-${item.name}`), selectedProgram, {
-        env: {
-          REVIT_OPERATOR_MODE: "development",
-          OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
-          OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled",
-          OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH: supervisor,
-          OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: supervisorPackageSha256,
-          OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers,
-          OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: workerRuntimePackageSha256,
-          OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token,
-          OPERATOR_DYNAMIC_REVIT_BRIDGE_URL: "http://127.0.0.1:5000"
-        },
+        env: runnerEnvironment(supervisor, workers, token, workerRuntimePackageSha256),
         runsSessionsDirectory: path.join(root, "runs"),
         executeSupervisor: async (_executable, supervisorArgs) => {
           const config = JSON.parse(fs.readFileSync(supervisorArgs[1]!, "utf8")) as Record<string, unknown>;
@@ -401,24 +423,17 @@ test("provider supervisor evidence rejects fake ok, wrong schema, target, apply,
 
 test("provider supervisor executable must match its explicit trusted package pin before launch", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-pin-"));
-  const supervisor = path.join(root, "DynamicRevitSandboxSupervisor.exe");
+  const supervisor = supervisorPackage(root);
   const workers = path.join(root, "workers");
   const token = path.join(root, "operator-token.txt");
   fs.mkdirSync(workers);
-  fs.writeFileSync(supervisor, "test-supervisor");
   fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "test-worker");
   fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
   let invoked = false;
   try {
     const response = await runTrustedProviderDynamicProgram(request("wrong-pin"), program(), {
-      env: {
-        REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
-        OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER: "enabled", OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH: supervisor,
-        OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256: `sha256:${"0".repeat(64)}`,
-        OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY: workers,
-        OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256: `sha256:${"e".repeat(64)}`,
-        OPERATOR_DYNAMIC_REVIT_TOKEN_FILE: token
-      },
+      env: { ...runnerEnvironment(supervisor, workers, token, `sha256:${"e".repeat(64)}`),
+        OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_SHA256: `sha256:${"0".repeat(64)}` },
       runsSessionsDirectory: path.join(root, "runs"),
       executeSupervisor: async () => {
         invoked = true;
@@ -431,6 +446,44 @@ test("provider supervisor executable must match its explicit trusted package pin
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("dependency, manifest, and same-content original-directory swaps fail immediately before launch", async () => {
+  for (const attack of ["dependency", "manifest", "directory-swap"] as const) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), `provider-dynamic-${attack}-`)); const pkg = supervisorPackage(root);
+    const workers = path.join(root, "workers"); const token = path.join(root, "token"); fs.mkdirSync(workers);
+    fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "worker"); fs.writeFileSync(token, "0123456789abcdef0123456789abcdef"); let invoked = false;
+    try {
+      const response = await runTrustedProviderDynamicProgram(request(attack), program(), {
+        env: runnerEnvironment(pkg, workers, token, `sha256:${"e".repeat(64)}`), runsSessionsDirectory: path.join(root, "runs"),
+        beforeSupervisorLaunch: () => {
+          if (attack === "dependency") fs.appendFileSync(path.join(pkg.directory, "DynamicRevitSandboxSupervisor.dll"), "tampered");
+          else if (attack === "manifest") fs.appendFileSync(path.join(pkg.directory, "manifests", "sandbox-policy.v1.json"), "tampered");
+          else { const moved = `${pkg.directory}-original`; fs.renameSync(pkg.directory, moved); fs.cpSync(moved, pkg.directory, { recursive: true }); }
+        },
+        executeSupervisor: async () => { invoked = true; throw new Error("must not launch"); }
+      });
+      assert.equal(invoked, false, attack); assert.equal(response.dynamic_program_execution_receipt?.status, "blocked", attack);
+      assert.match(response.dynamic_program_execution_receipt?.failure ?? "", /changed before launch/, attack);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test("supervisor evidence must remain a stable regular file in the private run root", { skip: process.platform !== "win32" }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-evidence-link-")); const pkg = supervisorPackage(root);
+  const workers = path.join(root, "workers"); const token = path.join(root, "token"); const outside = path.join(root, "outside.json"); fs.mkdirSync(workers);
+  fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "worker"); fs.writeFileSync(token, "0123456789abcdef0123456789abcdef"); fs.writeFileSync(outside, "{}");
+  try {
+    const response = await runTrustedProviderDynamicProgram(request("evidence-link"), program(), {
+      env: runnerEnvironment(pkg, workers, token, `sha256:${"e".repeat(64)}`), runsSessionsDirectory: path.join(root, "runs"),
+      executeSupervisor: async (_executable, args) => {
+        const config = JSON.parse(fs.readFileSync(args[1]!, "utf8")) as Record<string, unknown>;
+        fs.symlinkSync(outside, String(config.evidencePath), "file");
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false, outputExceeded: false };
+      }
+    });
+    assert.equal(response.dynamic_program_execution_receipt?.status, "blocked"); assert.match(response.dynamic_program_execution_receipt?.failure ?? "", /symlink|junction|regular/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("Gemini structured response executes only the dynamic supervisor lane", async () => {

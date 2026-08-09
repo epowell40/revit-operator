@@ -9,6 +9,7 @@ import type { RecordedExecutionStrategyEvidence } from "../execution_strategy.js
 import { buildTeammateTurnContract } from "../teammate_loop_runtime.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { normalizeProviderSupervisorEvidence } from "./provider_supervisor_evidence.js";
+import { computeDynamicRuntimePackageDirectoryIdentity } from "./runtime_package_directory_identity.js";
 
 export const PROVIDER_DYNAMIC_PROGRAM_V1 = "revit-operator.provider-dynamic-program.v1" as const;
 export const PROVIDER_DYNAMIC_PROGRAM_EXECUTION_RECEIPT_V1 =
@@ -77,6 +78,7 @@ export type ProviderDynamicProgramExecutionReceipt = {
   authority: "trusted_supervisor_receipt";
   provider_prose_authorized: false;
   failure: string | null;
+  supervisor_executable_sha256?: string | null;
   supervisor_package_sha256?: string | null;
   worker_runtime_package_sha256?: string | null;
   evidence_binding_sha256?: string | null;
@@ -104,6 +106,7 @@ export type DynamicProgramRunnerDependencies = {
     args: string[],
     options: { cwd: string; timeoutMs: number; env: NodeJS.ProcessEnv }
   ) => Promise<SupervisorExecution>;
+  beforeSupervisorLaunch?: () => void;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -180,7 +183,8 @@ export function isTrustedDynamicProgramRunnerEnabled(env: NodeJS.ProcessEnv = pr
   return env.REVIT_OPERATOR_MODE === "development"
     && env.OPERATOR_TOOL_EXPOSURE_PROFILE === "laboratory"
     && env.OPERATOR_DYNAMIC_REVIT_PROGRAM_RUNNER === "enabled"
-    && /^sha256:[a-f0-9]{64}$/.test(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256 ?? "")
+    && /^sha256:[a-f0-9]{64}$/.test(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_SHA256 ?? "")
+    && /^sha256:[a-f0-9]{64}$/.test(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_DIRECTORY_SHA256 ?? "")
     && /^sha256:[a-f0-9]{64}$/.test(env.OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256 ?? "");
 }
 
@@ -239,8 +243,50 @@ function trustedHashPin(raw: string | undefined, label: string): string {
   return value;
 }
 
-function fileHash(filePath: string): string {
-  return `sha256:${createHash("sha256").update(fs.readFileSync(filePath)).digest("hex")}`;
+function stableDirectoryIdentity(directory: string, label: string): string {
+  assertNoLinkComponents(directory, label); const stat = fs.statSync(directory, { bigint: true });
+  if (!stat.isDirectory()) throw new Error(`${label} must remain a regular directory`);
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+}
+
+function stableRegularFile(filePath: string, trustedRoot: string, label: string, maximumBytes = 256 * 1024 * 1024,
+  expectedRootIdentity?: string): { bytes: Buffer; hash: string; fileIdentity: string } {
+  const relative = path.relative(trustedRoot, filePath);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`${label} escaped its private trusted root`);
+  assertNoLinkComponents(trustedRoot, label); assertNoLinkComponents(filePath, label);
+  if (expectedRootIdentity !== undefined && stableDirectoryIdentity(trustedRoot, label) !== expectedRootIdentity) throw new Error(`${label} private root changed before read`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(filePath, "r");
+    const before = fs.fstatSync(descriptor, { bigint: true }); const leafBefore = fs.statSync(filePath, { bigint: true });
+    if (!before.isFile() || before.dev !== leafBefore.dev || before.ino !== leafBefore.ino || before.size > BigInt(maximumBytes)) throw new Error(`${label} must remain a bounded regular file`);
+    const bytes = fs.readFileSync(descriptor); const after = fs.fstatSync(descriptor, { bigint: true });
+    assertNoLinkComponents(filePath, label); const leafAfter = fs.statSync(filePath, { bigint: true });
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || BigInt(bytes.length) !== after.size
+      || after.dev !== leafAfter.dev || after.ino !== leafAfter.ino) throw new Error(`${label} changed while it was being read`);
+    if (expectedRootIdentity !== undefined && stableDirectoryIdentity(trustedRoot, label) !== expectedRootIdentity) throw new Error(`${label} private root changed during read`);
+    return { bytes, hash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, fileIdentity: `${after.dev}:${after.ino}:${after.birthtimeNs}` };
+  } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
+}
+
+function stageVerifiedSupervisorDirectory(source: string, destination: string): void {
+  fs.mkdirSync(destination, { recursive: false, mode: 0o700 });
+  const directories = [destination]; const visit = (sourceDirectory: string, destinationDirectory: string) => {
+    assertNoLinkComponents(sourceDirectory, "Dynamic Revit supervisor package");
+    for (const entry of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
+      const sourcePath = path.join(sourceDirectory, entry.name); const destinationPath = path.join(destinationDirectory, entry.name);
+      const stat = fs.lstatSync(sourcePath);
+      if (stat.isSymbolicLink()) throw new Error("Dynamic Revit supervisor package contains a symlink or junction");
+      if (stat.isDirectory()) {
+        fs.mkdirSync(destinationPath, { recursive: false, mode: 0o700 }); directories.push(destinationPath); visit(sourcePath, destinationPath);
+      } else if (stat.isFile()) {
+        fs.copyFileSync(sourcePath, destinationPath, fs.constants.COPYFILE_EXCL); fs.chmodSync(destinationPath, 0o500);
+      } else throw new Error("Dynamic Revit supervisor package contains an unsupported filesystem object");
+    }
+    assertNoLinkComponents(sourceDirectory, "Dynamic Revit supervisor package");
+  };
+  visit(source, destination);
+  for (const directory of directories.reverse()) fs.chmodSync(directory, 0o500);
 }
 
 function loopbackBridgeUrl(raw: string | undefined): string {
@@ -341,6 +387,7 @@ function receipt(args: Partial<ProviderDynamicProgramExecutionReceipt> & Pick<Pr
     authority: "trusted_supervisor_receipt",
     provider_prose_authorized: false,
     failure: args.failure ?? null,
+    ...(args.supervisor_executable_sha256 !== undefined ? { supervisor_executable_sha256: args.supervisor_executable_sha256 } : {}),
     ...(args.supervisor_package_sha256 !== undefined ? { supervisor_package_sha256: args.supervisor_package_sha256 } : {}),
     ...(args.worker_runtime_package_sha256 !== undefined ? { worker_runtime_package_sha256: args.worker_runtime_package_sha256 } : {}),
     ...(args.evidence_binding_sha256 !== undefined ? { evidence_binding_sha256: args.evidence_binding_sha256 } : {}),
@@ -376,9 +423,18 @@ export async function runTrustedProviderDynamicProgram(
   }
 
   try {
-    const supervisorPath = trustedFile(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_PATH, "Dynamic Revit supervisor");
-    const supervisorPackagePin = trustedHashPin(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_SHA256, "Dynamic Revit supervisor package");
-    if (fileHash(supervisorPath) !== supervisorPackagePin) throw new Error("Dynamic Revit supervisor package does not match its trusted pin");
+    const supervisorPath = trustedFile(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_PATH, "Dynamic Revit supervisor executable");
+    const supervisorDirectory = trustedDirectory(path.dirname(supervisorPath), "Dynamic Revit supervisor directory");
+    const supervisorExecutablePin = trustedHashPin(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_SHA256, "Dynamic Revit supervisor executable");
+    const supervisorPackagePin = trustedHashPin(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_DIRECTORY_SHA256, "Dynamic Revit supervisor directory");
+    const originalDirectoryFilesystemIdentity = stableDirectoryIdentity(supervisorDirectory, "Dynamic Revit supervisor directory");
+    const originalExecutable = stableRegularFile(supervisorPath, supervisorDirectory, "Dynamic Revit supervisor executable");
+    if (originalExecutable.hash !== supervisorExecutablePin) {
+      throw new Error("Dynamic Revit supervisor executable does not match its trusted pin");
+    }
+    if (computeDynamicRuntimePackageDirectoryIdentity(supervisorDirectory) !== supervisorPackagePin) {
+      throw new Error("Dynamic Revit supervisor directory does not match its trusted pin");
+    }
     const workerRuntimePackagePin = trustedHashPin(env.OPERATOR_DYNAMIC_REVIT_WORKER_PACKAGE_SHA256, "Dynamic Revit worker runtime package");
     const workerDirectory = trustedDirectory(env.OPERATOR_DYNAMIC_REVIT_WORKER_DIRECTORY, "Dynamic Revit worker directory");
     const tokenFile = trustedFile(env.OPERATOR_DYNAMIC_REVIT_TOKEN_FILE, "Operator token file");
@@ -392,10 +448,22 @@ export async function runTrustedProviderDynamicProgram(
       "dynamic-programs",
       `${safeSegment(req.message_id)}-${randomUUID()}`
     );
-    fs.mkdirSync(runDirectory, { recursive: true });
+    fs.mkdirSync(runDirectory, { recursive: true, mode: 0o700 }); assertNoLinkComponents(runDirectory, "Dynamic Revit private run root");
+    fs.chmodSync(runDirectory, 0o700);
+    const runDirectoryFilesystemIdentity = stableDirectoryIdentity(runDirectory, "Dynamic Revit private run root");
     const sourceFile = path.join(runDirectory, "program.cs");
     const evidencePath = path.join(runDirectory, "supervisor-evidence.json");
     const configPath = path.join(runDirectory, "live-task.json");
+    const stagedPackages = path.join(runDirectory, "supervisor-packages"); fs.mkdirSync(stagedPackages, { mode: 0o700 });
+    const stagedSupervisorDirectory = path.join(stagedPackages, supervisorPackagePin.slice("sha256:".length));
+    stageVerifiedSupervisorDirectory(supervisorDirectory, stagedSupervisorDirectory);
+    const stagedSupervisorPath = path.join(stagedSupervisorDirectory, path.basename(supervisorPath));
+    const stagedDirectoryFilesystemIdentity = stableDirectoryIdentity(stagedSupervisorDirectory, "Staged Dynamic Revit supervisor directory");
+    const stagedExecutable = stableRegularFile(stagedSupervisorPath, stagedSupervisorDirectory, "Staged Dynamic Revit supervisor executable");
+    if (computeDynamicRuntimePackageDirectoryIdentity(stagedSupervisorDirectory) !== supervisorPackagePin
+      || stagedExecutable.hash !== supervisorExecutablePin) {
+      throw new Error("Staged Dynamic Revit supervisor package does not match its trusted pins");
+    }
     fs.writeFileSync(sourceFile, program.source, { encoding: "utf8", mode: 0o600, flag: "wx" });
     const liveTaskConfig = {
       workerDirectory,
@@ -415,18 +483,35 @@ export async function runTrustedProviderDynamicProgram(
     fs.writeFileSync(configPath, JSON.stringify(liveTaskConfig), { encoding: "utf8", mode: 0o600, flag: "wx" });
 
     const timeoutMs = Math.min(300_000, program.worker_deadline_ms + program.apply_deadline_ms + 30_000);
+    dependencies.beforeSupervisorLaunch?.();
+    if (stableDirectoryIdentity(runDirectory, "Dynamic Revit private run root") !== runDirectoryFilesystemIdentity) {
+      throw new Error("Dynamic Revit private run root changed before launch");
+    }
+    const originalExecutableBeforeLaunch = stableRegularFile(supervisorPath, supervisorDirectory, "Dynamic Revit supervisor executable");
+    if (computeDynamicRuntimePackageDirectoryIdentity(supervisorDirectory) !== supervisorPackagePin
+      || originalExecutableBeforeLaunch.hash !== supervisorExecutablePin || originalExecutableBeforeLaunch.fileIdentity !== originalExecutable.fileIdentity
+      || stableDirectoryIdentity(supervisorDirectory, "Dynamic Revit supervisor directory") !== originalDirectoryFilesystemIdentity) {
+      throw new Error("Original Dynamic Revit supervisor package changed before launch");
+    }
+    const stagedExecutableBeforeLaunch = stableRegularFile(stagedSupervisorPath, stagedSupervisorDirectory, "Staged Dynamic Revit supervisor executable");
+    if (computeDynamicRuntimePackageDirectoryIdentity(stagedSupervisorDirectory) !== supervisorPackagePin
+      || stagedExecutableBeforeLaunch.hash !== supervisorExecutablePin || stagedExecutableBeforeLaunch.fileIdentity !== stagedExecutable.fileIdentity
+      || stableDirectoryIdentity(stagedSupervisorDirectory, "Staged Dynamic Revit supervisor directory") !== stagedDirectoryFilesystemIdentity) {
+      throw new Error("Staged Dynamic Revit supervisor package changed before launch");
+    }
     const launched = await (dependencies.executeSupervisor ?? spawnSupervisor)(
-      supervisorPath,
+      stagedSupervisorPath,
       ["--execute-task", configPath],
-      { cwd: path.dirname(supervisorPath), timeoutMs, env: sanitizedSupervisorEnvironment(env) }
+      { cwd: stagedSupervisorDirectory, timeoutMs, env: sanitizedSupervisorEnvironment(env) }
     );
     if (launched.timedOut) throw new Error("trusted supervisor deadline exceeded");
     if (launched.outputExceeded) throw new Error("trusted supervisor output exceeded its bound");
     if (!fs.existsSync(evidencePath)) {
       throw new Error(`trusted supervisor returned exit ${launched.exitCode ?? "unknown"} without evidence`);
     }
-    const evidence = fs.readFileSync(evidencePath);
-    if (!evidence.length || evidence.length > MAX_EVIDENCE_BYTES) throw new Error("trusted supervisor evidence size is invalid");
+    const evidenceRead = stableRegularFile(evidencePath, runDirectory, "Trusted supervisor evidence", MAX_EVIDENCE_BYTES, runDirectoryFilesystemIdentity);
+    const evidence = evidenceRead.bytes;
+    if (!evidence.length) throw new Error("trusted supervisor evidence size is invalid");
     if (launched.exitCode !== 0) throw new Error(`trusted supervisor returned exit ${launched.exitCode ?? "unknown"}`);
     const normalizedEvidence = normalizeProviderSupervisorEvidence(evidence, {
       applyRequested: program.apply,
@@ -435,7 +520,7 @@ export async function runTrustedProviderDynamicProgram(
       supervisorPackageSha256: supervisorPackagePin,
       workerRuntimePackageSha256: workerRuntimePackagePin
     });
-    const evidenceHash = createHash("sha256").update(evidence).digest("hex");
+    const evidenceHash = evidenceRead.hash.slice("sha256:".length);
     return executionResponse(
       `The pinned Dynamic Revit supervisor completed the bounded ${program.apply ? "apply" : "preview"}; its normalized receipt chain is authoritative, not provider prose.`,
       receipt({
@@ -445,6 +530,7 @@ export async function runTrustedProviderDynamicProgram(
         evidence_path: evidencePath,
         evidence_sha256: evidenceHash,
         failure: null,
+        supervisor_executable_sha256: supervisorExecutablePin,
         supervisor_package_sha256: normalizedEvidence.supervisor_package_sha256,
         worker_runtime_package_sha256: normalizedEvidence.worker_runtime_package_sha256,
         evidence_binding_sha256: normalizedEvidence.binding_sha256,

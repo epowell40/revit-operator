@@ -94,6 +94,7 @@ export type ChatResponse = {
     authority: "trusted_supervisor_receipt";
     provider_prose_authorized: false;
     failure: string | null;
+    supervisor_executable_sha256?: string | null;
     supervisor_package_sha256?: string | null;
     worker_runtime_package_sha256?: string | null;
     evidence_binding_sha256?: string | null;
