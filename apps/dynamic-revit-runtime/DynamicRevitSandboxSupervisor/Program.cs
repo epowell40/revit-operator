@@ -45,16 +45,15 @@ internal static class Program
         var started = DateTimeOffset.UtcNow;
         var workerDirectory = Path.GetFullPath(config.WorkerDirectory);
         var evidencePath = Path.GetFullPath(config.EvidencePath);
-        var taskRoot = Path.Combine(Path.GetDirectoryName(evidencePath)!, "live-tasks", Guid.NewGuid().ToString("N"));
-        var scratch = Path.Combine(taskRoot, "scratch");
-        Directory.CreateDirectory(scratch);
-        CopyDirectory(workerDirectory, scratch);
+        using var workspace = TaskWorkspace.Create(evidencePath, "live-tasks", workerDirectory);
+        var taskRoot = workspace.Root;
+        var scratch = workspace.ScratchDirectory;
         var source = await File.ReadAllTextAsync(config.SourceFile);
         var token = (await File.ReadAllTextAsync(config.OperatorTokenFile)).Trim();
         if (token.Length < 16) throw new InvalidOperationException("Operator token file is empty or invalid.");
         var writeGrant = ReadWriteGrant(config.OperatorTokenFile);
         using var profile = WindowsSandboxProfile.Create(lessPrivileged: true);
-        profile.GrantTaskDirectory(taskRoot);
+        profile.GrantTaskLayout(taskRoot, workspace.RuntimeDirectory, scratch);
         var runtimeId = Guid.NewGuid().ToString("N");
         var signingKey = RandomNumberGenerator.GetBytes(32);
         var hostSessionKey = RandomNumberGenerator.GetBytes(32);
@@ -89,10 +88,10 @@ internal static class Program
         using var pipe = profile.CreateAuthenticatedPipe(outputPipeName);
         using var inputPipe = new AnonymousPipeServerStream(PipeDirection.Out, HandleInheritability.Inheritable);
         var inputPipeHandle = inputPipe.GetClientHandleAsString();
-        var executable = Path.Combine(scratch, "DynamicRevitWorker.exe");
+        var executable = Path.Combine(workspace.RuntimeDirectory, "DynamicRevitWorker.exe");
         var arguments = "--sandbox-execute --input-pipe " + inputPipeHandle + " --output-named-pipe " + outputPipeName;
-        using var worker = profile.Launch(executable, arguments, scratch, memoryMb: 256, inheritedHandles: new[] { new IntPtr(long.Parse(inputPipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
-        var workerHash = WorkerPackageHash(scratch);
+        var workerHash = workspace.RuntimeImage.VerifyBeforeLaunch();
+        using var worker = profile.Launch(executable, arguments, scratch, memoryMb: 256, cpuTimeLimit: TimeSpan.FromMilliseconds(Math.Max(config.WorkerDeadlineMs, 1_000) + 5_000), inheritedHandles: new[] { new IntPtr(long.Parse(inputPipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
         var startupNonceHash = DynamicWire.Sha256(nonce);
         var taskDirectoryIdentity = DynamicWire.Sha256(Path.GetFullPath(taskRoot));
         var registrationCore = JsonSerializer.Serialize(new { runtimeInstanceId = runtimeId, signingKeyBase64 = Convert.ToBase64String(signingKey), launcherExecutableHash = launcherHash, workerExecutableHash = workerHash, sandboxProfile = profile.ProfileName, workerProcessId = checked((int)worker.ProcessId), startupNonceHash, taskDirectoryIdentity, expiresUnixSeconds = runtimeExpires }, WireJson);
@@ -123,7 +122,7 @@ internal static class Program
             throw new InvalidOperationException("Sandboxed worker channel authentication failed: pid=" + pidMatches + ", nonce=" + nonceMatches + ", correlation=" + correlationMatches + ", payload/HMAC=" + hmacMatches + ", expectedPid=" + worker.ProcessId + ", observedPid=" + messagePid + ".");
         if (!worker.Wait(TimeSpan.FromSeconds(5))) worker.Kill();
         var output = DecodePayload(message);
-        if (!output.GetProperty("ok").GetBoolean()) return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, registration, snapshotRaw, output.Clone(), "Worker compilation or execution failed.");
+        if (!output.GetProperty("ok").GetBoolean()) return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, workspace.RuntimeImage, registration, snapshotRaw, output.Clone(), "Worker compilation or execution failed.");
         var sourceHash = output.GetProperty("sourceHash").GetString()!;
         var programHash = output.GetProperty("programHash").GetString()!;
         var sdkHash = output.GetProperty("sdkHash").GetString()!;
@@ -141,7 +140,7 @@ internal static class Program
         if (graph.GetProperty("operations").GetArrayLength() == 0)
         {
             var readReceipt = JsonSerializer.Serialize(new { schema = "dynamic-revit-read-report-receipt/v0", ok = true, sourceHash, programHash, sdkHash, inputHash = snapshotInputHash, graphHash, documentFingerprint = document.ProjectFingerprint, documentSessionId = document.SessionId, workerIdentity = admission, report = output.GetProperty("report").Clone(), logs = output.GetProperty("logs").Clone() }, Json);
-            return new LiveEvidence { Schema = "dynamic-revit-phase2-live-evidence/v0", Ok = true, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = readReceipt, HostAuthenticationReceipts = hostAuthentications, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage };
+            return new LiveEvidence { Schema = "dynamic-revit-phase2-live-evidence/v0", Ok = true, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = readReceipt, HostAuthenticationReceipts = hostAuthentications, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage };
         }
         var previewRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-preview-request/v0", phase = "preview", sourceHash, programHash, sdkHash, documentFingerprint = document.ProjectFingerprint, documentSessionId = document.SessionId, snapshotToken, operationBudget = config.OperationBudget, graph, admission }, Json);
         var previewEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/preview", token, writeGrant, previewRequest, correlation);
@@ -182,7 +181,7 @@ internal static class Program
             };
             ok = ok && replayRejected;
         }
-        return new LiveEvidence { Schema = "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : "Revit preview returned a structured failure." };
+        return new LiveEvidence { Schema = "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : "Revit preview returned a structured failure." };
     }
 
     private static async Task<string> Post(string baseUrl, string path, string token, string writeGrant, string json, string correlation)
@@ -261,10 +260,9 @@ internal static class Program
     private static async Task<ProbeEvidence> RunProbeSuite(string workerDirectory, string evidencePath, bool lessPrivileged)
     {
         var started = DateTimeOffset.UtcNow;
-        var root = Path.Combine(Path.GetDirectoryName(evidencePath)!, "tasks", Guid.NewGuid().ToString("N"));
-        var scratch = Path.Combine(root, "scratch");
-        Directory.CreateDirectory(scratch);
-        CopyDirectory(workerDirectory, scratch);
+        using var workspace = TaskWorkspace.Create(evidencePath, "tasks", workerDirectory);
+        var root = workspace.Root;
+        var scratch = workspace.ScratchDirectory;
         var outsideSecret = Path.Combine(Path.GetDirectoryName(evidencePath)!, "outside-secret.txt");
         await File.WriteAllTextAsync(outsideSecret, "not-visible-to-worker-" + Guid.NewGuid().ToString("N"));
         var outsideWrite = Path.Combine(Path.GetDirectoryName(evidencePath)!, "outside-write-must-not-exist.txt");
@@ -275,7 +273,7 @@ internal static class Program
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         using var profile = WindowsSandboxProfile.Create(lessPrivileged);
-        profile.GrantTaskDirectory(root);
+        profile.GrantTaskLayout(root, workspace.RuntimeDirectory, scratch);
         var inputPath = Path.Combine(scratch, "probe-input.json");
         await File.WriteAllTextAsync(inputPath, JsonSerializer.Serialize(new
         {
@@ -286,17 +284,15 @@ internal static class Program
             secretEnvironmentName = secretName,
             loopbackPort = port
         }, Json));
-        profile.GrantTaskDirectory(root);
-
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var correlation = Guid.NewGuid().ToString("N");
         var channelKey = RandomNumberGenerator.GetBytes(32);
         using var pipe = new AnonymousPipeServerStream(PipeDirection.In, HandleInheritability.Inheritable);
         var pipeHandle = pipe.GetClientHandleAsString();
-        var executable = Path.Combine(scratch, "DynamicRevitWorker.exe");
-        var workerPackageHash = WorkerPackageHash(scratch);
+        var executable = Path.Combine(workspace.RuntimeDirectory, "DynamicRevitWorker.exe");
+        var workerPackageHash = workspace.RuntimeImage.VerifyBeforeLaunch();
         var arguments = "--sandbox-probe --input \"" + inputPath + "\" --pipe " + pipeHandle + " --nonce " + nonce + " --channel-key " + Convert.ToBase64String(channelKey) + " " + correlation;
-        using var process = profile.Launch(executable, arguments, scratch, memoryMb: 256, inheritedHandles: new[] { new IntPtr(long.Parse(pipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
+        using var process = profile.Launch(executable, arguments, scratch, memoryMb: 256, cpuTimeLimit: TimeSpan.FromSeconds(30), inheritedHandles: new[] { new IntPtr(long.Parse(pipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
         pipe.DisposeLocalCopyOfClientHandle();
         var read = ReadBoundedLineAsync(pipe, 4 * 1024 * 1024);
         var received = await Task.WhenAny(read, Task.Delay(TimeSpan.FromSeconds(30))) == read;
@@ -305,9 +301,17 @@ internal static class Program
             var exited = process.Wait(TimeSpan.Zero);
             var detail = exited ? " Worker exited with code " + process.ExitCode + "." : " Worker remained running until terminated.";
             process.Kill();
-            return ProbeEvidence.Failed(profile.ProfileName, profile.Sid.Value, "Worker did not write to the inherited task pipe." + detail, root, started, process.ProcessId, File.Exists(Path.Combine(scratch, "managed-startup-marker.txt")), File.Exists(Path.Combine(scratch, "probe-failure.txt")) ? await File.ReadAllTextAsync(Path.Combine(scratch, "probe-failure.txt")) : null);
+            return ProbeEvidence.Failed(profile.ProfileName, profile.Sid.Value, "Worker did not write to the inherited task pipe." + detail, root, started, process.ProcessId, workspace.RuntimeImage, File.Exists(Path.Combine(scratch, "managed-startup-marker.txt")), File.Exists(Path.Combine(scratch, "probe-failure.txt")) ? await File.ReadAllTextAsync(Path.Combine(scratch, "probe-failure.txt")) : null);
         }
-        var line = await read ?? throw new InvalidOperationException("Worker pipe closed without a message.");
+        string line;
+        try { line = await read; }
+        catch (Exception exception)
+        {
+            var exited = process.Wait(TimeSpan.FromSeconds(2));
+            var detail = exited ? " Worker exited with code " + process.ExitCode + "." : " Worker remained running until terminated.";
+            if (!exited) process.Kill();
+            return ProbeEvidence.Failed(profile.ProfileName, profile.Sid.Value, "Worker channel failed: " + exception.Message + detail, root, started, process.ProcessId, workspace.RuntimeImage, File.Exists(Path.Combine(scratch, "managed-startup-marker.txt")), File.Exists(Path.Combine(scratch, "probe-failure.txt")) ? await File.ReadAllTextAsync(Path.Combine(scratch, "probe-failure.txt")) : null);
+        }
         using var message = JsonDocument.Parse(line);
         var rootMessage = message.RootElement;
         var envelopePid = rootMessage.GetProperty("pid").GetUInt32();
@@ -366,26 +370,20 @@ internal static class Program
         {
             Schema = "dynamic-revit-phase2-sandbox-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
             Os = Environment.OSVersion.VersionString, SandboxProfile = profile.ProfileName, AppContainerSid = profile.Sid.Value,
-            Configuration = new[] { "zero AppContainer capabilities", "low-integrity task directory", "task SID ACL", "only explicitly inherited anonymous input-pipe handle", "kernel-observed named-pipe output client PID", "environment allowlist", "one-process job", "256 MiB process memory", "kill-on-job-close", "30 second probe IPC deadline", "PID + 256-bit nonce + correlation + payload-hash HMAC-bound typed pipe message", "Microsoft-signed-native-image policy enabled before generated code" },
+            Configuration = new[] { "zero AppContainer capabilities", "reparse-free read/execute-only content-addressed runtime image", "separate low-integrity writable task scratch", "complete allowlisted runtime dependency manifest hashed before launch", "task SID ACL", "only explicitly inherited anonymous input-pipe handle", "kernel-observed named-pipe output client PID", "environment allowlist", "one-process job", "256 MiB process and job memory", "30 second per-process CPU time", "job UI restrictions", "kill-on-job-close", "30 second probe IPC deadline", "PID + 256-bit nonce + correlation + payload-hash HMAC-bound typed pipe message", "Microsoft-signed-native-image policy enabled before generated code" },
             TaskDirectory = root, WorkerPid = process.ProcessId, PipeClientPid = pipePid, AuthenticatedPipe = authenticated,
+            RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerPackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count,
             Admission = admission, AdmissionSignatureValid = signatureValid, WrongKeyRejected = wrongKeyRejected, WrongProcessRejected = wrongProcessRejected, ReplayRejected = replayRejected,
             WrongProcessPipeConnected = hostileConnectedInTime, WrongProcessKernelPid = kernelHostilePid, WrongProcessClaimedMessageValid = hostileCryptographicallyValidAsClaimedWorker, WrongProcessFailureDetail = hostile?.StandardError.ReadToEnd(),
             Results = results, Failure = ok ? null : "One or more sandbox or authentication expectations were not observed.", ManagedWorkerStarted = File.Exists(Path.Combine(scratch, "managed-startup-marker.txt"))
         };
     }
 
-    private static string Hash(string path) => File.Exists(path) ? DynamicWire.Sha256(File.ReadAllBytes(path)) : DynamicWire.Sha256(path);
     private static string LauncherPackageHash()
     {
         var directory = AppContext.BaseDirectory;
         var files = Directory.EnumerateFiles(directory, "DynamicRevitSandboxSupervisor.*", SearchOption.TopDirectoryOnly)
             .Concat(new[] { Path.Combine(directory, "DynamicRevitSdk.dll") }.Where(File.Exists));
-        return PackageHash(files);
-    }
-    private static string WorkerPackageHash(string directory)
-    {
-        var files = Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
-            .Where(path => path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".deps.json", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".runtimeconfig.json", StringComparison.OrdinalIgnoreCase));
         return PackageHash(files);
     }
     private static string PackageHash(IEnumerable<string> files)
@@ -437,11 +435,6 @@ internal static class Program
         var a = Encoding.UTF8.GetBytes(left); var b = Encoding.UTF8.GetBytes(right); if (a.Length != b.Length) return false;
         var diff = 0; for (var i = 0; i < a.Length; i++) diff |= a[i] ^ b[i]; return diff == 0;
     }
-    private static void CopyDirectory(string source, string destination)
-    {
-        foreach (var directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories)) Directory.CreateDirectory(Path.Combine(destination, Path.GetRelativePath(source, directory)));
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories)) File.Copy(file, Path.Combine(destination, Path.GetRelativePath(source, file)), true);
-    }
 }
 
 internal sealed class ProbeResult { public string Action { get; set; } = ""; public string Expected { get; set; } = ""; public bool Denied { get; set; } public string Observed { get; set; } = ""; public string? ExceptionType { get; set; } }
@@ -453,8 +446,10 @@ internal sealed class LiveTaskConfig
 internal sealed class LiveEvidence
 {
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }
-    public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = ""; public string? Failure { get; set; }
-    public static LiveEvidence Failed(DateTimeOffset started, string profile, string task, string registration, string snapshot, JsonElement worker, string failure) => new() { Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile, TaskDirectory = task, RegistrationReceipt = registration, SnapshotReceipt = snapshot, WorkerOutput = worker, Failure = failure };
+    public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
+    public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }
+    public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = "";
+    public static LiveEvidence Failed(DateTimeOffset started, string profile, string task, RuntimeImage runtimeImage, string registration, string snapshot, JsonElement worker, string failure) => new() { Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile, TaskDirectory = task, RuntimeImageDirectory = runtimeImage.Directory, RuntimeImageIdentity = runtimeImage.Identity, RuntimeDependencyCount = runtimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshot, WorkerOutput = worker, Failure = failure };
 }
 internal sealed class HostReplayEvidence
 {
@@ -469,9 +464,10 @@ internal sealed class ProbeEvidence
     public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; } public string Os { get; set; } = "";
     public string SandboxProfile { get; set; } = ""; public string AppContainerSid { get; set; } = ""; public string[] Configuration { get; set; } = Array.Empty<string>();
     public string TaskDirectory { get; set; } = ""; public uint WorkerPid { get; set; } public uint PipeClientPid { get; set; } public bool AuthenticatedPipe { get; set; }
+    public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }
     public DynamicWorkerAdmission? Admission { get; set; } public bool AdmissionSignatureValid { get; set; } public bool WrongKeyRejected { get; set; } public bool WrongProcessRejected { get; set; } public bool ReplayRejected { get; set; }
     public bool WrongProcessPipeConnected { get; set; } public uint WrongProcessKernelPid { get; set; } public bool WrongProcessClaimedMessageValid { get; set; } public string? WrongProcessFailureDetail { get; set; }
     public List<ProbeResult> Results { get; set; } = new(); public string? Failure { get; set; }
     public bool ManagedWorkerStarted { get; set; } public string? WorkerFailureDetail { get; set; }
-    public static ProbeEvidence Failed(string profile, string sid, string failure, string task, DateTimeOffset started, uint pid, bool managedStarted, string? workerFailure) => new() { Ok = false, SandboxProfile = profile, AppContainerSid = sid, Failure = failure, TaskDirectory = task, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, Os = Environment.OSVersion.VersionString, WorkerPid = pid, ManagedWorkerStarted = managedStarted, WorkerFailureDetail = workerFailure };
+    public static ProbeEvidence Failed(string profile, string sid, string failure, string task, DateTimeOffset started, uint pid, RuntimeImage runtimeImage, bool managedStarted, string? workerFailure) => new() { Ok = false, SandboxProfile = profile, AppContainerSid = sid, Failure = failure, TaskDirectory = task, RuntimeImageDirectory = runtimeImage.Directory, RuntimeImageIdentity = runtimeImage.Identity, RuntimeDependencyCount = runtimeImage.Files.Count, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, Os = Environment.OSVersion.VersionString, WorkerPid = pid, ManagedWorkerStarted = managedStarted, WorkerFailureDetail = workerFailure };
 }

@@ -39,10 +39,18 @@ internal sealed class WindowsSandboxProfile : IDisposable
         return new WindowsSandboxProfile(moniker, sid, lessPrivileged);
     }
 
-    public void GrantTaskDirectory(string directory)
+    public void GrantTaskLayout(string taskRoot, string runtimeDirectory, string scratchDirectory)
     {
-        RunIcacls(directory, "/grant", "*" + Sid.Value + ":(OI)(CI)F", "/T", "/C", "/Q");
-        RunIcacls(directory, "/setintegritylevel", "(OI)(CI)L", "/T", "/C", "/Q");
+        ReparsePointGuard.EnsureExistingPathIsDirect(taskRoot);
+        ReparsePointGuard.EnsureExistingPathIsDirect(runtimeDirectory);
+        ReparsePointGuard.EnsureExistingPathIsDirect(scratchDirectory);
+        var owner = WindowsIdentity.GetCurrent().User ?? throw new InvalidOperationException("Current Windows identity has no SID.");
+        RunIcacls(taskRoot, "/grant", "*" + Sid.Value + ":(RX)", "/C", "/Q");
+        RunIcacls(runtimeDirectory, "/inheritance:r", "/T", "/C", "/Q");
+        RunIcacls(runtimeDirectory, "/grant:r", "*" + Sid.Value + ":RX", "*" + owner.Value + ":F", "*S-1-5-18:F", "*S-1-5-32-544:F", "/T", "/C", "/Q");
+        RunIcacls(runtimeDirectory, "/setintegritylevel", "(OI)(CI)L", "/T", "/C", "/Q");
+        RunIcacls(scratchDirectory, "/grant", "*" + Sid.Value + ":(OI)(CI)F", "/T", "/C", "/Q");
+        RunIcacls(scratchDirectory, "/setintegritylevel", "(OI)(CI)L", "/T", "/C", "/Q");
     }
 
     public NamedPipeServerStream CreateAuthenticatedPipe(string pipeName)
@@ -57,9 +65,13 @@ internal sealed class WindowsSandboxProfile : IDisposable
         return pipe;
     }
 
-    public SandboxedProcess Launch(string executable, string arguments, string workingDirectory, int memoryMb, IReadOnlyList<IntPtr> inheritedHandles)
+    public SandboxedProcess Launch(string executable, string arguments, string workingDirectory, int memoryMb, TimeSpan cpuTimeLimit, IReadOnlyList<IntPtr> inheritedHandles)
     {
         if (inheritedHandles == null || inheritedHandles.Count < 1 || inheritedHandles.Count > 4) throw new ArgumentOutOfRangeException(nameof(inheritedHandles));
+        if (memoryMb < 64 || memoryMb > 4_096) throw new ArgumentOutOfRangeException(nameof(memoryMb));
+        if (cpuTimeLimit <= TimeSpan.Zero || cpuTimeLimit > TimeSpan.FromMinutes(10)) throw new ArgumentOutOfRangeException(nameof(cpuTimeLimit));
+        ReparsePointGuard.EnsureExistingPathIsDirect(executable);
+        ReparsePointGuard.EnsureExistingPathIsDirect(workingDirectory);
         var attributeCount = LessPrivileged ? 3 : 2;
         var attributeSize = IntPtr.Zero;
         Native.InitializeProcThreadAttributeList(IntPtr.Zero, attributeCount, 0, ref attributeSize);
@@ -94,16 +106,22 @@ internal sealed class WindowsSandboxProfile : IDisposable
         var job = Native.CreateJobObject(IntPtr.Zero, null);
         if (job.IsInvalid) throw new Win32Exception();
         var limits = new Native.JobObjectExtendedLimitInformation();
-        limits.BasicLimitInformation.LimitFlags = Native.JobObjectLimitKillOnJobClose | Native.JobObjectLimitActiveProcess | Native.JobObjectLimitProcessMemory;
+        limits.BasicLimitInformation.LimitFlags = Native.JobObjectLimitKillOnJobClose | Native.JobObjectLimitActiveProcess | Native.JobObjectLimitProcessMemory | Native.JobObjectLimitJobMemory | Native.JobObjectLimitProcessTime | Native.JobObjectLimitDieOnUnhandledException;
+        limits.BasicLimitInformation.PerProcessUserTimeLimit = checked(cpuTimeLimit.Ticks);
         limits.BasicLimitInformation.ActiveProcessLimit = 1;
         limits.ProcessMemoryLimit = (UIntPtr)((ulong)memoryMb * 1024UL * 1024UL);
+        limits.JobMemoryLimit = limits.ProcessMemoryLimit;
         var limitsSize = Marshal.SizeOf<Native.JobObjectExtendedLimitInformation>();
         var limitsPtr = Marshal.AllocHGlobal(limitsSize);
         Marshal.StructureToPtr(limits, limitsPtr, false);
         if (!Native.SetInformationJobObject(job, 9, limitsPtr, (uint)limitsSize)) throw new Win32Exception();
+        var uiRestrictionsPtr = Marshal.AllocHGlobal(sizeof(uint));
+        Marshal.WriteInt32(uiRestrictionsPtr, unchecked((int)Native.JobObjectUiLimitAll));
+        if (!Native.SetInformationJobObject(job, 4, uiRestrictionsPtr, sizeof(uint))) throw new Win32Exception();
         if (!Native.AssignProcessToJobObject(job, processInfo.Process)) throw new Win32Exception();
         if (Native.ResumeThread(processInfo.Thread) == uint.MaxValue) throw new Win32Exception();
 
+        Marshal.FreeHGlobal(uiRestrictionsPtr);
         Marshal.FreeHGlobal(limitsPtr);
         Marshal.FreeHGlobal(environment);
         Marshal.FreeHGlobal(capabilitiesPtr);
@@ -172,8 +190,12 @@ internal static class Native
     internal const uint CreateSuspended = 0x00000004;
     internal const uint CreateNoWindow = 0x08000000;
     internal const uint JobObjectLimitActiveProcess = 0x00000008;
+    internal const uint JobObjectLimitProcessTime = 0x00000002;
     internal const uint JobObjectLimitProcessMemory = 0x00000100;
+    internal const uint JobObjectLimitJobMemory = 0x00000200;
+    internal const uint JobObjectLimitDieOnUnhandledException = 0x00000400;
     internal const uint JobObjectLimitKillOnJobClose = 0x00002000;
+    internal const uint JobObjectUiLimitAll = 0x000000FF;
 
     [StructLayout(LayoutKind.Sequential)] internal struct SecurityCapabilities { public IntPtr AppContainerSid; public IntPtr Capabilities; public uint CapabilityCount; public uint Reserved; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] internal struct StartupInfo { public int cb; public string? reserved; public string? desktop; public string? title; public uint x, y, xSize, ySize, xCountChars, yCountChars, fillAttribute, flags; public short showWindow, reserved2; public IntPtr reserved2Ptr, stdInput, stdOutput, stdError; }
