@@ -79,19 +79,18 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             };
             var budgetHash = budget.CanonicalHash();
             var finalAuthorizationHash = DynamicWire.Sha256(Convert.ToBase64String(RandomBytes(32)));
-            var sdkArtifactHash = HashFile(typeof(DynamicProgramAdmissionV1).Assembly.Location);
             var targetYear = app.Application.VersionNumber;
             var expectations = new DynamicProgramAdmissionExpectationsV1
             {
-                NormalizedSourceHash = preview.SourceHash, CompiledArtifactHash = preview.ProgramHash, CompilerRuntimeHash = runtime.WorkerHash,
-                SdkVersion = DynamicRevitSdkProductionVersion.Value, SdkManifestHash = DynamicRevitSdkProductionVersion.ManifestHash, SdkArtifactHash = sdkArtifactHash,
-                WorkerExecutableHash = runtime.WorkerHash, WorkerRuntimePackageHash = runtime.WorkerHash, SandboxProfileVersion = runtime.SandboxProfile,
+                NormalizedSourceHash = preview.SourceHash, CompiledArtifactHash = preview.ProgramHash, CompilerRuntimeHash = runtime.CompilerRuntimeHash,
+                SdkVersion = DynamicRevitSdkProductionVersion.Value, SdkManifestHash = DynamicRevitSdkProductionVersion.ManifestHash, SdkArtifactHash = runtime.SdkArtifactHash,
+                WorkerExecutableHash = runtime.WorkerExecutableHash, WorkerRuntimePackageHash = runtime.WorkerRuntimePackageHash, SandboxProfileVersion = runtime.SandboxProfile,
                 SandboxProfileHash = DynamicWire.Sha256(runtime.SandboxProfile), AuthenticatedWorkerIdentityHash = runtime.AuthenticatedWorkerIdentityHash,
                 TargetRevitVersion = targetYear, HostAdapterManifestHash = HostAdapterManifestHash(targetYear), DocumentFingerprint = preview.DocumentFingerprint,
                 DocumentSessionId = preview.DocumentSessionId, DocumentRevision = preview.DocumentRevision, ProjectContextIdentityHash = DynamicWire.Sha256("local-lab\n" + preview.DocumentFingerprint),
                 CapabilityEnvelopeHash = DynamicWire.Sha256("move_element\nset_parameter"), OperationFamilyEnvelopeHash = DynamicWire.Sha256("dynamic-local-lab/v1\nmove_element\nset_parameter"),
                 EffectBudgetHash = budgetHash, FileCapabilitySetHash = emptyFiles, OperationGraphHash = preview.Graph.GraphHash, PreviewReceiptHash = preview.PreviewReceiptHash,
-                PolicyIdentityHash = DynamicWire.Sha256("dynamic-local-lab-policy/v1"), RuntimeIdentityHash = DynamicWire.Sha256(runtime.LauncherHash + "\n" + runtime.WorkerHash + "\n" + runtime.SandboxProfile),
+                PolicyIdentityHash = DynamicWire.Sha256("dynamic-local-lab-policy/v1"), RuntimeIdentityHash = DynamicWire.Sha256(runtime.LauncherHash + "\n" + runtime.WorkerRuntimePackageHash + "\n" + runtime.WorkerExecutableHash + "\n" + runtime.CompilerRuntimeHash + "\n" + runtime.SdkArtifactHash + "\n" + runtime.SandboxProfile),
                 RequestFamilySealHash = DynamicWire.Sha256("dynamic-local-lab-apply-family/v1"), FinalAuthorizationHash = finalAuthorizationHash,
                 PrincipalIdHash = DynamicWire.Sha256("local-laboratory-operator"), PrincipalSessionHash = DynamicWire.Sha256("local-laboratory-operator\n" + preview.DocumentSessionId)
             };
@@ -147,7 +146,6 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         }).Distinct().OrderBy(value => value).Select(value => value.ToString(CultureInfo.InvariantCulture))));
         internal static string HostAdapterManifestHash(string year) => DynamicWire.Sha256("dynamic-revit-host-adapter/v1\n" + year + "\nmove_element\nset_parameter");
         private static long SafePhase(Element element, BuiltInParameter parameter) { try { return ElementIdCompat.GetValue(element.get_Parameter(parameter)?.AsElementId() ?? ElementId.InvalidElementId); } catch { return -1; } }
-        private static string HashFile(string file) { if (string.IsNullOrWhiteSpace(file) || !File.Exists(file)) throw new InvalidOperationException("Trusted SDK artifact is unavailable."); return DynamicWire.Sha256(File.ReadAllBytes(file)); }
         private static byte[] RandomBytes(int count) { var bytes = new byte[count]; using var random = RandomNumberGenerator.Create(); random.GetBytes(bytes); return bytes; }
         private static void Prune()
         {

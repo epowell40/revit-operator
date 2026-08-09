@@ -195,6 +195,7 @@ type Effect = {
   schema: typeof DYNAMIC_EXTERNAL_EFFECT_SCHEMA; effect_id: string; effect_class: "export" | "save_as" | "print";
   state: EffectState; staging_directory: string; manifest_hash: string | null; authorization_hash: string | null; receipt_hash: string | null;
   inspected_files: FileIdentity[] | null; authorized_destination_hash: string | null; authorized_bindings_hash: string | null;
+  publication_authorization: DynamicPublicationAuthorizationV1 | null;
 };
 
 type FileIdentity = { relative: string; bytes: number; hash: string };
@@ -233,17 +234,20 @@ export class DynamicExternalEffectCoordinator {
 
   plan(effectClass: "export" | "save_as" | "print"): Readonly<Effect> {
     const effectId = `effect_${randomUUID().replaceAll("-", "")}`; const directory = path.join(this.stagingRoot, effectId);
-    const effect: Effect = { schema: DYNAMIC_EXTERNAL_EFFECT_SCHEMA, effect_id: effectId, effect_class: effectClass, state: "planned", staging_directory: directory, manifest_hash: null, authorization_hash: null, receipt_hash: null, inspected_files: null, authorized_destination_hash: null, authorized_bindings_hash: null };
+    const effect: Effect = { schema: DYNAMIC_EXTERNAL_EFFECT_SCHEMA, effect_id: effectId, effect_class: effectClass, state: "planned", staging_directory: directory, manifest_hash: null, authorization_hash: null, receipt_hash: null, inspected_files: null, authorized_destination_hash: null, authorized_bindings_hash: null, publication_authorization: null };
     this.effects.set(effectId, effect); return publicEffect(effect);
   }
 
   stage(effectId: string, outputs: { relative_path: string; bytes: Buffer }[]): Readonly<Effect> {
     const effect = this.require(effectId, "planned");
     if (effect.effect_class !== "export") throw new Error("Save As and print require dedicated trusted adapters and remain denied.");
-    if (!Array.isArray(outputs) || outputs.length < 1 || outputs.length > 10_000) throw new Error("External-effect stage manifest is invalid.");
+    // v1 publishes one exact leaf atomically. Multi-file/nested publication needs a dedicated
+    // directory transaction and remains fail-closed instead of risking a partial destination.
+    if (!Array.isArray(outputs) || outputs.length !== 1) throw new Error("External-effect v1 requires exactly one staged output.");
     fs.mkdirSync(effect.staging_directory, { recursive: false });
     for (const output of outputs) {
-      if (!output || !Buffer.isBuffer(output.bytes) || !output.relative_path || path.isAbsolute(output.relative_path)) throw new Error("External-effect staged output is invalid.");
+      if (!output || !Buffer.isBuffer(output.bytes) || !output.relative_path || path.isAbsolute(output.relative_path)
+        || path.dirname(output.relative_path) !== "." || output.relative_path.includes("/") || output.relative_path.includes("\\")) throw new Error("External-effect staged output must be one direct leaf file.");
       const target = path.resolve(effect.staging_directory, output.relative_path);
       if (!isWithin(effect.staging_directory, target)) throw new Error("External-effect staged output escaped staging.");
       fs.mkdirSync(path.dirname(target), { recursive: true }); requireNoReparse(path.dirname(target), true);
@@ -268,12 +272,18 @@ export class DynamicExternalEffectCoordinator {
       throw new Error("External-effect publication authorization is stale or bound to another effect.");
     }
     effect.authorization_hash = sha256(canonicalAuthorization(authorization)); effect.authorized_destination_hash = destinationHash;
-    effect.authorized_bindings_hash = expectedBindingsHash; effect.state = "authorized"; return publicEffect(effect);
+    effect.authorized_bindings_hash = expectedBindingsHash;
+    effect.publication_authorization = Object.freeze({ ...authorization }); effect.state = "authorized"; return publicEffect(effect);
   }
 
   publish(effectId: string, destinationCapabilityId: string, bindings: { task: string; program: string; document: string; principal: string }): Readonly<Effect> {
     const effect = this.require(effectId, "authorized");
     if (effect.effect_class !== "export") throw new Error("Only staged export publication is implemented.");
+    if (!effect.publication_authorization) throw new Error("External-effect publication authorization is missing.");
+    this.authorizations.verify(effect.publication_authorization);
+    if (effect.authorization_hash !== sha256(canonicalAuthorization(effect.publication_authorization))) {
+      throw new Error("External-effect publication authorization changed after approval.");
+    }
     if (effect.authorized_destination_hash !== sha256(destinationCapabilityId) || effect.authorized_bindings_hash !== bindingsHash(bindings)) {
       throw new Error("External-effect publication destination or identity binding changed.");
     }
@@ -346,6 +356,6 @@ function signAuthorization(key: Buffer, value: Omit<DynamicPublicationAuthorizat
 
 function sha256(value: string | Buffer): string { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
 function publicEffect(effect: Effect): Readonly<Effect> {
-  const { inspected_files: _inspected, authorized_destination_hash: _destination, authorized_bindings_hash: _bindings, ...visible } = effect;
+  const { inspected_files: _inspected, authorized_destination_hash: _destination, authorized_bindings_hash: _bindings, publication_authorization: _authorization, ...visible } = effect;
   return Object.freeze({ ...visible, staging_directory: "opaque:trusted-staging" }) as Readonly<Effect>;
 }

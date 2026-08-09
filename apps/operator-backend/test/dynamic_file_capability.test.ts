@@ -107,6 +107,32 @@ test("publication never overwrites an existing create-only destination", () => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("publication rechecks signed authorization expiry at the publish boundary", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-expiry-")); const stage = path.join(root, "stage"); const destination = path.join(root, "out");
+  try {
+    let time = 1000; fs.mkdirSync(destination); const files = new DynamicFileCapabilityAuthority(() => time); const capability = issue(files, destination, { expires_unix_seconds: 1200 });
+    const auth = new DynamicPublicationAuthorizationAuthority(authorizationKey, () => time); const coordinator = new DynamicExternalEffectCoordinator(stage, files, auth);
+    const plan = coordinator.plan("export"); coordinator.stage(plan.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("AUTHORIZED") }]);
+    const inspected = coordinator.inspect(plan.effect_id); const receipt = auth.issue({ effect_id: inspected.effect_id, effect_class: inspected.effect_class,
+      manifest_hash: inspected.manifest_hash!, destination_capability_id_hash: sha256(capability.capability_id),
+      bindings_hash: sha256(`${bindings.task}\n${bindings.program}\n${bindings.document}\n${bindings.principal}`), expires_unix_seconds: 1005 });
+    coordinator.authorize(plan.effect_id, receipt, capability.capability_id, bindings); time = 1006;
+    assert.throws(() => coordinator.publish(plan.effect_id, capability.capability_id, bindings), /expired/);
+    assert.equal(fs.existsSync(path.join(destination, "a.pdf")), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("v1 rejects nested and multi-file staging before publication can become partial", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-bounded-"));
+  try {
+    const coordinator = new DynamicExternalEffectCoordinator(path.join(root, "stage"), new DynamicFileCapabilityAuthority(() => 1000), new DynamicPublicationAuthorizationAuthority(authorizationKey, () => 1000));
+    const nested = coordinator.plan("export");
+    assert.throws(() => coordinator.stage(nested.effect_id, [{ relative_path: "nested/a.pdf", bytes: Buffer.from("a") }]), /direct leaf/);
+    const multiple = coordinator.plan("export");
+    assert.throws(() => coordinator.stage(multiple.effect_id, [{ relative_path: "a.pdf", bytes: Buffer.from("a") }, { relative_path: "b.pdf", bytes: Buffer.from("b") }]), /exactly one/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test("Save As and print remain denied until dedicated trusted adapters exist", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "external-denied-"));
   try {

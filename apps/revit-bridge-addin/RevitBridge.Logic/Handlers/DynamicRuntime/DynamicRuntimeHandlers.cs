@@ -129,36 +129,44 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
     internal static class DynamicRuntimeAdmissionRegistry
     {
-        private sealed class RuntimeKey { public byte[] Key = Array.Empty<byte>(); public DateTime ExpiresUtc; public string LauncherHash = ""; public string WorkerHash = ""; public string SandboxProfile = ""; public int WorkerProcessId; public string StartupNonceHash = ""; public string TaskDirectoryIdentity = ""; }
+        private sealed class RuntimeKey
+        {
+            public byte[] Key = Array.Empty<byte>(); public DateTime ExpiresUtc; public string LauncherHash = "";
+            public string WorkerExecutableHash = ""; public string WorkerRuntimePackageHash = ""; public string CompilerRuntimeHash = ""; public string SdkArtifactHash = "";
+            public string SandboxProfile = ""; public int WorkerProcessId; public string StartupNonceHash = ""; public string TaskDirectoryIdentity = "";
+        }
         private static readonly ConcurrentDictionary<string, RuntimeKey> Keys = new ConcurrentDictionary<string, RuntimeKey>(StringComparer.Ordinal);
         private static readonly ConcurrentDictionary<string, byte> UsedCorrelations = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
-        public static void Register(string runtimeId, string keyBase64, string launcherHash, string workerHash, string sandboxProfile, int workerProcessId, string startupNonceHash, string taskDirectoryIdentity, long expiresUnixSeconds)
+        public static void Register(string runtimeId, string keyBase64, string launcherHash, string workerExecutableHash, string workerRuntimePackageHash, string compilerRuntimeHash, string sdkArtifactHash, string sandboxProfile, int workerProcessId, string startupNonceHash, string taskDirectoryIdentity, long expiresUnixSeconds)
         {
             var trustedLauncherHash = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RUNTIME_LAUNCHER_SHA256") ?? "";
             var trustedWorkerHash = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RUNTIME_WORKER_SHA256") ?? "";
             var runtimeValid = !string.IsNullOrWhiteSpace(runtimeId) && runtimeId.Length <= 128;
             var launcherFormatValid = DynamicRuntimePreviewHandler.IsHash(launcherHash);
-            var workerFormatValid = DynamicRuntimePreviewHandler.IsHash(workerHash);
+            var workerExecutableFormatValid = DynamicRuntimePreviewHandler.IsHash(workerExecutableHash);
+            var workerPackageFormatValid = DynamicRuntimePreviewHandler.IsHash(workerRuntimePackageHash);
+            var compilerRuntimeFormatValid = DynamicRuntimePreviewHandler.IsHash(compilerRuntimeHash);
+            var sdkArtifactFormatValid = DynamicRuntimePreviewHandler.IsHash(sdkArtifactHash);
             var launcherPinValid = string.Equals(launcherHash, trustedLauncherHash, StringComparison.Ordinal);
-            var workerPinValid = string.Equals(workerHash, trustedWorkerHash, StringComparison.Ordinal);
+            var workerPinValid = string.Equals(workerRuntimePackageHash, trustedWorkerHash, StringComparison.Ordinal);
             var profileValid = sandboxProfile == "windows-lpac-v1-zero-capabilities";
             var workerProcessValid = workerProcessId > 0;
             var startupNonceValid = DynamicRuntimePreviewHandler.IsHash(startupNonceHash);
             var taskDirectoryValid = DynamicRuntimePreviewHandler.IsHash(taskDirectoryIdentity);
-            if (!runtimeValid || !launcherFormatValid || !workerFormatValid || !launcherPinValid || !workerPinValid || !profileValid || !workerProcessValid || !startupNonceValid || !taskDirectoryValid)
-                throw new ArgumentException("Dynamic runtime registration is invalid or does not match the laboratory-pinned launcher/worker binaries and LPAC profile. Checks: runtime=" + runtimeValid + ", launcherFormat=" + launcherFormatValid + ", workerFormat=" + workerFormatValid + ", launcherPin=" + launcherPinValid + ", workerPin=" + workerPinValid + ", profile=" + profileValid + ", workerProcess=" + workerProcessValid + ", startupNonce=" + startupNonceValid + ", taskDirectory=" + taskDirectoryValid + ".");
+            if (!runtimeValid || !launcherFormatValid || !workerExecutableFormatValid || !workerPackageFormatValid || !compilerRuntimeFormatValid || !sdkArtifactFormatValid || !launcherPinValid || !workerPinValid || !profileValid || !workerProcessValid || !startupNonceValid || !taskDirectoryValid)
+                throw new ArgumentException("Dynamic runtime registration is invalid or does not match the laboratory-pinned launcher/worker package and LPAC profile. Checks: runtime=" + runtimeValid + ", launcherFormat=" + launcherFormatValid + ", workerExecutableFormat=" + workerExecutableFormatValid + ", workerPackageFormat=" + workerPackageFormatValid + ", compilerRuntimeFormat=" + compilerRuntimeFormatValid + ", sdkArtifactFormat=" + sdkArtifactFormatValid + ", launcherPin=" + launcherPinValid + ", workerPin=" + workerPinValid + ", profile=" + profileValid + ", workerProcess=" + workerProcessValid + ", startupNonce=" + startupNonceValid + ", taskDirectory=" + taskDirectoryValid + ".");
             var key = Convert.FromBase64String(keyBase64 ?? "");
             if (key.Length != 32) throw new ArgumentException("Dynamic runtime signing key must be 256 bits.");
             var expires = DateTimeOffset.FromUnixTimeSeconds(expiresUnixSeconds).UtcDateTime;
             if (expires <= DateTime.UtcNow || expires > DateTime.UtcNow.AddMinutes(10)) throw new ArgumentException("Dynamic runtime registration expiration is invalid.");
-            Keys[runtimeId] = new RuntimeKey { Key = key, ExpiresUtc = expires, LauncherHash = launcherHash, WorkerHash = workerHash, SandboxProfile = sandboxProfile, WorkerProcessId = workerProcessId, StartupNonceHash = startupNonceHash, TaskDirectoryIdentity = taskDirectoryIdentity };
+            Keys[runtimeId] = new RuntimeKey { Key = key, ExpiresUtc = expires, LauncherHash = launcherHash, WorkerExecutableHash = workerExecutableHash, WorkerRuntimePackageHash = workerRuntimePackageHash, CompilerRuntimeHash = compilerRuntimeHash, SdkArtifactHash = sdkArtifactHash, SandboxProfile = sandboxProfile, WorkerProcessId = workerProcessId, StartupNonceHash = startupNonceHash, TaskDirectoryIdentity = taskDirectoryIdentity };
             foreach (var expired in Keys.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Keys.TryRemove(expired, out _);
         }
         public static void VerifyAndConsume(DynamicWorkerAdmission admission, string sourceHash, string programHash, string sdkHash, string graphHash, string documentFingerprint, string documentSession)
         {
             if (admission == null || admission.Schema != "dynamic-revit-worker-admission/v0" || !Keys.TryGetValue(admission.RuntimeInstanceId, out var runtime) || runtime.ExpiresUtc <= DateTime.UtcNow) throw new InvalidOperationException("Dynamic worker runtime is not registered or has expired.");
             if (!string.Equals(sdkHash, DynamicRevitSdkVersion.ManifestHash, StringComparison.Ordinal)) throw new InvalidOperationException("Dynamic worker SDK manifest does not match the trusted host SDK manifest.");
-            if (!string.Equals(admission.WorkerExecutableHash, runtime.WorkerHash, StringComparison.Ordinal) || admission.WorkerProcessId != runtime.WorkerProcessId || !string.Equals(admission.StartupNonceHash, runtime.StartupNonceHash, StringComparison.Ordinal) || !string.Equals(admission.TaskDirectoryIdentity, runtime.TaskDirectoryIdentity, StringComparison.Ordinal)) throw new InvalidOperationException("Dynamic worker provenance does not match the launcher-registered process, nonce, or task directory.");
+            if (!string.Equals(admission.WorkerExecutableHash, runtime.WorkerExecutableHash, StringComparison.Ordinal) || admission.WorkerProcessId != runtime.WorkerProcessId || !string.Equals(admission.StartupNonceHash, runtime.StartupNonceHash, StringComparison.Ordinal) || !string.Equals(admission.TaskDirectoryIdentity, runtime.TaskDirectoryIdentity, StringComparison.Ordinal)) throw new InvalidOperationException("Dynamic worker provenance does not match the launcher-registered executable, process, nonce, or task directory.");
             DynamicWorkerAdmissionPolicy.Validate(admission, runtime.Key, runtime.LauncherHash, runtime.SandboxProfile, sourceHash, programHash, sdkHash, graphHash, documentFingerprint, documentSession, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
             if (string.IsNullOrWhiteSpace(admission.CorrelationId) || !UsedCorrelations.TryAdd(admission.RuntimeInstanceId + "\n" + admission.CorrelationId, 0)) throw new InvalidOperationException("Dynamic worker admission was replayed.");
         }
@@ -169,7 +177,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 throw new InvalidOperationException("Dynamic worker runtime is not registered or has expired.");
             return new DynamicRuntimeV1Identity
             {
-                Key = (byte[])runtime.Key.Clone(), LauncherHash = runtime.LauncherHash, WorkerHash = runtime.WorkerHash,
+                Key = (byte[])runtime.Key.Clone(), LauncherHash = runtime.LauncherHash, WorkerExecutableHash = runtime.WorkerExecutableHash,
+                WorkerRuntimePackageHash = runtime.WorkerRuntimePackageHash, CompilerRuntimeHash = runtime.CompilerRuntimeHash, SdkArtifactHash = runtime.SdkArtifactHash,
                 SandboxProfile = runtime.SandboxProfile, WorkerProcessId = runtime.WorkerProcessId,
                 StartupNonceHash = runtime.StartupNonceHash, TaskDirectoryIdentity = runtime.TaskDirectoryIdentity
             };
@@ -178,21 +187,22 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
     internal sealed class DynamicRuntimeV1Identity
     {
-        public byte[] Key = Array.Empty<byte>(); public string LauncherHash = ""; public string WorkerHash = ""; public string SandboxProfile = "";
+        public byte[] Key = Array.Empty<byte>(); public string LauncherHash = ""; public string WorkerExecutableHash = "";
+        public string WorkerRuntimePackageHash = ""; public string CompilerRuntimeHash = ""; public string SdkArtifactHash = ""; public string SandboxProfile = "";
         public int WorkerProcessId; public string StartupNonceHash = ""; public string TaskDirectoryIdentity = "";
-        public string AuthenticatedWorkerIdentityHash => DynamicWire.Sha256(WorkerHash + "\n" + WorkerProcessId.ToString(CultureInfo.InvariantCulture) + "\n" + StartupNonceHash + "\n" + TaskDirectoryIdentity);
+        public string AuthenticatedWorkerIdentityHash => DynamicWire.Sha256(WorkerExecutableHash + "\n" + WorkerRuntimePackageHash + "\n" + CompilerRuntimeHash + "\n" + SdkArtifactHash + "\n" + WorkerProcessId.ToString(CultureInfo.InvariantCulture) + "\n" + StartupNonceHash + "\n" + TaskDirectoryIdentity);
     }
 
     public sealed class DynamicRuntimeRegistrationHandler : IRequestHandler
     {
-        private sealed class Request { public string? runtimeInstanceId { get; set; } public string? signingKeyBase64 { get; set; } public string? launcherExecutableHash { get; set; } public string? workerExecutableHash { get; set; } public string? sandboxProfile { get; set; } public int workerProcessId { get; set; } public string? startupNonceHash { get; set; } public string? taskDirectoryIdentity { get; set; } public long expiresUnixSeconds { get; set; } public string? correlationId { get; set; } public long authExpiresUnixSeconds { get; set; } public string? requestMac { get; set; } }
+        private sealed class Request { public string? runtimeInstanceId { get; set; } public string? signingKeyBase64 { get; set; } public string? launcherExecutableHash { get; set; } public string? workerExecutableHash { get; set; } public string? workerRuntimePackageHash { get; set; } public string? compilerRuntimeHash { get; set; } public string? sdkArtifactHash { get; set; } public string? sandboxProfile { get; set; } public int workerProcessId { get; set; } public string? startupNonceHash { get; set; } public string? taskDirectoryIdentity { get; set; } public long expiresUnixSeconds { get; set; } public string? correlationId { get; set; } public long authExpiresUnixSeconds { get; set; } public string? requestMac { get; set; } }
         public Task<object> Handle(UIApplication app, string jsonData)
         {
-            ValidateShape(jsonData, new[] { "runtimeInstanceId", "signingKeyBase64", "launcherExecutableHash", "workerExecutableHash", "sandboxProfile", "workerProcessId", "startupNonceHash", "taskDirectoryIdentity", "expiresUnixSeconds", "correlationId", "authExpiresUnixSeconds", "requestMac" });
+            ValidateShape(jsonData, new[] { "runtimeInstanceId", "signingKeyBase64", "launcherExecutableHash", "workerExecutableHash", "workerRuntimePackageHash", "compilerRuntimeHash", "sdkArtifactHash", "sandboxProfile", "workerProcessId", "startupNonceHash", "taskDirectoryIdentity", "expiresUnixSeconds", "correlationId", "authExpiresUnixSeconds", "requestMac" });
             var request = JsonSerializer.Deserialize<Request>(jsonData) ?? throw new ArgumentException("Dynamic runtime registration is invalid.");
-            var core = JsonSerializer.Serialize(new { runtimeInstanceId = request.runtimeInstanceId, signingKeyBase64 = request.signingKeyBase64, launcherExecutableHash = request.launcherExecutableHash, workerExecutableHash = request.workerExecutableHash, sandboxProfile = request.sandboxProfile, workerProcessId = request.workerProcessId, startupNonceHash = request.startupNonceHash, taskDirectoryIdentity = request.taskDirectoryIdentity, expiresUnixSeconds = request.expiresUnixSeconds });
+            var core = JsonSerializer.Serialize(new { runtimeInstanceId = request.runtimeInstanceId, signingKeyBase64 = request.signingKeyBase64, launcherExecutableHash = request.launcherExecutableHash, workerExecutableHash = request.workerExecutableHash, workerRuntimePackageHash = request.workerRuntimePackageHash, compilerRuntimeHash = request.compilerRuntimeHash, sdkArtifactHash = request.sdkArtifactHash, sandboxProfile = request.sandboxProfile, workerProcessId = request.workerProcessId, startupNonceHash = request.startupNonceHash, taskDirectoryIdentity = request.taskDirectoryIdentity, expiresUnixSeconds = request.expiresUnixSeconds });
             DynamicRuntimeBootstrapRegistry.VerifyRequest(request.runtimeInstanceId ?? "", "register-worker", request.correlationId ?? "", request.authExpiresUnixSeconds, DynamicWire.Sha256(core), request.requestMac ?? "");
-            DynamicRuntimeAdmissionRegistry.Register(request.runtimeInstanceId ?? "", request.signingKeyBase64 ?? "", request.launcherExecutableHash ?? "", request.workerExecutableHash ?? "", request.sandboxProfile ?? "", request.workerProcessId, request.startupNonceHash ?? "", request.taskDirectoryIdentity ?? "", request.expiresUnixSeconds);
+            DynamicRuntimeAdmissionRegistry.Register(request.runtimeInstanceId ?? "", request.signingKeyBase64 ?? "", request.launcherExecutableHash ?? "", request.workerExecutableHash ?? "", request.workerRuntimePackageHash ?? "", request.compilerRuntimeHash ?? "", request.sdkArtifactHash ?? "", request.sandboxProfile ?? "", request.workerProcessId, request.startupNonceHash ?? "", request.taskDirectoryIdentity ?? "", request.expiresUnixSeconds);
             var receipt = new { schema = "dynamic-revit-runtime-registration-receipt/v0", ok = true, runtime_instance_id = request.runtimeInstanceId, expires_unix_seconds = request.expiresUnixSeconds };
             return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.runtimeInstanceId ?? "", "register-worker-receipt", receipt));
         }

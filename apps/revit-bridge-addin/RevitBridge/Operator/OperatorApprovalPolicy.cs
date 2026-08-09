@@ -244,8 +244,10 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/query", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/register", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/snapshot", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
-                if (string.Equals(p, "/revit/dynamic-runtime/preview", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
-                if (string.Equals(p, "/revit/dynamic-runtime/authorize-apply", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                // Preview is transactionally rolled back and authorization only seals current trusted state.
+                // Preserve a one-use grant for the sole mutating boundary below.
+                if (string.Equals(p, "/revit/dynamic-runtime/preview", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/authorize-apply", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/apply", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/resolve", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/views", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;

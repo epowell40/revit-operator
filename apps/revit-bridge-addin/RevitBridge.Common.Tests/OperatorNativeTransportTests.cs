@@ -205,6 +205,16 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void DynamicRuntimeConsumesOneUseWriteGrantOnlyAtCommittedApplyBoundary()
+        {
+            var root = FindRepositoryRoot();
+            var policy = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+            Assert.Contains("\"/revit/dynamic-runtime/preview\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/authorize-apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
+        }
+
+        [Fact]
         public void NativeServerDiscoveryReceiptsAreOwnedAndFailClosedAcrossRevitProcesses()
         {
             var root = FindRepositoryRoot();

@@ -15,6 +15,7 @@ public sealed class RuntimeWorkspaceTests
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.dll"), "managed-worker");
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.deps.json"), "{}");
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.runtimeconfig.json"), "{}");
+        File.WriteAllText(Path.Combine(source, "DynamicRevitSdk.dll"), "sdk");
         File.WriteAllText(Path.Combine(source, "debug.pdb"), "not-runtime");
         var locale = Directory.CreateDirectory(Path.Combine(source, "fr")).FullName;
         File.WriteAllText(Path.Combine(locale, "Microsoft.CodeAnalysis.resources.dll"), "satellite");
@@ -22,9 +23,14 @@ public sealed class RuntimeWorkspaceTests
 
         var image = RuntimeImage.Stage(source, task);
 
-        Assert.Equal(5, image.Files.Count);
+        Assert.Equal(6, image.Files.Count);
         Assert.DoesNotContain(image.Files, file => file.RelativePath.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(image.Identity, image.VerifyBeforeLaunch());
+        Assert.NotEqual(image.Identity, image.WorkerExecutableHash);
+        Assert.NotEqual(image.Identity, image.CompilerRuntimeHash);
+        Assert.NotEqual(image.Identity, image.SdkArtifactHash);
+        Assert.Equal(image.Files.Single(file => file.RelativePath == "DynamicRevitWorker.exe").Sha256, image.WorkerExecutableHash);
+        Assert.Equal(image.Files.Single(file => file.RelativePath == "DynamicRevitSdk.dll").Sha256, image.SdkArtifactHash);
         Assert.All(image.Files, file => Assert.True((File.GetAttributes(Path.Combine(image.Directory, file.RelativePath)) & FileAttributes.ReadOnly) != 0));
         using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(task, "runtime-image.manifest.json")));
         Assert.Equal("dynamic-revit-runtime-image/v1", manifest.RootElement.GetProperty("schema").GetString());
@@ -37,6 +43,7 @@ public sealed class RuntimeWorkspaceTests
         using var temporary = new TemporaryDirectory();
         var source = temporary.CreateDirectory("source");
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.exe"), "worker");
+        File.WriteAllText(Path.Combine(source, "DynamicRevitSdk.dll"), "sdk");
         File.WriteAllText(Path.Combine(source, "dependency.dll"), "dependency");
         var image = RuntimeImage.Stage(source, temporary.CreateDirectory("task"));
         var dependency = Path.Combine(image.Directory, "dependency.dll");
@@ -56,6 +63,7 @@ public sealed class RuntimeWorkspaceTests
         var source = temporary.CreateDirectory("source");
         var worker = Path.Combine(source, "DynamicRevitWorker.exe");
         File.WriteAllText(worker, "worker");
+        File.WriteAllText(Path.Combine(source, "DynamicRevitSdk.dll"), "sdk");
         try
         {
             File.CreateSymbolicLink(Path.Combine(source, "linked.dll"), worker);
@@ -74,7 +82,8 @@ public sealed class RuntimeWorkspaceTests
         using var temporary = new TemporaryDirectory();
         var source = temporary.CreateDirectory("source");
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.exe"), "worker");
-        for (var index = 0; index < 256; index++) File.WriteAllText(Path.Combine(source, $"dependency-{index:D3}.dll"), "x");
+        File.WriteAllText(Path.Combine(source, "DynamicRevitSdk.dll"), "sdk");
+        for (var index = 0; index < 255; index++) File.WriteAllText(Path.Combine(source, $"dependency-{index:D3}.dll"), "x");
 
         Assert.Throws<InvalidOperationException>(() => RuntimeImage.Stage(source, temporary.CreateDirectory("task")));
     }

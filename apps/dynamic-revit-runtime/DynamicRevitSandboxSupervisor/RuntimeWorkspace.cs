@@ -80,6 +80,11 @@ internal sealed class RuntimeImage
     public string Directory { get; }
     public string Identity { get; }
     public IReadOnlyList<RuntimeFile> Files => _files;
+    public string WorkerExecutableHash => RequireFile("DynamicRevitWorker.exe").Sha256;
+    public string SdkArtifactHash => RequireFile("DynamicRevitSdk.dll").Sha256;
+    public string CompilerRuntimeHash => ComputeIdentity(_files.Where(file =>
+        !string.Equals(file.RelativePath, "DynamicRevitWorker.exe", StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(file.RelativePath, "DynamicRevitSdk.dll", StringComparison.OrdinalIgnoreCase)));
 
     public static RuntimeImage Stage(string sourceDirectory, string taskRoot)
     {
@@ -91,6 +96,8 @@ internal sealed class RuntimeImage
         var sourceFiles = EnumerateRuntimeFiles(source).ToArray();
         if (!sourceFiles.Any(file => string.Equals(file.RelativePath, "DynamicRevitWorker.exe", StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("Runtime dependency set does not contain DynamicRevitWorker.exe.");
+        if (!sourceFiles.Any(file => string.Equals(file.RelativePath, "DynamicRevitSdk.dll", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Runtime dependency set does not contain DynamicRevitSdk.dll.");
         ValidateBounds(sourceFiles.Select(file => new FileInfo(file.FullPath).Length));
 
         var destination = Path.Combine(root, "runtime-image");
@@ -185,6 +192,10 @@ internal sealed class RuntimeImage
         if (canonical.Length == 0) throw new InvalidOperationException("Runtime image identity has no allowlisted dependencies.");
         return "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
     }
+
+    private RuntimeFile RequireFile(string relativePath)
+        => _files.SingleOrDefault(file => string.Equals(file.RelativePath, relativePath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("Runtime image is missing its required identity artifact: " + relativePath + ".");
 
     private static string Sha256(string path)
     {
