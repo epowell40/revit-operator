@@ -200,6 +200,26 @@ test("TypeScript launcher directory identity matches the canonical C# byte strea
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("runtime package identity rejects a same-length dependency swap after opening the leaf", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-package-open-swap-"));
+  const dependency = path.join(root, "dep.dll"); const displaced = path.join(root, "dep.held.dll");
+  fs.writeFileSync(dependency, "TRUSTED");
+  const originalReadFileSync = fs.readFileSync; let swapped = false;
+  try {
+    (fs as any).readFileSync = function(target: fs.PathOrFileDescriptor, ...args: unknown[]) {
+      if (!swapped && typeof target === "number") {
+        fs.renameSync(dependency, displaced); fs.writeFileSync(dependency, "MALWARE"); swapped = true;
+      }
+      return (originalReadFileSync as any).call(fs, target, ...args);
+    };
+    assert.throws(() => computeDynamicRuntimePackageDirectoryIdentity(root), /changed while it was being identified/);
+    assert.equal(swapped, true);
+  } finally {
+    (fs as any).readFileSync = originalReadFileSync;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("dynamic provider runner requires exact development laboratory execution", () => {
   assert.equal(isTrustedDynamicProgramRunnerEnabled({ REVIT_OPERATOR_MODE: "production" }), false);
   assert.equal(isTrustedDynamicProgramRunnerEnabled({
@@ -319,6 +339,7 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
   fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
   let captured: any = null;
   let capturedArgs: string[] = [];
+  let capturedExecutable = "";
   let supervisorEnvironment: NodeJS.ProcessEnv = {};
   const supervisorPackageSha256 = supervisor.directorySha256;
   const workerRuntimePackageSha256 = `sha256:${"e".repeat(64)}`;
@@ -331,8 +352,12 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
       },
       runsSessionsDirectory: runs,
       executeSupervisor: async (executable, args, options) => {
+        capturedExecutable = executable;
         assert.notEqual(executable, supervisor.executable); assert.equal(path.dirname(executable), options.cwd);
         assert.equal(computeDynamicRuntimePackageDirectoryIdentity(options.cwd), supervisorPackageSha256);
+        if (process.platform === "win32") {
+          assert.throws(() => fs.appendFileSync(path.join(options.cwd, "DynamicRevitSandboxSupervisor.dll"), "tampered"), /EPERM|EACCES/);
+        }
         capturedArgs = args;
         supervisorEnvironment = options.env;
         captured = JSON.parse(fs.readFileSync(args[1]!, "utf8")) as Record<string, unknown>;
@@ -364,6 +389,7 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
     assert.equal(response.dynamic_program_execution_receipt?.supervisor_package_sha256, supervisorPackageSha256);
     assert.equal(response.dynamic_program_execution_receipt?.worker_runtime_package_sha256, workerRuntimePackageSha256);
     assert.match(response.dynamic_program_execution_receipt?.evidence_binding_sha256 ?? "", /^sha256:[0-9a-f]{64}$/);
+    assert.equal(fs.existsSync(path.dirname(capturedExecutable)), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -444,6 +470,40 @@ test("provider supervisor executable must match its explicit trusted package pin
     assert.equal(response.dynamic_program_execution_receipt?.status, "blocked");
     assert.match(response.dynamic_program_execution_receipt?.failure ?? "", /does not match its trusted pin/);
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("provider supervisor executable swap after opening is rejected before launch", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-executable-open-swap-"));
+  const supervisor = supervisorPackage(root); const displaced = `${supervisor.executable}.held`;
+  const workers = path.join(root, "workers"); const token = path.join(root, "operator-token.txt");
+  fs.mkdirSync(workers); fs.writeFileSync(path.join(workers, "DynamicRevitWorker.exe"), "test-worker");
+  fs.writeFileSync(token, "0123456789abcdef0123456789abcdef");
+  const executableIdentity = fs.statSync(supervisor.executable, { bigint: true });
+  const originalReadFileSync = fs.readFileSync; let swapped = false; let invoked = false;
+  try {
+    (fs as any).readFileSync = function(target: fs.PathOrFileDescriptor, ...args: unknown[]) {
+      if (!swapped && typeof target === "number") {
+        const held = fs.fstatSync(target, { bigint: true });
+        if (held.dev === executableIdentity.dev && held.ino === executableIdentity.ino) {
+          fs.renameSync(supervisor.executable, displaced);
+          fs.writeFileSync(supervisor.executable, Buffer.alloc(Number(executableIdentity.size), 0x4d));
+          swapped = true;
+        }
+      }
+      return (originalReadFileSync as any).call(fs, target, ...args);
+    };
+    const response = await runTrustedProviderDynamicProgram(request("executable-open-swap"), program(), {
+      env: runnerEnvironment(supervisor, workers, token, `sha256:${"e".repeat(64)}`),
+      runsSessionsDirectory: path.join(root, "runs"),
+      executeSupervisor: async () => { invoked = true; throw new Error("must not launch"); }
+    });
+    assert.equal(swapped, true); assert.equal(invoked, false);
+    assert.equal(response.dynamic_program_execution_receipt?.status, "blocked");
+    assert.match(response.dynamic_program_execution_receipt?.failure ?? "", /changed while it was being read/);
+  } finally {
+    (fs as any).readFileSync = originalReadFileSync;
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

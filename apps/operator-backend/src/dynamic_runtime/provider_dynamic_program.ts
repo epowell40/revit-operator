@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -249,13 +249,15 @@ function stableDirectoryIdentity(directory: string, label: string): string {
   return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
 }
 
-function stableRegularFile(filePath: string, trustedRoot: string, label: string, maximumBytes = 256 * 1024 * 1024,
-  expectedRootIdentity?: string): { bytes: Buffer; hash: string; fileIdentity: string } {
+type HeldStableRegularFile = { bytes: Buffer; hash: string; fileIdentity: string; descriptor: number; close: () => void };
+
+function holdStableRegularFile(filePath: string, trustedRoot: string, label: string, maximumBytes = 256 * 1024 * 1024,
+  expectedRootIdentity?: string): HeldStableRegularFile {
   const relative = path.relative(trustedRoot, filePath);
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error(`${label} escaped its private trusted root`);
   assertNoLinkComponents(trustedRoot, label); assertNoLinkComponents(filePath, label);
   if (expectedRootIdentity !== undefined && stableDirectoryIdentity(trustedRoot, label) !== expectedRootIdentity) throw new Error(`${label} private root changed before read`);
-  let descriptor: number | undefined;
+  let descriptor: number | undefined; let retained = false;
   try {
     descriptor = fs.openSync(filePath, "r");
     const before = fs.fstatSync(descriptor, { bigint: true }); const leafBefore = fs.statSync(filePath, { bigint: true });
@@ -265,8 +267,28 @@ function stableRegularFile(filePath: string, trustedRoot: string, label: string,
     if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || BigInt(bytes.length) !== after.size
       || after.dev !== leafAfter.dev || after.ino !== leafAfter.ino) throw new Error(`${label} changed while it was being read`);
     if (expectedRootIdentity !== undefined && stableDirectoryIdentity(trustedRoot, label) !== expectedRootIdentity) throw new Error(`${label} private root changed during read`);
-    return { bytes, hash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, fileIdentity: `${after.dev}:${after.ino}:${after.birthtimeNs}` };
-  } finally { if (descriptor !== undefined) fs.closeSync(descriptor); }
+    retained = true; const heldDescriptor = descriptor;
+    return { bytes, hash: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, fileIdentity: `${after.dev}:${after.ino}:${after.birthtimeNs}`,
+      descriptor: heldDescriptor, close: () => fs.closeSync(heldDescriptor) };
+  } finally { if (!retained && descriptor !== undefined) fs.closeSync(descriptor); }
+}
+
+function stableRegularFile(filePath: string, trustedRoot: string, label: string, maximumBytes = 256 * 1024 * 1024,
+  expectedRootIdentity?: string): { bytes: Buffer; hash: string; fileIdentity: string } {
+  const held = holdStableRegularFile(filePath, trustedRoot, label, maximumBytes, expectedRootIdentity);
+  try { return { bytes: held.bytes, hash: held.hash, fileIdentity: held.fileIdentity }; }
+  finally { held.close(); }
+}
+
+function windowsSystemTool(name: "whoami.exe" | "icacls.exe"): string {
+  const systemRoot = process.env.SystemRoot;
+  if (!systemRoot || !path.isAbsolute(systemRoot) || path.parse(systemRoot).root === systemRoot) {
+    throw new Error("Trusted Windows system tool directory is unavailable");
+  }
+  const tool = path.join(systemRoot, "System32", name);
+  const stat = fs.statSync(tool);
+  if (!stat.isFile()) throw new Error(`Trusted Windows system tool is unavailable: ${name}`);
+  return tool;
 }
 
 function stageVerifiedSupervisorDirectory(source: string, destination: string): void {
@@ -287,6 +309,40 @@ function stageVerifiedSupervisorDirectory(source: string, destination: string): 
   };
   visit(source, destination);
   for (const directory of directories.reverse()) fs.chmodSync(directory, 0o500);
+  if (process.platform === "win32") {
+    const whoami = spawnSync(windowsSystemTool("whoami.exe"), [], { encoding: "utf8", windowsHide: true, shell: false });
+    const identity = whoami.status === 0 ? whoami.stdout.trim() : "";
+    if (!identity) throw new Error("Dynamic Revit staged package write-denial identity could not be established");
+    const icacls = windowsSystemTool("icacls.exe");
+    const grant = spawnSync(icacls, [destination, "/grant:r", `${identity}:(RX)`, "/T", "/C", "/Q"],
+      { encoding: "utf8", windowsHide: true, shell: false });
+    const stripInheritance = grant.status === 0
+      ? spawnSync(icacls, [destination, "/inheritance:r", "/T", "/C", "/Q"], { encoding: "utf8", windowsHide: true, shell: false })
+      : null;
+    if (grant.status !== 0 || stripInheritance?.status !== 0) throw new Error("Dynamic Revit staged package deny-write ACL could not be established");
+  }
+}
+
+function removeStagedSupervisorDirectory(destination: string): void {
+  if (!fs.existsSync(destination)) return;
+  if (process.platform === "win32") {
+    const icacls = windowsSystemTool("icacls.exe");
+    const inherited = spawnSync(icacls, [destination, "/inheritance:e", "/T", "/C", "/Q"],
+      { encoding: "utf8", windowsHide: true, shell: false });
+    const reset = inherited.status === 0
+      ? spawnSync(icacls, [destination, "/reset", "/T", "/C", "/Q"], { encoding: "utf8", windowsHide: true, shell: false })
+      : null;
+    if (inherited.status !== 0 || reset?.status !== 0) throw new Error("Dynamic Revit staged package ACL could not be restored for cleanup");
+  } else {
+    const makeWritable = (directory: string) => {
+      fs.chmodSync(directory, 0o700);
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const candidate = path.join(directory, entry.name); if (entry.isDirectory()) makeWritable(candidate); else fs.chmodSync(candidate, 0o600);
+      }
+    };
+    makeWritable(destination);
+  }
+  fs.rmSync(destination, { recursive: true, force: true });
 }
 
 function loopbackBridgeUrl(raw: string | undefined): string {
@@ -422,6 +478,7 @@ export async function runTrustedProviderDynamicProgram(
     );
   }
 
+  let stagedPackageForCleanup: string | null = null;
   try {
     const supervisorPath = trustedFile(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_PATH, "Dynamic Revit supervisor executable");
     const supervisorDirectory = trustedDirectory(path.dirname(supervisorPath), "Dynamic Revit supervisor directory");
@@ -456,6 +513,7 @@ export async function runTrustedProviderDynamicProgram(
     const configPath = path.join(runDirectory, "live-task.json");
     const stagedPackages = path.join(runDirectory, "supervisor-packages"); fs.mkdirSync(stagedPackages, { mode: 0o700 });
     const stagedSupervisorDirectory = path.join(stagedPackages, supervisorPackagePin.slice("sha256:".length));
+    stagedPackageForCleanup = stagedSupervisorDirectory;
     stageVerifiedSupervisorDirectory(supervisorDirectory, stagedSupervisorDirectory);
     const stagedSupervisorPath = path.join(stagedSupervisorDirectory, path.basename(supervisorPath));
     const stagedDirectoryFilesystemIdentity = stableDirectoryIdentity(stagedSupervisorDirectory, "Staged Dynamic Revit supervisor directory");
@@ -493,17 +551,20 @@ export async function runTrustedProviderDynamicProgram(
       || stableDirectoryIdentity(supervisorDirectory, "Dynamic Revit supervisor directory") !== originalDirectoryFilesystemIdentity) {
       throw new Error("Original Dynamic Revit supervisor package changed before launch");
     }
-    const stagedExecutableBeforeLaunch = stableRegularFile(stagedSupervisorPath, stagedSupervisorDirectory, "Staged Dynamic Revit supervisor executable");
-    if (computeDynamicRuntimePackageDirectoryIdentity(stagedSupervisorDirectory) !== supervisorPackagePin
-      || stagedExecutableBeforeLaunch.hash !== supervisorExecutablePin || stagedExecutableBeforeLaunch.fileIdentity !== stagedExecutable.fileIdentity
-      || stableDirectoryIdentity(stagedSupervisorDirectory, "Staged Dynamic Revit supervisor directory") !== stagedDirectoryFilesystemIdentity) {
-      throw new Error("Staged Dynamic Revit supervisor package changed before launch");
-    }
-    const launched = await (dependencies.executeSupervisor ?? spawnSupervisor)(
-      stagedSupervisorPath,
-      ["--execute-task", configPath],
-      { cwd: stagedSupervisorDirectory, timeoutMs, env: sanitizedSupervisorEnvironment(env) }
-    );
+    const stagedExecutableBeforeLaunch = holdStableRegularFile(stagedSupervisorPath, stagedSupervisorDirectory, "Staged Dynamic Revit supervisor executable");
+    let launched!: SupervisorExecution;
+    try {
+      if (computeDynamicRuntimePackageDirectoryIdentity(stagedSupervisorDirectory) !== supervisorPackagePin
+        || stagedExecutableBeforeLaunch.hash !== supervisorExecutablePin || stagedExecutableBeforeLaunch.fileIdentity !== stagedExecutable.fileIdentity
+        || stableDirectoryIdentity(stagedSupervisorDirectory, "Staged Dynamic Revit supervisor directory") !== stagedDirectoryFilesystemIdentity) {
+        throw new Error("Staged Dynamic Revit supervisor package changed before launch");
+      }
+      launched = await (dependencies.executeSupervisor ?? spawnSupervisor)(
+        stagedSupervisorPath,
+        ["--execute-task", configPath],
+        { cwd: stagedSupervisorDirectory, timeoutMs, env: sanitizedSupervisorEnvironment(env) }
+      );
+    } finally { stagedExecutableBeforeLaunch.close(); }
     if (launched.timedOut) throw new Error("trusted supervisor deadline exceeded");
     if (launched.outputExceeded) throw new Error("trusted supervisor output exceeded its bound");
     if (!fs.existsSync(evidencePath)) {
@@ -546,7 +607,7 @@ export async function runTrustedProviderDynamicProgram(
         failure: error instanceof Error ? error.message : String(error)
       })
     );
-  }
+  } finally { if (stagedPackageForCleanup) removeStagedSupervisorDirectory(stagedPackageForCleanup); }
 }
 
 export async function executeProviderDynamicProgramLane(args: {

@@ -49,10 +49,15 @@ export function computeDynamicRuntimePackageDirectoryIdentity(directory: string)
     const descriptor = fs.openSync(file.fullPath, "r");
     let length: number; let fileHash: string;
     try {
-      const before = fs.fstatSync(descriptor, { bigint: true });
-      if (!before.isFile() || before.size > BigInt(DYNAMIC_RUNTIME_PACKAGE_MAXIMUM_FILE_BYTES)) throw new Error(`Runtime package file exceeds the byte limit: ${file.relativePath}`);
+      const before = fs.fstatSync(descriptor, { bigint: true }); const leafBefore = fs.statSync(file.fullPath, { bigint: true });
+      if (!before.isFile() || !leafBefore.isFile() || before.dev !== leafBefore.dev || before.ino !== leafBefore.ino) {
+        throw new Error(`Runtime package file changed before it was identified: ${file.relativePath}`);
+      }
+      if (before.size > BigInt(DYNAMIC_RUNTIME_PACKAGE_MAXIMUM_FILE_BYTES)) throw new Error(`Runtime package file exceeds the byte limit: ${file.relativePath}`);
       const bytes = fs.readFileSync(descriptor); const after = fs.fstatSync(descriptor, { bigint: true });
-      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || BigInt(bytes.length) !== after.size) throw new Error(`Runtime package file changed while it was being identified: ${file.relativePath}`);
+      rejectReparse(file.fullPath, "Runtime package file"); const leafAfter = fs.statSync(file.fullPath, { bigint: true });
+      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || BigInt(bytes.length) !== after.size
+        || !leafAfter.isFile() || after.dev !== leafAfter.dev || after.ino !== leafAfter.ino) throw new Error(`Runtime package file changed while it was being identified: ${file.relativePath}`);
       length = bytes.length; fileHash = createHash("sha256").update(bytes).digest("hex");
     } finally { fs.closeSync(descriptor); }
     rejectReparse(file.fullPath, "Runtime package file");
