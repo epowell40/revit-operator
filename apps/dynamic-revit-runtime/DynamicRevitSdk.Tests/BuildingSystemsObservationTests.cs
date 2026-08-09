@@ -114,6 +114,22 @@ public sealed class BuildingSystemsObservationTests
         Assert.Contains("var y = z.CrossProduct(x).Normalize();", source);
     }
 
+    [Fact]
+    public void CanonicalNumbersBindExactIeeeBitsAcrossRuntimeTargets()
+    {
+        var fact = CurveFact("bits");
+        fact.Curve!.End.X = BitConverter.Int64BitsToDouble(unchecked((long)0x3ff0000000000001));
+        var first = DynamicBuildingSystemsObservationPolicyV1.RevisionHash(Fingerprint, "session", 9, Snapshot, new[] { fact });
+        fact.Curve.End.X = 1d;
+        var adjacent = DynamicBuildingSystemsObservationPolicyV1.RevisionHash(Fingerprint, "session", 9, Snapshot, new[] { fact });
+
+        Assert.NotEqual(first, adjacent);
+        Assert.Equal("dynamic-revit-building-systems-canonical/v2", DynamicBuildingSystemsObservationContractV1.CanonicalVersion);
+        var source = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "DynamicRevitSdk", "BuildingSystemsObservationContracts.cs")));
+        Assert.Contains("BitConverter.DoubleToInt64Bits", source);
+        Assert.DoesNotContain("value.ToString(\"R\"", source);
+    }
+
     private static DynamicBuildingSystemsSelectorV1 Selector(int page) => new() { PageSize = page };
 
     private static DynamicBuildingSystemsFactV1 CurveFact(string id)

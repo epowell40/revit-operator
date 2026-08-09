@@ -1,12 +1,12 @@
 {
   "schema": "dynamic-revit-building-systems-observation-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:3ceb4531b1b067c77a63efe229208bb962eb8e7eaa51a62ae5e9a21edb12e0a4",
+  "contractManifestHash": "sha256:b16bca0da3ca3a4d2246e07989fd5eed268cfda86b92c76b04a0e1f7c9c4d235",
   "contractSurfaceHash": "sha256:48385519c913a2ac0cf7ad305eeeb6d9ab6219587f36e65db257917783866d11",
   "selectorSchema": "dynamic-revit-building-systems-selector/v1",
   "envelopeSchema": "dynamic-revit-building-systems-envelope/v1",
   "cursorSchema": "dynamic-revit-building-systems-cursor/v1",
-  "canonicalVersion": "dynamic-revit-building-systems-canonical/v1",
+  "canonicalVersion": "dynamic-revit-building-systems-canonical/v2",
   "readOnly": true,
   "productionExposed": false,
   "limits": {

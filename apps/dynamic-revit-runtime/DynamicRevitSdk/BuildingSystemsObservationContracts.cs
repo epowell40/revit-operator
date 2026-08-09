@@ -13,7 +13,7 @@ public static class DynamicBuildingSystemsObservationContractV1
     public const string SelectorSchema = "dynamic-revit-building-systems-selector/v1";
     public const string EnvelopeSchema = "dynamic-revit-building-systems-envelope/v1";
     public const string CursorSchema = "dynamic-revit-building-systems-cursor/v1";
-    public const string CanonicalVersion = "dynamic-revit-building-systems-canonical/v1";
+    public const string CanonicalVersion = "dynamic-revit-building-systems-canonical/v2";
     public const int MaximumRequestBytes = 64 * 1024;
     public const int MaximumPageSize = 128;
     public const int MaximumObservedFacts = 2048;
@@ -363,7 +363,11 @@ public static class DynamicBuildingSystemsObservationPolicyV1
     private static bool Orthonormal(DynamicPointV1 x, DynamicPointV1 y, DynamicPointV1 z) => Math.Abs(Dot(x, x) - 1) <= 1e-9 && Math.Abs(Dot(y, y) - 1) <= 1e-9 && Math.Abs(Dot(z, z) - 1) <= 1e-9 && Math.Abs(Dot(x, y)) <= 1e-9 && Math.Abs(Dot(x, z)) <= 1e-9 && Math.Abs(Dot(y, z)) <= 1e-9 && Math.Abs(x.Y * y.Z - x.Z * y.Y - z.X) <= 1e-9 && Math.Abs(x.Z * y.X - x.X * y.Z - z.Y) <= 1e-9 && Math.Abs(x.X * y.Y - x.Y * y.X - z.Z) <= 1e-9;
     private static double Dot(DynamicPointV1 left, DynamicPointV1 right) => left.X * right.X + left.Y * right.Y + left.Z * right.Z;
     private static string Num(double? value) => value.HasValue ? Num(value.Value) : "null";
-    private static string Num(double value) { if (!Finite(value)) throw new ArgumentException("Canonical number is non-finite."); return value == 0 ? "0" : value.ToString("R", CultureInfo.InvariantCulture); }
+    private static string Num(double value)
+    {
+        if (!Finite(value)) throw new ArgumentException("Canonical number is non-finite.");
+        return BitConverter.DoubleToInt64Bits(value == 0 ? 0d : value).ToString("x16", CultureInfo.InvariantCulture);
+    }
     private static bool Finite(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
     private static void Strings(IEnumerable<string>? values, int maximum, int length, string label) { var array = values?.ToArray() ?? throw new ArgumentException(label + " are missing."); if (array.Length > maximum || array.Any(value => string.IsNullOrWhiteSpace(value) || value.Length > length) || array.Distinct(StringComparer.Ordinal).Count() != array.Length) throw new ArgumentException(label + " are invalid, duplicated, or unbounded."); }
     private static void RequireText(string? value, int maximum, string label) { if (value == null || string.IsNullOrWhiteSpace(value) || value.Length > maximum) throw new ArgumentException(label + " is invalid."); }
