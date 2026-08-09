@@ -96,7 +96,7 @@ public sealed class PackagingTests : IDisposable
         return new DynamicRuntimePackageManifest
         {
             PackageVersion = "1.0.0-test",
-            ProtocolVersion = "dynamic-revit-protocol/v0",
+            ProtocolVersion = "dynamic-revit-protocol/v1",
             SdkManifestHash = sdkManifestHash,
             Supervisor = DirectoryIdentity("supervisor"),
             Worker = DirectoryIdentity("worker"),

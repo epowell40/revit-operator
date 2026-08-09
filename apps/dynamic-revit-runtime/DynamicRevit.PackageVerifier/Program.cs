@@ -5,7 +5,7 @@ using RevitOperator.DynamicRevitSdk;
 
 if (args.Length == 1 && args[0] == "--sdk-manifest-hash")
 {
-    Console.WriteLine(DynamicRevitSdkVersion.ManifestHash);
+    Console.WriteLine(DynamicRevitSdkProductionVersion.ManifestHash);
     return 0;
 }
 
@@ -28,7 +28,7 @@ try
     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     var manifest = JsonSerializer.Deserialize<DynamicRuntimePackageManifest>(File.ReadAllText(args[2]), options)
         ?? throw new InvalidDataException("Package manifest is empty.");
-    var result = RuntimePackageVerifier.Verify(args[1], manifest, args[3], DynamicRevitSdkVersion.ManifestHash);
+    var result = RuntimePackageVerifier.Verify(args[1], manifest, args[3], DynamicRevitSdkProductionVersion.ManifestHash);
     foreach (var artifact in result.VerifiedArtifacts) Console.WriteLine("verified: " + artifact);
     foreach (var error in result.Errors) Console.Error.WriteLine("error: " + error);
     return result.Ok ? 0 : 1;
