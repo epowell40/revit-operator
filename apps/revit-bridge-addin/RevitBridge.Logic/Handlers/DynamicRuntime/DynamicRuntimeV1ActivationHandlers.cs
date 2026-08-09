@@ -1,0 +1,377 @@
+using System;
+using System.Collections.Concurrent;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Threading.Tasks;
+using Autodesk.Revit.UI;
+using RevitBridge.Common;
+using RevitOperator.DynamicRevitSdk;
+
+namespace RevitBridge.Logic.Handlers.DynamicRuntime
+{
+    /// <summary>
+    /// Narrow activation boundary for the reviewed observation and core-operation v1 adapters.
+    /// Every handler also performs its own exact development/laboratory check so an alternate
+    /// in-process dispatcher cannot accidentally bypass the HTTP exposure gate.
+    /// </summary>
+    internal static class DynamicRuntimeV1LaboratoryBoundary
+    {
+        internal static void Require()
+        {
+            if (!string.Equals(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"), "development", StringComparison.Ordinal) ||
+                !string.Equals(Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE"), "laboratory", StringComparison.Ordinal))
+                throw new InvalidOperationException("Dynamic runtime v1 adapters are available only in the exact development/laboratory profile.");
+        }
+    }
+
+    internal static class DynamicRuntimeV1Wire
+    {
+        internal static readonly JsonSerializerOptions Camel = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = false,
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            NumberHandling = JsonNumberHandling.Strict,
+            MaxDepth = 32
+        };
+
+        internal static T ParseExact<T>(string json, params string[] fields)
+        {
+            if (json == null || Encoding.UTF8.GetByteCount(json) > 256 * 1024)
+                throw new ArgumentException("Dynamic runtime v1 request exceeds the bounded wire size.");
+            using (var document = JsonDocument.Parse(json, new JsonDocumentOptions { AllowTrailingCommas = false, CommentHandling = JsonCommentHandling.Disallow, MaxDepth = 32 }))
+                RejectDuplicateFields(document.RootElement);
+            DynamicRuntimeApplyAuthorizationHandler.ExactShape(json, fields);
+            return JsonSerializer.Deserialize<T>(json, Camel) ?? throw new ArgumentException("Dynamic runtime v1 request is invalid.");
+        }
+
+        internal static string CoreHash(object value) => DynamicWire.Sha256(JsonSerializer.Serialize(value, Camel));
+
+        internal static JsonElement CamelElement<T>(T value)
+        {
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(value, Camel));
+            return document.RootElement.Clone();
+        }
+
+        private static void RejectDuplicateFields(JsonElement value)
+        {
+            if (value.ValueKind == JsonValueKind.Object)
+            {
+                var names = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+                foreach (var property in value.EnumerateObject())
+                {
+                    if (!names.Add(property.Name)) throw new ArgumentException("Dynamic runtime v1 request contains duplicate fields.");
+                    RejectDuplicateFields(property.Value);
+                }
+            }
+            else if (value.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in value.EnumerateArray()) RejectDuplicateFields(item);
+            }
+        }
+    }
+
+    public sealed class DynamicRuntimeObservationV1Handler : IRequestHandler
+    {
+        private sealed class Request
+        {
+            public string? Schema { get; set; }
+            public string? RuntimeInstanceId { get; set; }
+            public DynamicObservationSelectorV1? Selector { get; set; }
+            public string? CorrelationId { get; set; }
+            public long AuthExpiresUnixSeconds { get; set; }
+            public string? RequestMac { get; set; }
+        }
+
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            DynamicRuntimeV1LaboratoryBoundary.Require();
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "selector", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-observation-request/v1" || request.Selector == null)
+                throw new ArgumentException("Dynamic observation request v1 is invalid.");
+            DynamicObservationPolicyV1.ValidateSelector(request.Selector);
+            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, selector = request.Selector };
+            DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "observe-v1", request.CorrelationId ?? "",
+                request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
+            DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
+            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
+            var envelope = DynamicObservationRevitAdapterV1.Observe(document, request.Selector);
+            var receipt = new
+            {
+                schema = "dynamic-revit-observation-receipt/v1",
+                contract_manifest_hash = DynamicObservationContractV1.ManifestHash,
+                envelope_hash = envelope.EnvelopeHash,
+                document_fingerprint = envelope.DocumentFingerprint,
+                document_session_id = envelope.DocumentSessionId,
+                authorization_granted = false,
+                envelope = DynamicRuntimeV1Wire.CamelElement(envelope)
+            };
+            return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.RuntimeInstanceId ?? "", "observe-v1-receipt", receipt));
+        }
+    }
+
+    internal sealed class DynamicCoreOperationPreviewSealV1
+    {
+        internal string PreviewId = "";
+        internal string RuntimeId = "";
+        internal DynamicOperationGraphV1 Graph = new DynamicOperationGraphV1();
+        internal DynamicEffectBudgetV1 Budget = new DynamicEffectBudgetV1();
+        internal DynamicCoreOperationManifestBindingV1 Binding = new DynamicCoreOperationManifestBindingV1();
+        internal DynamicCoreOperationPreviewV1 Preview = new DynamicCoreOperationPreviewV1();
+        internal string DocumentSessionId = "";
+        internal int PlannedExecutionMilliseconds;
+        internal DateTime ExpiresUtc;
+    }
+
+    internal sealed class DynamicCoreOperationAuthorizationSealV1
+    {
+        internal string AuthorizationId = "";
+        internal DynamicCoreOperationPreviewSealV1 Preview = new DynamicCoreOperationPreviewSealV1();
+        internal DynamicCoreOperationApplyAuthorizationV1 Authorization = new DynamicCoreOperationApplyAuthorizationV1();
+        internal DateTime ExpiresUtc;
+    }
+
+    internal static class DynamicCoreOperationLaboratoryStateV1
+    {
+        private static readonly ConcurrentDictionary<string, DynamicCoreOperationPreviewSealV1> Previews = new ConcurrentDictionary<string, DynamicCoreOperationPreviewSealV1>(StringComparer.Ordinal);
+        private static readonly ConcurrentDictionary<string, DynamicCoreOperationAuthorizationSealV1> Authorizations = new ConcurrentDictionary<string, DynamicCoreOperationAuthorizationSealV1>(StringComparer.Ordinal);
+        private static readonly object AuthorizationGate = new object();
+
+        internal static void RegisterPreview(DynamicCoreOperationPreviewSealV1 preview)
+        {
+            Prune();
+            if (!Previews.TryAdd(preview.PreviewId, preview)) throw new InvalidOperationException("Core-operation preview identity collided.");
+        }
+
+        internal static DynamicCoreOperationPreviewSealV1 RequirePreview(string runtimeId, string previewId, string previewHash)
+        {
+            Prune();
+            if (!Previews.TryGetValue(previewId ?? "", out var preview) || preview.ExpiresUtc <= DateTime.UtcNow ||
+                preview.RuntimeId != runtimeId || preview.Preview.PreviewHash != previewHash)
+                throw new InvalidOperationException("Core-operation preview is unknown, expired, or substituted.");
+            return preview;
+        }
+
+        internal static DynamicCoreOperationAuthorizationSealV1 Authorize(DynamicCoreOperationPreviewSealV1 preview,
+            DynamicCoreOperationApplyAuthorizationV1 authorization)
+        {
+            Prune();
+            var seal = new DynamicCoreOperationAuthorizationSealV1
+            {
+                AuthorizationId = authorization.AuthorizationId,
+                Preview = preview,
+                Authorization = authorization,
+                ExpiresUtc = DateTimeOffset.FromUnixTimeSeconds(authorization.ExpiresUnixSeconds).UtcDateTime
+            };
+            lock (AuthorizationGate)
+            {
+                if (Authorizations.Values.Any(value => value.ExpiresUtc > DateTime.UtcNow && value.Preview.PreviewId == preview.PreviewId))
+                    throw new InvalidOperationException("Core-operation preview already has a live apply authorization.");
+                if (!Authorizations.TryAdd(seal.AuthorizationId, seal)) throw new InvalidOperationException("Core-operation authorization identity collided.");
+            }
+            return seal;
+        }
+
+        internal static DynamicCoreOperationAuthorizationSealV1 TakeAuthorization(string runtimeId, string previewId, string authorizationId)
+        {
+            Prune();
+            if (!Authorizations.TryRemove(authorizationId ?? "", out var authorization) || authorization.ExpiresUtc <= DateTime.UtcNow ||
+                authorization.Preview.RuntimeId != runtimeId || authorization.Preview.PreviewId != previewId)
+                throw new InvalidOperationException("Core-operation authorization is unknown, expired, consumed, or substituted.");
+            Previews.TryRemove(previewId ?? "", out _);
+            return authorization;
+        }
+
+        private static void Prune()
+        {
+            foreach (var key in Previews.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Previews.TryRemove(key, out _);
+            foreach (var key in Authorizations.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Authorizations.TryRemove(key, out _);
+        }
+    }
+
+    public sealed class DynamicCoreOperationPreviewV1Handler : IRequestHandler
+    {
+        private sealed class Request
+        {
+            public string? Schema { get; set; }
+            public string? RuntimeInstanceId { get; set; }
+            public DynamicOperationGraphV1? Graph { get; set; }
+            public DynamicEffectBudgetV1? EffectBudget { get; set; }
+            public int PlannedExecutionMilliseconds { get; set; }
+            public string? NonceHash { get; set; }
+            public string? CorrelationId { get; set; }
+            public long AuthExpiresUnixSeconds { get; set; }
+            public string? RequestMac { get; set; }
+        }
+
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            DynamicRuntimeV1LaboratoryBoundary.Require();
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "graph", "effectBudget", "plannedExecutionMilliseconds", "nonceHash", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-core-preview-request/v1" || request.Graph == null || request.EffectBudget == null ||
+                request.PlannedExecutionMilliseconds < 1 || request.PlannedExecutionMilliseconds > 5000 || !DynamicRuntimePreviewHandler.IsHash(request.NonceHash))
+                throw new ArgumentException("Dynamic core-operation preview request v1 is invalid.");
+            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, graph = request.Graph, effectBudget = request.EffectBudget,
+                plannedExecutionMilliseconds = request.PlannedExecutionMilliseconds, nonceHash = request.NonceHash };
+            DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "core-preview-v1", request.CorrelationId ?? "",
+                request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
+            var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
+            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
+            if (request.Graph.DocumentFingerprint != DynamicRuntimeSnapshotHandler.Fingerprint(document))
+                throw new InvalidOperationException("Core-operation graph is not bound to the active document.");
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var binding = DynamicCoreOperationManifestBindingPolicyV1.Issue(request.Graph,
+                DynamicCoreOperationHostV1.HostAdapterManifestHash(app.Application.VersionNumber), now, now + 120, runtime.Key,
+                "corebind_" + Guid.NewGuid().ToString("N"), request.NonceHash ?? "");
+            var preview = DynamicCoreOperationHostV1.Preview(app, request.Graph, request.EffectBudget, binding, runtime.Key, now, request.PlannedExecutionMilliseconds);
+            var previewId = "corepreview_" + Guid.NewGuid().ToString("N");
+            var seal = new DynamicCoreOperationPreviewSealV1
+            {
+                PreviewId = previewId,
+                RuntimeId = request.RuntimeInstanceId ?? "",
+                Graph = Clone(request.Graph),
+                Budget = Clone(request.EffectBudget),
+                Binding = binding,
+                Preview = preview,
+                DocumentSessionId = DynamicRuntimeSnapshotHandler.Session(document),
+                PlannedExecutionMilliseconds = request.PlannedExecutionMilliseconds,
+                ExpiresUtc = DateTime.UtcNow.AddSeconds(110)
+            };
+            DynamicCoreOperationLaboratoryStateV1.RegisterPreview(seal);
+            var receipt = new
+            {
+                schema = "dynamic-revit-core-preview-receipt/v1",
+                preview_id = previewId,
+                preview_hash = preview.PreviewHash,
+                graph_hash = request.Graph.GraphHash,
+                effect_budget_hash = request.EffectBudget.CanonicalHash(),
+                document_fingerprint = request.Graph.DocumentFingerprint,
+                document_session_id = seal.DocumentSessionId,
+                host_adapter_manifest_hash = binding.HostAdapterManifestHash,
+                binding = DynamicRuntimeV1Wire.CamelElement(binding),
+                preview = DynamicRuntimeV1Wire.CamelElement(preview),
+                outcome = "preview_rolled_back_verified",
+                authorization_granted = false
+            };
+            return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(seal.RuntimeId, "core-preview-v1-receipt", receipt));
+        }
+
+        private static T Clone<T>(T value) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value, DynamicRuntimeV1Wire.Camel), DynamicRuntimeV1Wire.Camel)
+            ?? throw new InvalidOperationException("Core-operation preview state could not be sealed.");
+    }
+
+    public sealed class DynamicCoreOperationAuthorizeV1Handler : IRequestHandler
+    {
+        private sealed class Request
+        {
+            public string? Schema { get; set; }
+            public string? RuntimeInstanceId { get; set; }
+            public string? PreviewId { get; set; }
+            public string? PreviewHash { get; set; }
+            public string? CorrelationId { get; set; }
+            public long AuthExpiresUnixSeconds { get; set; }
+            public string? RequestMac { get; set; }
+        }
+
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            DynamicRuntimeV1LaboratoryBoundary.Require();
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "previewId", "previewHash", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-core-authorize-request/v1") throw new ArgumentException("Dynamic core-operation authorization request v1 is invalid.");
+            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, previewId = request.PreviewId, previewHash = request.PreviewHash };
+            DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "core-authorize-v1", request.CorrelationId ?? "",
+                request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
+            var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
+            var preview = DynamicCoreOperationLaboratoryStateV1.RequirePreview(request.RuntimeInstanceId ?? "", request.PreviewId ?? "", request.PreviewHash ?? "");
+            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
+            if (DynamicRuntimeSnapshotHandler.Fingerprint(document) != preview.Graph.DocumentFingerprint || DynamicRuntimeSnapshotHandler.Session(document) != preview.DocumentSessionId)
+                throw new InvalidOperationException("Core-operation document identity changed after preview.");
+            var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            var context = DynamicCoreOperationHostV1.BuildAdmissionContext(app, preview.Graph, preview.Budget, preview.PlannedExecutionMilliseconds);
+            DynamicCoreOperationAdmissionV1.Validate(preview.Graph, preview.Budget, context, preview.Binding, runtime.Key, now, "apply");
+            var expires = Math.Min(now + 90, preview.Binding.ExpiresUnixSeconds);
+            var authorization = DynamicCoreOperationApplyAuthorizationPolicyV1.Issue(preview.Graph, preview.Binding, preview.Preview.EffectSetHash,
+                expires, runtime.Key, "coreauth_" + Guid.NewGuid().ToString("N"));
+            DynamicCoreOperationLaboratoryStateV1.Authorize(preview, authorization);
+            var receipt = new
+            {
+                schema = "dynamic-revit-core-authorize-receipt/v1",
+                authorization_id = authorization.AuthorizationId,
+                preview_id = preview.PreviewId,
+                preview_hash = preview.Preview.PreviewHash,
+                graph_hash = preview.Graph.GraphHash,
+                effect_set_hash = preview.Preview.EffectSetHash,
+                expires_unix_seconds = authorization.ExpiresUnixSeconds,
+                authorization = DynamicRuntimeV1Wire.CamelElement(authorization),
+                authorization_granted = true
+            };
+            return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(preview.RuntimeId, "core-authorize-v1-receipt", receipt));
+        }
+    }
+
+    public sealed class DynamicCoreOperationApplyV1Handler : IRequestHandler
+    {
+        private sealed class Request
+        {
+            public string? Schema { get; set; }
+            public string? Phase { get; set; }
+            public string? RuntimeInstanceId { get; set; }
+            public string? PreviewId { get; set; }
+            public string? AuthorizationId { get; set; }
+            public string? CorrelationId { get; set; }
+            public long AuthExpiresUnixSeconds { get; set; }
+            public string? RequestMac { get; set; }
+        }
+
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            DynamicRuntimeV1LaboratoryBoundary.Require();
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "phase", "runtimeInstanceId", "previewId", "authorizationId", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-core-apply-request/v1" || request.Phase != "apply") throw new ArgumentException("Dynamic core-operation apply request v1 is invalid.");
+            var core = new { schema = request.Schema, phase = request.Phase, runtimeInstanceId = request.RuntimeInstanceId, previewId = request.PreviewId, authorizationId = request.AuthorizationId };
+            DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "core-apply-v1", request.CorrelationId ?? "",
+                request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
+            var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
+            var seal = DynamicCoreOperationLaboratoryStateV1.TakeAuthorization(request.RuntimeInstanceId ?? "", request.PreviewId ?? "", request.AuthorizationId ?? "");
+            var ledgerRoot = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_CORE_APPLY_REPLAY_DIRECTORY");
+            if (string.IsNullOrWhiteSpace(ledgerRoot))
+                ledgerRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RevitOperator", "DynamicRuntime", "core-apply-replay-v1");
+            try
+            {
+                var ledger = new DurableCoreOperationApplyAuthorizationLedgerV1(ledgerRoot, seal.Authorization.ExpiresUnixSeconds);
+                var receiptValue = DynamicCoreOperationHostV1.Apply(app, seal.Preview.Graph, seal.Preview.Budget, seal.Preview.Binding,
+                    seal.Preview.Preview, seal.Authorization, ledger, runtime.Key, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), seal.Preview.PlannedExecutionMilliseconds);
+                var receipt = new
+                {
+                    schema = "dynamic-revit-core-apply-receipt-envelope/v1",
+                    outcome = receiptValue.Outcome,
+                    preview_id = seal.Preview.PreviewId,
+                    authorization_id = seal.AuthorizationId,
+                    graph_hash = seal.Preview.Graph.GraphHash,
+                    effect_set_hash = receiptValue.EffectSetHash,
+                    receipt_hash = receiptValue.ReceiptHash,
+                    retry_permitted = false,
+                    apply_receipt = DynamicRuntimeV1Wire.CamelElement(receiptValue)
+                };
+                return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(seal.Preview.RuntimeId, "core-apply-v1-receipt", receipt));
+            }
+            catch (Exception error)
+            {
+                var receipt = new
+                {
+                    schema = "dynamic-revit-core-apply-receipt-envelope/v1",
+                    outcome = "failed_closed",
+                    preview_id = seal.Preview.PreviewId,
+                    authorization_id = seal.AuthorizationId,
+                    graph_hash = seal.Preview.Graph.GraphHash,
+                    failure = error.Message,
+                    retry_permitted = false
+                };
+                return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(seal.Preview.RuntimeId, "core-apply-v1-receipt", receipt));
+            }
+        }
+    }
+}

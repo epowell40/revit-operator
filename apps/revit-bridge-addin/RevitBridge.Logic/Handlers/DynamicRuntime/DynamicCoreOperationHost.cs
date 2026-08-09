@@ -12,9 +12,10 @@ using RevitOperator.DynamicRevitSdk;
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
     /// <summary>
-    /// Additive v1 adapter for signed core-operation graphs. It is intentionally not registered as
-    /// an HTTP route or advertised capability. Preview is always a rolled-back TransactionGroup;
-    /// apply additionally requires an exact preview effect-set authorization.
+    /// Additive v1 adapter for signed core-operation graphs. It is registered only by the exact
+    /// development/laboratory runtime boundary and is never an advertised production capability.
+    /// Preview is always a rolled-back TransactionGroup; apply additionally requires an exact
+    /// preview effect-set authorization.
     /// </summary>
     internal static class DynamicCoreOperationHostV1
     {

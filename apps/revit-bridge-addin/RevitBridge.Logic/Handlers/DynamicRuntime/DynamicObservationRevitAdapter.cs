@@ -9,8 +9,9 @@ using RevitOperator.DynamicRevitSdk;
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
     /// <summary>
-    /// Read-only Revit projection for observation-core/v1. This adapter is intentionally not
-    /// registered as a route or production capability and never opens a transaction.
+    /// Read-only Revit projection for observation-core/v1. This adapter is registered only by
+    /// the exact development/laboratory runtime boundary, is not a production capability, and
+    /// never opens a transaction.
     /// </summary>
     internal static class DynamicObservationRevitAdapterV1
     {
