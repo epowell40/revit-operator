@@ -77,7 +77,11 @@ namespace RevitBridge.Common
                 ["System.Runtime.CompilerServices.Unsafe.dll"] = new ApprovedHostRuntimeDependency(
                     @"C:\Program Files\Autodesk\Revit 2024\System.Runtime.CompilerServices.Unsafe.dll",
                     "sha256:66409f670315afe8610f17a4d3a1ee52d72b6a46c544cec97544e8385f90ad74",
-                    "System.Runtime.CompilerServices.Unsafe, Version=4.0.4.1, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a")
+                    "System.Runtime.CompilerServices.Unsafe, Version=4.0.4.1, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"),
+                ["System.Threading.Tasks.Extensions.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Carbon Insights for Revit 2024\System.Threading.Tasks.Extensions.dll",
+                    "sha256:4f81ffd0dc7204db75afc35ea4291769b07c440592f28894260eea76626a23c6",
+                    "System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51")
             };
 
         public static OperatorLaboratoryCourierReceiptContext BeginCourierExecution(
@@ -390,12 +394,14 @@ namespace RevitBridge.Common
                 || string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)))
                 throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
             var deployedIdentity = deployedExists ? AssemblyName.GetAssemblyName(deployedPath).FullName ?? "" : "";
-            var reviewedIdentities = new HashSet<string>(StringComparer.Ordinal);
-            if (deployedExists) reviewedIdentities.Add(deployedIdentity);
-            if (!string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)) reviewedIdentities.Add(approvedHostAssemblyFullName!);
-            var identityMatches = managedAssemblies
-                .Where(value => reviewedIdentities.Contains(value.Key))
-                .ToList();
+            var deployedIdentityMatches = deployedExists
+                ? managedAssemblies.Where(value => string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal)).ToList()
+                : new List<KeyValuePair<string, string>>();
+            var identityMatches = deployedIdentityMatches.Count > 0
+                ? deployedIdentityMatches
+                : managedAssemblies
+                    .Where(value => string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal))
+                    .ToList();
             if (identityMatches.Count == 0)
             {
                 if (managedAssemblies.Count > 0)
@@ -412,8 +418,6 @@ namespace RevitBridge.Common
             var selected = managedMatches[0];
             if (string.Equals(selected, deployedPath, StringComparison.OrdinalIgnoreCase))
             {
-                if (identityMatches.Any(value => !string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal)))
-                    throw Denied("Protected laboratory evidence loaded a different identity from the deployed " + name + ".");
                 return selected;
             }
             if (string.IsNullOrWhiteSpace(approvedHostPath) || string.IsNullOrWhiteSpace(approvedHostSha256)

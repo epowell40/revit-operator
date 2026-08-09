@@ -668,7 +668,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts",
-      "sha256": "sha256:76ee31145788c59eda8d98f5d7d5051ad42ffd2ef2a225596f9377fa39109baf"
+      "sha256": "sha256:5c787e78ebcd883491296c6ef2b7b4d231a5732c12372dac7486229adc0c71bb"
     },
     {
       "path": "apps/operator-backend/src/capabilities/safe_read_attestation_authority.ts",
@@ -2597,7 +2597,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
-      "sha256": "sha256:8f2040f5f5d42d3454f0d7389844031d8a0630bef96e71b3f5a8c6e184fd618c"
+      "sha256": "sha256:2f15a4cd023d32c4779c9e364fb5542c8b833c9250560154c0c01219dfd8fdc1"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeHttpAdmissionTests.cs",
@@ -2961,7 +2961,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
-      "sha256": "sha256:3c51d3d84c6fef1aac4fb02e25ece81fda9c99aab670aaad0989790645514f19"
+      "sha256": "sha256:38baaf5f3c0cf3aae8d86202046ecb8d5d0cffa846262e3598f5679876423c65"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
@@ -4313,7 +4313,7 @@
       "sha256": "sha256:d4440e460b7a98f40ed22ef546557def3baeed09f467726033a8aaaeea92da93"
     }
   ],
-  "inputs_hash": "sha256:9c3907cb53d15a5ef6d56206e9148110203fba5b52f4a61ed1f77c1023fb104e",
+  "inputs_hash": "sha256:49b15ad039f354f2054fd46d1bd7c6b88e0af1dbf720f709d305c6cb63f554c0",
   "result": {
     "passed": true,
     "checks": [

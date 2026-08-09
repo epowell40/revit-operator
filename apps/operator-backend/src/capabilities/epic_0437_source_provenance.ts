@@ -124,6 +124,11 @@ export const EPIC_0437_REVIT_HOST_RUNTIME_DEPENDENCIES: Readonly<Record<string, 
     path: "C:\\Program Files\\Autodesk\\Revit 2024\\System.Runtime.CompilerServices.Unsafe.dll",
     sha256: "sha256:66409f670315afe8610f17a4d3a1ee52d72b6a46c544cec97544e8385f90ad74",
     assembly_full_name: "System.Runtime.CompilerServices.Unsafe, Version=4.0.4.1, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
+  },
+  "System.Threading.Tasks.Extensions.dll": {
+    path: "C:\\Program Files\\Autodesk\\Carbon Insights for Revit 2024\\System.Threading.Tasks.Extensions.dll",
+    sha256: "sha256:4f81ffd0dc7204db75afc35ea4291769b07c440592f28894260eea76626a23c6",
+    assembly_full_name: "System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
   }
 };
 
