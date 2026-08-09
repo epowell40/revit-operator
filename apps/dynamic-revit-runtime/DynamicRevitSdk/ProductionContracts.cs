@@ -21,7 +21,7 @@ public static class DynamicRevitProductionSchemas
     public const string ExternalEffectV1 = "dynamic_external_effect/v1";
     public const string RepairFeedbackV1 = "dynamic_program_repair_feedback/v1";
     public const string ReuseRecordV1 = "dynamic_program_reuse_record/v1";
-    public const string StrategyEvidenceV1 = "dynamic_execution_strategy_evidence/v1";
+    public const string StrategyEvidenceV1 = "revit-operator.execution-strategy-evidence.v1";
     public const string PrimitiveManifestV1 = "dynamic_revit_primitive_manifest/v1";
 }
 
@@ -70,9 +70,13 @@ public sealed class DynamicProgramAdmissionExpectationsV1
 {
     public string NormalizedSourceHash { get; set; } = "";
     public string CompiledArtifactHash { get; set; } = "";
+    public string CompilerRuntimeHash { get; set; } = "";
+    public string SdkVersion { get; set; } = "";
     public string SdkManifestHash { get; set; } = "";
     public string SdkArtifactHash { get; set; } = "";
+    public string WorkerExecutableHash { get; set; } = "";
     public string WorkerRuntimePackageHash { get; set; } = "";
+    public string SandboxProfileVersion { get; set; } = "";
     public string SandboxProfileHash { get; set; } = "";
     public string AuthenticatedWorkerIdentityHash { get; set; } = "";
     public string TargetRevitVersion { get; set; } = "";
@@ -151,9 +155,13 @@ public static class DynamicProgramAdmissionV1Policy
 
         RequireEqual(admission.NormalizedSourceHash, expected.NormalizedSourceHash, "source");
         RequireEqual(admission.CompiledArtifactHash, expected.CompiledArtifactHash, "artifact");
+        RequireEqual(admission.CompilerRuntimeHash, expected.CompilerRuntimeHash, "compiler runtime");
+        RequireEqual(admission.SdkVersion, expected.SdkVersion, "SDK version");
         RequireEqual(admission.SdkManifestHash, expected.SdkManifestHash, "SDK manifest");
         RequireEqual(admission.SdkArtifactHash, expected.SdkArtifactHash, "SDK artifact");
+        RequireEqual(admission.WorkerExecutableHash, expected.WorkerExecutableHash, "worker executable");
         RequireEqual(admission.WorkerRuntimePackageHash, expected.WorkerRuntimePackageHash, "worker package");
+        RequireEqual(admission.SandboxProfileVersion, expected.SandboxProfileVersion, "sandbox profile version");
         RequireEqual(admission.SandboxProfileHash, expected.SandboxProfileHash, "sandbox profile");
         RequireEqual(admission.AuthenticatedWorkerIdentityHash, expected.AuthenticatedWorkerIdentityHash, "worker identity");
         RequireEqual(admission.TargetRevitVersion, expected.TargetRevitVersion, "Revit version");
@@ -204,8 +212,8 @@ public sealed class DynamicEffectBudgetV1
     public string PhaseScopeHash { get; set; } = DynamicWire.Sha256("none");
     public int MaximumOperationCount { get; set; } = 256;
     public int MaximumAffectedElements { get; set; } = 512;
-    public int MaximumCreates { get; set; } = 64;
-    public int MaximumModifications { get; set; } = 256;
+    public int MaximumCreates { get; set; } = 32;
+    public int MaximumModifications { get; set; } = 224;
     public int MaximumDeletes { get; set; }
     public int MaximumExecutionMilliseconds { get; set; } = 30000;
     public int MaximumRegenerations { get; set; } = 8;
@@ -540,10 +548,20 @@ public static class DynamicExternalEffectV1Policy
             !Next.TryGetValue(previous.State, out var allowed) || !allowed.Contains(next.State, StringComparer.Ordinal))
             throw new InvalidOperationException("Dynamic external-effect state transition is invalid.");
         DynamicCanonical.RequireHashes(previous.PlanHash);
+        Preserve(previous.StageManifestHash, next.StageManifestHash, "stage manifest");
+        Preserve(previous.InspectionReceiptHash, next.InspectionReceiptHash, "inspection receipt");
+        Preserve(previous.PublicationAuthorizationHash, next.PublicationAuthorizationHash, "publication authorization");
+        Preserve(previous.PublicationReceiptHash, next.PublicationReceiptHash, "publication receipt");
         if (next.State == "staged" && !DynamicCanonical.Hash(next.StageManifestHash)) throw new InvalidOperationException("Staged external effect requires a stage manifest.");
         if (next.State == "inspected" && (!DynamicCanonical.Hash(next.StageManifestHash) || !DynamicCanonical.Hash(next.InspectionReceiptHash))) throw new InvalidOperationException("Inspected external effect requires stage and inspection receipts.");
         if (next.State == "authorized" && !DynamicCanonical.Hash(next.PublicationAuthorizationHash)) throw new InvalidOperationException("Publishing requires fresh authorization.");
         if ((next.State == "published" || next.State == "verified") && !DynamicCanonical.Hash(next.PublicationReceiptHash)) throw new InvalidOperationException("Published external effect requires a publication receipt.");
+    }
+
+    private static void Preserve(string prior, string current, string field)
+    {
+        if (!string.IsNullOrEmpty(prior) && !DynamicCanonical.FixedEquals(prior, current))
+            throw new InvalidOperationException("Dynamic external-effect " + field + " continuity changed.");
     }
 }
 
@@ -607,7 +625,7 @@ public sealed class DynamicExecutionStrategyEvidenceV1
 
     public void Validate()
     {
-        var substrates = new[] { "typed_capability", "typed_composition", "dynamic_program" };
+        var substrates = new[] { "typed_capability", "typed_capability_composition", "dynamic_revit_program" };
         var reasons = new[] { "exact_primitive", "few_deterministic_calls", "custom_loop", "custom_branching", "large_repetition", "geometry_algorithm", "graph_algorithm", "novel_composition", "contextual_rules", "model_judgment" };
         if (Schema != DynamicRevitProductionSchemas.StrategyEvidenceV1 || !substrates.Contains(SelectedSubstrate, StringComparer.Ordinal) ||
             !reasons.Contains(ReasonCode, StringComparer.Ordinal) || string.IsNullOrWhiteSpace(ReasonSummary) || ReasonSummary.Length > 512)

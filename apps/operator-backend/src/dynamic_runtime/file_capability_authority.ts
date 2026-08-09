@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -31,6 +31,16 @@ export type DynamicFileCapabilityIssueRequest = Omit<DynamicFileCapabilityPublic
 
 type Grant = { public: DynamicFileCapabilityPublicV1; canonicalRoot: string; uses: number; outputCount: number; outputBytes: number };
 
+type CapabilityUse = {
+  capability_id: string;
+  operation: "read" | "write" | "create";
+  relative_path?: string;
+  expected_task_id_hash: string;
+  expected_program_hash: string;
+  expected_document_fingerprint: string;
+  expected_principal_id_hash: string;
+};
+
 export class DynamicFileCapabilityAuthority {
   private readonly grants = new Map<string, Grant>();
   constructor(private readonly clock: () => number = () => Math.floor(Date.now() / 1000)) {}
@@ -52,16 +62,56 @@ export class DynamicFileCapabilityAuthority {
     return Object.freeze({ ...publicCapability, access: [...publicCapability.access], allowed_extensions: [...publicCapability.allowed_extensions] });
   }
 
-  resolve(args: {
-    capability_id: string;
-    operation: "read" | "write" | "create";
-    relative_path?: string;
-    expected_task_id_hash: string;
-    expected_program_hash: string;
-    expected_document_fingerprint: string;
-    expected_principal_id_hash: string;
-    reserve_output_bytes?: number;
-  }): string {
+  /** Read-only resolution. Mutating callers must use an operation-specific API that never exposes a naked path. */
+  resolve(args: CapabilityUse): string {
+    if (args.operation !== "read") throw new Error("Mutating dynamic file capabilities require the atomic create API.");
+    const { grant, resolved } = this.validateUse(args);
+    if (!fs.existsSync(resolved) || fs.lstatSync(resolved).isDirectory()) throw new Error("Dynamic file capability input is unavailable.");
+    requireNoReparse(resolved, true);
+    grant.uses += 1;
+    return resolved;
+  }
+
+  /** Atomically creates a new output and writes through a held descriptor. Existing or reparse leaves are never followed or replaced. */
+  createFile(args: Omit<CapabilityUse, "operation"> & { bytes: Buffer }): { relative_path: string; bytes: number; hash: string } {
+    if (!Buffer.isBuffer(args.bytes)) throw new Error("Dynamic file capability output must be bytes.");
+    const use: CapabilityUse = { ...args, operation: "create" };
+    const { grant, resolved, relative } = this.validateUse(use);
+    if (grant.outputCount + 1 > grant.public.maximum_output_count || grant.outputBytes + args.bytes.length > grant.public.maximum_output_bytes) {
+      throw new Error("Dynamic file capability output quota would be exceeded.");
+    }
+
+    const parent = path.dirname(resolved);
+    requireNoReparse(grant.canonicalRoot, true);
+    requireNoReparse(parent, true);
+    if (!isWithin(grant.canonicalRoot, parent) && parent !== grant.canonicalRoot) throw new Error("Dynamic file capability output parent escaped its directory scope.");
+    if (fs.existsSync(resolved)) throw new Error("Dynamic file capability create target already exists.");
+
+    let descriptor: number | undefined;
+    try {
+      descriptor = fs.openSync(resolved, "wx", 0o600);
+      assertHeldOutputIsAnchored(descriptor, resolved, grant.canonicalRoot);
+      fs.writeFileSync(descriptor, args.bytes);
+      fs.fsyncSync(descriptor);
+      assertHeldOutputIsAnchored(descriptor, resolved, grant.canonicalRoot);
+    } catch (error) {
+      if (descriptor !== undefined) {
+        try { fs.closeSync(descriptor); } catch { /* best effort */ }
+        descriptor = undefined;
+        try { if (fs.existsSync(resolved) && !fs.lstatSync(resolved).isSymbolicLink()) fs.unlinkSync(resolved); } catch { /* preserve original failure */ }
+      }
+      throw error;
+    } finally {
+      if (descriptor !== undefined) fs.closeSync(descriptor);
+    }
+
+    grant.uses += 1;
+    grant.outputCount += 1;
+    grant.outputBytes += args.bytes.length;
+    return { relative_path: relative, bytes: args.bytes.length, hash: sha256(args.bytes) };
+  }
+
+  private validateUse(args: CapabilityUse): { grant: Grant; resolved: string; relative: string } {
     const grant = this.grants.get(args.capability_id);
     if (!grant || grant.public.expires_unix_seconds <= this.clock()) throw new Error("Dynamic file capability is unknown or expired.");
     if (!grant.public.access.includes(args.operation)) throw new Error("Dynamic file capability does not allow this access.");
@@ -81,20 +131,16 @@ export class DynamicFileCapabilityAuthority {
 
     const extension = path.extname(resolved).toLowerCase();
     if (grant.public.allowed_extensions.length > 0 && !grant.public.allowed_extensions.includes(extension)) throw new Error("Dynamic file capability extension is not allowed.");
-    if (args.operation === "read") {
-      if (!fs.existsSync(resolved) || fs.lstatSync(resolved).isDirectory()) throw new Error("Dynamic file capability input is unavailable.");
-      requireNoReparse(resolved, true);
-    } else {
-      requireNoReparse(path.dirname(resolved), true);
-      const reserve = args.reserve_output_bytes ?? 0;
-      if (!Number.isSafeInteger(reserve) || reserve < 0 || grant.outputCount + 1 > grant.public.maximum_output_count || grant.outputBytes + reserve > grant.public.maximum_output_bytes) {
-        throw new Error("Dynamic file capability output quota would be exceeded.");
-      }
-      grant.outputCount += 1; grant.outputBytes += reserve;
-    }
-    grant.uses += 1;
-    return resolved;
+    return { grant, resolved, relative: grant.public.scope === "directory" ? path.relative(grant.canonicalRoot, resolved) : path.basename(resolved) };
   }
+}
+
+function assertHeldOutputIsAnchored(descriptor: number, target: string, root: string): void {
+  requireNoReparse(root, true); requireNoReparse(path.dirname(target), true); requireNoReparse(target, true);
+  const held = fs.fstatSync(descriptor); const leaf = fs.statSync(target);
+  if (!held.isFile() || !leaf.isFile() || held.dev !== leaf.dev || held.ino !== leaf.ino) throw new Error("Dynamic file capability output changed during secure creation.");
+  const actualParent = fs.realpathSync.native(path.dirname(target));
+  if (actualParent !== root && !isWithin(root, actualParent)) throw new Error("Dynamic file capability output parent escaped its directory scope.");
 }
 
 function validateIssue(request: DynamicFileCapabilityIssueRequest, now: number): void {
@@ -148,18 +194,46 @@ type EffectState = "planned" | "staged" | "inspected" | "authorized" | "publishe
 type Effect = {
   schema: typeof DYNAMIC_EXTERNAL_EFFECT_SCHEMA; effect_id: string; effect_class: "export" | "save_as" | "print";
   state: EffectState; staging_directory: string; manifest_hash: string | null; authorization_hash: string | null; receipt_hash: string | null;
+  inspected_files: FileIdentity[] | null; authorized_destination_hash: string | null; authorized_bindings_hash: string | null;
 };
+
+type FileIdentity = { relative: string; bytes: number; hash: string };
+export const DYNAMIC_PUBLICATION_AUTHORIZATION_SCHEMA = "dynamic_external_effect_publication_authorization/v1" as const;
+export type DynamicPublicationAuthorizationV1 = {
+  schema: typeof DYNAMIC_PUBLICATION_AUTHORIZATION_SCHEMA;
+  effect_id: string; effect_class: "export" | "save_as" | "print"; manifest_hash: string;
+  destination_capability_id_hash: string; bindings_hash: string; expires_unix_seconds: number; nonce: string; signature: string;
+};
+
+/** Trusted authorization signer. The secret remains outside model/runtime-visible contracts. */
+export class DynamicPublicationAuthorizationAuthority {
+  constructor(private readonly key: Buffer, private readonly clock: () => number = () => Math.floor(Date.now() / 1000)) {
+    if (!Buffer.isBuffer(key) || key.length < 32) throw new Error("Publication authorization key must contain at least 256 bits.");
+  }
+  issue(args: Omit<DynamicPublicationAuthorizationV1, "schema" | "nonce" | "signature">): Readonly<DynamicPublicationAuthorizationV1> {
+    if (args.expires_unix_seconds <= this.clock() || args.expires_unix_seconds > this.clock() + 900 || !SHA256.test(args.manifest_hash)
+      || !SHA256.test(args.destination_capability_id_hash) || !SHA256.test(args.bindings_hash)) throw new Error("Publication authorization request is invalid.");
+    const unsigned = { schema: DYNAMIC_PUBLICATION_AUTHORIZATION_SCHEMA, ...args, nonce: randomBytes(24).toString("base64url") };
+    return Object.freeze({ ...unsigned, signature: signAuthorization(this.key, unsigned) });
+  }
+  verify(receipt: DynamicPublicationAuthorizationV1): void {
+    if (!receipt || receipt.schema !== DYNAMIC_PUBLICATION_AUTHORIZATION_SCHEMA || receipt.expires_unix_seconds <= this.clock()) throw new Error("Publication authorization is invalid or expired.");
+    const { signature, ...unsigned } = receipt; const expected = signAuthorization(this.key, unsigned);
+    const left = Buffer.from(signature, "utf8"); const right = Buffer.from(expected, "utf8");
+    if (left.length !== right.length || !timingSafeEqual(left, right)) throw new Error("Publication authorization signature is invalid.");
+  }
+}
 
 /** Trusted staging coordinator. Only export publication is implemented in v1; Save As and print remain separately gated. */
 export class DynamicExternalEffectCoordinator {
   private readonly effects = new Map<string, Effect>();
-  constructor(private readonly stagingRoot: string, private readonly files: DynamicFileCapabilityAuthority) {
+  constructor(private readonly stagingRoot: string, private readonly files: DynamicFileCapabilityAuthority, private readonly authorizations: DynamicPublicationAuthorizationAuthority) {
     fs.mkdirSync(stagingRoot, { recursive: true }); requireNoReparse(stagingRoot, true);
   }
 
   plan(effectClass: "export" | "save_as" | "print"): Readonly<Effect> {
     const effectId = `effect_${randomUUID().replaceAll("-", "")}`; const directory = path.join(this.stagingRoot, effectId);
-    const effect: Effect = { schema: DYNAMIC_EXTERNAL_EFFECT_SCHEMA, effect_id: effectId, effect_class: effectClass, state: "planned", staging_directory: directory, manifest_hash: null, authorization_hash: null, receipt_hash: null };
+    const effect: Effect = { schema: DYNAMIC_EXTERNAL_EFFECT_SCHEMA, effect_id: effectId, effect_class: effectClass, state: "planned", staging_directory: directory, manifest_hash: null, authorization_hash: null, receipt_hash: null, inspected_files: null, authorized_destination_hash: null, authorized_bindings_hash: null };
     this.effects.set(effectId, effect); return publicEffect(effect);
   }
 
@@ -180,30 +254,42 @@ export class DynamicExternalEffectCoordinator {
 
   inspect(effectId: string): Readonly<Effect> {
     const effect = this.require(effectId, "staged"); const files = enumerateFiles(effect.staging_directory);
-    effect.manifest_hash = sha256(files.map(file => `${file.relative}:${file.bytes}:${file.hash}`).join("\n"));
+    effect.inspected_files = files.map(({ relative, bytes, hash }) => ({ relative, bytes, hash }));
+    effect.manifest_hash = manifestHash(effect.inspected_files);
     effect.state = "inspected"; return publicEffect(effect);
   }
 
-  authorize(effectId: string, expectedManifestHash: string, publicationAuthorizationHash: string): Readonly<Effect> {
+  authorize(effectId: string, authorization: DynamicPublicationAuthorizationV1, destinationCapabilityId: string, bindings: { task: string; program: string; document: string; principal: string }): Readonly<Effect> {
     const effect = this.require(effectId, "inspected");
-    if (effect.manifest_hash !== expectedManifestHash || !SHA256.test(publicationAuthorizationHash)) throw new Error("External-effect publication authorization is stale or invalid.");
-    effect.authorization_hash = publicationAuthorizationHash; effect.state = "authorized"; return publicEffect(effect);
+    this.authorizations.verify(authorization);
+    const destinationHash = sha256(destinationCapabilityId); const expectedBindingsHash = bindingsHash(bindings);
+    if (authorization.effect_id !== effect.effect_id || authorization.effect_class !== effect.effect_class || authorization.manifest_hash !== effect.manifest_hash
+      || authorization.destination_capability_id_hash !== destinationHash || authorization.bindings_hash !== expectedBindingsHash) {
+      throw new Error("External-effect publication authorization is stale or bound to another effect.");
+    }
+    effect.authorization_hash = sha256(canonicalAuthorization(authorization)); effect.authorized_destination_hash = destinationHash;
+    effect.authorized_bindings_hash = expectedBindingsHash; effect.state = "authorized"; return publicEffect(effect);
   }
 
   publish(effectId: string, destinationCapabilityId: string, bindings: { task: string; program: string; document: string; principal: string }): Readonly<Effect> {
     const effect = this.require(effectId, "authorized");
     if (effect.effect_class !== "export") throw new Error("Only staged export publication is implemented.");
-    const staged = enumerateFiles(effect.staging_directory);
+    if (effect.authorized_destination_hash !== sha256(destinationCapabilityId) || effect.authorized_bindings_hash !== bindingsHash(bindings)) {
+      throw new Error("External-effect publication destination or identity binding changed.");
+    }
+    const staged = snapshotFiles(effect.staging_directory);
+    const actualIdentities = staged.map(({ relative, bytes, hash }) => ({ relative, bytes, hash }));
+    if (manifestHash(actualIdentities) !== effect.manifest_hash || JSON.stringify(actualIdentities) !== JSON.stringify(effect.inspected_files)) {
+      effect.state = "failed"; throw new Error("External-effect staged content changed after inspection.");
+    }
     try {
       for (const file of staged) {
-        const destination = this.files.resolve({ capability_id: destinationCapabilityId, operation: "create", relative_path: file.relative,
+        this.files.createFile({ capability_id: destinationCapabilityId, relative_path: file.relative,
           expected_task_id_hash: bindings.task, expected_program_hash: bindings.program, expected_document_fingerprint: bindings.document,
-          expected_principal_id_hash: bindings.principal, reserve_output_bytes: file.bytes });
-        fs.mkdirSync(path.dirname(destination), { recursive: true });
-        const temporary = `${destination}.stage-${randomUUID().replaceAll("-", "")}`;
-        fs.copyFileSync(file.absolute, temporary, fs.constants.COPYFILE_EXCL); fs.renameSync(temporary, destination);
+          expected_principal_id_hash: bindings.principal, bytes: file.buffer });
       }
-      effect.receipt_hash = sha256(`${effect.effect_id}\n${effect.manifest_hash}\n${effect.authorization_hash}\n${staged.length}`);
+      const destinations = actualIdentities.map(file => ({ ...file, destination_path_hash: sha256(`${destinationCapabilityId}\n${file.relative}`) }));
+      effect.receipt_hash = sha256(JSON.stringify({ effect_id: effect.effect_id, manifest_hash: effect.manifest_hash, authorization_hash: effect.authorization_hash, files: destinations }));
       effect.state = "published"; return publicEffect(effect);
     } catch (error) {
       effect.state = "outcome_uncertain";
@@ -235,5 +321,31 @@ function enumerateFiles(root: string): { absolute: string; relative: string; byt
   visit(root); return result.sort((left, right) => left.relative.localeCompare(right.relative, "en"));
 }
 
+function snapshotFiles(root: string): { relative: string; bytes: number; hash: string; buffer: Buffer }[] {
+  const files = enumerateFiles(root); let total = 0;
+  return files.map(file => {
+    const buffer = fs.readFileSync(file.absolute); total += buffer.length;
+    if (total > 512 * 1024 * 1024) throw new Error("External-effect staged snapshot exceeds its trusted publication bound.");
+    const identity = { relative: file.relative, bytes: buffer.length, hash: sha256(buffer), buffer };
+    if (identity.bytes !== file.bytes || identity.hash !== file.hash) throw new Error("External-effect staged content changed while being snapshotted.");
+    return identity;
+  });
+}
+
+function manifestHash(files: FileIdentity[]): string { return sha256(files.map(file => `${file.relative}:${file.bytes}:${file.hash}`).join("\n")); }
+function bindingsHash(bindings: { task: string; program: string; document: string; principal: string }): string {
+  for (const value of [bindings.task, bindings.program, bindings.document, bindings.principal]) if (!SHA256.test(value)) throw new Error("External-effect identity binding is invalid.");
+  return sha256(`${bindings.task}\n${bindings.program}\n${bindings.document}\n${bindings.principal}`);
+}
+function canonicalAuthorization(value: Omit<DynamicPublicationAuthorizationV1, "signature">): string {
+  return [value.schema, value.effect_id, value.effect_class, value.manifest_hash, value.destination_capability_id_hash, value.bindings_hash, value.expires_unix_seconds, value.nonce].join("\n");
+}
+function signAuthorization(key: Buffer, value: Omit<DynamicPublicationAuthorizationV1, "signature">): string {
+  return `hmac-sha256:${createHmac("sha256", key).update(canonicalAuthorization(value)).digest("hex")}`;
+}
+
 function sha256(value: string | Buffer): string { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
-function publicEffect(effect: Effect): Readonly<Effect> { return Object.freeze({ ...effect, staging_directory: "opaque:trusted-staging" }); }
+function publicEffect(effect: Effect): Readonly<Effect> {
+  const { inspected_files: _inspected, authorized_destination_hash: _destination, authorized_bindings_hash: _bindings, ...visible } = effect;
+  return Object.freeze({ ...visible, staging_directory: "opaque:trusted-staging" }) as Readonly<Effect>;
+}

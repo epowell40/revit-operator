@@ -28,6 +28,8 @@ public sealed class ProductionContractsTests
         Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true));
         expected.DocumentRevision = admission.DocumentRevision; expected.FinalAuthorizationHash = H("other-auth");
         Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true));
+        expected.FinalAuthorizationHash = admission.FinalAuthorizationHash; expected.WorkerExecutableHash = H("other-worker");
+        Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true));
     }
 
     [Fact]
@@ -101,6 +103,15 @@ public sealed class ProductionContractsTests
         Assert.Throws<InvalidOperationException>(() => DynamicExternalEffectV1Policy.ValidateTransition(inspected, unauthorized, Now()));
         unauthorized.PublicationAuthorizationHash = H("authorization");
         DynamicExternalEffectV1Policy.ValidateTransition(inspected, unauthorized, Now());
+
+        var substitutedInspection = Effect("authorized"); substitutedInspection.StageManifestHash = H("different-stage");
+        substitutedInspection.InspectionReceiptHash = inspected.InspectionReceiptHash; substitutedInspection.PublicationAuthorizationHash = H("authorization");
+        Assert.Throws<InvalidOperationException>(() => DynamicExternalEffectV1Policy.ValidateTransition(inspected, substitutedInspection, Now()));
+
+        var published = Effect("published"); published.StageManifestHash = unauthorized.StageManifestHash;
+        published.InspectionReceiptHash = unauthorized.InspectionReceiptHash; published.PublicationAuthorizationHash = H("different-authorization");
+        published.PublicationReceiptHash = H("publication");
+        Assert.Throws<InvalidOperationException>(() => DynamicExternalEffectV1Policy.ValidateTransition(unauthorized, published, Now()));
     }
 
     [Fact]
@@ -115,7 +126,7 @@ public sealed class ProductionContractsTests
     [Fact]
     public void StrategyEvidenceIsExplicitlyNonAuthoritative()
     {
-        var evidence = new DynamicExecutionStrategyEvidenceV1 { ObjectiveHash = H("objective"), SelectedSubstrate = "dynamic_program", ReasonCode = "custom_loop", ReasonSummary = "A bounded loop avoids many equivalent calls.", ModelIdentityHash = H("model"), RecordedUnixSeconds = Now() };
+        var evidence = new DynamicExecutionStrategyEvidenceV1 { ObjectiveHash = H("objective"), SelectedSubstrate = "dynamic_revit_program", ReasonCode = "custom_loop", ReasonSummary = "A bounded loop avoids many equivalent calls.", ModelIdentityHash = H("model"), RecordedUnixSeconds = Now() };
         evidence.Validate();
         Assert.False(evidence.IsAuthorization);
     }
@@ -161,8 +172,10 @@ public sealed class ProductionContractsTests
 
     private static DynamicProgramAdmissionExpectationsV1 Expectations(DynamicProgramAdmissionV1 value) => new()
     {
-        NormalizedSourceHash = value.NormalizedSourceHash, CompiledArtifactHash = value.CompiledArtifactHash, SdkManifestHash = value.SdkManifestHash,
-        SdkArtifactHash = value.SdkArtifactHash, WorkerRuntimePackageHash = value.WorkerRuntimePackageHash, SandboxProfileHash = value.SandboxProfileHash,
+        NormalizedSourceHash = value.NormalizedSourceHash, CompiledArtifactHash = value.CompiledArtifactHash, CompilerRuntimeHash = value.CompilerRuntimeHash,
+        SdkVersion = value.SdkVersion, SdkManifestHash = value.SdkManifestHash, SdkArtifactHash = value.SdkArtifactHash,
+        WorkerExecutableHash = value.WorkerExecutableHash, WorkerRuntimePackageHash = value.WorkerRuntimePackageHash,
+        SandboxProfileVersion = value.SandboxProfileVersion, SandboxProfileHash = value.SandboxProfileHash,
         AuthenticatedWorkerIdentityHash = value.AuthenticatedWorkerIdentityHash, TargetRevitVersion = value.TargetRevitVersion, HostAdapterManifestHash = value.HostAdapterManifestHash,
         DocumentFingerprint = value.DocumentFingerprint, DocumentSessionId = value.DocumentSessionId, DocumentRevision = value.DocumentRevision,
         ProjectContextIdentityHash = value.ProjectContextIdentityHash, CapabilityEnvelopeHash = value.CapabilityEnvelopeHash,
