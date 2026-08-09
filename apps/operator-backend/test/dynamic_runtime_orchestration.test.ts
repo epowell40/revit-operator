@@ -52,7 +52,7 @@ test("approved company/project/user context informs reasoning but never authoriz
     issue("project-1", "project", "Use the issued project family type."),
     issue("user-1", "user", "Group preview summaries by sheet.")
   ];
-  const bundle = authority.buildBundle(records.map(record => authority.verify(record, bindings, now)));
+  const bundle = authority.buildBundle(records.map(record => authority.verify(record, bindings, now)), now);
   assert.equal(bundle.entries.length, 3); assert.equal(bundle.informs_model_reasoning_only, true); assert.equal(bundle.authorization_granted, false);
   assert.match(bundle.bundle_hash, /^sha256:/);
   assert.equal(Object.isFrozen(bundle), true); assert.equal(Object.isFrozen(bundle.entries), true); assert.equal(Object.isFrozen(bundle.entries[0]), true);
@@ -66,10 +66,15 @@ test("approved company/project/user context informs reasoning but never authoriz
   assert.throws(() => authority.verify(records[0]!, bindings, new Date(now.getTime() + 120_000)), /currently valid/);
   authority.revoke(records[2]!.revocation_id);
   assert.throws(() => authority.verify(records[2]!, bindings, now), /revocation/);
+  const verifiedBeforeRevocation = authority.verify(records[1]!, bindings, now);
+  authority.revoke(records[1]!.revocation_id);
+  assert.throws(() => authority.buildBundle([verifiedBeforeRevocation], now), /revoked|expired/);
+  const verifiedExpiring = authority.verify(records[0]!, bindings, now);
+  assert.throws(() => authority.buildBundle([verifiedExpiring], new Date(now.getTime() + 120_000)), /revoked|expired/);
   const restartedAuthority = new DynamicContextApprovalAuthority(Buffer.alloc(32, 7), h("a"), revocations);
   assert.throws(() => restartedAuthority.verify(records[2]!, bindings, now), /revocation/);
   const duplicate = authority.verify(records[0]!, bindings, now);
-  assert.throws(() => authority.buildBundle([duplicate, duplicate]), /duplicate/);
+  assert.throws(() => authority.buildBundle([duplicate, duplicate], now), /duplicate/);
 });
 
 test("Sidecar lifecycle exposes truthful phases and outcome uncertainty is terminal", () => {
@@ -116,9 +121,6 @@ test("reuse ledger authenticates source, evidence, identity, and complete append
     assert.throws(() => reuseStore(file, new Set()).append(record), /evidence/);
     store.append(record);
     assert.throws(() => store.append(record), /duplicate|equivocated/);
-    fs.writeFileSync(`${file}.lock`, "competing-writer\n", "utf8");
-    assert.throws(() => store.append({ ...record, record_id: "reuse-2" }), /locked/);
-    fs.unlinkSync(`${file}.lock`);
     const original = fs.readFileSync(file, "utf8");
     store.append({ ...record, record_id: "reuse-2" });
     assert.equal(store.readAll().length, 2);
@@ -133,15 +135,15 @@ test("reuse ledger authenticates source, evidence, identity, and complete append
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test("reuse ledger rejects a junction anywhere in its ancestor chain", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-reuse-reparse-"));
+test("reuse ledger detects deletion and requires descriptor-anchored persistence authority", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-reuse-persistence-"));
   try {
-    const outside = path.join(root, "outside"); const link = path.join(root, "link");
-    fs.mkdirSync(path.join(outside, "nested"), { recursive: true });
-    fs.symlinkSync(outside, link, process.platform === "win32" ? "junction" : "dir");
-    const record = reuseRecord(); const store = reuseStore(path.join(link, "nested", "reuse.jsonl"), new Set([record.preview_evidence_hash]));
-    assert.throws(() => store.append(record), /reparse|symbolic link/);
-    assert.equal(fs.existsSync(path.join(outside, "nested", "reuse.jsonl")), false);
+    const file = path.join(root, "reuse.jsonl"); const record = reuseRecord(); const evidence = new Set([record.preview_evidence_hash]);
+    const store = reuseStore(file, evidence); store.append(record); fs.unlinkSync(file);
+    assert.throws(() => store.readAll(), /missing.*monotonic head/);
+    assert.throws(() => new DynamicProgramReuseStore({ authentication_key: Buffer.alloc(32), writer_key_id: h("7"),
+      verify_evidence: () => true, head_authority: { read: () => null, advance: () => undefined }
+    } as never), /persistence/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -167,12 +169,21 @@ function clearReuseHead(file: string): void { reuseHeads.set(path.resolve(file),
 function reuseStore(file: string, evidence: Set<string>, revoked = new Set<string>()): DynamicProgramReuseStore {
   const key = path.resolve(file);
   if (!reuseHeads.has(key)) reuseHeads.set(key, null);
-  return new DynamicProgramReuseStore(file, { authentication_key: Buffer.alloc(32, 11), writer_key_id: h("7"),
+  return new DynamicProgramReuseStore({ authentication_key: Buffer.alloc(32, 11), writer_key_id: h("7"),
     verify_evidence: hash => evidence.has(hash), is_revoked: recordId => revoked.has(recordId), head_authority: {
       read: () => reuseHeads.get(key) ?? null,
       advance: (expected, next) => {
         assert.deepEqual(reuseHeads.get(key) ?? null, expected);
         reuseHeads.set(key, { ...next });
+      }
+    }, persistence_authority: {
+      read: () => fs.existsSync(file) ? fs.readFileSync(file) : null,
+      append: (expectedByteLength, line) => {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const actual = fs.existsSync(file) ? fs.statSync(file).size : 0;
+        if (actual !== expectedByteLength) throw new Error("test persistence compare-and-swap failed");
+        const descriptor = fs.openSync(file, "a");
+        try { fs.writeSync(descriptor, line); fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
       }
     } });
 }

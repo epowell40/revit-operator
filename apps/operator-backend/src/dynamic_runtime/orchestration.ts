@@ -101,7 +101,12 @@ export type DynamicContextBindings = {
 };
 
 const VERIFIED_CONTEXT = Symbol("verified-dynamic-context");
-type VerifiedDynamicContextEntry = ApprovedDynamicContextEntry & { readonly [VERIFIED_CONTEXT]: true; readonly record_id: string };
+type VerifiedDynamicContextEntry = ApprovedDynamicContextEntry & {
+  readonly [VERIFIED_CONTEXT]: true;
+  readonly record_id: string;
+  readonly revocation_id: string;
+  readonly expires_at_utc: string;
+};
 
 export type DynamicProgramContextBundleV1 = {
   schema: typeof DYNAMIC_CONTEXT_BUNDLE_SCHEMA;
@@ -185,14 +190,20 @@ export class DynamicContextApprovalAuthority {
       approval_hash: sha256(canonicalContextApproval(record)),
       approved_for_model_context: true as const,
       record_id: record.record_id,
+      revocation_id: record.revocation_id,
+      expires_at_utc: record.expires_at_utc,
       [VERIFIED_CONTEXT]: true as const
     });
     this.verified.add(entry);
     return entry;
   }
 
-  buildBundle(entries: readonly VerifiedDynamicContextEntry[]): DynamicProgramContextBundleV1 {
-    return buildVerifiedDynamicContextBundle(entries, entry => this.verified.has(entry));
+  buildBundle(entries: readonly VerifiedDynamicContextEntry[], now = new Date()): DynamicProgramContextBundleV1 {
+    return buildVerifiedDynamicContextBundle(entries, entry => this.verified.has(entry), entry => {
+      if (this.revocations.isRevoked(entry.revocation_id) || now.getTime() >= Date.parse(entry.expires_at_utc)) {
+        throw new Error("Dynamic context approval was revoked or expired before bundle construction.");
+      }
+    });
   }
 
   private sign(value: Omit<DynamicContextApprovalV1, "signature">): string {
@@ -221,11 +232,13 @@ export function buildApprovedDynamicContextBundle(_entries: ReadonlyArray<Readon
   throw new Error("Unauthenticated context entries are not accepted; verify approvals through DynamicContextApprovalAuthority first.");
 }
 
-function buildVerifiedDynamicContextBundle(entries: readonly VerifiedDynamicContextEntry[], verified: (entry: object) => boolean): DynamicProgramContextBundleV1 {
+function buildVerifiedDynamicContextBundle(entries: readonly VerifiedDynamicContextEntry[], verified: (entry: object) => boolean,
+  revalidate: (entry: VerifiedDynamicContextEntry) => void): DynamicProgramContextBundleV1 {
   if (!Array.isArray(entries) || entries.length > 64) throw new Error("Dynamic context entry count is invalid.");
   const normalized = entries.map(entry => {
     if (!entry || !verified(entry) || entry[VERIFIED_CONTEXT] !== true || !["company", "project", "user"].includes(entry.scope) || entry.approved_for_model_context !== true
       || !boundedText(entry.semantic_summary, 2000)) throw new Error("Dynamic context entry is not approved and bounded.");
+    revalidate(entry);
     requireHash(entry.content_hash, "content_hash"); requireHash(entry.provenance_hash, "provenance_hash"); requireHash(entry.approval_hash, "approval_hash");
     return { ...entry, semantic_summary: entry.semantic_summary.trim() };
   });
