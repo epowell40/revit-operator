@@ -19,6 +19,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity ObservationContract { get; set; } = new();
     public PackageArtifactIdentity BuildingSystemsObservationContract { get; set; } = new();
     public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
+    public PackageArtifactIdentity ResultReferenceContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
     public string HostCapabilitiesManifestSha256 { get; set; } = "";
@@ -92,10 +93,12 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "observation contract", package.ObservationContract, result);
         VerifyArtifact(root, "building-systems observation contract", package.BuildingSystemsObservationContract, result);
         VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
+        VerifyArtifact(root, "result-reference contract", package.ResultReferenceContract, result);
         VerifySandboxPolicy(root, package, result);
         VerifyObservationContract(root, package, result);
         VerifyBuildingSystemsObservationContract(root, package, result);
         VerifyCoreOperationsContract(root, package, result);
+        VerifyResultReferenceContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
             var packagedCapabilitiesPath = Path.Combine(root, relativeCapabilitiesPath.Replace('/', Path.DirectorySeparatorChar));
@@ -124,7 +127,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract, package.ResultReferenceContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -332,6 +335,40 @@ public static class RuntimePackageVerifier
         catch (Exception ex)
         {
             result.Errors.Add("Core operations contract manifest content is invalid: " + ex.Message);
+        }
+    }
+
+    private static void VerifyResultReferenceContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.ResultReferenceContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.ResultReferenceContract.RelativePath, "result-reference contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.ResultReferenceContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "productionExposed" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicResultReferenceContractV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicResultReferenceManifestV1.ContractSurfaceHash ||
+                value.GetProperty("graphSchema").GetString() != DynamicResultReferenceContractV1.GraphSchema ||
+                value.GetProperty("outputFactSchema").GetString() != DynamicResultReferenceContractV1.OutputFactSchema ||
+                value.GetProperty("receiptSchema").GetString() != DynamicResultReferenceContractV1.ReceiptSchema ||
+                value.GetProperty("programResultSchema").GetString() != DynamicResultReferenceContractV1.ProgramResultSchema ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicResultReferenceContractV1.CanonicalVersion ||
+                value.GetProperty("maximumNodes").GetInt32() != DynamicResultReferenceContractV1.MaximumNodes ||
+                value.GetProperty("maximumOutputsPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumOutputsPerNode ||
+                value.GetProperty("maximumReferencesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumReferencesPerNode ||
+                value.GetProperty("maximumAttributesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumAttributesPerNode ||
+                value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Result-reference contract manifest identity or field set is invalid.");
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add("Result-reference contract manifest content is invalid: " + ex.Message);
         }
     }
 

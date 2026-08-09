@@ -17,5 +17,6 @@
     <None Include="..\manifests\dynamic-revit-observations-core.v1.json" Link="manifests\dynamic-revit-observations-core.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\dynamic-revit-building-systems-observations.v1.json" Link="manifests\dynamic-revit-building-systems-observations.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\dynamic-revit-operations-core.v1.json" Link="manifests\dynamic-revit-operations-core.v1.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\manifests\dynamic-revit-result-reference-graph.v1.json" Link="manifests\dynamic-revit-result-reference-graph.v1.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

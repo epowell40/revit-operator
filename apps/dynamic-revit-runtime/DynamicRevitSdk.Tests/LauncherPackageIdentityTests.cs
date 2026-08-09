@@ -23,7 +23,8 @@ public sealed class LauncherPackageIdentityTests : IDisposable
             ["manifests/sandbox-policy.v1.json"] = "policy",
             ["manifests/dynamic-revit-observations-core.v1.json"] = "observations",
             ["manifests/dynamic-revit-building-systems-observations.v1.json"] = "building-systems-observations",
-            ["manifests/dynamic-revit-operations-core.v1.json"] = "operations"
+            ["manifests/dynamic-revit-operations-core.v1.json"] = "operations",
+            ["manifests/dynamic-revit-result-reference-graph.v1.json"] = "result-reference"
         };
         WritePackage(dependencies);
         var baseline = DynamicRuntimePackageDirectoryIdentity.Compute(_root);

@@ -23,6 +23,7 @@ internal sealed class WorkerInput
     public string Source { get; set; } = "";
     public DynamicTaskInput Input { get; set; } = new();
     public int DeadlineMs { get; set; } = 10_000;
+    public long? ResultReferenceDocumentRevision { get; set; }
 }
 
 internal sealed class WorkerOutput
@@ -33,6 +34,7 @@ internal sealed class WorkerOutput
     public string? ProgramHash { get; set; }
     public string SdkHash { get; set; } = "";
     public DynamicOperationGraph? Graph { get; set; }
+    public DynamicResultReferenceProgramResultV1? ResultReferenceProgramResult { get; set; }
     public string[] Logs { get; set; } = Array.Empty<string>();
     public IReadOnlyDictionary<string, string> Report { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
     public WorkerDiagnostic[] Diagnostics { get; set; } = Array.Empty<WorkerDiagnostic>();
@@ -61,6 +63,7 @@ internal static class Program
             catch (Exception ex) { Console.Error.WriteLine(ex.GetType().FullName + ": " + ex.Message); return 1; }
         }
         if (args.SequenceEqual(new[] { "--self-test" }, StringComparer.Ordinal)) return SelfTest.Run();
+        if (args.SequenceEqual(new[] { "--result-reference-self-test" }, StringComparer.Ordinal)) return SelfTest.ResultReferenceScenario();
         if (args.SequenceEqual(new[] { "--repair-scenario" }, StringComparer.Ordinal)) return SelfTest.RepairScenario();
         if (args.Length != 2 || args[0] != "--input")
         {
@@ -257,16 +260,31 @@ internal static class WorkerExecutor
         using var timeout = new CancellationTokenSource(request.DeadlineMs);
         try
         {
-            var task = Task.Run(() => ExecuteAssembly(compilation.Assembly!, request.Input), timeout.Token);
+            var task = Task.Run(() => ExecuteAssembly(compilation.Assembly!, request.Input, request.ResultReferenceDocumentRevision), timeout.Token);
             if (!task.Wait(request.DeadlineMs)) return Fail(output, "WORKER_DEADLINE", "Program exceeded its worker deadline.");
             var result = task.GetAwaiter().GetResult();
-            if (result.Report == null || result.Report.Count > 64 || result.Report.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 128 || pair.Value == null || pair.Value.Length > 1024)) return Fail(output, "REPORT_BUDGET", "Structured report exceeds the bounded SDK contract.");
-            result.Graph.InputHash = DynamicWire.InputHash(request.Input);
-            result.Graph.GraphHash = DynamicWire.GraphHash(result.Graph);
+            var report = result.Legacy?.Report ?? result.ResultReference?.Report;
+            if (report == null || report.Count > 64 || report.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 128 || pair.Value == null || pair.Value.Length > 1024)) return Fail(output, "REPORT_BUDGET", "Structured report exceeds the bounded SDK contract.");
+            if (result.Legacy != null)
+            {
+                result.Legacy.Graph.InputHash = DynamicWire.InputHash(request.Input);
+                result.Legacy.Graph.GraphHash = DynamicWire.GraphHash(result.Legacy.Graph);
+                output.Graph = result.Legacy.Graph;
+                output.Logs = result.Legacy.Logs.Take(64).ToArray();
+            }
+            else
+            {
+                var reference = result.ResultReference ?? throw new InvalidOperationException("Generated result-reference program returned no result.");
+                if (request.ResultReferenceDocumentRevision == null) return Fail(output, "RESULT_REFERENCE_REVISION", "Result-reference programs require an exact document revision.");
+                DynamicResultReferencePolicyV1.ValidateWorkerOutput(reference.Graph, DynamicWire.InputHash(request.Input), request.Input.Document.ProjectFingerprint,
+                    request.Input.Document.SessionId, request.ResultReferenceDocumentRevision.Value);
+                if (reference.Schema != DynamicResultReferenceContractV1.ProgramResultSchema || reference.ContractManifestHash != DynamicResultReferenceManifestV1.ManifestHash)
+                    return Fail(output, "RESULT_REFERENCE_CONTRACT", "Result-reference program result contract was substituted.");
+                output.ResultReferenceProgramResult = reference;
+                output.Logs = reference.Logs.Take(64).ToArray();
+            }
+            output.Report = new Dictionary<string, string>(report, StringComparer.Ordinal);
             output.Ok = true;
-            output.Graph = result.Graph;
-            output.Logs = result.Logs.Take(64).ToArray();
-            output.Report = new Dictionary<string, string>(result.Report, StringComparer.Ordinal);
             return output;
         }
         catch (Exception ex)
@@ -275,20 +293,33 @@ internal static class WorkerExecutor
         }
     }
 
-    private static DynamicProgramResult ExecuteAssembly(byte[] assembly, DynamicTaskInput input)
+    private sealed class ExecutedProgram
+    {
+        internal DynamicProgramResult? Legacy;
+        internal DynamicResultReferenceProgramResultV1? ResultReference;
+    }
+
+    private static ExecutedProgram ExecuteAssembly(byte[] assembly, DynamicTaskInput input, long? resultReferenceDocumentRevision = null)
     {
         var alc = new AssemblyLoadContext("dynamic-revit-worker", isCollectible: true);
         try
         {
             using var stream = new MemoryStream(assembly);
             var loaded = alc.LoadFromStream(stream);
-            var type = loaded.GetTypes().SingleOrDefault(t => typeof(IDynamicRevitProgram).IsAssignableFrom(t) && !t.IsAbstract && t.IsPublic)
-                ?? throw new InvalidOperationException("Source must contain exactly one public IDynamicRevitProgram implementation.");
-            if (loaded.GetTypes().Count(t => typeof(IDynamicRevitProgram).IsAssignableFrom(t) && !t.IsAbstract && t.IsPublic) != 1)
-                throw new InvalidOperationException("Source must contain exactly one public IDynamicRevitProgram implementation.");
-            var program = (IDynamicRevitProgram?)Activator.CreateInstance(type) ?? throw new InvalidOperationException("Program cannot be constructed.");
-            var context = new DynamicRevitContext(input);
-            return program.Execute(context) ?? context.Complete();
+            var types = loaded.GetTypes().Where(t => !t.IsAbstract && t.IsPublic &&
+                (typeof(IDynamicRevitProgram).IsAssignableFrom(t) || typeof(IDynamicResultReferenceRevitProgramV1).IsAssignableFrom(t))).ToArray();
+            if (types.Length != 1) throw new InvalidOperationException("Source must contain exactly one public supported dynamic Revit program implementation.");
+            if (typeof(IDynamicRevitProgram).IsAssignableFrom(types[0]) && typeof(IDynamicResultReferenceRevitProgramV1).IsAssignableFrom(types[0]))
+                throw new InvalidOperationException("A generated program may implement only one dynamic Revit program contract.");
+            var instance = Activator.CreateInstance(types[0]) ?? throw new InvalidOperationException("Program cannot be constructed.");
+            if (instance is IDynamicResultReferenceRevitProgramV1 referenceProgram)
+            {
+                if (resultReferenceDocumentRevision == null) throw new InvalidOperationException("Result-reference programs require an exact document revision.");
+                var context = new DynamicResultReferenceProgramContextV1(input, resultReferenceDocumentRevision.Value);
+                return new ExecutedProgram { ResultReference = referenceProgram.Execute(context) ?? context.Complete() };
+            }
+            var legacy = (IDynamicRevitProgram)instance; var legacyContext = new DynamicRevitContext(input);
+            return new ExecutedProgram { Legacy = legacy.Execute(legacyContext) ?? legacyContext.Complete() };
         }
         finally { alc.Unload(); }
     }
@@ -335,7 +366,8 @@ internal static class StaticAdmission
         var diagnostics = new List<WorkerDiagnostic>();
         foreach (var token in BannedTokens.Where(token => source.IndexOf(token, StringComparison.Ordinal) >= 0)) diagnostics.Add(new WorkerDiagnostic { Code = "POLICY_SOURCE_FORBIDDEN", Message = "Untrusted worker source may not use " + token + "." });
         if (source.IndexOf("Autodesk.Revit", StringComparison.OrdinalIgnoreCase) >= 0) diagnostics.Add(new WorkerDiagnostic { Code = "REVIT_REFERENCE_FORBIDDEN", Message = "Generated programs may not reference Autodesk.Revit APIs." });
-        if (!source.Contains("IDynamicRevitProgram", StringComparison.Ordinal)) diagnostics.Add(new WorkerDiagnostic { Code = "PROGRAM_INTERFACE_REQUIRED", Message = "Program must implement IDynamicRevitProgram." });
+        if (!source.Contains("IDynamicRevitProgram", StringComparison.Ordinal) && !source.Contains("IDynamicResultReferenceRevitProgramV1", StringComparison.Ordinal))
+            diagnostics.Add(new WorkerDiagnostic { Code = "PROGRAM_INTERFACE_REQUIRED", Message = "Program must implement exactly one supported dynamic Revit program interface." });
         return diagnostics.Take(32).ToArray();
     }
     public static WorkerDiagnostic[] CheckSemantic(CSharpCompilation compilation)
@@ -381,6 +413,27 @@ internal static class StaticAdmission
 
 internal static class SelfTest
 {
+    public static int ResultReferenceScenario()
+    {
+        const string source = "using System.Collections.Generic; using RevitOperator.DynamicRevitSdk; " +
+            "public sealed class X : IDynamicResultReferenceRevitProgramV1 { public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) { " +
+            "var a = c.Plan.AddOperation(\"create_family_instance\", null, null, new[] { new DynamicResultOutputSpecV1 { OutputSlot=\"primary\", ExpectedCategoryStableId=\"category:generic-model\", ExpectedTypeUniqueId=\"type:generic-a\" } }, new Dictionary<string,string> { [\"family_type_identity\"]=\"type:generic-a\", [\"placement\"]=\"0,0,0\" }); " +
+            "c.Plan.AddOperation(\"copy_element\", null, new[] { a.Reference(\"primary\") }, new[] { new DynamicResultOutputSpecV1 { OutputSlot=\"copy\", ExpectedCategoryStableId=\"category:generic-model\", ExpectedTypeUniqueId=\"type:generic-a\" } }, new Dictionary<string,string> { [\"transform\"]=\"identity\" }); return c.Complete(); } }";
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = DynamicWire.Sha256("worker-self-test-document"), SessionId = "worker-session" } };
+        var output = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = input, ResultReferenceDocumentRevision = 9 });
+        var graph = output.ResultReferenceProgramResult?.Graph;
+        using var wire = JsonDocument.Parse(JsonSerializer.Serialize(output, Compiler.Json));
+        var wireResult = wire.RootElement.GetProperty("resultReferenceProgramResult");
+        var ok = output.Ok && output.Graph == null && graph?.Nodes.Count == 2 &&
+            graph.Nodes[1].ResultReferences.Single().ResultId == graph.Nodes[0].Outputs.Single().ResultId &&
+            graph.GraphHash == DynamicResultReferencePolicyV1.GraphHash(graph) &&
+            wireResult.GetProperty("schema").GetString() == DynamicResultReferenceContractV1.ProgramResultSchema &&
+            wireResult.GetProperty("contractManifestHash").GetString() == DynamicResultReferenceManifestV1.ManifestHash &&
+            wireResult.GetProperty("graph").GetProperty("graphHash").GetString() == graph.GraphHash;
+        Console.WriteLine(JsonSerializer.Serialize(new { schema = "dynamic-revit-worker-result-reference-self-test/v1", ok, graphHash = graph?.GraphHash, diagnostics = output.Diagnostics }, Compiler.Json));
+        return ok ? 0 : 1;
+    }
+
     public static int Run()
     {
         const string sdk = "using RevitOperator.DynamicRevitSdk; ";
