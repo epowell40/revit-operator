@@ -219,7 +219,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
             var authorization = DynamicRuntimeApplyState.RequireAuthorization(request.authorization_id ?? "", request.runtime_instance_id ?? "", request.preview_id ?? "");
             DynamicRuntimeApplyState.RequireCurrentState(document, authorization.Preview);
-            if (request.graph.GraphHash != authorization.Preview.Graph.GraphHash || DynamicWire.Sha256(JsonSerializer.Serialize(request.graph)) != DynamicWire.Sha256(JsonSerializer.Serialize(authorization.Preview.Graph)))
+            // GraphHash is the canonical, signed semantic identity and is revalidated
+            // against every operation below. Serializer bytes differ across the camel
+            // preview and snake_case apply envelopes even when the graph is identical.
+            if (request.graph.GraphHash != authorization.Preview.Graph.GraphHash)
                 throw new InvalidOperationException("Dynamic apply graph changed after preview.");
             if (request.effect_budget.CanonicalHash() != authorization.Expectations.EffectBudgetHash) throw new InvalidOperationException("Dynamic apply effect budget changed after authorization.");
             ValidateBudgetedGraph(app, document, request.graph, request.effect_budget, authorization.Preview.DocumentRevision);
