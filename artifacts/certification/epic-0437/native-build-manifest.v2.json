@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:137e85a7721ee6263628729f2d1f0f198fb9234a389d44cb3325fa4ed4910af2",
-  "source_inputs_hash": "sha256:4ceaf9d46ed04f2db44187d33c6116c44620d1f956c51fb1337c8b5b01ca8dcc",
+  "policy_hash": "sha256:7e110859b962fd49b8a37de4e93a4e42f5ff7a09d2a385001ade838187cf8d5b",
+  "source_inputs_hash": "sha256:9c3907cb53d15a5ef6d56206e9148110203fba5b52f4a61ed1f77c1023fb104e",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -659,7 +659,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts",
-      "sha256": "sha256:9bf1ea47d5ad4c2247ea3f0d15eb7a288bcba7392e9d2756daaad1501709ead6"
+      "sha256": "sha256:76ee31145788c59eda8d98f5d7d5051ad42ffd2ef2a225596f9377fa39109baf"
     },
     {
       "path": "apps/operator-backend/src/capabilities/safe_read_attestation_authority.ts",
@@ -2952,7 +2952,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
-      "sha256": "sha256:659aeb38dc2b2caa3eeb826f834338ce3aba13edefc27ead87bfd6a6455baf5c"
+      "sha256": "sha256:3c51d3d84c6fef1aac4fb02e25ece81fda9c99aab670aaad0989790645514f19"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
@@ -4309,15 +4309,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:63c04944898cb4bc8551e17a281b95b8576a47c1628131c0f9ea0f749d608228"
+      "sha256": "sha256:8a555f22a04cabd911205d64e6f615dce5bcc542e0197c2272e18024eaee691d"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:c8d2fbe8ee8de462060a462b0cbe590e80a5c7aa4ad4e059a04dc90cecfaf639"
+      "sha256": "sha256:b8f6cb49d23e03b0c40e6af82e445ba42ed74c328371757e7e7c06699ef7d3d4"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:4ab4d523cc848e1d8db88c3bbe1f73681dd8ca30d375dced1a245dd7f3b79102"
+      "sha256": "sha256:cd37ba05ce3cc17814c79e799adc50bb61b56f463afeebb511cde09333f7cc0c"
     }
   },
   "runtime_dependencies": [
@@ -4360,19 +4360,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:63c04944898cb4bc8551e17a281b95b8576a47c1628131c0f9ea0f749d608228",
+      "sha256": "sha256:8a555f22a04cabd911205d64e6f615dce5bcc542e0197c2272e18024eaee691d",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:4ab4d523cc848e1d8db88c3bbe1f73681dd8ca30d375dced1a245dd7f3b79102",
+      "sha256": "sha256:cd37ba05ce3cc17814c79e799adc50bb61b56f463afeebb511cde09333f7cc0c",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:c8d2fbe8ee8de462060a462b0cbe590e80a5c7aa4ad4e059a04dc90cecfaf639",
+      "sha256": "sha256:b8f6cb49d23e03b0c40e6af82e445ba42ed74c328371757e7e7c06699ef7d3d4",
       "host": null
     },
     {
@@ -4390,7 +4390,7 @@
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/System.Memory.dll",
       "sha256": "sha256:bf3fb84664f4097f1a8a9bc71a51dcf8cf1a905d4080a4d290da1730866e856f",
       "host": {
-        "path": "C:\\Program Files\\Autodesk\\Revit 2024\\System.Memory.dll",
+        "path": "C:\\Program Files\\Autodesk\\Revit 2024\\AddIns\\PnIDModeler\\System.Memory.dll",
         "sha256": "sha256:8e76318e8b06692abf7dab1169d27d15557f7f0a34d36af6463eff0fe21213c7",
         "assembly_full_name": "System.Memory, Version=4.0.1.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
       }
@@ -4452,6 +4452,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:2e50f9da4727a805fc3ae4b2a5bf63b0a8550db95222a52329b01c4e0fb87dc1",
-  "built_at_utc": "2026-08-09T00:18:21.931Z"
+  "runtime_dependencies_hash": "sha256:7b9d69c1257d50feb0ee4144dfb58f23ae8cd39db6d93aa2e8adef77a10bf480",
+  "built_at_utc": "2026-08-09T00:36:39.141Z"
 }

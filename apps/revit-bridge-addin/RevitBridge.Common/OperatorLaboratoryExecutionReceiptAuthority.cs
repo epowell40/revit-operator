@@ -67,7 +67,7 @@ namespace RevitBridge.Common
                     "sha256:c65fff603b283dc966d1a8b730c11d5e5e750e8021bd24640612f6cc3f2c6fb7",
                     "System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"),
                 ["System.Memory.dll"] = new ApprovedHostRuntimeDependency(
-                    @"C:\Program Files\Autodesk\Revit 2024\System.Memory.dll",
+                    @"C:\Program Files\Autodesk\Revit 2024\AddIns\PnIDModeler\System.Memory.dll",
                     "sha256:8e76318e8b06692abf7dab1169d27d15557f7f0a34d36af6463eff0fe21213c7",
                     "System.Memory, Version=4.0.1.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"),
                 ["System.Numerics.Vectors.dll"] = new ApprovedHostRuntimeDependency(

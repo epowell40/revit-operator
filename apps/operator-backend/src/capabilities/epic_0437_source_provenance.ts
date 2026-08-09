@@ -111,7 +111,7 @@ export const EPIC_0437_REVIT_HOST_RUNTIME_DEPENDENCIES: Readonly<Record<string, 
     assembly_full_name: "System.Buffers, Version=4.0.3.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
   },
   "System.Memory.dll": {
-    path: "C:\\Program Files\\Autodesk\\Revit 2024\\System.Memory.dll",
+    path: "C:\\Program Files\\Autodesk\\Revit 2024\\AddIns\\PnIDModeler\\System.Memory.dll",
     sha256: "sha256:8e76318e8b06692abf7dab1169d27d15557f7f0a34d36af6463eff0fe21213c7",
     assembly_full_name: "System.Memory, Version=4.0.1.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
   },
