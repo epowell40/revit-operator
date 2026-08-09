@@ -1,4 +1,4 @@
-# EPIC-0439 usefulness and anti-demo benchmark
+# Dynamic Runtime usefulness and anti-demo benchmark
 
 This package compares two execution representations on the same randomized Revit objective:
 
