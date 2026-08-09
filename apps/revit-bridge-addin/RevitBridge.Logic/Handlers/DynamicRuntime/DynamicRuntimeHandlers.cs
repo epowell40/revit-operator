@@ -197,6 +197,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             public string DocumentFingerprint { get; set; } = "";
             public string DocumentSessionId { get; set; } = "";
             public HashSet<string> TargetIds { get; set; } = new HashSet<string>(StringComparer.Ordinal);
+            public Dictionary<string, string> TargetStateHashes { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
+            public string[] ParameterNames { get; set; } = Array.Empty<string>();
             public string InputHash { get; set; } = "";
             public DateTime ExpiresUtc { get; set; }
         }
@@ -226,7 +228,16 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var input = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = operationBudget };
             var inputHash = DynamicWire.InputHash(input);
             var token = "experimental:" + Guid.NewGuid().ToString("N");
-            Grants[token] = new SnapshotGrant { DocumentFingerprint = document.ProjectFingerprint, DocumentSessionId = document.SessionId, InputHash = inputHash, TargetIds = new HashSet<string>(elements.Select(element => element.UniqueId), StringComparer.Ordinal), ExpiresUtc = DateTime.UtcNow.AddMinutes(2) };
+            Grants[token] = new SnapshotGrant
+            {
+                DocumentFingerprint = document.ProjectFingerprint,
+                DocumentSessionId = document.SessionId,
+                InputHash = inputHash,
+                TargetIds = new HashSet<string>(elements.Select(element => element.UniqueId), StringComparer.Ordinal),
+                TargetStateHashes = elements.ToDictionary(element => element.UniqueId, ElementStateHash, StringComparer.Ordinal),
+                ParameterNames = requestedParameters,
+                ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
+            };
             foreach (var expired in Grants.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Grants.TryRemove(expired, out _);
             var receipt = new { schema = "dynamic-revit-snapshot/v0", sdk = DynamicRevitSdkVersion.Value, input_hash = inputHash, document, snapshot_token = token, elements };
             return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.runtimeInstanceId ?? "", "snapshot-receipt", receipt));
@@ -240,15 +251,35 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (names.Length != fields.Count || names.Distinct(StringComparer.Ordinal).Count() != names.Length || names.Any(name => !fields.Contains(name))) throw new ArgumentException("Dynamic snapshot request has an invalid field set.");
         }
 
-        internal static bool ConsumeGrant(string? token, string fingerprint, string session, string inputHash, IEnumerable<string> targetIds)
+        internal static bool ConsumeGrant(Document document, string? token, string fingerprint, string session, string inputHash, IEnumerable<string> targetIds)
         {
             if (string.IsNullOrWhiteSpace(token) || !Grants.TryRemove(token, out var grant)) return false;
-            return grant.ExpiresUtc > DateTime.UtcNow && Equal(grant.DocumentFingerprint, fingerprint) && Equal(grant.DocumentSessionId, session) && Equal(grant.InputHash, inputHash) && targetIds.All(id => grant.TargetIds.Contains(id));
+            if (document == null || grant.ExpiresUtc <= DateTime.UtcNow || !Equal(grant.DocumentFingerprint, fingerprint) ||
+                !Equal(grant.DocumentSessionId, session) || !Equal(grant.InputHash, inputHash)) return false;
+            foreach (var id in targetIds.Distinct(StringComparer.Ordinal))
+            {
+                if (!grant.TargetIds.Contains(id) || !grant.TargetStateHashes.TryGetValue(id, out var expected)) return false;
+                var element = document.GetElement(id);
+                if (element == null || !Equal(expected, ElementStateHash(ToDto(document, element, grant.ParameterNames)))) return false;
+            }
+            return true;
         }
 
-        internal static string Fingerprint(Document doc) => Hash((doc.PathName ?? "") + "\n" + (doc.Title ?? ""));
-        internal static string Session(Document doc) => "experimental:" + Hash(doc.GetHashCode().ToString(CultureInfo.InvariantCulture)).Substring("sha256:".Length, 24);
+        internal static string Fingerprint(Document doc)
+        {
+            string? projectUniqueId = null;
+            try { projectUniqueId = doc.ProjectInformation?.UniqueId; } catch { }
+            return "sha256:" + OperatorRevitBatchBinding.ComputeProjectFingerprint(doc.Title, doc.PathName, projectUniqueId);
+        }
+        internal static string Session(Document doc) => OperatorNativeDocumentSessionAuthority.GetSessionId(doc);
         private static string Hash(string value) { using var sha = SHA256.Create(); return "sha256:" + BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", "").ToLowerInvariant(); }
+        private static string ElementStateHash(DynamicElementDto element)
+            => DynamicWire.InputHash(new DynamicTaskInput
+            {
+                Document = new DynamicDocumentDto(),
+                Elements = new[] { element },
+                OperationBudget = 1
+            });
         private static bool Equal(string? left, string? right) => string.Equals(left, right, StringComparison.Ordinal);
         private static DynamicElementDto ToDto(Document doc, Element element, string[] parameterNames)
         {
@@ -322,7 +353,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var graph = request.graph ?? throw new ArgumentException("Dynamic preview graph is required.");
             var budget = request.operationBudget ?? 32;
             ValidateGraph(graph, budget);
-            if (!DynamicRuntimeSnapshotHandler.ConsumeGrant(request.snapshotToken, request.documentFingerprint!, request.documentSessionId!, graph.InputHash, graph.Operations.Select(operation => operation.TargetUniqueId))) throw new InvalidOperationException("Dynamic preview snapshot capability is invalid, expired, replayed, not bound to this exact DTO input, or out of scope.");
+            if (!DynamicRuntimeSnapshotHandler.ConsumeGrant(doc, request.snapshotToken, request.documentFingerprint!, request.documentSessionId!, graph.InputHash, graph.Operations.Select(operation => operation.TargetUniqueId))) throw new InvalidOperationException("Dynamic preview snapshot capability is invalid, expired, replayed, stale, not bound to this exact DTO input, or out of scope.");
             DynamicRuntimeAdmissionRegistry.VerifyAndConsume(request.admission!, request.sourceHash!, request.programHash!, request.sdkHash!, graph.GraphHash, request.documentFingerprint!, request.documentSessionId!);
             var warnings = new List<string>();
             var failures = new List<DynamicCapturedFailure>();
