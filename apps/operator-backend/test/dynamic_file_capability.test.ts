@@ -58,7 +58,7 @@ test("file capabilities reject traversal, extensions, expiry, quotas, and use ex
   try {
     let time = 1000; const authority = new DynamicFileCapabilityAuthority(() => time); const capability = issue(authority, root, { maximum_output_count: 1, maximum_use_count: 1 });
     const base = { capability_id: capability.capability_id, expected_task_id_hash: bindings.task, expected_program_hash: bindings.program, expected_document_fingerprint: bindings.document, expected_principal_id_hash: bindings.principal };
-    assert.throws(() => authority.createFile({ ...base, relative_path: "..\\escape.pdf", bytes: Buffer.from("x") }), /escaped/);
+    assert.throws(() => authority.createFile({ ...base, relative_path: path.join("..", "escape.pdf"), bytes: Buffer.from("x") }), /escaped/);
     assert.throws(() => authority.createFile({ ...base, relative_path: "bad.exe", bytes: Buffer.from("x") }), /extension/);
     assert.equal(authority.createFile({ ...base, relative_path: "ok.pdf", bytes: Buffer.from("0123456789") }).bytes, 10);
     assert.throws(() => authority.createFile({ ...base, relative_path: "again.pdf", bytes: Buffer.from("x") }), /use count|quota/);
