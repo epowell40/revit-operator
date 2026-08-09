@@ -394,39 +394,44 @@ namespace RevitBridge.Common
                 || string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)))
                 throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
             var deployedIdentity = deployedExists ? AssemblyName.GetAssemblyName(deployedPath).FullName ?? "" : "";
-            var deployedIdentityMatches = deployedExists
-                ? managedAssemblies.Where(value => string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal)).ToList()
-                : new List<KeyValuePair<string, string>>();
-            var identityMatches = deployedIdentityMatches.Count > 0
-                ? deployedIdentityMatches
-                : managedAssemblies
-                    .Where(value => string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal))
-                    .ToList();
-            if (identityMatches.Count == 0)
+            var deployedFullPath = deployedExists ? Path.GetFullPath(deployedPath) : "";
+            var approvedHostFullPath = string.IsNullOrWhiteSpace(approvedHostPath) ? "" : Path.GetFullPath(approvedHostPath);
+            var reviewedIdentityMatches = managedAssemblies
+                .Where(value => (deployedExists && string.Equals(value.Key, deployedIdentity, StringComparison.Ordinal))
+                    || (!string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)
+                        && string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal)))
+                .ToList();
+            var loadedDeployed = false;
+            var loadedApprovedHost = false;
+            foreach (var match in reviewedIdentityMatches)
+            {
+                var loadedPath = Path.GetFullPath(match.Value);
+                if (deployedExists
+                    && string.Equals(match.Key, deployedIdentity, StringComparison.Ordinal)
+                    && string.Equals(loadedPath, deployedFullPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    loadedDeployed = true;
+                    continue;
+                }
+                if (!string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)
+                    && string.Equals(match.Key, approvedHostAssemblyFullName, StringComparison.Ordinal)
+                    && string.Equals(loadedPath, approvedHostFullPath, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(approvedHostSha256)
+                    && FileHashMatches(loadedPath, approvedHostSha256!))
+                {
+                    loadedApprovedHost = true;
+                    continue;
+                }
+                throw Denied("Protected laboratory evidence loaded " + name + " outside the reviewed add-in/host dependency closure.");
+            }
+            if (!loadedDeployed && !loadedApprovedHost)
             {
                 if (managedAssemblies.Count > 0)
                     throw Denied("Protected laboratory evidence loaded only unreviewed identities for " + name + ".");
                 if (deployedExists) return deployedPath;
                 throw Denied("Protected laboratory evidence did not load the exact reviewed host runtime dependency " + name + ".");
             }
-            var managedMatches = identityMatches
-                .Select(value => Path.GetFullPath(value.Value))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (managedMatches.Count > 1) throw Denied("Protected laboratory evidence found multiple loaded reviewed-identity copies of " + name + ".");
-
-            var selected = managedMatches[0];
-            if (string.Equals(selected, deployedPath, StringComparison.OrdinalIgnoreCase))
-            {
-                return selected;
-            }
-            if (string.IsNullOrWhiteSpace(approvedHostPath) || string.IsNullOrWhiteSpace(approvedHostSha256)
-                || string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)
-                || !string.Equals(selected, Path.GetFullPath(approvedHostPath), StringComparison.OrdinalIgnoreCase)
-                || identityMatches.Any(value => !string.Equals(value.Key, approvedHostAssemblyFullName, StringComparison.Ordinal))
-                || !FileHashMatches(selected, approvedHostSha256!))
-                throw Denied("Protected laboratory evidence loaded " + name + " outside the reviewed add-in/host dependency closure.");
-            return selected;
+            return loadedDeployed ? deployedFullPath : approvedHostFullPath;
         }
 
         private static bool IsApprovedHostRuntimeDependency(string name, string candidatePath, IEnumerable<string>? loadedIdentities = null)

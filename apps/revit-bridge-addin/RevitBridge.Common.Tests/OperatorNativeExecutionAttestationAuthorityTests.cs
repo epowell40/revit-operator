@@ -137,6 +137,46 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Laboratory_dependency_identity_rejects_an_off_path_reviewed_host_identity_beside_exact_deployed()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-deployed-host-decoy-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var source = typeof(JsonDocument).Assembly.Location;
+                var deployed = Path.Combine(directory, "deployed-System.Text.Json.dll");
+                var approvedHost = Path.Combine(directory, "approved-host-System.Text.Json.dll");
+                var offPathHost = Path.Combine(directory, "off-path-host-System.Text.Json.dll");
+                File.Copy(source, deployed);
+                File.Copy(source, approvedHost);
+                File.Copy(source, offPathHost);
+                var deployedIdentity = AssemblyName.GetAssemblyName(deployed).FullName!;
+                var hostIdentity = "System.Text.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51";
+                using var stream = File.OpenRead(approvedHost);
+                using var algorithm = SHA256.Create();
+                var hostHash = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "SelectManagedRuntimeDependencyPathWithApprovedHost", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[]
+                {
+                    deployed, "System.Text.Json.dll",
+                    new[]
+                    {
+                        new KeyValuePair<string, string>(deployedIdentity, deployed),
+                        new KeyValuePair<string, string>(hostIdentity, offPathHost)
+                    },
+                    approvedHost, hostHash, hostIdentity
+                }));
+                Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                    Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Fact]
         public void Laboratory_dependency_identity_rejects_duplicate_paths_for_the_reviewed_identity()
         {
             var directory = Path.Combine(Path.GetTempPath(), "revit-operator-duplicate-dependency-" + Guid.NewGuid().ToString("N"));
