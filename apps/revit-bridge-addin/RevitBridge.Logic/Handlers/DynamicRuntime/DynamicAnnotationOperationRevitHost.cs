@@ -73,7 +73,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             note.Text = node.Attributes["replacement_text"]; document.Regenerate();
             var current = document.GetElement(resolved.UniqueId) as TextNote ?? throw new InvalidOperationException("Edited TextNote identity disappeared.");
             var afterText = DynamicAnnotationOperationPolicyV1.NormalizeText(current.Text);
-            if (afterText != node.Attributes["replacement_text"] || DynamicAnnotationRevitStateV1.UniqueId(document, current.GetTypeId()) != type ||
+            if (!TextNoteTextCanonicalizer.IsExactRevitRoundTrip(node.Attributes["replacement_text"], current.Text) || DynamicAnnotationRevitStateV1.UniqueId(document, current.GetTypeId()) != type ||
                 DynamicAnnotationRevitStateV1.UniqueId(document, current.OwnerViewId) != view)
                 throw new InvalidOperationException("Text note edit produced substituted text, type, view, or identity.");
             AddReadback(node, current.UniqueId, before, DynamicAnnotationRevitStateV1.StateHash(current), new Dictionary<string, string>(StringComparer.Ordinal)

@@ -14,5 +14,25 @@ namespace RevitBridge.Common.Tests
         {
             Assert.Equal(expected, TextNoteTextCanonicalizer.Normalize(input));
         }
+
+        [Theory]
+        [InlineData("one", "one")]
+        [InlineData("one", "one\r")]
+        [InlineData("one\n", "one\r\r")]
+        [InlineData("one\ntwo\n", "one\rtwo\r\r")]
+        public void Exact_revit_round_trip_accepts_only_the_terminal_paragraph_marker(string requested, string actual)
+        {
+            Assert.True(TextNoteTextCanonicalizer.IsExactRevitRoundTrip(requested, actual));
+        }
+
+        [Theory]
+        [InlineData("one", "one\r\r")]
+        [InlineData("one\n", "one\r\r\r")]
+        [InlineData("one\ntwo", "one\rsubstituted\r")]
+        [InlineData("one\ntwo", "one\rtwo \r")]
+        public void Exact_revit_round_trip_rejects_other_substitutions(string requested, string actual)
+        {
+            Assert.False(TextNoteTextCanonicalizer.IsExactRevitRoundTrip(requested, actual));
+        }
     }
 }
