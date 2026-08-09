@@ -251,6 +251,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/dynamic-runtime/authorize-apply", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/apply", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/dynamic-runtime/observe-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/observe-building-systems-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/core-preview-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/core-authorize-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/core-apply-v1", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

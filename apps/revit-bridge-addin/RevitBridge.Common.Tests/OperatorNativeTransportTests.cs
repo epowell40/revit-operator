@@ -216,6 +216,7 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("\"/revit/dynamic-runtime/authorize-apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
             Assert.Contains("\"/revit/dynamic-runtime/observe-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/observe-building-systems-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
@@ -224,6 +225,8 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("REVIT_OPERATOR_MODE\"), \"development\", StringComparison.Ordinal", activation);
             Assert.Contains("OPERATOR_TOOL_EXPOSURE_PROFILE\"), \"laboratory\", StringComparison.Ordinal", activation);
             Assert.Contains("DurableCoreOperationApplyAuthorizationLedgerV1", activation);
+            Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1", activation);
+            Assert.Contains("DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes", activation);
             Assert.Contains("authorization_granted = false", activation);
         }
 

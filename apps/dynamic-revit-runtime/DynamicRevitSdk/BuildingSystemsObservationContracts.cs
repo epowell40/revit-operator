@@ -40,7 +40,7 @@ public static class DynamicBuildingSystemsObservationContractV1
         MaximumCategorySelectors.ToString(CultureInfo.InvariantCulture), MaximumKindSelectors.ToString(CultureInfo.InvariantCulture),
         MaximumParameterSelectors.ToString(CultureInfo.InvariantCulture), MaximumParametersPerFact.ToString(CultureInfo.InvariantCulture),
         MaximumConnectorsPerFact.ToString(CultureInfo.InvariantCulture), MaximumConnectionsPerConnector.ToString(CultureInfo.InvariantCulture),
-        MaximumSystemMembers.ToString(CultureInfo.InvariantCulture), ContractSurfaceHash, "read-only", "snapshot-bound", "unregistered", "no-revit-handles"));
+        MaximumSystemMembers.ToString(CultureInfo.InvariantCulture), ContractSurfaceHash, "read-only", "snapshot-bound", "development-laboratory-only", "no-revit-handles"));
 
     private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
         .Where(property => property.GetMethod != null).OrderBy(property => property.Name, StringComparer.Ordinal)

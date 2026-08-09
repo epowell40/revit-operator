@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -110,6 +111,110 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 envelope = DynamicRuntimeV1Wire.CamelElement(envelope)
             };
             return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.RuntimeInstanceId ?? "", "observe-v1-receipt", receipt));
+        }
+    }
+
+    internal sealed class DynamicBuildingSystemsSnapshotSealV1
+    {
+        internal string SnapshotId = "";
+        internal string RuntimeId = "";
+        internal string DocumentFingerprint = "";
+        internal string DocumentSessionId = "";
+        internal string ScopeHash = "";
+        internal string SnapshotHash = "";
+        internal long DocumentRevision;
+        internal DateTime ExpiresUtc;
+    }
+
+    internal static class DynamicBuildingSystemsSnapshotAuthorityV1
+    {
+        private static readonly ConcurrentDictionary<string, DynamicBuildingSystemsSnapshotSealV1> Snapshots = new ConcurrentDictionary<string, DynamicBuildingSystemsSnapshotSealV1>(StringComparer.Ordinal);
+
+        internal static DynamicBuildingSystemsSnapshotSealV1 Issue(string runtimeId, string documentFingerprint, string documentSessionId,
+            DynamicBuildingSystemsSelectorV1 selector)
+        {
+            Prune();
+            var revision = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var scopeHash = DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector);
+            var nonce = new byte[32]; using (var random = RandomNumberGenerator.Create()) random.GetBytes(nonce);
+            var seal = new DynamicBuildingSystemsSnapshotSealV1
+            {
+                SnapshotId = "buildingsnapshot_" + Guid.NewGuid().ToString("N"), RuntimeId = runtimeId,
+                DocumentFingerprint = documentFingerprint, DocumentSessionId = documentSessionId,
+                ScopeHash = scopeHash, DocumentRevision = revision,
+                SnapshotHash = DynamicWire.Sha256(Convert.ToBase64String(nonce) + "\n" + documentFingerprint + "\n" + documentSessionId + "\n" + scopeHash + "\n" + revision),
+                ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
+            };
+            if (!Snapshots.TryAdd(seal.SnapshotId, seal)) throw new InvalidOperationException("Building-systems snapshot identity collided.");
+            return seal;
+        }
+
+        internal static DynamicBuildingSystemsSnapshotSealV1 Require(string runtimeId, string snapshotId, string documentFingerprint,
+            string documentSessionId, DynamicBuildingSystemsSelectorV1 selector)
+        {
+            Prune();
+            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow || seal.RuntimeId != runtimeId ||
+                seal.DocumentFingerprint != documentFingerprint || seal.DocumentSessionId != documentSessionId ||
+                seal.ScopeHash != DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector))
+                throw new InvalidOperationException("Building-systems snapshot is unknown, expired, stale, or scope-substituted.");
+            return seal;
+        }
+
+        private static void Prune()
+        {
+            foreach (var key in Snapshots.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Snapshots.TryRemove(key, out _);
+        }
+    }
+
+    public sealed class DynamicBuildingSystemsObservationV1Handler : IRequestHandler
+    {
+        private sealed class Request
+        {
+            public string? Schema { get; set; }
+            public string? RuntimeInstanceId { get; set; }
+            public DynamicBuildingSystemsSelectorV1? Selector { get; set; }
+            public string? SnapshotId { get; set; }
+            public string? CorrelationId { get; set; }
+            public long AuthExpiresUnixSeconds { get; set; }
+            public string? RequestMac { get; set; }
+        }
+
+        public Task<object> Handle(UIApplication app, string jsonData)
+        {
+            DynamicRuntimeV1LaboratoryBoundary.Require();
+            if (jsonData == null || Encoding.UTF8.GetByteCount(jsonData) > DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes)
+                throw new ArgumentException("Building-systems observation request exceeds 64 KiB.");
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "selector", "snapshotId", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-building-systems-request/v1" || request.Selector == null)
+                throw new ArgumentException("Building-systems observation request v1 is invalid.");
+            DynamicBuildingSystemsObservationPolicyV1.ValidateSelector(request.Selector);
+            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, selector = request.Selector, snapshotId = request.SnapshotId };
+            DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "observe-building-systems-v1", request.CorrelationId ?? "",
+                request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
+            var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
+            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
+            var fingerprint = DynamicRuntimeSnapshotHandler.Fingerprint(document);
+            var session = DynamicRuntimeSnapshotHandler.Session(document);
+            var snapshot = string.IsNullOrWhiteSpace(request.SnapshotId)
+                ? DynamicBuildingSystemsSnapshotAuthorityV1.Issue(request.RuntimeInstanceId ?? "", fingerprint, session, request.Selector)
+                : DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", fingerprint, session, request.Selector);
+            var envelope = DynamicBuildingSystemsObservationAdapterV1.Observe(document, request.Selector, snapshot.DocumentRevision, snapshot.SnapshotHash);
+            var receipt = new
+            {
+                schema = "dynamic-revit-building-systems-receipt/v1",
+                snapshot_id = snapshot.SnapshotId,
+                snapshot_hash = snapshot.SnapshotHash,
+                document_revision = snapshot.DocumentRevision,
+                contract_manifest_hash = DynamicBuildingSystemsObservationContractV1.ManifestHash,
+                sdk_manifest_hash = DynamicRevitSdkProductionVersion.ManifestHash,
+                worker_runtime_package_hash = runtime.WorkerRuntimePackageHash,
+                envelope_hash = envelope.EnvelopeHash,
+                document_fingerprint = envelope.DocumentFingerprint,
+                document_session_id = envelope.DocumentSessionId,
+                authorization_granted = false,
+                envelope = DynamicRuntimeV1Wire.CamelElement(envelope)
+            };
+            return Task.FromResult(DynamicRuntimeBootstrapRegistry.AuthenticateReceipt(request.RuntimeInstanceId ?? "", "observe-building-systems-v1-receipt", receipt));
         }
     }
 

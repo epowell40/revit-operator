@@ -25,6 +25,7 @@ namespace RevitBridge.Logic
                 { "/revit/dynamic-runtime/authorize-apply", new DynamicRuntimeApplyAuthorizationHandler() },
                 { "/revit/dynamic-runtime/apply", new DynamicRuntimeApplyHandler() },
                 { "/revit/dynamic-runtime/observe-v1", new DynamicRuntimeObservationV1Handler() },
+                { "/revit/dynamic-runtime/observe-building-systems-v1", new DynamicBuildingSystemsObservationV1Handler() },
                 { "/revit/dynamic-runtime/core-preview-v1", new DynamicCoreOperationPreviewV1Handler() },
                 { "/revit/dynamic-runtime/core-authorize-v1", new DynamicCoreOperationAuthorizeV1Handler() },
                 { "/revit/dynamic-runtime/core-apply-v1", new DynamicCoreOperationApplyV1Handler() },

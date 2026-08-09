@@ -9,8 +9,9 @@ using RevitOperator.DynamicRevitSdk;
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
     /// <summary>
-    /// Read-only bounded building-systems projection. Intentionally internal and unregistered;
-    /// callers must supply a trusted snapshot/revision identity from the snapshot authority.
+    /// Read-only bounded building-systems projection. Internal and reachable only through the
+    /// exact development/laboratory boundary; callers must supply a trusted snapshot/revision
+    /// identity from the host snapshot authority.
     /// </summary>
     internal static class DynamicBuildingSystemsObservationAdapterV1
     {
@@ -20,10 +21,14 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (document == null) throw new ArgumentNullException(nameof(document));
             DynamicBuildingSystemsObservationPolicyV1.ValidateSelector(selector);
             var requested = new HashSet<string>(selector.ElementUniqueIds, StringComparer.Ordinal);
+            var requestedCategories = new HashSet<string>(selector.CategoryStableIds, StringComparer.Ordinal);
+            var requestedKinds = new HashSet<string>(selector.Kinds, StringComparer.Ordinal);
             IEnumerable<Element> candidates = requested.Count == 0
                 ? new FilteredElementCollector(document).WhereElementIsNotElementType().Cast<Element>()
                 : requested.OrderBy(value => value, StringComparer.Ordinal).Select(value => Safe(() => document.GetElement(value))).Where(value => value != null).Cast<Element>();
-            var eligible = candidates.Select(element => new { Element = element, Kind = Kind(element) }).Where(value => value.Kind != null)
+            var eligible = candidates.Select(element => new { Element = element, Kind = Kind(element), Category = Category(element.Category)?.StableId ?? "" })
+                .Where(value => value.Kind != null && (requestedKinds.Count == 0 || requestedKinds.Contains(value.Kind)) &&
+                    (requestedCategories.Count == 0 || requestedCategories.Contains(value.Category)))
                 .Take(DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts + 1).ToArray();
             if (eligible.Length > DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts)
                 throw new InvalidOperationException("Building-systems scope exceeds the bounded fact count; provide narrower selectors.");
