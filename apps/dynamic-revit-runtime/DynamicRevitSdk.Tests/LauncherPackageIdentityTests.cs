@@ -22,6 +22,7 @@ public sealed class LauncherPackageIdentityTests : IDisposable
             ["manifests/revit-host-capabilities.v1.json"] = "capabilities",
             ["manifests/sandbox-policy.v1.json"] = "policy",
             ["manifests/dynamic-revit-observations-core.v1.json"] = "observations",
+            ["manifests/dynamic-revit-building-systems-observations.v1.json"] = "building-systems-observations",
             ["manifests/dynamic-revit-operations-core.v1.json"] = "operations"
         };
         WritePackage(dependencies);

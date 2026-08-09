@@ -1,0 +1,25 @@
+{
+  "schema": "dynamic-revit-building-systems-observation-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractManifestHash": "sha256:6615d73278437801cb6183a857dbfdf0723691c64ac4f8b29361dfa443ef9957",
+  "contractSurfaceHash": "sha256:48385519c913a2ac0cf7ad305eeeb6d9ab6219587f36e65db257917783866d11",
+  "selectorSchema": "dynamic-revit-building-systems-selector/v1",
+  "envelopeSchema": "dynamic-revit-building-systems-envelope/v1",
+  "cursorSchema": "dynamic-revit-building-systems-cursor/v1",
+  "canonicalVersion": "dynamic-revit-building-systems-canonical/v1",
+  "readOnly": true,
+  "productionExposed": false,
+  "limits": {
+    "maximumRequestBytes": 65536,
+    "maximumPageSize": 128,
+    "maximumObservedFacts": 2048,
+    "maximumElementSelectors": 256,
+    "maximumCategorySelectors": 32,
+    "maximumKindSelectors": 5,
+    "maximumParameterSelectors": 32,
+    "maximumParametersPerFact": 64,
+    "maximumConnectorsPerFact": 64,
+    "maximumConnectionsPerConnector": 64,
+    "maximumSystemMembers": 2048
+  }
+}

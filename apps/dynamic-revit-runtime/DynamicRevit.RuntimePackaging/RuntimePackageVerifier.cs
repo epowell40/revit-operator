@@ -17,6 +17,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity Sdk { get; set; } = new();
     public PackageArtifactIdentity SandboxPolicy { get; set; } = new();
     public PackageArtifactIdentity ObservationContract { get; set; } = new();
+    public PackageArtifactIdentity BuildingSystemsObservationContract { get; set; } = new();
     public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
@@ -89,9 +90,11 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "sdk", package.Sdk, result);
         VerifyArtifact(root, "sandbox policy", package.SandboxPolicy, result);
         VerifyArtifact(root, "observation contract", package.ObservationContract, result);
+        VerifyArtifact(root, "building-systems observation contract", package.BuildingSystemsObservationContract, result);
         VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
         VerifySandboxPolicy(root, package, result);
         VerifyObservationContract(root, package, result);
+        VerifyBuildingSystemsObservationContract(root, package, result);
         VerifyCoreOperationsContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
@@ -121,7 +124,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.CoreOperationsContract }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -240,6 +243,51 @@ public static class RuntimePackageVerifier
         {
             result.Errors.Add("Observation contract manifest content is invalid: " + ex.Message);
         }
+    }
+
+    private static void VerifyBuildingSystemsObservationContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.BuildingSystemsObservationContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.BuildingSystemsObservationContract.RelativePath, "building-systems observation contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.BuildingSystemsObservationContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "productionExposed", "limits" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestSchema ||
+                string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicBuildingSystemsObservationContractV1.ContractSurfaceHash ||
+                value.GetProperty("selectorSchema").GetString() != DynamicBuildingSystemsObservationContractV1.SelectorSchema ||
+                value.GetProperty("envelopeSchema").GetString() != DynamicBuildingSystemsObservationContractV1.EnvelopeSchema ||
+                value.GetProperty("cursorSchema").GetString() != DynamicBuildingSystemsObservationContractV1.CursorSchema ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicBuildingSystemsObservationContractV1.CanonicalVersion ||
+                value.GetProperty("readOnly").ValueKind != JsonValueKind.True || value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Building-systems observation manifest identity or field set is invalid.");
+            var expectedLimits = new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                ["maximumRequestBytes"] = DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes,
+                ["maximumPageSize"] = DynamicBuildingSystemsObservationContractV1.MaximumPageSize,
+                ["maximumObservedFacts"] = DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts,
+                ["maximumElementSelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumElementSelectors,
+                ["maximumCategorySelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumCategorySelectors,
+                ["maximumKindSelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumKindSelectors,
+                ["maximumParameterSelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumParameterSelectors,
+                ["maximumParametersPerFact"] = DynamicBuildingSystemsObservationContractV1.MaximumParametersPerFact,
+                ["maximumConnectorsPerFact"] = DynamicBuildingSystemsObservationContractV1.MaximumConnectorsPerFact,
+                ["maximumConnectionsPerConnector"] = DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector,
+                ["maximumSystemMembers"] = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers
+            };
+            var limits = value.GetProperty("limits"); var observed = limits.ValueKind == JsonValueKind.Object ? limits.EnumerateObject().ToArray() : [];
+            if (observed.Length != expectedLimits.Count || observed.Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() != observed.Length ||
+                observed.Any(property => !expectedLimits.TryGetValue(property.Name, out var expected) || property.Value.ValueKind != JsonValueKind.Number || property.Value.GetInt32() != expected))
+                throw new InvalidDataException("Building-systems observation manifest limits are invalid.");
+        }
+        catch (Exception ex) { result.Errors.Add("Building-systems observation manifest content is invalid: " + ex.Message); }
     }
 
     private static void VerifyCoreOperationsContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)

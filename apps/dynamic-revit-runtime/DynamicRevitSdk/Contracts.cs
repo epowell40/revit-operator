@@ -11,7 +11,7 @@ public static class DynamicRevitSdkVersion
 {
     public const string Value = "dynamic-revit-sdk/v0";
     public const string GraphSchema = "dynamic-revit-operation-graph/v0";
-    public static string ManifestHash => DynamicWire.Sha256(Value + "\n" + GraphSchema + "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash);
+    public static string ManifestHash => DynamicWire.Sha256(Value + "\n" + GraphSchema + "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicBuildingSystemsObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash);
 }
 
 public sealed class DynamicDocumentDto
