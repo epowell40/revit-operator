@@ -23,6 +23,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         public string ProgramHash = ""; public DynamicOperationGraph Graph = new DynamicOperationGraph(); public string DocumentFingerprint = "";
         public string DocumentSessionId = ""; public long DocumentRevision; public DateTime ExpiresUtc;
         public Dictionary<string, string> TargetStateHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        public HashSet<long> ProjectedChangedElementIds = new HashSet<long>();
     }
 
     internal sealed class DynamicRuntimeApplyAuthorization
@@ -38,17 +39,19 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private static readonly ConcurrentDictionary<string, DynamicRuntimeApplyAuthorization> Authorizations = new ConcurrentDictionary<string, DynamicRuntimeApplyAuthorization>(StringComparer.Ordinal);
         private static readonly object Gate = new object();
 
-        public static void RegisterPreview(string previewId, string receiptHash, string runtimeId, string sourceHash, string programHash, DynamicOperationGraph graph, Document document)
+        public static void RegisterPreview(string previewId, string receiptHash, string runtimeId, string sourceHash, string programHash, DynamicOperationGraph graph, Document document, IEnumerable<long> projectedChangedElementIds)
         {
-            if (!DynamicRuntimePreviewHandler.IsHash(receiptHash) || graph == null || document == null) throw new ArgumentException("Dynamic preview seal is invalid.");
+            if (!DynamicRuntimePreviewHandler.IsHash(receiptHash) || graph == null || document == null || projectedChangedElementIds == null) throw new ArgumentException("Dynamic preview seal is invalid.");
             var clone = JsonSerializer.Deserialize<DynamicOperationGraph>(JsonSerializer.Serialize(graph)) ?? throw new InvalidOperationException("Dynamic preview graph could not be sealed.");
+            var projected = new HashSet<long>(projectedChangedElementIds);
             var targetHashes = clone.Operations.Select(operation => operation.TargetUniqueId).Distinct(StringComparer.Ordinal).ToDictionary(id => id,
                 id => DynamicRuntimePreviewHandler.TrustedElementStateHash(document.GetElement(id) ?? throw new InvalidOperationException("Preview target disappeared before sealing.")), StringComparer.Ordinal);
             Previews[previewId] = new DynamicRuntimePreviewSeal
             {
                 PreviewId = previewId, PreviewReceiptHash = receiptHash, RuntimeId = runtimeId, SourceHash = sourceHash, ProgramHash = programHash,
                 Graph = clone, DocumentFingerprint = DynamicRuntimeSnapshotHandler.Fingerprint(document), DocumentSessionId = DynamicRuntimeSnapshotHandler.Session(document),
-                DocumentRevision = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), TargetStateHashes = targetHashes, ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
+                DocumentRevision = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), TargetStateHashes = targetHashes,
+                ProjectedChangedElementIds = projected, ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
             };
             Prune();
         }
@@ -73,7 +76,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 AllowedSdkDomains = operations.Select(operation => operation.Kind == "set_parameter" ? "parameters" : "elements").Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
                 AllowedExternalEffectClasses = Array.Empty<string>(), ViewScopeHash = ViewScopeHash(app), LevelScopeHash = ElementScopeHash("level", elements, element => ElementIdCompat.GetValue(element.LevelId)),
                 WorksetScopeHash = ElementScopeHash("workset", elements, element => element.WorksetId.IntegerValue), PhaseScopeHash = PhaseScopeHash(elements),
-                MaximumOperationCount = operations.Count, MaximumAffectedElements = targets.Length, MaximumCreates = 0, MaximumModifications = operations.Count, MaximumDeletes = 0,
+                MaximumOperationCount = operations.Count, MaximumAffectedElements = Math.Max(targets.Length, preview.ProjectedChangedElementIds.Count), MaximumCreates = 0, MaximumModifications = operations.Count, MaximumDeletes = 0,
                 MaximumExecutionMilliseconds = maximumExecutionMilliseconds, MaximumRegenerations = operations.Count, MaximumOutputCount = 0, MaximumOutputBytes = 0,
                 FileCapabilitySetHash = emptyFiles
             };
@@ -260,6 +263,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 }
                 app.Application.DocumentChanged -= changedHandler; changedHandler = null;
                 if (changed.Count > request.effect_budget.MaximumAffectedElements) throw new InvalidOperationException("Dynamic apply changed-element budget was exceeded.");
+                if (!changed.SetEquals(authorization.Preview.ProjectedChangedElementIds)) throw new InvalidOperationException("Dynamic apply blast radius differed from the authorized preview.");
                 RequireDeadline(stopwatch, request.effect_budget.MaximumExecutionMilliseconds);
                 if (group.Assimilate() != TransactionStatus.Committed) throw new InvalidOperationException("Dynamic apply transaction group did not commit.");
                 committed = true;
