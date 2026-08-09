@@ -24,8 +24,8 @@ public sealed class MepResultReferenceOperationsTests
     [Fact]
     public void BuilderCreatesExactCurveAndLaterConnectorGraph()
     {
-        var builder = Builder(); var first = DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
-        var second = DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(20, 10), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
+        var builder = Builder(); var first = DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
+        var second = DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(20, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
         DynamicMepResultReferenceBuilderV1.ConnectMep(builder, null, new[] { first.Reference("curve"), second.Reference("curve") },
             Connector(first.Reference("curve"), 10), Connector(second.Reference("curve"), 10));
         var graph = builder.Build(); DynamicMepMutationPolicyV1.ValidateGraphShape(graph);
@@ -36,7 +36,7 @@ public sealed class MepResultReferenceOperationsTests
     [Fact]
     public void ExactGraphShapeRejectsExtraAttributesAndWrongOutputType()
     {
-        var builder = Builder(); DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
+        var builder = Builder(); DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves");
         var graph = builder.Build(); var node = graph.Nodes[0];
         node.Attributes = node.Attributes.Concat(new[] { new KeyValuePair<string, string>("fixture_id", "forbidden") }).ToDictionary(value => value.Key, value => value.Value);
         Assert.Throws<ArgumentException>(() => DynamicMepMutationPolicyV1.ValidateGraphShape(graph));
@@ -52,6 +52,10 @@ public sealed class MepResultReferenceOperationsTests
         var selector = new DynamicMepConnectorSelectorV1 { SourceIdentityHash = H("source"), ExpectedOriginFeet = new DynamicPointV1(), ExpectedDomain = "DomainPiping", ExpectedShape = "Round" };
         var encoded = selector.Canonical(); Assert.Equal(encoded, DynamicMepConnectorSelectorV1.ParseCanonical(encoded).Canonical());
         selector.ExpectedDomain = "DomainElectrical"; Assert.Throws<ArgumentException>(() => selector.Validate());
+        var round = Round(0.5); Assert.Equal(round.Canonical(), DynamicMepCurveSizeV1.ParseCanonical(round.Canonical()).Canonical());
+        round.WidthFeet = 1; Assert.Throws<ArgumentException>(() => round.Validate());
+        var rectangular = new DynamicMepCurveSizeV1 { Shape = "Rectangular", WidthFeet = 1, HeightFeet = 0.5 };
+        Assert.Equal(rectangular.Canonical(), DynamicMepCurveSizeV1.ParseCanonical(rectangular.Canonical()).Canonical());
     }
 
     [Fact]
@@ -82,6 +86,7 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Contains("DocumentChanged", host); Assert.Contains("ValidateAndConsumeAuthorization", host); Assert.Contains("group.RollBack()", host); Assert.Contains("group.Assimilate()", host);
         Assert.Contains("diverged from preview", host); Assert.Contains("VerifyLiveOutputs", host); Assert.Contains("Pipe.Create", executor); Assert.Contains("Duct.Create", executor);
         Assert.Contains("ConnectTo", executor); Assert.Contains("NewTransitionFitting", executor);
+        Assert.Contains("ApplyExactSize", executor); Assert.Contains("Created MEP curve dimensions differ", executor);
         Assert.Contains("mep-result-reference-pair/v1", executor); Assert.DoesNotContain("value.SourceKind + \":\" + value.SourceIdentity", executor);
     }
 
@@ -102,9 +107,10 @@ public sealed class MepResultReferenceOperationsTests
             ReadbackSetHash = DynamicMepMutationPolicyV1.ReadbackSetHash(new[] { readback }), TopologyHash = H("topology"), RollbackVerified = true };
         preview.PreviewHash = DynamicMepMutationPolicyV1.PreviewHash(preview); return preview;
     }
-    private static DynamicResultReferenceGraphV1 BuilderGraph() { var builder = Builder(); DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves"); return builder.Build(); }
+    private static DynamicResultReferenceGraphV1 BuilderGraph() { var builder = Builder(); DynamicMepResultReferenceBuilderV1.CreateMepCurve(builder, Curve(0, 10), Round(0.5), "system:piping", "type:pipe-a", "category:builtin:OST_PipeCurves"); return builder.Build(); }
     private static DynamicResultReferenceGraphBuilderV1 Builder() => new(H("input"), Document, "session-1", 7);
     private static DynamicMepCurveSpecV1 Curve(double start, double end) => new() { CurveKind = "pipe", StartFeet = new DynamicPointV1 { X = start }, EndFeet = new DynamicPointV1 { X = end }, LevelUniqueId = "level-1" };
+    private static DynamicMepCurveSizeV1 Round(double diameter) => new() { Shape = "Round", DiameterFeet = diameter };
     private static DynamicMepConnectorSelectorV1 Connector(DynamicSymbolicResultReferenceV1 reference, double x) => new() { SourceIdentityHash = H(reference.ResultId + "\n" + reference.OutputSlot), ExpectedOriginFeet = new DynamicPointV1 { X = x }, ExpectedDomain = "DomainPiping", ExpectedShape = "Round" };
     private static DynamicEffectBudgetV1 Budget() => new() { BudgetId = "mep-budget", TargetDocumentFingerprints = new[] { Document }, AllowedCategories = new[] { "category:builtin:OST_PipeCurves" }, AllowedSdkDomains = new[] { "mep" }, MaximumOperationCount = 8, MaximumAffectedElements = 8, MaximumCreates = 4, MaximumModifications = 4, MaximumOutputCount = 4, MaximumRegenerations = 8, FileCapabilitySetHash = H("none") };
     private static string H(string value) => DynamicWire.Sha256(value);

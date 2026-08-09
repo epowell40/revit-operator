@@ -46,7 +46,7 @@ public static class DynamicMepMutationManifestV1
 {
     private static readonly Type[] ContractTypes =
     {
-        typeof(DynamicMepMutationDescriptorV1), typeof(DynamicMepCurveSpecV1), typeof(DynamicMepConnectorSelectorV1),
+        typeof(DynamicMepMutationDescriptorV1), typeof(DynamicMepCurveSpecV1), typeof(DynamicMepCurveSizeV1), typeof(DynamicMepConnectorSelectorV1),
         typeof(DynamicMepSemanticEffectV1), typeof(DynamicMepObservedEffectV1), typeof(DynamicMepSemanticOutputV1),
         typeof(DynamicResultReferenceMutationReadbackV1),
         typeof(DynamicMepMutationPreviewV1), typeof(DynamicMepMutationApplyAuthorizationV1), typeof(DynamicMepMutationApplyReceiptV1),
@@ -54,7 +54,7 @@ public static class DynamicMepMutationManifestV1
     };
     private static readonly DynamicMepMutationDescriptorV1[] Descriptors =
     {
-        new("create_mep_curve", "create_mep_curve/v1", "create", 0, 0, 0, 0, 1, "curve", "system_type", "type_identity"),
+        new("create_mep_curve", "create_mep_curve/v2", "create", 0, 0, 0, 0, 1, "curve", "size", "system_type", "type_identity"),
         new("connect_mep", "connect_mep/v1", "modify", 0, 2, 0, 2, 0, "connector_a", "connector_b"),
         new("create_transition_fitting", "create_transition_fitting/v1", "create", 0, 2, 0, 2, 1, "connector_a", "connector_b", "expected_fitting_type")
     };
@@ -90,6 +90,52 @@ public static class DynamicMepMutationManifestV1
         if (!type.IsGenericType) return type.FullName ?? type.Name;
         var name = type.GetGenericTypeDefinition().FullName ?? type.Name; var tick = name.IndexOf('`'); if (tick >= 0) name = name.Substring(0, tick);
         return name + "<" + string.Join(",", type.GetGenericArguments().Select(TypeName)) + ">";
+    }
+}
+
+/// <summary>Exact internal-unit size for a newly created pipe or duct curve.</summary>
+public sealed class DynamicMepCurveSizeV1
+{
+    public string Shape { get; set; } = "";
+    public double? DiameterFeet { get; set; }
+    public double? HeightFeet { get; set; }
+    public double? WidthFeet { get; set; }
+
+    public string Canonical()
+    {
+        Validate();
+        return DynamicCanonical.Join("mep-curve-size/v1", Shape, Number(DiameterFeet), Number(HeightFeet), Number(WidthFeet));
+    }
+
+    public void Validate()
+    {
+        if (Shape == "Round")
+        {
+            RequireDimension(DiameterFeet, "diameter");
+            if (HeightFeet != null || WidthFeet != null) throw new ArgumentException("Round MEP size may specify only diameter.");
+            return;
+        }
+        if (Shape != "Rectangular" && Shape != "Oval") throw new ArgumentException("MEP curve size shape is invalid.");
+        RequireDimension(HeightFeet, "height"); RequireDimension(WidthFeet, "width");
+        if (DiameterFeet != null) throw new ArgumentException("Non-round MEP size may not specify diameter.");
+    }
+
+    public static DynamicMepCurveSizeV1 ParseCanonical(string value)
+    {
+        var parts = DynamicMepCurveSpecV1.Decode(value, 5, "MEP curve size");
+        if (parts[0] != "mep-curve-size/v1") throw new ArgumentException("MEP curve size canonical version is invalid.");
+        var result = new DynamicMepCurveSizeV1 { Shape = parts[1], DiameterFeet = Parse(parts[2]), HeightFeet = Parse(parts[3]), WidthFeet = Parse(parts[4]) };
+        result.Validate();
+        if (result.Canonical() != value) throw new ArgumentException("MEP curve size canonical bytes are not exact.");
+        return result;
+    }
+
+    private static string Number(double? value) => value == null ? "none" : DynamicCoreOperationCanonicalNumberV1.Format(value.Value);
+    private static double? Parse(string value) => value == "none" ? null : DynamicCoreOperationCanonicalNumberV1.ParseExact(value, "MEP curve size");
+    private static void RequireDimension(double? value, string name)
+    {
+        if (value == null || double.IsNaN(value.Value) || double.IsInfinity(value.Value) || value.Value < 1d / 384d || value.Value > 1_000d)
+            throw new ArgumentException("MEP curve " + name + " is outside the bounded internal-unit range.");
     }
 }
 
@@ -178,14 +224,15 @@ public sealed class DynamicMepConnectorSelectorV1
 public static class DynamicMepResultReferenceBuilderV1
 {
     public static DynamicResultOperationHandleV1 CreateMepCurve(DynamicResultReferenceGraphBuilderV1 builder, DynamicMepCurveSpecV1 curve,
-        string systemTypeUniqueId, string curveTypeUniqueId, string expectedCategoryStableId)
+        DynamicMepCurveSizeV1 size, string systemTypeUniqueId, string curveTypeUniqueId, string expectedCategoryStableId)
     {
-        if (builder == null) throw new ArgumentNullException(nameof(builder)); curve.Validate(); RequireId(systemTypeUniqueId); RequireId(curveTypeUniqueId); RequireId(expectedCategoryStableId);
+        if (builder == null) throw new ArgumentNullException(nameof(builder)); curve.Validate(); size.Validate(); RequireId(systemTypeUniqueId); RequireId(curveTypeUniqueId); RequireId(expectedCategoryStableId);
+        if (curve.CurveKind == "pipe" && size.Shape != "Round") throw new ArgumentException("Pipe curves require an exact round size.");
         var expected = curve.CurveKind == "pipe" ? "category:builtin:OST_PipeCurves" : "category:builtin:OST_DuctCurves";
         if (expectedCategoryStableId != expected) throw new ArgumentException("MEP curve output category does not match its declared curve kind.");
         return builder.AddOperation("create_mep_curve", null, null,
             new[] { new DynamicResultOutputSpecV1 { OutputSlot = "curve", ExpectedCategoryStableId = expectedCategoryStableId, ExpectedTypeUniqueId = curveTypeUniqueId } },
-            new Dictionary<string, string>(StringComparer.Ordinal) { ["curve"] = curve.Canonical(), ["system_type"] = systemTypeUniqueId, ["type_identity"] = curveTypeUniqueId });
+            new Dictionary<string, string>(StringComparer.Ordinal) { ["curve"] = curve.Canonical(), ["size"] = size.Canonical(), ["system_type"] = systemTypeUniqueId, ["type_identity"] = curveTypeUniqueId });
     }
 
     public static DynamicResultOperationHandleV1 ConnectMep(DynamicResultReferenceGraphBuilderV1 builder,
@@ -350,7 +397,9 @@ public static class DynamicMepMutationPolicyV1
             if (node.Kind == "create_mep_curve")
             {
                 var curve = DynamicMepCurveSpecV1.ParseCanonical(node.Attributes["curve"]);
+                var size = DynamicMepCurveSizeV1.ParseCanonical(node.Attributes["size"]);
                 if (!DynamicCanonical.Id(node.Attributes["system_type"], 256) || !DynamicCanonical.Id(node.Attributes["type_identity"], 256) ||
+                    curve.CurveKind == "pipe" && size.Shape != "Round" ||
                     node.Outputs[0].ExpectedCategoryStableId != (curve.CurveKind == "pipe" ? "category:builtin:OST_PipeCurves" : "category:builtin:OST_DuctCurves") ||
                     node.Outputs[0].ExpectedTypeUniqueId != node.Attributes["type_identity"])
                     throw new ArgumentException("MEP curve semantic declaration is invalid.");

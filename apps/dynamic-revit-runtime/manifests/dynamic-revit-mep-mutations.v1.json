@@ -1,16 +1,16 @@
 {
   "schema": "dynamic-revit-mep-mutation-manifest/v1",
-  "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:b0143efe46991992c9589cd89d97bf8a4b1f8ad0be6fbf09057e89f3bd3ad514",
-  "contractSurfaceHash": "sha256:e8f9019f34a4dc0a1353d53336ae0e09bcd705dd5a971be1e9fddb43b2cbb8dd",
-  "primitiveManifestHash": "sha256:6794bf78b3d65e7e9ec8bbe65a68c7ee51250848a05c8cd4971f7bc53fff5024",
+  "manifestVersion": "1.1.0",
+  "contractManifestHash": "sha256:a7026687f84e13c4b8407a109be1e946ab8d0033e7dd48eab043afa6b8143911",
+  "contractSurfaceHash": "sha256:2b65ee8a4f87bc1e8d29892e76d1211da84d4936153892f4ca62222524699433",
+  "primitiveManifestHash": "sha256:2249c982d95a92d4659f1016f99bbd72c77c57d496476e60703b980a6d550658",
   "resultReferenceManifestHash": "sha256:0230fdf6954c0128c8eb87afe559643196e53651037eb7a7980a2f369cc429f5",
   "canonicalVersion": "dynamic-revit-mep-mutation-canonical/v1",
   "maximumOperations": 64,
   "maximumEffects": 64,
   "maximumOutputs": 64,
   "primitives": [
-    { "kind": "create_mep_curve", "version": "create_mep_curve/v1", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 0, "resultReferenceMinimum": 0, "resultReferenceMaximum": 0, "outputs": 1, "attributes": ["curve", "system_type", "type_identity"] },
+    { "kind": "create_mep_curve", "version": "create_mep_curve/v2", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 0, "resultReferenceMinimum": 0, "resultReferenceMaximum": 0, "outputs": 1, "attributes": ["curve", "size", "system_type", "type_identity"] },
     { "kind": "connect_mep", "version": "connect_mep/v1", "effectClass": "modify", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 0, "attributes": ["connector_a", "connector_b"] },
     { "kind": "create_transition_fitting", "version": "create_transition_fitting/v1", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 1, "attributes": ["connector_a", "connector_b", "expected_fitting_type"] }
   ],

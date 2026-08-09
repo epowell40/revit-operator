@@ -19,7 +19,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         internal string TopologyHash { get; set; } = "";
     }
 
-    /// <summary>Trusted, unregistered laboratory executor for the three exact MEP graph primitives.</summary>
+    /// <summary>Trusted laboratory executor for the exact package-bound MEP graph primitives.</summary>
     internal sealed class DynamicMepResultReferenceExecutorV1 : IDynamicResultReferenceRevitLabExecutorV1
     {
         private readonly UIApplication _application;
@@ -42,6 +42,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         {
             if (resolvedTargets.Count != 0 || node.Outputs.Count != 1) throw new InvalidOperationException("MEP curve shape was substituted.");
             var spec = DynamicMepCurveSpecV1.ParseCanonical(node.Attributes["curve"]);
+            var requestedSize = DynamicMepCurveSizeV1.ParseCanonical(node.Attributes["size"]);
             var level = document.GetElement(spec.LevelUniqueId) as Level ?? throw new InvalidOperationException("Exact MEP curve level is missing.");
             var systemType = document.GetElement(node.Attributes["system_type"]) ?? throw new InvalidOperationException("Exact MEP system type is missing.");
             var curveType = document.GetElement(node.Attributes["type_identity"]) ?? throw new InvalidOperationException("Exact MEP curve type is missing.");
@@ -56,9 +57,49 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 if (!(systemType is MechanicalSystemType) || !(curveType is DuctType)) throw new InvalidOperationException("Duct system/type identity is incompatible.");
                 created = Duct.Create(document, systemType.Id, curveType.Id, level.Id, start, end);
             }
+            ApplyExactSize(created, requestedSize);
             document.Regenerate();
-            var readback = Readback(node, "result:" + node.Outputs[0].ResultId + ":curve", AbsentHash(), ElementState(created));
+            var observedSize = ReadExactSize(created);
+            if (observedSize.Canonical() != requestedSize.Canonical()) throw new InvalidOperationException("Created MEP curve dimensions differ from the exact requested internal-unit size.");
+            var readback = Readback(node, "result:" + node.Outputs[0].ResultId + ":curve", AbsentHash(), ElementState(created),
+                new Dictionary<string, string>(StringComparer.Ordinal) { ["size"] = observedSize.Canonical() });
             return Result(node, new[] { Output("curve", created) }, new[] { readback }, created);
+        }
+
+        private static void ApplyExactSize(Element element, DynamicMepCurveSizeV1 size)
+        {
+            var connectors = element is MEPCurve curve ? curve.ConnectorManager?.Connectors?.Cast<Connector>().ToArray() : null;
+            if (connectors == null || connectors.Length < 2 || connectors.Any(value => value.Shape.ToString() != size.Shape))
+                throw new InvalidOperationException("Created MEP curve type does not expose the requested exact connector shape.");
+            if (size.Shape == "Round") SetDouble(element, BuiltInParameter.RBS_CURVE_DIAMETER_PARAM, size.DiameterFeet!.Value);
+            else
+            {
+                SetDouble(element, BuiltInParameter.RBS_CURVE_WIDTH_PARAM, size.WidthFeet!.Value);
+                SetDouble(element, BuiltInParameter.RBS_CURVE_HEIGHT_PARAM, size.HeightFeet!.Value);
+            }
+        }
+
+        private static DynamicMepCurveSizeV1 ReadExactSize(Element element)
+        {
+            var connectors = element is MEPCurve curve ? curve.ConnectorManager?.Connectors?.Cast<Connector>().ToArray() : null;
+            if (connectors == null || connectors.Length < 2 || connectors.Select(value => value.Shape).Distinct().Count() != 1)
+                throw new InvalidOperationException("Created MEP curve connector sizes are unavailable or inconsistent.");
+            var first = connectors[0];
+            var result = first.Shape == ConnectorProfileType.Round
+                ? new DynamicMepCurveSizeV1 { Shape = "Round", DiameterFeet = first.Radius * 2d }
+                : new DynamicMepCurveSizeV1 { Shape = first.Shape.ToString(), WidthFeet = first.Width, HeightFeet = first.Height };
+            result.Validate();
+            if (connectors.Any(value => value.Shape.ToString() != result.Shape || result.Shape == "Round" && Math.Abs(value.Radius * 2d - result.DiameterFeet!.Value) > 1e-9 ||
+                result.Shape != "Round" && (Math.Abs(value.Width - result.WidthFeet!.Value) > 1e-9 || Math.Abs(value.Height - result.HeightFeet!.Value) > 1e-9)))
+                throw new InvalidOperationException("Created MEP curve endpoints do not share one exact size.");
+            return result;
+        }
+
+        private static void SetDouble(Element element, BuiltInParameter id, double value)
+        {
+            var parameter = element.get_Parameter(id);
+            if (parameter == null || parameter.StorageType != StorageType.Double || parameter.IsReadOnly || !parameter.Set(value) || Math.Abs(parameter.AsDouble() - value) > 1e-9)
+                throw new InvalidOperationException("Revit rejected exact MEP curve sizing.");
         }
 
         private DynamicMepLabExecutionV1 Connect(Document document, DynamicResultReferenceNodeV1 node,
