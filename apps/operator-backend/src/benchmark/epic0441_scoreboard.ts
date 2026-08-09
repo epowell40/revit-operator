@@ -91,6 +91,14 @@ function sha256(value: string | Buffer): string {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
+export function epic0441ReviewerPacketSha256(value: Buffer): string {
+  let decoded: string;
+  try { decoded = new TextDecoder("utf-8", { fatal: true }).decode(value); }
+  catch { throw new Error("Private reviewer packet must be valid UTF-8."); }
+  if (decoded.startsWith("\uFEFF")) throw new Error("Private reviewer packet must not contain a UTF-8 BOM.");
+  return sha256(Buffer.from(decoded.replace(/\r\n?/g, "\n"), "utf8"));
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -197,7 +205,7 @@ export function scoreEpic0441Campaign(options: {
   if (evidenceManifest.suite_id !== options.campaign.suite_id) throw new Error("Evidence manifest suite does not match campaign.");
   const reviewerPacketBytes = fs.readFileSync(options.reviewerPacketPath);
   if (reviewerPacketBytes.length === 0) throw new Error("Private reviewer packet must not be empty.");
-  const reviewerPacketSha256 = sha256(reviewerPacketBytes);
+  const reviewerPacketSha256 = epic0441ReviewerPacketSha256(reviewerPacketBytes);
   if (evidenceManifest.reviewer_packet_sha256 !== reviewerPacketSha256) {
     throw new Error("Reviewer packet hash does not match the private packet bytes.");
   }

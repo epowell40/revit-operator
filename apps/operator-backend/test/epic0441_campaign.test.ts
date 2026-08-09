@@ -13,6 +13,7 @@ import {
 } from "../src/benchmark/epic0441_campaign.js";
 import {
   createEpic0441EvidenceManifestSkeleton,
+  epic0441ReviewerPacketSha256,
   epic0441Ordering,
   scoreEpic0441Campaign,
   type Epic0441EvidenceManifest
@@ -27,6 +28,12 @@ test("EPIC-0441 evidence skeleton is complete, balanced, and conservatively unsc
   assert.equal(manifest.rows.filter(row => row.pair_order === 1 && row.representation === "dynamic_program").length, 15);
   assert.equal(manifest.rows.filter(row => row.classification === "sealed_not_yet_run").length, 6);
   assert.ok(manifest.rows.filter(row => row.classification !== "sealed_not_yet_run").every(row => row.classification === "source_only"));
+});
+
+test("EPIC-0441 reviewer packet seal is stable across Git LF and Windows CRLF checkouts", () => {
+  assert.equal(epic0441ReviewerPacketSha256(Buffer.from("{\n  \"task\": \"n28\"\n}\n")),
+    epic0441ReviewerPacketSha256(Buffer.from("{\r\n  \"task\": \"n28\"\r\n}\r\n")));
+  assert.throws(() => epic0441ReviewerPacketSha256(Buffer.from([0xff, 0xfe])), /UTF-8/);
 });
 
 test("EPIC-0441 freezes thirty paired, redline-led task slots", () => {

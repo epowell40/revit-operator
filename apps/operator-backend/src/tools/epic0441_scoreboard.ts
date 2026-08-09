@@ -1,8 +1,7 @@
 import path from "node:path";
 import fs from "node:fs";
-import crypto from "node:crypto";
 import { loadEpic0441Campaign } from "../benchmark/epic0441_campaign.js";
-import { createEpic0441EvidenceManifestSkeleton, scoreEpic0441Campaign } from "../benchmark/epic0441_scoreboard.js";
+import { createEpic0441EvidenceManifestSkeleton, epic0441ReviewerPacketSha256, scoreEpic0441Campaign } from "../benchmark/epic0441_scoreboard.js";
 import { writeJsonFile } from "../benchmark/files.js";
 
 function flag(name: string): string | undefined {
@@ -28,7 +27,7 @@ if (process.argv[2] === "init") {
   const reviewerBytes = fs.readFileSync(path.resolve(reviewerPacketPath));
   const manifest = createEpic0441EvidenceManifestSkeleton({
     campaign: loadEpic0441Campaign(), campaignSeed,
-    reviewerPacketSha256: `sha256:${crypto.createHash("sha256").update(reviewerBytes).digest("hex")}`
+    reviewerPacketSha256: epic0441ReviewerPacketSha256(reviewerBytes)
   });
   writeJsonFile(path.resolve(outputPath), manifest);
   console.log(JSON.stringify({ output: path.resolve(outputPath), row_count: manifest.rows.length, reviewer_packet_sha256: manifest.reviewer_packet_sha256 }, null, 2));
