@@ -90,6 +90,11 @@ const EPIC_0437_NATIVE_RUNTIME_DIRECTORY = "apps/revit-bridge-addin/RevitBridge/
 
 export type Epic0437HostRuntimeDependency = { path: string; sha256: string; assembly_full_name: string };
 export const EPIC_0437_REVIT_HOST_RUNTIME_DEPENDENCIES: Readonly<Record<string, Epic0437HostRuntimeDependency>> = {
+  "Microsoft.Bcl.AsyncInterfaces.dll": {
+    path: "C:\\Program Files\\Autodesk\\Carbon Insights for Revit 2024\\Microsoft.Bcl.AsyncInterfaces.dll",
+    sha256: "sha256:295af2142d9214f3fd84eafe4778dca119be7e0229f14b6ba8d5269c2f1e2e78",
+    assembly_full_name: "Microsoft.Bcl.AsyncInterfaces, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
+  },
   "Microsoft.Web.WebView2.Core.dll": {
     path: "C:\\Program Files\\Autodesk\\Revit 2024\\Microsoft.Web.WebView2.Core.dll",
     sha256: "sha256:f351435147bd9c6f70d9704ca1de3f170234fa9ccc536f1ac736c1c9bd20dcc3",
@@ -129,6 +134,11 @@ export const EPIC_0437_REVIT_HOST_RUNTIME_DEPENDENCIES: Readonly<Record<string, 
     path: "C:\\Program Files\\Autodesk\\Carbon Insights for Revit 2024\\System.Threading.Tasks.Extensions.dll",
     sha256: "sha256:4f81ffd0dc7204db75afc35ea4291769b07c440592f28894260eea76626a23c6",
     assembly_full_name: "System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
+  },
+  "System.ValueTuple.dll": {
+    path: "C:\\Windows\\Microsoft.Net\\assembly\\GAC_MSIL\\System.ValueTuple\\v4.0_4.0.0.0__cc7b13ffcd2ddd51\\System.ValueTuple.dll",
+    sha256: "sha256:62216986c754ad8f0ee68412c42cfc3fc6e025bd908ae1fef1a3a8d528b1495a",
+    assembly_full_name: "System.ValueTuple, Version=4.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
   }
 };
 

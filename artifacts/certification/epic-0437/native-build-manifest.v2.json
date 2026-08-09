@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:ac16330c5f040579ee89acd5f901edf518da62f5829ec2ed2942a504f26f99d0",
-  "source_inputs_hash": "sha256:3d922541e3a7c0416ba9852ec9b13673acd9d446d8fca56e554b87ef8085fad5",
+  "policy_hash": "sha256:18f0dfb746a72d4abb5d0e59cbabfe40bb5079b14f4a4d224d258acbc2eab339",
+  "source_inputs_hash": "sha256:0c6371ced36c35e3d6c3c8977d5a3eb09c1af9c2fa5e41b0b126a3b36104a32a",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -659,7 +659,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts",
-      "sha256": "sha256:5c787e78ebcd883491296c6ef2b7b4d231a5732c12372dac7486229adc0c71bb"
+      "sha256": "sha256:ae3cf13deb7e5ef006ad8a807daa5d14e9ff9cfeef3e3c6e3a81845c22da1bb8"
     },
     {
       "path": "apps/operator-backend/src/capabilities/safe_read_attestation_authority.ts",
@@ -2588,7 +2588,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeExecutionAttestationAuthorityTests.cs",
-      "sha256": "sha256:901ee5cbbb9f31d4bb6c7b77fb6539fb791d70d59545833ccf40206cf946538a"
+      "sha256": "sha256:cc6b1e0fa7e7ab655f074780e92ad95e5c4cca188b4efa3ce06cbf52da6bcf46"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeHttpAdmissionTests.cs",
@@ -2952,7 +2952,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryExecutionReceiptAuthority.cs",
-      "sha256": "sha256:a25d54610e2426c3408b393b69e3242447473b9082f5a7f87fa7424a9e68e51e"
+      "sha256": "sha256:f7a385320621d6da8cd47b20a8da66d3ba31a78c0711d256a6cb10634b23719c"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryMoveEvidenceAdmission.cs",
@@ -4309,15 +4309,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:d076d22136bcb80116c88e78f49965bd46742b23c56151633c946ed033a9fe39"
+      "sha256": "sha256:2aa695accc14fe457be6535a7b249a50deef910567475957e98f747a73a0be20"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:a09f01a1f6ef9ee8a20c93c79b9f823f9538d0bbf7f0924e095f001b615305ab"
+      "sha256": "sha256:212b5c835f7a529300e3cf3d6cb274328180d5fd25dd567723dc23d5f50da1c9"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:9cf7f9bc5119e43e2746b3bfee0a752ae515e7849adaf7a07fa4bd3106f18a90"
+      "sha256": "sha256:251fcd97a97af7a67053882306d5a18f1e067e7e94867a1768d903ce11506253"
     }
   },
   "runtime_dependencies": [
@@ -4325,7 +4325,11 @@
       "name": "Microsoft.Bcl.AsyncInterfaces.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/Microsoft.Bcl.AsyncInterfaces.dll",
       "sha256": "sha256:80678203bd0203a6594f4e330b22543c0de5059382bb1c9334b7868b8f31b1bc",
-      "host": null
+      "host": {
+        "path": "C:\\Program Files\\Autodesk\\Carbon Insights for Revit 2024\\Microsoft.Bcl.AsyncInterfaces.dll",
+        "sha256": "sha256:295af2142d9214f3fd84eafe4778dca119be7e0229f14b6ba8d5269c2f1e2e78",
+        "assembly_full_name": "Microsoft.Bcl.AsyncInterfaces, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
+      }
     },
     {
       "name": "Microsoft.Web.WebView2.Core.dll",
@@ -4360,19 +4364,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:d076d22136bcb80116c88e78f49965bd46742b23c56151633c946ed033a9fe39",
+      "sha256": "sha256:2aa695accc14fe457be6535a7b249a50deef910567475957e98f747a73a0be20",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:9cf7f9bc5119e43e2746b3bfee0a752ae515e7849adaf7a07fa4bd3106f18a90",
+      "sha256": "sha256:251fcd97a97af7a67053882306d5a18f1e067e7e94867a1768d903ce11506253",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:a09f01a1f6ef9ee8a20c93c79b9f823f9538d0bbf7f0924e095f001b615305ab",
+      "sha256": "sha256:212b5c835f7a529300e3cf3d6cb274328180d5fd25dd567723dc23d5f50da1c9",
       "host": null
     },
     {
@@ -4447,7 +4451,11 @@
       "name": "System.ValueTuple.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/System.ValueTuple.dll",
       "sha256": "sha256:e905d102585b22c6df04f219af5cbdbfa7bc165979e9788b62df6dcc165e10f4",
-      "host": null
+      "host": {
+        "path": "C:\\Windows\\Microsoft.Net\\assembly\\GAC_MSIL\\System.ValueTuple\\v4.0_4.0.0.0__cc7b13ffcd2ddd51\\System.ValueTuple.dll",
+        "sha256": "sha256:62216986c754ad8f0ee68412c42cfc3fc6e025bd908ae1fef1a3a8d528b1495a",
+        "assembly_full_name": "System.ValueTuple, Version=4.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"
+      }
     },
     {
       "name": "WebView2Loader.dll",
@@ -4456,6 +4464,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:c85e766b41fe2f5b0ad3c6ba4587da4d9425aa3c4fca28df97ba6c8f87587521",
-  "built_at_utc": "2026-08-09T01:40:23.363Z"
+  "runtime_dependencies_hash": "sha256:2511a4a634b04eb744a49d30c4b115cb506a7bf6cb4c49d007944722a295f9a4",
+  "built_at_utc": "2026-08-09T01:48:08.436Z"
 }

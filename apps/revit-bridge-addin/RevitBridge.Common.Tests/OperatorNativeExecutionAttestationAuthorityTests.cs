@@ -177,6 +177,43 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Laboratory_dependency_identity_rejects_two_exact_paths_with_the_same_reviewed_identity()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-same-identity-two-path-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var source = typeof(JsonDocument).Assembly.Location;
+                var deployed = Path.Combine(directory, "deployed-System.Text.Json.dll");
+                var host = Path.Combine(directory, "host-System.Text.Json.dll");
+                File.Copy(source, deployed);
+                File.Copy(source, host);
+                var identity = AssemblyName.GetAssemblyName(deployed).FullName!;
+                using var stream = File.OpenRead(host);
+                using var algorithm = SHA256.Create();
+                var hostHash = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "SelectManagedRuntimeDependencyPathWithApprovedHost", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object[]
+                {
+                    deployed, "System.Text.Json.dll",
+                    new[]
+                    {
+                        new KeyValuePair<string, string>(identity, deployed),
+                        new KeyValuePair<string, string>(identity, host)
+                    },
+                    host, hostHash, identity
+                }));
+                Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                    Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Fact]
         public void Laboratory_dependency_identity_rejects_duplicate_paths_for_the_reviewed_identity()
         {
             var directory = Path.Combine(Path.GetTempPath(), "revit-operator-duplicate-dependency-" + Guid.NewGuid().ToString("N"));

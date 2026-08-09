@@ -50,6 +50,10 @@ namespace RevitBridge.Common
         private static readonly IReadOnlyDictionary<string, ApprovedHostRuntimeDependency> ApprovedHostRuntimeDependencies =
             new Dictionary<string, ApprovedHostRuntimeDependency>(StringComparer.Ordinal)
             {
+                ["Microsoft.Bcl.AsyncInterfaces.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Program Files\Autodesk\Carbon Insights for Revit 2024\Microsoft.Bcl.AsyncInterfaces.dll",
+                    "sha256:295af2142d9214f3fd84eafe4778dca119be7e0229f14b6ba8d5269c2f1e2e78",
+                    "Microsoft.Bcl.AsyncInterfaces, Version=6.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"),
                 ["Microsoft.Web.WebView2.Core.dll"] = new ApprovedHostRuntimeDependency(
                     @"C:\Program Files\Autodesk\Revit 2024\Microsoft.Web.WebView2.Core.dll",
                     "sha256:f351435147bd9c6f70d9704ca1de3f170234fa9ccc536f1ac736c1c9bd20dcc3",
@@ -81,7 +85,11 @@ namespace RevitBridge.Common
                 ["System.Threading.Tasks.Extensions.dll"] = new ApprovedHostRuntimeDependency(
                     @"C:\Program Files\Autodesk\Carbon Insights for Revit 2024\System.Threading.Tasks.Extensions.dll",
                     "sha256:4f81ffd0dc7204db75afc35ea4291769b07c440592f28894260eea76626a23c6",
-                    "System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51")
+                    "System.Threading.Tasks.Extensions, Version=4.2.0.1, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51"),
+                ["System.ValueTuple.dll"] = new ApprovedHostRuntimeDependency(
+                    @"C:\Windows\Microsoft.Net\assembly\GAC_MSIL\System.ValueTuple\v4.0_4.0.0.0__cc7b13ffcd2ddd51\System.ValueTuple.dll",
+                    "sha256:62216986c754ad8f0ee68412c42cfc3fc6e025bd908ae1fef1a3a8d528b1495a",
+                    "System.ValueTuple, Version=4.0.0.0, Culture=neutral, PublicKeyToken=cc7b13ffcd2ddd51")
             };
 
         public static OperatorLaboratoryCourierReceiptContext BeginCourierExecution(
@@ -431,6 +439,10 @@ namespace RevitBridge.Common
                 if (deployedExists) return deployedPath;
                 throw Denied("Protected laboratory evidence did not load the exact reviewed host runtime dependency " + name + ".");
             }
+            if (loadedDeployed && loadedApprovedHost
+                && string.Equals(deployedIdentity, approvedHostAssemblyFullName, StringComparison.Ordinal)
+                && !string.Equals(deployedFullPath, approvedHostFullPath, StringComparison.OrdinalIgnoreCase))
+                throw Denied("Protected laboratory evidence found multiple loaded reviewed-identity copies of " + name + ".");
             return loadedDeployed ? deployedFullPath : approvedHostFullPath;
         }
 
