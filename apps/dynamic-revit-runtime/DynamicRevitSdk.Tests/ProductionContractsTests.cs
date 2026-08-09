@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Security.Cryptography;
 using RevitOperator.DynamicRevitSdk;
 using Xunit;
@@ -27,6 +28,14 @@ public sealed class ProductionContractsTests
         Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true));
         expected.DocumentRevision = admission.DocumentRevision; expected.FinalAuthorizationHash = H("other-auth");
         Assert.Throws<InvalidOperationException>(() => DynamicProgramAdmissionV1Policy.ValidateAndConsume(admission, expected, key, Now(), _ => true));
+    }
+
+    [Fact]
+    public void AdmissionV1SignatureMatchesBackendGoldenVector()
+    {
+        var admission = AdmissionGoldenVector();
+        Assert.Equal("hmac-sha256:38dcc8b3d4061dd601fb89136455ca5cf47a7c0522ff81ca922fae5d7bde2ad7",
+            DynamicProgramAdmissionV1Policy.Sign(admission, Enumerable.Repeat((byte)7, 32).ToArray()));
     }
 
     [Fact]
@@ -137,6 +146,19 @@ public sealed class ProductionContractsTests
         };
     }
 
+    private static DynamicProgramAdmissionV1 AdmissionGoldenVector() => new()
+    {
+        AdmissionId = "admission-1", NormalizedSourceHash = RepeatedHash('a'), CompiledArtifactHash = RepeatedHash('b'), CompilerRuntimeHash = RepeatedHash('c'),
+        SdkVersion = "dynamic-revit-sdk/v1", SdkManifestHash = RepeatedHash('d'), SdkArtifactHash = RepeatedHash('e'), WorkerExecutableHash = RepeatedHash('f'),
+        WorkerRuntimePackageHash = RepeatedHash('1'), SandboxProfileVersion = "windows-appcontainer/v2", SandboxProfileHash = RepeatedHash('2'),
+        AuthenticatedWorkerIdentityHash = RepeatedHash('3'), TargetRevitVersion = "2024", HostAdapterManifestHash = RepeatedHash('4'),
+        DocumentFingerprint = RepeatedHash('5'), DocumentSessionId = "session-1", DocumentRevision = 10, ProjectContextIdentityHash = RepeatedHash('6'),
+        CapabilityEnvelopeHash = RepeatedHash('7'), OperationFamilyEnvelopeHash = RepeatedHash('8'), EffectBudgetHash = RepeatedHash('9'), FileCapabilitySetHash = RepeatedHash('0'),
+        OperationGraphHash = RepeatedHash('A'), PreviewReceiptHash = RepeatedHash('B'), PolicyIdentityHash = RepeatedHash('C'), RuntimeIdentityHash = RepeatedHash('D'),
+        RequestFamilySealHash = RepeatedHash('E'), FinalAuthorizationHash = RepeatedHash('F'), PrincipalIdHash = RepeatedHash('P'), PrincipalSessionHash = RepeatedHash('S'),
+        CorrelationId = "correlation-1", ReplayNonceHash = RepeatedHash('N'), IssuedUnixSeconds = 1000, ExpiresUnixSeconds = 1060
+    };
+
     private static DynamicProgramAdmissionExpectationsV1 Expectations(DynamicProgramAdmissionV1 value) => new()
     {
         NormalizedSourceHash = value.NormalizedSourceHash, CompiledArtifactHash = value.CompiledArtifactHash, SdkManifestHash = value.SdkManifestHash,
@@ -186,5 +208,6 @@ public sealed class ProductionContractsTests
     };
 
     private static string H(string value) => DynamicWire.Sha256(value);
+    private static string RepeatedHash(char value) => "sha256:" + string.Concat(Enumerable.Repeat(((int)value).ToString("x2"), 32));
     private static long Now() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 }
