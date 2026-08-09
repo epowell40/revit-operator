@@ -191,6 +191,34 @@ test("duplicate task arms, assignment replay, score replay, duplicate result, an
   assert.throws(() => verifyEpic0442AuthenticatedChain({ publicKey: first.scorer.publicKey(), campaignReceipt, assignmentReceipts: [typedAssignment], results: [] }), /exactly one authenticated result/);
 });
 
+test("invalid receipt lifetimes fail before consuming durable campaign or assignment replay slots", () => {
+  const { scorer } = authority();
+  assert.throws(() => scorer.issueCampaign({ campaign, campaignVersion: "lifetime-retry-v1", campaignNonce: "bad-lifetime-campaign", lifetimeSeconds: 31_536_001 }), /lifetime/);
+  const campaignReceipt = scorer.issueCampaign({ campaign, campaignVersion: "lifetime-retry-v1", campaignNonce: "valid-lifetime-campaign", lifetimeSeconds: 86_400 });
+  const invalid = {
+    campaign,
+    campaignReceipt,
+    taskId: "r05_add_tag",
+    configId: "epic0441_typed_v1",
+    representation: "typed_capability_chain" as const,
+    pairOrder: 1 as const,
+    fixtureId: "snowdon-electrical-disposable-copy",
+    fixtureSha256: h("fixture"),
+    fixtureAdapterSha256: h("hidden-adapter"),
+    promptId: "r05-holdout-wording-01",
+    promptSha256: h("unseen prompt bytes"),
+    substrate: "snowdon_electrical",
+    provider: "operator_typed_planner",
+    model: "deterministic-v1",
+    actionPolicy: "apply_cleanup" as const,
+    assignmentId: "lifetime-retry-assignment",
+    assignmentNonce: "lifetime-retry-nonce"
+  };
+  assert.throws(() => scorer.issueAssignment({ ...invalid, lifetimeSeconds: 86_401 }), /lifetime/);
+  const receipt = scorer.issueAssignment({ ...invalid, lifetimeSeconds: 3_600 });
+  assert.equal(receipt.assignment_id, "lifetime-retry-assignment");
+});
+
 test("durable scorer replay survives fresh authority instances and separates namespaces", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "epic0442-scorer-replay-"));
   try {

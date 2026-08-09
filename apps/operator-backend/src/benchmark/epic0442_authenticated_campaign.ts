@@ -430,13 +430,14 @@ export class Epic0442ScorerAuthority {
   issueCampaign(args: { campaign: Epic0441Campaign; campaignVersion: string; campaignNonce?: string; lifetimeSeconds?: number }): Epic0442CampaignReceipt {
     this.#assertSignerEnabled(); validateEpic0441Campaign(args.campaign); const issued = this.#now(); const nonce = args.campaignNonce ?? randomUUID();
     string(args.campaignVersion, "Campaign version"); string(nonce, "Campaign nonce");
+    const lifetime = integer(args.lifetimeSeconds ?? 86_400, "Campaign receipt lifetime", 1, 31_536_000);
     const campaignKey = `${args.campaign.suite_id}\0${args.campaignVersion}`;
     if (!this.#replay.reserve("campaign", `version\0${campaignKey}`)) throw new Error("Campaign version was already authenticated.");
     if (!this.#replay.reserve("campaign", `nonce\0${nonce}`)) throw new Error("Campaign receipt nonce was replayed.");
     const receipt = signed({ schema_version: "epic0442_authenticated_campaign_receipt/v1" as const, ...this.#authority(), suite_id: args.campaign.suite_id,
       campaign_version: args.campaignVersion, source_campaign_schema_version: args.campaign.schema_version,
       source_campaign_sha256: epic0442SourceCampaignSha256(args.campaign), campaign_nonce: nonce, issued_unix_seconds: issued,
-      expires_unix_seconds: issued + (args.lifetimeSeconds ?? 86_400) }, this.#privateKey);
+      expires_unix_seconds: issued + lifetime }, this.#privateKey);
     validateCampaignReceipt(receipt); return receipt;
   }
 
@@ -458,6 +459,7 @@ export class Epic0442ScorerAuthority {
     if (task.wave !== "novel_post_freeze" && task.substrate !== args.substrate) throw new Error("Assignment substrate does not match the frozen campaign task.");
     const expectedPolicy = task.action_policy === "dry_run_only" ? "preview_only" : "apply_cleanup";
     if (args.actionPolicy !== expectedPolicy) throw new Error("Assignment action policy does not match the frozen campaign task.");
+    const lifetime = integer(args.lifetimeSeconds ?? 3_600, "Assignment receipt lifetime", 1, 86_400);
     const issued = this.#now(); if (issued >= args.campaignReceipt.expires_unix_seconds) throw new Error("Campaign receipt expired before assignment.");
     const campaignHash = envelopeHash(args.campaignReceipt); const armKey = `${campaignHash}\0${args.taskId}\0${args.configId}\0${args.representation}`;
     const assignmentId = args.assignmentId ?? randomUUID(); const assignmentNonce = args.assignmentNonce ?? randomUUID();
@@ -469,7 +471,7 @@ export class Epic0442ScorerAuthority {
       representation: args.representation, pair_order: args.pairOrder, fixture_id: args.fixtureId, fixture_sha256: args.fixtureSha256,
       fixture_adapter_sha256: args.fixtureAdapterSha256, prompt_id: args.promptId, prompt_sha256: args.promptSha256, substrate: args.substrate,
       provider: args.provider, model: args.model, action_policy: args.actionPolicy, issued_unix_seconds: issued,
-      expires_unix_seconds: Math.min(args.campaignReceipt.expires_unix_seconds, issued + (args.lifetimeSeconds ?? 3_600)) }, this.#privateKey);
+      expires_unix_seconds: Math.min(args.campaignReceipt.expires_unix_seconds, issued + lifetime) }, this.#privateKey);
     validateAssignmentReceipt(receipt); return receipt;
   }
 
