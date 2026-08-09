@@ -115,6 +115,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (aTarget.SourceKind == bTarget.SourceKind && aTarget.SourceIdentity == bTarget.SourceIdentity) throw new InvalidOperationException("MEP connector selectors resolved the same source.");
             var a = ResolveConnector(document, aTarget, aSelector); var b = ResolveConnector(document, bTarget, bSelector);
             if (a.Owner.Id == b.Owner.Id || a.Domain != b.Domain || a.Shape != b.Shape) throw new InvalidOperationException("MEP connectors are self, cross-domain, or cross-shape.");
+            var aOwnerId = ElementIdCompat.GetValue(a.Owner.Id); var bOwnerId = ElementIdCompat.GetValue(b.Owner.Id);
+            var aOwnerUniqueId = a.Owner.UniqueId; var bOwnerUniqueId = b.Owner.UniqueId;
             var subject = "pair:" + DynamicWire.Sha256("mep-result-reference-pair/v1\n" + string.Join("\n", resolvedTargets
                 .Select(value => value.SourceKind + ":" + DynamicWire.Sha256(value.SourceIdentity))
                 .OrderBy(value => value, StringComparer.Ordinal)));
@@ -127,6 +129,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 document.Regenerate();
                 if (TypeUniqueId(document, fitting) != node.Attributes["expected_fitting_type"])
                     throw new InvalidOperationException("Routing preferences produced a different fitting type.");
+                var refreshed = ResolveFittingCounterparts(document, fitting, aOwnerId, aOwnerUniqueId, bOwnerId, bOwnerUniqueId);
+                a = refreshed.Item1; b = refreshed.Item2;
             }
             else { a.ConnectTo(b); document.Regenerate(); }
             if (!Connected(a, b, fitting)) throw new InvalidOperationException("MEP topology readback does not prove the requested connection.");
@@ -184,6 +188,23 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var fittingIds = (fitting as FamilyInstance)?.MEPModel?.ConnectorManager?.Connectors.Cast<Connector>()
                 .SelectMany(value => value.AllRefs.Cast<Connector>()).Select(value => value.Owner.Id).ToArray() ?? Array.Empty<ElementId>();
             return fittingIds.Contains(a.Owner.Id) && fittingIds.Contains(b.Owner.Id);
+        }
+
+        private static Tuple<Connector, Connector> ResolveFittingCounterparts(Document document, Element fitting,
+            long aOwnerId, string aOwnerUniqueId, long bOwnerId, string bOwnerUniqueId)
+        {
+            var aOwner = document.GetElement(ElementIdCompat.Create(aOwnerId));
+            var bOwner = document.GetElement(ElementIdCompat.Create(bOwnerId));
+            if (aOwner == null || bOwner == null || aOwner.UniqueId != aOwnerUniqueId || bOwner.UniqueId != bOwnerUniqueId)
+                throw new InvalidOperationException("A fitting connection recycled or removed an exact connector owner.");
+            var counterparts = (fitting as FamilyInstance)?.MEPModel?.ConnectorManager?.Connectors.Cast<Connector>()
+                .SelectMany(value => value.AllRefs.Cast<Connector>())
+                .Where(value => value.Owner != null && (ElementIdCompat.GetValue(value.Owner.Id) == aOwnerId || ElementIdCompat.GetValue(value.Owner.Id) == bOwnerId))
+                .ToArray() ?? Array.Empty<Connector>();
+            var a = counterparts.Where(value => ElementIdCompat.GetValue(value.Owner.Id) == aOwnerId).ToArray();
+            var b = counterparts.Where(value => ElementIdCompat.GetValue(value.Owner.Id) == bOwnerId).ToArray();
+            if (a.Length != 1 || b.Length != 1) throw new InvalidOperationException("A created fitting did not expose exactly one live counterpart on each declared owner.");
+            return Tuple.Create(a[0], b[0]);
         }
 
         private static string PairState(Connector a, Connector b) => DynamicWire.Sha256("mep-pair/v1\n" + string.Join("\n", new[] { ConnectorState(a), ConnectorState(b) }.OrderBy(value => value, StringComparer.Ordinal)));
