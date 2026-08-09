@@ -106,9 +106,16 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 var connected = new List<string>();
                 foreach (Connector counterpart in connector.AllRefs)
                 {
+                    var counterpartElement = counterpart?.Owner;
+                    if (counterpartElement == null || counterpartElement.Id == null || counterpartElement.Id == element.Id || counterpartElement is MEPSystem)
+                        continue;
+                    bool physicallyConnected;
+                    try { physicallyConnected = connector.IsConnectedTo(counterpart); }
+                    catch (Exception ex) { throw new InvalidOperationException("Physical connector relationship could not be verified.", ex); }
+                    if (!physicallyConnected) continue;
                     if (connected.Count >= DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector)
                         throw new InvalidOperationException("Connector counterpart count exceeds its bound.");
-                    var counterpartOwner = counterpart.Owner?.UniqueId ?? throw new InvalidOperationException("Connected connector owner lacks a stable identity.");
+                    var counterpartOwner = counterpartElement.UniqueId ?? throw new InvalidOperationException("Connected connector owner lacks a stable identity.");
                     connected.Add(DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(snapshotHash, counterpartOwner, ConnectorId(counterpart)));
                 }
                 var frame = CanonicalFrame(coordinate);
@@ -120,6 +127,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     FlowDirection = RequiredProperty(connector, "Direction"), SystemClassification = Classification(connector),
                     RadiusFeet = NumberProperty(connector, "Radius"), HeightFeet = NumberProperty(connector, "Height"), WidthFeet = NumberProperty(connector, "Width"),
                     System = connector.MEPSystem == null ? null : Reference(connector.MEPSystem, "system"),
+                    IsPhysicallyConnected = connected.Count > 0,
                     ConnectedCounterpartIds = connected.Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray()
                 });
             }

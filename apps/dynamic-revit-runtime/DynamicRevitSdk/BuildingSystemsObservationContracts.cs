@@ -13,7 +13,7 @@ public static class DynamicBuildingSystemsObservationContractV1
     public const string SelectorSchema = "dynamic-revit-building-systems-selector/v1";
     public const string EnvelopeSchema = "dynamic-revit-building-systems-envelope/v1";
     public const string CursorSchema = "dynamic-revit-building-systems-cursor/v1";
-    public const string CanonicalVersion = "dynamic-revit-building-systems-canonical/v2";
+    public const string CanonicalVersion = "dynamic-revit-building-systems-canonical/v3";
     public const int MaximumRequestBytes = 64 * 1024;
     public const int MaximumPageSize = 128;
     public const int MaximumObservedFacts = 2048;
@@ -120,6 +120,7 @@ public sealed class DynamicBuildingConnectorV1
     public double? HeightFeet { get; set; }
     public double? WidthFeet { get; set; }
     public DynamicStableReferenceV1? System { get; set; }
+    public bool IsPhysicallyConnected { get; set; }
     public IReadOnlyList<string> ConnectedCounterpartIds { get; set; } = Array.Empty<string>();
 }
 
@@ -300,6 +301,7 @@ public static class DynamicBuildingSystemsObservationPolicyV1
         foreach (var size in new[] { value.RadiusFeet, value.HeightFeet, value.WidthFeet }) if (size.HasValue && (!Finite(size.Value) || size.Value < 0 || size.Value > MaximumCoordinate)) throw new ArgumentException("Connector size is invalid.");
         Reference(value.System, false, "system"); Strings(value.ConnectedCounterpartIds, DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector, 148, "connected counterparts");
         if (value.ConnectedCounterpartIds.Any(id => !id.StartsWith(prefix, StringComparison.Ordinal) || id.Length != 148 || !DynamicCanonical.Hash("sha256:" + id.Substring(prefix.Length)))) throw new ArgumentException("Connected counterpart identity is invalid.");
+        if (value.IsPhysicallyConnected != (value.ConnectedCounterpartIds.Count > 0)) throw new ArgumentException("Physical connector state contradicts its counterpart set.");
     }
 
     private static void Curve(DynamicMepCurveFactV1 value)
@@ -317,7 +319,7 @@ public static class DynamicBuildingSystemsObservationPolicyV1
     private static string CurveCanonical(DynamicMepCurveFactV1? value) => value == null ? "" : DynamicCanonical.Join(Pt(value.Start), Pt(value.End), value.CurveKind, value.Shape, Num(value.DiameterFeet), Num(value.HeightFeet), Num(value.WidthFeet), Num(value.OffsetFeet), Num(value.Slope), Ref(value.Level), Ref(value.Type), DynamicCanonical.Set(value.Systems.Select(Ref)));
     private static string AssetCanonical(DynamicBuildingAssetFactV1? value) => value == null ? "" : DynamicCanonical.Join(value.AssetClass, Pt(value.Location), Tx(value.Orientation), Ref(value.Family), Ref(value.Type), Ref(value.Host), Ref(value.Level), Ref(value.Workset));
     private static string SystemCanonical(DynamicBuildingSystemFactV1? value) => value == null ? "" : DynamicCanonical.Join(value.Domain, value.Classification, Ref(value.Type), DynamicCanonical.Set(value.Members.Select(Ref)));
-    private static string ConnectorCanonical(DynamicBuildingConnectorV1 value) => DynamicCanonical.Join(value.StableWithinSnapshotId, Pt(value.Origin), Pt(value.BasisX), Pt(value.BasisY), Pt(value.BasisZ), value.Domain, value.ConnectorType, value.Shape, value.FlowDirection, value.SystemClassification, Num(value.RadiusFeet), Num(value.HeightFeet), Num(value.WidthFeet), Ref(value.System), DynamicCanonical.Set(value.ConnectedCounterpartIds));
+    private static string ConnectorCanonical(DynamicBuildingConnectorV1 value) => DynamicCanonical.Join(value.StableWithinSnapshotId, Pt(value.Origin), Pt(value.BasisX), Pt(value.BasisY), Pt(value.BasisZ), value.Domain, value.ConnectorType, value.Shape, value.FlowDirection, value.SystemClassification, Num(value.RadiusFeet), Num(value.HeightFeet), Num(value.WidthFeet), Ref(value.System), value.IsPhysicallyConnected ? "1" : "0", DynamicCanonical.Set(value.ConnectedCounterpartIds));
     private static string ParameterCanonical(DynamicParameterValueV1 value) => DynamicCanonical.Join(value.Identity, value.Name, value.StorageKind, value.HasValue ? "1" : "0", value.RawString, value.RawInteger?.ToString(CultureInfo.InvariantCulture), Num(value.RawDouble), value.RawElementId?.ToString(CultureInfo.InvariantCulture), value.FormattedValue, value.SpecTypeId, value.UnitTypeId, value.Scope, value.Writable ? "1" : "0");
     private static void Parameter(DynamicParameterValueV1 value)
     {

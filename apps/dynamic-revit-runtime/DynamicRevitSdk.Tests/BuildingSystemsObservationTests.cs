@@ -48,11 +48,15 @@ public sealed class BuildingSystemsObservationTests
     {
         var left = CurveFact("a"); var baseline = DynamicBuildingSystemsObservationPolicyV1.RevisionHash(Fingerprint, "session", 7, Snapshot, new[] { left });
         left.Connectors[0].ConnectedCounterpartIds = new[] { DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(Snapshot, "owner-c", "7") };
+        left.Connectors[0].IsPhysicallyConnected = true;
         var topologyChanged = DynamicBuildingSystemsObservationPolicyV1.RevisionHash(Fingerprint, "session", 7, Snapshot, new[] { left });
         Assert.NotEqual(baseline, topologyChanged);
         Assert.NotEqual(DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(Snapshot, "owner-a", "1"),
             DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(H("next-snapshot"), "owner-a", "1"));
         Assert.DoesNotContain(typeof(DynamicBuildingConnectorV1).GetProperties(), property => property.Name.Contains("Handle", StringComparison.OrdinalIgnoreCase) || property.Name == "ConnectorId");
+
+        left.Connectors[0].IsPhysicallyConnected = false;
+        Assert.Throws<ArgumentException>(() => DynamicBuildingSystemsObservationPolicyV1.ValidateFact(left, Snapshot));
     }
 
     [Fact]
@@ -113,6 +117,9 @@ public sealed class BuildingSystemsObservationTests
         Assert.Contains("transform.BasisX - z.Multiply(transform.BasisX.DotProduct(z))", source);
         Assert.Contains("var y = z.CrossProduct(x).Normalize();", source);
         Assert.Contains("name == \"OST_DuctTerminal\"", source);
+        Assert.Contains("counterpartElement.Id == element.Id", source);
+        Assert.Contains("counterpartElement is MEPSystem", source);
+        Assert.Contains("connector.IsConnectedTo(counterpart)", source);
     }
 
     [Fact]
@@ -125,7 +132,7 @@ public sealed class BuildingSystemsObservationTests
         var adjacent = DynamicBuildingSystemsObservationPolicyV1.RevisionHash(Fingerprint, "session", 9, Snapshot, new[] { fact });
 
         Assert.NotEqual(first, adjacent);
-        Assert.Equal("dynamic-revit-building-systems-canonical/v2", DynamicBuildingSystemsObservationContractV1.CanonicalVersion);
+        Assert.Equal("dynamic-revit-building-systems-canonical/v3", DynamicBuildingSystemsObservationContractV1.CanonicalVersion);
         var source = File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "DynamicRevitSdk", "BuildingSystemsObservationContracts.cs")));
         Assert.Contains("BitConverter.DoubleToInt64Bits", source);
         Assert.DoesNotContain("value.ToString(\"R\"", source);
@@ -141,6 +148,7 @@ public sealed class BuildingSystemsObservationTests
             Origin = Point(0, 0, 0), BasisX = Point(1, 0, 0), BasisY = Point(0, 1, 0), BasisZ = Point(0, 0, 1),
             Domain = "DomainHvac", ConnectorType = "End", Shape = "Rectangular", FlowDirection = "Out",
             SystemClassification = "DuctSystemType=SupplyAir", HeightFeet = 1, WidthFeet = 2,
+            IsPhysicallyConnected = true,
             ConnectedCounterpartIds = new[] { DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(Snapshot, "owner-b", "2") }
         };
         return new DynamicBuildingSystemsFactV1
