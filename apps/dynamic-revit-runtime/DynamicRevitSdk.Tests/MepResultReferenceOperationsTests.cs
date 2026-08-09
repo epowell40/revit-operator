@@ -103,6 +103,7 @@ public sealed class MepResultReferenceOperationsTests
         Assert.Contains("diverged from preview", host); Assert.Contains("VerifyLiveOutputs", host); Assert.Contains("Pipe.Create", executor); Assert.Contains("Duct.Create", executor);
         Assert.Contains("ConnectTo", executor); Assert.Contains("NewTransitionFitting", executor);
         Assert.Contains("NewElbowFitting", executor);
+        Assert.Contains("\"create_elbow_fitting\"", host);
         Assert.Contains("ApplyExactSize", executor); Assert.Contains("Created MEP curve dimensions differ", executor);
         Assert.Contains("mep-result-reference-pair/v1", executor); Assert.DoesNotContain("value.SourceKind + \":\" + value.SourceIdentity", executor);
     }

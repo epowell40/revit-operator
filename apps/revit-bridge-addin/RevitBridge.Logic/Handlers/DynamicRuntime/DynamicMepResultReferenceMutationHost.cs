@@ -18,7 +18,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicMepResultReferenceMutationHostV1
     {
         private const int BaselineLimit = 50000;
-        private static readonly string[] Kinds = { "create_mep_curve", "connect_mep", "create_transition_fitting" };
+        private static readonly string[] Kinds = { "create_mep_curve", "connect_mep", "create_elbow_fitting", "create_transition_fitting" };
 
         internal static DynamicMepMutationPreviewV1 Preview(UIApplication application, DynamicResultReferenceGraphV1 graph,
             DynamicEffectBudgetV1 budget, IReadOnlyDictionary<string, DynamicTrustedElementFactV1> admissionTargets, long trustedDocumentRevision)
