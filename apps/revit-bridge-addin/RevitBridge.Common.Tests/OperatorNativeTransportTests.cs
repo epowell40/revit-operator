@@ -235,6 +235,20 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void DynamicRollbackBaselinesApplyExplicitRevitCollectorFilters()
+        {
+            var root = FindRepositoryRoot();
+            foreach (var file in new[] { "DynamicCoreOperationHost.cs", "DynamicMepResultReferenceMutationHost.cs" })
+            {
+                var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", file));
+                Assert.Contains("foreach (var element in AllElements(document))", source);
+                Assert.Contains("new FilteredElementCollector(document).WhereElementIsNotElementType()", source);
+                Assert.Contains("new FilteredElementCollector(document).WhereElementIsElementType()", source);
+                Assert.DoesNotContain("foreach (var element in new FilteredElementCollector(document))", source);
+            }
+        }
+
+        [Fact]
         public void NativeServerDiscoveryReceiptsAreOwnedAndFailClosedAcrossRevitProcesses()
         {
             var root = FindRepositoryRoot();

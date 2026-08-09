@@ -201,9 +201,14 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
 
         private static Dictionary<long, Baseline> CaptureBaseline(Document document)
         {
-            var result = new Dictionary<long, Baseline>(); foreach (var element in new FilteredElementCollector(document))
+            var result = new Dictionary<long, Baseline>(); foreach (var element in AllElements(document))
             { if (result.Count >= BaselineLimit) throw new InvalidOperationException("MEP exact rollback baseline exceeds 50000 elements."); result[ElementIdCompat.GetValue(element.Id)] = new Baseline { UniqueId = element.UniqueId ?? "", StateHash = StateHash(element) }; }
             return result;
+        }
+        private static IEnumerable<Element> AllElements(Document document)
+        {
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsNotElementType()) yield return element;
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsElementType()) yield return element;
         }
         private static bool VerifyRollback(Document document, IReadOnlyDictionary<long, Baseline> baseline, IEnumerable<long> ids) => ids.All(id =>
         { var current = document.GetElement(ElementIdCompat.Create(id)); return baseline.TryGetValue(id, out var prior) ? current != null && current.UniqueId == prior.UniqueId && StateHash(current) == prior.StateHash : current == null; });

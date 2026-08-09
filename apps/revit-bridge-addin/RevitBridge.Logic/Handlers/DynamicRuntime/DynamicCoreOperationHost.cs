@@ -295,13 +295,19 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private static Dictionary<long, Baseline> CaptureBaseline(Document document)
         {
             var result = new Dictionary<long, Baseline>();
-            foreach (var element in new FilteredElementCollector(document))
+            foreach (var element in AllElements(document))
             {
                 if (result.Count >= BaselineLimit) throw new InvalidOperationException("Core-operation exact baseline exceeds 50000 elements.");
                 var id = ElementIdCompat.GetValue(element.Id);
                 result[id] = new Baseline { UniqueId = element.UniqueId ?? "", StateHash = CoreTrustedElementStateHash(element) };
             }
             return result;
+        }
+
+        private static IEnumerable<Element> AllElements(Document document)
+        {
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsNotElementType()) yield return element;
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsElementType()) yield return element;
         }
 
         private static bool VerifyRollback(Document document, IReadOnlyDictionary<long, Baseline> baseline, IEnumerable<long> affected)
