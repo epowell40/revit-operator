@@ -112,6 +112,7 @@ public sealed class BuildingSystemsObservationTests
         Assert.Contains("var frame = CanonicalFrame(coordinate);", source);
         Assert.Contains("transform.BasisX - z.Multiply(transform.BasisX.DotProduct(z))", source);
         Assert.Contains("var y = z.CrossProduct(x).Normalize();", source);
+        Assert.Contains("name == \"OST_DuctTerminal\"", source);
     }
 
     [Fact]

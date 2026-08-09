@@ -83,7 +83,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (!(element is FamilyInstance)) return null;
             var name = BuiltInCategoryName(element.Category);
             if (new[] { "OST_MechanicalEquipment", "OST_ElectricalEquipment" }.Contains(name, StringComparer.Ordinal)) return "equipment";
-            if (name != null && (name.EndsWith("Devices", StringComparison.Ordinal) || name == "OST_ElectricalFixtures" || name == "OST_LightingFixtures")) return "device";
+            if (name != null && (name.EndsWith("Devices", StringComparison.Ordinal) || name == "OST_ElectricalFixtures" ||
+                name == "OST_LightingFixtures" || name == "OST_DuctTerminal")) return "device";
             if (name != null && (name.Contains("Accessory") || name.Contains("Fitting"))) return "accessory";
             return null;
         }
