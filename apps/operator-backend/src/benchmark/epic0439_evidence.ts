@@ -91,6 +91,52 @@ function sha256Bytes(value: string | Buffer): string {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
+function canonicalJoin(values: string[]): string {
+  return values.map((value) => `+${Buffer.from(value, "utf8").toString("base64")}\n`).join("");
+}
+
+function canonicalSet(value: unknown, field: string): string {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || !entry.trim())) {
+    throw new Error(`${field} must be an array of non-empty strings.`);
+  }
+  return canonicalJoin([...(value as string[])].sort());
+}
+
+function integerString(value: JsonRecord, field: string): string {
+  const candidate = value[field];
+  if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 0) {
+    throw new Error(`${field} must be a non-negative safe integer.`);
+  }
+  return String(candidate);
+}
+
+function effectBudgetHash(value: unknown): string {
+  const budget = record(value, "applyAuthorizationReceipt.effect_budget");
+  return sha256Bytes(canonicalJoin([
+    stringField(budget, "Schema"),
+    stringField(budget, "BudgetId"),
+    canonicalSet(budget.TargetDocumentFingerprints, "effect_budget.TargetDocumentFingerprints"),
+    canonicalSet(budget.AllowedCategories, "effect_budget.AllowedCategories"),
+    canonicalSet(budget.ExplicitTargetUniqueIds, "effect_budget.ExplicitTargetUniqueIds"),
+    canonicalSet(budget.AllowedSdkDomains, "effect_budget.AllowedSdkDomains"),
+    canonicalSet(budget.AllowedExternalEffectClasses, "effect_budget.AllowedExternalEffectClasses"),
+    stringField(budget, "ViewScopeHash"),
+    stringField(budget, "LevelScopeHash"),
+    stringField(budget, "WorksetScopeHash"),
+    stringField(budget, "PhaseScopeHash"),
+    integerString(budget, "MaximumOperationCount"),
+    integerString(budget, "MaximumAffectedElements"),
+    integerString(budget, "MaximumCreates"),
+    integerString(budget, "MaximumModifications"),
+    integerString(budget, "MaximumDeletes"),
+    integerString(budget, "MaximumExecutionMilliseconds"),
+    integerString(budget, "MaximumRegenerations"),
+    integerString(budget, "MaximumOutputCount"),
+    integerString(budget, "MaximumOutputBytes"),
+    stringField(budget, "FileCapabilitySetHash")
+  ]));
+}
+
 function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -265,8 +311,11 @@ export function verifyEpic0439LiveEvidenceReceipt(rawBytes: Buffer): {
     equal(v1Admission.documentFingerprint, admission.documentFingerprint, "v1Admission.documentFingerprint");
     equal(v1Admission.documentSessionId, admission.documentSessionId, "v1Admission.documentSessionId");
     const expectations = record(authorization.receipt.admission_expectations, "applyAuthorizationReceipt.admission_expectations");
+    const recomputedEffectBudgetHash = effectBudgetHash(authorization.receipt.effect_budget);
     equal(expectations.OperationGraphHash, graph.graphHash, "admission_expectations.OperationGraphHash");
     equal(expectations.PreviewReceiptHash, previewHash, "admission_expectations.PreviewReceiptHash");
+    equal(expectations.EffectBudgetHash, recomputedEffectBudgetHash, "admission_expectations.EffectBudgetHash");
+    equal(v1Admission.effectBudgetHash, recomputedEffectBudgetHash, "v1Admission.effectBudgetHash");
     equal(apply.receipt.admission_id, v1Admission.admissionId, "applyReceipt.admission_id");
     equal(apply.receipt.preview_id, previewId, "applyReceipt.preview_id");
     equal(apply.receipt.preview_receipt_hash, previewHash, "applyReceipt.preview_receipt_hash");
