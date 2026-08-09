@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RevitOperator.DynamicRevitSandboxSupervisor;
+using RevitOperator.DynamicRevitSdk;
 using Xunit;
 
 namespace DynamicRevitSandboxSupervisor.Tests;
@@ -7,7 +8,7 @@ namespace DynamicRevitSandboxSupervisor.Tests;
 public sealed class RuntimeWorkspaceTests
 {
     [Fact]
-    public void RuntimeImageHashesEveryAllowlistedDependencyAndExcludesOtherFiles()
+    public void RuntimeImageHashesTheExactPackagedDependencySet()
     {
         using var temporary = new TemporaryDirectory();
         var source = temporary.CreateDirectory("source");
@@ -16,15 +17,16 @@ public sealed class RuntimeWorkspaceTests
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.deps.json"), "{}");
         File.WriteAllText(Path.Combine(source, "DynamicRevitWorker.runtimeconfig.json"), "{}");
         File.WriteAllText(Path.Combine(source, "DynamicRevitSdk.dll"), "sdk");
-        File.WriteAllText(Path.Combine(source, "debug.pdb"), "not-runtime");
+        File.WriteAllText(Path.Combine(source, "debug.pdb"), "symbols");
         var locale = Directory.CreateDirectory(Path.Combine(source, "fr")).FullName;
         File.WriteAllText(Path.Combine(locale, "Microsoft.CodeAnalysis.resources.dll"), "satellite");
         var task = temporary.CreateDirectory("task");
 
         var image = RuntimeImage.Stage(source, task);
 
-        Assert.Equal(6, image.Files.Count);
-        Assert.DoesNotContain(image.Files, file => file.RelativePath.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(7, image.Files.Count);
+        Assert.Contains(image.Files, file => file.RelativePath.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(source), image.Identity);
         Assert.Equal(image.Identity, image.VerifyBeforeLaunch());
         Assert.NotEqual(image.Identity, image.WorkerExecutableHash);
         Assert.NotEqual(image.Identity, image.CompilerRuntimeHash);

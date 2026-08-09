@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using RevitOperator.DynamicRevitSdk;
 
 namespace RevitOperator.DynamicRevitSandboxSupervisor;
 
@@ -65,7 +66,7 @@ internal sealed class TaskWorkspace : IDisposable
 
 internal sealed class RuntimeImage
 {
-    private static readonly string[] AllowedSuffixes = { ".dll", ".exe", ".deps.json", ".runtimeconfig.json" };
+    private static readonly string[] AllowedSuffixes = { ".dll", ".exe", ".deps.json", ".runtimeconfig.json", ".pdb" };
     private const int MaximumDependencyCount = 256;
     private const long MaximumDependencyBytes = 256L * 1024 * 1024;
     private readonly RuntimeFile[] _files;
@@ -121,7 +122,7 @@ internal sealed class RuntimeImage
             File.SetAttributes(path, File.GetAttributes(path) | FileAttributes.ReadOnly);
         }
 
-        var identity = ComputeIdentity(files);
+        var identity = DynamicRuntimePackageDirectoryIdentity.Compute(destination);
         var manifestPath = Path.Combine(root, "runtime-image.manifest.json");
         File.WriteAllText(manifestPath, JsonSerializer.Serialize(new { schema = "dynamic-revit-runtime-image/v1", identity, files }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true }), new UTF8Encoding(false));
         return new RuntimeImage(destination, files, identity);
@@ -145,7 +146,7 @@ internal sealed class RuntimeImage
                 throw new InvalidOperationException("Runtime image dependency is no longer read-only: " + actual.RelativePath + ".");
         }
 
-        var identity = ComputeIdentity(observed);
+        var identity = DynamicRuntimePackageDirectoryIdentity.Compute(Directory);
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Identity), Encoding.UTF8.GetBytes(identity)))
             throw new InvalidOperationException("Runtime image identity changed after staging.");
         return identity;

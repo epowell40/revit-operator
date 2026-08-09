@@ -151,7 +151,7 @@ public static class RuntimePackageVerifier
         if (directory is null) { result.Errors.Add($"{name} identity is missing."); return; }
         try { ValidateSafeRelativePath(directory.RelativePath, name); }
         catch (InvalidDataException ex) { result.Errors.Add(ex.Message); return; }
-        if (!IsSha256(directory.Sha256)) { result.Errors.Add($"{name} hash is invalid."); return; }
+        if (!IsDirectorySha256(directory.Sha256)) { result.Errors.Add($"{name} hash is invalid."); return; }
         var path = Path.GetFullPath(Path.Combine(root, directory.RelativePath));
         var relative = Path.GetRelativePath(root, path);
         if (Path.IsPathRooted(relative) || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)) { result.Errors.Add($"{name} resolves outside the package."); return; }
@@ -207,6 +207,7 @@ public static class RuntimePackageVerifier
         return false;
     }
     private static bool IsSha256(string? value) => value is { Length: 64 } && value.All(character => Uri.IsHexDigit(character));
+    private static bool IsDirectorySha256(string? value) => value is { Length: 71 } && value.StartsWith("sha256:", StringComparison.Ordinal) && value[7..].All(character => Uri.IsHexDigit(character));
     private static bool IsSdkManifestIdentity(string? value) => value is { Length: 71 } && value.StartsWith("sha256:", StringComparison.Ordinal) && value[7..].All(character => Uri.IsHexDigit(character));
     private static bool FixedEquals(string? left, string? right)
     {

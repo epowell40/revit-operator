@@ -24,6 +24,7 @@ public sealed class LauncherPackageIdentityTests : IDisposable
         };
         WritePackage(dependencies);
         var baseline = DynamicRuntimePackageDirectoryIdentity.Compute(_root);
+        Assert.Matches("^sha256:[0-9a-f]{64}$", baseline);
 
         foreach (var dependency in dependencies.Keys)
         {

@@ -35,6 +35,7 @@
   },
   "$defs": {
     "hash": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "directoryHash": { "type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$" },
     "artifact": {
       "type": "object",
       "additionalProperties": false,
@@ -50,7 +51,7 @@
       "required": [ "relativePath", "sha256" ],
       "properties": {
         "relativePath": { "type": "string", "minLength": 1 },
-        "sha256": { "$ref": "#/$defs/hash" }
+        "sha256": { "$ref": "#/$defs/directoryHash" }
       }
     }
   }

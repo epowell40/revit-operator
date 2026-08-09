@@ -95,7 +95,7 @@ namespace RevitOperator.DynamicRevitSdk
             }
 
             RejectReparsePoint(root, "Runtime package root");
-            using (var sha256 = SHA256.Create()) return ToLowerHex(sha256.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString())));
+            using (var sha256 = SHA256.Create()) return "sha256:" + ToLowerHex(sha256.ComputeHash(Encoding.UTF8.GetBytes(canonical.ToString())));
         }
 
         private static string RelativePath(string root, string path)

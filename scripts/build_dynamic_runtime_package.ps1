@@ -63,7 +63,7 @@ function New-DirectoryIdentity([string]$RelativePath) {
     $native = $RelativePath.Replace('/', [IO.Path]::DirectorySeparatorChar)
     $hashOutput = @(dotnet run --project $verifierProject -c Release -- --directory-hash (Join-Path $output $native))
     if ($LASTEXITCODE) { exit $LASTEXITCODE }
-    $hash = @($hashOutput | Where-Object { $_ -match '^[0-9a-f]{64}$' } | Select-Object -Last 1)
+    $hash = @($hashOutput | Where-Object { $_ -match '^sha256:[0-9a-f]{64}$' } | Select-Object -Last 1)
     if ($hash.Count -ne 1) { throw "Directory identity hash was not produced for $RelativePath." }
     [ordered]@{ relativePath = $RelativePath; sha256 = $hash[0] }
 }
