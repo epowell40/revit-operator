@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/epic0441_scoreboard.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "campaign_seed", "ordering_algorithm", "typed_first_task_count", "dynamic_first_task_count", "reviewer_packet_sha256", "results_sha256", "task_count", "row_count", "complete_pair_count", "sealed_not_yet_run_count", "mixed_tier_pair_count", "authenticated_live_pair_count", "broad_live_acceptance_claimable", "tier_counts", "source_mock_calibration"],
+  "properties": {
+    "schema_version": { "const": "epic0441_scoreboard/v1" },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "campaign_seed": { "type": "string", "minLength": 1 },
+    "ordering_algorithm": { "const": "sha256-balanced-pairs/v1" },
+    "typed_first_task_count": { "const": 15 },
+    "dynamic_first_task_count": { "const": 15 },
+    "reviewer_packet_sha256": { "$ref": "#/$defs/hash" },
+    "results_sha256": { "$ref": "#/$defs/hash" },
+    "task_count": { "const": 30 },
+    "row_count": { "const": 60 },
+    "complete_pair_count": { "const": 30 },
+    "sealed_not_yet_run_count": { "type": "integer", "minimum": 0, "maximum": 60 },
+    "mixed_tier_pair_count": { "type": "integer", "minimum": 0, "maximum": 30 },
+    "authenticated_live_pair_count": { "const": 0 },
+    "broad_live_acceptance_claimable": { "const": false },
+    "tier_counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+    "source_mock_calibration": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["config_id", "representation", "source_only_count", "mocked_count"],
+        "properties": {
+          "config_id": { "type": "string", "minLength": 1 },
+          "representation": { "enum": ["typed_capability_chain", "dynamic_program"] },
+          "source_only_count": { "type": "integer", "minimum": 0 },
+          "mocked_count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": { "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" } }
+}

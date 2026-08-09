@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/epic0441_result.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "task_id", "config_id", "representation", "pair_order", "ordering_key", "classification", "reason", "scored", "authenticated_campaign_binding"],
+  "properties": {
+    "schema_version": { "const": "epic0441_result/v1" },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "config_id": { "type": "string", "minLength": 1 },
+    "representation": { "enum": ["typed_capability_chain", "dynamic_program"] },
+    "pair_order": { "type": "integer", "minimum": 1, "maximum": 2 },
+    "ordering_key": { "$ref": "#/$defs/hash" },
+    "classification": { "enum": ["source_only", "mocked", "live_preview_unverified", "live_applied_unverified", "failed_receipt_unverified", "unsupported", "blocked_safe", "failed", "sealed_not_yet_run"] },
+    "reason": { "type": ["string", "null"], "minLength": 1 },
+    "scored": { "const": false },
+    "authenticated_campaign_binding": { "const": false },
+    "reviewer_packet_sha256": { "$ref": "#/$defs/hash" },
+    "evidence_receipt": { "$ref": "#/$defs/evidenceReceipt" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "evidenceReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_file_sha256", "canonical_binding_sha256", "receipt_schema"],
+      "properties": {
+        "evidence_file_sha256": { "$ref": "#/$defs/hash" },
+        "canonical_binding_sha256": { "$ref": "#/$defs/hash" },
+        "receipt_schema": { "enum": ["dynamic-revit-live-evidence/v1", "dynamic-revit-phase2-live-evidence/v0"] }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "classification": { "enum": ["live_preview_unverified", "live_applied_unverified", "failed_receipt_unverified"] } }, "required": ["classification"] },
+      "then": { "required": ["evidence_receipt"] },
+      "else": { "not": { "required": ["evidence_receipt"] } }
+    },
+    {
+      "if": { "properties": { "classification": { "const": "sealed_not_yet_run" } }, "required": ["classification"] },
+      "then": { "required": ["reviewer_packet_sha256"] },
+      "else": { "not": { "required": ["reviewer_packet_sha256"] } }
+    }
+  ]
+}

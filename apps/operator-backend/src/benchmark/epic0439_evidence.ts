@@ -346,6 +346,23 @@ export function verifyEpic0439LiveEvidenceReceipt(rawBytes: Buffer): {
   };
 }
 
+export function verifyEpic0439LiveEvidenceFile(options: {
+  evidenceRoot: string;
+  evidenceFile: string;
+  expectedSha256: string;
+}): ReturnType<typeof verifyEpic0439LiveEvidenceReceipt> & { evidenceFileSha256: string } {
+  const evidencePath = validateEvidencePath(options.evidenceRoot, options.evidenceFile);
+  const evidenceBytes = fs.readFileSync(evidencePath);
+  const evidenceFileSha256 = sha256Bytes(evidenceBytes);
+  if (!sha256Pattern.test(options.expectedSha256) || options.expectedSha256 !== evidenceFileSha256) {
+    throw new Error(`Evidence hash mismatch for '${options.evidenceFile}'.`);
+  }
+  return {
+    ...verifyEpic0439LiveEvidenceReceipt(evidenceBytes),
+    evidenceFileSha256
+  };
+}
+
 function metrics(entry: Epic0439EvidenceEntry, verified: ReturnType<typeof verifyEpic0439LiveEvidenceReceipt>): Epic0439Metrics {
   return {
     completion: verified.completed,
@@ -396,13 +413,11 @@ export function ingestEpic0439EvidenceCampaign(options: {
     const pair = `${entry.case_id}\0${entry.config_id}`;
     if (seen.has(pair)) throw new Error(`Duplicate evidence entry for case/config '${entry.case_id}/${entry.config_id}'.`);
     seen.add(pair);
-    const evidencePath = validateEvidencePath(options.evidenceRoot, entry.evidence_file);
-    const evidenceBytes = fs.readFileSync(evidencePath);
-    const evidenceHash = sha256Bytes(evidenceBytes);
-    if (!sha256Pattern.test(entry.evidence_sha256) || entry.evidence_sha256 !== evidenceHash) {
-      throw new Error(`Evidence hash mismatch for '${entry.case_id}/${entry.config_id}'.`);
-    }
-    const verified = verifyEpic0439LiveEvidenceReceipt(evidenceBytes);
+    const verified = verifyEpic0439LiveEvidenceFile({
+      evidenceRoot: options.evidenceRoot,
+      evidenceFile: entry.evidence_file,
+      expectedSha256: entry.evidence_sha256
+    });
     results.push({
       schema_version: "epic0439_result/v1",
       case_id: entry.case_id,
@@ -422,7 +437,7 @@ export function ingestEpic0439EvidenceCampaign(options: {
       ],
       scorer_evidence_receipt: {
         schema_version: "epic0439_scorer_evidence_receipt/v1",
-        evidence_file_sha256: evidenceHash,
+        evidence_file_sha256: verified.evidenceFileSha256,
         canonical_binding_sha256: verified.bindingHash,
         receipt_schema: verified.schema,
         authenticated_campaign_binding: false
