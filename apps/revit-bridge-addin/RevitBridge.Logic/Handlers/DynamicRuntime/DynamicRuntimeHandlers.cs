@@ -525,8 +525,18 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         {
             var id = ElementIdCompat.GetValue(element.Id);
             var fields = new List<string> { id.ToString(CultureInfo.InvariantCulture), element.UniqueId ?? "", ElementIdCompat.GetValue(element.GetTypeId()).ToString(CultureInfo.InvariantCulture), element.Pinned ? "1" : "0", ElementIdCompat.GetValue(element.GroupId).ToString(CultureInfo.InvariantCulture) };
-            if (element.Location is LocationPoint point) fields.Add("point:" + Coordinate(point.Point));
-            else if (element.Location is LocationCurve curve) fields.Add("curve:" + Coordinate(curve.Curve.GetEndPoint(0)) + ":" + Coordinate(curve.Curve.GetEndPoint(1)));
+            try
+            {
+                if (element.Location is LocationPoint point) fields.Add("point:" + Coordinate(point.Point));
+                else if (element.Location is LocationCurve locationCurve)
+                {
+                    var curve = locationCurve.Curve;
+                    fields.Add(curve != null && curve.IsBound
+                        ? "curve:" + Coordinate(curve.GetEndPoint(0)) + ":" + Coordinate(curve.GetEndPoint(1))
+                        : "curve:unbound");
+                }
+            }
+            catch (Exception ex) { fields.Add("location-capture-error:" + ex.GetType().Name); }
             foreach (Parameter parameter in element.Parameters)
             {
                 try
