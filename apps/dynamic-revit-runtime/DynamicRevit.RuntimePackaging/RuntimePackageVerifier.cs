@@ -17,6 +17,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity Sdk { get; set; } = new();
     public PackageArtifactIdentity SandboxPolicy { get; set; } = new();
     public PackageArtifactIdentity ObservationContract { get; set; } = new();
+    public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
     public string HostCapabilitiesManifestSha256 { get; set; } = "";
@@ -88,8 +89,10 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "sdk", package.Sdk, result);
         VerifyArtifact(root, "sandbox policy", package.SandboxPolicy, result);
         VerifyArtifact(root, "observation contract", package.ObservationContract, result);
+        VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
         VerifySandboxPolicy(root, package, result);
         VerifyObservationContract(root, package, result);
+        VerifyCoreOperationsContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
             var packagedCapabilitiesPath = Path.Combine(root, relativeCapabilitiesPath.Replace('/', Path.DirectorySeparatorChar));
@@ -118,7 +121,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.CoreOperationsContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -236,6 +239,51 @@ public static class RuntimePackageVerifier
         catch (Exception ex)
         {
             result.Errors.Add("Observation contract manifest content is invalid: " + ex.Message);
+        }
+    }
+
+    private static void VerifyCoreOperationsContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.CoreOperationsContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.CoreOperationsContract.RelativePath, "core operations contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.CoreOperationsContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "canonicalVersion", "maximumOperations", "maximumAttributes", "productionExposed", "primitives" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicCoreOperationsV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicCoreOperationManifestV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicCoreOperationManifestV1.ContractSurfaceHash ||
+                value.GetProperty("primitiveManifestHash").GetString() != DynamicPrimitiveManifestV1.ManifestHash ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicCoreOperationsV1.CanonicalVersion ||
+                value.GetProperty("maximumOperations").GetInt32() != DynamicCoreOperationsV1.MaximumOperations ||
+                value.GetProperty("maximumAttributes").GetInt32() != DynamicCoreOperationsV1.MaximumAttributes ||
+                value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Core operations contract manifest identity or field set is invalid.");
+            var primitives = value.GetProperty("primitives").EnumerateArray().ToArray();
+            if (primitives.Length != DynamicCoreOperationManifestV1.All.Count) throw new InvalidDataException("Core operations primitive set is incomplete.");
+            var primitiveKinds = primitives.Select(primitive => primitive.GetProperty("kind").GetString() ?? "").ToArray();
+            if (primitiveKinds.Distinct(StringComparer.Ordinal).Count() != primitiveKinds.Length ||
+                !new HashSet<string>(primitiveKinds, StringComparer.Ordinal).SetEquals(DynamicCoreOperationManifestV1.All.Select(descriptor => descriptor.Kind)))
+                throw new InvalidDataException("Core operations primitive set is duplicated or substituted.");
+            foreach (var primitive in primitives)
+            {
+                var primitiveFields = primitive.EnumerateObject().Select(property => property.Name).ToArray();
+                if (primitiveFields.Length != 4 || primitiveFields.Distinct(StringComparer.Ordinal).Count() != 4 || primitiveFields.Any(field => !new[] { "kind", "version", "preview", "apply" }.Contains(field, StringComparer.Ordinal)))
+                    throw new InvalidDataException("Core operations primitive descriptor has unknown or missing fields.");
+                var descriptor = DynamicCoreOperationManifestV1.Find(primitive.GetProperty("kind").GetString() ?? "") ?? throw new InvalidDataException("Core operations primitive is unknown.");
+                if (primitive.GetProperty("version").GetString() != descriptor.PrimitiveVersion || primitive.GetProperty("preview").GetBoolean() != descriptor.PreviewSupported ||
+                    primitive.GetProperty("apply").GetBoolean() != descriptor.ApplySupported || !descriptor.ImplementedByV1Host)
+                    throw new InvalidDataException("Core operations primitive descriptor does not match the SDK.");
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add("Core operations contract manifest content is invalid: " + ex.Message);
         }
     }
 

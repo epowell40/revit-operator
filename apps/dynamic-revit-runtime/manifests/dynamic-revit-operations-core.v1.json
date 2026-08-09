@@ -1,0 +1,17 @@
+{
+  "schema": "dynamic-revit-core-operation-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractManifestHash": "sha256:9890297fa6f67027344c1b7468406605e52ab796969f7c51ed5d5038f792a2fa",
+  "contractSurfaceHash": "sha256:dc9085a2a4cc594896fbc0a79766eac921470dd1a01e348c3609084e1289c04c",
+  "primitiveManifestHash": "sha256:567812dee6298aa4b4537f99640bfa035154ec5d1174d86901aba667e29b9d25",
+  "canonicalVersion": "dynamic-revit-core-operation-canonical/v1",
+  "maximumOperations": 256,
+  "maximumAttributes": 16,
+  "productionExposed": false,
+  "primitives": [
+    { "kind": "set_parameter", "version": "set_parameter/v1", "preview": true, "apply": true },
+    { "kind": "rotate_element", "version": "rotate_element/v1", "preview": true, "apply": true },
+    { "kind": "change_type", "version": "change_type/v1", "preview": true, "apply": true },
+    { "kind": "delete_element", "version": "delete_element/v1", "preview": true, "apply": false }
+  ]
+}

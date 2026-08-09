@@ -44,7 +44,8 @@ public static class DynamicRevitSdkProductionVersion
         DynamicRevitProductionSchemas.FileCapabilityV1, DynamicRevitProductionSchemas.FileCapabilitySetV1,
         DynamicRevitProductionSchemas.ExternalEffectV1, DynamicRevitProductionSchemas.RepairFeedbackV1,
         DynamicRevitProductionSchemas.ReuseRecordV1, DynamicRevitProductionSchemas.StrategyEvidenceV1,
-        ContractSurfaceHash, DynamicPrimitiveManifestV1.ManifestHash, DynamicObservationContractV1.ManifestHash));
+        ContractSurfaceHash, DynamicPrimitiveManifestV1.ManifestHash, DynamicObservationContractV1.ManifestHash,
+        DynamicCoreOperationManifestV1.ManifestHash));
 
     private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
         .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)
@@ -388,10 +389,11 @@ public static class DynamicPrimitiveManifestV1
     private static readonly DynamicPrimitiveDescriptorV1[] Descriptors =
     {
         D("move_element", "elements", "modify", true, "vector_feet"),
-        D("rotate_element", "elements", "modify", false, "axis", "angle_radians"),
+        D("rotate_element", "elements", "modify", true, "axis", "angle_radians"),
         D("copy_element", "elements", "create", false, "transform"),
-        D("delete_element", "elements", "delete", false),
+        D("delete_element", "elements", "delete", true),
         D("set_parameter", "parameters", "modify", true, "parameter_identity", "value", "value_kind"),
+        D("change_type", "elements", "modify", true, "replacement_type_unique_id", "expected_target_state_hash"),
         D("create_family_instance", "families", "create", false, "family_type_identity", "placement"),
         D("create_model_curve", "geometry", "create", false, "curve"),
         D("create_mep_curve", "mep", "create", false, "curve", "system_type", "type_identity"),
