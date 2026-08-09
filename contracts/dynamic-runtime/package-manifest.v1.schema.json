@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/dynamic-runtime/package-manifest.v1.schema.json",
+  "title": "Dynamic Revit Runtime package manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [ "schema", "packageVersion", "protocolVersion", "sdkManifestHash", "supervisor", "worker", "sdk", "sandboxPolicy", "sandboxProfile", "sandboxProfileVersion", "hostCapabilitiesManifestSha256", "hosts" ],
+  "properties": {
+    "schema": { "const": "dynamic-revit-runtime-package/v1" },
+    "packageVersion": { "type": "string", "minLength": 1 },
+    "protocolVersion": { "type": "string", "minLength": 1 },
+    "sdkManifestHash": { "type": "string", "pattern": "^sha256:[0-9a-fA-F]{64}$" },
+    "supervisor": { "$ref": "#/$defs/directory" },
+    "worker": { "$ref": "#/$defs/directory" },
+    "sdk": { "$ref": "#/$defs/artifact" },
+    "sandboxPolicy": { "$ref": "#/$defs/artifact" },
+    "sandboxProfile": { "type": "string", "minLength": 1 },
+    "sandboxProfileVersion": { "type": "string", "minLength": 1 },
+    "hostCapabilitiesManifestSha256": { "$ref": "#/$defs/hash" },
+    "hosts": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [ "revitYear", "targetFramework", "artifact" ],
+        "properties": {
+          "revitYear": { "enum": [ "2023", "2024", "2025" ] },
+          "targetFramework": { "enum": [ "net48", "net8.0-windows" ] },
+          "artifact": { "$ref": "#/$defs/artifact" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [ "relativePath", "sha256" ],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "directory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [ "relativePath", "sha256" ],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}
