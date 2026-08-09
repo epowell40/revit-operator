@@ -188,6 +188,50 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Laboratory_dependency_identity_allows_an_exact_loaded_host_when_the_staged_duplicate_is_absent()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "revit-operator-host-only-dependency-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            try
+            {
+                var source = typeof(JsonDocument).Assembly.Location;
+                var missingDeployed = Path.Combine(directory, "missing-deployed-System.Text.Json.dll");
+                var host = Path.Combine(directory, "host-System.Text.Json.dll");
+                File.Copy(source, host);
+                var identity = AssemblyName.GetAssemblyName(source).FullName!;
+                using var stream = File.OpenRead(host);
+                using var algorithm = SHA256.Create();
+                var hash = "sha256:" + BitConverter.ToString(algorithm.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                    "SelectManagedRuntimeDependencyPathWithApprovedHost", BindingFlags.NonPublic | BindingFlags.Static)!;
+                var selected = method.Invoke(null, new object[]
+                {
+                    missingDeployed, "System.Text.Json.dll",
+                    new[] { new KeyValuePair<string, string>(identity, host) }, host, hash, identity
+                });
+                Assert.Equal(Path.GetFullPath(host), selected);
+            }
+            finally
+            {
+                Directory.Delete(directory, true);
+            }
+        }
+
+        [Fact]
+        public void Laboratory_dependency_identity_rejects_a_missing_staged_dependency_without_an_exact_host_authority()
+        {
+            var method = typeof(OperatorLaboratoryExecutionReceiptAuthority).GetMethod(
+                "SelectManagedRuntimeDependencyPathWithApprovedHost", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var missing = Path.Combine(Path.GetTempPath(), "missing-runtime-" + Guid.NewGuid().ToString("N") + ".dll");
+            var error = Assert.Throws<TargetInvocationException>(() => method.Invoke(null, new object?[]
+            {
+                missing, "Missing.Runtime.dll", Array.Empty<KeyValuePair<string, string>>(), null, null, null
+            }));
+            Assert.Equal("CERTIFICATION_LABORATORY_EXECUTION_EVIDENCE_DENIED",
+                Assert.IsType<OperatorNativeHttpAdmissionException>(error.InnerException).Code);
+        }
+
+        [Fact]
         public void Process_local_key_signs_exact_canonical_receipt_and_rejects_tamper()
         {
             var modulus = OperatorNativeExecutionAttestationAuthority.ModulusBase64Url

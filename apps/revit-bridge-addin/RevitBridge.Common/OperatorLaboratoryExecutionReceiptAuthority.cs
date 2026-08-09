@@ -332,10 +332,10 @@ namespace RevitBridge.Common
         private static string RuntimeDependencyPath(string directory, string name)
         {
             var deployedPath = Path.GetFullPath(Path.Combine(directory, name));
-            if (!File.Exists(deployedPath)) throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
 
             if (string.Equals(name, "WebView2Loader.dll", StringComparison.Ordinal))
             {
+                if (!File.Exists(deployedPath)) throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
                 var nativeMatches = Process.GetCurrentProcess().Modules.Cast<ProcessModule>()
                     .Where(value => string.Equals(value.ModuleName, name, StringComparison.OrdinalIgnoreCase))
                     .Select(value => Path.GetFullPath(value.FileName))
@@ -348,6 +348,8 @@ namespace RevitBridge.Common
             }
 
             var simpleName = Path.GetFileNameWithoutExtension(name);
+            if (!File.Exists(deployedPath) && !ApprovedHostRuntimeDependencies.ContainsKey(name))
+                throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
             var managedAssemblies = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(value => string.Equals(value.GetName().Name, simpleName, StringComparison.Ordinal))
                 .Select(value => new KeyValuePair<string, string>(value.GetName().FullName ?? "", AssemblyLocationOrEmpty(value)))
@@ -382,8 +384,14 @@ namespace RevitBridge.Common
             if (managedAssemblies.Any(value => string.IsNullOrWhiteSpace(value.Value))
                 || managedAssemblies.Any(value => !File.Exists(value.Value)))
                 throw Denied("Protected laboratory evidence cannot resolve every loaded " + name + " assembly location.");
-            var deployedIdentity = AssemblyName.GetAssemblyName(deployedPath).FullName ?? "";
-            var reviewedIdentities = new HashSet<string>(StringComparer.Ordinal) { deployedIdentity };
+            var deployedExists = File.Exists(deployedPath);
+            if (!deployedExists && (string.IsNullOrWhiteSpace(approvedHostPath)
+                || string.IsNullOrWhiteSpace(approvedHostSha256)
+                || string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)))
+                throw Denied("Protected laboratory evidence is missing runtime dependency " + name + ".");
+            var deployedIdentity = deployedExists ? AssemblyName.GetAssemblyName(deployedPath).FullName ?? "" : "";
+            var reviewedIdentities = new HashSet<string>(StringComparer.Ordinal);
+            if (deployedExists) reviewedIdentities.Add(deployedIdentity);
             if (!string.IsNullOrWhiteSpace(approvedHostAssemblyFullName)) reviewedIdentities.Add(approvedHostAssemblyFullName!);
             var identityMatches = managedAssemblies
                 .Where(value => reviewedIdentities.Contains(value.Key))
@@ -392,7 +400,8 @@ namespace RevitBridge.Common
             {
                 if (managedAssemblies.Count > 0)
                     throw Denied("Protected laboratory evidence loaded only unreviewed identities for " + name + ".");
-                return deployedPath;
+                if (deployedExists) return deployedPath;
+                throw Denied("Protected laboratory evidence did not load the exact reviewed host runtime dependency " + name + ".");
             }
             var managedMatches = identityMatches
                 .Select(value => Path.GetFullPath(value.Value))
