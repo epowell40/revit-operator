@@ -172,7 +172,8 @@ internal static class Program
             v1Admission.ReplayNonceHash = DynamicWire.Sha256(Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
             v1Admission.IssuedUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); v1Admission.ExpiresUnixSeconds = Math.Min(authorizationRoot.GetProperty("expires_unix_seconds").GetInt64(), v1Admission.IssuedUnixSeconds + 60);
             v1Admission.AdmissionSignature = DynamicProgramAdmissionV1Policy.Sign(v1Admission, signingKey);
-            var applyRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-apply-request/v1", phase = "apply", runtime_instance_id = runtimeId, preview_id = previewId, authorization_id = authorizationId, graph, effect_budget = budget, admission = v1Admission }, SnakeJson);
+            var applyGraph = GraphForApply(graph);
+            var applyRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-apply-request/v1", phase = "apply", runtime_instance_id = runtimeId, preview_id = previewId, authorization_id = authorizationId, graph = applyGraph, effect_budget = budget, admission = v1Admission }, SnakeJson);
             var applyEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/apply", token, writeGrant, applyRequest, v1Admission.CorrelationId);
             applyRaw = UnwrapAuthenticated(applyEnvelope, hostSessionKey, runtimeId, "apply-receipt", out var applyAuthentication); hostAuthentications.Add(applyAuthentication);
             using var applyDocument = JsonDocument.Parse(applyRaw); ok = applyDocument.RootElement.GetProperty("outcome").GetString() == "committed_verified";
@@ -256,6 +257,15 @@ internal static class Program
         var token = document.RootElement.TryGetProperty("token", out var property) ? property.GetString()?.Trim() : null;
         if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("Operator write-grant file is empty or invalid.");
         return token;
+    }
+
+    internal static DynamicOperationGraph GraphForApply(JsonElement graph)
+    {
+        var typed = graph.Deserialize<DynamicOperationGraph>(Json) ?? throw new InvalidOperationException("Worker graph is invalid.");
+        var wireHash = graph.TryGetProperty("graphHash", out var property) ? property.GetString() : null;
+        if (string.IsNullOrWhiteSpace(wireHash) || !FixedEquals(wireHash, typed.GraphHash))
+            throw new InvalidOperationException("Worker graph identity was lost before apply serialization.");
+        return typed;
     }
 
     private static async Task<BootstrapCompletion> CompleteBootstrap(string challengeRaw, string runtimeId, byte[] sessionKey, string launcherHash, RevitHostCapability selectedHost)

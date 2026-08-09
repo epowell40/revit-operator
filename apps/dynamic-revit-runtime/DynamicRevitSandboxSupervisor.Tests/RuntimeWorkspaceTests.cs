@@ -102,6 +102,23 @@ public sealed class RuntimeWorkspaceTests
     }
 
     [Fact]
+    public void ApplyGraphConvertsCamelWorkerWireToExactSnakeWire()
+    {
+        using var document = JsonDocument.Parse("""
+            {"schema":"dynamic-revit-operation-graph/v0","inputHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","operations":[{"operationId":"op","kind":"set_parameter","targetUniqueId":"target","vectorFeet":null,"parameter":"Comments","value":"marker"}],"graphHash":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+            """);
+
+        var graph = Program.GraphForApply(document.RootElement);
+        var snake = JsonSerializer.Serialize(new { graph }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
+        using var wire = JsonDocument.Parse(snake);
+        var graphWire = wire.RootElement.GetProperty("graph");
+
+        Assert.Equal(graph.GraphHash, graphWire.GetProperty("graph_hash").GetString());
+        Assert.Equal("op", graphWire.GetProperty("operations")[0].GetProperty("operation_id").GetString());
+        Assert.False(graphWire.TryGetProperty("graphHash", out _));
+    }
+
+    [Fact]
     public void RetentionKeepsOnlyNewestBoundedTaskDirectoriesAndDeletesReadOnlyTrees()
     {
         using var temporary = new TemporaryDirectory();
