@@ -34,7 +34,9 @@ New-Item -ItemType Directory -Path $manifestOutput | Out-Null
 
 dotnet publish (Join-Path $runtimeRoot "DynamicRevitSandboxSupervisor\DynamicRevitSandboxSupervisor.csproj") -c Release -r win-x64 --self-contained false -o $supervisorOutput
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
-dotnet publish (Join-Path $runtimeRoot "DynamicRevitWorker\DynamicRevitWorker.csproj") -c Release -r win-x64 --self-contained false -o $workerOutput
+# LPAC cannot depend on the user or machine-wide dotnet host. Ship the bounded worker
+# with its exact runtime so the zero-capability process can start without broad reads.
+dotnet publish (Join-Path $runtimeRoot "DynamicRevitWorker\DynamicRevitWorker.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $workerOutput
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 $hostBuilds = @(

@@ -242,6 +242,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/pick-at-pixel", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/activate-view", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/query", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
+                if (string.Equals(p, "/revit/dynamic-runtime/bootstrap", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/register", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 if (string.Equals(p, "/revit/dynamic-runtime/snapshot", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low;
                 // Preview is transactionally rolled back and authorization only seals current trusted state.
