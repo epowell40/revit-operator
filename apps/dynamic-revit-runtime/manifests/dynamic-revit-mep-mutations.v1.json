@@ -1,0 +1,18 @@
+{
+  "schema": "dynamic-revit-mep-mutation-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractManifestHash": "sha256:7f2d46d01caa10d6841bb48658895c34671001fe4b81e9f42523587097c2d2fb",
+  "contractSurfaceHash": "sha256:e8f9019f34a4dc0a1353d53336ae0e09bcd705dd5a971be1e9fddb43b2cbb8dd",
+  "primitiveManifestHash": "sha256:6794bf78b3d65e7e9ec8bbe65a68c7ee51250848a05c8cd4971f7bc53fff5024",
+  "resultReferenceManifestHash": "sha256:7cae08e13785f18f1d69978bd5d94133014cc01233fd38026534468b2ab7977f",
+  "canonicalVersion": "dynamic-revit-mep-mutation-canonical/v1",
+  "maximumOperations": 64,
+  "maximumEffects": 64,
+  "maximumOutputs": 64,
+  "primitives": [
+    { "kind": "create_mep_curve", "version": "create_mep_curve/v1", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 0, "resultReferenceMinimum": 0, "resultReferenceMaximum": 0, "outputs": 1, "attributes": ["curve", "system_type", "type_identity"] },
+    { "kind": "connect_mep", "version": "connect_mep/v1", "effectClass": "modify", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 0, "attributes": ["connector_a", "connector_b"] },
+    { "kind": "create_transition_fitting", "version": "create_transition_fitting/v1", "effectClass": "create", "externalTargetMinimum": 0, "externalTargetMaximum": 2, "resultReferenceMinimum": 0, "resultReferenceMaximum": 2, "outputs": 1, "attributes": ["connector_a", "connector_b", "expected_fitting_type"] }
+  ],
+  "productionExposed": false
+}

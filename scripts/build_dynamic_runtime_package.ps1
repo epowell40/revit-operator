@@ -17,6 +17,7 @@ $buildingSystemsObservationContractSource = Join-Path $runtimeRoot "manifests\dy
 $coreOperationsContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-operations-core.v1.json"
 $resultReferenceContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-result-reference-graph.v1.json"
 $annotationOperationsContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-annotation-operations.v1.json"
+$mepMutationContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-mep-mutations.v1.json"
 $verifierProject = Join-Path $runtimeRoot "DynamicRevit.PackageVerifier\DynamicRevit.PackageVerifier.csproj"
 
 if (Test-Path -LiteralPath $output) { throw "OutputRoot already exists: $output" }
@@ -65,6 +66,7 @@ Copy-Item -LiteralPath $buildingSystemsObservationContractSource -Destination (J
 Copy-Item -LiteralPath $coreOperationsContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-operations-core.v1.json")
 Copy-Item -LiteralPath $resultReferenceContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-result-reference-graph.v1.json")
 Copy-Item -LiteralPath $annotationOperationsContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-annotation-operations.v1.json")
+Copy-Item -LiteralPath $mepMutationContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-mep-mutations.v1.json")
 
 function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function New-Artifact([string]$RelativePath) {
@@ -99,6 +101,7 @@ $packageManifest = [ordered]@{
     coreOperationsContract = New-Artifact "manifests/dynamic-revit-operations-core.v1.json"
     resultReferenceContract = New-Artifact "manifests/dynamic-revit-result-reference-graph.v1.json"
     annotationOperationsContract = New-Artifact "manifests/dynamic-revit-annotation-operations.v1.json"
+    mepMutationContract = New-Artifact "manifests/dynamic-revit-mep-mutations.v1.json"
     sandboxProfile = "windows-lpac-v1-zero-capabilities"
     sandboxProfileVersion = "1.0.0"
     hostCapabilitiesManifestSha256 = Get-Sha256 (Join-Path $manifestOutput "revit-host-capabilities.v1.json")

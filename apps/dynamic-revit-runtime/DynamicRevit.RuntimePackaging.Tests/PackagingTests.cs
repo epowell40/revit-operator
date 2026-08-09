@@ -43,7 +43,9 @@ public sealed class PackagingTests : IDisposable
         var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
-        Assert.Equal(14, result.VerifiedArtifacts.Count);
+        Assert.Equal(15, result.VerifiedArtifacts.Count);
+        Assert.Contains("manifests/dynamic-revit-annotation-operations.v1.json", result.VerifiedArtifacts);
+        Assert.Contains("manifests/dynamic-revit-mep-mutations.v1.json", result.VerifiedArtifacts);
         Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(Path.Combine(_root, package.Supervisor.RelativePath)), package.Supervisor.Sha256);
     }
 
@@ -61,6 +63,21 @@ public sealed class PackagingTests : IDisposable
         Assert.False(result.Ok);
         Assert.Contains(result.Errors, error => error.Contains("supervisor package path may not traverse", StringComparison.Ordinal));
         Assert.Contains(result.Errors, error => error.Contains("worker package hash mismatch", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Package_verifier_rejects_substituted_mep_descriptor_even_with_updated_artifact_hash()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest(); var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.MepMutationContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"outputs\": 1", "\"outputs\": 2", StringComparison.Ordinal));
+        package.MepMutationContract.Sha256 = HashFile(path);
+
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("MEP mutation contract manifest content is invalid", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -184,6 +201,7 @@ public sealed class PackagingTests : IDisposable
             CoreOperationsContract = Artifact("manifests/dynamic-revit-operations-core.v1.json", CoreOperationsContractManifest()),
             ResultReferenceContract = Artifact("manifests/dynamic-revit-result-reference-graph.v1.json", ResultReferenceContractManifest()),
             AnnotationOperationsContract = Artifact("manifests/dynamic-revit-annotation-operations.v1.json", AnnotationOperationsContractManifest()),
+            MepMutationContract = Artifact("manifests/dynamic-revit-mep-mutations.v1.json", File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "manifests", "dynamic-revit-mep-mutations.v1.json")))),
             SandboxProfile = "windows-lpac-v1-zero-capabilities",
             SandboxProfileVersion = "1.0.0",
             HostCapabilitiesManifestSha256 = HashFile(capabilitiesPath),

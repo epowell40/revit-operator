@@ -46,7 +46,8 @@ public static class DynamicRevitSdkProductionVersion
         DynamicRevitProductionSchemas.ReuseRecordV1, DynamicRevitProductionSchemas.StrategyEvidenceV1,
         ContractSurfaceHash, DynamicPrimitiveManifestV1.ManifestHash, DynamicObservationContractV1.ManifestHash,
         DynamicBuildingSystemsObservationContractV1.ManifestHash, DynamicCoreOperationManifestV1.ManifestHash,
-        DynamicResultReferenceManifestV1.ManifestHash, DynamicAnnotationOperationManifestV1.ManifestHash));
+        DynamicResultReferenceManifestV1.ManifestHash, DynamicAnnotationOperationManifestV1.ManifestHash,
+        DynamicMepMutationManifestV1.ManifestHash));
 
     private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
         .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)
@@ -397,8 +398,9 @@ public static class DynamicPrimitiveManifestV1
         D("change_type", "elements", "modify", true, "replacement_type_unique_id", "expected_target_state_hash"),
         D("create_family_instance", "families", "create", false, "family_type_identity", "placement"),
         D("create_model_curve", "geometry", "create", false, "curve"),
-        D("create_mep_curve", "mep", "create", false, "curve", "system_type", "type_identity"),
-        D("connect_mep", "mep", "modify", false, "connector_a", "connector_b"),
+        D("create_mep_curve", "mep", "create", true, "curve", "system_type", "type_identity"),
+        D("connect_mep", "mep", "modify", true, "connector_a", "connector_b"),
+        D("create_transition_fitting", "mep", "create", true, "connector_a", "connector_b", "expected_fitting_type"),
         D("create_view", "views", "create", false, "view_kind"),
         D("duplicate_view", "views", "create", false, "duplicate_mode"),
         D("create_sheet", "sheets", "create", false, "number", "name", "titleblock_type"),

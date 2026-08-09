@@ -3,7 +3,7 @@
   "manifestVersion": "1.0.0",
   "contractManifestHash": "sha256:2e4f3ffb7f73a824dd4a5765919a66759ad60a57c28881b35da89cbcfdedc70b",
   "contractSurfaceHash": "sha256:fd5077423276e9d15271ab98567d7459ce52f2591bf12e757ef3c719bd74c717",
-  "primitiveManifestHash": "sha256:567812dee6298aa4b4537f99640bfa035154ec5d1174d86901aba667e29b9d25",
+  "primitiveManifestHash": "sha256:6794bf78b3d65e7e9ec8bbe65a68c7ee51250848a05c8cd4971f7bc53fff5024",
   "canonicalVersion": "dynamic-revit-core-operation-canonical/v3",
   "maximumOperations": 256,
   "maximumAttributes": 16,

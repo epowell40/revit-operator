@@ -21,6 +21,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
     public PackageArtifactIdentity ResultReferenceContract { get; set; } = new();
     public PackageArtifactIdentity AnnotationOperationsContract { get; set; } = new();
+    public PackageArtifactIdentity MepMutationContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
     public string HostCapabilitiesManifestSha256 { get; set; } = "";
@@ -96,12 +97,14 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
         VerifyArtifact(root, "result-reference contract", package.ResultReferenceContract, result);
         VerifyArtifact(root, "annotation operations contract", package.AnnotationOperationsContract, result);
+        VerifyArtifact(root, "MEP mutation contract", package.MepMutationContract, result);
         VerifySandboxPolicy(root, package, result);
         VerifyObservationContract(root, package, result);
         VerifyBuildingSystemsObservationContract(root, package, result);
         VerifyCoreOperationsContract(root, package, result);
         VerifyResultReferenceContract(root, package, result);
         VerifyAnnotationOperationsContract(root, package, result);
+        VerifyMepMutationContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
             var packagedCapabilitiesPath = Path.Combine(root, relativeCapabilitiesPath.Replace('/', Path.DirectorySeparatorChar));
@@ -130,7 +133,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract, package.ResultReferenceContract, package.AnnotationOperationsContract }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract, package.ResultReferenceContract, package.AnnotationOperationsContract, package.MepMutationContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -407,6 +410,48 @@ public static class RuntimePackageVerifier
             }
         }
         catch (Exception ex) { result.Errors.Add("Annotation operations contract manifest content is invalid: " + ex.Message); }
+    }
+
+    private static void VerifyMepMutationContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.MepMutationContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.MepMutationContract.RelativePath, "MEP mutation contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.MepMutationContract.RelativePath)); if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path)); var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "resultReferenceManifestHash", "canonicalVersion", "maximumOperations", "maximumEffects", "maximumOutputs", "primitives", "productionExposed" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicMepMutationContractV1.ManifestSchema ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicMepMutationManifestV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicMepMutationManifestV1.ContractSurfaceHash ||
+                value.GetProperty("primitiveManifestHash").GetString() != DynamicPrimitiveManifestV1.ManifestHash ||
+                value.GetProperty("resultReferenceManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicMepMutationContractV1.CanonicalVersion ||
+                value.GetProperty("maximumOperations").GetInt32() != DynamicMepMutationContractV1.MaximumOperations ||
+                value.GetProperty("maximumEffects").GetInt32() != DynamicMepMutationContractV1.MaximumEffects ||
+                value.GetProperty("maximumOutputs").GetInt32() != DynamicMepMutationContractV1.MaximumOutputs ||
+                value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("MEP mutation manifest identity or exact field set is invalid.");
+            var kinds = value.GetProperty("primitives").EnumerateArray().Select(item => item.GetProperty("kind").GetString() ?? "").ToArray();
+            if (kinds.Length != DynamicMepMutationManifestV1.All.Count || !new HashSet<string>(kinds, StringComparer.Ordinal).SetEquals(DynamicMepMutationManifestV1.All.Select(item => item.Kind)))
+                throw new InvalidDataException("MEP mutation primitive set is incomplete or substituted.");
+            foreach (var primitive in value.GetProperty("primitives").EnumerateArray())
+            {
+                var primitiveFields = primitive.EnumerateObject().Select(property => property.Name).ToArray();
+                var expectedPrimitiveFields = new[] { "kind", "version", "effectClass", "externalTargetMinimum", "externalTargetMaximum", "resultReferenceMinimum", "resultReferenceMaximum", "outputs", "attributes" };
+                var descriptor = DynamicMepMutationManifestV1.Find(primitive.GetProperty("kind").GetString() ?? "") ?? throw new InvalidDataException("MEP mutation primitive is unknown.");
+                if (primitiveFields.Length != expectedPrimitiveFields.Length || primitiveFields.Any(field => !expectedPrimitiveFields.Contains(field, StringComparer.Ordinal)) ||
+                    primitive.GetProperty("version").GetString() != descriptor.PrimitiveVersion || primitive.GetProperty("effectClass").GetString() != descriptor.EffectClass ||
+                    primitive.GetProperty("externalTargetMinimum").GetInt32() != descriptor.ExternalTargetMinimum || primitive.GetProperty("externalTargetMaximum").GetInt32() != descriptor.ExternalTargetMaximum ||
+                    primitive.GetProperty("resultReferenceMinimum").GetInt32() != descriptor.ResultReferenceMinimum || primitive.GetProperty("resultReferenceMaximum").GetInt32() != descriptor.ResultReferenceMaximum ||
+                    primitive.GetProperty("outputs").GetInt32() != descriptor.OutputCount ||
+                    !primitive.GetProperty("attributes").EnumerateArray().Select(item => item.GetString() ?? "").SequenceEqual(descriptor.RequiredAttributes, StringComparer.Ordinal))
+                    throw new InvalidDataException("MEP mutation primitive descriptor differs from the exact SDK contract.");
+            }
+        }
+        catch (Exception ex) { result.Errors.Add("MEP mutation contract manifest content is invalid: " + ex.Message); }
     }
 
     private static string NormalizeRelativePath(string? path) => (path ?? "").Replace('\\', '/').TrimStart('/');
