@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -79,28 +80,66 @@ test("Sidecar lifecycle exposes truthful phases and outcome uncertainty is termi
 test("successful programs are retained only as readmission-required templates", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-reuse-"));
   try {
-    const store = new DynamicProgramReuseStore(path.join(root, "reuse.jsonl")); const record = reuseRecord(); store.append(record);
-    const candidate = store.candidate(record.record_id)!;
+    const record = reuseRecord(); const evidence = new Set([record.preview_evidence_hash]);
+    const store = reuseStore(path.join(root, "reuse.jsonl"), evidence); store.append(record);
+    const candidate = store.candidate(record.record_id, reuseBindings())!;
     assert.equal(candidate.use_as, "example_or_starting_template");
     assert.equal(candidate.requires_current_compilation, true); assert.equal(candidate.requires_current_admission, true);
     assert.equal(candidate.historical_success_bypasses_authorization, false);
+    assert.equal(store.candidate(record.record_id, { ...reuseBindings(), sdk_version: "sdk/v2" }), null);
+    assert.equal(store.candidate(record.record_id, { ...reuseBindings(), project_hash: h("9") }), null);
+    assert.equal(reuseStore(path.join(root, "reuse.jsonl"), evidence, new Set([record.record_id])).candidate(record.record_id, reuseBindings()), null);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
 test("applied reuse records require exact apply evidence", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-reuse-invalid-"));
   try {
-    const store = new DynamicProgramReuseStore(path.join(root, "reuse.jsonl"));
+    const store = reuseStore(path.join(root, "reuse.jsonl"), new Set([reuseRecord().preview_evidence_hash]));
     assert.throws(() => store.append({ ...reuseRecord(), verification_outcome: "apply_verified", apply_evidence_hash: null }));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("reuse ledger authenticates source, evidence, identity, and complete append history", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-reuse-auth-"));
+  try {
+    const file = path.join(root, "reuse.jsonl"); const record = reuseRecord(); const evidence = new Set([record.preview_evidence_hash]);
+    const store = reuseStore(file, evidence);
+    assert.throws(() => store.append({ ...record, normalized_source: `${record.normalized_source} ` }), /source hash/);
+    assert.throws(() => reuseStore(file, new Set()).append(record), /evidence/);
+    store.append(record);
+    assert.throws(() => store.append(record), /duplicate|equivocated/);
+    fs.writeFileSync(`${file}.lock`, "competing-writer\n", "utf8");
+    assert.throws(() => store.append({ ...record, record_id: "reuse-2" }), /locked/);
+    fs.unlinkSync(`${file}.lock`);
+    const original = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(original.trim()); parsed.record.semantic_task_description = "tampered";
+    fs.writeFileSync(file, `${JSON.stringify(parsed)}\n`, "utf8");
+    assert.throws(() => store.readAll(), /authentication/);
+    fs.writeFileSync(file, original.trimEnd(), "utf8");
+    assert.throws(() => store.readAll(), /truncated/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 function reuseRecord(): DynamicProgramReuseRecordV1 {
+  const source = "public sealed class Program {}";
   return {
-    schema: DYNAMIC_PROGRAM_REUSE_RECORD_SCHEMA, record_id: "reuse-1", normalized_source: "public sealed class Program {}", normalized_source_hash: h("a"),
+    schema: DYNAMIC_PROGRAM_REUSE_RECORD_SCHEMA, record_id: "reuse-1", normalized_source: source, normalized_source_hash: digest(source),
     semantic_task_description: "Set approved parameters according to a bounded rule.", required_sdk_capabilities: ["parameters.set"],
     applicability: { company_hash: h("b"), project_hash: h("c"), user_hash: null }, input_schema_hash: h("d"), program_hash: h("e"),
     preview_evidence_hash: h("f"), apply_evidence_hash: null, verification_outcome: "preview_verified", failure_history_hash: h("1"),
     runtime_version: "runtime/v1", sdk_version: "sdk/v1", authoring_model_identity_hash: h("2"), recorded_at_utc: "2026-08-09T02:00:00.000Z"
   };
 }
+
+function reuseBindings() {
+  return { company_hash: h("b"), project_hash: h("c"), user_hash: null, input_schema_hash: h("d"), runtime_version: "runtime/v1",
+    sdk_version: "sdk/v1", model_identity_hash: h("2"), available_sdk_capabilities: ["parameters.set"] };
+}
+
+function reuseStore(file: string, evidence: Set<string>, revoked = new Set<string>()): DynamicProgramReuseStore {
+  return new DynamicProgramReuseStore(file, { authentication_key: Buffer.alloc(32, 11), writer_key_id: h("7"),
+    verify_evidence: hash => evidence.has(hash), is_revoked: recordId => revoked.has(recordId) });
+}
+
+function digest(value: string): string { return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`; }
