@@ -39,11 +39,11 @@ export type DynamicProgramReuseBindings = {
 };
 
 export type DynamicProgramReuseCandidate = {
-  record: Readonly<DynamicProgramReuseRecordV1>;
-  use_as: "example_or_starting_template";
-  requires_current_compilation: true;
-  requires_current_admission: true;
-  historical_success_bypasses_authorization: false;
+  readonly record: Readonly<DynamicProgramReuseRecordV1>;
+  readonly use_as: "example_or_starting_template";
+  readonly requires_current_compilation: true;
+  readonly requires_current_admission: true;
+  readonly historical_success_bypasses_authorization: false;
 };
 
 type LedgerEntry = {
@@ -122,13 +122,13 @@ export class DynamicProgramReuseStore {
       || record.runtime_version !== bindings.runtime_version || record.sdk_version !== bindings.sdk_version
       || record.authoring_model_identity_hash !== bindings.model_identity_hash
       || record.required_sdk_capabilities.some(value => !available.has(value))) return null;
-    return {
+    return Object.freeze({
       record,
       use_as: "example_or_starting_template",
       requires_current_compilation: true,
       requires_current_admission: true,
       historical_success_bypasses_authorization: false
-    };
+    });
   }
 
   private readLedger(bytes: Buffer | null): LedgerEntry[] {

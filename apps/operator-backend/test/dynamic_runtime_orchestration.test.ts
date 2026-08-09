@@ -165,10 +165,13 @@ test("reuse records are deeply immutable and append CAS binds exact authenticate
     const store = reuseStore(file, evidence); store.append(record);
     const candidate = store.candidate(record.record_id, reuseBindings())!;
     assert.equal(Object.isFrozen(candidate.record), true);
+    assert.equal(Object.isFrozen(candidate), true);
     assert.equal(Object.isFrozen(candidate.record.applicability), true);
     assert.equal(Object.isFrozen(candidate.record.required_sdk_capabilities), true);
     assert.throws(() => { candidate.record.required_sdk_capabilities.push("elements.delete"); }, TypeError);
     assert.throws(() => { (candidate.record.applicability as { project_hash: string | null }).project_hash = h("9"); }, TypeError);
+    assert.throws(() => { (candidate as unknown as { requires_current_admission: boolean }).requires_current_admission = false; }, TypeError);
+    assert.throws(() => { (candidate as unknown as { historical_success_bypasses_authorization: boolean }).historical_success_bypasses_authorization = true; }, TypeError);
 
     const racingStore = reuseStore(file, evidence, new Set(), () => {
       const bytes = fs.readFileSync(file);
