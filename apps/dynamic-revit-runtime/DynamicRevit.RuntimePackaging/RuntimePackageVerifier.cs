@@ -16,6 +16,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageDirectoryIdentity Worker { get; set; } = new();
     public PackageArtifactIdentity Sdk { get; set; } = new();
     public PackageArtifactIdentity SandboxPolicy { get; set; } = new();
+    public PackageArtifactIdentity ObservationContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
     public string HostCapabilitiesManifestSha256 { get; set; } = "";
@@ -86,7 +87,9 @@ public static class RuntimePackageVerifier
         VerifyDirectory(root, "worker package", package.Worker, result);
         VerifyArtifact(root, "sdk", package.Sdk, result);
         VerifyArtifact(root, "sandbox policy", package.SandboxPolicy, result);
+        VerifyArtifact(root, "observation contract", package.ObservationContract, result);
         VerifySandboxPolicy(root, package, result);
+        VerifyObservationContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
             var packagedCapabilitiesPath = Path.Combine(root, relativeCapabilitiesPath.Replace('/', Path.DirectorySeparatorChar));
@@ -115,7 +118,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -188,6 +191,51 @@ public static class RuntimePackageVerifier
         catch (Exception ex)
         {
             result.Errors.Add("Sandbox policy content is invalid: " + ex.Message);
+        }
+    }
+
+    private static void VerifyObservationContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.ObservationContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.ObservationContract.RelativePath, "observation contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.ObservationContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var rootValue = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "limits" };
+            var fields = rootValue.ValueKind == JsonValueKind.Object ? rootValue.EnumerateObject().Select(value => value.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                rootValue.GetProperty("schema").GetString() != DynamicObservationContractV1.ManifestSchema ||
+                string.IsNullOrWhiteSpace(rootValue.GetProperty("manifestVersion").GetString()) ||
+                rootValue.GetProperty("contractManifestHash").GetString() != DynamicObservationContractV1.ManifestHash ||
+                rootValue.GetProperty("selectorSchema").GetString() != DynamicObservationContractV1.SelectorSchema ||
+                rootValue.GetProperty("envelopeSchema").GetString() != DynamicObservationContractV1.EnvelopeSchema ||
+                rootValue.GetProperty("cursorSchema").GetString() != DynamicObservationContractV1.CursorSchema ||
+                rootValue.GetProperty("canonicalVersion").GetString() != DynamicObservationContractV1.CanonicalVersion ||
+                rootValue.GetProperty("readOnly").ValueKind != JsonValueKind.True)
+                throw new InvalidDataException("Observation contract manifest identity or field set is invalid.");
+            var limits = rootValue.GetProperty("limits");
+            var expectedLimits = new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                ["maximumRequestBytes"] = DynamicObservationContractV1.MaximumRequestBytes,
+                ["maximumPageSize"] = DynamicObservationContractV1.MaximumPageSize,
+                ["maximumObservedElements"] = DynamicObservationContractV1.MaximumObservedElements,
+                ["maximumElementSelectors"] = DynamicObservationContractV1.MaximumElementSelectors,
+                ["maximumCategorySelectors"] = DynamicObservationContractV1.MaximumCategorySelectors,
+                ["maximumOwnerViewSelectors"] = DynamicObservationContractV1.MaximumOwnerViewSelectors,
+                ["maximumParameterSelectors"] = DynamicObservationContractV1.MaximumParameterSelectors,
+                ["maximumParametersPerElement"] = DynamicObservationContractV1.MaximumParametersPerElement
+            };
+            var observedLimits = limits.ValueKind == JsonValueKind.Object ? limits.EnumerateObject().ToArray() : [];
+            if (observedLimits.Length != expectedLimits.Count || observedLimits.Select(value => value.Name).Distinct(StringComparer.Ordinal).Count() != observedLimits.Length ||
+                observedLimits.Any(value => !expectedLimits.TryGetValue(value.Name, out var expected) || value.Value.ValueKind != JsonValueKind.Number || value.Value.GetInt32() != expected))
+                throw new InvalidDataException("Observation contract manifest limits are invalid.");
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add("Observation contract manifest content is invalid: " + ex.Message);
         }
     }
 

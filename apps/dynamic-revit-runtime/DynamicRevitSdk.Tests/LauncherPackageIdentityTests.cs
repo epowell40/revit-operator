@@ -20,7 +20,8 @@ public sealed class LauncherPackageIdentityTests : IDisposable
             ["DynamicRevit.RuntimePackaging.dll"] = "packaging",
             ["System.IO.Pipes.AccessControl.dll"] = "pipe-access",
             ["manifests/revit-host-capabilities.v1.json"] = "capabilities",
-            ["manifests/sandbox-policy.v1.json"] = "policy"
+            ["manifests/sandbox-policy.v1.json"] = "policy",
+            ["manifests/dynamic-revit-observations-core.v1.json"] = "observations"
         };
         WritePackage(dependencies);
         var baseline = DynamicRuntimePackageDirectoryIdentity.Compute(_root);

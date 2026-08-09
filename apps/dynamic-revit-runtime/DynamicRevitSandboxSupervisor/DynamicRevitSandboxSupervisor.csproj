@@ -14,5 +14,6 @@
   <ItemGroup>
     <None Include="..\manifests\revit-host-capabilities.v1.json" Link="manifests\revit-host-capabilities.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\sandbox-policy.v1.json" Link="manifests\sandbox-policy.v1.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\manifests\dynamic-revit-observations-core.v1.json" Link="manifests\dynamic-revit-observations-core.v1.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

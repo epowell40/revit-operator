@@ -43,7 +43,7 @@ public sealed class PackagingTests : IDisposable
         var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
-        Assert.Equal(9, result.VerifiedArtifacts.Count);
+        Assert.Equal(10, result.VerifiedArtifacts.Count);
         Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(Path.Combine(_root, package.Supervisor.RelativePath)), package.Supervisor.Sha256);
     }
 
@@ -77,6 +77,22 @@ public sealed class PackagingTests : IDisposable
         Assert.Contains(result.Errors, error => error.Contains("Duplicate packaged Revit host years: 2023", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Package_verifier_binds_observation_source_manifest_to_sdk_contract_identity()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest();
+        var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.ObservationContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace(DynamicObservationContractV1.ManifestHash, "sha256:" + new string('0', 64), StringComparison.Ordinal));
+        package.ObservationContract.Sha256 = HashFile(path);
+
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("Observation contract manifest content is invalid", StringComparison.Ordinal));
+    }
+
     private DynamicRuntimePackageManifest WritePackage(string capabilitiesPath, string sdkManifestHash)
     {
         PackageArtifactIdentity Artifact(string path, string content)
@@ -102,6 +118,7 @@ public sealed class PackagingTests : IDisposable
             Worker = DirectoryIdentity("worker"),
             Sdk = Artifact("worker/DynamicRevitSdk.dll", "sdk"),
             SandboxPolicy = Artifact("manifests/sandbox-policy.v1.json", "{\"schema\":\"dynamic-revit-sandbox-policy/v1\",\"profile\":\"windows-lpac-v1-zero-capabilities\",\"profileVersion\":\"1.0.0\"}"),
+            ObservationContract = Artifact("manifests/dynamic-revit-observations-core.v1.json", ObservationContractManifest()),
             SandboxProfile = "windows-lpac-v1-zero-capabilities",
             SandboxProfileVersion = "1.0.0",
             HostCapabilitiesManifestSha256 = HashFile(capabilitiesPath),
@@ -113,6 +130,29 @@ public sealed class PackagingTests : IDisposable
             ]
         };
     }
+
+    private static string ObservationContractManifest() => JsonSerializer.Serialize(new
+    {
+        schema = DynamicObservationContractV1.ManifestSchema,
+        manifestVersion = "1.0.0",
+        contractManifestHash = DynamicObservationContractV1.ManifestHash,
+        selectorSchema = DynamicObservationContractV1.SelectorSchema,
+        envelopeSchema = DynamicObservationContractV1.EnvelopeSchema,
+        cursorSchema = DynamicObservationContractV1.CursorSchema,
+        canonicalVersion = DynamicObservationContractV1.CanonicalVersion,
+        readOnly = true,
+        limits = new
+        {
+            maximumRequestBytes = DynamicObservationContractV1.MaximumRequestBytes,
+            maximumPageSize = DynamicObservationContractV1.MaximumPageSize,
+            maximumObservedElements = DynamicObservationContractV1.MaximumObservedElements,
+            maximumElementSelectors = DynamicObservationContractV1.MaximumElementSelectors,
+            maximumCategorySelectors = DynamicObservationContractV1.MaximumCategorySelectors,
+            maximumOwnerViewSelectors = DynamicObservationContractV1.MaximumOwnerViewSelectors,
+            maximumParameterSelectors = DynamicObservationContractV1.MaximumParameterSelectors,
+            maximumParametersPerElement = DynamicObservationContractV1.MaximumParametersPerElement
+        }
+    });
 
     private string WriteCapabilitiesManifest()
     {

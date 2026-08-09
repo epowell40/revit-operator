@@ -12,6 +12,7 @@ $runtimeRoot = Join-Path $repository "apps\dynamic-revit-runtime"
 $hostProject = Join-Path $repository "apps\revit-bridge-addin\DynamicRevitHost\DynamicRevitHost.csproj"
 $capabilitiesSource = Join-Path $runtimeRoot "manifests\revit-host-capabilities.v1.json"
 $sandboxSource = Join-Path $runtimeRoot "manifests\sandbox-policy.v1.json"
+$observationContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-observations-core.v1.json"
 $verifierProject = Join-Path $runtimeRoot "DynamicRevit.PackageVerifier\DynamicRevit.PackageVerifier.csproj"
 
 if (Test-Path -LiteralPath $output) { throw "OutputRoot already exists: $output" }
@@ -55,6 +56,7 @@ foreach ($hostBuild in $hostBuilds) {
 }
 Copy-Item -LiteralPath $capabilitiesSource -Destination (Join-Path $manifestOutput "revit-host-capabilities.v1.json")
 Copy-Item -LiteralPath $sandboxSource -Destination (Join-Path $manifestOutput "sandbox-policy.v1.json")
+Copy-Item -LiteralPath $observationContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-observations-core.v1.json")
 
 function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function New-Artifact([string]$RelativePath) {
@@ -84,6 +86,7 @@ $packageManifest = [ordered]@{
     worker = New-DirectoryIdentity "worker"
     sdk = New-Artifact "worker/DynamicRevitSdk.dll"
     sandboxPolicy = New-Artifact "manifests/sandbox-policy.v1.json"
+    observationContract = New-Artifact "manifests/dynamic-revit-observations-core.v1.json"
     sandboxProfile = "windows-lpac-v1-zero-capabilities"
     sandboxProfileVersion = "1.0.0"
     hostCapabilitiesManifestSha256 = Get-Sha256 (Join-Path $manifestOutput "revit-host-capabilities.v1.json")
