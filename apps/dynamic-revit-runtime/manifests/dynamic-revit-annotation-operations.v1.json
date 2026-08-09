@@ -1,18 +1,18 @@
 {
   "schema": "dynamic-revit-annotation-operation-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:84b53060b5f322a225370c551d0d7b2bec747423b111fd0bf42f51008444a224",
+  "contractManifestHash": "sha256:cb1868cb9a4089f78f6bc67cf2e05e9b9759af17159675c073cb54bd22129f87",
   "contractSurfaceHash": "sha256:93578da9d429efa81124a551fccdefe1e4fae4ce9aaaa12c82d1f62bfff8932a",
   "resultReferenceManifestHash": "sha256:03a7a296eb10044416078851fa5f30a3048fda1e50316a9d9ae0785536f97701",
   "readbackSchema": "dynamic-revit-annotation-operation-readback/v1",
   "previewSchema": "dynamic-revit-annotation-operation-preview/v1",
-  "canonicalVersion": "dynamic-revit-annotation-operation-canonical/v1",
+  "canonicalVersion": "dynamic-revit-annotation-operation-canonical/v2",
   "maximumTextLength": 4096,
   "productionExposed": false,
   "primitives": [
     {
       "kind": "edit_text_note",
-      "version": "edit_text_note/v1",
+      "version": "edit_text_note/v2",
       "effectClass": "modify",
       "externalTargetCount": 1,
       "outputCount": 0,

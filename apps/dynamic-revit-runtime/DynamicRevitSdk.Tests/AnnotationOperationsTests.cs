@@ -86,17 +86,17 @@ public sealed class AnnotationOperationsTests
             NodeId = H("node"), Kind = "edit_text_note", SubjectUniqueId = "note", BeforeStateHash = H("before"), AfterStateHash = H("after"),
             Values = new Dictionary<string, string>
             {
-                ["element_id"] = "17", ["owner_view_unique_id"] = "view", ["text_before"] = "old", ["text_after"] = "new", ["text_type_unique_id"] = "type"
+                ["element_id"] = "17", ["owner_view_unique_id"] = "view", ["text_before"] = "old", ["text_after_requested"] = "new", ["text_after_observed"] = "new\n", ["text_type_unique_id"] = "type"
             }
         };
         value.ReadbackHash = DynamicAnnotationOperationPolicyV1.ReadbackHash(value);
         var baseline = DynamicAnnotationOperationPolicyV1.ReadbackSetHash(new[] { value });
         value.Values = new Dictionary<string, string>
         {
-            ["element_id"] = "17", ["owner_view_unique_id"] = "view", ["text_before"] = "old", ["text_after"] = "tampered", ["text_type_unique_id"] = "type"
+            ["element_id"] = "17", ["owner_view_unique_id"] = "view", ["text_before"] = "old", ["text_after_requested"] = "new", ["text_after_observed"] = "tampered", ["text_type_unique_id"] = "type"
         };
         Assert.Throws<ArgumentException>(() => DynamicAnnotationOperationPolicyV1.ReadbackSetHash(new[] { value }));
-        value.Values = new Dictionary<string, string> { ["text_before"] = "old", ["text_after"] = "new" };
+        value.Values = new Dictionary<string, string> { ["text_before"] = "old", ["text_after_requested"] = "new", ["text_after_observed"] = "new" };
         Assert.Throws<ArgumentException>(() => DynamicAnnotationOperationPolicyV1.ReadbackHash(value));
         Assert.Matches("^sha256:[0-9a-f]{64}$", baseline);
     }

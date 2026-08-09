@@ -158,9 +158,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 foreach (var node in graph.Nodes)
                 {
                     current = new Changes();
+                    var independentBefore = node.Kind == "edit_text_note" ? CaptureBaseline(document) : null;
                     var resolved = resolver.Resolve(node, host.LiveExternalTarget);
                     var facts = host.ExecuteNode(node, resolved);
                     if (trackingFailure != null) throw new InvalidOperationException("Annotation DocumentChanged capture failed.", trackingFailure);
+                    if (independentBefore != null) MergeIndependentTextNoteDiff(document, independentBefore, current);
                     var readback = executor.Readbacks.Single(value => value.NodeId == node.NodeId);
                     ValidateObservedNode(document, node, resolved, facts, readback, current);
                     resolver.RegisterSuccessfulOutputs(node, facts);
@@ -203,7 +205,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (node.Kind == "edit_text_note")
             {
                 if (facts.Count != 0 || changes.Added.Count != 0 || changes.Modified.Count != 1 || !changes.Modified.Contains(resolved[0].ElementId) || readback.SubjectUniqueId != resolved[0].UniqueId)
-                    throw new InvalidOperationException("edit_text_note produced unscoped or missing observed effects.");
+                    throw new InvalidOperationException("edit_text_note produced unscoped or missing observed effects: added=" +
+                        string.Join(",", changes.Added.OrderBy(value => value)) + "; modified=" +
+                        string.Join(",", changes.Modified.OrderBy(value => value)) + "; deleted=" +
+                        string.Join(",", changes.Deleted.OrderBy(value => value)) + "; expected=" + resolved[0].ElementId.ToString(CultureInfo.InvariantCulture) + ".");
             }
             else
             {
@@ -251,6 +256,24 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 result[ElementIdCompat.GetValue(element.Id)] = new Baseline { UniqueId = element.UniqueId ?? "", StateHash = DynamicAnnotationRevitStateV1.StateHash(element) };
             }
             return result;
+        }
+
+        private static void MergeIndependentTextNoteDiff(Document document, IReadOnlyDictionary<long, Baseline> before, Changes changes)
+        {
+            var after = CaptureBaseline(document);
+            foreach (var pair in after)
+            {
+                if (!before.TryGetValue(pair.Key, out var prior))
+                {
+                    changes.Added.Add(pair.Key);
+                    continue;
+                }
+                if (prior.UniqueId != pair.Value.UniqueId)
+                    throw new InvalidOperationException("TextNote edit observed an element identity substitution during independent effect accounting.");
+                if (prior.StateHash != pair.Value.StateHash) changes.Modified.Add(pair.Key);
+            }
+            foreach (var pair in before)
+                if (!after.ContainsKey(pair.Key)) changes.Deleted.Add(pair.Key);
         }
         private static IEnumerable<Element> AllElements(Document document)
         {

@@ -78,7 +78,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 throw new InvalidOperationException("Text note edit produced substituted text, type, view, or identity.");
             AddReadback(node, current.UniqueId, before, DynamicAnnotationRevitStateV1.StateHash(current), new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["text_before"] = text, ["text_after"] = afterText, ["text_type_unique_id"] = type, ["owner_view_unique_id"] = view,
+                ["text_before"] = text, ["text_after_requested"] = node.Attributes["replacement_text"], ["text_after_observed"] = afterText,
+                ["text_type_unique_id"] = type, ["owner_view_unique_id"] = view,
                 ["element_id"] = ElementIdCompat.GetValue(current.Id).ToString(CultureInfo.InvariantCulture)
             });
             return Array.Empty<DynamicRevitLabCreatedOutputV1>();

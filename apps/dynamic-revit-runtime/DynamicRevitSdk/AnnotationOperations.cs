@@ -11,7 +11,7 @@ public static class DynamicAnnotationOperationsV1
     public const string ManifestSchema = "dynamic-revit-annotation-operation-manifest/v1";
     public const string ReadbackSchema = "dynamic-revit-annotation-operation-readback/v1";
     public const string PreviewSchema = "dynamic-revit-annotation-operation-preview/v1";
-    public const string CanonicalVersion = "dynamic-revit-annotation-operation-canonical/v1";
+    public const string CanonicalVersion = "dynamic-revit-annotation-operation-canonical/v2";
     public const int MaximumTextLength = 4096;
 }
 
@@ -34,7 +34,7 @@ public static class DynamicAnnotationOperationManifestV1
 {
     private static readonly DynamicAnnotationOperationDescriptorV1[] Values =
     {
-        new("edit_text_note", "edit_text_note/v1", "modify", 1, 0,
+        new("edit_text_note", "edit_text_note/v2", "modify", 1, 0,
             new[] { "expected_owner_view_unique_id", "expected_text", "expected_text_type_unique_id", "replacement_text" }),
         new("create_tag", "create_tag/v1", "create", 1, 1,
             new[] { "expected_tag_type_state_hash", "expected_view_state_hash", "head_position_feet", "leader_elbow_feet", "leader_enabled", "leader_end_feet", "output_slot", "tag_orientation", "tag_type_unique_id", "target_unique_id", "view_unique_id" })
@@ -217,7 +217,8 @@ public static class DynamicAnnotationOperationPolicyV1
             if (node.Kind == "edit_text_note")
             {
                 if (readback.SubjectUniqueId != node.ExternalTargets[0].TargetUniqueId || readback.Values["text_before"] != node.Attributes["expected_text"] ||
-                    readback.Values["text_after"] != node.Attributes["replacement_text"] || readback.Values["text_type_unique_id"] != node.Attributes["expected_text_type_unique_id"] ||
+                    readback.Values["text_after_requested"] != node.Attributes["replacement_text"] || !ExactTextRoundTrip(readback.Values["text_after_requested"], readback.Values["text_after_observed"]) ||
+                    readback.Values["text_type_unique_id"] != node.Attributes["expected_text_type_unique_id"] ||
                     readback.Values["owner_view_unique_id"] != node.Attributes["expected_owner_view_unique_id"] || readback.BeforeStateHash == readback.AfterStateHash)
                     throw new InvalidOperationException("edit_text_note readback does not prove the declared exact mutation.");
             }
@@ -252,11 +253,13 @@ public static class DynamicAnnotationOperationPolicyV1
             requireHash && value.ReadbackHash != ReadbackHash(value)) throw new ArgumentException("Annotation operation readback is invalid or unbounded.");
         if (value.Kind == "edit_text_note")
         {
-            RequireExactKeys(value.Values, "element_id", "owner_view_unique_id", "text_after", "text_before", "text_type_unique_id");
+            RequireExactKeys(value.Values, "element_id", "owner_view_unique_id", "text_after_observed", "text_after_requested", "text_before", "text_type_unique_id");
             if (!long.TryParse(value.Values["element_id"], NumberStyles.None, CultureInfo.InvariantCulture, out var elementId) || elementId <= 0 ||
                 !DynamicCanonical.Id(value.Values["owner_view_unique_id"], 256) || !DynamicCanonical.Id(value.Values["text_type_unique_id"], 256) ||
-                NormalizeText(value.Values["text_before"]) != value.Values["text_before"] || NormalizeText(value.Values["text_after"]) != value.Values["text_after"] ||
-                value.Values["text_before"] == value.Values["text_after"] || value.BeforeStateHash == value.AfterStateHash)
+                NormalizeText(value.Values["text_before"]) != value.Values["text_before"] || NormalizeText(value.Values["text_after_requested"]) != value.Values["text_after_requested"] ||
+                NormalizeText(value.Values["text_after_observed"]) != value.Values["text_after_observed"] ||
+                !ExactTextRoundTrip(value.Values["text_after_requested"], value.Values["text_after_observed"]) ||
+                value.Values["text_before"] == value.Values["text_after_observed"] || value.BeforeStateHash == value.AfterStateHash)
                 throw new ArgumentException("edit_text_note readback is not an exact mutation.");
         }
         else
@@ -276,4 +279,6 @@ public static class DynamicAnnotationOperationPolicyV1
     {
         if (values.Count != keys.Length || keys.Any(key => !values.ContainsKey(key))) throw new ArgumentException("Annotation readback value fields are not exact.");
     }
+    private static bool ExactTextRoundTrip(string requested, string observed) =>
+        string.Equals(observed, requested, StringComparison.Ordinal) || string.Equals(observed, requested + "\n", StringComparison.Ordinal);
 }
