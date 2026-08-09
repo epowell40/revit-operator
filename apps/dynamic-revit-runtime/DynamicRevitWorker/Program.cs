@@ -24,6 +24,10 @@ internal sealed class WorkerInput
     public DynamicTaskInput Input { get; set; } = new();
     public int DeadlineMs { get; set; } = 10_000;
     public long? ResultReferenceDocumentRevision { get; set; }
+    public string ResultReferenceSnapshotHash { get; set; } = "";
+    public string ResultReferenceScopeHash { get; set; } = "";
+    public IReadOnlyList<DynamicBuildingSystemsEnvelopeV1> BuildingSystemsPages { get; set; } = Array.Empty<DynamicBuildingSystemsEnvelopeV1>();
+    public IReadOnlyList<DynamicTrustedElementFactV1> TrustedExternalTargets { get; set; } = Array.Empty<DynamicTrustedElementFactV1>();
 }
 
 internal sealed class WorkerOutput
@@ -260,7 +264,8 @@ internal static class WorkerExecutor
         using var timeout = new CancellationTokenSource(request.DeadlineMs);
         try
         {
-            var task = Task.Run(() => ExecuteAssembly(compilation.Assembly!, request.Input, request.ResultReferenceDocumentRevision), timeout.Token);
+            var task = Task.Run(() => ExecuteAssembly(compilation.Assembly!, request.Input, request.ResultReferenceDocumentRevision,
+                request.ResultReferenceSnapshotHash, request.ResultReferenceScopeHash, request.BuildingSystemsPages, request.TrustedExternalTargets), timeout.Token);
             if (!task.Wait(request.DeadlineMs)) return Fail(output, "WORKER_DEADLINE", "Program exceeded its worker deadline.");
             var result = task.GetAwaiter().GetResult();
             var report = result.Legacy?.Report ?? result.ResultReference?.Report;
@@ -299,7 +304,10 @@ internal static class WorkerExecutor
         internal DynamicResultReferenceProgramResultV1? ResultReference;
     }
 
-    private static ExecutedProgram ExecuteAssembly(byte[] assembly, DynamicTaskInput input, long? resultReferenceDocumentRevision = null)
+    private static ExecutedProgram ExecuteAssembly(byte[] assembly, DynamicTaskInput input, long? resultReferenceDocumentRevision = null,
+        string resultReferenceSnapshotHash = "", string resultReferenceScopeHash = "",
+        IEnumerable<DynamicBuildingSystemsEnvelopeV1>? buildingSystemsPages = null,
+        IEnumerable<DynamicTrustedElementFactV1>? trustedExternalTargets = null)
     {
         var alc = new AssemblyLoadContext("dynamic-revit-worker", isCollectible: true);
         try
@@ -315,7 +323,10 @@ internal static class WorkerExecutor
             if (instance is IDynamicResultReferenceRevitProgramV1 referenceProgram)
             {
                 if (resultReferenceDocumentRevision == null) throw new InvalidOperationException("Result-reference programs require an exact document revision.");
-                var context = new DynamicResultReferenceProgramContextV1(input, resultReferenceDocumentRevision.Value);
+                var context = new DynamicResultReferenceProgramContextV1(input, resultReferenceDocumentRevision.Value,
+                    resultReferenceSnapshotHash, resultReferenceScopeHash,
+                    buildingSystemsPages ?? Array.Empty<DynamicBuildingSystemsEnvelopeV1>(),
+                    trustedExternalTargets ?? Array.Empty<DynamicTrustedElementFactV1>());
                 return new ExecutedProgram { ResultReference = referenceProgram.Execute(context) ?? context.Complete() };
             }
             var legacy = (IDynamicRevitProgram)instance; var legacyContext = new DynamicRevitContext(input);
@@ -417,15 +428,28 @@ internal static class SelfTest
     {
         const string source = "using System.Collections.Generic; using RevitOperator.DynamicRevitSdk; " +
             "public sealed class X : IDynamicResultReferenceRevitProgramV1 { public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) { " +
-            "var a = c.Plan.AddOperation(\"create_family_instance\", null, null, new[] { new DynamicResultOutputSpecV1 { OutputSlot=\"primary\", ExpectedCategoryStableId=\"category:generic-model\", ExpectedTypeUniqueId=\"type:generic-a\" } }, new Dictionary<string,string> { [\"family_type_identity\"]=\"type:generic-a\", [\"placement\"]=\"0,0,0\" }); " +
-            "c.Plan.AddOperation(\"copy_element\", null, new[] { a.Reference(\"primary\") }, new[] { new DynamicResultOutputSpecV1 { OutputSlot=\"copy\", ExpectedCategoryStableId=\"category:generic-model\", ExpectedTypeUniqueId=\"type:generic-a\" } }, new Dictionary<string,string> { [\"transform\"]=\"identity\" }); return c.Complete(); } }";
-        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = DynamicWire.Sha256("worker-self-test-document"), SessionId = "worker-session" } };
-        var output = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = input, ResultReferenceDocumentRevision = 9 });
+            "var observed = c.BuildingSystemsFacts[0]; var target = c.ExternalTarget(observed.Element.UniqueId); " +
+            "c.Report(\"snapshot\", c.ResultReferenceSnapshotHash); c.Report(\"scope\", c.ResultReferenceScopeHash); " +
+            "c.Plan.AddOperation(\"copy_element\", new[] { target }, null, new[] { new DynamicResultOutputSpecV1 { OutputSlot=\"copy\", ExpectedCategoryStableId=target.ExpectedCategoryStableId, ExpectedTypeUniqueId=target.ExpectedTypeUniqueId } }, new Dictionary<string,string> { [\"transform\"]=\"identity\" }); return c.Complete(); } }";
+        var fingerprint = DynamicWire.Sha256("worker-self-test-document"); var snapshot = DynamicWire.Sha256("worker-self-test-snapshot");
+        var page = BuildingSystemsPage(fingerprint, snapshot); var trusted = TrustedExternal(fingerprint);
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = fingerprint, SessionId = "worker-session" } };
+        var request = new WorkerInput { Source = source, Input = input, ResultReferenceDocumentRevision = 9,
+            ResultReferenceSnapshotHash = page.SnapshotHash, ResultReferenceScopeHash = page.ScopeHash,
+            BuildingSystemsPages = new[] { page }, TrustedExternalTargets = new[] { trusted } };
+        var output = WorkerExecutor.Execute(request);
         var graph = output.ResultReferenceProgramResult?.Graph;
         using var wire = JsonDocument.Parse(JsonSerializer.Serialize(output, Compiler.Json));
         var wireResult = wire.RootElement.GetProperty("resultReferenceProgramResult");
-        var ok = output.Ok && output.Graph == null && graph?.Nodes.Count == 2 &&
-            graph.Nodes[1].ResultReferences.Single().ResultId == graph.Nodes[0].Outputs.Single().ResultId &&
+        var wrongSnapshot = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = input, ResultReferenceDocumentRevision = 9,
+            ResultReferenceSnapshotHash = DynamicWire.Sha256("wrong"), ResultReferenceScopeHash = page.ScopeHash,
+            BuildingSystemsPages = new[] { page }, TrustedExternalTargets = new[] { trusted } });
+        var foreignTarget = TrustedExternal(DynamicWire.Sha256("foreign-document"));
+        var wrongTarget = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = input, ResultReferenceDocumentRevision = 9,
+            ResultReferenceSnapshotHash = page.SnapshotHash, ResultReferenceScopeHash = page.ScopeHash,
+            BuildingSystemsPages = new[] { page }, TrustedExternalTargets = new[] { foreignTarget } });
+        var ok = output.Ok && !wrongSnapshot.Ok && !wrongTarget.Ok && output.Graph == null && graph?.Nodes.Count == 1 &&
+            graph.Nodes[0].ExternalTargets.Single().TargetUniqueId == trusted.UniqueId &&
             graph.GraphHash == DynamicResultReferencePolicyV1.GraphHash(graph) &&
             wireResult.GetProperty("schema").GetString() == DynamicResultReferenceContractV1.ProgramResultSchema &&
             wireResult.GetProperty("contractManifestHash").GetString() == DynamicResultReferenceManifestV1.ManifestHash &&
@@ -433,6 +457,24 @@ internal static class SelfTest
         Console.WriteLine(JsonSerializer.Serialize(new { schema = "dynamic-revit-worker-result-reference-self-test/v1", ok, graphHash = graph?.GraphHash, diagnostics = output.Diagnostics }, Compiler.Json));
         return ok ? 0 : 1;
     }
+
+    private static DynamicBuildingSystemsEnvelopeV1 BuildingSystemsPage(string fingerprint, string snapshot)
+    {
+        var type = new DynamicStableReferenceV1 { Kind = "type", StableId = "revit-element:type", UniqueId = "type", ElementId = 2 };
+        var family = new DynamicStableReferenceV1 { Kind = "family", StableId = "revit-element:family", UniqueId = "family", ElementId = 3 };
+        var element = new DynamicStableReferenceV1 { Kind = "element", StableId = "revit-element:equipment", UniqueId = "equipment", ElementId = 1 };
+        var origin = new DynamicPointV1 { X = 1, Y = 2, Z = 3 };
+        var transform = new DynamicTransformV1 { Origin = origin, BasisX = new DynamicPointV1 { X = 1 }, BasisY = new DynamicPointV1 { Y = 1 }, BasisZ = new DynamicPointV1 { Z = 1 } };
+        var fact = new DynamicBuildingSystemsFactV1 { Kind = "equipment", Element = element, Family = family, Type = type, Location = origin, Orientation = transform,
+            Asset = new DynamicBuildingAssetFactV1 { AssetClass = "equipment", Location = origin, Orientation = transform, Family = family, Type = type } };
+        return DynamicBuildingSystemsObservationPolicyV1.BuildPage(new DynamicBuildingSystemsSelectorV1 { PageSize = 1 }, fingerprint, "worker-session", 9, snapshot, new[] { fact });
+    }
+
+    private static DynamicTrustedElementFactV1 TrustedExternal(string fingerprint) => new()
+    {
+        UniqueId = "equipment", ElementId = 1, DocumentFingerprint = fingerprint, CategoryStableId = "category:none", TypeUniqueId = "type",
+        StateHash = DynamicWire.Sha256("worker-self-test-state"), Exists = true, Verified = true, Visible = true
+    };
 
     public static int Run()
     {

@@ -294,6 +294,8 @@ public sealed class PackagingTests : IDisposable
         maximumOutputsPerNode = DynamicResultReferenceContractV1.MaximumOutputsPerNode,
         maximumReferencesPerNode = DynamicResultReferenceContractV1.MaximumReferencesPerNode,
         maximumAttributesPerNode = DynamicResultReferenceContractV1.MaximumAttributesPerNode,
+        maximumBuildingSystemsPages = DynamicResultReferenceContractV1.MaximumBuildingSystemsPages,
+        maximumTrustedExternalTargets = DynamicResultReferenceContractV1.MaximumTrustedExternalTargets,
         productionExposed = false
     });
 

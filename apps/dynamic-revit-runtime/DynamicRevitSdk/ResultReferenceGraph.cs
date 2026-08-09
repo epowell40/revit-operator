@@ -17,6 +17,8 @@ public static class DynamicResultReferenceContractV1
     public const int MaximumOutputsPerNode = 16;
     public const int MaximumReferencesPerNode = 64;
     public const int MaximumAttributesPerNode = 64;
+    public const int MaximumBuildingSystemsPages = DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts;
+    public const int MaximumTrustedExternalTargets = DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts;
 }
 
 public static class DynamicResultReferenceManifestV1
@@ -38,7 +40,9 @@ public static class DynamicResultReferenceManifestV1
         DynamicResultReferenceContractV1.MaximumNodes.ToString(CultureInfo.InvariantCulture),
         DynamicResultReferenceContractV1.MaximumOutputsPerNode.ToString(CultureInfo.InvariantCulture),
         DynamicResultReferenceContractV1.MaximumReferencesPerNode.ToString(CultureInfo.InvariantCulture),
-        DynamicResultReferenceContractV1.MaximumAttributesPerNode.ToString(CultureInfo.InvariantCulture), SurfaceHashValue));
+        DynamicResultReferenceContractV1.MaximumAttributesPerNode.ToString(CultureInfo.InvariantCulture),
+        DynamicResultReferenceContractV1.MaximumBuildingSystemsPages.ToString(CultureInfo.InvariantCulture),
+        DynamicResultReferenceContractV1.MaximumTrustedExternalTargets.ToString(CultureInfo.InvariantCulture), SurfaceHashValue));
 
     public static string ContractSurfaceHash => SurfaceHashValue;
     public static string ManifestHash => ManifestHashValue;
@@ -215,19 +219,13 @@ public interface IDynamicResultReferenceRevitProgramV1
     DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 context);
 }
 
-public sealed class DynamicResultReferenceProgramContextV1
+public sealed partial class DynamicResultReferenceProgramContextV1
 {
     private readonly List<string> _logs = new();
     private readonly Dictionary<string, string> _report = new(StringComparer.Ordinal);
 
     public DynamicResultReferenceProgramContextV1(DynamicTaskInput input, long documentRevision)
-    {
-        Input = input ?? throw new ArgumentNullException(nameof(input));
-        var document = input.Document;
-        if (documentRevision < 0 || document == null || !DynamicCanonical.Hash(document.ProjectFingerprint) || !DynamicCanonical.Id(document.SessionId, 256))
-            throw new ArgumentException("Result-reference worker context requires an exact document, session, and revision.");
-        Plan = new DynamicResultReferenceGraphBuilderV1(DynamicWire.InputHash(input), document.ProjectFingerprint, document.SessionId, documentRevision);
-    }
+        : this(input, documentRevision, "", "", Array.Empty<DynamicBuildingSystemsEnvelopeV1>(), Array.Empty<DynamicTrustedElementFactV1>()) { }
 
     public DynamicTaskInput Input { get; }
     public IReadOnlyList<DynamicElementDto> Elements => Input.Elements;
@@ -392,7 +390,9 @@ public static class DynamicResultReferencePolicyV1
         var explicitTargets = budget.ExplicitTargetUniqueIds ?? Array.Empty<string>();
         var outputs = new Dictionary<string, (string NodeId, DynamicResultOutputDeclarationV1 Output)>(StringComparer.Ordinal);
         var resultIds = new HashSet<string>(StringComparer.Ordinal);
-        var outputCount = 0; var createCount = 0;
+        var outputCount = 0; var createCount = 0; var modifyCount = 0; var deleteCount = 0;
+        var affected = new HashSet<string>(StringComparer.Ordinal);
+        var permittedExternalEffects = new HashSet<string>(budget.AllowedExternalEffectClasses ?? Array.Empty<string>(), StringComparer.Ordinal);
         foreach (var node in graph.Nodes)
         {
             ValidateNodeShape(node);
@@ -407,6 +407,15 @@ public static class DynamicResultReferencePolicyV1
                 throw new ArgumentException("Result-reference primitive contains an unknown or extra attribute.");
             if ((descriptor.EffectClass == "create") != (node.Outputs.Count > 0)) throw new ArgumentException("Create primitives require symbolic outputs and only create primitives may declare them.");
             if (descriptor.EffectClass == "create") createCount += node.Outputs.Count;
+            else if (descriptor.EffectClass == "modify") modifyCount++;
+            else if (descriptor.EffectClass == "delete") deleteCount++;
+            else if (descriptor.EffectClass == "external")
+            {
+                if (!permittedExternalEffects.Contains(node.Kind)) throw new ArgumentException("Result-reference external effect is not authorized.");
+            }
+            else throw new ArgumentException("Result-reference primitive effect class is unsupported.");
+            if ((descriptor.EffectClass == "modify" || descriptor.EffectClass == "delete") && node.ExternalTargets.Count + node.ResultReferences.Count < 1)
+                throw new ArgumentException("Result-reference modifying and deleting primitives require an exact target reference.");
             foreach (var external in node.ExternalTargets)
             {
                 if (!trustedExternalTargets.TryGetValue(external.TargetUniqueId, out var fact)) throw new InvalidOperationException("External target is unresolved.");
@@ -415,6 +424,7 @@ public static class DynamicResultReferencePolicyV1
                     throw new ArgumentException("External target is outside explicit scope.");
                 if ((budget.AllowedCategories?.Count ?? 0) < 1 || !(budget.AllowedCategories ?? Array.Empty<string>()).Contains(fact.CategoryStableId, StringComparer.Ordinal))
                     throw new ArgumentException("External target category is outside scope.");
+                if (descriptor.EffectClass != "create") affected.Add("external\n" + external.TargetUniqueId);
             }
             foreach (var reference in node.ResultReferences)
             {
@@ -422,6 +432,7 @@ public static class DynamicResultReferencePolicyV1
                 if (!outputs.TryGetValue(key, out var prior)) throw new InvalidOperationException("Symbolic result is unresolved or forward.");
                 if (!ReferenceMatches(reference, prior.Output) || !node.DependsOn.Contains(prior.NodeId, StringComparer.Ordinal))
                     throw new InvalidOperationException("Symbolic result dependency, type, category, or document is invalid.");
+                if (descriptor.EffectClass != "create") affected.Add("result\n" + key);
             }
             foreach (var output in node.Outputs)
             {
@@ -431,11 +442,13 @@ public static class DynamicResultReferencePolicyV1
                 if (output.ExpectedDocumentFingerprint != graph.DocumentFingerprint) throw new InvalidOperationException("Symbolic output targets another document.");
                 if ((budget.AllowedCategories?.Count ?? 0) < 1 || !(budget.AllowedCategories ?? Array.Empty<string>()).Contains(output.ExpectedCategoryStableId, StringComparer.Ordinal))
                     throw new ArgumentException("Symbolic output category is outside scope.");
+                affected.Add("output\n" + key);
                 outputCount++;
             }
         }
-        if (createCount > budget.MaximumCreates || outputCount > budget.MaximumAffectedElements || outputCount > budget.MaximumOutputCount)
-            throw new ArgumentException("Result-reference graph exceeds create or output bounds.");
+        if (createCount > budget.MaximumCreates || modifyCount > budget.MaximumModifications || deleteCount > budget.MaximumDeletes ||
+            affected.Count > budget.MaximumAffectedElements || outputCount > budget.MaximumOutputCount)
+            throw new ArgumentException("Result-reference graph exceeds effect, affected-element, or output bounds.");
         if (graph.GraphHash != GraphHash(graph)) throw new ArgumentException("Result-reference graph hash is invalid.");
     }
 
@@ -474,7 +487,18 @@ public static class DynamicResultReferencePolicyV1
             throw new ArgumentException("Result-reference receipt is invalid.");
         if (value.Outcome == "failed_rolled_back" && (!value.PartialFailureRolledBack || !DynamicCanonical.Hash(value.FailureNodeId)))
             throw new ArgumentException("Partial failure receipt lacks exact rollback identity.");
-        foreach (var output in value.Outputs) ValidateCreatedFactShape(output, requireHash: true);
+        if (value.Outcome == "preview_rolled_back_verified" && (value.PartialFailureRolledBack || value.FailureNodeId.Length != 0))
+            throw new ArgumentException("Successful rollback receipt contains contradictory failure state.");
+        foreach (var output in value.Outputs)
+        {
+            ValidateCreatedFactShape(output, requireHash: true);
+            if (output.Status != "rolled_back_verified" || output.Visible)
+                throw new ArgumentException("Rollback receipt exposes a live or non-rolled-back symbolic output.");
+        }
+        if (value.Outputs.Select(output => Key(output.ResultId, output.OutputSlot)).Distinct(StringComparer.Ordinal).Count() != value.Outputs.Count ||
+            value.Outputs.Select(output => output.CreatedUniqueId).Distinct(StringComparer.Ordinal).Count() != value.Outputs.Count ||
+            value.Outputs.Select(output => output.CreatedElementId).Distinct().Count() != value.Outputs.Count)
+            throw new ArgumentException("Rollback receipt contains duplicate symbolic or Revit output identities.");
         return DynamicWire.Sha256(DynamicCanonical.Join(value.Schema, value.ContractManifestHash, value.GraphHash, value.DocumentFingerprint,
             value.DocumentSessionId, value.DocumentRevision.ToString(CultureInfo.InvariantCulture), value.Outcome,
             value.RollbackVerified ? "1" : "0", value.PartialFailureRolledBack ? "1" : "0", value.FailureNodeId,

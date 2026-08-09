@@ -1,10 +1,10 @@
 {
   "schema": "dynamic-revit-mep-mutation-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:7f2d46d01caa10d6841bb48658895c34671001fe4b81e9f42523587097c2d2fb",
+  "contractManifestHash": "sha256:b0143efe46991992c9589cd89d97bf8a4b1f8ad0be6fbf09057e89f3bd3ad514",
   "contractSurfaceHash": "sha256:e8f9019f34a4dc0a1353d53336ae0e09bcd705dd5a971be1e9fddb43b2cbb8dd",
   "primitiveManifestHash": "sha256:6794bf78b3d65e7e9ec8bbe65a68c7ee51250848a05c8cd4971f7bc53fff5024",
-  "resultReferenceManifestHash": "sha256:7cae08e13785f18f1d69978bd5d94133014cc01233fd38026534468b2ab7977f",
+  "resultReferenceManifestHash": "sha256:0230fdf6954c0128c8eb87afe559643196e53651037eb7a7980a2f369cc429f5",
   "canonicalVersion": "dynamic-revit-mep-mutation-canonical/v1",
   "maximumOperations": 64,
   "maximumEffects": 64,

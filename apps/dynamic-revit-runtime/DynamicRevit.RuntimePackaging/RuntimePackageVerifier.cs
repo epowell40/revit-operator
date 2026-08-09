@@ -354,7 +354,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var value = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "productionExposed" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "maximumBuildingSystemsPages", "maximumTrustedExternalTargets", "productionExposed" };
             var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 value.GetProperty("schema").GetString() != DynamicResultReferenceContractV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
@@ -369,6 +369,8 @@ public static class RuntimePackageVerifier
                 value.GetProperty("maximumOutputsPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumOutputsPerNode ||
                 value.GetProperty("maximumReferencesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumReferencesPerNode ||
                 value.GetProperty("maximumAttributesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumAttributesPerNode ||
+                value.GetProperty("maximumBuildingSystemsPages").GetInt32() != DynamicResultReferenceContractV1.MaximumBuildingSystemsPages ||
+                value.GetProperty("maximumTrustedExternalTargets").GetInt32() != DynamicResultReferenceContractV1.MaximumTrustedExternalTargets ||
                 value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
                 throw new InvalidDataException("Result-reference contract manifest identity or field set is invalid.");
         }

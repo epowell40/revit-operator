@@ -20,9 +20,9 @@ public sealed class ResultReferenceGraphTests
         Assert.Equal(first.Nodes[0].Outputs[0].ResultId, first.Nodes[1].ResultReferences[0].ResultId);
         Assert.Equal(first.Nodes[0].Outputs[0].OutputSlot, first.Nodes[1].ResultReferences[0].OutputSlot);
         Assert.Equal(new[] { first.Nodes[0].NodeId }, first.Nodes[1].DependsOn);
-        Assert.Equal("sha256:0a16626914c3c018755d7d860c316e84648994fb16cc9c9291324c044fd22999", first.GraphHash);
-        Assert.Equal("sha256:7cae08e13785f18f1d69978bd5d94133014cc01233fd38026534468b2ab7977f", DynamicResultReferenceManifestV1.ManifestHash);
-        Assert.Equal("sha256:1fed4ff5af05030c66a75f0865d6e1f18525dd1a2fcef222272246d8283daa75", DynamicResultReferenceManifestV1.ContractSurfaceHash);
+        Assert.Equal("sha256:36ee7595d686be786bd4b2cc4833c4939bca5a992b4753add6154663fdd5c803", first.GraphHash);
+        Assert.Equal("sha256:0230fdf6954c0128c8eb87afe559643196e53651037eb7a7980a2f369cc429f5", DynamicResultReferenceManifestV1.ManifestHash);
+        Assert.Equal("sha256:8d0670abe703212c58a57f92745f04f77541f1d05d0b1fca45623d74952fb273", DynamicResultReferenceManifestV1.ContractSurfaceHash);
     }
 
     [Fact]
@@ -170,6 +170,65 @@ public sealed class ResultReferenceGraphTests
         node.Outputs = outputs; Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ValidateNodeShape(node));
     }
 
+    [Fact]
+    public void AdmissionCountsModifyDeleteAffectedTargetsAndAuthorizesExternalEffectsExactly()
+    {
+        var external = External(); var facts = new Dictionary<string, DynamicTrustedElementFactV1> { [external.TargetUniqueId] = Trusted(external) };
+        var modifyBuilder = Builder();
+        modifyBuilder.AddOperation("move_element", new[] { external }, null, null, new Dictionary<string, string> { ["vector_feet"] = "1,0,0" });
+        var modifyBudget = EffectBudget("elements"); modifyBudget.MaximumModifications = 1;
+        DynamicResultReferencePolicyV1.Validate(modifyBuilder.Build(), modifyBudget, new[] { "move_element" }, facts);
+        modifyBudget.MaximumModifications = 0;
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.Validate(modifyBuilder.Build(), modifyBudget, new[] { "move_element" }, facts));
+
+        var deleteBuilder = Builder(); deleteBuilder.AddOperation("delete_element", new[] { external }, null, null, new Dictionary<string, string>());
+        var deleteBudget = EffectBudget("elements"); deleteBudget.MaximumDeletes = 1;
+        DynamicResultReferencePolicyV1.Validate(deleteBuilder.Build(), deleteBudget, new[] { "delete_element" }, facts);
+        deleteBudget.MaximumDeletes = 0;
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.Validate(deleteBuilder.Build(), deleteBudget, new[] { "delete_element" }, facts));
+
+        var externalBuilder = Builder(); externalBuilder.AddOperation("reload_link", null, null, null,
+            new Dictionary<string, string> { ["file_capability_id"] = "capability" });
+        var externalBudget = EffectBudget("links"); externalBudget.AllowedExternalEffectClasses = new[] { "reload_link" };
+        DynamicResultReferencePolicyV1.Validate(externalBuilder.Build(), externalBudget, new[] { "reload_link" }, new Dictionary<string, DynamicTrustedElementFactV1>());
+        externalBudget.AllowedExternalEffectClasses = Array.Empty<string>();
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.Validate(externalBuilder.Build(), externalBudget, new[] { "reload_link" }, new Dictionary<string, DynamicTrustedElementFactV1>()));
+
+        var second = new DynamicExternalTargetReferenceV1 { TargetUniqueId = "existing-b", TargetElementId = 45, DocumentFingerprint = Document,
+            ExpectedCategoryStableId = Category, ExpectedTypeUniqueId = Type, ExpectedStateHash = H("existing-state-b") };
+        var twoTargetBuilder = Builder(); twoTargetBuilder.AddOperation("move_element", new[] { external, second }, null, null, new Dictionary<string, string> { ["vector_feet"] = "1,0,0" });
+        facts[second.TargetUniqueId] = Trusted(second); modifyBudget = EffectBudget("elements"); modifyBudget.MaximumModifications = 1;
+        modifyBudget.ExplicitTargetUniqueIds = new[] { external.TargetUniqueId, second.TargetUniqueId };
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.Validate(twoTargetBuilder.Build(), modifyBudget, new[] { "move_element" }, facts));
+    }
+
+    [Fact]
+    public void ReceiptHashRejectsContradictoryRollbackOutcomesFlagsAndOutputs()
+    {
+        var graph = SingleNodeGraph(); var fact = Created(graph.Nodes[0], graph.Nodes[0].Outputs[0], 101);
+        fact.Status = "rolled_back_verified"; fact.Visible = false; fact.OutputHash = DynamicResultReferencePolicyV1.OutputHash(fact);
+        var receipt = new DynamicResultReferenceReceiptV1
+        {
+            GraphHash = graph.GraphHash, DocumentFingerprint = Document, DocumentSessionId = "session-1", DocumentRevision = 7,
+            Outcome = "preview_rolled_back_verified", RollbackVerified = true, Outputs = new[] { fact }
+        };
+        Assert.Matches("^sha256:[0-9a-f]{64}$", DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+
+        receipt.PartialFailureRolledBack = true;
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+        receipt.PartialFailureRolledBack = false; receipt.FailureNodeId = H("unexpected-failure");
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+        receipt.FailureNodeId = ""; fact.Status = "created_verified"; fact.Visible = true; fact.OutputHash = DynamicResultReferencePolicyV1.OutputHash(fact);
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+        fact.Status = "rolled_back_verified"; fact.Visible = true; fact.OutputHash = DynamicResultReferencePolicyV1.OutputHash(fact);
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+        fact.Visible = false; fact.OutputHash = DynamicResultReferencePolicyV1.OutputHash(fact);
+        receipt.Outcome = "failed_rolled_back"; receipt.PartialFailureRolledBack = false; receipt.FailureNodeId = H("failed-node");
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+        receipt.PartialFailureRolledBack = true; receipt.Outputs = new[] { fact, fact };
+        Assert.Throws<ArgumentException>(() => DynamicResultReferencePolicyV1.ReceiptHash(receipt));
+    }
+
     private static DynamicResultReferenceGraphV1 Graph()
     {
         var builder = Builder();
@@ -193,6 +252,7 @@ public sealed class ResultReferenceGraphTests
     private static DynamicExternalTargetReferenceV1 External() => new() { TargetUniqueId = "existing-a", TargetElementId = 44, DocumentFingerprint = Document, ExpectedCategoryStableId = Category, ExpectedTypeUniqueId = Type, ExpectedStateHash = H("existing-state") };
     private static DynamicTrustedElementFactV1 Trusted(DynamicExternalTargetReferenceV1 value) => new() { UniqueId = value.TargetUniqueId, ElementId = value.TargetElementId, DocumentFingerprint = value.DocumentFingerprint, CategoryStableId = value.ExpectedCategoryStableId, TypeUniqueId = value.ExpectedTypeUniqueId, StateHash = value.ExpectedStateHash, Exists = true, Verified = true, Visible = true };
     private static DynamicEffectBudgetV1 Budget() => new() { BudgetId = "result-reference-test", TargetDocumentFingerprints = new[] { Document }, AllowedCategories = new[] { Category }, AllowedSdkDomains = new[] { "families", "elements" }, MaximumOperationCount = 4, MaximumAffectedElements = 4, MaximumCreates = 4, MaximumModifications = 0, MaximumDeletes = 0, MaximumOutputCount = 4, FileCapabilitySetHash = H("none") };
+    private static DynamicEffectBudgetV1 EffectBudget(string domain) => new() { BudgetId = "result-reference-effect-test", TargetDocumentFingerprints = new[] { Document }, ExplicitTargetUniqueIds = new[] { "existing-a" }, AllowedCategories = new[] { Category }, AllowedSdkDomains = new[] { domain }, MaximumOperationCount = 1, MaximumAffectedElements = 1, MaximumCreates = 0, MaximumModifications = 0, MaximumDeletes = 0, MaximumOutputCount = 1, FileCapabilitySetHash = H("none") };
     private static void Validate(DynamicResultReferenceGraphV1 graph, IReadOnlyDictionary<string, DynamicTrustedElementFactV1>? facts = null) => DynamicResultReferencePolicyV1.Validate(graph, Budget(), new[] { "create_family_instance", "copy_element" }, facts ?? new Dictionary<string, DynamicTrustedElementFactV1>());
     private static string H(string value) => DynamicWire.Sha256(value);
 
