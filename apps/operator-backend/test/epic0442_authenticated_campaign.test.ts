@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { loadEpic0441Campaign, type Epic0441Campaign } from "../src/benchmark/epic0441_campaign.js";
 import {
   Epic0442ScorerAuthority,
+  DurableEpic0442ReplayAuthority,
   InMemoryEpic0442ReplayAuthority,
   epic0442SourceCampaignSha256,
   verifyEpic0442AuthenticatedChain,
@@ -185,6 +189,20 @@ test("duplicate task arms, assignment replay, score replay, duplicate result, an
   const freshProcessSameReplay = new Epic0442ScorerAuthority({ runtimeMode: "development", privateKey: secondKeys.privateKey, replayAuthority: replay, now: () => now });
   assert.throws(() => freshProcessSameReplay.issueCampaign({ campaign, campaignVersion: "v1", campaignNonce: "replay-campaign" }), /already authenticated/);
   assert.throws(() => verifyEpic0442AuthenticatedChain({ publicKey: first.scorer.publicKey(), campaignReceipt, assignmentReceipts: [typedAssignment], results: [] }), /exactly one authenticated result/);
+});
+
+test("durable scorer replay survives fresh authority instances and separates namespaces", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "epic0442-scorer-replay-"));
+  try {
+    const ledger = path.join(root, "scorer-replay.sqlite");
+    assert.equal(new DurableEpic0442ReplayAuthority(ledger).reserve("campaign", "same-key"), true);
+    assert.equal(new DurableEpic0442ReplayAuthority(ledger).reserve("campaign", "same-key"), false);
+    assert.equal(new DurableEpic0442ReplayAuthority(ledger).reserve("assignment", "same-key"), true);
+    assert.equal(new DurableEpic0442ReplayAuthority(ledger).reserve("result", "same-key"), true);
+    assert.equal(new DurableEpic0442ReplayAuthority(ledger).reserve("result", "same-key"), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("task/provider self-scoring fields, arm mismatches, unsafe blocker claims, and malformed deltas are rejected", () => {

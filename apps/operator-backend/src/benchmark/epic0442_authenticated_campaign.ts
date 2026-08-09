@@ -8,6 +8,7 @@ import {
   type KeyObject
 } from "node:crypto";
 import { canonicalJson, type JsonValue } from "../capabilities/tool_certification.js";
+import { DurableDynamicAdmissionReplayAuthority } from "../dynamic_runtime/durable_replay.js";
 import { type Epic0441Campaign, validateEpic0441Campaign } from "./epic0441_campaign.js";
 
 export const EPIC0442_OUTCOMES = [
@@ -164,6 +165,25 @@ export class InMemoryEpic0442ReplayAuthority implements Epic0442ReplayAuthority 
     if (this.#seen.has(scoped)) return false;
     this.#seen.add(scoped);
     return true;
+  }
+}
+
+/**
+ * Cross-process scorer replay authority. Keys are domain-separated and hashed
+ * before entering the synchronous FULL SQLite replay ledger, so campaign task
+ * names, fixture identifiers, and evaluator nonces are not stored in plaintext.
+ */
+export class DurableEpic0442ReplayAuthority implements Epic0442ReplayAuthority {
+  readonly #ledger: DurableDynamicAdmissionReplayAuthority;
+
+  constructor(filePath: string) {
+    this.#ledger = new DurableDynamicAdmissionReplayAuthority(filePath);
+  }
+
+  reserve(namespace: "campaign" | "assignment" | "result", key: string): boolean {
+    if (!key || key.length > 4096) return false;
+    const replayKey = `sha256:${createHash("sha256").update("epic0442-scorer-replay/v1\0").update(namespace).update("\0").update(key).digest("hex")}`;
+    return this.#ledger.consume(replayKey, Number.MAX_SAFE_INTEGER, Math.floor(Date.now() / 1000));
   }
 }
 
