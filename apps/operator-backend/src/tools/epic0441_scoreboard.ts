@@ -1,6 +1,8 @@
 import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
 import { loadEpic0441Campaign } from "../benchmark/epic0441_campaign.js";
-import { scoreEpic0441Campaign } from "../benchmark/epic0441_scoreboard.js";
+import { createEpic0441EvidenceManifestSkeleton, scoreEpic0441Campaign } from "../benchmark/epic0441_scoreboard.js";
 import { writeJsonFile } from "../benchmark/files.js";
 
 function flag(name: string): string | undefined {
@@ -12,11 +14,26 @@ function usage(): never {
   console.error([
     "EPIC-0441 scorer-owned scoreboard",
     "",
+    "  npm run benchmark:epic0441 -- init --campaign-seed <seed> --reviewer-packet <private-file> --output <evidence.json>",
     "  npm run benchmark:epic0441 -- score --manifest <evidence.json> --evidence-root <dir> --reviewer-packet <private-file> --output-dir <dir>"
   ].join("\n"));
   process.exit(2);
 }
 
+if (process.argv[2] === "init") {
+  const campaignSeed = flag("--campaign-seed");
+  const reviewerPacketPath = flag("--reviewer-packet");
+  const outputPath = flag("--output");
+  if (!campaignSeed || !reviewerPacketPath || !outputPath) usage();
+  const reviewerBytes = fs.readFileSync(path.resolve(reviewerPacketPath));
+  const manifest = createEpic0441EvidenceManifestSkeleton({
+    campaign: loadEpic0441Campaign(), campaignSeed,
+    reviewerPacketSha256: `sha256:${crypto.createHash("sha256").update(reviewerBytes).digest("hex")}`
+  });
+  writeJsonFile(path.resolve(outputPath), manifest);
+  console.log(JSON.stringify({ output: path.resolve(outputPath), row_count: manifest.rows.length, reviewer_packet_sha256: manifest.reviewer_packet_sha256 }, null, 2));
+  process.exit(0);
+}
 if (process.argv[2] !== "score") usage();
 const evidenceManifestPath = flag("--manifest");
 const evidenceRoot = flag("--evidence-root");

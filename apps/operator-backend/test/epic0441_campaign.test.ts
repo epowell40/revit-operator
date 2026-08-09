@@ -12,12 +12,22 @@ import {
   type Epic0441Campaign
 } from "../src/benchmark/epic0441_campaign.js";
 import {
+  createEpic0441EvidenceManifestSkeleton,
   epic0441Ordering,
   scoreEpic0441Campaign,
   type Epic0441EvidenceManifest
 } from "../src/benchmark/epic0441_scoreboard.js";
 
 const campaign = loadEpic0441Campaign();
+
+test("EPIC-0441 evidence skeleton is complete, balanced, and conservatively unscored", () => {
+  const manifest = createEpic0441EvidenceManifestSkeleton({ campaign, campaignSeed: "epic0441-frozen-20260809", reviewerPacketSha256: hash("packet") });
+  assert.equal(manifest.rows.length, 60);
+  assert.equal(manifest.rows.filter(row => row.pair_order === 1 && row.representation === "typed_capability_chain").length, 15);
+  assert.equal(manifest.rows.filter(row => row.pair_order === 1 && row.representation === "dynamic_program").length, 15);
+  assert.equal(manifest.rows.filter(row => row.classification === "sealed_not_yet_run").length, 6);
+  assert.ok(manifest.rows.filter(row => row.classification !== "sealed_not_yet_run").every(row => row.classification === "source_only"));
+});
 
 test("EPIC-0441 freezes thirty paired, redline-led task slots", () => {
   assert.equal(campaign.tasks.length, 30);

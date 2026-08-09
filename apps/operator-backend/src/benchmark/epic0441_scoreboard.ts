@@ -123,6 +123,40 @@ export function epic0441Ordering(campaign: Epic0441Campaign, campaignSeed: strin
   }]));
 }
 
+export function createEpic0441EvidenceManifestSkeleton(args: {
+  campaign: Epic0441Campaign;
+  campaignSeed: string;
+  reviewerPacketSha256: string;
+}): Epic0441EvidenceManifest {
+  validateEpic0441Campaign(args.campaign);
+  if (args.campaign.tasks.length !== 30 || args.campaign.execution_configs.length !== 2 || !hashPattern.test(args.reviewerPacketSha256)) {
+    throw new Error("EPIC-0441 evidence skeleton requires the frozen campaign and a canonical reviewer-packet hash.");
+  }
+  const ordering = epic0441Ordering(args.campaign, args.campaignSeed);
+  return {
+    schema_version: "epic0441_evidence_manifest/v1",
+    suite_id: args.campaign.suite_id,
+    campaign_seed: args.campaignSeed,
+    ordering_algorithm: "sha256-balanced-pairs/v1",
+    reviewer_packet_sha256: args.reviewerPacketSha256,
+    rows: args.campaign.tasks.flatMap((task) => args.campaign.execution_configs.map((config) => {
+      const taskOrdering = ordering.get(task.task_id)!;
+      const sealed = task.wave === "novel_post_freeze";
+      return {
+        task_id: task.task_id,
+        config_id: config.config_id,
+        representation: config.representation,
+        pair_order: (config.representation === taskOrdering.first_representation ? 1 : 2) as 1 | 2,
+        ordering_key: taskOrdering.ordering_key,
+        classification: sealed ? "sealed_not_yet_run" as const : "source_only" as const,
+        reason: sealed
+          ? "Independent post-freeze task remains sealed from this source-calibration manifest."
+          : "No scorer-authenticated task/config receipt is attached; source-level campaign calibration only."
+      };
+    }))
+  };
+}
+
 function requireReason(row: Epic0441EvidenceRow): void {
   if (row.classification !== "receipt" && (typeof row.reason !== "string" || !row.reason.trim())) {
     throw new Error(`${row.task_id}/${row.config_id} classification '${row.classification}' requires an honest reason.`);
