@@ -134,21 +134,37 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             DynamicRevitLabCreatedOutputV1 output)
         {
             var element = output.Element;
-            if (element == null || !element.IsValidObject || element.Document != _document || !output.VisibilityVerified || !IsVisible(element))
-                throw new InvalidOperationException("Lab output is missing, foreign, hidden, or lacks independent visibility proof.");
-            var category = CategoryStableId(element.Category); var type = TypeUniqueId(element);
+            var isValid = element != null && element.IsValidObject;
+            var isSameDocument = isValid && IsCurrentDocument(element!);
+            var isVisible = isSameDocument && IsVisible(element!);
+            if (!isValid || !isSameDocument || !output.VisibilityVerified || !isVisible)
+                throw new InvalidOperationException("Lab output is missing, foreign, hidden, or lacks independent visibility proof. Checks: present=" +
+                    (element != null) + ", valid=" + isValid + ", sameDocument=" + isSameDocument + ", executorVisibility=" +
+                    output.VisibilityVerified + ", hostVisibility=" + isVisible + ".");
+            var verifiedElement = element!;
+            var category = CategoryStableId(verifiedElement.Category); var type = TypeUniqueId(verifiedElement);
             if (declaration.ExpectedDocumentFingerprint != DynamicRuntimeSnapshotHandler.Fingerprint(_document) ||
                 declaration.ExpectedCategoryStableId != category || declaration.ExpectedTypeUniqueId != type)
                 throw new InvalidOperationException("Created Revit output document, category, or type differs from its declaration.");
             var fact = new DynamicCreatedResultFactV1
             {
                 ProducerNodeId = node.NodeId, ResultId = declaration.ResultId, OutputSlot = declaration.OutputSlot,
-                CreatedUniqueId = element.UniqueId, CreatedElementId = ElementIdCompat.GetValue(element.Id),
+                CreatedUniqueId = verifiedElement.UniqueId, CreatedElementId = ElementIdCompat.GetValue(verifiedElement.Id),
                 DocumentFingerprint = declaration.ExpectedDocumentFingerprint, CategoryStableId = category, TypeUniqueId = type,
-                StateHash = DynamicAnnotationRevitStateV1.StateHash(element), Status = "created_verified", Verified = true, Visible = true
+                StateHash = DynamicAnnotationRevitStateV1.StateHash(verifiedElement), Status = "created_verified", Verified = true, Visible = true
             };
             fact.OutputHash = DynamicResultReferencePolicyV1.OutputHash(fact);
             return fact;
+        }
+
+        private bool IsCurrentDocument(Element element)
+        {
+            var document = element.Document;
+            return document != null && document.IsValidObject &&
+                string.Equals(DynamicRuntimeSnapshotHandler.Fingerprint(document),
+                    DynamicRuntimeSnapshotHandler.Fingerprint(_document), StringComparison.Ordinal) &&
+                string.Equals(DynamicRuntimeSnapshotHandler.Session(document),
+                    DynamicRuntimeSnapshotHandler.Session(_document), StringComparison.Ordinal);
         }
 
         private bool IsVisible(Element element)
