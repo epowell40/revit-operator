@@ -18,12 +18,27 @@ public sealed class ObservationContractsTests
         var envelope = DynamicObservationPolicyV1.BuildPage(selector, DocumentFingerprint, SessionId,
             new[] { Element("z-element", 30, 12.5), Element("a-element", 10, 4.25), Element("m-element", 20, 8.75) });
 
-        Assert.Equal("sha256:91f9cc000f27b1591ff1ce7d86dc0546ec37fdd77250f1e44017d3b70105d9b6", DynamicObservationContractV1.ManifestHash);
+        Assert.Equal("sha256:1fe8867e3d83aa667e1600dce1b76d9be22578e128f8907ee397e3ccd292ba8b", DynamicObservationContractV1.ManifestHash);
         Assert.Equal("sha256:5250896bc15318bdf5e586517643ad3ec315c2c3a4c550f1f1f12b2807c2ef36", envelope.ScopeHash);
-        Assert.Equal("sha256:07373793814624df44f4e933e9907b7cfa90619135935e8daf35b10f51cf9207", envelope.RevisionHash);
-        Assert.Equal("sha256:fcaf8ac7bbd53d435e86e8301d30596b7615f65eb446f5bac84e9dabf01e0be8", envelope.EnvelopeHash);
+        Assert.Equal("sha256:5cdfdfdf75b1a02802173c63563bff2611fe3e19ba3720a5071afddfba8f72d8", envelope.RevisionHash);
+        Assert.Equal("sha256:62077314fec20d47c8a37b644c590396d2fa914ea30837da6f69c938035b80ae", envelope.EnvelopeHash);
         Assert.Equal(new[] { "revit-element:a-element", "revit-element:m-element" }, envelope.Elements.Select(value => value.Element.StableId));
         Assert.NotNull(envelope.NextCursor);
+    }
+
+    [Theory]
+    [InlineData(64.50565087321395, 64.50565087321394)]
+    [InlineData(-7.83333333333325, -7.833333333333249)]
+    [InlineData(0.0001234567890123456, 0.0001234567890123457)]
+    [InlineData(123456789.01234567, 123456789.01234566)]
+    public void Observation_canonical_is_stable_across_net48_json_transport_precision(double hostValue, double transportedValue)
+    {
+        var host = Element("transport-element", 42, hostValue);
+        var transported = Element("transport-element", 42, transportedValue);
+        transported.CoreStateHash = host.CoreStateHash;
+
+        Assert.NotEqual(BitConverter.DoubleToInt64Bits(hostValue), BitConverter.DoubleToInt64Bits(transportedValue));
+        Assert.Equal(DynamicObservationPolicyV1.ElementCanonical(host), DynamicObservationPolicyV1.ElementCanonical(transported));
     }
 
     [Fact]
