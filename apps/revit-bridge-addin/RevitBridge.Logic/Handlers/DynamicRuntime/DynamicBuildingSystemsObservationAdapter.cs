@@ -142,8 +142,16 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 if (result.Count >= DynamicBuildingSystemsObservationContractV1.MaximumConnectorsPerFact)
                     throw new InvalidOperationException("Building-systems connector count exceeds its bound.");
-                var coordinate = connector.CoordinateSystem ?? throw new InvalidOperationException("Connector coordinate frame is unavailable.");
-                var identity = DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(snapshotHash, owner, ConnectorId(connector));
+                // Family instances may expose logical or other non-spatial connectors. Those
+                // cannot participate in an exact geometry/topology operation, so omit them from
+                // the physical connector projection instead of inventing a frame or failing an
+                // otherwise valid asset/annotation observation.
+                var coordinate = Safe(() => connector.CoordinateSystem);
+                var connectorIdentity = OptionalProperty(connector, "Id");
+                var flowDirection = OptionalProperty(connector, "Direction");
+                var origin = Safe(() => connector.Origin);
+                if (coordinate == null || connectorIdentity == null || flowDirection == null || origin == null) continue;
+                var identity = DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(snapshotHash, owner, connectorIdentity);
                 var connected = new List<string>();
                 foreach (Connector counterpart in connector.AllRefs)
                 {
@@ -157,15 +165,17 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     if (connected.Count >= DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector)
                         throw new InvalidOperationException("Connector counterpart count exceeds its bound.");
                     var counterpartOwner = counterpartElement.UniqueId ?? throw new InvalidOperationException("Connected connector owner lacks a stable identity.");
-                    connected.Add(DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(snapshotHash, counterpartOwner, ConnectorId(counterpart)));
+                    var counterpartIdentity = OptionalProperty(counterpart!, "Id");
+                    if (counterpartIdentity == null) throw new InvalidOperationException("Connected physical connector lacks an exact identity.");
+                    connected.Add(DynamicBuildingSystemsObservationPolicyV1.ConnectorStableId(snapshotHash, counterpartOwner, counterpartIdentity));
                 }
                 var frame = CanonicalFrame(coordinate);
                 result.Add(new DynamicBuildingConnectorV1
                 {
                     StableWithinSnapshotId = identity,
-                    Origin = Point(connector.Origin)!, BasisX = frame.BasisX, BasisY = frame.BasisY, BasisZ = frame.BasisZ,
+                    Origin = Point(origin)!, BasisX = frame.BasisX, BasisY = frame.BasisY, BasisZ = frame.BasisZ,
                     Domain = connector.Domain.ToString(), ConnectorType = connector.ConnectorType.ToString(), Shape = connector.Shape.ToString(),
-                    FlowDirection = RequiredProperty(connector, "Direction"), SystemClassification = Classification(connector),
+                    FlowDirection = flowDirection, SystemClassification = Classification(connector),
                     RadiusFeet = NumberProperty(connector, "Radius"), HeightFeet = NumberProperty(connector, "Height"), WidthFeet = NumberProperty(connector, "Width"),
                     System = connector.MEPSystem == null ? null : Reference(connector.MEPSystem, "system"),
                     IsPhysicallyConnected = connected.Count > 0,
@@ -264,12 +274,16 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             return "none:" + system.GetType().Name;
         }
 
-        private static string RequiredProperty(object value, string name)
+        private static string? OptionalProperty(object value, string name)
         {
-            try { var result = value.GetType().GetProperty(name)?.GetValue(value, null); return result == null ? throw new InvalidOperationException("Required Revit property is unavailable: " + name) : Convert.ToString(result, CultureInfo.InvariantCulture) ?? ""; }
-            catch (Exception ex) { throw new InvalidOperationException("Required Revit property is unavailable: " + name, ex); }
+            try
+            {
+                var result = value.GetType().GetProperty(name)?.GetValue(value, null);
+                var text = result == null ? null : Convert.ToString(result, CultureInfo.InvariantCulture);
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch { return null; }
         }
-        private static string ConnectorId(Connector connector) => RequiredProperty(connector, "Id");
         private static double? NumberProperty(object value, string name) { try { var result = value.GetType().GetProperty(name)?.GetValue(value, null); return result == null ? (double?)null : Convert.ToDouble(result, CultureInfo.InvariantCulture); } catch { return null; } }
         private static double? ParameterDouble(Element value, BuiltInParameter parameter) { try { var item = value.get_Parameter(parameter); return item != null && item.StorageType == StorageType.Double && item.HasValue ? item.AsDouble() : (double?)null; } catch { return null; } }
 
