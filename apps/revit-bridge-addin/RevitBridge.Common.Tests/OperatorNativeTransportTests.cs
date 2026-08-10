@@ -303,6 +303,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void DynamicCoreEffectsBindTheExactReadbackProvenMutationOwner()
+        {
+            var root = FindRepositoryRoot();
+            var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicCoreOperationHost.cs"));
+            Assert.Contains("dynamic-revit-core-operation-host/v4", source);
+            Assert.Contains("if (readback.BeforeStateHash == readback.AfterStateHash)", source);
+            Assert.Contains("current.Modified.Add(primary);", source);
+            Assert.Contains("current.Modified.OrderBy(value => value).ToArray()", source);
+            Assert.Contains("DynamicCoreOperationEffectPolicyV1.ValidateAgainstGraph(effects, graph, budget)", source);
+        }
+
+        [Fact]
         public void DynamicMepOutputsRemainProvenWhileRevitCollateralIsFullyAccounted()
         {
             var root = FindRepositoryRoot();

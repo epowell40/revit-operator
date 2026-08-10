@@ -20,7 +20,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicCoreOperationHostV1
     {
         private const int BaselineLimit = 50000;
-        private const string AdapterSurface = "dynamic-revit-core-operation-host/v3\nset_parameter/v1:exact-owner\nrotate_element/v1:exact-orientation-state-v1\nchange_type/v1:connector-signature-v3\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
+        private const string AdapterSurface = "dynamic-revit-core-operation-host/v4\nset_parameter/v1:exact-owner-readback-effect\nrotate_element/v1:exact-orientation-state-v1\nchange_type/v1:connector-signature-v3\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
         private static readonly ConcurrentDictionary<string, byte> ConsumedBindings = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
 
         internal static string HostAdapterManifestHash(string revitYear) => DynamicWire.Sha256(string.Join("\n", new[]
@@ -160,6 +160,15 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                         catch { if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack(); throw; }
                     }
                     if (trackingFailure != null) throw new InvalidOperationException("Core-operation DocumentChanged capture failed.", trackingFailure);
+                    if (node.Kind != "delete_element")
+                    {
+                        if (readback.BeforeStateHash == readback.AfterStateHash)
+                            throw new InvalidOperationException("Core-operation mutation produced no trusted state change.");
+                        // Revit can omit a parameter-only owner from DocumentChanged even though the
+                        // exact post-transaction readback proves its state changed. Bind the primary
+                        // mutation owner explicitly; all collateral IDs remain event-derived.
+                        current.Modified.Add(primary);
+                    }
                     if (exactDeleted != null)
                     {
                         var returned = new HashSet<long>(exactDeleted.Select(ElementIdCompat.GetValue));
