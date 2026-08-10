@@ -17,7 +17,7 @@ public static class DynamicObservationContractV1
     public const string EnvelopeSchema = "dynamic-revit-observation-envelope/v1";
     public const string CursorSchema = "dynamic-revit-observation-cursor/v1";
     public const string ManifestSchema = "dynamic-revit-observation-contract-manifest/v1";
-    public const string CanonicalVersion = "dynamic-revit-observation-canonical/v3";
+    public const string CanonicalVersion = "dynamic-revit-observation-canonical/v4";
     public const int MaximumRequestBytes = 64 * 1024;
     public const int MaximumPageSize = 256;
     public const int MaximumObservedElements = 4096;
@@ -440,20 +440,45 @@ public static class DynamicObservationPolicyV1
     private static string BoxCanonical(DynamicBoxV1? value) => value == null ? Canonical.Join((string?)null) : Canonical.Join(
         PointCanonical(value.Min), PointCanonical(value.Max), TransformCanonical(value.Transform));
 
-    // Observation DTOs cross the Revit net48 -> supervisor/worker net8 JSON boundary. Raw
-    // IEEE-754 bits are not a stable wire canonical there: the two System.Text.Json runtime
-    // implementations can choose different, equally valid round-trip decimal spellings and
-    // recover adjacent binary values. Thirteen significant digits retain substantially more
-    // precision than Revit needs while making the signed observation identity transport-stable.
+    // Observation DTOs cross the Revit net48 -> supervisor/worker net8 JSON boundary. Decimal
+    // floating formatting is not a stable canonical there: even the same IEEE value can produce
+    // a different G-format result, while valid round-trip spellings can parse one ULP apart.
+    // Normalize the transport value to 40 mantissa bits, then hash a 36-bit guarded identity as
+    // fixed-width integer text. This retains roughly twelve decimal digits without depending on
+    // either runtime's floating formatter.
+    public static double? NormalizeTransportDouble(double? value)
+    {
+        if (!value.HasValue) return null;
+        if (!Finite(value.Value)) throw new ArgumentException("Dynamic observation double is not finite.");
+        return BitConverter.Int64BitsToDouble(unchecked((long)RoundMantissaBits(value.Value, 40)));
+    }
+
     private static string? DoubleCanonical(double? value)
     {
         if (!value.HasValue) return null;
-        var text = value.Value.ToString("G13", CultureInfo.InvariantCulture);
-        if (text == "-0") return "0";
-        var exponentIndex = text.IndexOfAny(new[] { 'e', 'E' });
-        if (exponentIndex < 0) return text;
-        var exponent = int.Parse(text.Substring(exponentIndex + 1), NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture);
-        return text.Substring(0, exponentIndex) + "e" + exponent.ToString(CultureInfo.InvariantCulture);
+        if (!Finite(value.Value)) throw new ArgumentException("Dynamic observation double is not finite.");
+        var transport = BitConverter.Int64BitsToDouble(unchecked((long)RoundMantissaBits(value.Value, 40)));
+        var bits = RoundMantissaBits(transport, 36);
+        if ((bits & 0x7fffffffffffffffUL) == 0) bits = 0;
+        return bits.ToString("x16", CultureInfo.InvariantCulture);
+    }
+
+    private static ulong RoundMantissaBits(double value, int retainedBits)
+    {
+        var bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(value));
+        var sign = bits & 0x8000000000000000UL;
+        var magnitude = bits & 0x7fffffffffffffffUL;
+        if (magnitude == 0 || (magnitude & 0x7ff0000000000000UL) == 0x7ff0000000000000UL) return bits;
+        var clearedBits = 52 - retainedBits;
+        var quantum = 1UL << clearedBits;
+        var remainderMask = quantum - 1UL;
+        var remainder = magnitude & remainderMask;
+        var rounded = magnitude & ~remainderMask;
+        var halfway = quantum >> 1;
+        if (remainder > halfway || remainder == halfway && ((rounded / quantum) & 1UL) != 0) rounded += quantum;
+        // A finite maximum-magnitude parameter must not normalize to infinity.
+        if ((rounded & 0x7ff0000000000000UL) == 0x7ff0000000000000UL) rounded = magnitude & ~remainderMask;
+        return sign | rounded;
     }
 
     private static void ValidatePoint(DynamicPointV1? point, bool required = false)
