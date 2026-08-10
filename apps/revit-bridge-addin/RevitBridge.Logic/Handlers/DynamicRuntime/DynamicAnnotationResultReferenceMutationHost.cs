@@ -145,7 +145,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 try
                 {
-                    if (current == null || args.GetDocument() != document) return;
+                    if (current == null || !IsCurrentDocument(args.GetDocument(), document)) return;
                     foreach (var id in args.GetAddedElementIds()) current.Added.Add(ElementIdCompat.GetValue(id));
                     foreach (var id in args.GetModifiedElementIds()) current.Modified.Add(ElementIdCompat.GetValue(id));
                     foreach (var id in args.GetDeletedElementIds()) current.Deleted.Add(ElementIdCompat.GetValue(id));
@@ -213,11 +213,24 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             else
             {
                 if (facts.Count != 1 || changes.Added.Count != 1 || !changes.Added.Contains(facts[0].CreatedElementId) || changes.Modified.Count != 0)
-                    throw new InvalidOperationException("create_tag produced collateral or failed exact creation accounting.");
+                    throw new InvalidOperationException("create_tag produced collateral or failed exact creation accounting: added=" +
+                        string.Join(",", changes.Added.OrderBy(value => value)) + "; modified=" +
+                        string.Join(",", changes.Modified.OrderBy(value => value)) + "; deleted=" +
+                        string.Join(",", changes.Deleted.OrderBy(value => value)) + "; output=" +
+                        (facts.Count == 1 ? facts[0].CreatedElementId.ToString(CultureInfo.InvariantCulture) : "count:" + facts.Count.ToString(CultureInfo.InvariantCulture)) + ".");
                 var element = document.GetElement(facts[0].CreatedUniqueId);
                 if (!(element is IndependentTag) || readback.SubjectUniqueId != facts[0].CreatedUniqueId)
                     throw new InvalidOperationException("create_tag output/readback identity is not an IndependentTag.");
             }
+        }
+
+        private static bool IsCurrentDocument(Document candidate, Document expected)
+        {
+            return candidate != null && candidate.IsValidObject &&
+                string.Equals(DynamicRuntimeSnapshotHandler.Fingerprint(candidate),
+                    DynamicRuntimeSnapshotHandler.Fingerprint(expected), StringComparison.Ordinal) &&
+                string.Equals(DynamicRuntimeSnapshotHandler.Session(candidate),
+                    DynamicRuntimeSnapshotHandler.Session(expected), StringComparison.Ordinal);
         }
 
         private static string Semantic(DynamicResultReferenceNodeV1 node, IReadOnlyList<DynamicResolvedElementTargetV1> resolved,
