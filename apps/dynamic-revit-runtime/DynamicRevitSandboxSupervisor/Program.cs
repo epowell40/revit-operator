@@ -16,6 +16,7 @@ internal static class Program
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = true };
     private static readonly JsonSerializerOptions WireJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = false };
     private static readonly JsonSerializerOptions SnakeJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = false, WriteIndented = false };
+    private static readonly JsonSerializerOptions StrictJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = false, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, WriteIndented = false };
 
     public static async Task<int> Main(string[] args)
     {
@@ -44,6 +45,16 @@ internal static class Program
     private static async Task<LiveEvidence> RunLiveTask(LiveTaskConfig config, bool replayAdmission)
     {
         var started = DateTimeOffset.UtcNow;
+        var contextRuleRequested = !string.IsNullOrWhiteSpace(config.ContextRuleFile) || !string.IsNullOrWhiteSpace(config.ContextRuleVerificationKeyFile) ||
+            !string.IsNullOrWhiteSpace(config.ContextCompanyId) || !string.IsNullOrWhiteSpace(config.ContextUserId) || config.CoreEffectBudget != null;
+        if (contextRuleRequested)
+        {
+            RequireDevelopmentLaboratory();
+            if (string.IsNullOrWhiteSpace(config.ContextRuleFile) || string.IsNullOrWhiteSpace(config.ContextRuleVerificationKeyFile) ||
+                string.IsNullOrWhiteSpace(config.ContextCompanyId) || string.IsNullOrWhiteSpace(config.ContextUserId) || config.CoreEffectBudget == null || config.ResultReference)
+                throw new InvalidOperationException("Context-rule execution requires one complete rule/key/company/user/core-budget lane and cannot share another worker lane.");
+            config.CoreEffectBudget.Validate();
+        }
         var workerDirectory = Path.GetFullPath(config.WorkerDirectory);
         var evidencePath = Path.GetFullPath(config.EvidencePath);
         using var workspace = TaskWorkspace.Create(evidencePath, "live-tasks", workerDirectory);
@@ -83,6 +94,7 @@ internal static class Program
         var taskInput = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = config.OperationBudget };
         string workerInput;
         ResultReferenceObservationInput? resultReferenceInput = null;
+        ContextRuleExecutionInput? contextRuleInput = null;
 
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var correlation = Guid.NewGuid().ToString("N");
@@ -107,7 +119,17 @@ internal static class Program
         var registrationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/register", token, writeGrant, registrationRequest, registrationCorrelation);
         registration = UnwrapAuthenticated(registrationEnvelope, hostSessionKey, runtimeId, "register-worker-receipt", out var registrationAuthentication);
         hostAuthentications.Add(registrationAuthentication);
-        if (config.ResultReference)
+        if (contextRuleRequested)
+        {
+            contextRuleInput = await CollectContextRuleInput(config, taskInput, runtimeId, hostSessionKey, token, writeGrant, workerRuntimePackageHash, hostAuthentications);
+            workerInput = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-worker-input/v0", source, input = taskInput, deadlineMs = config.WorkerDeadlineMs,
+                resultReferenceDocumentRevision = contextRuleInput.DocumentRevision, verifiedContextRule = contextRuleInput.Rule,
+                contextObservationPages = contextRuleInput.Pages
+            }, Json);
+        }
+        else if (config.ResultReference)
         {
             if (config.BuildingSystemsSelector == null || config.ResultReferenceEffectBudget == null)
                 throw new InvalidOperationException("Result-reference execution requires an exact building-systems selector and effect budget.");
@@ -156,6 +178,9 @@ internal static class Program
         var sourceHash = output.GetProperty("sourceHash").GetString()!;
         var programHash = output.GetProperty("programHash").GetString()!;
         var sdkHash = output.GetProperty("sdkHash").GetString()!;
+        if (contextRuleInput != null)
+            return await CompleteCoreContextTask(config, started, taskRoot, workspace, profile, selectedHost, bootstrap, runtimeId, hostSessionKey,
+                token, writeGrant, registration, snapshotRaw, output.Clone(), sourceHash, programHash, sdkHash, snapshotInputHash, contextRuleInput, hostAuthentications);
         if (config.ResultReference)
         {
             if (resultReferenceInput == null) throw new InvalidOperationException("Result-reference observation state is missing.");
@@ -246,6 +271,175 @@ internal static class Program
             ok = ok && replayRejected;
         }
         return new LiveEvidence { Schema = config.Apply ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory, RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(), Admission = admission, PreviewReceipt = previewRaw, ApplyAuthorizationReceipt = applyAuthorizationRaw, V1Admission = v1Admission, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications, ReplayEvidence = replay, TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage, Failure = ok ? null : replayAdmission && replay is not null && !replay.SecondSubmissionRejected ? "Revit host accepted a replayed signed worker admission." : config.Apply ? "Authorized Revit apply did not produce committed verification." : "Revit preview returned a structured failure." };
+    }
+
+    internal static void RequireDevelopmentLaboratory()
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"), "development", StringComparison.Ordinal) ||
+            !string.Equals(Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE"), "laboratory", StringComparison.Ordinal))
+            throw new InvalidOperationException("Trusted context-rule execution is available only in the exact development/laboratory profile.");
+    }
+
+    internal static DynamicContextRuleRecordV1 VerifyContextRuleRecord(string recordPath, string verificationKeyPath, DynamicTaskInput input,
+        string expectedCompanyId, string expectedUserId, long nowUnixSeconds)
+    {
+        if (string.IsNullOrWhiteSpace(recordPath) || string.IsNullOrWhiteSpace(verificationKeyPath)) throw new InvalidOperationException("Context rule record and verification key files are required.");
+        var record = JsonSerializer.Deserialize<DynamicContextRuleRecordV1>(File.ReadAllText(recordPath).TrimStart('\ufeff'), StrictJson)
+            ?? throw new InvalidOperationException("Context rule record is empty.");
+        DynamicContextRulePolicyV1.ValidateRecord(record);
+        if (record.CompanyId != expectedCompanyId || record.UserId != expectedUserId || record.ProjectFingerprint != input.Document.ProjectFingerprint ||
+            record.ActiveViewElementId != input.Document.ActiveViewId || record.IssuedUnixSeconds > nowUnixSeconds + 5 || record.ExpiresUnixSeconds <= nowUnixSeconds)
+            throw new InvalidOperationException("Context rule company, project, user, active-view, or lifetime scope does not match the task.");
+        byte[] key;
+        try { key = Convert.FromBase64String(File.ReadAllText(verificationKeyPath).Trim()); }
+        catch (Exception ex) { throw new InvalidOperationException("Context rule verification key is not valid base64.", ex); }
+        if (key.Length != 32) throw new InvalidOperationException("Context rule verification key must be exactly 256 bits.");
+        var expected = ContextRuleSignature(record.RecordHash, key);
+        if (!FixedEquals(expected, record.Signature)) throw new InvalidOperationException("Context rule signature is invalid.");
+        return record;
+    }
+
+    internal static string ContextRuleSignature(string recordHash, byte[] key)
+    {
+        if (!IsSha256(recordHash) || key == null || key.Length != 32) throw new ArgumentException("Context rule signature input is invalid.");
+        using var hmac = new HMACSHA256(key);
+        return "hmac-sha256:" + Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes("dynamic-revit-context-rule-signature/v1\n" + recordHash))).ToLowerInvariant();
+    }
+
+    private static bool IsSha256(string value) => value != null && value.Length == 71 && value.StartsWith("sha256:", StringComparison.Ordinal) && value.Substring(7).All(character => character >= '0' && character <= '9' || character >= 'a' && character <= 'f');
+
+    private static async Task<ContextRuleExecutionInput> CollectContextRuleInput(LiveTaskConfig config, DynamicTaskInput input, string runtimeId,
+        byte[] hostSessionKey, string token, string writeGrant, string workerRuntimePackageHash, List<string> hostAuthentications)
+    {
+        var record = VerifyContextRuleRecord(config.ContextRuleFile!, config.ContextRuleVerificationKeyFile!, input,
+            config.ContextCompanyId, config.ContextUserId, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        var selector = new DynamicObservationSelectorV1
+        {
+            CategoryStableIds = record.TargetCategoryStableIds.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            VisibleInViewElementId = input.Document.ActiveViewId,
+            ParameterNames = record.Conditions.Select(value => value.ParameterName).Append(record.Action.ParameterName).Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+            IncludeTypeParameters = record.Conditions.Any(value => value.ParameterScope == "type") || record.Action.ParameterScope == "type",
+            PageSize = DynamicObservationContractV1.MaximumPageSize
+        };
+        DynamicObservationPolicyV1.ValidateSelector(selector);
+        var pages = new List<DynamicObservationEnvelopeV1>(); var receipts = new List<string>();
+        for (var pageIndex = 0; pageIndex < 64; pageIndex++)
+        {
+            var core = JsonSerializer.Serialize(new { schema = "dynamic-revit-observation-request/v1", runtimeInstanceId = runtimeId, selector }, WireJson);
+            var correlation = Guid.NewGuid().ToString("N"); var expires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var request = JsonSerializer.Serialize(new { schema = "dynamic-revit-observation-request/v1", runtimeInstanceId = runtimeId, selector,
+                correlationId = correlation, authExpiresUnixSeconds = expires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "observe-v1", runtimeId, correlation, expires, DynamicWire.Sha256(core)) }, WireJson);
+            var envelopeRaw = await Post(config.BridgeUrl, "/revit/dynamic-runtime/observe-v1", token, writeGrant, request, correlation);
+            var receiptRaw = UnwrapAuthenticated(envelopeRaw, hostSessionKey, runtimeId, "observe-v1-receipt", out var authentication);
+            hostAuthentications.Add(authentication); receipts.Add(receiptRaw);
+            using var receiptDocument = JsonDocument.Parse(receiptRaw); var receipt = receiptDocument.RootElement;
+            var page = receipt.GetProperty("envelope").Deserialize<DynamicObservationEnvelopeV1>(Json) ?? throw new InvalidOperationException("Context observation envelope is missing.");
+            DynamicObservationPolicyV1.ValidateEnvelope(page);
+            if (receipt.GetProperty("schema").GetString() != "dynamic-revit-observation-receipt/v1" || receipt.GetProperty("authorization_granted").GetBoolean() ||
+                receipt.GetProperty("contract_manifest_hash").GetString() != DynamicObservationContractV1.ManifestHash || receipt.GetProperty("envelope_hash").GetString() != page.EnvelopeHash ||
+                receipt.GetProperty("worker_runtime_package_hash").GetString() != workerRuntimePackageHash ||
+                page.DocumentFingerprint != input.Document.ProjectFingerprint || page.DocumentSessionId != input.Document.SessionId ||
+                pages.Count == 0 && page.PageOffset != 0 ||
+                pages.Count > 0 && (page.RevisionHash != pages[0].RevisionHash || page.ScopeHash != pages[0].ScopeHash || page.PageOffset != pages.Sum(value => value.Elements.Count)))
+                throw new InvalidOperationException("Context observation receipt or page binding is invalid, stale, or substituted.");
+            pages.Add(page);
+            if (page.NextCursor == null) break;
+            selector.Cursor = page.NextCursor;
+        }
+        if (pages.Count == 0 || pages[^1].NextCursor != null || pages.Sum(value => value.Elements.Count) != pages[0].TotalCount)
+            throw new InvalidOperationException("Context observation did not produce one complete bounded active-view candidate set.");
+        selector.Cursor = null;
+        var key = Convert.FromBase64String(File.ReadAllText(config.ContextRuleVerificationKeyFile!).Trim());
+        var rule = new DynamicVerifiedContextRuleV1
+        {
+            RecordId = record.RecordId, RecordHash = record.RecordHash, CompanyId = record.CompanyId, ProjectFingerprint = record.ProjectFingerprint,
+            UserId = record.UserId, ActiveViewElementId = record.ActiveViewElementId, TargetCategoryStableIds = record.TargetCategoryStableIds.ToArray(),
+            Conditions = record.Conditions.ToArray(), Action = record.Action, IssuedUnixSeconds = record.IssuedUnixSeconds, ExpiresUnixSeconds = record.ExpiresUnixSeconds,
+            VerificationKeyHash = DynamicWire.Sha256(Convert.ToBase64String(key)), WorkerRuntimePackageHash = workerRuntimePackageHash,
+            ObservationScopeHash = pages[0].ScopeHash, ObservationRevisionHash = pages[0].RevisionHash
+        };
+        rule.BindingHash = DynamicContextRulePolicyV1.BindingHash(rule); DynamicContextRulePolicyV1.ValidateBinding(rule);
+        return new ContextRuleExecutionInput { Rule = rule, Selector = selector, Pages = pages, ObservationReceiptBodies = receipts, DocumentRevision = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
+    }
+
+    private static async Task<LiveEvidence> CompleteCoreContextTask(LiveTaskConfig config, DateTimeOffset started, string taskRoot,
+        TaskWorkspace workspace, WindowsSandboxProfile profile, RevitHostCapability selectedHost, BootstrapCompletion bootstrap, string runtimeId,
+        byte[] hostSessionKey, string token, string writeGrant, string registration, string snapshotRaw, JsonElement output, string sourceHash,
+        string programHash, string sdkHash, string snapshotInputHash, ContextRuleExecutionInput contextInput, List<string> hostAuthentications)
+    {
+        if (!output.TryGetProperty("coreProgramResult", out var resultElement) || resultElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("Worker did not return a core-v1 program result.");
+        var result = resultElement.Deserialize<DynamicCoreProgramResultV1>(Json) ?? throw new InvalidOperationException("Core-v1 program result is malformed.");
+        var rule = contextInput.Rule; DynamicContextRulePolicyV1.ValidateBinding(rule);
+        if (result.Schema != "dynamic-revit-core-program-result/v1" || result.Graph.InputHash != snapshotInputHash ||
+            result.Graph.DocumentFingerprint != rule.ProjectFingerprint || result.Graph.DocumentRevision != contextInput.DocumentRevision ||
+            result.Graph.ContextRuleRecordId != rule.RecordId || result.Graph.ContextRuleRecordHash != rule.RecordHash ||
+            result.Graph.ContextRuleBindingHash != rule.BindingHash || result.Graph.GraphHash != DynamicOperationGraphV1Admission.GraphHash(result.Graph))
+            throw new InvalidOperationException("Core-v1 graph lost its exact worker-input or verified context-rule binding.");
+        if (rule.ExpiresUnixSeconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            throw new InvalidOperationException("The verified context rule expired before preview admission.");
+        var budget = config.CoreEffectBudget ?? throw new InvalidOperationException("Core-v1 effect budget is missing.");
+        var nonceHash = DynamicWire.Sha256(Guid.NewGuid().ToString("N"));
+        var planned = Math.Min(Math.Max(config.CorePlannedExecutionMilliseconds, 1), 5000);
+        var previewCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-core-preview-request/v1", runtimeInstanceId = runtimeId,
+            graph = result.Graph, effectBudget = budget, plannedExecutionMilliseconds = planned, nonceHash }, WireJson);
+        var previewCorrelation = Guid.NewGuid().ToString("N"); var previewExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+        var previewRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-core-preview-request/v1", runtimeInstanceId = runtimeId,
+            graph = result.Graph, effectBudget = budget, plannedExecutionMilliseconds = planned, nonceHash, correlationId = previewCorrelation,
+            authExpiresUnixSeconds = previewExpires, requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "core-preview-v1", runtimeId, previewCorrelation, previewExpires, DynamicWire.Sha256(previewCore)) }, WireJson);
+        var previewEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/core-preview-v1", token, writeGrant, previewRequest, previewCorrelation);
+        var previewRaw = UnwrapAuthenticated(previewEnvelope, hostSessionKey, runtimeId, "core-preview-v1-receipt", out var previewAuthentication);
+        hostAuthentications.Add(previewAuthentication);
+        using var previewDocument = JsonDocument.Parse(previewRaw); var preview = previewDocument.RootElement;
+        var ok = preview.GetProperty("schema").GetString() == "dynamic-revit-core-preview-receipt/v1" &&
+            preview.GetProperty("outcome").GetString() == "preview_rolled_back_verified" && !preview.GetProperty("authorization_granted").GetBoolean() &&
+            preview.GetProperty("graph_hash").GetString() == result.Graph.GraphHash && preview.GetProperty("context_rule_record_id").GetString() == rule.RecordId &&
+            preview.GetProperty("context_rule_record_hash").GetString() == rule.RecordHash && preview.GetProperty("context_rule_binding_hash").GetString() == rule.BindingHash;
+        string? authorizationRaw = null; string? applyRaw = null;
+        if (ok && config.Apply)
+        {
+            if (rule.ExpiresUnixSeconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+                throw new InvalidOperationException("The verified context rule expired before apply authorization.");
+            var previewId = preview.GetProperty("preview_id").GetString() ?? throw new InvalidOperationException("Core-v1 preview ID is missing.");
+            var previewHash = preview.GetProperty("preview_hash").GetString() ?? throw new InvalidOperationException("Core-v1 preview hash is missing.");
+            var authorizationCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-core-authorize-request/v1", runtimeInstanceId = runtimeId, previewId, previewHash }, WireJson);
+            var authorizationCorrelation = Guid.NewGuid().ToString("N"); var authorizationExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var authorizationRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-core-authorize-request/v1", runtimeInstanceId = runtimeId,
+                previewId, previewHash, correlationId = authorizationCorrelation, authExpiresUnixSeconds = authorizationExpires,
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "core-authorize-v1", runtimeId, authorizationCorrelation, authorizationExpires, DynamicWire.Sha256(authorizationCore)) }, WireJson);
+            var authorizationEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/core-authorize-v1", token, writeGrant, authorizationRequest, authorizationCorrelation);
+            authorizationRaw = UnwrapAuthenticated(authorizationEnvelope, hostSessionKey, runtimeId, "core-authorize-v1-receipt", out var authorizationAuthentication);
+            hostAuthentications.Add(authorizationAuthentication);
+            using var authorizationDocument = JsonDocument.Parse(authorizationRaw); var authorization = authorizationDocument.RootElement;
+            if (!authorization.GetProperty("authorization_granted").GetBoolean() || authorization.GetProperty("context_rule_binding_hash").GetString() != rule.BindingHash)
+                throw new InvalidOperationException("Core-v1 apply authorization lost its verified context-rule binding.");
+            if (rule.ExpiresUnixSeconds <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+                throw new InvalidOperationException("The verified context rule expired before apply dispatch.");
+            var authorizationId = authorization.GetProperty("authorization_id").GetString() ?? throw new InvalidOperationException("Core-v1 authorization ID is missing.");
+            var applyCore = JsonSerializer.Serialize(new { schema = "dynamic-revit-core-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId, previewId, authorizationId }, WireJson);
+            var applyCorrelation = Guid.NewGuid().ToString("N"); var applyExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var applyRequest = JsonSerializer.Serialize(new { schema = "dynamic-revit-core-apply-request/v1", phase = "apply", runtimeInstanceId = runtimeId,
+                previewId, authorizationId, correlationId = applyCorrelation, authExpiresUnixSeconds = applyExpires,
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "core-apply-v1", runtimeId, applyCorrelation, applyExpires, DynamicWire.Sha256(applyCore)) }, WireJson);
+            var applyEnvelope = await Post(config.BridgeUrl, "/revit/dynamic-runtime/core-apply-v1", token, writeGrant, applyRequest, applyCorrelation);
+            applyRaw = UnwrapAuthenticated(applyEnvelope, hostSessionKey, runtimeId, "core-apply-v1-receipt", out var applyAuthentication);
+            hostAuthentications.Add(applyAuthentication);
+            using var applyDocument = JsonDocument.Parse(applyRaw); var apply = applyDocument.RootElement;
+            ok = apply.GetProperty("outcome").GetString() == "committed_verified" && apply.GetProperty("graph_hash").GetString() == result.Graph.GraphHash &&
+                apply.GetProperty("context_rule_record_id").GetString() == rule.RecordId && apply.GetProperty("context_rule_record_hash").GetString() == rule.RecordHash &&
+                apply.GetProperty("context_rule_binding_hash").GetString() == rule.BindingHash;
+        }
+        return new LiveEvidence
+        {
+            Schema = "dynamic-revit-context-rule-live-evidence/v1", Ok = ok, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
+            SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory,
+            RuntimeImageIdentity = workspace.RuntimeImage.Identity, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count,
+            RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output, PreviewReceipt = previewRaw,
+            ApplyAuthorizationReceipt = authorizationRaw, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications,
+            ContextObservationReceipts = contextInput.ObservationReceiptBodies, ContextRule = rule,
+            TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage,
+            Failure = ok ? null : config.Apply ? "Authorized context-rule core apply did not produce committed verification." : "Context-rule core preview did not produce rollback truth."
+        };
     }
 
     internal static void ValidateResultReferenceObservationContext(DynamicTaskInput input, ResultReferenceObservationInput observation)
@@ -731,6 +925,15 @@ internal sealed class LiveTaskConfig
     public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000; public bool Apply { get; set; } public int ApplyDeadlineMs { get; set; } = 5000;
     public bool ResultReference { get; set; } public DynamicBuildingSystemsSelectorV1? BuildingSystemsSelector { get; set; }
     public string[] ResultReferenceTargetUniqueIds { get; set; } = Array.Empty<string>(); public DynamicEffectBudgetV1? ResultReferenceEffectBudget { get; set; }
+    public string? ContextRuleFile { get; set; } public string? ContextRuleVerificationKeyFile { get; set; }
+    public string ContextCompanyId { get; set; } = ""; public string ContextUserId { get; set; } = "";
+    public DynamicEffectBudgetV1? CoreEffectBudget { get; set; } public int CorePlannedExecutionMilliseconds { get; set; } = 1000;
+}
+internal sealed class ContextRuleExecutionInput
+{
+    public long DocumentRevision { get; set; } public DynamicVerifiedContextRuleV1 Rule { get; set; } = new();
+    public DynamicObservationSelectorV1 Selector { get; set; } = new(); public IReadOnlyList<DynamicObservationEnvelopeV1> Pages { get; set; } = Array.Empty<DynamicObservationEnvelopeV1>();
+    public List<string> ObservationReceiptBodies { get; set; } = new();
 }
 internal sealed class ResultReferenceObservationInput
 {
@@ -745,6 +948,7 @@ internal sealed class LiveEvidence
     public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public string? ApplyAuthorizationReceipt { get; set; } public DynamicProgramAdmissionV1? V1Admission { get; set; } public string? ApplyReceipt { get; set; } public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
     public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }
     public List<string> BuildingSystemsObservationReceipts { get; set; } = new(); public string? ResultReferenceFactsReceipt { get; set; }
+    public List<string> ContextObservationReceipts { get; set; } = new(); public DynamicVerifiedContextRuleV1? ContextRule { get; set; }
     public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = "";
     public static LiveEvidence Failed(DateTimeOffset started, string profile, string task, RuntimeImage runtimeImage, string registration, string snapshot, JsonElement worker, string failure) => new() { Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile, TaskDirectory = task, RuntimeImageDirectory = runtimeImage.Directory, RuntimeImageIdentity = runtimeImage.Identity, RuntimeDependencyCount = runtimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshot, WorkerOutput = worker, Failure = failure };
 }

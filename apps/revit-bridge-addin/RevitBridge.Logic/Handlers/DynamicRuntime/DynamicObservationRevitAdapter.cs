@@ -29,6 +29,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 candidates = requestedElements.OrderBy(value => value, StringComparer.Ordinal)
                     .Select(value => Safe(() => document.GetElement(value))).Where(value => value != null).Cast<Element>();
             }
+            else if (selector.VisibleInViewElementId is long visibleViewId)
+            {
+                candidates = new FilteredElementCollector(document, ElementIdCompat.Create(visibleViewId)).WhereElementIsNotElementType().Cast<Element>();
+            }
             else
             {
                 candidates = new FilteredElementCollector(document).WhereElementIsNotElementType().Cast<Element>();
@@ -72,6 +76,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 Transform = InstanceTransform(element),
                 IsPinned = Safe(() => element.Pinned),
                 IsGrouped = Id(Safe(() => element.GroupId)) >= 0,
+                CoreStateHash = DynamicCoreOperationHostV1.CoreTrustedElementStateHash(element),
                 Parameters = Parameters(element, type, selector)
             };
             DynamicObservationPolicyV1.ValidateElement(result);

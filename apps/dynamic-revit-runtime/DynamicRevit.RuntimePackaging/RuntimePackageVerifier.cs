@@ -219,7 +219,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var rootValue = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "limits" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "activeViewCandidateHydration", "hostExactCoreStateHash", "limits" };
             var fields = rootValue.ValueKind == JsonValueKind.Object ? rootValue.EnumerateObject().Select(value => value.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 rootValue.GetProperty("schema").GetString() != DynamicObservationContractV1.ManifestSchema ||
@@ -229,7 +229,9 @@ public static class RuntimePackageVerifier
                 rootValue.GetProperty("envelopeSchema").GetString() != DynamicObservationContractV1.EnvelopeSchema ||
                 rootValue.GetProperty("cursorSchema").GetString() != DynamicObservationContractV1.CursorSchema ||
                 rootValue.GetProperty("canonicalVersion").GetString() != DynamicObservationContractV1.CanonicalVersion ||
-                rootValue.GetProperty("readOnly").ValueKind != JsonValueKind.True)
+                rootValue.GetProperty("readOnly").ValueKind != JsonValueKind.True ||
+                rootValue.GetProperty("activeViewCandidateHydration").ValueKind != JsonValueKind.True ||
+                rootValue.GetProperty("hostExactCoreStateHash").ValueKind != JsonValueKind.True)
                 throw new InvalidDataException("Observation contract manifest identity or field set is invalid.");
             var limits = rootValue.GetProperty("limits");
             var expectedLimits = new Dictionary<string, int>(StringComparer.Ordinal)
@@ -311,7 +313,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var value = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "canonicalVersion", "maximumOperations", "maximumAttributes", "productionExposed", "primitives" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "canonicalVersion", "contextRuleRecordSchema", "contextRuleBindingSchema", "contextRuleCanonicalVersion", "maximumContextRuleConditions", "maximumContextRuleCategories", "maximumOperations", "maximumAttributes", "productionExposed", "primitives" };
             var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 value.GetProperty("schema").GetString() != DynamicCoreOperationsV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
@@ -319,6 +321,11 @@ public static class RuntimePackageVerifier
                 value.GetProperty("contractSurfaceHash").GetString() != DynamicCoreOperationManifestV1.ContractSurfaceHash ||
                 value.GetProperty("primitiveManifestHash").GetString() != DynamicPrimitiveManifestV1.ManifestHash ||
                 value.GetProperty("canonicalVersion").GetString() != DynamicCoreOperationsV1.CanonicalVersion ||
+                value.GetProperty("contextRuleRecordSchema").GetString() != DynamicContextRuleContractV1.RecordSchema ||
+                value.GetProperty("contextRuleBindingSchema").GetString() != DynamicContextRuleContractV1.BindingSchema ||
+                value.GetProperty("contextRuleCanonicalVersion").GetString() != DynamicContextRuleContractV1.CanonicalVersion ||
+                value.GetProperty("maximumContextRuleConditions").GetInt32() != DynamicContextRuleContractV1.MaximumConditions ||
+                value.GetProperty("maximumContextRuleCategories").GetInt32() != DynamicContextRuleContractV1.MaximumCategories ||
                 value.GetProperty("maximumOperations").GetInt32() != DynamicCoreOperationsV1.MaximumOperations ||
                 value.GetProperty("maximumAttributes").GetInt32() != DynamicCoreOperationsV1.MaximumAttributes ||
                 value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)

@@ -224,6 +224,8 @@ public sealed class PackagingTests : IDisposable
         cursorSchema = DynamicObservationContractV1.CursorSchema,
         canonicalVersion = DynamicObservationContractV1.CanonicalVersion,
         readOnly = true,
+        activeViewCandidateHydration = true,
+        hostExactCoreStateHash = true,
         limits = new
         {
             maximumRequestBytes = DynamicObservationContractV1.MaximumRequestBytes,
@@ -245,6 +247,11 @@ public sealed class PackagingTests : IDisposable
         contractSurfaceHash = DynamicCoreOperationManifestV1.ContractSurfaceHash,
         primitiveManifestHash = DynamicPrimitiveManifestV1.ManifestHash,
         canonicalVersion = DynamicCoreOperationsV1.CanonicalVersion,
+        contextRuleRecordSchema = DynamicContextRuleContractV1.RecordSchema,
+        contextRuleBindingSchema = DynamicContextRuleContractV1.BindingSchema,
+        contextRuleCanonicalVersion = DynamicContextRuleContractV1.CanonicalVersion,
+        maximumContextRuleConditions = DynamicContextRuleContractV1.MaximumConditions,
+        maximumContextRuleCategories = DynamicContextRuleContractV1.MaximumCategories,
         maximumOperations = DynamicCoreOperationsV1.MaximumOperations,
         maximumAttributes = DynamicCoreOperationsV1.MaximumAttributes,
         productionExposed = false,

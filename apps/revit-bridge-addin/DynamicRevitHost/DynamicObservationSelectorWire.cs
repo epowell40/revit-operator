@@ -16,7 +16,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     {
         private static readonly HashSet<string> AllowedFields = new HashSet<string>(new[]
         {
-            "schema", "elementUniqueIds", "categoryStableIds", "ownerViewElementIds",
+            "schema", "elementUniqueIds", "categoryStableIds", "ownerViewElementIds", "visibleInViewElementId",
             "parameterNames", "includeTypeParameters", "pageSize", "cursor"
         }, StringComparer.Ordinal);
 

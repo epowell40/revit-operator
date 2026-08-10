@@ -58,7 +58,9 @@ public static class DynamicCoreOperationManifestV1
         typeof(DynamicCoreOperationApplyAuthorizationV1), typeof(DynamicCoreOperationReadbackV1),
         typeof(DynamicCoreOperationPreviewV1), typeof(DynamicCoreOperationApplyReceiptV1),
         typeof(DynamicCoreConnectorSignatureEntryV1), typeof(DynamicCoreExactOrientationStateV1),
-        typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1)
+        typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1), typeof(DynamicContextRuleConditionV1), typeof(DynamicContextRuleActionV1),
+        typeof(DynamicContextRuleRecordV1), typeof(DynamicVerifiedContextRuleV1), typeof(DynamicContextRulePolicyV1),
+        typeof(DynamicCoreProgramResultV1), typeof(DynamicCoreProgramContextV1), typeof(IDynamicCoreRevitProgramV1)
     };
     private static readonly DynamicCoreOperationDescriptorV1[] Descriptors =
     {
@@ -76,6 +78,8 @@ public static class DynamicCoreOperationManifestV1
     private static readonly IReadOnlyList<DynamicCoreOperationDescriptorV1> ReadOnlyDescriptors = Array.AsReadOnly(Descriptors);
     private static readonly string ContractSurfaceHashValue = DynamicWire.Sha256(string.Join("\n", ContractTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
     private static readonly string ManifestHashValue = DynamicWire.Sha256(DynamicCanonical.Join(DynamicCoreOperationsV1.ManifestSchema, DynamicCoreOperationsV1.CanonicalVersion, ContractSurfaceHashValue,
+        DynamicContextRuleContractV1.RecordSchema, DynamicContextRuleContractV1.BindingSchema, DynamicContextRuleContractV1.CanonicalVersion,
+        DynamicContextRuleContractV1.MaximumConditions.ToString(CultureInfo.InvariantCulture), DynamicContextRuleContractV1.MaximumCategories.ToString(CultureInfo.InvariantCulture),
         string.Join("\n", Descriptors.OrderBy(value => value.Kind, StringComparer.Ordinal).Select(Canonical))));
 
     public static IReadOnlyList<DynamicCoreOperationDescriptorV1> All => ReadOnlyDescriptors;
@@ -148,15 +152,24 @@ public sealed class DynamicCoreOperationGraphBuilderV1
     private readonly string _documentFingerprint;
     private readonly long _documentRevision;
     private readonly int _budget;
+    private readonly string _contextRuleRecordId;
+    private readonly string _contextRuleRecordHash;
+    private readonly string _contextRuleBindingHash;
     private readonly List<DynamicOperationNodeV1> _nodes = new();
     private string? _prior;
 
     public DynamicCoreOperationGraphBuilderV1(string inputHash, string documentFingerprint, long documentRevision, int operationBudget)
+        : this(inputHash, documentFingerprint, documentRevision, operationBudget, "", "", "") { }
+
+    public DynamicCoreOperationGraphBuilderV1(string inputHash, string documentFingerprint, long documentRevision, int operationBudget,
+        string contextRuleRecordId, string contextRuleRecordHash, string contextRuleBindingHash)
     {
         RequireHash(inputHash, nameof(inputHash)); RequireHash(documentFingerprint, nameof(documentFingerprint));
         if (documentRevision < 0) throw new ArgumentOutOfRangeException(nameof(documentRevision));
         if (operationBudget < 1 || operationBudget > DynamicCoreOperationsV1.MaximumOperations) throw new ArgumentOutOfRangeException(nameof(operationBudget));
         _inputHash = inputHash; _documentFingerprint = documentFingerprint; _documentRevision = documentRevision; _budget = operationBudget;
+        _contextRuleRecordId = contextRuleRecordId ?? ""; _contextRuleRecordHash = contextRuleRecordHash ?? ""; _contextRuleBindingHash = contextRuleBindingHash ?? "";
+        DynamicOperationGraphV1Admission.ValidateContextBinding(new DynamicOperationGraphV1 { ContextRuleRecordId = _contextRuleRecordId, ContextRuleRecordHash = _contextRuleRecordHash, ContextRuleBindingHash = _contextRuleBindingHash });
     }
 
     public string SetString(string targetUniqueId, string parameterIdentity, string scope, string value, string expectedTargetStateHash, string expectedParameterStateHash,
@@ -218,6 +231,7 @@ public sealed class DynamicCoreOperationGraphBuilderV1
         var graph = new DynamicOperationGraphV1
         {
             InputHash = _inputHash, DocumentFingerprint = _documentFingerprint, DocumentRevision = _documentRevision,
+            ContextRuleRecordId = _contextRuleRecordId, ContextRuleRecordHash = _contextRuleRecordHash, ContextRuleBindingHash = _contextRuleBindingHash,
             Nodes = _nodes.Select(Clone).ToArray()
         };
         graph.GraphHash = DynamicOperationGraphV1Admission.GraphHash(graph);
@@ -370,6 +384,7 @@ public static class DynamicCoreOperationAdmissionV1
         if (tryConsumeBinding != null && !tryConsumeBinding(DynamicCoreOperationManifestBindingPolicyV1.BindingHash(binding))) throw new InvalidOperationException("Core-operation manifest binding was replayed.");
         DynamicCanonical.RequireHashes(graph.InputHash, graph.DocumentFingerprint, graph.GraphHash, context.HostAdapterManifestHash,
             context.ViewScopeHash, context.LevelScopeHash, context.WorksetScopeHash, context.PhaseScopeHash, context.FileCapabilitySetHash);
+        DynamicOperationGraphV1Admission.ValidateContextBinding(graph);
         if (graph.GraphHash != DynamicOperationGraphV1Admission.GraphHash(graph)) throw new ArgumentException("Core-operation graph hash is invalid.");
         budget.Validate();
         if (!budget.TargetDocumentFingerprints.Contains(graph.DocumentFingerprint, StringComparer.Ordinal) || graph.Nodes.Count > budget.MaximumOperationCount ||

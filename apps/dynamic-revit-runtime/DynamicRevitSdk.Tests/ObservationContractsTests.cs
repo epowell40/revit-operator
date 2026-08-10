@@ -18,10 +18,10 @@ public sealed class ObservationContractsTests
         var envelope = DynamicObservationPolicyV1.BuildPage(selector, DocumentFingerprint, SessionId,
             new[] { Element("z-element", 30, 12.5), Element("a-element", 10, 4.25), Element("m-element", 20, 8.75) });
 
-        Assert.Equal("sha256:86d57659b3a1955b45fde712ee57e3a07c9eaf69b45346b6815532e2b28b7a6e", DynamicObservationContractV1.ManifestHash);
-        Assert.Equal("sha256:dd32cca9b62eee6ddcfc3d843d1f20b8faa634bb847a5f66705fcc17adfd8ae3", envelope.ScopeHash);
-        Assert.Equal("sha256:2be5c621d7207077c8fac8f70f8e16635bb9f0b2658260bf211704ffbce74f0b", envelope.RevisionHash);
-        Assert.Equal("sha256:3ad11aa3ee3d16a25afa0e41a1df24d598988f8090186de05792f287feff0f9a", envelope.EnvelopeHash);
+        Assert.Equal("sha256:91f9cc000f27b1591ff1ce7d86dc0546ec37fdd77250f1e44017d3b70105d9b6", DynamicObservationContractV1.ManifestHash);
+        Assert.Equal("sha256:5250896bc15318bdf5e586517643ad3ec315c2c3a4c550f1f1f12b2807c2ef36", envelope.ScopeHash);
+        Assert.Equal("sha256:07373793814624df44f4e933e9907b7cfa90619135935e8daf35b10f51cf9207", envelope.RevisionHash);
+        Assert.Equal("sha256:fcaf8ac7bbd53d435e86e8301d30596b7615f65eb446f5bac84e9dabf01e0be8", envelope.EnvelopeHash);
         Assert.Equal(new[] { "revit-element:a-element", "revit-element:m-element" }, envelope.Elements.Select(value => value.Element.StableId));
         Assert.NotNull(envelope.NextCursor);
     }
@@ -34,6 +34,8 @@ public sealed class ObservationContractsTests
         Assert.Equal(DynamicObservationContractV1.ManifestSchema, document.RootElement.GetProperty("schema").GetString());
         Assert.Equal(DynamicObservationContractV1.ManifestHash, document.RootElement.GetProperty("contractManifestHash").GetString());
         Assert.True(document.RootElement.GetProperty("readOnly").GetBoolean());
+        Assert.True(document.RootElement.GetProperty("activeViewCandidateHydration").GetBoolean());
+        Assert.True(document.RootElement.GetProperty("hostExactCoreStateHash").GetBoolean());
         var expectedSdkIdentity = DynamicWire.Sha256(DynamicRevitSdkVersion.Value + "\n" + DynamicRevitSdkVersion.GraphSchema +
             "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicBuildingSystemsObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash + "\n" + DynamicResultReferenceManifestV1.ManifestHash + "\n" + DynamicAnnotationOperationManifestV1.ManifestHash + "\n" + DynamicMepMutationManifestV1.ManifestHash);
         Assert.Equal(expectedSdkIdentity, DynamicRevitSdkVersion.ManifestHash);
@@ -73,6 +75,8 @@ public sealed class ObservationContractsTests
         right.IncludeTypeParameters = true;
         Assert.NotEqual(DynamicObservationPolicyV1.ScopeHash(left), DynamicObservationPolicyV1.ScopeHash(right));
         right.IncludeTypeParameters = false; right.PageSize = 63;
+        Assert.NotEqual(DynamicObservationPolicyV1.ScopeHash(left), DynamicObservationPolicyV1.ScopeHash(right));
+        right.PageSize = 64; right.VisibleInViewElementId = 200;
         Assert.NotEqual(DynamicObservationPolicyV1.ScopeHash(left), DynamicObservationPolicyV1.ScopeHash(right));
     }
 
@@ -172,6 +176,7 @@ public sealed class ObservationContractsTests
             Transform = IdentityTransform()
         },
         Transform = IdentityTransform(),
+        CoreStateHash = DynamicWire.Sha256("core-state-" + uniqueId + "-" + x.ToString(System.Globalization.CultureInfo.InvariantCulture)),
         Parameters = new[] { new DynamicParameterValueV1 { Identity = "parameter:builtin:-1001203", Name = "Mark", StorageKind = "string", HasValue = true, RawString = "M-" + id, FormattedValue = "M-" + id, Scope = "instance", Writable = true } }
     };
 

@@ -99,7 +99,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, selector = request.Selector };
             DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "observe-v1", request.CorrelationId ?? "",
                 request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
-            DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
+            var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
             var envelope = DynamicObservationRevitAdapterV1.Observe(document, request.Selector);
             var receipt = new
@@ -109,6 +109,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 envelope_hash = envelope.EnvelopeHash,
                 document_fingerprint = envelope.DocumentFingerprint,
                 document_session_id = envelope.DocumentSessionId,
+                worker_runtime_package_hash = runtime.WorkerRuntimePackageHash,
                 authorization_granted = false,
                 envelope = DynamicRuntimeV1Wire.CamelElement(envelope)
             };
@@ -423,6 +424,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 preview_id = previewId,
                 preview_hash = preview.PreviewHash,
                 graph_hash = request.Graph.GraphHash,
+                context_rule_record_id = request.Graph.ContextRuleRecordId,
+                context_rule_record_hash = request.Graph.ContextRuleRecordHash,
+                context_rule_binding_hash = request.Graph.ContextRuleBindingHash,
                 effect_budget_hash = request.EffectBudget.CanonicalHash(),
                 document_fingerprint = request.Graph.DocumentFingerprint,
                 document_session_id = seal.DocumentSessionId,
@@ -479,6 +483,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 preview_id = preview.PreviewId,
                 preview_hash = preview.Preview.PreviewHash,
                 graph_hash = preview.Graph.GraphHash,
+                context_rule_record_id = preview.Graph.ContextRuleRecordId,
+                context_rule_record_hash = preview.Graph.ContextRuleRecordHash,
+                context_rule_binding_hash = preview.Graph.ContextRuleBindingHash,
                 effect_set_hash = preview.Preview.EffectSetHash,
                 expires_unix_seconds = authorization.ExpiresUnixSeconds,
                 authorization = DynamicRuntimeV1Wire.CamelElement(authorization),
@@ -527,6 +534,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     preview_id = seal.Preview.PreviewId,
                     authorization_id = seal.AuthorizationId,
                     graph_hash = seal.Preview.Graph.GraphHash,
+                    context_rule_record_id = seal.Preview.Graph.ContextRuleRecordId,
+                    context_rule_record_hash = seal.Preview.Graph.ContextRuleRecordHash,
+                    context_rule_binding_hash = seal.Preview.Graph.ContextRuleBindingHash,
                     effect_set_hash = receiptValue.EffectSetHash,
                     receipt_hash = receiptValue.ReceiptHash,
                     retry_permitted = false,
@@ -543,6 +553,9 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     preview_id = seal.Preview.PreviewId,
                     authorization_id = seal.AuthorizationId,
                     graph_hash = seal.Preview.Graph.GraphHash,
+                    context_rule_record_id = seal.Preview.Graph.ContextRuleRecordId,
+                    context_rule_record_hash = seal.Preview.Graph.ContextRuleRecordHash,
+                    context_rule_binding_hash = seal.Preview.Graph.ContextRuleBindingHash,
                     failure = error.Message,
                     retry_permitted = false
                 };

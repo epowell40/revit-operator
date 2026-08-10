@@ -57,6 +57,7 @@ function evidence(representation: Epic0442Representation, repair = false): Epic0
     package_sha256: h(`${representation}-package`),
     revit_process: { process_id: 4242, executable_sha256: h("Revit.exe"), started_at_utc: "2026-08-09T12:00:00.000Z" },
     document: { project_fingerprint: h("document"), document_session_id: "revit-document-session-1" },
+    trusted_context: null,
     execution: {
       kind: representation === "dynamic_program" ? "dynamic_program" : "typed_tool_chain",
       status: "completed",
@@ -106,6 +107,22 @@ test("synthetic typed and Dynamic arms produce scorer-owned authenticated paired
   assert.equal(dynamicResult.authorizes_revit_apply, false);
 });
 
+test("verified context record and active-view observation identities are scorer-signed evidence", () => {
+  const { scorer } = authority(); const campaignReceipt = scorer.issueCampaign({ campaign, campaignVersion: "v1", campaignNonce: "context-campaign" });
+  const dynamicAssignment = assignment(scorer, campaignReceipt, "dynamic_program"); const observed = evidence("dynamic_program");
+  observed.trusted_context = {
+    record_id: "rule-office-annotation-1", record_sha256: h("context-record"), binding_sha256: h("context-binding"),
+    observation_scope_sha256: h("active-view-scope"), observation_revision_sha256: h("active-view-revision"), verification_key_sha256: h("fixture-verification-key"),
+    worker_package_sha256: observed.package_sha256, observation_receipt_sha256s: [h("observation-page-0")]
+  };
+  const result = scorer.score({ campaignReceipt, assignmentReceipt: dynamicAssignment, evidence: observed, verdict: verdict("authenticated_live_success", 0) });
+  verifyEpic0442AuthenticatedChain({ publicKey: scorer.publicKey(), campaignReceipt, assignmentReceipts: [dynamicAssignment], results: [result], expectedCampaign: campaign });
+  const forged = structuredClone(result); forged.evidence.trusted_context!.record_sha256 = h("forged-context-record");
+  assert.throws(() => verifyEpic0442AuthenticatedChain({ publicKey: scorer.publicKey(), campaignReceipt, assignmentReceipts: [dynamicAssignment], results: [forged] }), /payload hash is invalid/);
+  const wrongPackage = structuredClone(observed); wrongPackage.trusted_context!.worker_package_sha256 = h("other-package");
+  assert.throws(() => scorer.score({ campaignReceipt, assignmentReceipt: dynamicAssignment, evidence: wrongPackage, verdict: verdict("authenticated_live_success", 0), resultNonce: "wrong-package" }), /worker package/);
+});
+
 test("campaign, assignment, and result forgery or cross-authority substitution fails", () => {
   const first = authority(); const second = authority();
   const campaignReceipt = first.scorer.issueCampaign({ campaign, campaignVersion: "v1", campaignNonce: "forgery-campaign" });
@@ -144,6 +161,7 @@ test("every material campaign result dimension is inside the scorer signature", 
     candidate => { candidate.evidence.package_sha256 = h("other-package"); },
     candidate => { candidate.evidence.revit_process!.process_id += 1; },
     candidate => { candidate.evidence.document!.document_session_id = "other-session"; },
+    candidate => { candidate.evidence.trusted_context = { record_id: "rule-1", record_sha256: h("rule"), binding_sha256: h("binding"), observation_scope_sha256: h("scope"), observation_revision_sha256: h("revision"), verification_key_sha256: h("key"), worker_package_sha256: candidate.evidence.package_sha256, observation_receipt_sha256s: [h("observation")] }; },
     candidate => { candidate.evidence.execution.execution_receipt_sha256 = h("other-execution"); },
     candidate => { candidate.evidence.preview.receipt_sha256 = h("other-preview"); },
     candidate => { candidate.evidence.apply.receipt_sha256 = h("other-apply"); },

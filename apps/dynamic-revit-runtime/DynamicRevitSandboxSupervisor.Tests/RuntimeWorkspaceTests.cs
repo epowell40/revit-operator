@@ -1,12 +1,91 @@
 using System.Text.Json;
 using RevitOperator.DynamicRevitSandboxSupervisor;
 using RevitOperator.DynamicRevitSdk;
+using WorkerExecutor = RevitOperator.DynamicRevitWorker.WorkerExecutor;
+using WorkerInput = RevitOperator.DynamicRevitWorker.WorkerInput;
 using Xunit;
 
 namespace DynamicRevitSandboxSupervisor.Tests;
 
 public sealed class RuntimeWorkspaceTests
 {
+    [Fact]
+    public void SignedContextRuleIsExactScopedExpiringAndFailsClosedOutsideLaboratory()
+    {
+        using var temporary = new TemporaryDirectory(); var root = temporary.CreateDirectory("context");
+        var key = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray(); var keyPath = Path.Combine(root, "key.txt");
+        File.WriteAllText(keyPath, Convert.ToBase64String(key));
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = DynamicWire.Sha256("project"), SessionId = "session", ActiveViewId = 77 } };
+        var record = RuleRecord(input.Document.ProjectFingerprint, 77, 2_000_000_000);
+        record.RecordHash = DynamicContextRulePolicyV1.RecordHash(record); record.Signature = Program.ContextRuleSignature(record.RecordHash, key);
+        var recordPath = Path.Combine(root, "rule.json");
+        File.WriteAllText(recordPath, JsonSerializer.Serialize(record, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+        Assert.Equal(record.RecordHash, Program.VerifyContextRuleRecord(recordPath, keyPath, input, "company-a", "user-a", 2_000_000_010).RecordHash);
+        Assert.Throws<InvalidOperationException>(() => Program.VerifyContextRuleRecord(recordPath, keyPath, input, "company-b", "user-a", 2_000_000_010));
+        record.Signature = Program.ContextRuleSignature(DynamicWire.Sha256("forged"), key);
+        File.WriteAllText(recordPath, JsonSerializer.Serialize(record, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+        Assert.Throws<InvalidOperationException>(() => Program.VerifyContextRuleRecord(recordPath, keyPath, input, "company-a", "user-a", 2_000_000_010));
+
+        var oldMode = Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"); var oldExposure = Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE");
+        try
+        {
+            Environment.SetEnvironmentVariable("REVIT_OPERATOR_MODE", "production"); Environment.SetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE", "laboratory");
+            Assert.Throws<InvalidOperationException>(Program.RequireDevelopmentLaboratory);
+            Environment.SetEnvironmentVariable("REVIT_OPERATOR_MODE", "development"); Assert.Null(Record.Exception(Program.RequireDevelopmentLaboratory));
+        }
+        finally { Environment.SetEnvironmentVariable("REVIT_OPERATOR_MODE", oldMode); Environment.SetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE", oldExposure); }
+    }
+
+    [Fact]
+    public void GeneratedCoreSourceDerivesRuleTargetAndEveryMutationBindingFromVerifiedContext()
+    {
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = DynamicWire.Sha256("project"), SessionId = "session", ActiveViewId = 77 }, OperationBudget = 4 };
+        var parameter = new DynamicParameterValueV1 { Identity = "parameter:builtin:-1001203", Name = "Mark", StorageKind = "string", HasValue = true, RawString = "MATCH", Scope = "instance", Writable = true };
+        var actionParameter = new DynamicParameterValueV1 { Identity = "parameter:builtin:-1001205", Name = "Comments", StorageKind = "string", HasValue = true, RawString = "", Scope = "instance", Writable = true };
+        var element = new DynamicObservedElementV1
+        {
+            Element = new DynamicStableReferenceV1 { Kind = "element", StableId = "revit-element:candidate-1", UniqueId = "candidate-1", ElementId = 10 },
+            Category = new DynamicStableReferenceV1 { Kind = "category", StableId = "category:builtin:OST_ElectricalFixtures", ElementId = -1 },
+            CoreStateHash = DynamicWire.Sha256("exact-core-state"), Parameters = new[] { parameter, actionParameter }
+        };
+        var selector = new DynamicObservationSelectorV1 { CategoryStableIds = new[] { element.Category.StableId }, VisibleInViewElementId = 77, ParameterNames = new[] { "Comments", "Mark" }, PageSize = 16 };
+        var page = DynamicObservationPolicyV1.BuildPage(selector, input.Document.ProjectFingerprint, input.Document.SessionId, new[] { element });
+        var record = RuleRecord(input.Document.ProjectFingerprint, 77, 2_000_000_000); record.RecordHash = DynamicContextRulePolicyV1.RecordHash(record);
+        var rule = new DynamicVerifiedContextRuleV1
+        {
+            RecordId = record.RecordId, RecordHash = record.RecordHash, CompanyId = record.CompanyId, ProjectFingerprint = record.ProjectFingerprint, UserId = record.UserId,
+            ActiveViewElementId = record.ActiveViewElementId, TargetCategoryStableIds = record.TargetCategoryStableIds, Conditions = record.Conditions, Action = record.Action,
+            IssuedUnixSeconds = record.IssuedUnixSeconds, ExpiresUnixSeconds = record.ExpiresUnixSeconds, VerificationKeyHash = DynamicWire.Sha256("key"),
+            WorkerRuntimePackageHash = DynamicWire.Sha256("package"), ObservationScopeHash = page.ScopeHash, ObservationRevisionHash = page.RevisionHash
+        };
+        rule.BindingHash = DynamicContextRulePolicyV1.BindingHash(rule);
+        const string source = """
+using System.Linq;
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicCoreRevitProgramV1 {
+  public DynamicCoreProgramResultV1 Execute(DynamicCoreProgramContextV1 c) {
+    var condition = c.Rule.Conditions.Single(); var action = c.Rule.Action;
+    foreach (var candidate in c.Candidates) {
+      var observed = candidate.Parameters.SingleOrDefault(p => p.Identity == condition.ParameterIdentity && p.Scope == condition.ParameterScope);
+      if (observed == null || observed.StorageKind != condition.ValueKind || observed.RawString != condition.RawValue) continue;
+      var target = candidate.Parameters.Single(p => p.Identity == action.ParameterIdentity && p.Scope == action.ParameterScope);
+      c.Plan.SetString(candidate.Element.UniqueId, action.ParameterIdentity, action.ParameterScope, action.RawValue,
+        candidate.CoreStateHash, DynamicCoreOperationStateV1.ParameterStateHash(target));
+    }
+    c.Report("context_rule_record_id", c.Rule.RecordId); c.Report("context_rule_record_hash", c.Rule.RecordHash); return c.Complete();
+  }
+}
+""";
+        var output = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = input, ResultReferenceDocumentRevision = 123, VerifiedContextRule = rule, ContextObservationPages = new[] { page } });
+
+        Assert.True(output.Ok, string.Join("; ", output.Diagnostics.Select(value => value.Code + ":" + value.Message)));
+        var graph = Assert.IsType<DynamicOperationGraphV1>(output.CoreProgramResult?.Graph);
+        Assert.Equal("candidate-1", graph.Nodes.Single().TargetUniqueIds.Single());
+        Assert.Equal(element.CoreStateHash, graph.Nodes.Single().Attributes["expected_target_state_hash"]);
+        Assert.Equal(DynamicCoreOperationStateV1.ParameterStateHash(actionParameter), graph.Nodes.Single().Attributes["expected_parameter_state_hash"]);
+        Assert.Equal(rule.RecordId, graph.ContextRuleRecordId); Assert.Equal(rule.RecordHash, graph.ContextRuleRecordHash); Assert.Equal(rule.BindingHash, graph.ContextRuleBindingHash);
+    }
     [Fact]
     public void HostTextNoteSelectorProjectionIsAcceptedBySupervisorObservationContext()
     {
@@ -222,6 +301,15 @@ public sealed class RuntimeWorkspaceTests
     private static DynamicStableReferenceV1 Reference(string kind, string uniqueId, long elementId) => new()
     {
         Kind = kind, StableId = "revit-element:" + uniqueId, UniqueId = uniqueId, ElementId = elementId
+    };
+
+    private static DynamicContextRuleRecordV1 RuleRecord(string project, long viewId, long issued) => new()
+    {
+        RecordId = "rule-office-annotation-1", CompanyId = "company-a", ProjectFingerprint = project, UserId = "user-a", ActiveViewElementId = viewId,
+        TargetCategoryStableIds = new[] { "category:builtin:OST_ElectricalFixtures" },
+        Conditions = new[] { new DynamicContextRuleConditionV1 { ParameterName = "Mark", ParameterIdentity = "parameter:builtin:-1001203", ParameterScope = "instance", Operator = "equals", ValueKind = "string", RawValue = "MATCH" } },
+        Action = new DynamicContextRuleActionV1 { ParameterName = "Comments", ParameterIdentity = "parameter:builtin:-1001205", ParameterScope = "instance", ValueKind = "string", RawValue = "APPROVED" },
+        IssuedUnixSeconds = issued, ExpiresUnixSeconds = issued + 3600
     };
 
     private sealed class TemporaryDirectory : IDisposable

@@ -364,6 +364,9 @@ public sealed class DynamicOperationGraphV1
     public string InputHash { get; set; } = "";
     public string DocumentFingerprint { get; set; } = "";
     public long DocumentRevision { get; set; }
+    public string ContextRuleRecordId { get; set; } = "";
+    public string ContextRuleRecordHash { get; set; } = "";
+    public string ContextRuleBindingHash { get; set; } = "";
     public IReadOnlyList<DynamicOperationNodeV1> Nodes { get; set; } = Array.Empty<DynamicOperationNodeV1>();
     public string GraphHash { get; set; } = "";
 }
@@ -457,7 +460,7 @@ public static class DynamicOperationGraphV1Admission
     {
         if (graph == null) throw new ArgumentNullException(nameof(graph));
         return DynamicWire.Sha256(DynamicCanonical.Join(graph.Schema, graph.InputHash, graph.DocumentFingerprint,
-            graph.DocumentRevision.ToString(CultureInfo.InvariantCulture),
+            graph.DocumentRevision.ToString(CultureInfo.InvariantCulture), graph.ContextRuleRecordId, graph.ContextRuleRecordHash, graph.ContextRuleBindingHash,
             string.Join("\n", graph.Nodes.Select(NodeId).OrderBy(value => value, StringComparer.Ordinal))));
     }
 
@@ -467,6 +470,7 @@ public static class DynamicOperationGraphV1Admission
             graph.DocumentRevision < 0 || graph.Nodes == null || graph.Nodes.Count < 1)
             throw new ArgumentException("Dynamic operation graph v1 is invalid.");
         DynamicCanonical.RequireHashes(graph.InputHash, graph.DocumentFingerprint, graph.GraphHash);
+        ValidateContextBinding(graph);
         budget.Validate();
         if (!budget.TargetDocumentFingerprints.Contains(graph.DocumentFingerprint, StringComparer.Ordinal) || graph.Nodes.Count > budget.MaximumOperationCount)
             throw new ArgumentException("Dynamic operation graph exceeds its document or operation budget.");
@@ -531,6 +535,13 @@ public static class DynamicOperationGraphV1Admission
         RejectCycles(nodes);
         RejectConflicts(graph.Nodes);
         if (graph.GraphHash != GraphHash(graph)) throw new ArgumentException("Dynamic operation graph v1 hash is invalid.");
+    }
+
+    internal static void ValidateContextBinding(DynamicOperationGraphV1 graph)
+    {
+        var absent = graph.ContextRuleRecordId.Length == 0 && graph.ContextRuleRecordHash.Length == 0 && graph.ContextRuleBindingHash.Length == 0;
+        if (!absent && (!DynamicCanonical.Id(graph.ContextRuleRecordId, 240) || !DynamicCanonical.Hash(graph.ContextRuleRecordHash) || !DynamicCanonical.Hash(graph.ContextRuleBindingHash)))
+            throw new ArgumentException("Dynamic operation graph context-rule binding is partial or invalid.");
     }
 
     private static void ValidateTypedAttributes(DynamicOperationNodeV1 node)

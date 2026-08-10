@@ -389,7 +389,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             return document.GetElement(typeId) ?? throw new InvalidOperationException("Type-scoped parameter owner no longer exists.");
         }
 
-        private static string CoreTrustedElementStateHash(Element element, bool requireExactOrientation = false)
+        internal static string CoreTrustedElementStateHash(Element element, bool requireExactOrientation = false)
         {
             var fields = new List<string> { "base:" + DynamicRuntimePreviewHandler.TrustedElementStateHash(element) };
             try

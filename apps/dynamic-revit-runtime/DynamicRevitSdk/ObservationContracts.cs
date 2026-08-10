@@ -74,6 +74,7 @@ public sealed class DynamicObservationSelectorV1
     public string[] ElementUniqueIds { get; set; } = Array.Empty<string>();
     public string[] CategoryStableIds { get; set; } = Array.Empty<string>();
     public long[] OwnerViewElementIds { get; set; } = Array.Empty<long>();
+    public long? VisibleInViewElementId { get; set; }
     public string[] ParameterNames { get; set; } = Array.Empty<string>();
     public bool IncludeTypeParameters { get; set; }
     public int PageSize { get; set; } = 128;
@@ -171,6 +172,7 @@ public sealed class DynamicObservedElementV1
     public DynamicTransformV1? Transform { get; set; }
     public bool IsPinned { get; set; }
     public bool IsGrouped { get; set; }
+    public string CoreStateHash { get; set; } = "";
     public IReadOnlyList<DynamicParameterValueV1> Parameters { get; set; } = Array.Empty<DynamicParameterValueV1>();
 }
 
@@ -188,6 +190,7 @@ public static class DynamicObservationPolicyV1
         RequireDistinctStrings(selector.ElementUniqueIds, DynamicObservationContractV1.MaximumElementSelectors, MaximumIdentifierLength, "element selectors");
         RequireDistinctStrings(selector.CategoryStableIds, DynamicObservationContractV1.MaximumCategorySelectors, MaximumIdentifierLength, "category selectors");
         RequireDistinctLongs(selector.OwnerViewElementIds, DynamicObservationContractV1.MaximumOwnerViewSelectors, "owner-view selectors");
+        if (selector.VisibleInViewElementId is < 0) throw new ArgumentException("Dynamic observation visible-view selector is invalid.");
         RequireDistinctStrings(selector.ParameterNames, DynamicObservationContractV1.MaximumParameterSelectors, MaximumNameLength, "parameter selectors");
         if (selector.PageSize < 1 || selector.PageSize > DynamicObservationContractV1.MaximumPageSize)
             throw new ArgumentException("Dynamic observation page size is outside the bounded contract.");
@@ -201,6 +204,7 @@ public static class DynamicObservationPolicyV1
         return DynamicWire.Sha256(Canonical.Join(DynamicObservationContractV1.SelectorSchema,
             Canonical.Set(selector.ElementUniqueIds), Canonical.Set(selector.CategoryStableIds),
             Canonical.Set(selector.OwnerViewElementIds.Select(value => value.ToString(CultureInfo.InvariantCulture))),
+            selector.VisibleInViewElementId?.ToString(CultureInfo.InvariantCulture),
             Canonical.Set(selector.ParameterNames), selector.IncludeTypeParameters ? "1" : "0",
             selector.PageSize.ToString(CultureInfo.InvariantCulture)));
     }
@@ -317,7 +321,7 @@ public static class DynamicObservationPolicyV1
             ReferenceCanonical(element.Workset), ReferenceCanonical(element.CreatedPhase), ReferenceCanonical(element.DemolishedPhase),
             PointCanonical(element.PointLocation), DoubleCanonical(element.PointRotationRadians), CurveCanonical(element.CurveLocation),
             BoxCanonical(element.BoundingBox), TransformCanonical(element.Transform), element.IsPinned ? "1" : "0", element.IsGrouped ? "1" : "0",
-            Canonical.Join(parameters));
+            element.CoreStateHash, Canonical.Join(parameters));
     }
 
     public static void ValidateElement(DynamicObservedElementV1 element)
@@ -333,6 +337,7 @@ public static class DynamicObservationPolicyV1
         ValidateReference(element.Workset, "workset", false);
         ValidateReference(element.CreatedPhase, "phase", false);
         ValidateReference(element.DemolishedPhase, "phase", false);
+        RequireHash(element.CoreStateHash, "core state hash");
         ValidatePoint(element.PointLocation);
         if (element.PointRotationRadians.HasValue && !Finite(element.PointRotationRadians.Value)) throw new ArgumentException("Dynamic point rotation must be finite.");
         if (element.CurveLocation != null)
