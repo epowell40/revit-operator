@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 using Autodesk.Revit.DB;
 using RevitBridge.Common;
 using RevitOperator.DynamicRevitSdk;
@@ -45,10 +46,18 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (bounded.Length > DynamicObservationContractV1.MaximumObservedElements)
                 throw new InvalidOperationException("Dynamic observation scope exceeds the bounded element count; provide narrower element, category, or owner-view selectors.");
 
-            var observed = bounded.Select(element => Project(document, element, selector)).ToArray();
+            // Hash the exact DTO values that cross the net48 -> net8 JSON boundary. System.Text.Json
+            // can recover an adjacent IEEE-754 value from an equally valid decimal spelling on the
+            // other runtime; cloning once through the exact host wire options before BuildPage keeps
+            // revision/envelope identities bound to the transmitted facts rather than pre-wire bits.
+            var observed = bounded.Select(element => TransportClone(Project(document, element, selector))).ToArray();
             return DynamicObservationPolicyV1.BuildPage(selector, DynamicRuntimeSnapshotHandler.Fingerprint(document),
                 DynamicRuntimeSnapshotHandler.Session(document), observed);
         }
+
+        private static DynamicObservedElementV1 TransportClone(DynamicObservedElementV1 value) =>
+            JsonSerializer.Deserialize<DynamicObservedElementV1>(JsonSerializer.Serialize(value, DynamicRuntimeV1Wire.Camel), DynamicRuntimeV1Wire.Camel)
+            ?? throw new InvalidOperationException("Dynamic observation transport normalization failed.");
 
         private static DynamicObservedElementV1 Project(Document document, Element element, DynamicObservationSelectorV1 selector)
         {

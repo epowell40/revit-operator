@@ -17,7 +17,7 @@ public static class DynamicObservationContractV1
     public const string EnvelopeSchema = "dynamic-revit-observation-envelope/v1";
     public const string CursorSchema = "dynamic-revit-observation-cursor/v1";
     public const string ManifestSchema = "dynamic-revit-observation-contract-manifest/v1";
-    public const string CanonicalVersion = "dynamic-revit-observation-canonical/v2";
+    public const string CanonicalVersion = "dynamic-revit-observation-canonical/v3";
     public const int MaximumRequestBytes = 64 * 1024;
     public const int MaximumPageSize = 256;
     public const int MaximumObservedElements = 4096;

@@ -18,10 +18,10 @@ public sealed class ObservationContractsTests
         var envelope = DynamicObservationPolicyV1.BuildPage(selector, DocumentFingerprint, SessionId,
             new[] { Element("z-element", 30, 12.5), Element("a-element", 10, 4.25), Element("m-element", 20, 8.75) });
 
-        Assert.Equal("sha256:1fe8867e3d83aa667e1600dce1b76d9be22578e128f8907ee397e3ccd292ba8b", DynamicObservationContractV1.ManifestHash);
+        Assert.Equal("sha256:50e3d2505fc8dcd680e929714487e4c91eb59be47d2a32124372db35ecd15c5c", DynamicObservationContractV1.ManifestHash);
         Assert.Equal("sha256:5250896bc15318bdf5e586517643ad3ec315c2c3a4c550f1f1f12b2807c2ef36", envelope.ScopeHash);
-        Assert.Equal("sha256:5cdfdfdf75b1a02802173c63563bff2611fe3e19ba3720a5071afddfba8f72d8", envelope.RevisionHash);
-        Assert.Equal("sha256:62077314fec20d47c8a37b644c590396d2fa914ea30837da6f69c938035b80ae", envelope.EnvelopeHash);
+        Assert.Equal("sha256:abbaa8e713b0277cc4639b1fb8be62366ebaed29c5b47094add433e6fd25320a", envelope.RevisionHash);
+        Assert.Equal("sha256:21a5c4b95591e5672cb66158ec04e28bb2f768385743feb79a0d6c2841aa5e04", envelope.EnvelopeHash);
         Assert.Equal(new[] { "revit-element:a-element", "revit-element:m-element" }, envelope.Elements.Select(value => value.Element.StableId));
         Assert.NotNull(envelope.NextCursor);
     }
