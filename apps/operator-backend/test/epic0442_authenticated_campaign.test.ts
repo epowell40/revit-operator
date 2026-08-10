@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { canonicalJson, type JsonValue } from "../src/capabilities/tool_certification.js";
 import { loadEpic0441Campaign, type Epic0441Campaign } from "../src/benchmark/epic0441_campaign.js";
 import {
   Epic0442ScorerAuthority,
@@ -87,6 +88,15 @@ function verdict(outcome: "authenticated_live_success" | "success_after_repair",
   };
 }
 
+function asLegacySignedResult<T extends { evidence: Epic0442ExecutionEvidence; receipt_hash: string; signature_base64url: string }>(result: T, privateKey: KeyObject): T {
+  const legacy = structuredClone(result) as unknown as { evidence: Record<string, unknown>; receipt_hash: string; signature_base64url: string; [key: string]: unknown };
+  delete legacy.evidence.trusted_context;
+  const { receipt_hash: _receiptHash, signature_base64url: _signature, ...payload } = legacy;
+  const receipt_hash = h(canonicalJson(payload as unknown as JsonValue));
+  const signature_base64url = sign(null, Buffer.from(canonicalJson({ domain: "epic0442-scorer-receipt/v1", receipt_hash }), "utf8"), privateKey).toString("base64url");
+  return { ...payload, receipt_hash, signature_base64url } as T;
+}
+
 test("synthetic typed and Dynamic arms produce scorer-owned authenticated paired results", () => {
   const { scorer } = authority();
   const campaignReceipt = scorer.issueCampaign({ campaign, campaignVersion: "epic0442-stream-a-v1", campaignNonce: "campaign-nonce-1" });
@@ -121,6 +131,15 @@ test("verified context record and active-view observation identities are scorer-
   assert.throws(() => verifyEpic0442AuthenticatedChain({ publicKey: scorer.publicKey(), campaignReceipt, assignmentReceipts: [dynamicAssignment], results: [forged] }), /payload hash is invalid/);
   const wrongPackage = structuredClone(observed); wrongPackage.trusted_context!.worker_package_sha256 = h("other-package");
   assert.throws(() => scorer.score({ campaignReceipt, assignmentReceipt: dynamicAssignment, evidence: wrongPackage, verdict: verdict("authenticated_live_success", 0), resultNonce: "wrong-package" }), /worker package/);
+});
+
+test("legacy signed v1 evidence without the additive trusted-context field remains verifiable", () => {
+  const { scorer, keys } = authority(); const campaignReceipt = scorer.issueCampaign({ campaign, campaignVersion: "v1", campaignNonce: "legacy-context-campaign" });
+  const typedAssignment = assignment(scorer, campaignReceipt, "typed_capability_chain");
+  const current = scorer.score({ campaignReceipt, assignmentReceipt: typedAssignment, evidence: evidence("typed_capability_chain"), verdict: verdict("authenticated_live_success", 0) });
+  const legacy = asLegacySignedResult(current, keys.privateKey);
+  assert.equal(Object.prototype.hasOwnProperty.call(legacy.evidence, "trusted_context"), false);
+  verifyEpic0442AuthenticatedChain({ publicKey: scorer.publicKey(), campaignReceipt, assignmentReceipts: [typedAssignment], results: [legacy], expectedCampaign: campaign });
 });
 
 test("campaign, assignment, and result forgery or cross-authority substitution fails", () => {

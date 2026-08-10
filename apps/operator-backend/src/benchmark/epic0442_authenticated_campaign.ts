@@ -316,15 +316,21 @@ function validateIdArray(value: unknown, label: string): number[] {
 }
 
 function validateEvidence(value: unknown, representation: Epic0442Representation): asserts value is Epic0442ExecutionEvidence {
+  const candidate = record(value, "Execution evidence");
+  const hasTrustedContext = Object.prototype.hasOwnProperty.call(candidate, "trusted_context");
   const object = exact(value, ["schema_version", "evidence_tier", "source_sha256", "runtime_sha256", "package_sha256", "revit_process", "document",
-    "trusted_context", "execution", "preview", "apply", "element_delta", "metrics", "cleanup"], "Execution evidence");
+    ...(hasTrustedContext ? ["trusted_context"] : []), "execution", "preview", "apply", "element_delta", "metrics", "cleanup"], "Execution evidence");
   if (object.schema_version !== "epic0442_execution_evidence/v1" || (object.evidence_tier !== "live" && object.evidence_tier !== "source_only")) throw new Error("Execution evidence schema or tier is invalid.");
   hash(object.source_sha256, "Evidence source hash"); hash(object.runtime_sha256, "Evidence runtime hash"); hash(object.package_sha256, "Evidence package hash");
   const process = object.revit_process === null ? null : exact(object.revit_process, ["process_id", "executable_sha256", "started_at_utc"], "Revit process evidence");
   if (process) { integer(process.process_id, "Revit process id", 1, 4_294_967_295); hash(process.executable_sha256, "Revit executable hash"); string(process.started_at_utc, "Revit start time", UTC); }
   const document = object.document === null ? null : exact(object.document, ["project_fingerprint", "document_session_id"], "Document evidence");
   if (document) { hash(document.project_fingerprint, "Project fingerprint"); string(document.document_session_id, "Document session id"); }
-  const trustedContext = object.trusted_context === null ? null : exact(object.trusted_context,
+  // trusted_context was added additively to the signed v1 result envelope. Receipts issued
+  // before that extension have an exact legacy shape with the field absent; preserve their
+  // original signed bytes and interpret the omission as the same non-authorizing null value.
+  const trustedContextValue = hasTrustedContext ? object.trusted_context : null;
+  const trustedContext = trustedContextValue === null ? null : exact(trustedContextValue,
     ["record_id", "record_sha256", "binding_sha256", "observation_scope_sha256", "observation_revision_sha256", "verification_key_sha256", "worker_package_sha256", "observation_receipt_sha256s"], "Trusted context binding");
   if (trustedContext) {
     string(trustedContext.record_id, "Context rule record id");
