@@ -148,11 +148,6 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
   const runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
   const requested = rawRequestedProfile.trim().toLowerCase();
   const exactHostedProduction = rawRuntimeMode === "hosted" || rawRuntimeMode === "production";
-  const configuredAuth = (env.OPERATOR_AUTH_MODE ?? "").trim().toLowerCase();
-  const principalAuth = configuredAuth === "principal_jwt" || (configuredAuth === "" && exactHostedProduction);
-  const productionBrain = env.OPERATOR_BRAIN === "codex" || env.OPERATOR_BRAIN === "openai" || env.OPERATOR_BRAIN === "auto";
-  const providerReady = !!((env.OPERATOR_OPENAI_API_KEY ?? "").trim() || (env.OPENAI_API_KEY ?? "").trim());
-  const hostedGeneralReady = exactHostedProduction && principalAuth && productionBrain && providerReady;
   // This is the sole certification escape. Keep it bound to the exact raw
   // deployment values so normalization cannot silently weaken the boundary.
   const explicitLaboratory = rawRuntimeMode === "development" && rawRequestedProfile === "laboratory";
@@ -171,7 +166,7 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
     // Do not let a stale deployment variable silently put the user back onto the
     // retired certified-only surface. Laboratory semantics are also ignored here;
     // production continues to use the authenticated General Agent transport.
-    if (hostedGeneralReady) {
+    if (exactHostedProduction) {
       return {
         runtimeMode,
         mode: "general",
@@ -187,11 +182,7 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
       mode: "certified",
       certified: true,
       explicitLaboratory: false,
-      reason: requested === "laboratory"
-        ? "laboratory mode is not permitted in hosted or production runtime; failing closed"
-        : requested === "certified"
-          ? "explicit certified exposure is active"
-          : "hosted General Agent exposure requires principal authentication, an enabled provider, and an exact production brain; failing closed"
+      reason: "non-exact hosted/production runtime values cannot activate General Agent exposure"
     };
   }
 

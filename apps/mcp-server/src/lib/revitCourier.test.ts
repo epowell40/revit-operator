@@ -378,7 +378,7 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -417,7 +417,7 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
     assert.equal(envelope.body_sha256, `sha256:${createHash("sha256").update("", "utf8").digest("hex")}`);
     assert.equal(envelope.channel, "typed_mcp");
     assert.equal(envelope.alias, "revit_ping");
-    assert.equal(envelope.runtime_mode, "hosted");
+    assert.equal(envelope.runtime_mode, "self_hosted");
     assert.equal(envelope.exposure_profile, "certified");
     assert.equal(envelope.policy_trust_source, "deployment");
     assert.match(envelope.envelope_hash, /^sha256:[0-9a-f]{64}$/);
@@ -591,7 +591,7 @@ test("certified move family publishes one sealed v2 envelope and binds it into c
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -704,7 +704,7 @@ test("certified family courier rejects raw or standalone-decision failure receip
       process.env.OPERATOR_WORKSPACE_ROOT = root;
       process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
       process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-      process.env.REVIT_OPERATOR_MODE = "hosted";
+      process.env.REVIT_OPERATOR_MODE = "self_hosted";
       delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
       process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
       process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -785,7 +785,7 @@ test("certified family courier rejects deleted or downgraded durable jobs before
       process.env.OPERATOR_WORKSPACE_ROOT = root;
       process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
       process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-      process.env.REVIT_OPERATOR_MODE = "hosted";
+      process.env.REVIT_OPERATOR_MODE = "self_hosted";
       delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
       process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
       process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -831,7 +831,7 @@ test("certified v2 normalizes context expiry, keeps duplicate identity stable, a
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -884,7 +884,7 @@ test("certified MCP courier separates identities when the immutable policy envel
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     writeContext(root, { session_id: "envelope-session", message_id: "envelope-message" });
 
@@ -946,7 +946,7 @@ test("certified MCP courier refuses to resume an existing v1 job", async () => {
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -992,7 +992,7 @@ test("certified MCP courier preserves present raw JSON body bytes, order, escape
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1035,7 +1035,7 @@ test("certified courier context accepts Unicode identity strings within the alig
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1069,7 +1069,7 @@ test("certified courier rejects unsafe or oversized context identity strings and
   try {
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1117,7 +1117,7 @@ test("certified MCP courier binds target and raw-body identity into distinct v2 
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1163,7 +1163,7 @@ test("certified MCP courier fails closed on a tampered existing v2 receipt", asy
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1203,7 +1203,7 @@ test("certified retry rejects altered id, correlation, expiry, and timing receip
   try {
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1243,7 +1243,7 @@ test("opaque courier admissions require the original alias context and are singl
   try {
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
@@ -1291,7 +1291,7 @@ test("certified MCP courier refuses a stale opaque admission before publishing",
   try {
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policyA.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policyA.policyHash;
@@ -1450,7 +1450,7 @@ test("certified v2 courier timeout never publishes competing terminal truth", as
     process.env.OPERATOR_WORKSPACE_ROOT = root;
     process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
     process.env.OPERATOR_REVIT_TRANSPORT = "courier";
-    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.REVIT_OPERATOR_MODE = "self_hosted";
     delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = policy.policyPath;
     process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = policy.policyHash;
