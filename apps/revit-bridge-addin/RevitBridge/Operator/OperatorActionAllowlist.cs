@@ -167,6 +167,7 @@ namespace RevitBridge.Operator
                     "/revit/tag-elements",
                     "/revit/create-dimension",
                     "/revit/create-sheet",
+                    "/revit/duplicate-sheet",
                     "/revit/create-sheets",
                     "/revit/place-view",
                     "/revit/place-views",

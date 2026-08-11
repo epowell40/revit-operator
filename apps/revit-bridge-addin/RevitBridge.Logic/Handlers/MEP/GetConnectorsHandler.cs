@@ -128,7 +128,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                                             var o = r?.Owner;
                                             if (o == null) continue;
                                             if (o.Id == null) continue;
-                                            if (o.Id.IntegerValue == e.Id.IntegerValue) continue;
+                                            if (RevitBridge.Common.ElementIdCompat.GetValue(o.Id) == RevitBridge.Common.ElementIdCompat.GetValue(e.Id)) continue;
                                             if (!seen.Add(RevitBridge.Common.ElementIdCompat.GetValue(o.Id))) continue;
                                             var ownerCategory = SelectionUtil.GetCategoryToken(o) ?? (o.Category?.Name ?? "None");
                                             var isMepSystem = o is MEPSystem;

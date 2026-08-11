@@ -10,6 +10,8 @@ namespace RevitBridge.Common
         private static readonly PropertyInfo? IntegerValueProperty = typeof(ElementId).GetProperty("IntegerValue", BindingFlags.Public | BindingFlags.Instance);
         private static readonly ConstructorInfo? LongCtor = typeof(ElementId).GetConstructor(new[] { typeof(long) });
         private static readonly ConstructorInfo? IntCtor = typeof(ElementId).GetConstructor(new[] { typeof(int) });
+        private static readonly PropertyInfo? WorksetValueProperty = typeof(WorksetId).GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+        private static readonly PropertyInfo? WorksetIntegerValueProperty = typeof(WorksetId).GetProperty("IntegerValue", BindingFlags.Public | BindingFlags.Instance);
 
         public static long GetValue(ElementId? id)
         {
@@ -50,6 +52,16 @@ namespace RevitBridge.Common
             }
 
             throw new InvalidOperationException("Unable to construct Autodesk.Revit.DB.ElementId for the current Revit API version.");
+        }
+
+        public static long GetValue(WorksetId? id)
+        {
+            if (id == null) return -1;
+
+            var raw = WorksetValueProperty?.GetValue(id) ?? WorksetIntegerValueProperty?.GetValue(id);
+            if (raw is long l) return l;
+            if (raw is int i) return i;
+            return -1;
         }
     }
 }

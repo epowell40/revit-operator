@@ -4716,7 +4716,7 @@ namespace RevitBridge.Operator
             {
                 var uidoc = app.ActiveUIDocument ?? throw new InvalidOperationException("No active Revit document.");
                 var refs = uidoc.Selection.PickObjects(ObjectType.Element, prompt);
-                var ids = refs.Select(r => r.ElementId.IntegerValue).ToArray();
+                var ids = refs.Select(r => RevitBridge.Common.ElementIdCompat.GetValue(r.ElementId)).ToArray();
                 return (object)new { elementIds = ids };
             }).ConfigureAwait(false);
         }

@@ -397,7 +397,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         selected = BuildSelected(ctx, sysType, dType, pType, conduitType),
                         selectedWorkset = requestedWorkset == null ? null : new
                         {
-                            id = requestedWorkset.Id.IntegerValue,
+                            id = RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id),
                             name = requestedWorkset.Name
                         },
                         chosenSize = new
@@ -594,7 +594,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .OfKind(WorksetKind.UserWorkset)
                 .ToWorksets()
                 .ToList();
-            var byId = hasId ? worksets.FirstOrDefault(x => x.Id.IntegerValue == worksetId!.Value) : null;
+            var byId = hasId ? worksets.FirstOrDefault(x => RevitBridge.Common.ElementIdCompat.GetValue(x.Id) == worksetId!.Value) : null;
             var byName = hasName ? worksets.FirstOrDefault(x => string.Equals(x.Name, requestedName, StringComparison.OrdinalIgnoreCase)) : null;
             if (hasId && byId == null)
             {
@@ -606,7 +606,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 error = $"MEP route workset '{requestedName}' was not found as a user workset.";
                 return null;
             }
-            if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+            if (byId != null && byName != null && RevitBridge.Common.ElementIdCompat.GetValue(byId.Id) != RevitBridge.Common.ElementIdCompat.GetValue(byName.Id))
             {
                 error = $"MEP route workset id {worksetId} does not match workset name '{requestedName}'.";
                 return null;
@@ -657,20 +657,20 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} cannot be assigned to workset '{workset.Name}'.");
             }
-            if (!parameter.Set(workset.Id.IntegerValue))
+            if (!parameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(workset.Id)))
             {
                 throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} rejected workset '{workset.Name}'.");
             }
             var readbackId = parameter.AsInteger();
-            var verified = readbackId == workset.Id.IntegerValue;
+            var verified = readbackId == RevitBridge.Common.ElementIdCompat.GetValue(workset.Id);
             if (verify && !verified)
             {
-                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} workset readback {readbackId} did not match requested workset {workset.Id.IntegerValue}.");
+                throw new InvalidOperationException($"Element {ElementIdCompat.GetValue(element.Id)} workset readback {readbackId} did not match requested workset {RevitBridge.Common.ElementIdCompat.GetValue(workset.Id)}.");
             }
             return new
             {
                 elementId = ElementIdCompat.GetValue(element.Id),
-                requestedWorksetId = workset.Id.IntegerValue,
+                requestedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(workset.Id),
                 requestedWorksetName = workset.Name,
                 readbackWorksetId = readbackId,
                 verified

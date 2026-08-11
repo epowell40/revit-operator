@@ -70,11 +70,11 @@ namespace RevitBridge.Handlers
                 max,
                 activeWorkset = worksets
                     .Where(x => x.Id == activeId)
-                    .Select(x => new { id = x.Id.IntegerValue, name = x.Name })
+                    .Select(x => new { id = RevitBridge.Common.ElementIdCompat.GetValue(x.Id), name = x.Name })
                     .FirstOrDefault(),
                 items = worksets.Select(x => new
                 {
-                    id = x.Id.IntegerValue,
+                    id = RevitBridge.Common.ElementIdCompat.GetValue(x.Id),
                     name = x.Name,
                     isOpen = x.IsOpen,
                     isDefault = x.IsDefaultWorkset
@@ -98,7 +98,7 @@ namespace RevitBridge.Handlers
                 {
                     status = "AlreadyExists",
                     action = "create",
-                    workset = new { id = existing.Id.IntegerValue, name = existing.Name },
+                    workset = new { id = RevitBridge.Common.ElementIdCompat.GetValue(existing.Id), name = existing.Name },
                     activateAfterCreate
                 };
             }
@@ -135,8 +135,8 @@ namespace RevitBridge.Handlers
             {
                 status = "Success",
                 action = "create",
-                workset = new { id = created.Id.IntegerValue, name = created.Name },
-                activeWorksetId = active.IntegerValue
+                workset = new { id = RevitBridge.Common.ElementIdCompat.GetValue(created.Id), name = created.Name },
+                activeWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(active)
             };
         }
 
@@ -153,7 +153,7 @@ namespace RevitBridge.Handlers
                     status = "Dry Run",
                     action = "set_active",
                     dryRun = true,
-                    target = new { id = target.Id.IntegerValue, name = target.Name }
+                    target = new { id = RevitBridge.Common.ElementIdCompat.GetValue(target.Id), name = target.Name }
                 };
             }
 
@@ -169,7 +169,7 @@ namespace RevitBridge.Handlers
             {
                 status = "Success",
                 action = "set_active",
-                activeWorkset = new { id = active.IntegerValue, name = doc.GetWorksetTable().GetWorkset(active)?.Name }
+                activeWorkset = new { id = RevitBridge.Common.ElementIdCompat.GetValue(active), name = doc.GetWorksetTable().GetWorkset(active)?.Name }
             };
         }
 
@@ -201,7 +201,7 @@ namespace RevitBridge.Handlers
 
             if (worksetId.HasValue && worksetId.Value > 0)
             {
-                return worksets.FirstOrDefault(x => x.Id.IntegerValue == (int)worksetId.Value);
+                return worksets.FirstOrDefault(x => RevitBridge.Common.ElementIdCompat.GetValue(x.Id) == (int)worksetId.Value);
             }
 
             var name = (worksetName ?? "").Trim();

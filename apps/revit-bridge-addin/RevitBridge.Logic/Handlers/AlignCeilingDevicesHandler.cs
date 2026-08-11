@@ -112,7 +112,7 @@ namespace RevitBridge.Logic.Handlers
                 // 2. Group by Host (Ceiling)
                 var devicesByCeiling = elementsToAlign
                     .OfType<FamilyInstance>()
-                    .Where(e => e.Host != null && (e.Host.Category.Id.IntegerValue == (int)BuiltInCategory.OST_Ceilings))
+                    .Where(e => e.Host != null && (RevitBridge.Common.ElementIdCompat.GetValue(e.Host.Category.Id) == (int)BuiltInCategory.OST_Ceilings))
                     .GroupBy(e => e.Host.Id)
                     .ToList();
 

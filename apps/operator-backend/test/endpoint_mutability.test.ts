@@ -25,6 +25,8 @@ test("conditional audit and type-maintenance routes inspect the request body", (
   assert.equal(pathLooksWrite("/revit/visibility", { action: "get" }), false);
   assert.equal(conditionalActionPathEffect("/revit/visibility", { action: "hide_category", dryRun: true }), "preview");
   assert.equal(conditionalActionPathEffect("/revit/visibility", { action: "hide_category" }), "apply");
+  assert.equal(conditionalActionPathEffect("/revit/duplicate-sheet", { sourceSheetNumber: "M000", dryRun: true }), "preview");
+  assert.equal(conditionalActionPathEffect("/revit/duplicate-sheet", { sourceSheetNumber: "M000" }), "apply");
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "audit" }), false);
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }), true);
 

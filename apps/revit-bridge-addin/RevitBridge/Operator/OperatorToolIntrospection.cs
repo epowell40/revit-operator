@@ -321,6 +321,7 @@ namespace RevitBridge.Operator
                 { "/revit/purge-unused", typeof(RevitBridge.Handlers.PurgeUnusedHandler.Params) },
                 { "/revit/transfer-view-templates", typeof(RevitBridge.Handlers.TransferViewTemplatesHandler.Params) },
                 { "/revit/create-sheet", typeof(RevitBridge.Handlers.CreateSheetHandler.Params) },
+                { "/revit/duplicate-sheet", typeof(RevitBridge.Handlers.DuplicateSheetHandler.Params) },
                 { "/revit/create-sheets", typeof(RevitBridge.Handlers.CreateSheetsBatchHandler.Params) },
                 { "/revit/place-view", typeof(RevitBridge.Handlers.PlaceViewOnSheetHandler.Params) },
                 { "/revit/place-views", typeof(RevitBridge.Handlers.PlaceViewsBatchHandler.Params) },

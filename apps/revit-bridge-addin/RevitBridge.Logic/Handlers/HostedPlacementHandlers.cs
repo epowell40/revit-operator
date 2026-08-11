@@ -2407,14 +2407,14 @@ namespace RevitBridge.Logic.Handlers
                 if (!doc.IsWorkshared) return true;
 
                 var sourceWorksetId = source.WorksetId;
-                var sourceWorksetValue = sourceWorksetId.IntegerValue;
+                var sourceWorksetValue = RevitBridge.Common.ElementIdCompat.GetValue(sourceWorksetId);
                 if (sourceWorksetValue < 0)
                 {
                     warnings.Add("Source exemplar does not have a valid workset.");
                     return false;
                 }
 
-                if (target.WorksetId.IntegerValue == sourceWorksetValue) return true;
+                if (RevitBridge.Common.ElementIdCompat.GetValue(target.WorksetId) == sourceWorksetValue) return true;
 
                 var parameter = target.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
                 if (parameter == null || parameter.IsReadOnly)
@@ -2430,10 +2430,10 @@ namespace RevitBridge.Logic.Handlers
                 }
 
                 doc.Regenerate();
-                if (target.WorksetId.IntegerValue != sourceWorksetValue)
+                if (RevitBridge.Common.ElementIdCompat.GetValue(target.WorksetId) != sourceWorksetValue)
                 {
                     warnings.Add(
-                        $"Created instance workset verification failed: expected {sourceWorksetValue}, got {target.WorksetId.IntegerValue}.");
+                        $"Created instance workset verification failed: expected {sourceWorksetValue}, got {RevitBridge.Common.ElementIdCompat.GetValue(target.WorksetId)}.");
                     return false;
                 }
 
@@ -4042,7 +4042,7 @@ namespace RevitBridge.Logic.Handlers
             bool? workPlaneFlipMatched = null;
             long? sourceWorksetId = sourceElement == null || !doc.IsWorkshared
                 ? null
-                : sourceElement.WorksetId.IntegerValue;
+                : RevitBridge.Common.ElementIdCompat.GetValue(sourceElement.WorksetId);
             long? verifiedCreatedWorksetId = null;
             bool? sourceWorksetMatched = null;
             var dryRunRollbackVerified = false;
@@ -4105,7 +4105,7 @@ namespace RevitBridge.Logic.Handlers
                     sourceCreatedPhaseMatched = sourceCreatedPhaseId == verifiedCreatedPhaseId;
                     if (doc.IsWorkshared)
                     {
-                        verifiedCreatedWorksetId = created.WorksetId.IntegerValue;
+                        verifiedCreatedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(created.WorksetId);
                         sourceWorksetMatched = sourceWorksetId == verifiedCreatedWorksetId;
                     }
                     if (sourceCreatedPhaseId.HasValue &&
@@ -4128,7 +4128,7 @@ namespace RevitBridge.Logic.Handlers
                 if (sourceElement != null && doc.IsWorkshared)
                 {
                     doc.Regenerate();
-                    verifiedCreatedWorksetId = created.WorksetId.IntegerValue;
+                    verifiedCreatedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(created.WorksetId);
                     sourceWorksetMatched = sourceWorksetId == verifiedCreatedWorksetId;
                     if (sourceWorksetMatched != true)
                     {
@@ -4565,7 +4565,7 @@ namespace RevitBridge.Logic.Handlers
             var requestedLevelId = ElementIdCompat.GetValue(level.Id);
             var exemplarCreatedPhaseId = ElementIdCompat.GetValue(exemplar.CreatedPhaseId);
             long? exemplarWorksetId = doc.IsWorkshared
-                ? exemplar.WorksetId.IntegerValue
+                ? RevitBridge.Common.ElementIdCompat.GetValue(exemplar.WorksetId)
                 : null;
             var usedCopiedLinkedHostFallback = false;
 
@@ -4711,7 +4711,7 @@ namespace RevitBridge.Logic.Handlers
                     HostedPlacementUtil.ApplyParameterValues(created, p.parameterOverrides, warnings);
                     doc.Regenerate();
                     long? verifiedCreatedWorksetId = doc.IsWorkshared
-                        ? created.WorksetId.IntegerValue
+                        ? RevitBridge.Common.ElementIdCompat.GetValue(created.WorksetId)
                         : null;
                     bool? sourceWorksetMatched = doc.IsWorkshared
                         ? exemplarWorksetId == verifiedCreatedWorksetId

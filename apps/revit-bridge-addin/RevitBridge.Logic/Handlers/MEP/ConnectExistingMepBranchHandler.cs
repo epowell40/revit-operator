@@ -694,7 +694,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (hasRequestedId || hasRequestedName)
             {
                 var byId = hasRequestedId
-                    ? userWorksets.FirstOrDefault(workset => workset.Id.IntegerValue == requestedWorksetId!.Value)
+                    ? userWorksets.FirstOrDefault(workset => RevitBridge.Common.ElementIdCompat.GetValue(workset.Id) == requestedWorksetId!.Value)
                     : null;
                 var byName = hasRequestedName
                     ? userWorksets.FirstOrDefault(workset => string.Equals(workset.Name, requestedName, StringComparison.OrdinalIgnoreCase))
@@ -703,14 +703,14 @@ namespace RevitBridge.Logic.Handlers.MEP
                     throw new InvalidOperationException($"Takeoff workset id {requestedWorksetId} was not found as a user workset.");
                 if (hasRequestedName && byName == null)
                     throw new InvalidOperationException($"Takeoff workset '{requestedName}' was not found as a user workset.");
-                if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+                if (byId != null && byName != null && RevitBridge.Common.ElementIdCompat.GetValue(byId.Id) != RevitBridge.Common.ElementIdCompat.GetValue(byName.Id))
                     throw new InvalidOperationException($"Takeoff workset id {requestedWorksetId} does not match workset name '{requestedName}'.");
                 source = "explicit";
                 return byId ?? byName;
             }
 
             var branchWorksetId = branch.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.AsInteger() ?? -1;
-            var inherited = userWorksets.FirstOrDefault(workset => workset.Id.IntegerValue == branchWorksetId);
+            var inherited = userWorksets.FirstOrDefault(workset => RevitBridge.Common.ElementIdCompat.GetValue(workset.Id) == branchWorksetId);
             if (inherited != null)
             {
                 source = "branch_element";
@@ -727,21 +727,21 @@ namespace RevitBridge.Logic.Handlers.MEP
                 ?? throw new InvalidOperationException($"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} does not expose ELEM_PARTITION_PARAM.");
             if (parameter.IsReadOnly)
                 throw new InvalidOperationException($"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} has a read-only workset parameter.");
-            parameter.Set(workset.Id.IntegerValue);
+            parameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(workset.Id));
             VerifyWorkset(fitting, workset);
         }
 
         private static void VerifyWorkset(Element fitting, Workset workset)
         {
             var actual = fitting.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM)?.AsInteger() ?? -1;
-            if (actual != workset.Id.IntegerValue)
+            if (actual != RevitBridge.Common.ElementIdCompat.GetValue(workset.Id))
                 throw new InvalidOperationException(
-                    $"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} workset {actual} did not match requested workset {workset.Id.IntegerValue} ({workset.Name}).");
+                    $"Takeoff fitting {ElementIdCompat.GetValue(fitting.Id)} workset {actual} did not match requested workset {RevitBridge.Common.ElementIdCompat.GetValue(workset.Id)} ({workset.Name}).");
         }
 
         private static object DescribeWorkset(Workset workset, string source) => new
         {
-            id = workset.Id.IntegerValue,
+            id = RevitBridge.Common.ElementIdCompat.GetValue(workset.Id),
             name = workset.Name,
             source
         };

@@ -388,20 +388,20 @@ namespace RevitBridge.Logic.Handlers.MEP
 
         private static IEnumerable<long> TraceConnectedIds(Document doc, ElementId startId, int max)
         {
-            var visited = new HashSet<int>();
+            var visited = new HashSet<long>();
             var q = new Queue<ElementId>();
             q.Enqueue(startId);
             while (q.Count > 0 && visited.Count < max)
             {
                 var id = q.Dequeue();
-                if (!visited.Add(id.IntegerValue)) continue;
+                if (!visited.Add(RevitBridge.Common.ElementIdCompat.GetValue(id))) continue;
                 yield return RevitBridge.Common.ElementIdCompat.GetValue(id);
 
                 var e = doc.GetElement(id);
                 if (e == null) continue;
                 foreach (var next in MepSystemUtil.GetConnectedOwnerElementIds(e))
                 {
-                    if (!visited.Contains(next.IntegerValue)) q.Enqueue(next);
+                    if (!visited.Contains(RevitBridge.Common.ElementIdCompat.GetValue(next))) q.Enqueue(next);
                 }
             }
         }
@@ -501,9 +501,9 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             // 2) Graph walk fallback for fitting->fitting->duct chains.
             var candidates = new List<AdjacentSizeCandidate>();
-            var visited = new HashSet<int>();
+            var visited = new HashSet<long>();
             var q = new Queue<(ElementId id, int hops)>();
-            visited.Add(e.Id.IntegerValue);
+            visited.Add(RevitBridge.Common.ElementIdCompat.GetValue(e.Id));
 
             try
             {
@@ -518,7 +518,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     var item = q.Dequeue();
                     var id = item.id;
                     var hops = item.hops;
-                    if (!visited.Add(id.IntegerValue)) continue;
+                    if (!visited.Add(RevitBridge.Common.ElementIdCompat.GetValue(id))) continue;
 
                     var node = doc.GetElement(id);
                     if (node == null) continue;
@@ -537,7 +537,7 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                     foreach (var next in MepSystemUtil.GetConnectedOwnerElementIds(node))
                     {
-                        if (!visited.Contains(next.IntegerValue)) q.Enqueue((next, hops + 1));
+                        if (!visited.Contains(RevitBridge.Common.ElementIdCompat.GetValue(next))) q.Enqueue((next, hops + 1));
                     }
                 }
             }

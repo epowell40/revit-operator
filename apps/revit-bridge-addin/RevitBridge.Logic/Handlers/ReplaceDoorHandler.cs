@@ -34,7 +34,7 @@ namespace RevitBridge.Logic.Handlers
             if (!(oldElem is FamilyInstance oldDoor))
                 throw new ArgumentException($"Element {p.elementId} is not a FamilyInstance.");
 
-            var catId = oldDoor.Category?.Id?.IntegerValue ?? 0;
+            var catId = RevitBridge.Common.ElementIdCompat.GetValue(oldDoor.Category?.Id);
             if (catId != (int)BuiltInCategory.OST_Doors)
                 throw new ArgumentException($"Element {p.elementId} is not in category OST_Doors.");
 
@@ -42,7 +42,7 @@ namespace RevitBridge.Logic.Handlers
             if (newSym == null)
                 throw new ArgumentException($"newTypeId {p.newTypeId} not found or is not a FamilySymbol.");
 
-            var newCatId = newSym.Category?.Id?.IntegerValue ?? 0;
+            var newCatId = RevitBridge.Common.ElementIdCompat.GetValue(newSym.Category?.Id);
             if (newCatId != (int)BuiltInCategory.OST_Doors)
                 warnings.Add("New type is not categorized as OST_Doors; placement may fail.");
 

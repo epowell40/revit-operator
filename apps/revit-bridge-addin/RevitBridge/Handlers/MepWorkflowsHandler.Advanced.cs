@@ -279,13 +279,13 @@ namespace RevitBridge.Handlers
                             ?? throw new InvalidOperationException($"Flex duct {transientOrCreatedId} does not expose ELEM_PARTITION_PARAM.");
                         if (worksetParameter.IsReadOnly)
                             throw new InvalidOperationException($"Flex duct {transientOrCreatedId} workset parameter is read-only.");
-                        worksetParameter.Set(workset.Id.IntegerValue);
+                        worksetParameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(workset.Id));
                         var readbackWorksetId = worksetParameter.AsInteger();
-                        if (readbackWorksetId != workset.Id.IntegerValue)
+                        if (readbackWorksetId != RevitBridge.Common.ElementIdCompat.GetValue(workset.Id))
                             throw new InvalidOperationException($"Flex duct {transientOrCreatedId} workset readback did not match the requested workset.");
                         worksetWrite = new
                         {
-                            requestedWorksetId = workset.Id.IntegerValue,
+                            requestedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(workset.Id),
                             requestedWorksetName = workset.Name,
                             readbackWorksetId,
                             verified = true
@@ -347,7 +347,7 @@ namespace RevitBridge.Handlers
                     systemType = new { id = ElementIdCompat.GetValue(systemType.Id), name = systemType.Name },
                     flexDuctType = new { id = ElementIdCompat.GetValue(flexType.Id), name = flexType.Name },
                     level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name },
-                    workset = workset == null ? null : new { id = workset.Id.IntegerValue, name = workset.Name }
+                    workset = workset == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(workset.Id), name = workset.Name }
                 },
                 requestedDuctSize = requestedSize.Length == 0 ? null : requestedSize,
                 diameterWrite,
@@ -491,13 +491,13 @@ namespace RevitBridge.Handlers
                             ?? throw new InvalidOperationException($"Flex duct {transientOrCreatedId} does not expose ELEM_PARTITION_PARAM.");
                         if (worksetParameter.IsReadOnly)
                             throw new InvalidOperationException($"Flex duct {transientOrCreatedId} workset parameter is read-only.");
-                        worksetParameter.Set(workset.Id.IntegerValue);
+                        worksetParameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(workset.Id));
                         var readbackWorksetId = worksetParameter.AsInteger();
-                        if (readbackWorksetId != workset.Id.IntegerValue)
+                        if (readbackWorksetId != RevitBridge.Common.ElementIdCompat.GetValue(workset.Id))
                             throw new InvalidOperationException($"Flex duct {transientOrCreatedId} workset readback did not match the requested workset.");
                         worksetWrite = new
                         {
-                            requestedWorksetId = workset.Id.IntegerValue,
+                            requestedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(workset.Id),
                             requestedWorksetName = workset.Name,
                             readbackWorksetId,
                             verified = true
@@ -584,7 +584,7 @@ namespace RevitBridge.Handlers
                     systemType = new { id = ElementIdCompat.GetValue(systemType.Id), name = systemType.Name },
                     flexDuctType = new { id = ElementIdCompat.GetValue(flexType.Id), name = flexType.Name },
                     level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name },
-                    workset = workset == null ? null : new { id = workset.Id.IntegerValue, name = workset.Name }
+                    workset = workset == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(workset.Id), name = workset.Name }
                 },
                 requestedDuctSize = requestedSize.Length == 0 ? null : requestedSize,
                 diameterWrite,
@@ -776,7 +776,7 @@ namespace RevitBridge.Handlers
                 .ToList();
             if (requestedId.GetValueOrDefault(0) > 0)
             {
-                var byId = userWorksets.FirstOrDefault(x => x.Id.IntegerValue == requestedId!.Value);
+                var byId = userWorksets.FirstOrDefault(x => RevitBridge.Common.ElementIdCompat.GetValue(x.Id) == requestedId!.Value);
                 return byId ?? throw new InvalidOperationException($"User workset id {requestedId.Value} was not found.");
             }
 

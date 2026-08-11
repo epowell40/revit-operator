@@ -610,7 +610,7 @@ namespace RevitBridge.Logic.Handlers
             if (id == null) return false;
             try
             {
-                return id != ElementId.InvalidElementId && id.IntegerValue != -1;
+                return id != ElementId.InvalidElementId && RevitBridge.Common.ElementIdCompat.GetValue(id) != -1;
             }
             catch
             {

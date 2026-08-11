@@ -31,8 +31,8 @@
   <Target Name="ValidateDynamicRevitHostTarget" BeforeTargets="ResolveReferences">
     <Error Condition="'$(TargetFramework)'=='net48' and '$(RevitYear)'!='2023' and '$(RevitYear)'!='2024'"
            Text="DynamicRevitHost net48 must be built with RevitYear=2023 or RevitYear=2024." />
-    <Error Condition="'$(TargetFramework)'=='net8.0-windows' and '$(RevitYear)'!='2025'"
-           Text="DynamicRevitHost net8.0-windows must be built with RevitYear=2025." />
+    <Error Condition="'$(TargetFramework)'=='net8.0-windows' and '$(RevitYear)'!='2025' and '$(RevitYear)'!='2026'"
+           Text="DynamicRevitHost net8.0-windows must be built with RevitYear=2025 or RevitYear=2026." />
     <Error Condition="!Exists('$(RevitApiPath)\RevitAPI.dll') or !Exists('$(RevitApiPath)\RevitAPIUI.dll')"
            Text="Revit API assemblies were not found under $(RevitApiPath)." />
   </Target>

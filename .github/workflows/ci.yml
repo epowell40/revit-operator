@@ -18,7 +18,7 @@ on:
         default: false
         type: boolean
       run_dynamic_runtime_release:
-        description: "Build and verify the Dynamic Runtime package for installed Revit 2023/2024/2025"
+        description: "Build and verify the Dynamic Runtime package for installed Revit 2023/2024/2025/2026"
         required: false
         default: false
         type: boolean
@@ -210,7 +210,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - name: Build, bind, and verify the exact three-year package
+      - name: Build, bind, and verify the exact four-year package
         shell: pwsh
         run: |
           $output = Join-Path $env:RUNNER_TEMP ('dynamic-runtime-package-' + [guid]::NewGuid().ToString('N'))

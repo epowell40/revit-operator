@@ -24,7 +24,9 @@ test("general Revit corpus covers the user basics and the retained redline opera
   }
   for (const expectedCase of [
     "q01_air_device_inventory", "b01_equipment_rename", "b02_print_sheet", "b03_create_view", "b04_duplicate_view",
-    "b05_duplicate_sheet", "b06_edit_loaded_family", "s01_create_schedule", "s02_add_schedule_field",
+    "b05_duplicate_sheet", "b06_edit_loaded_family", "b08_create_and_rename_sheet", "b09_rename_view",
+    "b10_change_view_scale_and_settings", "b11_create_enlarged_plan", "b12_visual_observe_verify",
+    "s01_create_schedule", "s02_add_schedule_field",
     "s03_schedule_filter", "s04_schedule_sort_group", "s05_schedule_value_edit", "v01_hide_show_category",
     "v02_category_graphics_override", "v03_create_apply_view_filter", "v04_create_view_template",
     "v05_apply_view_template", "r13_schedule_airflow_sync", "r14_tag_designation_sync",
