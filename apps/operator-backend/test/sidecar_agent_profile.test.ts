@@ -34,18 +34,33 @@ test("Sidecar refuses a rule-brain laboratory as not being the General Agent", (
   assert.equal(state.reason_code, "GENERAL_AGENT_UNAVAILABLE_GENERAL_BRAIN_REQUIRED");
 });
 
-test("Sidecar reports the general agent unavailable for production and hosted runtimes", () => {
-  for (const env of [
-    { REVIT_OPERATOR_MODE: "production", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
-    { REVIT_OPERATOR_MODE: "hosted", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
-    { REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_HOSTED_ENABLED: "true" }
-  ]) {
-    const state = getSidecarAgentProfileState(env);
-    assert.equal(state.capability_profile, "general_agent_unavailable");
-    assert.equal(state.tool_exposure_profile, "certified");
-    assert.equal(state.general_agent_ready, false);
-    assert.equal(state.reason_code, "GENERAL_AGENT_UNAVAILABLE_HOSTED_OR_PRODUCTION");
+test("Sidecar exposes the full General Agent by default for an authenticated hosted production provider", () => {
+  for (const runtime of ["hosted", "production"]) {
+    const state = getSidecarAgentProfileState({
+      REVIT_OPERATOR_MODE: runtime,
+      OPERATOR_AUTH_MODE: "principal_jwt",
+      OPERATOR_BRAIN: "openai",
+      OPERATOR_OPENAI_API_KEY: "test-provider-key"
+    });
+    assert.equal(state.capability_profile, "general_agent");
+    assert.equal(state.tool_exposure_profile, "general");
+    assert.equal(state.general_agent_ready, true);
+    assert.equal(state.reason_code, "GENERAL_AGENT_HOSTED_PRODUCTION_READY");
   }
+});
+
+test("Sidecar hosted production readiness requires principal auth and a live general provider", () => {
+  const missingPrincipal = getSidecarAgentProfileState({
+    REVIT_OPERATOR_MODE: "hosted", OPERATOR_AUTH_MODE: "shared_token", OPERATOR_BRAIN: "openai", OPERATOR_OPENAI_API_KEY: "test-key"
+  });
+  assert.equal(missingPrincipal.reason_code, "GENERAL_AGENT_UNAVAILABLE_PRINCIPAL_AUTH_REQUIRED");
+  assert.equal(missingPrincipal.tool_exposure_profile, "unavailable");
+
+  const missingProvider = getSidecarAgentProfileState({
+    REVIT_OPERATOR_MODE: "hosted", OPERATOR_AUTH_MODE: "principal_jwt", OPERATOR_BRAIN: "openai"
+  });
+  assert.equal(missingProvider.reason_code, "GENERAL_AGENT_UNAVAILABLE_PROVIDER_REQUIRED");
+  assert.equal(missingProvider.general_agent_ready, false);
 });
 
 test("Sidecar laboratory escape rejects normalized lookalikes and incomplete configuration", () => {
@@ -60,7 +75,7 @@ test("Sidecar laboratory escape rejects normalized lookalikes and incomplete con
   ]) {
     const state = getSidecarAgentProfileState(env);
     assert.equal(state.capability_profile, "general_agent_unavailable", JSON.stringify(env));
-    assert.equal(state.tool_exposure_profile, "certified", JSON.stringify(env));
+    assert.equal(state.tool_exposure_profile, "unavailable", JSON.stringify(env));
     assert.equal(state.general_agent_ready, false, JSON.stringify(env));
   }
 });

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [string[]]$RevitYear = @("2023", "2024", "2025"),
+  [string[]]$RevitYear = @("2023", "2024", "2025", "2026"),
   [ValidateSet("Debug", "Release")]
   [string]$Configuration = "Release",
   [switch]$SkipMissing
@@ -34,7 +34,7 @@ foreach ($year in @($RevitYear | ForEach-Object { $_.Trim() } | Where-Object { $
   $property = if ($framework -eq "net48") { "RevitApiPathNet48=$apiPath" } else { "RevitApiPathNet8=$apiPath" }
 
   Write-Host "Building Revit $year compatibility target ($framework)..."
-  & dotnet build $project -c $Configuration -f $framework "-p:$property" --nologo --verbosity:minimal
+  & dotnet build $project -c $Configuration -f $framework "-p:RevitYear=$year" "-p:RevitVersion=$year" "-p:$property" --nologo --verbosity:minimal
   if ($LASTEXITCODE -ne 0) { throw "Revit $year compatibility build failed with exit code $LASTEXITCODE." }
   $results += [pscustomobject]@{ RevitYear = $year; Framework = $framework; Status = "Passed"; ApiPath = $apiPath }
 }

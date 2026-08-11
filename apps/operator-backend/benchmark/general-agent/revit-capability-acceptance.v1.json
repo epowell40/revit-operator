@@ -16,6 +16,10 @@
     "parameter_edit",
     "print_export",
     "view_create",
+    "view_rename",
+    "view_settings",
+    "enlarged_plan",
+    "sheet_create",
     "sheet_duplicate",
     "family_edit",
     "schedule_create",
@@ -35,7 +39,8 @@
     "route",
     "reroute_offset",
     "graphics_override",
-    "native_fallback"
+    "native_fallback",
+    "visual_verification"
   ],
   "cases": [
     {
@@ -98,9 +103,9 @@
       "source": "user_basic",
       "operation_family": "sheet_duplicate",
       "prompt": "Duplicate sheet M000, including its placed views where Revit permits, and give the new sheet the next available temporary number.",
-      "probe_prompt": "Inspect sheet M000 and preview a composed duplication: a new sheet with the same title block and eligible duplicated placed views. Report any view that Revit cannot place twice. Do not create anything.",
-      "capability_paths": ["/revit/sheets", "/revit/create-sheet", "/revit/duplicate-view", "/revit/place-view"],
-      "dispatch_any_of": ["/revit/sheets", "/revit/create-sheet", "/revit/duplicate-view", "/revit/place-view", "/revit/native-api-search"],
+      "probe_prompt": "Inspect sheet M000 and dry-run the native duplicate-sheet primitive with views and detailing. Report the planned number/name and any Revit-version limitation. Do not create anything.",
+      "capability_paths": ["/revit/sheets", "/revit/duplicate-sheet", "/revit/create-sheet", "/revit/duplicate-view", "/revit/place-view"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/duplicate-sheet", "/revit/create-sheet", "/revit/duplicate-view", "/revit/place-view", "/revit/native-api-search"],
       "expected_effect": "preview",
       "epic0441_task_refs": ["g22_sheet_view_package"]
     },
@@ -125,6 +130,61 @@
       "dispatch_any_of": ["/revit/find-elements", "/revit/get-parameters", "/revit/set-parameter", "/revit/update-parameter-by-query"],
       "expected_effect": "preview",
       "epic0441_task_refs": ["r01_schedule_value_edit"]
+    },
+    {
+      "case_id": "b08_create_and_rename_sheet",
+      "source": "user_basic",
+      "operation_family": "sheet_create",
+      "prompt": "Create a new sheet using the project-standard title block, number it TEST-M900, name it TEST MECHANICAL PLAN, then rename it TEST MECHANICAL COORDINATION and verify both number and name.",
+      "probe_prompt": "Inspect adjacent mechanical sheets and dry-run creating TEST-M900 with the appropriate title block, then preview the exact Sheet Name rename and readback. Do not create anything.",
+      "capability_paths": ["/revit/sheets", "/revit/create-sheet", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/create-sheet", "/revit/set-parameter"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
+    },
+    {
+      "case_id": "b09_rename_view",
+      "source": "user_basic",
+      "operation_family": "view_rename",
+      "prompt": "Rename the selected plan view to TEST LEVEL 2 HVAC COORDINATION and verify the exact view ID and final name.",
+      "probe_prompt": "Find one non-template floor-plan view, preview renaming only that exact view to TEST LEVEL 2 HVAC COORDINATION, and report the readback check. Do not rename it.",
+      "capability_paths": ["/revit/views", "/revit/create-view"],
+      "dispatch_any_of": ["/revit/views", "/revit/create-view", "/revit/set-parameter"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
+    },
+    {
+      "case_id": "b10_change_view_scale_and_settings",
+      "source": "user_basic",
+      "operation_family": "view_settings",
+      "prompt": "Set the selected plan view scale to 1/8 inch equals 1 foot, set detail level to Fine, and verify both settings without changing its template.",
+      "probe_prompt": "Inspect one eligible plan view and dry-run setting scale 96 and detail level Fine while preserving its current template. Report before/after settings; do not apply.",
+      "capability_paths": ["/revit/views", "/revit/visibility"],
+      "dispatch_any_of": ["/revit/views", "/revit/visibility"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
+    },
+    {
+      "case_id": "b11_create_enlarged_plan",
+      "source": "user_basic",
+      "operation_family": "enlarged_plan",
+      "prompt": "Create a dependent enlarged mechanical plan from the selected floor plan, crop it to the requested area, set the appropriate enlarged scale, and place it on a new sheet.",
+      "probe_prompt": "Find one eligible floor plan and preview the composed enlarged-plan workflow: dependent view, crop region, enlarged scale, new sheet, and viewport placement. Report exact source and planned verification; do not create anything.",
+      "capability_paths": ["/revit/create-view", "/revit/visibility", "/revit/create-sheet", "/revit/place-view"],
+      "dispatch_any_of": ["/revit/create-view", "/revit/visibility", "/revit/create-sheet", "/revit/place-view"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
+    },
+    {
+      "case_id": "b12_visual_observe_verify",
+      "source": "user_basic",
+      "operation_family": "visual_verification",
+      "prompt": "After making the requested view change, capture the resulting view, inspect visible elements, and verify visually and deterministically that the intended state is present.",
+      "probe_prompt": "Capture an eligible plan view and inspect its visible-element export to demonstrate the observe-and-verify loop. Do not change the model.",
+      "capability_paths": ["/revit/export-view-frame", "/revit/export-visible-elements"],
+      "dispatch_any_of": ["/revit/export-view-frame", "/revit/export-visible-elements", "/revit/export-image"],
+      "expected_effect": "read",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
     },
     {
       "case_id": "s01_create_schedule",

@@ -1760,7 +1760,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     : null,
                 fittingWorkset = requestedWorkset == null ? null : new
                 {
-                    id = requestedWorkset.Id.IntegerValue,
+                    id = RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id),
                     name = requestedWorkset.Name
                 }
             };
@@ -1994,8 +1994,8 @@ namespace RevitBridge.Logic.Handlers.MEP
                     throw new InvalidOperationException(
                         $"replacement_fitting_not_found:{teeRequest.replaceDisconnectedFittingElementId.Value}");
                 if (replacement.Category == null ||
-                    (replacement.Category.Id.IntegerValue != (int)BuiltInCategory.OST_PipeFitting &&
-                     replacement.Category.Id.IntegerValue != (int)BuiltInCategory.OST_DuctFitting))
+                    (RevitBridge.Common.ElementIdCompat.GetValue(replacement.Category.Id) != (int)BuiltInCategory.OST_PipeFitting &&
+                     RevitBridge.Common.ElementIdCompat.GetValue(replacement.Category.Id) != (int)BuiltInCategory.OST_DuctFitting))
                     throw new InvalidOperationException("replacement_element_is_not_a_pipe_or_duct_fitting");
                 if (teeRequest.expectedReplacementTypeId.HasValue &&
                     ElementIdCompat.GetValue(replacement.GetTypeId()) != teeRequest.expectedReplacementTypeId.Value)
@@ -2044,7 +2044,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 expectedReplacementTypeId = teeRequest.expectedReplacementTypeId,
                 fittingWorkset = requestedWorkset == null ? null : new
                 {
-                    id = requestedWorkset.Id.IntegerValue,
+                    id = RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id),
                     name = requestedWorkset.Name
                 }
             };
@@ -2331,7 +2331,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 .ToList();
             if (requestedId.HasValue)
             {
-                var byId = userWorksets.FirstOrDefault(workset => workset.Id.IntegerValue == requestedId.Value);
+                var byId = userWorksets.FirstOrDefault(workset => RevitBridge.Common.ElementIdCompat.GetValue(workset.Id) == requestedId.Value);
                 if (byId == null) throw new InvalidOperationException($"Requested fitting workset id {requestedId.Value} was not found.");
                 if (!string.IsNullOrWhiteSpace(requestedName) &&
                     !string.Equals(byId.Name, requestedName.Trim(), StringComparison.OrdinalIgnoreCase))
@@ -2353,18 +2353,18 @@ namespace RevitBridge.Logic.Handlers.MEP
                 ?? throw new InvalidOperationException($"Fitting {ElementIdCompat.GetValue(fitting.Id)} does not expose ELEM_PARTITION_PARAM.");
             if (parameter.IsReadOnly)
                 throw new InvalidOperationException($"Fitting {ElementIdCompat.GetValue(fitting.Id)} workset is read-only.");
-            if (!parameter.Set(requestedWorkset.Id.IntegerValue))
+            if (!parameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id)))
                 throw new InvalidOperationException($"Could not assign fitting {ElementIdCompat.GetValue(fitting.Id)} to workset '{requestedWorkset.Name}'.");
             var readbackId = parameter.AsInteger();
-            if (verify && readbackId != requestedWorkset.Id.IntegerValue)
+            if (verify && readbackId != RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id))
                 throw new InvalidOperationException($"Fitting {ElementIdCompat.GetValue(fitting.Id)} workset readback mismatch.");
             return new
             {
                 elementId = ElementIdCompat.GetValue(fitting.Id),
-                requestedWorksetId = requestedWorkset.Id.IntegerValue,
+                requestedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id),
                 requestedWorksetName = requestedWorkset.Name,
                 readbackWorksetId = readbackId,
-                verified = readbackId == requestedWorkset.Id.IntegerValue
+                verified = readbackId == RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id)
             };
         }
 

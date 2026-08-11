@@ -340,7 +340,7 @@ namespace RevitBridge.Logic.Handlers
                     if (e == null) continue;
                     foreach (var next in MepSystemUtil.GetConnectedOwnerElementIds(e))
                     {
-                        if (next == null || next.IntegerValue <= 0) continue;
+                        if (next == null || RevitBridge.Common.ElementIdCompat.GetValue(next) <= 0) continue;
                         if (matchedSet.Contains(RevitBridge.Common.ElementIdCompat.GetValue(next))) continue;
 
                         var other = doc.GetElement(next);

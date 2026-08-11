@@ -5,7 +5,7 @@ import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, render
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.equal(audit.tools.length, 214);
+  assert.equal(audit.tools.length, 215);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
   assert.equal(audit.summary.manifest_entries, audit.tools.length);
   assert.ok(audit.tools.every(tool => tool.evidence.live_safe === null));
@@ -26,6 +26,7 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.equal(audit.tools.find(tool => tool.path === "/revit/schedules")?.contracts.request_schema_source, "explicit");
   assert.ok(!audit.tools.find(tool => tool.path === "/revit/schedules")?.issues.includes("reflected_request_schema_unverified"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/get-parameters")?.contracts.request_schema_source, "explicit");
+  assert.ok(audit.tools.some(tool => tool.path === "/revit/duplicate-sheet"));
   assert.ok(!audit.tools.find(tool => tool.path === "/revit/get-parameters")?.issues.includes("reflected_request_schema_unverified"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/native-api-ops")?.contracts.request_schema_source, "explicit");
   assert.equal(audit.tools.find(tool => tool.path === "/revit/native-api-mutation-ops")?.contracts.request_schema_source, "explicit");

@@ -8643,6 +8643,47 @@
     },
     {
       "method": "POST",
+      "path": "/revit/duplicate-sheet",
+      "examples": [
+        {
+          "name": "Preview a sheet duplicate with detailing",
+          "request": {
+            "sourceSheetNumber": "M000",
+            "option": "views_and_detailing",
+            "newSheetNumber": "M000-COPY",
+            "newSheetName": "Cover Sheet Copy",
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Preview",
+            "sourceSheetId": 1420963,
+            "sourceSheetNumber": "M000",
+            "requestedOption": "views_and_detailing",
+            "dryRun": true
+          }
+        },
+        {
+          "name": "Duplicate a sheet and verify readback",
+          "request": {
+            "sourceSheetNumber": "M000",
+            "option": "views_and_detailing",
+            "newSheetNumber": "M000-COPY",
+            "newSheetName": "Cover Sheet Copy",
+            "dryRun": false
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "sourceSheetId": 1420963,
+            "createdSheetId": 1544000,
+            "sheetNumber": "M000-COPY",
+            "sheetName": "Cover Sheet Copy",
+            "verified": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/change-element-type",
       "examples": [
         {

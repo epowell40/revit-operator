@@ -395,6 +395,7 @@ namespace RevitBridge.Operator
 
                 // Views/sheets automation.
                 if (string.Equals(p, "/revit/create-sheets", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/place-views", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/align-viewports", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/renumber-sheets", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

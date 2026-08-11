@@ -175,7 +175,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                         try
                         {
                             var typeId = e.GetTypeId();
-                            if (typeId != null && typeId.IntegerValue > 0)
+                            if (typeId != null && RevitBridge.Common.ElementIdCompat.GetValue(typeId) > 0)
                             {
                                 var type = doc.GetElement(typeId) as ElementType;
                                 if (type != null)
@@ -375,7 +375,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             var run = new RunTraceResult();
 
-            var visited = new HashSet<int>();
+            var visited = new HashSet<long>();
             var queue = new Queue<(ElementId id, int depth)>();
             queue.Enqueue((start.Id, 0));
 
@@ -383,7 +383,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 var (id, depth) = queue.Dequeue();
                 if (id == null) continue;
-                if (!visited.Add(id.IntegerValue)) continue;
+                if (!visited.Add(RevitBridge.Common.ElementIdCompat.GetValue(id))) continue;
 
                 var e = doc.GetElement(id);
                 if (e == null) continue;
@@ -430,7 +430,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 foreach (var nextId in MepSystemUtil.GetConnectedOwnerElementIds(e))
                 {
                     if (visited.Count >= maxElements) break;
-                    if (!visited.Contains(nextId.IntegerValue))
+                    if (!visited.Contains(RevitBridge.Common.ElementIdCompat.GetValue(nextId)))
                     {
                         queue.Enqueue((nextId, depth + 1));
                     }

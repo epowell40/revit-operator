@@ -597,12 +597,12 @@ namespace RevitBridge.Logic.Handlers
             {
                 if (x == null && y == null) return true;
                 if (x == null || y == null) return false;
-                return x.IntegerValue == y.IntegerValue;
+                return RevitBridge.Common.ElementIdCompat.GetValue(x) == RevitBridge.Common.ElementIdCompat.GetValue(y);
             }
 
             public int GetHashCode(ElementId obj)
             {
-                return obj.IntegerValue.GetHashCode();
+                return RevitBridge.Common.ElementIdCompat.GetValue(obj).GetHashCode();
             }
         }
 

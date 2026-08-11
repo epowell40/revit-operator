@@ -83,6 +83,9 @@ export function conditionalActionPathEffect(pathname: string, body?: unknown): C
     if (action === "get") return "read";
     return row.dryRun === true || row.dry_run === true || row.preview === true || row.apply === false ? "preview" : "apply";
   }
+  if (normalized === "/revit/duplicate-sheet") {
+    return row.dryRun === true || row.dry_run === true || row.preview === true || row.apply === false ? "preview" : "apply";
+  }
   if (normalized === "/revit/fire-damper-audit") {
     return typeof row.command === "string" && row.command.trim().toLowerCase() === "fix" ? "apply" : "read";
   }

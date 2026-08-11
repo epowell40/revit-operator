@@ -90,7 +90,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (unknownStopCats.Count > 0) warnings.Add($"Unknown stopAtCategories ignored: {string.Join(", ", unknownStopCats)}");
             var stopCatIds = new HashSet<long>(stopCats.Select(x => (long)(int)x));
 
-            var visited = new HashSet<int>();
+            var visited = new HashSet<long>();
             var queue = new Queue<(ElementId id, int depth)>();
             queue.Enqueue((start.Id, 0));
 
@@ -105,7 +105,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var id = item.id;
                 var depth = item.depth;
                 if (id == null) continue;
-                if (!visited.Add(id.IntegerValue)) continue;
+                if (!visited.Add(RevitBridge.Common.ElementIdCompat.GetValue(id))) continue;
                 if (exclude.Contains(RevitBridge.Common.ElementIdCompat.GetValue(id))) continue;
 
                 var e = doc.GetElement(id);
@@ -139,7 +139,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     }
 
                     if (!allowTraverseFurther) continue;
-                    if (!visited.Contains(nextId.IntegerValue))
+                    if (!visited.Contains(RevitBridge.Common.ElementIdCompat.GetValue(nextId)))
                     {
                         queue.Enqueue((nextId, depth + 1));
                     }

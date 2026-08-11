@@ -27,10 +27,12 @@ $required = @(
     "C:\Program Files\Autodesk\Revit 2024\RevitAPI.dll",
     "C:\Program Files\Autodesk\Revit 2024\RevitAPIUI.dll",
     "C:\Program Files\Autodesk\Revit 2025\RevitAPI.dll",
-    "C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll"
+    "C:\Program Files\Autodesk\Revit 2025\RevitAPIUI.dll",
+    "C:\Program Files\Autodesk\Revit 2026\RevitAPI.dll",
+    "C:\Program Files\Autodesk\Revit 2026\RevitAPIUI.dll"
 )
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
-if ($missing.Count) { throw "Dynamic Runtime packaging requires installed Revit 2023/2024/2025 API files: $($missing -join ', ')" }
+if ($missing.Count) { throw "Dynamic Runtime packaging requires installed Revit 2023/2024/2025/2026 API files: $($missing -join ', ')" }
 
 New-Item -ItemType Directory -Path $output | Out-Null
 $supervisorOutput = Join-Path $output "supervisor"
@@ -48,7 +50,8 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 $hostBuilds = @(
     @{ Year = "2023"; Framework = "net48" },
     @{ Year = "2024"; Framework = "net48" },
-    @{ Year = "2025"; Framework = "net8.0-windows" }
+    @{ Year = "2025"; Framework = "net8.0-windows" },
+    @{ Year = "2026"; Framework = "net8.0-windows" }
 )
 foreach ($hostBuild in $hostBuilds) {
     $apiPath = "C:\Program Files\Autodesk\Revit $($hostBuild.Year)"

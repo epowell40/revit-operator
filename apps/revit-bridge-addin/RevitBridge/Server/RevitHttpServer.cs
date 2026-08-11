@@ -91,6 +91,7 @@ namespace RevitBridge.Server
                 { "/revit/delete", new DeleteElementsHandler() },
                 { "/revit/set-parameter", new SetParameterHandler() },
                 { "/revit/create-sheet", new CreateSheetHandler() },
+                { "/revit/duplicate-sheet", new DuplicateSheetHandler() },
                 { "/revit/create-sheets", new CreateSheetsBatchHandler() },
                 { "/revit/place-view", new PlaceViewOnSheetHandler() },
                 { "/revit/place-views", new PlaceViewsBatchHandler() },

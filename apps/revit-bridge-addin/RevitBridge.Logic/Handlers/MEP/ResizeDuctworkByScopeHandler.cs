@@ -1048,19 +1048,19 @@ namespace RevitBridge.Logic.Handlers.MEP
                     var systemTypeId = ResolveSystemTypeId(doc, a, b);
                     var ductTypeId = ResolveDuctTypeId(doc, a, b);
                     var levelId = ResolveLevelId(doc, a, b);
-                    if (systemTypeId == null || systemTypeId.IntegerValue <= 0)
+                    if (systemTypeId == null || RevitBridge.Common.ElementIdCompat.GetValue(systemTypeId) <= 0)
                     {
                         detail = "Could not resolve duct system type.";
                         st.RollBack();
                         return false;
                     }
-                    if (ductTypeId == null || ductTypeId.IntegerValue <= 0)
+                    if (ductTypeId == null || RevitBridge.Common.ElementIdCompat.GetValue(ductTypeId) <= 0)
                     {
                         detail = "Could not resolve duct type.";
                         st.RollBack();
                         return false;
                     }
-                    if (levelId == null || levelId.IntegerValue <= 0)
+                    if (levelId == null || RevitBridge.Common.ElementIdCompat.GetValue(levelId) <= 0)
                     {
                         detail = "Could not resolve level.";
                         st.RollBack();
@@ -1255,7 +1255,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     var other = r.Owner;
                     if (other == null) continue;
                     if (other.Id == null) continue;
-                    if (other.Id.IntegerValue == owner.Id.IntegerValue) continue;
+                    if (RevitBridge.Common.ElementIdCompat.GetValue(other.Id) == RevitBridge.Common.ElementIdCompat.GetValue(owner.Id)) continue;
                     // Revit exposes logical HVAC-system membership through
                     // Connector.AllRefs as an MEPSystem owner. That reference
                     // is not a physical curve/fitting connection and must not
@@ -1513,7 +1513,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             catch { }
 
             var adjacentTypeId = TryResolveAdjacentDuctTypeId(a.connector) ?? TryResolveAdjacentDuctTypeId(b.connector);
-            if (adjacentTypeId != null && adjacentTypeId.IntegerValue > 0) return adjacentTypeId;
+            if (adjacentTypeId != null && RevitBridge.Common.ElementIdCompat.GetValue(adjacentTypeId) > 0) return adjacentTypeId;
 
             try
             {
@@ -1683,7 +1683,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     {
                         var sys = duct.MEPSystem;
                         var typeId = sys?.GetTypeId();
-                        if (typeId != null && typeId.IntegerValue > 0) return typeId;
+                        if (typeId != null && RevitBridge.Common.ElementIdCompat.GetValue(typeId) > 0) return typeId;
                     }
                 }
                 catch { }
@@ -1694,7 +1694,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     if (p != null && p.StorageType == StorageType.ElementId)
                     {
                         var id = p.AsElementId();
-                        if (id != null && id.IntegerValue > 0) return id;
+                        if (id != null && RevitBridge.Common.ElementIdCompat.GetValue(id) > 0) return id;
                     }
                 }
                 catch { }
@@ -1733,7 +1733,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                 try
                 {
                     var id = owner.LevelId;
-                    if (id != null && id.IntegerValue > 0) return id;
+                    if (id != null && RevitBridge.Common.ElementIdCompat.GetValue(id) > 0) return id;
                 }
                 catch { }
 
@@ -1743,7 +1743,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     if (p != null && p.StorageType == StorageType.ElementId)
                     {
                         var id = p.AsElementId();
-                        if (id != null && id.IntegerValue > 0) return id;
+                        if (id != null && RevitBridge.Common.ElementIdCompat.GetValue(id) > 0) return id;
                     }
                 }
                 catch { }

@@ -2,11 +2,13 @@ import { isHostedRuntime, resolveRuntimeMode, type OperatorRuntimeMode } from ".
 
 export const SIDECAR_AGENT_PROFILE_SCHEMA = "revit-operator.sidecar-agent-profile.v1" as const;
 
-export type SidecarAgentCapabilityProfile = "general_agent_laboratory" | "general_agent_unavailable";
+export type SidecarAgentCapabilityProfile = "general_agent" | "general_agent_laboratory" | "general_agent_unavailable";
 
 export type SidecarAgentProfileReason =
   | "GENERAL_AGENT_DEVELOPMENT_LABORATORY_READY"
-  | "GENERAL_AGENT_UNAVAILABLE_HOSTED_OR_PRODUCTION"
+  | "GENERAL_AGENT_HOSTED_PRODUCTION_READY"
+  | "GENERAL_AGENT_UNAVAILABLE_PROVIDER_REQUIRED"
+  | "GENERAL_AGENT_UNAVAILABLE_PRINCIPAL_AUTH_REQUIRED"
   | "GENERAL_AGENT_UNAVAILABLE_LABORATORY_REQUIRES_EXACT_DEVELOPMENT"
   | "GENERAL_AGENT_UNAVAILABLE_DEVELOPMENT_REQUIRES_EXACT_LABORATORY"
   | "GENERAL_AGENT_UNAVAILABLE_GENERAL_BRAIN_REQUIRED"
@@ -17,16 +19,18 @@ export type SidecarAgentProfileState = Readonly<{
   schema: typeof SIDECAR_AGENT_PROFILE_SCHEMA;
   source: "backend_environment";
   runtime_mode: OperatorRuntimeMode | "unconfigured";
-  tool_exposure_profile: "certified" | "laboratory";
+  tool_exposure_profile: "general" | "laboratory" | "unavailable";
   capability_profile: SidecarAgentCapabilityProfile;
   general_agent_ready: boolean;
   reason_code: SidecarAgentProfileReason;
 }>;
 
 /**
- * Backend-authored Sidecar profile state. The laboratory escape deliberately
- * uses exact raw environment values so case/whitespace normalization cannot
- * silently broaden the production boundary.
+ * Backend-authored Sidecar profile state. Local laboratory activation remains
+ * exact. Hosted production is the normal product path: an authenticated
+ * principal runtime with the GPT-backed desktop relay available exposes the
+ * full General Agent. Revit execution still travels through the independently
+ * authorized ROSB transport; this profile does not weaken that boundary.
  */
 export function getSidecarAgentProfileState(env: NodeJS.ProcessEnv = process.env): SidecarAgentProfileState {
   const runtimeMode = resolveRuntimeMode(env);
@@ -34,13 +38,24 @@ export function getSidecarAgentProfileState(env: NodeJS.ProcessEnv = process.env
   const exactDevelopment = env.REVIT_OPERATOR_MODE === "development";
   const exactLaboratory = env.OPERATOR_TOOL_EXPOSURE_PROFILE === "laboratory";
   const exactGeneralBrain = env.OPERATOR_BRAIN === "codex";
-  const generalAgentReady = exactDevelopment && exactLaboratory && exactGeneralBrain && !hostedRuntime;
+  const laboratoryReady = exactDevelopment && exactLaboratory && exactGeneralBrain && !hostedRuntime;
+  const exactHostedProduction = env.REVIT_OPERATOR_MODE === "hosted" || env.REVIT_OPERATOR_MODE === "production";
+  const configuredAuth = (env.OPERATOR_AUTH_MODE ?? "").trim().toLowerCase();
+  const principalAuth = configuredAuth === "principal_jwt" || (configuredAuth === "" && exactHostedProduction);
+  const productionBrain = env.OPERATOR_BRAIN === "codex" || env.OPERATOR_BRAIN === "openai" || env.OPERATOR_BRAIN === "auto";
+  const providerReady = !!((env.OPERATOR_OPENAI_API_KEY ?? "").trim() || (env.OPENAI_API_KEY ?? "").trim());
+  const hostedProductionReady = exactHostedProduction && principalAuth && productionBrain && providerReady;
+  const generalAgentReady = laboratoryReady || hostedProductionReady;
 
   let reasonCode: SidecarAgentProfileReason;
-  if (generalAgentReady) {
+  if (laboratoryReady) {
     reasonCode = "GENERAL_AGENT_DEVELOPMENT_LABORATORY_READY";
-  } else if (runtimeMode === "hosted" || runtimeMode === "production" || hostedRuntime) {
-    reasonCode = "GENERAL_AGENT_UNAVAILABLE_HOSTED_OR_PRODUCTION";
+  } else if (hostedProductionReady) {
+    reasonCode = "GENERAL_AGENT_HOSTED_PRODUCTION_READY";
+  } else if (exactHostedProduction && !principalAuth) {
+    reasonCode = "GENERAL_AGENT_UNAVAILABLE_PRINCIPAL_AUTH_REQUIRED";
+  } else if (exactHostedProduction && (!productionBrain || !providerReady)) {
+    reasonCode = "GENERAL_AGENT_UNAVAILABLE_PROVIDER_REQUIRED";
   } else if (exactLaboratory && !exactDevelopment) {
     reasonCode = "GENERAL_AGENT_UNAVAILABLE_LABORATORY_REQUIRES_EXACT_DEVELOPMENT";
   } else if (runtimeMode === "development") {
@@ -57,8 +72,8 @@ export function getSidecarAgentProfileState(env: NodeJS.ProcessEnv = process.env
     schema: SIDECAR_AGENT_PROFILE_SCHEMA,
     source: "backend_environment",
     runtime_mode: runtimeMode ?? "unconfigured",
-    tool_exposure_profile: generalAgentReady ? "laboratory" : "certified",
-    capability_profile: generalAgentReady ? "general_agent_laboratory" : "general_agent_unavailable",
+    tool_exposure_profile: laboratoryReady ? "laboratory" : hostedProductionReady ? "general" : "unavailable",
+    capability_profile: laboratoryReady ? "general_agent_laboratory" : hostedProductionReady ? "general_agent" : "general_agent_unavailable",
     general_agent_ready: generalAgentReady,
     reason_code: reasonCode
   });

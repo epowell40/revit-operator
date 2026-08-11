@@ -4244,6 +4244,43 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "duplicate-sheet body must be an object.";
+                    return false;
+                }
+                if (!ValidateOptionalLong(obj.Value, "sourceSheetId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "sourceSheetNumber", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "sourceQuery", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "option", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "newNumber", maxLen: 64, out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "newName", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "verify", out error)) return false;
+
+                var selectors = 0;
+                if (obj.Value.TryGetProperty("sourceSheetId", out var sourceId) && sourceId.ValueKind == JsonValueKind.Number) selectors++;
+                if (obj.Value.TryGetProperty("sourceSheetNumber", out var sourceNumber) && sourceNumber.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sourceNumber.GetString())) selectors++;
+                if (obj.Value.TryGetProperty("sourceQuery", out var sourceQuery) && sourceQuery.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(sourceQuery.GetString())) selectors++;
+                if (selectors != 1)
+                {
+                    error = "duplicate-sheet requires exactly one of sourceSheetId, sourceSheetNumber, or sourceQuery.";
+                    return false;
+                }
+                if (obj.Value.TryGetProperty("option", out var option) && option.ValueKind == JsonValueKind.String)
+                {
+                    var normalized = (option.GetString() ?? "").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+                    if (normalized != "empty" && normalized != "detailing" && normalized != "views_only" && normalized != "views_and_detailing" && normalized != "views_as_dependent")
+                    {
+                        error = "duplicate-sheet.option is invalid.";
+                        return false;
+                    }
+                }
+                return true;
+            }
+
             if (string.Equals(path, "/revit/place-view", StringComparison.OrdinalIgnoreCase))
             {
                 // { sheetId?|sheetNumber?|sheetQuery?, sheetExact?, viewId?|viewName?|viewQuery?, viewExact?, x?, y?, moveIfAlreadyPlaced?, avoidOverlap?, lockViewport?, viewportTypeId?|viewportTypeName?, dryRun? }

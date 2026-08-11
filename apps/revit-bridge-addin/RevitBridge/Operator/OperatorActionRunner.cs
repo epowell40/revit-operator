@@ -179,6 +179,7 @@ namespace RevitBridge.Operator
                 { "/revit/tag-elements", new TagElementsHandler() },
                 { "/revit/create-dimension", new CreateDimensionHandler() },
                 { "/revit/create-sheet", new CreateSheetHandler() },
+                { "/revit/duplicate-sheet", new DuplicateSheetHandler() },
                 { "/revit/create-sheets", new CreateSheetsBatchHandler() },
                 { "/revit/place-view", new PlaceViewOnSheetHandler() },
                 { "/revit/place-views", new PlaceViewsBatchHandler() },

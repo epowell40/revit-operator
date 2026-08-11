@@ -617,7 +617,7 @@ namespace RevitBridge.Logic.Handlers
             try
             {
                 if (e?.Category?.Id == null) return false;
-                var id = e.Category.Id.IntegerValue;
+                var id = RevitBridge.Common.ElementIdCompat.GetValue(e.Category.Id);
                 foreach (var bic in bics)
                 {
                     if ((int)bic == id) return true;

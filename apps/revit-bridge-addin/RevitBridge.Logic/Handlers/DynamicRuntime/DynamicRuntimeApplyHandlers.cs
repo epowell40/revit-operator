@@ -75,7 +75,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 ExplicitTargetUniqueIds = targets.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
                 AllowedSdkDomains = operations.Select(operation => operation.Kind == "set_parameter" ? "parameters" : "elements").Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray(),
                 AllowedExternalEffectClasses = Array.Empty<string>(), ViewScopeHash = ViewScopeHash(app), LevelScopeHash = ElementScopeHash("level", elements, element => ElementIdCompat.GetValue(element.LevelId)),
-                WorksetScopeHash = ElementScopeHash("workset", elements, element => element.WorksetId.IntegerValue), PhaseScopeHash = PhaseScopeHash(elements),
+                WorksetScopeHash = ElementScopeHash("workset", elements, element => RevitBridge.Common.ElementIdCompat.GetValue(element.WorksetId)), PhaseScopeHash = PhaseScopeHash(elements),
                 MaximumOperationCount = operations.Count, MaximumAffectedElements = Math.Max(targets.Length, preview.ProjectedChangedElementIds.Count), MaximumCreates = 0, MaximumModifications = operations.Count, MaximumDeletes = 0,
                 MaximumExecutionMilliseconds = maximumExecutionMilliseconds, MaximumRegenerations = operations.Count, MaximumOutputCount = 0, MaximumOutputBytes = 0,
                 FileCapabilitySetHash = emptyFiles
@@ -315,7 +315,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             {
                 TargetCategories = elements.ToDictionary(element => element.UniqueId, element => element.Category?.Name ?? "(uncategorized)", StringComparer.Ordinal),
                 ViewScopeHash = DynamicRuntimeApplyState.ViewScopeHash(app), LevelScopeHash = DynamicRuntimeApplyState.ElementScopeHash("level", elements, element => ElementIdCompat.GetValue(element.LevelId)),
-                WorksetScopeHash = DynamicRuntimeApplyState.ElementScopeHash("workset", elements, element => element.WorksetId.IntegerValue), PhaseScopeHash = DynamicRuntimeApplyState.PhaseScopeHash(elements),
+                WorksetScopeHash = DynamicRuntimeApplyState.ElementScopeHash("workset", elements, element => RevitBridge.Common.ElementIdCompat.GetValue(element.WorksetId)), PhaseScopeHash = DynamicRuntimeApplyState.PhaseScopeHash(elements),
                 FileCapabilitySetHash = new DynamicFileCapabilitySetV1().CanonicalHash(), AuthorizedFileCapabilityIds = Array.Empty<string>(),
                 PlannedExecutionMilliseconds = 0, PlannedRegenerations = graph.Operations.Count, PlannedOutputCount = 0, PlannedOutputBytes = 0
             };

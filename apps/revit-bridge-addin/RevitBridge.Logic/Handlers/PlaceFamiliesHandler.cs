@@ -126,7 +126,7 @@ namespace RevitBridge.Logic.Handlers
                     var requestedWorkset = ResolveRequestedWorkset(doc, p.worksetId, p.worksetName);
                     if (requestedWorkset != null)
                     {
-                        result.selectedWorksetId = requestedWorkset.Id.IntegerValue;
+                        result.selectedWorksetId = RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id);
                         result.selectedWorksetName = requestedWorkset.Name;
                     }
 
@@ -329,7 +329,7 @@ namespace RevitBridge.Logic.Handlers
                             if (requestedWorkset != null)
                             {
                                 AssignAndVerifyWorkset(fi, requestedWorkset);
-                                instResult.worksetId = requestedWorkset.Id.IntegerValue;
+                                instResult.worksetId = RevitBridge.Common.ElementIdCompat.GetValue(requestedWorkset.Id);
                                 instResult.worksetName = requestedWorkset.Name;
                                 instResult.worksetVerified = true;
                             }
@@ -719,14 +719,14 @@ namespace RevitBridge.Logic.Handlers
                 .ToWorksets()
                 .ToList();
             var byId = hasId
-                ? worksets.FirstOrDefault(workset => workset.Id.IntegerValue == requestedId!.Value)
+                ? worksets.FirstOrDefault(workset => RevitBridge.Common.ElementIdCompat.GetValue(workset.Id) == requestedId!.Value)
                 : null;
             var byName = cleanName.Length > 0
                 ? worksets.FirstOrDefault(workset => string.Equals(workset.Name, cleanName, StringComparison.OrdinalIgnoreCase))
                 : null;
             if (hasId && byId == null) throw new Exception($"Workset id {requestedId} was not found.");
             if (cleanName.Length > 0 && byName == null) throw new Exception($"Workset '{cleanName}' was not found.");
-            if (byId != null && byName != null && byId.Id.IntegerValue != byName.Id.IntegerValue)
+            if (byId != null && byName != null && RevitBridge.Common.ElementIdCompat.GetValue(byId.Id) != RevitBridge.Common.ElementIdCompat.GetValue(byName.Id))
                 throw new Exception($"Requested workset id {requestedId} does not match workset name '{cleanName}'.");
             return byId ?? byName;
         }
@@ -736,9 +736,9 @@ namespace RevitBridge.Logic.Handlers
             var parameter = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
             if (parameter == null || parameter.IsReadOnly)
                 throw new Exception($"Element {ElementIdCompat.GetValue(element.Id)} cannot be assigned to workset '{workset.Name}'.");
-            if (!parameter.Set(workset.Id.IntegerValue))
+            if (!parameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(workset.Id)))
                 throw new Exception($"Revit rejected workset '{workset.Name}' for element {ElementIdCompat.GetValue(element.Id)}.");
-            if (element.WorksetId.IntegerValue != workset.Id.IntegerValue)
+            if (RevitBridge.Common.ElementIdCompat.GetValue(element.WorksetId) != RevitBridge.Common.ElementIdCompat.GetValue(workset.Id))
                 throw new Exception($"Workset verification failed for element {ElementIdCompat.GetValue(element.Id)}.");
         }
 

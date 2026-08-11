@@ -294,7 +294,7 @@ namespace RevitBridge.Handlers
                         end = new[] { end.X, end.Y, end.Z },
                         wallType = wallType.Name,
                         thickness = element.thickness,
-                        workset = wallWorksetId?.IntegerValue
+                        workset = wallWorksetId == null ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(wallWorksetId)
                     });
 
                     if (!wallTypeAssignments.ContainsKey(wallType.Name)) wallTypeAssignments[wallType.Name] = 0;
@@ -474,7 +474,7 @@ namespace RevitBridge.Handlers
                     start = new[] { start.X, start.Y, start.Z },
                     end = new[] { end.X, end.Y, end.Z },
                     lineStyle = lineStyle?.GraphicsStyleCategory?.Name,
-                    workset = worksetId?.IntegerValue
+                    workset = worksetId == null ? (long?)null : RevitBridge.Common.ElementIdCompat.GetValue(worksetId)
                 });
             }
 
@@ -1039,7 +1039,7 @@ namespace RevitBridge.Handlers
             {
                 var parameter = element.get_Parameter(BuiltInParameter.ELEM_PARTITION_PARAM);
                 if (parameter != null && !parameter.IsReadOnly)
-                    parameter.Set(worksetId.IntegerValue);
+                    parameter.Set(RevitBridge.Common.ElementIdCompat.GetValue(worksetId));
             }
             catch
             {

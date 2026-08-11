@@ -101,7 +101,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         {
             if (e == null) yield break;
             var ownerId = e.Id;
-            var seen = new HashSet<int>();
+            var seen = new HashSet<long>();
 
             foreach (var c in GetConnectors(e))
             {
@@ -117,7 +117,7 @@ namespace RevitBridge.Logic.Handlers.MEP
                     if (o == null) continue;
                     var id = o.Id;
                     if (id == null || id == ownerId) continue;
-                    if (seen.Add(id.IntegerValue)) yield return id;
+                    if (seen.Add(RevitBridge.Common.ElementIdCompat.GetValue(id))) yield return id;
                 }
             }
         }

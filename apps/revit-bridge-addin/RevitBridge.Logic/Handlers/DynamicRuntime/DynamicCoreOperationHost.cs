@@ -49,7 +49,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 TargetStateHashes = ownerStates,
                 ViewScopeHash = DynamicRuntimeApplyState.ViewScopeHash(app),
                 LevelScopeHash = DynamicRuntimeApplyState.ElementScopeHash("level", targets, element => ElementIdCompat.GetValue(element.LevelId)),
-                WorksetScopeHash = DynamicRuntimeApplyState.ElementScopeHash("workset", targets, element => element.WorksetId.IntegerValue),
+                WorksetScopeHash = DynamicRuntimeApplyState.ElementScopeHash("workset", targets, element => RevitBridge.Common.ElementIdCompat.GetValue(element.WorksetId)),
                 PhaseScopeHash = DynamicRuntimeApplyState.PhaseScopeHash(targets), FileCapabilitySetHash = budget.FileCapabilitySetHash,
                 PlannedExecutionMilliseconds = plannedExecutionMilliseconds, PlannedRegenerations = graph.Nodes.Count
             };

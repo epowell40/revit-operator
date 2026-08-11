@@ -713,12 +713,12 @@ namespace RevitBridge.Logic.Handlers
                         throw new InvalidOperationException("visibility.create_view_filter requires ruleValue for string rules.");
                     return op switch
                     {
-                        "equals" => ParameterFilterRuleFactory.CreateEqualsRule(parameterId, value, caseSensitive),
-                        "not_equals" => ParameterFilterRuleFactory.CreateNotEqualsRule(parameterId, value, caseSensitive),
-                        "contains" => ParameterFilterRuleFactory.CreateContainsRule(parameterId, value, caseSensitive),
-                        "not_contains" => ParameterFilterRuleFactory.CreateNotContainsRule(parameterId, value, caseSensitive),
-                        "begins_with" => ParameterFilterRuleFactory.CreateBeginsWithRule(parameterId, value, caseSensitive),
-                        "ends_with" => ParameterFilterRuleFactory.CreateEndsWithRule(parameterId, value, caseSensitive),
+                        "equals" => ParameterFilterRuleFactory.CreateEqualsRule(parameterId, value),
+                        "not_equals" => ParameterFilterRuleFactory.CreateNotEqualsRule(parameterId, value),
+                        "contains" => ParameterFilterRuleFactory.CreateContainsRule(parameterId, value),
+                        "not_contains" => ParameterFilterRuleFactory.CreateNotContainsRule(parameterId, value),
+                        "begins_with" => ParameterFilterRuleFactory.CreateBeginsWithRule(parameterId, value),
+                        "ends_with" => ParameterFilterRuleFactory.CreateEndsWithRule(parameterId, value),
                         _ => throw new InvalidOperationException($"visibility.create_view_filter does not support operator '{op}' for string parameters.")
                     };
                 }
