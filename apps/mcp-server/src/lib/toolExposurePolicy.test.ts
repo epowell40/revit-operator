@@ -106,7 +106,7 @@ test("runtime modes default hosted/production/development closed and expose only
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "future" }).mode, "certified");
 });
 
-test("authenticated hosted production defaults to full General Agent exposure while explicit certified remains available", () => {
+test("authenticated hosted production always exposes the full General Agent even with stale profile overrides", () => {
   for (const runtimeMode of ["hosted", "production"] as const) {
     const env = {
       REVIT_OPERATOR_MODE: runtimeMode,
@@ -129,12 +129,17 @@ test("authenticated hosted production defaults to full General Agent exposure wh
     assert.equal(decision.mode, "general");
     assert.deepEqual(decision.reasonCodes, ["GENERAL_AGENT_MODE_ACTIVE"]);
   }
-  assert.equal(getToolExposureRuntimeDecision({
-    REVIT_OPERATOR_MODE: "hosted",
-    OPERATOR_BRAIN: "codex",
-    OPERATOR_OPENAI_API_KEY: "test-provider-key",
-    OPERATOR_TOOL_EXPOSURE_PROFILE: "certified"
-  }).mode, "certified");
+  for (const staleProfile of ["certified", "laboratory"] as const) {
+    const decision = getToolExposureRuntimeDecision({
+      REVIT_OPERATOR_MODE: "hosted",
+      OPERATOR_BRAIN: "codex",
+      OPERATOR_OPENAI_API_KEY: "test-provider-key",
+      OPERATOR_TOOL_EXPOSURE_PROFILE: staleProfile
+    });
+    assert.equal(decision.mode, "general");
+    assert.equal(decision.certified, false);
+    assert.match(decision.reason, new RegExp(`ignoring retired ${staleProfile} profile override`, "i"));
+  }
 });
 
 test("cross-runtime canonical JSON fixture has fixed NFC bytes and SHA-256", () => {
