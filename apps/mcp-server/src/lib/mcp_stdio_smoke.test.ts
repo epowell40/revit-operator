@@ -582,7 +582,7 @@ test("MCP stdio certified mode keeps diagnostics available and blocks every Revi
       REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
       OPERATOR_TOKEN: "mcp-certified-stdio-token",
       OPERATOR_WORKSPACE_ROOT: workspace,
-      REVIT_OPERATOR_MODE: "hosted",
+      REVIT_OPERATOR_MODE: "self_hosted",
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: certifiedPolicyPath,
       OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: certifiedPolicyHash,
       OPERATOR_TEST_REGISTER_UNBOUND_MCP_ALIAS: "1"
@@ -699,7 +699,7 @@ test("MCP stdio tools/list follows trusted aliases and cached registry data is r
       OPERATOR_TOKEN: operatorToken,
       OPERATOR_WORKSPACE_ROOT: workspace,
       LOCALAPPDATA: localAppData,
-      REVIT_OPERATOR_MODE: "hosted",
+      REVIT_OPERATOR_MODE: "self_hosted",
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyVariant.policyPath,
       OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: policyVariant.policyHash
     },

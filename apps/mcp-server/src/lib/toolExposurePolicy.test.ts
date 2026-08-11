@@ -59,7 +59,7 @@ function writePolicyVariant(mutate: (policy: any) => void): { policyPath: string
 
 function policyVariantEnv(variant: { policyPath: string; policyHash: string }): NodeJS.ProcessEnv {
   return {
-    REVIT_OPERATOR_MODE: "hosted",
+    REVIT_OPERATOR_MODE: "self_hosted",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "certified",
     OPERATOR_TOOL_EXPOSURE_POLICY_PATH: variant.policyPath,
     OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: variant.policyHash
@@ -68,16 +68,16 @@ function policyVariantEnv(variant: { policyPath: string; policyHash: string }): 
 
 function certifiedEnv(policyPath = sourcePolicyPath): NodeJS.ProcessEnv {
   return {
-    REVIT_OPERATOR_MODE: "hosted",
+    REVIT_OPERATOR_MODE: "self_hosted",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "certified",
     OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyPath,
     OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: sourcePolicyHash
   };
 }
 
-test("runtime modes default hosted/production/development closed and expose only an explicit development laboratory escape", () => {
-  assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "hosted" }).mode, "certified");
-  assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "production", OPERATOR_TOOL_EXPOSURE_MODE: "laboratory" }).mode, "certified");
+test("exact hosted/production modes are always General Agent while non-product modes retain the explicit laboratory test escape", () => {
+  assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "hosted" }).mode, "general");
+  assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "production", OPERATOR_TOOL_EXPOSURE_MODE: "laboratory" }).mode, "general");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "development" }).mode, "certified");
   const developmentLab = getToolExposureRuntimeDecision({
     REVIT_OPERATOR_MODE: "development",
