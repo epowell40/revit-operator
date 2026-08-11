@@ -391,6 +391,83 @@
       "epic0441_task_refs": ["r17_pipe_reroute", "r18_duct_reroute"]
     },
     {
+      "case_id": "r13_schedule_airflow_sync",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Find the uniquely identifiable mechanical-equipment schedule row with a writable Supply Airflow value, change the backing model value to a compatible test value derived from its current units, verify that the schedule and model agree, and report the exact element.",
+      "probe_prompt": "Find one uniquely identifiable mechanical-equipment schedule row with a writable Supply Airflow value and preview changing its backing model value to a compatible test value derived from the current units. Show the exact row, element, old value, proposed value, and schedule/model readback plan. Do not apply it.",
+      "capability_paths": ["/revit/schedules", "/revit/get-parameters", "/revit/update-schedule-cell"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/get-parameters", "/revit/update-schedule-cell", "/revit/set-parameter"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r01_schedule_value_edit"]
+    },
+    {
+      "case_id": "r14_tag_designation_sync",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Find one equipment tag whose displayed designation is driven by a writable tagged-element parameter, change that driving value to a unique test designation, and verify the tag and corresponding schedule/model value agree without editing tag graphics.",
+      "probe_prompt": "Find one equipment tag whose displayed designation is driven by a writable tagged-element parameter and produce a bounded preview for synchronizing it to a unique test designation. Identify the tag, tagged element, driving parameter, and verification sources. Do not change the model.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-parameters", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-parameters", "/revit/set-parameter", "/revit/update-parameter-by-query"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r03_tag_designation_edit"]
+    },
+    {
+      "case_id": "r15_bulk_visible_status_rule",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "In an eligible plan view, find visible mechanical-equipment instances whose Comments parameter is writable and currently blank, set only those matching instances to TEST-ISSUE, and verify all and only the matched IDs changed.",
+      "probe_prompt": "In an eligible plan view, evaluate the rule 'visible mechanical equipment with writable blank Comments', report the exact matching and non-matching IDs, and preview setting only the matches to TEST-ISSUE. Do not apply it.",
+      "capability_paths": ["/revit/export-visible-elements", "/revit/get-parameters", "/revit/update-parameter-by-query"],
+      "dispatch_any_of": ["/revit/export-visible-elements", "/revit/find-elements", "/revit/get-parameters", "/revit/update-parameter-by-query"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r04_bulk_status_rule"]
+    },
+    {
+      "case_id": "r16_tag_layout_cleanup",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Find a bounded cluster of overlapping or crowded tags in an eligible view, improve their spacing without changing what they label, and verify the same tag targets remain with a better overlap score.",
+      "probe_prompt": "Find a bounded cluster of overlapping or crowded tags in an eligible view and preview moving only their heads to improve spacing. Preserve tag targets and leaders, report before/after geometry and the overlap metric, and do not apply it.",
+      "capability_paths": ["/revit/export-visible-elements", "/revit/move-elements"],
+      "dispatch_any_of": ["/revit/export-visible-elements", "/revit/locate-elements", "/revit/move-elements", "/revit/native-api-search"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r06_move_tag_cleanup"]
+    },
+    {
+      "case_id": "r17_add_connected_accessory",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "Find one unambiguous connected MEP branch that can accept a compatible nearby accessory precedent, insert one matching test accessory on that branch, and verify type, connectors, and system continuity.",
+      "probe_prompt": "Find one unambiguous connected MEP branch and a compatible nearby accessory precedent, then preview inserting one matching accessory. Resolve exact type, branch, connectors, system, placement, and cleanup plan. Do not create it.",
+      "capability_paths": ["/revit/get-connectors", "/revit/create-similar-from-instance", "/revit/connect-mep-elements"],
+      "dispatch_any_of": ["/revit/get-connectors", "/revit/find-elements", "/revit/create-similar-from-instance", "/revit/native-api-search"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r08_add_mep_accessory"]
+    },
+    {
+      "case_id": "r18_move_connected_accessory",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Find one movable connected MEP accessory with a clear nearby relocation direction, move it by a bounded test offset while preserving its connections and system, and verify exact final location and connectivity.",
+      "probe_prompt": "Find one movable connected MEP accessory and preview a bounded relocation that keeps it connected and accessible. Report exact target, offset, connector constraints, system, before/after coordinates, and restoration plan. Do not apply it.",
+      "capability_paths": ["/revit/get-connectors", "/revit/move-elements"],
+      "dispatch_any_of": ["/revit/get-connectors", "/revit/locate-elements", "/revit/move-elements", "/revit/trace-connected-network"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r11_move_accessory"]
+    },
+    {
+      "case_id": "r19_delete_bounded_route_preflight",
+      "source": "redline_corpus",
+      "operation_family": "delete",
+      "prompt": "Find one bounded connected MEP sub-run, trace its exact extent, and show the complete delete and disconnect impact without deleting anything.",
+      "probe_prompt": "Find one bounded connected MEP sub-run, trace its endpoints and connected extent, and run an exact delete/cascade dry-run. Report every affected or disconnected ID and do not mutate the model.",
+      "capability_paths": ["/revit/trace-connected-network", "/revit/delete"],
+      "dispatch_any_of": ["/revit/trace-connected-network", "/revit/get-connectors", "/revit/delete", "/revit/find-elements"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r20_delete_route_preflight"]
+    },
+    {
       "case_id": "x01_native_api_fallback",
       "source": "user_extended",
       "operation_family": "native_fallback",

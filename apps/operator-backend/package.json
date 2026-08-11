@@ -31,6 +31,9 @@
     "benchmark:epic0439": "tsx src/tools/epic0439_usefulness.ts",
     "benchmark:epic0441": "tsx src/tools/epic0441_scoreboard.ts",
     "probe:general-revit-capabilities": "tsx src/tools/general_revit_capability_acceptance.ts",
+    "benchmark:general-revit": "tsx src/tools/general_revit_capability_acceptance.ts --suite smoke --output-dir local-work/benchmarks/general-revit",
+    "benchmark:general-revit:redline": "tsx src/tools/general_revit_capability_acceptance.ts --suite redline --output-dir local-work/benchmarks/general-revit",
+    "benchmark:general-revit:full": "tsx src/tools/general_revit_capability_acceptance.ts --suite full --output-dir local-work/benchmarks/general-revit",
     "existing-conditions": "tsx src/tools/existing_conditions_fixture.ts",
     "report:runs": "tsx src/tools/run_report.ts",
     "prompts:scrub": "tsx src/tools/scrub_human_prompts.ts"

@@ -7,9 +7,21 @@ import {
   type GeneralRevitCapabilityCase,
   type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
-import { nowIso, writeJsonFile } from "../benchmark/files.js";
+import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 
 type JsonRecord = Record<string, unknown>;
+
+const SMOKE_CASE_IDS = new Set([
+  "q01_air_device_inventory",
+  "b07_grounded_equipment_rename",
+  "b03_create_view",
+  "s01_create_schedule",
+  "v01_hide_show_category",
+  "v06_create_apply_named_view_template",
+  "r01_text_note_edit",
+  "r04_delete_preview",
+  "r07_type_change"
+]);
 
 function flagValues(name: string): string[] {
   const values: string[] = [];
@@ -55,14 +67,79 @@ async function requestJson(baseUrl: string, pathname: string, options: RequestIn
 }
 
 function selectCases(cases: GeneralRevitCapabilityCase[]): GeneralRevitCapabilityCase[] {
+  const suite = flag("--suite", "full").toLowerCase();
+  if (!["smoke", "redline", "full"].includes(suite)) throw new Error(`Unknown suite '${suite}'. Expected smoke, redline, or full.`);
   const requestedIds = new Set(flagValues("--case"));
   const requestedSources = new Set(flagValues("--source"));
   const unknownIds = [...requestedIds].filter((caseId) => !cases.some((entry) => entry.case_id === caseId));
   if (unknownIds.length > 0) throw new Error(`Unknown case id(s): ${unknownIds.join(", ")}`);
-  const filtered = cases.filter((entry) => (requestedIds.size === 0 || requestedIds.has(entry.case_id))
+  const filtered = cases.filter((entry) => (suite !== "smoke" || SMOKE_CASE_IDS.has(entry.case_id))
+    && (suite !== "redline" || entry.source === "redline_corpus")
+    && (requestedIds.size === 0 || requestedIds.has(entry.case_id))
     && (requestedSources.size === 0 || requestedSources.has(entry.source)));
   const limit = Number.parseInt(flag("--limit", `${filtered.length}`), 10);
   return filtered.slice(0, Number.isFinite(limit) && limit >= 0 ? limit : filtered.length);
+}
+
+function fileStamp(): string {
+  return nowIso().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function percent(value: unknown): string {
+  return `${(numberValue(value) * 100).toFixed(1)}%`;
+}
+
+function delta(current: unknown, previous: unknown): string {
+  const change = (numberValue(current) - numberValue(previous)) * 100;
+  return `${change >= 0 ? "+" : ""}${change.toFixed(1)} pp`;
+}
+
+function markdownReport(report: JsonRecord): string {
+  const summary = asRecord(report.summary);
+  const baseline = asRecord(report.baseline_comparison);
+  const baselineSummary = asRecord(baseline.summary);
+  const traces = Array.isArray(report.task_traces) ? report.task_traces.map(asRecord) : [];
+  const lines = [
+    "# General Revit benchmark result",
+    "",
+    `- Run: \`${String(report.run_id || "")}\``,
+    `- Label: ${String(report.label || "unlabeled")}`,
+    `- Generated: ${String(report.generated_at || "")}`,
+    `- Mode: ${asRecord(report.suite_context).mutation_policy || "unknown"}`,
+    `- Cases: ${numberValue(summary.total)}`,
+    `- Non-refusal: ${percent(summary.non_refusal_rate)} (${numberValue(summary.non_refusal_count)}/${numberValue(summary.total)})`,
+    `- Completion: ${percent(summary.completion_rate)} (${numberValue(summary.completed_count)}/${numberValue(summary.total)})`,
+    `- Verification: ${percent(summary.verification_rate)} (${numberValue(summary.verified_count)}/${numberValue(summary.total)})`,
+    `- Refused: ${numberValue(summary.refusal_count)}`,
+    `- Failed: ${numberValue(summary.failure_count)}`,
+    ""
+  ];
+  if (baseline.path) {
+    lines.push(
+      "## Baseline comparison",
+      "",
+      `Baseline: \`${String(baseline.path)}\``,
+      "",
+      "| Metric | Current | Baseline | Change |",
+      "|---|---:|---:|---:|",
+      `| Non-refusal | ${percent(summary.non_refusal_rate)} | ${percent(baselineSummary.non_refusal_rate)} | ${delta(summary.non_refusal_rate, baselineSummary.non_refusal_rate)} |`,
+      `| Completion | ${percent(summary.completion_rate)} | ${percent(baselineSummary.completion_rate)} | ${delta(summary.completion_rate, baselineSummary.completion_rate)} |`,
+      `| Verification | ${percent(summary.verification_rate)} | ${percent(baselineSummary.verification_rate)} | ${delta(summary.verification_rate, baselineSummary.verification_rate)} |`,
+      ""
+    );
+  }
+  lines.push("## Cases", "", "| Case | Source | Operation | Tier | Duration |", "|---|---|---|---|---:|");
+  for (const trace of traces) {
+    const score = asRecord(trace.success_failure_score);
+    const efficiency = asRecord(trace.efficiency);
+    lines.push(`| ${String(trace.case_id || "").replaceAll("|", "\\|")} | ${String(trace.source || "")} | ${String(trace.operation_family || "")} | ${String(score.tier || "not_run")} | ${(numberValue(efficiency.duration_ms) / 1000).toFixed(1)}s |`);
+  }
+  lines.push("", "The suite is representative regression coverage, not a Revit capability allowlist. Non-refusal is not completion, and assistant prose alone is not verification.", "");
+  return lines.join("\n");
 }
 
 function safeGrant(value: JsonRecord): JsonRecord {
@@ -177,7 +254,7 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|full] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE | --output-dir DIR] [--baseline FILE] [--label TEXT] [--list-cases] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default the runner sends non-mutating probe_prompt. --apply sends the production prompt and permits model mutation."
     ].join("\n"));
@@ -187,8 +264,28 @@ async function main(): Promise<void> {
   const applyRequested = process.argv.includes("--apply");
   const selected = selectCases(corpus.cases);
   if (selected.length === 0) throw new Error("No cases matched the requested filters.");
+  if (process.argv.includes("--list-cases")) {
+    console.log(JSON.stringify(selected.map((entry) => ({
+      case_id: entry.case_id,
+      source: entry.source,
+      operation_family: entry.operation_family,
+      prompt: entry.prompt
+    })), null, 2));
+    return;
+  }
   const sidecar = flag("--sidecar", "http://127.0.0.1:3908").replace(/\/$/, "");
-  const output = path.resolve(flag("--output", `general-revit-capability-report-${Date.now()}.json`));
+  const suite = flag("--suite", "full").toLowerCase();
+  const runId = `${fileStamp()}-${suite}-${applyRequested ? "apply" : "safe"}`;
+  const explicitOutput = flag("--output");
+  const outputDir = flag("--output-dir");
+  if (explicitOutput && outputDir) throw new Error("Use either --output or --output-dir, not both.");
+  const resolvedOutputDir = outputDir ? path.resolve(outputDir) : "";
+  const output = explicitOutput
+    ? path.resolve(explicitOutput)
+    : resolvedOutputDir
+      ? path.join(resolvedOutputDir, runId, "report.json")
+      : path.resolve(`general-revit-capability-report-${Date.now()}.json`);
+  const summaryOutput = resolvedOutputDir ? path.join(resolvedOutputDir, runId, "summary.md") : output.replace(/\.json$/i, ".md");
   const [config, grant] = await Promise.all([
     requestJson(sidecar, "/api/config", {}, 30_000),
     requestJson(sidecar, "/api/revit/write-grant", {}, 30_000)
@@ -212,18 +309,41 @@ async function main(): Promise<void> {
   }
   const evaluations = traces.map((trace) => asRecord(asRecord(trace.verification_results).evaluation));
   const summary = summarizeGeneralRevitCapabilityReport(evaluations as never);
+  const baselinePath = flag("--baseline");
+  const baselineReport = baselinePath ? readJsonFile<JsonRecord>(path.resolve(baselinePath)) : null;
+  const baselineComparison = baselineReport ? {
+    path: path.resolve(baselinePath),
+    run_id: baselineReport.run_id ?? null,
+    generated_at: baselineReport.generated_at ?? null,
+    summary: asRecord(baselineReport.summary)
+  } : null;
   const report = {
     schema: "revit-operator.general-revit-capability-report/v1",
+    run_id: runId,
+    label: flag("--label") || null,
     generated_at: nowIso(),
     suite_id: corpus.suite_id,
+    suite,
     representative_not_exhaustive: true,
     suite_context: suiteContext,
     summary,
+    baseline_comparison: baselineComparison,
     task_traces: traces,
     report_sha256: sha256({ suiteContext, summary, traces })
   };
   writeJsonFile(output, report);
-  console.log(JSON.stringify({ output, summary }, null, 2));
+  writeTextFile(summaryOutput, markdownReport(report));
+  if (resolvedOutputDir) {
+    writeJsonFile(path.join(resolvedOutputDir, "latest.json"), {
+      schema: "revit-operator.general-revit-capability-latest/v1",
+      run_id: runId,
+      report_path: output,
+      summary_path: summaryOutput,
+      summary
+    });
+    writeTextFile(path.join(resolvedOutputDir, "latest.md"), markdownReport(report));
+  }
+  console.log(JSON.stringify({ output, summary_output: summaryOutput, latest: resolvedOutputDir ? path.join(resolvedOutputDir, "latest.md") : null, summary }, null, 2));
   const requireCompletion = process.argv.includes("--require-completion");
   if (summary.refusal_count > 0 || summary.failure_count > 0 || (requireCompletion && summary.completed_count !== summary.total)) process.exitCode = 1;
 }

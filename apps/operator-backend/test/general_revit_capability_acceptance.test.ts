@@ -18,7 +18,7 @@ function source(relativePath: string): string {
 
 test("general Revit corpus covers the user basics and the retained redline operation families", () => {
   assert.equal(new Set(corpus.cases.map((entry) => entry.case_id)).size, corpus.cases.length);
-  assert.ok(corpus.cases.length >= 25);
+  assert.ok(corpus.cases.length >= 40);
   for (const family of corpus.required_operation_families) {
     assert.ok(corpus.cases.some((entry) => entry.operation_family === family), `missing ${family}`);
   }
@@ -27,7 +27,9 @@ test("general Revit corpus covers the user basics and the retained redline opera
     "b05_duplicate_sheet", "b06_edit_loaded_family", "s01_create_schedule", "s02_add_schedule_field",
     "s03_schedule_filter", "s04_schedule_sort_group", "s05_schedule_value_edit", "v01_hide_show_category",
     "v02_category_graphics_override", "v03_create_apply_view_filter", "v04_create_view_template",
-    "v05_apply_view_template", "x01_native_api_fallback"
+    "v05_apply_view_template", "r13_schedule_airflow_sync", "r14_tag_designation_sync",
+    "r15_bulk_visible_status_rule", "r16_tag_layout_cleanup", "r17_add_connected_accessory",
+    "r18_move_connected_accessory", "r19_delete_bounded_route_preflight", "x01_native_api_fallback"
   ]) {
     assert.ok(corpus.cases.some((entry) => entry.case_id === expectedCase), `missing ${expectedCase}`);
   }
