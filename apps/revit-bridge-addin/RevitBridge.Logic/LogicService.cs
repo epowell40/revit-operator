@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
 using RevitBridge.Logic.Handlers;
+using RevitBridge.Logic.Handlers.DynamicRuntime;
 
 namespace RevitBridge.Logic
 {
@@ -17,6 +18,12 @@ namespace RevitBridge.Logic
             {
                 { "/revit/context", new ContextHandler() },
                 { "/revit/state-snapshot", new RevitStateSnapshotHandler() },
+                { "/revit/dynamic-runtime/bootstrap", new DynamicRuntimeBootstrapHandler() },
+                { "/revit/dynamic-runtime/register", new DynamicRuntimeRegistrationHandler() },
+                { "/revit/dynamic-runtime/snapshot", new DynamicRuntimeSnapshotHandler() },
+                { "/revit/dynamic-runtime/preview", new DynamicRuntimePreviewHandler() },
+                { "/revit/dynamic-runtime/authorize-apply", new DynamicRuntimeApplyAuthorizationHandler() },
+                { "/revit/dynamic-runtime/apply", new DynamicRuntimeApplyHandler() },
                 { "/revit/views", new ListViewsHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/query", new QueryElementsHandler() },

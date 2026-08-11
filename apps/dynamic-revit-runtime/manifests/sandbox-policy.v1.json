@@ -1,0 +1,11 @@
+{
+  "schema": "dynamic-revit-sandbox-policy/v1",
+  "profile": "windows-lpac-v1-zero-capabilities",
+  "profileVersion": "1.0.0",
+  "capabilities": [],
+  "processLimit": 1,
+  "memoryLimitMiB": 256,
+  "network": "denied",
+  "environment": "allowlist",
+  "taskDirectory": "explicit-acl-only"
+}

@@ -51,6 +51,12 @@ namespace RevitBridge.Server
             {
                 { "/revit/context", new ContextHandler() },
                 { "/revit/state-snapshot", new RevitStateSnapshotHandler() },
+                { "/revit/dynamic-runtime/bootstrap", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeBootstrapHandler() },
+                { "/revit/dynamic-runtime/register", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeRegistrationHandler() },
+                { "/revit/dynamic-runtime/snapshot", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeSnapshotHandler() },
+                { "/revit/dynamic-runtime/preview", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimePreviewHandler() },
+                { "/revit/dynamic-runtime/authorize-apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyAuthorizationHandler() },
+                { "/revit/dynamic-runtime/apply", new RevitBridge.Logic.Handlers.DynamicRuntime.DynamicRuntimeApplyHandler() },
                 { "/revit/native-capabilities", new NativeCapabilitiesHandler() },
                 { "/revit/views", new RevitBridge.Logic.Handlers.ListViewsHandler() },
                 { "/revit/tool-registry", new ToolRegistryHandler() },
@@ -753,6 +759,16 @@ namespace RevitBridge.Server
                     requestBody = effectiveRequest.BodyJson;
                 }
 
+                if (path.StartsWith("/revit/dynamic-runtime/", StringComparison.OrdinalIgnoreCase) && !laboratoryBypass)
+                {
+                    throw new OperatorNativeHttpAdmissionException(
+                        "DYNAMIC_RUNTIME_EXPERIMENT_ONLY",
+                        "Dynamic Revit Runtime endpoints are available only in the exact development laboratory profile.",
+                        403,
+                        false,
+                        "healthy");
+                }
+
                 // Bridge-layer write gate:
                 // Any mutating endpoint requires an ephemeral write grant beyond X-Operator-Token.
                 // This is critical when tools are executed indirectly (e.g., via MCP) where the Operator UI
@@ -1169,6 +1185,12 @@ namespace RevitBridge.Server
 
             if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase)) return risk;
 
+            if (string.Equals(path, "/revit/dynamic-runtime/preview", StringComparison.OrdinalIgnoreCase) &&
+                IsExplicitDynamicRuntimePreview(body))
+            {
+                return OperatorActionRisk.Low;
+            }
+
             if (OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, body))
             {
                 return OperatorActionRisk.Low;
@@ -1221,6 +1243,18 @@ namespace RevitBridge.Server
             {
                 return false;
             }
+        }
+
+        private static bool IsExplicitDynamicRuntimePreview(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return false;
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var root = doc.RootElement;
+                return root.ValueKind == JsonValueKind.Object && root.TryGetProperty("phase", out var phase) && phase.ValueKind == JsonValueKind.String && string.Equals(phase.GetString(), "preview", StringComparison.Ordinal);
+            }
+            catch { return false; }
         }
 
         private static bool IsExplicitMepRoutePreview(string path, string body)

@@ -61,6 +61,15 @@ Revit context, compacted tool results, and bounded image attachments. They
 return the next smallest Bridge action or tightly coupled action group; the
 host executes it and supplies the result on the next turn.
 
+OpenAI, Gemini, and Anthropic also share one exact, bounded `dynamic_program`
+response contract. This lane is disabled by default. When an operator explicitly
+enables the exact development laboratory runner and configures absolute supervisor,
+worker-package, and token paths, a provider may submit source plus bounded task
+limits to the trusted Dynamic Revit supervisor. Native actions, workbench actions,
+web requests, and dev actions cannot be mixed with that lane. Provider prose and
+strategy telemetry never authorize execution; the supervisor/host admission,
+fresh apply authorization, and structured receipt remain authoritative.
+
 ## Redline And Spatial Tools
 
 The public backend includes the generic redline/native placement improvements:

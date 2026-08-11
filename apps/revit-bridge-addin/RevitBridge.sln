@@ -5,6 +5,12 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RevitBridge", "RevitBridge\RevitBridge.csproj", "{A572367A-AA08-4528-874C-7BFA2D2B3047}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RevitBridge.Common", "RevitBridge.Common\RevitBridge.Common.csproj", "{C2C0886D-D96D-4DF2-A217-88E381238633}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RevitBridge.Logic", "RevitBridge.Logic\RevitBridge.Logic.csproj", "{DA8251CB-C94C-4108-B67C-400C1286D351}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DynamicRevitHost", "DynamicRevitHost\DynamicRevitHost.csproj", "{900A679A-7503-455D-AF76-4EF08D8C95C5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +33,42 @@ Global
 		{A572367A-AA08-4528-874C-7BFA2D2B3047}.Release|x64.Build.0 = Release|Any CPU
 		{A572367A-AA08-4528-874C-7BFA2D2B3047}.Release|x86.ActiveCfg = Release|Any CPU
 		{A572367A-AA08-4528-874C-7BFA2D2B3047}.Release|x86.Build.0 = Release|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Debug|x64.Build.0 = Debug|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Debug|x86.Build.0 = Debug|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Release|x64.ActiveCfg = Release|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Release|x64.Build.0 = Release|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Release|x86.ActiveCfg = Release|Any CPU
+		{C2C0886D-D96D-4DF2-A217-88E381238633}.Release|x86.Build.0 = Release|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Debug|x64.Build.0 = Debug|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Debug|x86.Build.0 = Debug|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Release|x64.ActiveCfg = Release|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Release|x64.Build.0 = Release|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Release|x86.ActiveCfg = Release|Any CPU
+		{DA8251CB-C94C-4108-B67C-400C1286D351}.Release|x86.Build.0 = Release|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Debug|x64.Build.0 = Debug|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Debug|x86.Build.0 = Debug|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Release|x64.ActiveCfg = Release|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Release|x64.Build.0 = Release|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Release|x86.ActiveCfg = Release|Any CPU
+		{900A679A-7503-455D-AF76-4EF08D8C95C5}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

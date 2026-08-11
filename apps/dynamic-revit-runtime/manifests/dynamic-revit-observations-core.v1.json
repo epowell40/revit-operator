@@ -1,0 +1,20 @@
+{
+  "schema": "dynamic-revit-observation-contract-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractManifestHash": "sha256:86d57659b3a1955b45fde712ee57e3a07c9eaf69b45346b6815532e2b28b7a6e",
+  "selectorSchema": "dynamic-revit-observation-selector/v1",
+  "envelopeSchema": "dynamic-revit-observation-envelope/v1",
+  "cursorSchema": "dynamic-revit-observation-cursor/v1",
+  "canonicalVersion": "dynamic-revit-observation-canonical/v1",
+  "readOnly": true,
+  "limits": {
+    "maximumRequestBytes": 65536,
+    "maximumPageSize": 256,
+    "maximumObservedElements": 4096,
+    "maximumElementSelectors": 256,
+    "maximumCategorySelectors": 64,
+    "maximumOwnerViewSelectors": 64,
+    "maximumParameterSelectors": 64,
+    "maximumParametersPerElement": 128
+  }
+}

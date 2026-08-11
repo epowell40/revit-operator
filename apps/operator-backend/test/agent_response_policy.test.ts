@@ -28,6 +28,11 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /Progress updates should be sparse and useful/i);
   assert.match(policy, /Goal mode should use a natural acknowledgement/i);
   assert.match(policy, /Do not say "Plan:" unless/i);
+  assert.match(policy, /one certified typed capability/i);
+  assert.match(policy, /composition of a few certified typed capabilities/i);
+  assert.match(policy, /bounded task-specific Dynamic Revit program/i);
+  assert.match(policy, /Do not route by prompt keywords or regexes/i);
+  assert.match(policy, /grants no capability, admission, approval, or authorization/i);
 });
 
 test("backend prompts do not force Plan-prefixed action turns", () => {

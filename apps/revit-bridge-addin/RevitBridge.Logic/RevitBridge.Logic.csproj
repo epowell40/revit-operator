@@ -11,6 +11,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RevitBridge.Common\RevitBridge.Common.csproj" />
+    <ProjectReference Include="..\DynamicRevitHost\DynamicRevitHost.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="Handlers\DynamicRuntime\**\*.cs" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">

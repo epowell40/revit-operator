@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/general-agent/execution-strategy-evidence.v1.schema.json",
+  "title": "Revit Operator execution strategy evidence v1",
+  "description": "A bounded model-authored explanation of the selected execution representation. This is telemetry/evidence only and never authorizes execution.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "selected_substrate", "reason"],
+  "properties": {
+    "schema": {
+      "const": "revit-operator.execution-strategy-evidence.v1"
+    },
+    "selected_substrate": {
+      "enum": [
+        "typed_capability",
+        "typed_capability_composition",
+        "dynamic_revit_program"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 320
+    }
+  }
+}

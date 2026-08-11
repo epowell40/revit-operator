@@ -1,0 +1,31 @@
+{
+  "schema": "dynamic-revit-host-capabilities/v1",
+  "manifestVersion": "1.0.0",
+  "protocolVersion": "dynamic-revit-protocol/v1",
+  "hosts": [
+    {
+      "revitYear": "2023",
+      "targetFramework": "net48",
+      "installDirectoryName": "Revit 2023",
+      "executableName": "Revit.exe",
+      "hostArtifactRelativePath": "hosts/2023/DynamicRevitHost.dll",
+      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+    },
+    {
+      "revitYear": "2024",
+      "targetFramework": "net48",
+      "installDirectoryName": "Revit 2024",
+      "executableName": "Revit.exe",
+      "hostArtifactRelativePath": "hosts/2024/DynamicRevitHost.dll",
+      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+    },
+    {
+      "revitYear": "2025",
+      "targetFramework": "net8.0-windows",
+      "installDirectoryName": "Revit 2025",
+      "executableName": "Revit.exe",
+      "hostArtifactRelativePath": "hosts/2025/DynamicRevitHost.dll",
+      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+    }
+  ]
+}

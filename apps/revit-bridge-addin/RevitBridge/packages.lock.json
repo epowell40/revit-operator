@@ -84,6 +84,17 @@
         "resolved": "4.5.0",
         "contentHash": "okurQJO6NRE/apDIP23ajJ0hpiNmJ+f0BwOlB/cSqTLQlw5upkf+5+96+iG2Jw40G1fCVCyPz/FhIABUjMR+RQ=="
       },
+      "dynamicrevithost": {
+        "type": "Project",
+        "dependencies": {
+          "DynamicRevitSdk": "[1.0.0, )",
+          "RevitBridge.Common": "[1.0.0, )",
+          "System.Text.Json": "[8.0.5, )"
+        }
+      },
+      "dynamicrevitsdk": {
+        "type": "Project"
+      },
       "revitbridge.common": {
         "type": "Project",
         "dependencies": {
@@ -94,6 +105,7 @@
       "revitbridge.logic": {
         "type": "Project",
         "dependencies": {
+          "DynamicRevitHost": "[1.0.0, )",
           "RevitBridge.Common": "[1.0.0, )",
           "System.Text.Json": "[8.0.5, )"
         }
@@ -138,6 +150,17 @@
         "resolved": "8.0.0",
         "contentHash": "+TUFINV2q2ifyXauQXRwy4CiBhqvDEDZeVJU7qfxya4aRYOKzVBpN+4acx25VcPB9ywUN6C0n8drWl110PhZEg=="
       },
+      "dynamicrevithost": {
+        "type": "Project",
+        "dependencies": {
+          "DynamicRevitSdk": "[1.0.0, )",
+          "RevitBridge.Common": "[1.0.0, )",
+          "System.Text.Json": "[8.0.5, )"
+        }
+      },
+      "dynamicrevitsdk": {
+        "type": "Project"
+      },
       "revitbridge.common": {
         "type": "Project",
         "dependencies": {
@@ -148,6 +171,7 @@
       "revitbridge.logic": {
         "type": "Project",
         "dependencies": {
+          "DynamicRevitHost": "[1.0.0, )",
           "RevitBridge.Common": "[1.0.0, )",
           "System.Drawing.Common": "[8.0.11, )",
           "System.Text.Json": "[8.0.5, )"

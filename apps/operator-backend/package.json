@@ -28,6 +28,8 @@
     "probe:live-revit-tools": "tsx src/tools/probe_live_revit_tools.ts",
     "check:codex-app-server": "tsx src/tools/verify_codex_app_server_protocol.ts",
     "benchmark": "tsx src/tools/benchmark.ts",
+    "benchmark:epic0439": "tsx src/tools/epic0439_usefulness.ts",
+    "benchmark:epic0441": "tsx src/tools/epic0441_scoreboard.ts",
     "existing-conditions": "tsx src/tools/existing_conditions_fixture.ts",
     "report:runs": "tsx src/tools/run_report.ts",
     "prompts:scrub": "tsx src/tools/scrub_human_prompts.ts"

@@ -51,7 +51,12 @@ import {
   assertCertifiedMoveOneToolExposure
 } from "./lib/toolExposurePolicy.js";
 
-import { discoverCertifiedCapabilities } from "./lib/certifiedCapabilityProjection.js";
+import { discoverGeneralAgentCapabilities } from "./lib/generalAgentCapabilityDiscovery.js";
+import {
+  EXECUTION_STRATEGY_EVIDENCE_V1,
+  recordExecutionStrategyEvidence
+} from "./lib/executionStrategyEvidence.js";
+import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -109,6 +114,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_plan_semantic_mep_route",
   "operator_runtime_probe",
   "operator_discover_capabilities",
+  "operator_record_execution_strategy",
   "print_sheets",
   "read_excel",
   "read_pdf_text",
@@ -569,10 +575,33 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
   };
 });
 
-server.tool("operator_discover_capabilities", "Discover a bounded set of currently certified Revit capabilities for a stated need. This does not execute Revit actions.", {
+server.tool("operator_discover_capabilities", "Discover a bounded set of currently certified Revit capabilities plus the concise dynamic-program substrate affordance. Discovery does not admit or authorize execution.", {
   need: z.string().min(1).max(480).describe("A concise semantic capability need, not a tool name or route."),
   maxResults: z.number().int().min(1).max(8).optional().describe("Maximum certified capability descriptions to return (default 4).")
-}, async (args) => ({ content: [{ type: "text", text: JSON.stringify(discoverCertifiedCapabilities(args), null, 2) }] }));
+}, async (args) => ({ content: [{ type: "text", text: JSON.stringify(discoverGeneralAgentCapabilities(args), null, 2) }] }));
+
+server.tool("operator_record_execution_strategy", "Record the model's bounded execution-representation choice as telemetry/evidence. This never admits or authorizes execution.", {
+  schema: z.literal(EXECUTION_STRATEGY_EVIDENCE_V1),
+  selected_substrate: z.enum(["typed_capability", "typed_capability_composition", "dynamic_revit_program"]),
+  reason: z.string().min(1).max(320).describe("One concise task-specific reason for this representation choice.")
+}, async (args) => ({
+  content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
+}));
+
+server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compile and execute one generated C# IDynamicRevitProgram through snapshot, sandbox, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. This tool is hidden in certified production exposure and model prose never authorizes apply.", {
+  source: z.string().min(1).max(200_000).describe("Exactly one public IDynamicRevitProgram implementation using RevitOperator.DynamicRevitSdk. Use c.Elements, c.Plan.MoveElement/SetParameter, and return c.Complete()."),
+  mode: z.enum(["preview", "apply"]),
+  target_revit_year: z.enum(["2023", "2024", "2025"]).optional(),
+  category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
+  parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
+  snapshot_limit: z.number().int().min(1).max(1000).optional(),
+  operation_budget: z.number().int().min(1).max(256).optional(),
+  worker_deadline_ms: z.number().int().min(1000).max(60_000).optional(),
+  apply_deadline_ms: z.number().int().min(100).max(5000).optional()
+}, async (args) => {
+  try { return { content: [{ type: "text", text: JSON.stringify(await runDynamicRevitProgram(args), null, 2) }] }; }
+  catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }
+});
 
 server.tool("revit_ping", "Check connection to Revit Add-in.", {}, async () => {
   try {

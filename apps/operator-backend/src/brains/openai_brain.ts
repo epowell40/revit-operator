@@ -105,8 +105,25 @@ import {
   discoverRegisteredRouteFrontierV1,
   type RegisteredRouteFrontierCandidateV1
 } from "../existing_conditions/registered_route_frontier_discovery.js";
+import {
+  EXECUTION_STRATEGY_EVIDENCE_V1,
+  recordExecutionStrategyEvidence,
+  type RecordedExecutionStrategyEvidence
+} from "../execution_strategy.js";
+import {
+  PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA,
+  dynamicProgramProviderPrompt,
+  executeProviderDynamicProgramLane
+} from "../dynamic_runtime/provider_dynamic_program.js";
 type OpenAiDecision = {
   assistant_message: string;
+  execution_strategy?: {
+    schema: typeof EXECUTION_STRATEGY_EVIDENCE_V1;
+    selected_substrate: "typed_capability" | "typed_capability_composition" | "dynamic_revit_program";
+    reason: string;
+  } | null;
+  recorded_execution_strategy?: RecordedExecutionStrategyEvidence;
+  dynamic_program?: unknown;
   actions: Array<{
     action_id: string;
     method: "GET" | "POST";
@@ -18839,6 +18856,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   lines.push(...(certifiedDirectSidecar ? CERTIFIED_SIDECAR_PROMPT_LINES : [process.env.OPERATOR_OPENAI_SYSTEM_PROMPT || defaultSystemPrompt(), ""]));
   const turnContract = formatAgentTurnContract(req.user_text, req.context);
   if (turnContract) lines.push(turnContract, "");
+  lines.push(dynamicProgramProviderPrompt(process.env, !certifiedDirectSidecar), "");
   if (speedSettings.speed_mode) {
     lines.push(
       `Speed mode: enabled; planner=${speedSettings.planner_model}/${speedSettings.planner_reasoning_effort}; executor=${speedSettings.executor_model}/${speedSettings.executor_reasoning_effort}; context_diet=${speedSettings.context_diet ? "on" : "off"}.`
@@ -22557,9 +22575,23 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     type: "object",
     additionalProperties: false,
     // OpenAI strict schema requires all declared properties to be required.
-    required: ["assistant_message", "actions", "web_requests", "dev_actions", "workbench_actions"],
+    required: ["assistant_message", "execution_strategy", "dynamic_program", "actions", "web_requests", "dev_actions", "workbench_actions"],
     properties: {
       assistant_message: { type: "string" },
+      execution_strategy: {
+        type: ["object", "null"],
+        additionalProperties: false,
+        required: ["schema", "selected_substrate", "reason"],
+        properties: {
+          schema: { type: "string", enum: [EXECUTION_STRATEGY_EVIDENCE_V1] },
+          selected_substrate: {
+            type: "string",
+            enum: ["typed_capability", "typed_capability_composition", "dynamic_revit_program"]
+          },
+          reason: { type: "string", minLength: 1, maxLength: 320 }
+        }
+      },
+      dynamic_program: PROVIDER_DYNAMIC_PROGRAM_RESPONSE_SCHEMA,
       actions: {
         type: "array",
         items: {
@@ -22822,6 +22854,16 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     if (!decision) {
       const status = typeof response?.status === "string" ? response.status : "unknown";
       return { error: `No response from model. Responses API status=${status}.` };
+    }
+
+    try {
+      decision.recorded_execution_strategy = recordExecutionStrategyEvidence(decision.execution_strategy, evidence => {
+        appendEvent(r.session_id, "assistant", "execution.strategy.selected", evidence);
+      }) ?? undefined;
+    } catch (error) {
+      return {
+        error: `Operator backend error: invalid execution strategy evidence: ${error instanceof Error ? error.message : String(error)}`
+      };
     }
 
     try {
@@ -23211,6 +23253,20 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
 
     lastDecision = d;
 
+    const dynamicLane = await executeProviderDynamicProgramLane({
+      req,
+      selectedSubstrate: d.recorded_execution_strategy?.selected_substrate ?? null,
+      dynamicProgram: d.dynamic_program,
+      otherLaneItemCount:
+        (Array.isArray(d.actions) ? d.actions.length : 0)
+        + (Array.isArray(d.workbench_actions) ? d.workbench_actions.length : 0)
+        + (Array.isArray(d.web_requests) ? d.web_requests.length : 0)
+        + (Array.isArray(d.dev_actions) ? d.dev_actions.length : 0),
+      strategyEvidence: d.recorded_execution_strategy,
+      requestEligible: !isCertifiedSidecarRequest(req)
+    });
+    if (dynamicLane) return finishResponse(dynamicLane);
+
     let wbActions = normalizeWorkbenchActions(d.workbench_actions);
     const workbenchNamespaceCorrection = buildWorkbenchNamespaceCorrection(d, wbActions);
     if (workbenchNamespaceCorrection) {
@@ -23558,7 +23614,10 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
   const allowlistedResponseForGuard: ChatResponse = {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: lastDecision.assistant_message || "",
-    actions: allowlisted
+    actions: allowlisted,
+    ...(lastDecision.recorded_execution_strategy
+      ? { execution_strategy_evidence: lastDecision.recorded_execution_strategy }
+      : {})
   };
   const mepRedlineActionGuard = buildMepRedlineActionGuardResponse({
     req,
@@ -23960,6 +24019,9 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
   return finishResponse({
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message,
-    actions: allowlisted
+    actions: allowlisted,
+    ...(lastDecision.recorded_execution_strategy
+      ? { execution_strategy_evidence: lastDecision.recorded_execution_strategy }
+      : {})
   });
 }

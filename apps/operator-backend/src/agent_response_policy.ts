@@ -1,4 +1,5 @@
 import { classifyAgentTurn, formatTeammateTurnContract, type AgentTurnKind } from "./teammate_loop_runtime.js";
+import { GENERAL_AGENT_EXECUTION_STRATEGY_LINES } from "./execution_strategy.js";
 
 export const AGENT_RESPONSE_STYLE_LINES = [
   "Response style (important):",
@@ -10,7 +11,8 @@ export const AGENT_RESPONSE_STYLE_LINES = [
   "- Do not say \"Plan:\" unless the user explicitly asked for a plan, the task is risky/destructive, approval is needed before execution, or the plan itself is the deliverable.",
   "- Progress updates should be sparse and useful: mention found scope, active export/write work, recovery from failures, warnings, or blockers. Avoid performative messages that merely restate that work is beginning.",
   "- For final responses, summarize what was done, where it was done, evidence/results, warnings/blockers, and any remaining user input needed.",
-  "- Goal mode should use a natural acknowledgement and may be shown as a UI status; do not dump objective, success criteria, step list, or tool list unless requested or approval is needed."
+  "- Goal mode should use a natural acknowledgement and may be shown as a UI status; do not dump objective, success criteria, step list, or tool list unless requested or approval is needed.",
+  ...GENERAL_AGENT_EXECUTION_STRATEGY_LINES
 ];
 
 export function formatAgentTurnContract(userText: string | null | undefined, context?: unknown): string {

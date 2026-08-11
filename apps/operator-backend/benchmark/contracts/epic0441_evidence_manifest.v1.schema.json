@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/epic0441_evidence_manifest.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "campaign_seed", "ordering_algorithm", "reviewer_packet_sha256", "rows"],
+  "properties": {
+    "schema_version": { "const": "epic0441_evidence_manifest/v1" },
+    "suite_id": { "type": "string", "minLength": 1 },
+    "campaign_seed": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "ordering_algorithm": { "const": "sha256-balanced-pairs/v1" },
+    "reviewer_packet_sha256": { "$ref": "#/$defs/hash" },
+    "rows": { "type": "array", "minItems": 60, "maxItems": 60, "items": { "$ref": "#/$defs/row" } }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "config_id", "representation", "pair_order", "ordering_key", "classification", "reason"],
+      "properties": {
+        "task_id": { "type": "string", "minLength": 1 },
+        "config_id": { "type": "string", "minLength": 1 },
+        "representation": { "enum": ["typed_capability_chain", "dynamic_program"] },
+        "pair_order": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "ordering_key": { "$ref": "#/$defs/hash" },
+        "classification": { "enum": ["receipt", "source_only", "mocked", "unsupported", "blocked_safe", "failed", "sealed_not_yet_run"] },
+        "reason": { "type": ["string", "null"], "minLength": 1 },
+        "evidence_file": { "type": "string", "minLength": 1 },
+        "evidence_sha256": { "$ref": "#/$defs/hash" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "classification": { "const": "receipt" } }, "required": ["classification"] },
+          "then": { "required": ["evidence_file", "evidence_sha256"] },
+          "else": { "not": { "anyOf": [{ "required": ["evidence_file"] }, { "required": ["evidence_sha256"] }] } }
+        }
+      ]
+    }
+  }
+}

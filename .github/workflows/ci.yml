@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_dynamic_runtime_release:
+        description: "Build and verify the Dynamic Runtime package for installed Revit 2023/2024/2025"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   architecture:
@@ -84,6 +89,25 @@ jobs:
           dotnet-version: 8.0.x
       - run: dotnet test packages/operator-deploy/OperatorDeploy.Tests/OperatorDeploy.Tests.csproj -c Release
       - run: dotnet publish packages/operator-deploy/OperatorDeploy/OperatorDeploy.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false
+
+  dynamic-runtime:
+    name: Dynamic Runtime Build/Test/Package Contracts
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build and test runtime projects without Revit dependencies
+        shell: pwsh
+        run: dotnet test apps/dynamic-revit-runtime/DynamicRevitRuntime.sln -c Release
+      - name: Verify supervisor and worker publish orchestration
+        shell: pwsh
+        run: |
+          dotnet publish apps/dynamic-revit-runtime/DynamicRevitSandboxSupervisor/DynamicRevitSandboxSupervisor.csproj -c Release -r win-x64 --self-contained false
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet publish apps/dynamic-revit-runtime/DynamicRevitWorker/DynamicRevitWorker.csproj -c Release -r win-x64 --self-contained false
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   safe-read-hermetic:
     name: SafeRead Hermetic Security Gates
@@ -175,6 +199,22 @@ jobs:
           $output = Join-Path $env:RUNNER_TEMP ('safe-read-cross-edition-package-' + [guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $output | Out-Null
           ./scripts/deploy/tests/Invoke-SafeReadCrossEditionPackageFixture.ps1 -RepositoryRoot (Get-Location).Path -OutputRoot $output
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+  dynamic-runtime-installed-revit-release:
+    name: Dynamic Runtime Installed Revit Package Gate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_dynamic_runtime_release == true }}
+    runs-on: [self-hosted, Windows, revit-certified]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build, bind, and verify the exact three-year package
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP ('dynamic-runtime-package-' + [guid]::NewGuid().ToString('N'))
+          ./scripts/build_dynamic_runtime_package.ps1 -RepositoryRoot (Get-Location).Path -OutputRoot $output -PackageVersion "0.1.0-ci-$env:GITHUB_SHA"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
   revit-addin:

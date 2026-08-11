@@ -172,6 +172,17 @@
           "xunit.extensibility.core": "[2.9.2]"
         }
       },
+      "dynamicrevithost": {
+        "type": "Project",
+        "dependencies": {
+          "DynamicRevitSdk": "[1.0.0, )",
+          "RevitBridge.Common": "[1.0.0, )",
+          "System.Text.Json": "[8.0.5, )"
+        }
+      },
+      "dynamicrevitsdk": {
+        "type": "Project"
+      },
       "revitbridge.common": {
         "type": "Project",
         "dependencies": {
@@ -182,6 +193,7 @@
       "revitbridge.logic": {
         "type": "Project",
         "dependencies": {
+          "DynamicRevitHost": "[1.0.0, )",
           "RevitBridge.Common": "[1.0.0, )",
           "System.Text.Json": "[8.0.5, )"
         }
@@ -310,6 +322,17 @@
           "xunit.extensibility.core": "[2.9.2]"
         }
       },
+      "dynamicrevithost": {
+        "type": "Project",
+        "dependencies": {
+          "DynamicRevitSdk": "[1.0.0, )",
+          "RevitBridge.Common": "[1.0.0, )",
+          "System.Text.Json": "[8.0.5, )"
+        }
+      },
+      "dynamicrevitsdk": {
+        "type": "Project"
+      },
       "revitbridge.common": {
         "type": "Project",
         "dependencies": {
@@ -320,6 +343,7 @@
       "revitbridge.logic": {
         "type": "Project",
         "dependencies": {
+          "DynamicRevitHost": "[1.0.0, )",
           "RevitBridge.Common": "[1.0.0, )",
           "System.Drawing.Common": "[8.0.11, )",
           "System.Text.Json": "[8.0.5, )"

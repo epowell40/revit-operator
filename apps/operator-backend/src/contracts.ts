@@ -76,6 +76,30 @@ export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  execution_strategy_evidence?: {
+    schema: "revit-operator.execution-strategy-evidence.v1";
+    selected_substrate: "typed_capability" | "typed_capability_composition" | "dynamic_revit_program";
+    reason: string;
+    recorded_at_utc: string;
+    authority: "telemetry_only";
+    authorization_granted: false;
+  };
+  dynamic_program_execution_receipt?: {
+    schema: "revit-operator.provider-dynamic-program-execution-receipt.v1";
+    status: "completed" | "failed" | "blocked";
+    apply_requested: boolean;
+    supervisor_exit_code: number | null;
+    evidence_path: string | null;
+    evidence_sha256: string | null;
+    authority: "trusted_supervisor_receipt";
+    provider_prose_authorized: false;
+    failure: string | null;
+    supervisor_executable_sha256?: string | null;
+    supervisor_package_sha256?: string | null;
+    worker_runtime_package_sha256?: string | null;
+    evidence_binding_sha256?: string | null;
+    target_revit_year?: "2023" | "2024" | "2025" | null;
+  };
   certified_capability_limitations?: Array<{
     code: "CERTIFIED_ACTION_DENIED";
     action_ids: string[];
