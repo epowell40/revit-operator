@@ -106,6 +106,10 @@ function saveEnv(): () => void {
     "OPERATOR_REVIT_COURIER_TIMEOUT_MS",
     "OPERATOR_REVIT_TRANSPORT",
     "REVIT_OPERATOR_MODE",
+    "OPERATOR_AUTH_MODE",
+    "OPERATOR_BRAIN",
+    "OPERATOR_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
     "OPERATOR_TOOL_EXPOSURE_PROFILE",
     "OPERATOR_TOOL_EXPOSURE_POLICY_PATH",
     "OPERATOR_TOOL_EXPOSURE_POLICY_SHA256"
@@ -432,6 +436,59 @@ test("certified MCP courier persists a deterministic immutable v2 certification 
       retryable: false
     }), "utf8");
     assert.deepEqual(await Promise.all([first, second]), [{ status: "certified-ok" }, { status: "certified-ok" }]);
+  } finally {
+    restore();
+  }
+});
+
+test("hosted General Agent courier exposes a route-bound v1 admission without persisting the bearer token", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-general-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.OPERATOR_REVIT_TRANSPORT = "courier";
+    process.env.REVIT_OPERATOR_MODE = "hosted";
+    process.env.OPERATOR_AUTH_MODE = "principal_jwt";
+    process.env.OPERATOR_BRAIN = "codex";
+    process.env.OPERATOR_OPENAI_API_KEY = "test-provider-key";
+    delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+    writeContext(root, {
+      session_id: "general-session",
+      message_id: "general-message",
+      token: "general-bearer-must-not-persist",
+      target_executor_id: "general-workstation",
+      target_document_title: "general-model",
+      target_document_path: "C:\\models\\general-model.rvt"
+    });
+
+    const pending = runWithRevitToolAlias("revit_query_elements", () => callRevit<{ count: number }>(
+      "/revit/query", "POST", { category: "Air Terminals", limit: 5000 }
+    ));
+    const jobRef = await waitForJob(root);
+    const job = JSON.parse(fs.readFileSync(path.join(jobRef.dir, "job.json"), "utf8"));
+    assert.equal(job.version, "revit-operator.revit-tool-job.v1");
+    assert.equal(job.turn_token, undefined);
+    assert.equal(job.turn_token_sha256, `sha256:${createHash("sha256").update("general-bearer-must-not-persist", "utf8").digest("hex")}`);
+    assert.equal(JSON.stringify(job).includes("general-bearer-must-not-persist"), false);
+    assert.deepEqual(job.general_agent_admission, {
+      schema: "revit-operator.general-agent-courier-admission.v1",
+      source: "backend_general_agent",
+      runtime_mode: "hosted",
+      exposure_profile: "general",
+      capability_profile: "general_agent",
+      general_agent_ready: true,
+      method: "POST",
+      path: "/revit/query",
+      channel: "typed_mcp",
+      alias: "revit_query_elements",
+      request_hash: job.general_agent_admission.request_hash,
+      effect_hash: job.general_agent_admission.effect_hash
+    });
+    assert.match(job.general_agent_admission.request_hash, /^sha256:[0-9a-f]{64}$/);
+    assert.match(job.general_agent_admission.effect_hash, /^sha256:[0-9a-f]{64}$/);
+    writeSucceededResult(jobRef, { count: 42 });
+    assert.deepEqual(await pending, { count: 42 });
   } finally {
     restore();
   }

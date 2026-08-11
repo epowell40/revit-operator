@@ -67,6 +67,44 @@ function writeJob(root: string, overrides: Record<string, unknown> = {}): string
   return id;
 }
 
+test("hosted General Agent v1 jobs require and preserve an exact route-bound admission", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-general-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.REVIT_OPERATOR_MODE = "hosted";
+  delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
+  process.env.OPERATOR_AUTH_MODE = "principal_jwt";
+  process.env.OPERATOR_BRAIN = "codex";
+  process.env.OPERATOR_OPENAI_API_KEY = "test-provider-key";
+  const requestHash = `sha256:${"1".repeat(64)}`;
+  const effectHash = `sha256:${"2".repeat(64)}`;
+  const id = writeJob(root, {
+    turn_token_sha256: `sha256:${"3".repeat(64)}`,
+    target_executor_id: "worker-1",
+    general_agent_admission: {
+      schema: "revit-operator.general-agent-courier-admission.v1",
+      source: "backend_general_agent",
+      runtime_mode: "hosted",
+      exposure_profile: "general",
+      capability_profile: "general_agent",
+      general_agent_ready: true,
+      method: "GET",
+      path: "/revit/ping",
+      channel: "typed_mcp",
+      alias: "revit_ping",
+      request_hash: requestHash,
+      effect_hash: effectHash
+    }
+  });
+  const claim = claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job;
+  assert.equal(claim?.id, id);
+  assert.equal((claim as any)?.turn_token, undefined);
+  assert.equal((claim as any)?.general_agent_admission?.request_hash, requestHash);
+
+  delete process.env.OPERATOR_AUTH_MODE;
+  delete process.env.OPERATOR_BRAIN;
+  delete process.env.OPERATOR_OPENAI_API_KEY;
+});
+
 function writeCertifiedPolicy(root: string, options: { exposed?: boolean; policyHashSuffix?: string } = {}): {
   policyPath: string;
   policyHash: string;

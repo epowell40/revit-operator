@@ -156,10 +156,26 @@ type CourierJob = {
   body_json?: string;
   body_present?: boolean;
   certification_envelope?: CertificationEnvelope;
+  general_agent_admission?: GeneralAgentCourierAdmission;
   laboratory_evidence?: LaboratoryEvidenceDispatchDto;
   laboratory_move_evidence_admission?: LaboratoryMoveEvidenceAdmissionDto;
   [key: string]: unknown;
 };
+
+export type GeneralAgentCourierAdmission = Readonly<{
+  schema: "revit-operator.general-agent-courier-admission.v1";
+  source: "backend_general_agent";
+  runtime_mode: "hosted" | "production";
+  exposure_profile: "general";
+  capability_profile: "general_agent";
+  general_agent_ready: true;
+  method: string;
+  path: string;
+  channel: ToolExposureChannel;
+  alias: string;
+  request_hash: string;
+  effect_hash: string;
+}>;
 
 export type RevitCourierCallOptions = {
   /**
@@ -709,9 +725,21 @@ export async function callRevitViaCourier<T>(
   const now = Date.now();
   const runtime = getToolExposureRuntimeDecision();
   const certified = runtime.certified;
-  const laboratoryDecision = !certified && isExactDevelopmentLaboratory() && options.certifiedAdmission
+  const nonCertifiedDecision = !certified && options.certifiedAdmission
     ? readCertifiedCourierAdmissionBinding(options.certifiedAdmission).decision
     : undefined;
+  const generalDecision = runtime.mode === "general" ? nonCertifiedDecision : undefined;
+  const laboratoryDecision = runtime.mode === "laboratory" && isExactDevelopmentLaboratory()
+    ? nonCertifiedDecision
+    : undefined;
+  if (generalDecision && (generalDecision.allowed !== true
+    || generalDecision.mode !== "general"
+    || (generalDecision.runtimeMode !== "hosted" && generalDecision.runtimeMode !== "production")
+    || generalDecision.method !== normalizedMethod
+    || generalDecision.path !== revitPath
+    || !generalDecision.alias)) {
+    throw new Error("General Agent courier publication requires the exact admitted alias, request, and hosted runtime.");
+  }
   if (laboratoryDecision && (laboratoryDecision.allowed !== true
     || laboratoryDecision.mode !== "laboratory"
     || laboratoryDecision.method !== normalizedMethod
@@ -741,7 +769,7 @@ export async function callRevitViaCourier<T>(
       evidence_step: laboratoryDispatchBinding?.evidenceStep ?? null
     })
     : "";
-  const rawBody = certified || options.laboratoryMoveEvidenceAdmission ? rawJsonBody(body) : undefined;
+  const rawBody = certified || generalDecision || options.laboratoryMoveEvidenceAdmission ? rawJsonBody(body) : undefined;
   const legacyBodyJson = JSON.stringify(body) ?? "null";
   const bodyForSizeCheck = rawBody?.json ?? legacyBodyJson;
   if (Buffer.byteLength(bodyForSizeCheck, "utf8") > 2 * 1024 * 1024) throw new Error("Revit courier request body exceeds 2 MiB.");
@@ -755,6 +783,22 @@ export async function callRevitViaCourier<T>(
     bodyJson: rawBody.json,
     certifiedMoveOneAdmission: binding.certifiedMoveOneAdmission
   }) : undefined;
+  const generalAgentAdmission: GeneralAgentCourierAdmission | undefined = generalDecision
+    ? Object.freeze({
+      schema: "revit-operator.general-agent-courier-admission.v1",
+      source: "backend_general_agent",
+      runtime_mode: generalDecision.runtimeMode as "hosted" | "production",
+      exposure_profile: "general",
+      capability_profile: "general_agent",
+      general_agent_ready: true,
+      method: generalDecision.method,
+      path: generalDecision.path,
+      channel: generalDecision.channel,
+      alias: generalDecision.alias!,
+      request_hash: generalDecision.requestHash,
+      effect_hash: generalDecision.effectHash
+    })
+    : undefined;
   const idempotencyKey = envelope && rawBody
     ? v2IdempotencyKey(context, normalizedMethod, revitPath, rawBody, envelope)
     : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson, laboratoryDiscriminator);
@@ -803,7 +847,7 @@ export async function callRevitViaCourier<T>(
     id,
     session_id: context.session_id,
     message_id: context.message_id ?? null,
-    ...((envelope || laboratoryEvidence)
+    ...((envelope || laboratoryEvidence || generalAgentAdmission)
       ? { turn_token_sha256: context.token ? sha256(context.token) : null }
       : { turn_token: context.token ?? null }),
     correlation_id: id,
@@ -816,6 +860,7 @@ export async function callRevitViaCourier<T>(
     ...(body === undefined ? {} : { body }),
     ...(rawBody ? { body_json: rawBody.json, body_present: rawBody.present } : {}),
     ...(envelope ? { certification_envelope: envelope } : {}),
+    ...(generalAgentAdmission ? { general_agent_admission: generalAgentAdmission } : {}),
     ...(laboratoryEvidence ? { laboratory_evidence: laboratoryEvidence } : {}),
     ...(laboratoryMoveEvidenceAdmission ? { laboratory_move_evidence_admission: laboratoryMoveEvidenceAdmission } : {}),
     created_at: new Date(now).toISOString(),

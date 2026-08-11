@@ -20,7 +20,7 @@ import {
 
 export const TOOL_EXPOSURE_CHANNELS = ["search", "generic_call", "typed_mcp", "deterministic_workflow"] as const;
 export type ToolExposureChannel = typeof TOOL_EXPOSURE_CHANNELS[number];
-export type ToolExposureMode = "certified" | "laboratory";
+export type ToolExposureMode = "certified" | "laboratory" | "general";
 /**
  * Cross-runtime envelope/policy canonicalization: NFC text, CRLF/CR folded
  * to LF, ordinal key sort, no duplicate normalized keys, and compact JSON.
@@ -147,10 +147,16 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
     : "";
   const runtimeMode = normalizeRuntimeMode(env.REVIT_OPERATOR_MODE);
   const requested = rawRequestedProfile.trim().toLowerCase();
+  const exactHostedProduction = rawRuntimeMode === "hosted" || rawRuntimeMode === "production";
+  const configuredAuth = (env.OPERATOR_AUTH_MODE ?? "").trim().toLowerCase();
+  const principalAuth = configuredAuth === "principal_jwt" || (configuredAuth === "" && exactHostedProduction);
+  const productionBrain = env.OPERATOR_BRAIN === "codex" || env.OPERATOR_BRAIN === "openai" || env.OPERATOR_BRAIN === "auto";
+  const providerReady = !!((env.OPERATOR_OPENAI_API_KEY ?? "").trim() || (env.OPENAI_API_KEY ?? "").trim());
+  const hostedGeneralReady = exactHostedProduction && principalAuth && productionBrain && providerReady;
   // This is the sole certification escape. Keep it bound to the exact raw
   // deployment values so normalization cannot silently weaken the boundary.
   const explicitLaboratory = rawRuntimeMode === "development" && rawRequestedProfile === "laboratory";
-  if (requested && requested !== "certified" && requested !== "laboratory") {
+  if (requested && requested !== "certified" && requested !== "laboratory" && requested !== "general") {
     return {
       runtimeMode,
       mode: "certified",
@@ -161,6 +167,15 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
   }
 
   if (runtimeMode === "hosted" || runtimeMode === "production") {
+    if (hostedGeneralReady && (rawRequestedProfile === "" || rawRequestedProfile === "general")) {
+      return {
+        runtimeMode,
+        mode: "general",
+        certified: false,
+        explicitLaboratory: false,
+        reason: "authenticated hosted General Agent exposure is active"
+      };
+    }
     return {
       runtimeMode,
       mode: "certified",
@@ -168,7 +183,9 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
       explicitLaboratory: false,
       reason: requested === "laboratory"
         ? "laboratory mode is not permitted in hosted or production runtime; failing closed"
-        : "hosted and production runtimes require certified exposure"
+        : requested === "certified"
+          ? "explicit certified exposure is active"
+          : "hosted General Agent exposure requires principal authentication, an enabled provider, and an exact production brain; failing closed"
     };
   }
 
@@ -534,7 +551,7 @@ function evaluateToolExposureInternal(input: {
   }
   const reqHash = input.requestFamily ? input.requestInstanceHash! : requestHash(method, input.path, input.body, runtime.certified);
   const effHash = effectHash(input.path, method, input.body, input.workflow);
-  if (runtime.mode === "laboratory") {
+  if (runtime.mode === "laboratory" || runtime.mode === "general") {
     return {
       allowed: true,
       mode: runtime.mode,
@@ -545,7 +562,7 @@ function evaluateToolExposureInternal(input: {
       requestHash: reqHash,
       effectHash: effHash,
       knownRoute: false,
-      reasonCodes: ["LABORATORY_MODE_ACTIVE"],
+      reasonCodes: [runtime.mode === "general" ? "GENERAL_AGENT_MODE_ACTIVE" : "LABORATORY_MODE_ACTIVE"],
       ...(alias ? { alias } : {}),
       ...(input.requestFamily ? { requestFamily: input.requestFamily, requestInstanceHash: reqHash } : {}),
       ...(workflow === undefined ? {} : { workflow })
@@ -920,7 +937,7 @@ export function createCertifiedCourierAdmission(input: {
   const runtime = getToolExposureRuntimeDecision(env);
   const protectedLaboratory = runtime.mode === "laboratory"
     && env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
-  if (!runtime.certified && !protectedLaboratory) return undefined;
+  if (!runtime.certified && !protectedLaboratory && runtime.mode !== "general") return undefined;
   const alias = String(invokedMcpAlias.getStore() ?? "").trim();
   if (!alias) {
     throw new ToolExposurePolicyError(
