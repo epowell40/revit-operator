@@ -3,7 +3,8 @@ import test from "node:test";
 import { CertifiedCapabilityProjectionError, projectCertifiedCapabilities } from "./certifiedCapabilityProjection.js";
 import {
   assertDiscoveredCapability,
-  discoverGeneralAgentCapabilities
+  discoverGeneralAgentCapabilities,
+  discoverHostedGeneralAgentCapabilities
 } from "./generalAgentCapabilityDiscovery.js";
 import { loadToolExposurePolicy } from "./toolExposurePolicy.js";
 
@@ -35,4 +36,19 @@ test("dynamic affordance never enters certified policy membership or its discove
     (error: unknown) => error instanceof CertifiedCapabilityProjectionError
       && error.code === "CAPABILITY_DISCOVERY_CAPABILITY_DENIED"
   );
+});
+
+test("hosted General Agent discovery ranks live project query and write registry primitives", async () => {
+  const result = await discoverHostedGeneralAgentCapabilities({ need: "count air terminal equipment and change parameters", maxResults: 3 }, async () => ({
+    tools: [
+      { method: "POST", path: "/revit/query", title: "Query Elements", description: "Find and count elements by category including Air Terminals." },
+      { method: "POST", path: "/revit/set-parameter", title: "Set Parameters", description: "Change equipment instance or type parameters." },
+      { method: "GET", path: "/revit/context", title: "Context", description: "Current document and view." }
+    ]
+  }));
+  assert.equal(result.exposureMode, "general");
+  assert.equal(result.typedCatalogExposure, "full");
+  assert.equal(result.status, "available");
+  assert.deepEqual(new Set(result.capabilities.map(item => item.path)), new Set(["/revit/query", "/revit/set-parameter"]));
+  assert.equal(result.capabilities.every(item => item.authorization === "general_agent_ready"), true);
 });

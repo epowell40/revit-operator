@@ -51,7 +51,7 @@ import {
   assertCertifiedMoveOneToolExposure
 } from "./lib/toolExposurePolicy.js";
 
-import { discoverGeneralAgentCapabilities } from "./lib/generalAgentCapabilityDiscovery.js";
+import { discoverGeneralAgentCapabilities, discoverHostedGeneralAgentCapabilities } from "./lib/generalAgentCapabilityDiscovery.js";
 import {
   EXECUTION_STRATEGY_EVIDENCE_V1,
   recordExecutionStrategyEvidence
@@ -581,29 +581,8 @@ server.tool("operator_discover_capabilities", "Discover a bounded set of availab
 }, async (args) => {
   const runtime = getToolExposureRuntimeDecision();
   if (runtime.mode === "general") {
-    const registry = await getToolRegistry();
-    const query = String(args.need ?? "").trim();
-    const maxResults = args.maxResults ?? 4;
-    const capabilities = (registry.tools ?? [])
-      .map(tool => ({ tool, score: scoreToolMatch(tool, query) }))
-      .filter(item => item.score > 0)
-      .sort((left, right) => right.score - left.score
-        || `${left.tool.method} ${left.tool.path}`.localeCompare(`${right.tool.method} ${right.tool.path}`))
-      .slice(0, maxResults)
-      .map(item => ({
-        ...compactToolForList(item.tool, item.score),
-        executionTool: "revit_call_tool",
-        authorization: "general_agent_ready"
-      }));
-    return { content: [{ type: "text", text: JSON.stringify({
-      schemaVersion: "revit-operator.general-agent-capability-discovery.v2",
-      status: capabilities.length ? "available" : "unavailable",
-      runtimeMode: runtime.runtimeMode,
-      exposureMode: runtime.mode,
-      typedCatalogExposure: "full",
-      capabilities,
-      reasonCodes: capabilities.length ? ["GENERAL_AGENT_CAPABILITIES_FOUND"] : ["GENERAL_AGENT_CAPABILITIES_UNAVAILABLE"]
-    }, null, 2) }] };
+    const result = await discoverHostedGeneralAgentCapabilities(args, getToolRegistry);
+    return { content: [{ type: "text", text: JSON.stringify({ ...result, runtimeMode: runtime.runtimeMode }, null, 2) }] };
   }
   return { content: [{ type: "text", text: JSON.stringify(discoverGeneralAgentCapabilities(args), null, 2) }] };
 });
