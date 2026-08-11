@@ -116,6 +116,17 @@
       "epic0441_task_refs": ["r13_type_change_accessory", "r14_type_change_device"]
     },
     {
+      "case_id": "b07_grounded_equipment_rename",
+      "source": "user_basic",
+      "operation_family": "parameter_edit",
+      "prompt": "Find the mechanical-equipment instance with the lowest element ID whose Mark is writable, change only that instance's Mark to TEST-AHU-01, and verify the exact element and new value.",
+      "probe_prompt": "Find the mechanical-equipment instance with the lowest element ID whose Mark is writable and preview changing only that instance's Mark to TEST-AHU-01. Report the exact target and readback plan; do not apply it.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-parameters", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-parameters", "/revit/set-parameter", "/revit/update-parameter-by-query"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r01_schedule_value_edit"]
+    },
+    {
       "case_id": "s01_create_schedule",
       "source": "user_extended",
       "operation_family": "schedule_create",
@@ -171,6 +182,17 @@
       "epic0441_task_refs": ["r01_schedule_value_edit"]
     },
     {
+      "case_id": "s06_filter_named_schedule",
+      "source": "user_extended",
+      "operation_family": "schedule_configure",
+      "prompt": "On the schedule named TEST MECHANICAL EQUIPMENT, add a filter so Mark begins with AHU and verify the saved schedule definition.",
+      "probe_prompt": "Inspect the schedule named TEST MECHANICAL EQUIPMENT and preview adding a begins-with AHU filter on Mark. Do not change the schedule.",
+      "capability_paths": ["/revit/schedules", "/revit/configure-schedule"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/configure-schedule"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["g23_schedule_configure"]
+    },
+    {
       "case_id": "v01_hide_show_category",
       "source": "user_extended",
       "operation_family": "view_visibility",
@@ -222,6 +244,17 @@
       "probe_prompt": "Resolve an eligible non-template plan view and an available view template, then preview applying that template to the view. Do not change the view.",
       "capability_paths": ["/revit/views", "/revit/visibility"],
       "dispatch_any_of": ["/revit/views", "/revit/visibility", "/revit/native-api-search"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
+    },
+    {
+      "case_id": "v06_create_apply_named_view_template",
+      "source": "user_extended",
+      "operation_family": "view_template",
+      "prompt": "Find the non-template FloorPlan view with the lowest element ID, create a view template named TEST HVAC COORDINATION TEMPLATE from it, apply the new template to that same source view, and verify the exact template assignment.",
+      "probe_prompt": "Find the non-template FloorPlan view with the lowest element ID and preview creating TEST HVAC COORDINATION TEMPLATE from it and applying the template back to that source view. Do not change the model.",
+      "capability_paths": ["/revit/views", "/revit/create-view", "/revit/visibility"],
+      "dispatch_any_of": ["/revit/views", "/revit/create-view", "/revit/visibility", "/revit/native-api-search", "/revit/native-api-mutation-ops"],
       "expected_effect": "preview",
       "epic0441_task_refs": ["g22_sheet_view_package"]
     },

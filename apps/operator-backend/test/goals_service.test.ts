@@ -917,6 +917,26 @@ test("an explicit task-level blocker still blocks after a successful discovery o
   });
 });
 
+test("a blocked mutation receipt overrides successful tool observations in durable assignment state", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-auto-receipt-blocked", {
+      title: "Create a schedule", objective: "Create and verify a mechanical equipment schedule.",
+      acceptance_criteria: ["The new schedule is verified in Revit."], work_budget: { mode: "auto_goal" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-auto-receipt-blocked");
+    observer.observe({ server: "revit_operator", tool: "revit_create_schedule", success: true, result: { id: 1542917 } });
+    observer.observe({ server: "revit_operator", tool: "revit_list_schedules", success: true, result: { id: 1542917, fieldCount: 4 } });
+    observer.finish("turn-receipt-blocked", "Created the schedule.", {
+      stage: "blocked", verified: false, apply_attempts: 1, blocked_reason: "post_apply_verification_required"
+    });
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.completion_audit?.complete ?? false, false);
+    assert.equal(persisted?.validation_log.length, 0);
+  });
+});
+
 test("a failed exploratory Revit call can be repaired by a later substantive success", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-recovered", {

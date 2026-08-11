@@ -99,7 +99,7 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
         version: "operator.backend.v1",
         session_id: sessionId,
         message_id: id(`capability-${testCase.case_id}`),
-        user_text: testCase.probe_prompt,
+        user_text: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
         context: { ui: { client: "operator-desktop", surface: "general-revit-capability-acceptance" } }
       })
     }, Number.parseInt(flag("--timeout-ms", "180000"), 10) || 180_000);
@@ -123,7 +123,12 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
     operation_family: testCase.operation_family,
     started_at: startedAt,
     finished_at: finishedAt,
-    user_intent: { production_prompt: testCase.prompt, safe_probe_prompt: testCase.probe_prompt },
+    user_intent: {
+      production_prompt: testCase.prompt,
+      safe_probe_prompt: testCase.probe_prompt,
+      executed_prompt: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
+      mutation_requested: process.argv.includes("--apply")
+    },
     initial_model_state: initialState,
     context_supplied: { session_id: sessionId, ui_surface: "general-revit-capability-acceptance", suite: suiteContext },
     agent_reasoning_plan_representation: Array.isArray(attempt.rounds) ? attempt.rounds : [],
@@ -170,15 +175,16 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
 async function main(): Promise<void> {
   if (process.argv.includes("--help")) {
     console.log([
-      "General Revit capability acceptance runner (safe probes only)",
+      "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE] [--apply] [--require-completion]",
       "",
-      "The corpus is representative regression coverage, not a capability allowlist. This runner always sends probe_prompt, which explicitly forbids mutation."
+      "The corpus is representative regression coverage, not a capability allowlist. By default the runner sends non-mutating probe_prompt. --apply sends the production prompt and permits model mutation."
     ].join("\n"));
     return;
   }
   const corpus = loadGeneralRevitCapabilityCorpus();
+  const applyRequested = process.argv.includes("--apply");
   const selected = selectCases(corpus.cases);
   if (selected.length === 0) throw new Error("No cases matched the requested filters.");
   const sidecar = flag("--sidecar", "http://127.0.0.1:3908").replace(/\/$/, "");
@@ -195,7 +201,9 @@ async function main(): Promise<void> {
     write_grant: safeGrant(grant),
     corpus_schema: corpus.schema_version,
     corpus_sha256: sha256(corpus),
-    mutation_policy: "safe probe prompts only; no apply requested"
+    mutation_policy: applyRequested
+      ? "production prompts; mutation explicitly requested by the test operator"
+      : "safe probe prompts only; no apply requested"
   };
   const traces: JsonRecord[] = [];
   for (const testCase of selected) {

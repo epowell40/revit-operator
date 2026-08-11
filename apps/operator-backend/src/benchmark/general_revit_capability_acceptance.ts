@@ -206,11 +206,30 @@ function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; b
   return { completed, blocked, verified };
 }
 
+function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: boolean; blocked: boolean; verified: boolean } {
+  const value = attempt.teammate_loop_receipt;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { mutationAttempted: false, blocked: false, verified: false };
+  }
+  const receipt = value as { turn_kind?: unknown; stage?: unknown; blocked_reason?: unknown; apply_attempts?: unknown; verified?: unknown };
+  const mutationAttempted = receipt.turn_kind === "mutation" && Number(receipt.apply_attempts) > 0;
+  const blocked = receipt.stage === "blocked"
+    || (typeof receipt.blocked_reason === "string" && receipt.blocked_reason.trim().length > 0)
+    || (mutationAttempted && receipt.verified !== true);
+  return { mutationAttempted, blocked, verified: mutationAttempted && receipt.verified === true && !blocked };
+}
+
 function combinedMessage(attempt: GeneralRevitAttempt): string {
   return [attempt.assistant_message, attempt.error]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join("\n")
     .trim();
+}
+
+function assistantReportsIncompleteMutation(attempt: GeneralRevitAttempt): boolean {
+  if (!teammateLoopTruth(attempt).mutationAttempted) return false;
+  const text = combinedMessage(attempt);
+  return /\[teammate_loop_blocked\]|\bassignment is blocked\b|\bcannot claim (?:the )?(?:revit )?change is complete\b|\brequest(?:ed)?(?: [^.\n]{0,80})? (?:is|was) not (?:yet )?complete\b|\bnot yet complete\b/i.test(text);
 }
 
 export function capabilityRefusalReason(attempt: GeneralRevitAttempt, expectedPathObserved = false): string | null {
@@ -250,18 +269,21 @@ export function evaluateGeneralRevitCapabilityAttempt(
     ...durableTools.map((tool) => `mcp:${tool}`)
   ])];
   const expectedPathObserved = observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate)) || durableTools.length > 0;
-  const applyDispatched = attempt.effect_state === "apply_dispatched"
+  const teammate = teammateLoopTruth(attempt);
+  const applyDispatched = teammate.mutationAttempted || attempt.effect_state === "apply_dispatched"
     || rows.some((row) => row.request_effect === "apply" && row.request_dispatched === true);
   const dispatched = applyDispatched || attempt.effect_state === "read_only_dispatched"
     || rows.some((row) => row.request_dispatched === true) || durableTools.length > 0;
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
+  const assistantIncomplete = assistantReportsIncompleteMutation(attempt);
   const refusalReason = capabilityRefusalReason(attempt, expectedPathObserved);
-  const completed = attempt.ok !== false && expectedPathObserved && !outcomeUnknown && !durable.blocked && (dispatched || durable.completed);
-  const verified = completed && (hasStructuredVerificationEvidence(attempt) || durable.verified);
+  const completed = attempt.ok !== false && expectedPathObserved && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete
+    && (dispatched || durable.completed);
+  const verified = completed && (teammate.verified || hasStructuredVerificationEvidence(attempt) || durable.verified);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
-  else if (attempt.ok === false || outcomeUnknown || durable.blocked) tier = "failed";
+  else if (attempt.ok === false || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";

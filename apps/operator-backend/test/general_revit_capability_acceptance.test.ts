@@ -153,3 +153,56 @@ test("execution failures remain non-refusals while still failing completion", ()
   assert.equal(result.non_refusal, true);
   assert.equal(result.completed, false);
 });
+
+test("a blocked mutation receipt overrides a contradictory completed assignment", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "b03_create_view")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The view was created, but post-apply verification did not complete.",
+    teammate_loop_receipt: {
+      turn_kind: "mutation",
+      stage: "blocked",
+      apply_attempts: 1,
+      verified: false,
+      blocked_reason: "post_apply_verification_required"
+    },
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] }
+      }]
+    }
+  });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.apply_dispatched, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+});
+
+test("an assistant-reported incomplete mutation cannot be scored verified", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "v06_create_apply_named_view_template")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The assignment is blocked this turn. The requested new assignment is not yet complete.",
+    teammate_loop_receipt: {
+      turn_kind: "mutation",
+      stage: "report",
+      apply_attempts: 1,
+      verified: true,
+      blocked_reason: null
+    },
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] }
+      }]
+    }
+  });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+});
