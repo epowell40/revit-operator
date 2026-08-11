@@ -99,6 +99,7 @@ test("task projection preserves preview approval, target binding, effects, and u
     updated_at: CREATED_AT,
     executor_kind: "revit_delegate",
     source: {
+      backend_surface: "revit_batch",
       session_id: "session-1",
       user_request: "Place two air terminals",
       target_context: {
@@ -108,7 +109,12 @@ test("task projection preserves preview approval, target binding, effects, and u
       }
     },
     plan: {
-      approval: { required: true, preview_hash: "preview-sha256" },
+      approval: {
+        required: true,
+        preview_hash: `sha256:${"a".repeat(64)}`,
+        preview_binding_schema: "revit-operator.batch-preview-binding.v1",
+        preview_hash_verified: true
+      },
       preview_items: [{ action: "create", category: "Air Terminals" }]
     },
     progress: { total: 2, succeeded: 0, running: 0, pending: 2, failed: 0, skipped: 0 },
@@ -127,7 +133,7 @@ test("task projection preserves preview approval, target binding, effects, and u
 
   assert.equal(assignment.lifecycle.phase, "awaiting_approval");
   assert.equal(assignment.approvals[0]?.status, "awaiting");
-  assert.equal(assignment.approvals[0]?.preview_hash, "preview-sha256");
+  assert.equal(assignment.approvals[0]?.preview_hash, `sha256:${"a".repeat(64)}`);
   assert.equal(assignment.approvals[0]?.binding_status, "bound");
   assert.equal(assignment.target.document_fingerprint, "fingerprint-1");
   assert.deepEqual(assignment.effects.created_ids, ["101", "102"]);
@@ -137,6 +143,17 @@ test("task projection preserves preview approval, target binding, effects, and u
     reconciliation_required: true
   });
   assert.equal(assignment.artifacts[0]?.role, "deliverable");
+});
+
+test("task projection never calls an unverified caller-supplied preview hash bound", () => {
+  const assignment = projectTaskAssignment({
+    id: "task-forged-preview", title: "Forged preview", status: "awaiting_approval",
+    created_at: CREATED_AT, updated_at: CREATED_AT,
+    source: { backend_surface: "caller" },
+    plan: { approval: { required: true, preview_hash: `sha256:${"b".repeat(64)}` } },
+    progress: {}, result: {}, evidence: {}, artifacts: {}, related: {}, verification: {}, events: []
+  });
+  assert.equal(assignment.approvals[0]?.binding_status, "unbound");
 });
 
 test("only explicit goal relations merge Task and Goal records", () => {

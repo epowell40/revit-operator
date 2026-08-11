@@ -965,11 +965,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
           const mcpStatus = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
           const mcpError = typeof item.error === "string" ? item.error.trim() : "";
           assignmentObserver.observe({
+            server: typeof item.server === "string" ? item.server : null,
             tool: typeof item.tool === "string" ? item.tool : "mcp_tool",
             success: mcpError ? false : mcpStatus ? ["success", "ok", "done", "completed"].includes(mcpStatus) : null,
             status: mcpStatus || null,
             error: mcpError || null,
-            duration_ms: typeof item.durationMs === "number" ? item.durationMs : null
+            duration_ms: typeof item.durationMs === "number" ? item.durationMs : null, arguments: item.arguments ?? null, result: item.result ?? item.content ?? item.contentItems ?? null
           });
           if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, {
             server: item.server,

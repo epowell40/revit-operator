@@ -2,48 +2,93 @@ import {
   appendGoalProgress,
   appendTrustedServerGoalValidation,
   getActiveGoalForSession,
-  listGoals,
+  getCurrentGoalForSession,
   markAgentGoalBlocked,
   markAgentGoalComplete
 } from "./service.js";
 
 export type AutoGoalToolObservation = {
+  server?: string | null;
   tool: string;
   success: boolean | null;
   status?: string | null;
   error?: string | null;
   duration_ms?: number | null;
+  arguments?: unknown;
+  result?: unknown;
+  output?: unknown;
 };
 
 export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
-  return sessionId
-    ? listGoals(100).find(goal => goal.related_session_id === sessionId && ["paused", "canceled", "failed"].includes(goal.status)) ?? null
-    : null;
+  const current = getCurrentGoalForSession(sessionId);
+  return current && ["paused", "blocked"].includes(current.status) ? current : null;
 }
 
 export function createAutoGoalTurnObserver(sessionId: string) {
-  let successfulTools = 0;
-  let failedTools = 0;
+  let successfulRevitTools = 0;
+  let failedRevitTools = 0;
   return {
     observe(observation: AutoGoalToolObservation) {
-      if (observation.success === true) successfulTools += 1;
-      if (observation.success === false) failedTools += 1;
+      if (isCompletionEvidence(observation) && observation.success === true) successfulRevitTools += 1;
+      if (isCompletionRelevant(observation) && observation.success === false) failedRevitTools += 1;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
     finish(turnId: string, assistantText: string) {
       try {
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
         const blockedOutcome = /\b(could not|cannot|can't|unable|blocked|not verified|failed)\b/i.test(assistantText);
-        if (!pendingApproval && !blockedOutcome && successfulTools > 0) {
-          completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: successfulTools, assistant_summary: assistantText });
-        } else if (blockedOutcome || (failedTools > 0 && successfulTools === 0)) {
-          blockAutoGoalFromTurn(sessionId, assistantText || "The General Agent turn ended without a successful live Revit tool result.");
+        if (!pendingApproval && !blockedOutcome && successfulRevitTools > 0 && failedRevitTools === 0) {
+          completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: successfulRevitTools, assistant_summary: assistantText });
+        } else if (failedRevitTools > 0 || blockedOutcome) {
+          blockAutoGoalFromTurn(sessionId, failedRevitTools > 0
+            ? "One or more live Revit tool calls failed; completion requires a clean verified turn."
+            : assistantText || "The General Agent turn ended without a successful live Revit tool result.");
         }
       } catch {
         // Assignment journaling is fail-safe and must not replace a completed user response.
       }
     }
   };
+}
+
+function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
+  const server = (observation.server ?? "").trim().toLowerCase();
+  const tool = observation.tool.trim().toLowerCase();
+  return server === "revit_operator" || server.startsWith("mcp__revit_operator") || tool.startsWith("revit_");
+}
+
+function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
+  if (!isCompletionRelevant(observation)) return false;
+  const result = observation.result ?? observation.output;
+  if (result === null || result === undefined) return false;
+  if (typeof result === "string") return result.trim().length > 0;
+  if (Array.isArray(result)) return result.length > 0;
+  if (typeof result === "object") return Object.keys(result as object).length > 0;
+  return true;
+}
+
+function isCompletionRelevant(observation: AutoGoalToolObservation): boolean {
+  if (!isLiveRevitObservation(observation)) return false;
+  const tool = observation.tool.trim().toLowerCase();
+  const discoveryTools = new Set([
+    "operator_runtime_probe",
+    "operator_discover_capabilities",
+    "operator_record_execution_strategy",
+    "revit_ping",
+    "revit_get_context",
+    "revit_search_tools",
+    "revit_tool_registry",
+    "revit_tool_doc",
+    "revit_tool_examples",
+    "revit_write_grant_status"
+  ]);
+  if (discoveryTools.has(tool) || /(?:^|_)(?:discovery|strategy|documentation|examples)$/.test(tool)) return false;
+  if (tool === "revit_call_tool") {
+    const args = observation.arguments && typeof observation.arguments === "object" ? observation.arguments as Record<string, unknown> : {};
+    const route = `${args.path || ""}`.trim().toLowerCase();
+    if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return false;
+  }
+  return true;
 }
 
 function activeAutoGoal(sessionId: string) {

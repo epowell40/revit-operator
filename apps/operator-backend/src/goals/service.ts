@@ -130,6 +130,7 @@ export type GoalAssumption = {
 
 export type GoalRecord = {
   id: string;
+  revision?: number;
   title: string;
   objective: string;
   acceptance_criteria: string[];
@@ -230,15 +231,51 @@ function goalPath(goalId: string): string {
 
 function writeJson(filePath: string, value: unknown): void {
   ensureDir(path.dirname(filePath));
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
+  const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  const backupPath = `${filePath}.previous`;
+  let handle: number | null = null;
+  try {
+    handle = fs.openSync(tempPath, "wx");
+    fs.writeFileSync(handle, JSON.stringify(value, null, 2) + "\n", "utf8");
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = null;
+    if (fs.existsSync(filePath)) fs.copyFileSync(filePath, backupPath);
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    if (handle !== null) fs.closeSync(handle);
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+  }
 }
 
 function readJson<T>(filePath: string): T | null {
+  for (const candidate of [filePath, `${filePath}.previous`]) {
+    try {
+      if (fs.existsSync(candidate)) return JSON.parse(fs.readFileSync(candidate, "utf8")) as T;
+    } catch {
+      // A torn/corrupt primary falls back to the last atomically replaced copy.
+    }
+  }
+  return null;
+}
+
+function withGoalLock<T>(goalId: string, fn: () => T): T {
+  const lockPath = path.join(ensureDir(goalDir(goalId)), "goal.lock");
+  let handle: number;
   try {
-    if (!fs.existsSync(filePath)) return null;
-    return JSON.parse(fs.readFileSync(filePath, "utf8")) as T;
-  } catch {
-    return null;
+    handle = fs.openSync(lockPath, "wx");
+  } catch (error: any) {
+    if (error?.code !== "EEXIST") throw error;
+    const ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+    if (ageMs <= 60_000) throw new Error(`Goal ${goalId} is being updated; retry the operation.`);
+    fs.unlinkSync(lockPath);
+    handle = fs.openSync(lockPath, "wx");
+  }
+  try {
+    return fn();
+  } finally {
+    fs.closeSync(handle);
+    if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
   }
 }
 
@@ -658,9 +695,15 @@ function assertTransition(from: GoalStatus, to: GoalStatus): void {
 }
 
 function saveGoal(goal: GoalRecord): GoalRecord {
-  const next = { ...goal, updated_at: nowIso() };
-  writeJson(goalPath(next.id), next);
-  return next;
+  return withGoalLock(goal.id, () => {
+    const persisted = readJson<GoalRecord>(goalPath(goal.id));
+    const expectedRevision = Number.isInteger(goal.revision) ? goal.revision : 0;
+    const persistedRevision = Number.isInteger(persisted?.revision) ? Number(persisted!.revision) : 0;
+    if (persisted && persistedRevision !== expectedRevision) throw new Error(`Goal ${goal.id} changed concurrently; reload and retry.`);
+    const next = { ...goal, revision: persistedRevision + 1, updated_at: nowIso() };
+    writeJson(goalPath(next.id), next);
+    return next;
+  });
 }
 
 export function createGoal(input: GoalCreateInput): GoalRecord {
@@ -676,6 +719,7 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
   const status: GoalStatus = requestedStatus === "active" ? "active" : "draft";
   const goal: GoalRecord = {
     id: randomUUID(),
+    revision: 1,
     title,
     objective,
     acceptance_criteria: acceptanceCriteria,
@@ -715,12 +759,13 @@ export function getGoal(goalId: string): GoalRecord | null {
   if (!goal) return null;
   return {
     ...goal,
+    revision: Number.isInteger(goal.revision) ? goal.revision : 0,
     work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
     assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
   };
 }
 
-export function listGoals(limit = 50): GoalRecord[] {
+function readAllGoals(): GoalRecord[] {
   const root = goalsRoot();
   const records: GoalRecord[] = [];
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
@@ -728,12 +773,17 @@ export function listGoals(limit = 50): GoalRecord[] {
     const goal = readJson<GoalRecord>(path.join(root, entry.name, "goal.json"));
     if (goal) records.push({
       ...goal,
+      revision: Number.isInteger(goal.revision) ? goal.revision : 0,
       work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
       assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
     });
   }
   records.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  return records.slice(0, Math.max(1, Math.min(200, limit)));
+  return records;
+}
+
+export function listGoals(limit = 50): GoalRecord[] {
+  return readAllGoals().slice(0, Math.max(1, Math.min(200, limit)));
 }
 
 export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
@@ -919,6 +969,14 @@ export function getActiveGoalForSession(sessionId?: string | null): GoalRecord |
   return candidates[0] ?? null;
 }
 
+export function getCurrentGoalForSession(sessionId?: string | null): GoalRecord | null {
+  const sid = clip(sessionId, 180);
+  if (!sid) return null;
+  return readAllGoals().find(goal =>
+    goal.related_session_id === sid && ["active", "paused", "blocked"].includes(goal.status)
+  ) ?? null;
+}
+
 export function setAgentGoal(sessionId: string, input: AgentGoalSetInput): GoalRecord {
   const sid = clip(sessionId || input.session_id, 180);
   if (!sid) throw new Error("session_id is required.");
@@ -927,8 +985,11 @@ export function setAgentGoal(sessionId: string, input: AgentGoalSetInput): GoalR
     input.acceptanceCriteria ??
     input.success_criteria ??
     input.successCriteria;
-  const existing = getActiveGoalForSession(sid);
+  const existing = getCurrentGoalForSession(sid);
   if (existing) {
+    if (existing.status !== "active") {
+      throw new Error(`Current goal is ${existing.status}; explicitly resume or clear it before starting another assignment.`);
+    }
     return updateGoal(existing.id, {
       ...(input as GoalUpdateInput),
       acceptance_criteria: acceptance,

@@ -136,6 +136,7 @@ import {
   clearAgentGoal,
   getGoal,
   getActiveGoalForSession,
+  getCurrentGoalForSession,
   listGoals,
   markAgentGoalBlocked,
   markAgentGoalComplete,
@@ -2061,7 +2062,7 @@ const server = http.createServer(async (req, res) => {
         return res.end("Provide user_text or tool_results");
       }
 
-      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "stream", auth.principal);
+      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "stream", auth.principal, canonicalRequest.context);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2423,7 +2424,7 @@ const server = http.createServer(async (req, res) => {
         return writeJson(res, 400, { error: "Provide user_text or tool_results" });
       }
 
-      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "chat", auth.principal);
+      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "chat", auth.principal, parsed.context);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -3974,14 +3975,19 @@ function maybeStartAutoGoal(
   userText: string,
   toolResultCount: number,
   source: string,
-  principal?: RequestPrincipal
+  principal?: RequestPrincipal,
+  requestContext?: unknown
 ): void {
   try {
     if (toolResultCount > 0) return;
-    if (getActiveGoalForSession(sessionId)) return;
+    if (getCurrentGoalForSession(sessionId)) return;
     const decision = classifyAutoGoalRequest(userText);
     if (!decision.shouldStart) return;
     const owner = sessionOwnerForPrincipal(principal);
+    const context = objectRecord(requestContext);
+    const revit = objectRecord(context.revit);
+    const document = objectRecord(revit.document);
+    const projectIdentity = objectRecord(document.projectIdentity);
     const goal = setAgentGoal(sessionId, {
       title: decision.title,
       objective: decision.objective,
@@ -3998,6 +4004,11 @@ function maybeStartAutoGoal(
       work_budget: {
         mode: "auto_goal",
         source,
+        source_user_request: decision.objective,
+        executor_id: trimText(revit.courier_executor_id, 180) || null,
+        document_fingerprint: trimText(projectIdentity.fingerprint, 128) || null,
+        document_title: trimText(document.title, 260) || null,
+        document_path: trimText(document.path, 1000) || null,
         score: decision.score,
         signals: decision.signals,
         retry_policy: "bounded spatial/workflow retries; ask or block after no defensible next action"

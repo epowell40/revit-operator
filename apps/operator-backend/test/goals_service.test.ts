@@ -16,6 +16,8 @@ import {
   createGoal,
   formatActiveGoalContext,
   getActiveGoalForSession,
+  getGoal,
+  getCurrentGoalForSession,
   listGoals,
   markAgentGoalBlocked,
   markAgentGoalComplete,
@@ -26,7 +28,7 @@ import {
   type GoalRecord
 } from "../src/goals/service.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
-import { completeAutoGoalFromValidatedTurn, recordAutoGoalToolObservation } from "../src/goals/auto_goal_runtime.js";
+import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation } from "../src/goals/auto_goal_runtime.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   createLocalGoalEvidenceAuthority,
@@ -836,5 +838,105 @@ test("successful live tools complete a quick auto assignment with trusted eviden
     assert.equal(persisted?.completion_audit?.complete, true);
     assert.equal(persisted?.work_items[0]?.status, "complete");
     assert.equal(persisted?.validation_log.length, 2);
+  });
+});
+
+test("auto goal completion requires clean Revit evidence and rejects unrelated successes", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-auto-mixed", {
+      title: "Count devices",
+      objective: "Count live Revit devices.",
+      acceptance_criteria: ["The live count is verified."],
+      work_budget: { mode: "auto_goal" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-auto-mixed");
+    observer.observe({ server: "browser", tool: "browser_open", success: true });
+    observer.observe({ server: "revit_operator", tool: "revit_query", success: false, error: "bridge failed" });
+    observer.finish("turn-mixed", "The browser step succeeded.");
+    const persisted = listGoals(10).find(item => item.id === goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.completion_audit?.complete ?? false, false);
+    assert.equal(persisted?.validation_log.length, 0);
+  });
+});
+
+test("discovery-only Revit calls cannot server-sign assignment completion", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-auto-discovery", {
+      title: "Count devices",
+      objective: "Count live Revit devices.",
+      acceptance_criteria: ["The live count is verified."],
+      work_budget: { mode: "auto_goal" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-auto-discovery");
+    observer.observe({ server: "revit_operator", tool: "revit_search_tools", success: true, result: { tools: ["revit_query"] } });
+    observer.finish("turn-discovery", "I found the requested result.");
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "active");
+    assert.equal(persisted?.completion_audit, null);
+    assert.equal(persisted?.validation_log.length, 0);
+
+    const substantive = createAutoGoalTurnObserver("session-auto-discovery");
+    substantive.observe({ server: "revit_operator", tool: "revit_query", success: true, result: { total: 509 } });
+    substantive.finish("turn-query", "Found 509 air terminals.");
+    assert.equal(getGoal(goal.id)?.status, "complete");
+  });
+});
+
+test("only the current paused or blocked assignment gates dispatch and prevents duplicates", () => {
+  withWorkspace(() => {
+    const historical = setAgentGoal("session-current-only", {
+      title: "Old task", objective: "Old task.", acceptance_criteria: ["Old task done."]
+    });
+    transitionGoal(historical.id, "canceled", "Superseded.");
+    const current = setAgentGoal("session-current-only", {
+      title: "Current task", objective: "Current task.", acceptance_criteria: ["Current task done."]
+    });
+    assert.equal(findInterruptedAutoGoalForSession("session-current-only"), null);
+    markAgentGoalBlocked("session-current-only", "Needs explicit recovery.");
+    assert.equal(findInterruptedAutoGoalForSession("session-current-only")?.id, current.id);
+    assert.equal(getCurrentGoalForSession("session-current-only")?.status, "blocked");
+    assert.throws(() => setAgentGoal("session-current-only", {
+      title: "Duplicate", objective: "Must not start.", acceptance_criteria: ["No duplicate."]
+    }), /explicitly resume or clear/);
+    assert.equal(listGoals(10).filter(goal => goal.related_session_id === "session-current-only").length, 2);
+  });
+});
+
+test("current session lookup is not evicted by unrelated global goal history", () => {
+  withWorkspace(() => {
+    const current = setAgentGoal("session-outside-window", {
+      title: "Paused assignment", objective: "Remain current.", acceptance_criteria: ["Explicitly resumed or cleared."]
+    });
+    transitionGoal(current.id, "paused", "Checkpointed.");
+    for (let index = 0; index < 205; index += 1) {
+      createGoal({
+        title: `Unrelated ${index}`,
+        objective: "Unrelated durable history.",
+        acceptance_criteria: ["History exists."],
+        related_session_id: `other-session-${index}`
+      });
+    }
+    assert.equal(getCurrentGoalForSession("session-outside-window")?.id, current.id);
+    assert.throws(() => setAgentGoal("session-outside-window", {
+      title: "Duplicate", objective: "Must not start.", acceptance_criteria: ["No duplicate."]
+    }), /explicitly resume or clear/);
+  });
+});
+
+test("goal JSON uses revisions and recovers the last complete copy after primary corruption", () => {
+  withWorkspace(() => {
+    const created = setAgentGoal("session-atomic", {
+      title: "Atomic goal", objective: "Persist atomically.", acceptance_criteria: ["State survives corruption."]
+    });
+    const updated = updateGoal(created.id, { progress_summary: "Second revision." });
+    assert.equal(updated.revision, 2);
+    const filePath = path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "artifacts", "goals", created.id, "goal.json");
+    fs.writeFileSync(filePath, "{torn", "utf8");
+    const recovered = getGoal(created.id);
+    assert.equal(recovered?.id, created.id);
+    assert.equal(recovered?.revision, 1);
   });
 });

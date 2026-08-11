@@ -428,7 +428,17 @@ test("principal auto-goals bind ownership to the requester so approval authority
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       session_id: sessionId,
       message_id: "auto-goal-owner-message",
-      user_text: "Update all marked receptacles and verify the completed model changes."
+      user_text: "Update all marked receptacles and verify the completed model changes.",
+      context: {
+        revit: {
+          courier_executor_id: "snowdon-executor",
+          document: {
+            title: "Snowdon Towers Sample HVAC",
+            path: "C:\\Models\\Snowdon Towers Sample HVAC.rvt",
+            projectIdentity: { fingerprint: "snowdon-hvac-fingerprint" }
+          }
+        }
+      }
     })
   });
   assert.equal(chatResponse.status, 200);
@@ -443,12 +453,25 @@ test("principal auto-goals bind ownership to the requester so approval authority
       related_session_id: string;
       created_by: string;
       acceptance_criteria: string[];
-      work_budget: { mode: string; source: string };
+      work_budget: {
+        mode: string;
+        source: string;
+        source_user_request: string;
+        executor_id: string;
+        document_fingerprint: string;
+        document_title: string;
+        document_path: string;
+      };
     };
   }).goal;
   assert.equal(goal.created_by, "alice");
   assert.equal(goal.work_budget.mode, "auto_goal");
   assert.equal(goal.work_budget.source, "chat");
+  assert.equal(goal.work_budget.source_user_request, "Update all marked receptacles and verify the completed model changes.");
+  assert.equal(goal.work_budget.executor_id, "snowdon-executor");
+  assert.equal(goal.work_budget.document_fingerprint, "snowdon-hvac-fingerprint");
+  assert.equal(goal.work_budget.document_title, "Snowdon Towers Sample HVAC");
+  assert.equal(goal.work_budget.document_path, "C:\\Models\\Snowdon Towers Sample HVAC.rvt");
 
   const authority = createLocalGoalEvidenceAuthority({ secret: authoritySecret });
   const context = {

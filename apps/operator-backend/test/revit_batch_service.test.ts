@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 
 import {
   claimNextRevitBatchItem,
+  approveRevitBatchJob,
   cancelRevitBatchJob,
   completeRevitBatchItem,
   createRevitBatchJob,
@@ -20,6 +21,31 @@ import {
 } from "../src/revit_batch/service.js";
 
 type AnyMap = Record<string, any>;
+
+test("batch approval binds the exact server preview hash and approving principal", () => {
+  const root = mkWorkspace();
+  const access = boundAccess("alice", "session-approval", "executor-a", fingerprintA);
+  const job = createRevitBatchJob({
+    job_type: "delegated_revit_task_batch",
+    title: "Approve exact preview",
+    approval: { required: true },
+    preview_items: [{ element_id: "1420963", parameter: "Sheet Name", value: "Test" }],
+    items: [{ id: "item-1", index: 1, status: "pending", task_prompt: "Change one sheet name." }]
+  }, access) as AnyMap;
+  assert.match(job.approval.preview_hash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(job.approval.preview_binding_schema, "revit-operator.batch-preview-binding.v1");
+  const approved = approveRevitBatchJob(job.id, access) as AnyMap;
+  assert.equal(approved.approval.approved_preview_hash, job.approval.preview_hash);
+  assert.equal(approved.approval.approved_by, "tenant-1:alice");
+
+  const tampered = createRevitBatchJob({
+    job_type: "delegated_revit_task_batch", title: "Tampered preview", approval: { required: true },
+    preview_items: [{ element_id: "1" }],
+    items: [{ id: "item-2", index: 1, status: "pending", task_prompt: "Change one item." }]
+  }, access) as AnyMap;
+  editStoredJob(root, tampered.id, stored => { stored.preview_items[0].element_id = "2"; });
+  assert.throws(() => approveRevitBatchJob(tampered.id, access), /preview identity changed/);
+});
 
 function mkWorkspace(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-batch-fencing-"));
