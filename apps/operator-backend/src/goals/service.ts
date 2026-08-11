@@ -842,6 +842,33 @@ export function appendGoalValidation(goalId: string, entry: unknown): GoalRecord
   return saveGoal({ ...goal, validation_log: [...goal.validation_log, log].slice(-500) });
 }
 
+export function appendTrustedServerGoalValidation(
+  goalId: string,
+  input: { criterion: string; validator_id: string; method: string; status: GoalValidatorStatus }
+): GoalRecord {
+  const goal = getGoal(goalId);
+  if (!goal) throw new Error("Goal not found.");
+  const criterion = canonicalCriterion(input.criterion, goal.acceptance_criteria);
+  const authority = goalEvidenceAuthority();
+  if (!("issueValidatorExecutionReceipt" in authority) || typeof authority.issueValidatorExecutionReceipt !== "function") {
+    throw new Error("The configured goal evidence authority cannot issue local validator receipts.");
+  }
+  const envelope = authority.issueValidatorExecutionReceipt({
+    ...authorityContext(goal, criterion),
+    validator_id: clip(input.validator_id, 240),
+    method: clip(input.method, 1000),
+    status: input.status
+  });
+  return appendGoalValidation(goal.id, {
+    summary: `${input.validator_id}: ${criterion}`,
+    evidence: {
+      kind: "validator",
+      criterion,
+      validator: { authority: envelope }
+    }
+  });
+}
+
 export function requestGoalCompletionAudit(goalId: string, input?: unknown): GoalRecord {
   const goal = getGoal(goalId);
   if (!goal) throw new Error("Goal not found.");

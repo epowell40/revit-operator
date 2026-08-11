@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
-import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
+import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
 import { resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
@@ -41,6 +42,23 @@ test("Codex protocol receipts canonicalize JSON object order without changing ar
 test("Codex executable resolution preserves explicit non-shim binaries", () => {
   assert.equal(resolveCodexExecutable("/opt/revitoperator/bin/codex", "linux", {}), "/opt/revitoperator/bin/codex");
   assert.equal(resolveCodexExecutable("C:\\tools\\codex-custom.exe", "win32", {}), "C:\\tools\\codex-custom.exe");
+});
+
+test("backend restart recovery recognizes a stale Codex app-server thread", () => {
+  assert.equal(isMissingCodexThreadError(new Error("thread not found: thread_123")), true);
+  assert.equal(isMissingCodexThreadError(new Error("transport closed")), false);
+});
+
+test("Codex executable resolution supports npm's hoisted Windows platform package", () => {
+  const appData = fs.mkdtempSync(path.join(os.tmpdir(), "operator-codex-appdata-"));
+  try {
+    const native = path.join(appData, "npm", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe");
+    fs.mkdirSync(path.dirname(native), { recursive: true });
+    fs.writeFileSync(native, "fixture");
+    assert.equal(resolveCodexExecutable("codex", "win32", { APPDATA: appData }), native);
+  } finally {
+    fs.rmSync(appData, { recursive: true, force: true });
+  }
 });
 
 test("Codex app-server launch uses the configured binary, strict config, and an observable receipt", () => {

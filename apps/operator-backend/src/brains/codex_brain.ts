@@ -31,6 +31,7 @@ import {
 import { getPinnedGoal } from "../session_store.js";
 import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
+import { createAutoGoalTurnObserver, findInterruptedAutoGoalForSession } from "../goals/auto_goal_runtime.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
@@ -43,8 +44,10 @@ import {
   endTeammateLoopOwner,
   guardTeammateMcpCall,
   recordTeammateMcpResult,
+  teammateLoopSessionIdForOwner,
   teammateLoopReceiptForLease
 } from "../teammate_loop_runtime.js";
+import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -69,6 +72,7 @@ const activeCodexTurnAborts = new Map<string, AbortController>();
 
 export { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 export { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
+export { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
 export { assertCertifiedMcpServerStatus };
 
 function codexTurnAbortKey(sessionId: string, messageId: string): string {
@@ -428,40 +432,19 @@ export function adaptMcpToolCallResultToDynamicResponse(
   return { contentItems, success: result?.isError !== true };
 }
 
-export function adaptDynamicToolCompletedItem(item: any): {
-  server: string | null;
-  tool: string;
-  status: string | null;
-  arguments: unknown;
-  duration_ms: number | null;
-  result: unknown;
-  error: string | null;
-  success: boolean | null;
-} | null {
-  if (item?.type !== "dynamicToolCall" || typeof item.tool !== "string") return null;
-  const contentItems = Array.isArray(item.contentItems) ? item.contentItems : null;
-  const failureText = item.success === false && contentItems
-    ? contentItems
-        .filter((entry: any) => entry?.type === "inputText" && typeof entry.text === "string")
-        .map((entry: any) => entry.text.trim())
-        .filter(Boolean)
-        .join("\n")
-    : "";
-  return {
-    server: typeof item.namespace === "string" ? item.namespace : null,
-    tool: item.tool,
-    status: typeof item.status === "string" ? item.status : null,
-    arguments: item.arguments ?? null,
-    duration_ms: typeof item.durationMs === "number" ? item.durationMs : null,
-    result: contentItems,
-    error: failureText || (item.success === false ? "Dynamic tool call failed without an error body." : null),
-    success: typeof item.success === "boolean" ? item.success : null
-  };
-}
-
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   if (request.method === "item/tool/call") {
     const params = request.params ?? {};
+    const interruptedAssignment = findInterruptedAutoGoalForSession(teammateLoopSessionIdForOwner(runtime, params.turnId));
+    if (interruptedAssignment) {
+      return {
+        contentItems: [{
+          type: "inputText",
+          text: `[assignment_${interruptedAssignment.status}] Assignment ${interruptedAssignment.id} is ${interruptedAssignment.status}; no further tool dispatch is allowed until it is explicitly resumed.`
+        }],
+        success: false
+      };
+    }
     const namespace = typeof params.namespace === "string" ? params.namespace : "";
     if (namespace !== "revit_operator" && !namespace.startsWith("mcp__")) {
       return { contentItems: [{ type: "inputText", text: `Unsupported dynamic tool namespace: ${namespace || "(none)"}` }], success: false };
@@ -683,7 +666,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   const workspaceRoot = getWorkspaceRoot();
   let c = await getClient(workspaceRoot, threadProfile);
-  const threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+  let threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
     c = activeClient;
     return await getOrCreateThreadId(req, activeClient, workspaceRoot);
   });
@@ -838,13 +821,20 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         ...courierTarget!
       });
     }
-    start = (await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
-      c = activeClient;
-      return await activeClient.request("turn/start", {
-        threadId,
-        input
+    try {
+      start = (await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+        c = activeClient;
+        return await activeClient.request("turn/start", { threadId, input });
+      })) as any;
+    } catch (error) {
+      if (!isMissingCodexThreadError(error)) throw error;
+      setCodexThreadId(threadProfile.threadKey, "");
+      threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+        c = activeClient;
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot);
       });
-    })) as any;
+      start = (await c.request("turn/start", { threadId, input })) as any;
+    }
   } catch (error) {
     endTeammateLoopOwner(teammateContext);
     teammateContext = null;
@@ -873,6 +863,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let assistantText = "";
   let assistantDeltas = "";
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
+  const assignmentObserver = createAutoGoalTurnObserver(req.session_id);
 
   const unsubscribe = c.onNotification(n => {
     try {
@@ -895,6 +886,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         }
         const dynamicTool = adaptDynamicToolCompletedItem(item);
         if (dynamicTool) {
+          assignmentObserver.observe(dynamicTool);
           if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
           try {
             recordRevitToolOutcome({
@@ -970,6 +962,15 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
           }
         }
         if (item?.type === "mcpToolCall") {
+          const mcpStatus = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
+          const mcpError = typeof item.error === "string" ? item.error.trim() : "";
+          assignmentObserver.observe({
+            tool: typeof item.tool === "string" ? item.tool : "mcp_tool",
+            success: mcpError ? false : mcpStatus ? ["success", "ok", "done", "completed"].includes(mcpStatus) : null,
+            status: mcpStatus || null,
+            error: mcpError || null,
+            duration_ms: typeof item.durationMs === "number" ? item.durationMs : null
+          });
           if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, {
             server: item.server,
             tool: item.tool,
@@ -1177,6 +1178,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   if (freshEvidenceRequirement.required && assistantText) cb.onDelta?.(assistantText);
   cb.onDone?.(assistantText);
+  assignmentObserver.finish(turnId, assistantText);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.completed", {
       thread_id: threadId,

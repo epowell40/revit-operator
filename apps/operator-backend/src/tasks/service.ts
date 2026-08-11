@@ -99,6 +99,8 @@ type RevitBatchLike = {
   started_at?: string | null;
   finished_at?: string | null;
   executor_kind?: string;
+  session_id?: string;
+  target_context?: JsonMap;
   source?: JsonMap;
   params?: JsonMap;
   approval?: JsonMap;
@@ -435,8 +437,11 @@ export function syncTaskFromRevitBatchJob(job: RevitBatchLike): JsonMap {
     source: {
       backend_surface: "revit_batch",
       batch_job_id: jobId,
-      session_id: clip(job?.source?.session_id, 120) || null,
-      frontend: clip(job?.source?.frontend, 80) || null
+      session_id: clip(job?.session_id ?? job?.source?.session_id, 120) || null,
+      frontend: clip(job?.source?.frontend, 80) || null,
+      assignment_id: clip(job?.source?.assignment_id ?? job?.source?.goal_id, 120) || null,
+      user_request: clip(job?.source?.user_request ?? job?.source?.query_text, 2_000) || null,
+      target_context: asObject(job?.target_context)
     },
     plan: {
       params: asObject(job?.params),
@@ -454,7 +459,9 @@ export function syncTaskFromRevitBatchJob(job: RevitBatchLike): JsonMap {
       workspace_paths: [...artifactPaths, ...outputPaths]
     },
     related: {
-      batch_job_id: jobId
+      batch_job_id: jobId,
+      assignment_id: clip(job?.source?.assignment_id ?? job?.source?.goal_id, 120) || null,
+      session_id: clip(job?.session_id ?? job?.source?.session_id, 120) || null
     },
     result: {
       ...(asObject(job?.result) || {}),

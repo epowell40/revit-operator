@@ -63,7 +63,7 @@ try {
       Start-Sleep -Milliseconds 250
     } else {
       Write-Host "Operator backend already listening on :$port (pid $($c.OwningProcess))"
-      exit 0
+      return
     }
   }
 

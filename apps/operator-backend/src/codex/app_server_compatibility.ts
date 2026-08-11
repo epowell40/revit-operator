@@ -35,8 +35,12 @@ export function resolveCodexExecutable(requested: string | undefined, platform =
   if (platform !== "win32" || !/^codex(?:\.cmd|\.ps1|\.exe)?$/i.test(path.basename(command))) return command;
   const appData = (env.APPDATA ?? "").trim();
   if (appData) {
-    const native = path.join(appData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe");
-    if (fs.existsSync(native)) return native;
+    const candidates = [
+      // npm may hoist the platform package beside @openai/codex.
+      path.join(appData, "npm", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe"),
+      path.join(appData, "npm", "node_modules", "@openai", "codex", "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin", "codex.exe")
+    ];
+    for (const native of candidates) if (fs.existsSync(native)) return native;
   }
   return command;
 }

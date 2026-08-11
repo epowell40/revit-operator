@@ -4,6 +4,8 @@ const SPATIAL = /\b(room|wall|sheet|view|redline|markup|receptacle|outlet|device
 const VISUAL = /\b(redline|markup|screenshot|capture|image|pdf|shown|marked|visual)\b/i;
 const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply|update|fix|add|place|print)\b/i;
 const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|show me|list|find)\b/i;
+const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection)\b/i;
+const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|add|place|move|rotate|change|update|edit|delete|remove|rename|verify)\b/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
@@ -23,21 +25,28 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   if (SPATIAL.test(text)) signals.push("spatial/model interpretation");
   if (VISUAL.test(text)) signals.push("visual/redline interpretation");
   if (OUTCOME.test(text)) signals.push("outcome-oriented request");
+  const liveModelRequest = LIVE_MODEL_OBJECT.test(text) && LIVE_MODEL_OPERATION.test(text);
+  if (liveModelRequest) signals.push("live Revit model work");
 
   let score = signals.length;
-  if (SINGLE_COMMAND.test(text) && score < 3) score -= 2;
-  const shouldStart = score >= 2;
+  if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
+  const shouldStart = liveModelRequest || score >= 2;
   return {
     shouldStart,
     score,
     signals,
     title: makeTitle(text),
     objective: text,
-    acceptanceCriteria: [
-      "The requested Revit outcome is completed or a concrete blocker is reported.",
-      "Actions are verified with native Revit context, coordinates, exported evidence, or tool validation.",
-      "Any retries are bounded and each retry changes placement, orientation, scope, or evidence."
-    ]
+    acceptanceCriteria: liveModelRequest
+      ? [
+          "The requested Revit work is completed or a concrete blocker is reported.",
+          "The reported result is grounded in successful live Revit tool evidence from this assignment."
+        ]
+      : [
+          "The requested Revit outcome is completed or a concrete blocker is reported.",
+          "Actions are verified with native Revit context, coordinates, exported evidence, or tool validation.",
+          "Any retries are bounded and each retry changes placement, orientation, scope, or evidence."
+        ]
   };
 }
 
