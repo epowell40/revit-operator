@@ -43,7 +43,9 @@ public sealed class PackagingTests : IDisposable
         var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
-        Assert.Equal(11, result.VerifiedArtifacts.Count);
+        Assert.Equal(15, result.VerifiedArtifacts.Count);
+        Assert.Contains("manifests/dynamic-revit-annotation-operations.v1.json", result.VerifiedArtifacts);
+        Assert.Contains("manifests/dynamic-revit-mep-mutations.v1.json", result.VerifiedArtifacts);
         Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(Path.Combine(_root, package.Supervisor.RelativePath)), package.Supervisor.Sha256);
     }
 
@@ -61,6 +63,21 @@ public sealed class PackagingTests : IDisposable
         Assert.False(result.Ok);
         Assert.Contains(result.Errors, error => error.Contains("supervisor package path may not traverse", StringComparison.Ordinal));
         Assert.Contains(result.Errors, error => error.Contains("worker package hash mismatch", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Package_verifier_rejects_substituted_mep_descriptor_even_with_updated_artifact_hash()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest(); var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.MepMutationContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"outputs\": 1", "\"outputs\": 2", StringComparison.Ordinal));
+        package.MepMutationContract.Sha256 = HashFile(path);
+
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("MEP mutation contract manifest content is invalid", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -109,6 +126,51 @@ public sealed class PackagingTests : IDisposable
         Assert.Contains(result.Errors, error => error.Contains("Core operations contract manifest content is invalid", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Package_verifier_binds_building_systems_manifest_to_sdk_surface()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest();
+        var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.BuildingSystemsObservationContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace(DynamicBuildingSystemsObservationContractV1.ContractSurfaceHash, "sha256:" + new string('0', 64), StringComparison.Ordinal));
+        package.BuildingSystemsObservationContract.Sha256 = HashFile(path);
+
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("Building-systems observation manifest content is invalid", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Package_verifier_binds_result_reference_source_manifest_and_rotation()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest();
+        var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.ResultReferenceContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace(DynamicResultReferenceManifestV1.ManifestHash, "sha256:" + new string('0', 64), StringComparison.Ordinal));
+        package.ResultReferenceContract.Sha256 = HashFile(path);
+
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("Result-reference contract manifest content is invalid", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Package_verifier_binds_annotation_operations_to_exact_sdk_surface()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest(); var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.AnnotationOperationsContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace(DynamicAnnotationOperationManifestV1.ContractSurfaceHash, "sha256:" + new string('0', 64), StringComparison.Ordinal));
+        package.AnnotationOperationsContract.Sha256 = HashFile(path);
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("Annotation operations contract manifest content is invalid", StringComparison.Ordinal));
+    }
+
     private DynamicRuntimePackageManifest WritePackage(string capabilitiesPath, string sdkManifestHash)
     {
         PackageArtifactIdentity Artifact(string path, string content)
@@ -135,7 +197,11 @@ public sealed class PackagingTests : IDisposable
             Sdk = Artifact("worker/DynamicRevitSdk.dll", "sdk"),
             SandboxPolicy = Artifact("manifests/sandbox-policy.v1.json", "{\"schema\":\"dynamic-revit-sandbox-policy/v1\",\"profile\":\"windows-lpac-v1-zero-capabilities\",\"profileVersion\":\"1.0.0\"}"),
             ObservationContract = Artifact("manifests/dynamic-revit-observations-core.v1.json", ObservationContractManifest()),
+            BuildingSystemsObservationContract = Artifact("manifests/dynamic-revit-building-systems-observations.v1.json", BuildingSystemsObservationContractManifest()),
             CoreOperationsContract = Artifact("manifests/dynamic-revit-operations-core.v1.json", CoreOperationsContractManifest()),
+            ResultReferenceContract = Artifact("manifests/dynamic-revit-result-reference-graph.v1.json", ResultReferenceContractManifest()),
+            AnnotationOperationsContract = Artifact("manifests/dynamic-revit-annotation-operations.v1.json", AnnotationOperationsContractManifest()),
+            MepMutationContract = Artifact("manifests/dynamic-revit-mep-mutations.v1.json", File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "manifests", "dynamic-revit-mep-mutations.v1.json")))),
             SandboxProfile = "windows-lpac-v1-zero-capabilities",
             SandboxProfileVersion = "1.0.0",
             HostCapabilitiesManifestSha256 = HashFile(capabilitiesPath),
@@ -158,6 +224,8 @@ public sealed class PackagingTests : IDisposable
         cursorSchema = DynamicObservationContractV1.CursorSchema,
         canonicalVersion = DynamicObservationContractV1.CanonicalVersion,
         readOnly = true,
+        activeViewCandidateHydration = true,
+        hostExactCoreStateHash = true,
         limits = new
         {
             maximumRequestBytes = DynamicObservationContractV1.MaximumRequestBytes,
@@ -179,10 +247,75 @@ public sealed class PackagingTests : IDisposable
         contractSurfaceHash = DynamicCoreOperationManifestV1.ContractSurfaceHash,
         primitiveManifestHash = DynamicPrimitiveManifestV1.ManifestHash,
         canonicalVersion = DynamicCoreOperationsV1.CanonicalVersion,
+        contextRuleRecordSchema = DynamicContextRuleContractV1.RecordSchema,
+        contextRuleBindingSchema = DynamicContextRuleContractV1.BindingSchema,
+        contextRuleCanonicalVersion = DynamicContextRuleContractV1.CanonicalVersion,
+        maximumContextRuleConditions = DynamicContextRuleContractV1.MaximumConditions,
+        maximumContextRuleCategories = DynamicContextRuleContractV1.MaximumCategories,
         maximumOperations = DynamicCoreOperationsV1.MaximumOperations,
         maximumAttributes = DynamicCoreOperationsV1.MaximumAttributes,
         productionExposed = false,
         primitives = DynamicCoreOperationManifestV1.All.Select(value => new { kind = value.Kind, version = value.PrimitiveVersion, preview = value.PreviewSupported, apply = value.ApplySupported })
+    });
+
+    private static string BuildingSystemsObservationContractManifest() => JsonSerializer.Serialize(new
+    {
+        schema = DynamicBuildingSystemsObservationContractV1.ManifestSchema,
+        manifestVersion = "1.0.0",
+        contractManifestHash = DynamicBuildingSystemsObservationContractV1.ManifestHash,
+        contractSurfaceHash = DynamicBuildingSystemsObservationContractV1.ContractSurfaceHash,
+        selectorSchema = DynamicBuildingSystemsObservationContractV1.SelectorSchema,
+        envelopeSchema = DynamicBuildingSystemsObservationContractV1.EnvelopeSchema,
+        cursorSchema = DynamicBuildingSystemsObservationContractV1.CursorSchema,
+        canonicalVersion = DynamicBuildingSystemsObservationContractV1.CanonicalVersion,
+        readOnly = true,
+        productionExposed = false,
+        limits = new
+        {
+            maximumRequestBytes = DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes,
+            maximumPageSize = DynamicBuildingSystemsObservationContractV1.MaximumPageSize,
+            maximumObservedFacts = DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts,
+            maximumElementSelectors = DynamicBuildingSystemsObservationContractV1.MaximumElementSelectors,
+            maximumCategorySelectors = DynamicBuildingSystemsObservationContractV1.MaximumCategorySelectors,
+            maximumKindSelectors = DynamicBuildingSystemsObservationContractV1.MaximumKindSelectors,
+            maximumParameterSelectors = DynamicBuildingSystemsObservationContractV1.MaximumParameterSelectors,
+            maximumParametersPerFact = DynamicBuildingSystemsObservationContractV1.MaximumParametersPerFact,
+            maximumConnectorsPerFact = DynamicBuildingSystemsObservationContractV1.MaximumConnectorsPerFact,
+            maximumConnectionsPerConnector = DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector,
+            maximumSystemMembers = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers,
+            maximumAnnotationTextBytes = DynamicBuildingSystemsObservationContractV1.MaximumAnnotationTextBytes,
+            maximumTaggedTargets = DynamicBuildingSystemsObservationContractV1.MaximumTaggedTargets
+        }
+    });
+
+    private static string ResultReferenceContractManifest() => JsonSerializer.Serialize(new
+    {
+        schema = DynamicResultReferenceContractV1.ManifestSchema,
+        manifestVersion = "1.0.0",
+        contractManifestHash = DynamicResultReferenceManifestV1.ManifestHash,
+        contractSurfaceHash = DynamicResultReferenceManifestV1.ContractSurfaceHash,
+        graphSchema = DynamicResultReferenceContractV1.GraphSchema,
+        outputFactSchema = DynamicResultReferenceContractV1.OutputFactSchema,
+        receiptSchema = DynamicResultReferenceContractV1.ReceiptSchema,
+        programResultSchema = DynamicResultReferenceContractV1.ProgramResultSchema,
+        canonicalVersion = DynamicResultReferenceContractV1.CanonicalVersion,
+        maximumNodes = DynamicResultReferenceContractV1.MaximumNodes,
+        maximumOutputsPerNode = DynamicResultReferenceContractV1.MaximumOutputsPerNode,
+        maximumReferencesPerNode = DynamicResultReferenceContractV1.MaximumReferencesPerNode,
+        maximumAttributesPerNode = DynamicResultReferenceContractV1.MaximumAttributesPerNode,
+        maximumBuildingSystemsPages = DynamicResultReferenceContractV1.MaximumBuildingSystemsPages,
+        maximumTrustedExternalTargets = DynamicResultReferenceContractV1.MaximumTrustedExternalTargets,
+        productionExposed = false
+    });
+
+    private static string AnnotationOperationsContractManifest() => JsonSerializer.Serialize(new
+    {
+        schema = DynamicAnnotationOperationsV1.ManifestSchema, manifestVersion = "1.0.0",
+        contractManifestHash = DynamicAnnotationOperationManifestV1.ManifestHash, contractSurfaceHash = DynamicAnnotationOperationManifestV1.ContractSurfaceHash,
+        resultReferenceManifestHash = DynamicResultReferenceManifestV1.ManifestHash, readbackSchema = DynamicAnnotationOperationsV1.ReadbackSchema,
+        previewSchema = DynamicAnnotationOperationsV1.PreviewSchema, canonicalVersion = DynamicAnnotationOperationsV1.CanonicalVersion,
+        maximumTextLength = DynamicAnnotationOperationsV1.MaximumTextLength, productionExposed = false,
+        primitives = DynamicAnnotationOperationManifestV1.All.Select(value => new { kind = value.Kind, version = value.PrimitiveVersion, effectClass = value.EffectClass, externalTargetCount = value.ExternalTargetCount, outputCount = value.OutputCount, requiredAttributes = value.RequiredAttributes })
     });
 
     private string WriteCapabilitiesManifest()

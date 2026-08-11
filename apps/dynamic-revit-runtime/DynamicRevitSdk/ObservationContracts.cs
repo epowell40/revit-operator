@@ -17,7 +17,7 @@ public static class DynamicObservationContractV1
     public const string EnvelopeSchema = "dynamic-revit-observation-envelope/v1";
     public const string CursorSchema = "dynamic-revit-observation-cursor/v1";
     public const string ManifestSchema = "dynamic-revit-observation-contract-manifest/v1";
-    public const string CanonicalVersion = "dynamic-revit-observation-canonical/v1";
+    public const string CanonicalVersion = "dynamic-revit-observation-canonical/v4";
     public const int MaximumRequestBytes = 64 * 1024;
     public const int MaximumPageSize = 256;
     public const int MaximumObservedElements = 4096;
@@ -74,6 +74,7 @@ public sealed class DynamicObservationSelectorV1
     public string[] ElementUniqueIds { get; set; } = Array.Empty<string>();
     public string[] CategoryStableIds { get; set; } = Array.Empty<string>();
     public long[] OwnerViewElementIds { get; set; } = Array.Empty<long>();
+    public long? VisibleInViewElementId { get; set; }
     public string[] ParameterNames { get; set; } = Array.Empty<string>();
     public bool IncludeTypeParameters { get; set; }
     public int PageSize { get; set; } = 128;
@@ -171,6 +172,7 @@ public sealed class DynamicObservedElementV1
     public DynamicTransformV1? Transform { get; set; }
     public bool IsPinned { get; set; }
     public bool IsGrouped { get; set; }
+    public string CoreStateHash { get; set; } = "";
     public IReadOnlyList<DynamicParameterValueV1> Parameters { get; set; } = Array.Empty<DynamicParameterValueV1>();
 }
 
@@ -188,6 +190,7 @@ public static class DynamicObservationPolicyV1
         RequireDistinctStrings(selector.ElementUniqueIds, DynamicObservationContractV1.MaximumElementSelectors, MaximumIdentifierLength, "element selectors");
         RequireDistinctStrings(selector.CategoryStableIds, DynamicObservationContractV1.MaximumCategorySelectors, MaximumIdentifierLength, "category selectors");
         RequireDistinctLongs(selector.OwnerViewElementIds, DynamicObservationContractV1.MaximumOwnerViewSelectors, "owner-view selectors");
+        if (selector.VisibleInViewElementId is < 0) throw new ArgumentException("Dynamic observation visible-view selector is invalid.");
         RequireDistinctStrings(selector.ParameterNames, DynamicObservationContractV1.MaximumParameterSelectors, MaximumNameLength, "parameter selectors");
         if (selector.PageSize < 1 || selector.PageSize > DynamicObservationContractV1.MaximumPageSize)
             throw new ArgumentException("Dynamic observation page size is outside the bounded contract.");
@@ -201,6 +204,7 @@ public static class DynamicObservationPolicyV1
         return DynamicWire.Sha256(Canonical.Join(DynamicObservationContractV1.SelectorSchema,
             Canonical.Set(selector.ElementUniqueIds), Canonical.Set(selector.CategoryStableIds),
             Canonical.Set(selector.OwnerViewElementIds.Select(value => value.ToString(CultureInfo.InvariantCulture))),
+            selector.VisibleInViewElementId?.ToString(CultureInfo.InvariantCulture),
             Canonical.Set(selector.ParameterNames), selector.IncludeTypeParameters ? "1" : "0",
             selector.PageSize.ToString(CultureInfo.InvariantCulture)));
     }
@@ -317,7 +321,7 @@ public static class DynamicObservationPolicyV1
             ReferenceCanonical(element.Workset), ReferenceCanonical(element.CreatedPhase), ReferenceCanonical(element.DemolishedPhase),
             PointCanonical(element.PointLocation), DoubleCanonical(element.PointRotationRadians), CurveCanonical(element.CurveLocation),
             BoxCanonical(element.BoundingBox), TransformCanonical(element.Transform), element.IsPinned ? "1" : "0", element.IsGrouped ? "1" : "0",
-            Canonical.Join(parameters));
+            element.CoreStateHash, Canonical.Join(parameters));
     }
 
     public static void ValidateElement(DynamicObservedElementV1 element)
@@ -333,6 +337,7 @@ public static class DynamicObservationPolicyV1
         ValidateReference(element.Workset, "workset", false);
         ValidateReference(element.CreatedPhase, "phase", false);
         ValidateReference(element.DemolishedPhase, "phase", false);
+        RequireHash(element.CoreStateHash, "core state hash");
         ValidatePoint(element.PointLocation);
         if (element.PointRotationRadians.HasValue && !Finite(element.PointRotationRadians.Value)) throw new ArgumentException("Dynamic point rotation must be finite.");
         if (element.CurveLocation != null)
@@ -435,7 +440,46 @@ public static class DynamicObservationPolicyV1
     private static string BoxCanonical(DynamicBoxV1? value) => value == null ? Canonical.Join((string?)null) : Canonical.Join(
         PointCanonical(value.Min), PointCanonical(value.Max), TransformCanonical(value.Transform));
 
-    private static string? DoubleCanonical(double? value) => value.HasValue ? BitConverter.DoubleToInt64Bits(value.Value).ToString("x16", CultureInfo.InvariantCulture) : null;
+    // Observation DTOs cross the Revit net48 -> supervisor/worker net8 JSON boundary. Decimal
+    // floating formatting is not a stable canonical there: even the same IEEE value can produce
+    // a different G-format result, while valid round-trip spellings can parse one ULP apart.
+    // Normalize the transport value to 40 mantissa bits, then hash a 36-bit guarded identity as
+    // fixed-width integer text. This retains roughly twelve decimal digits without depending on
+    // either runtime's floating formatter.
+    public static double? NormalizeTransportDouble(double? value)
+    {
+        if (!value.HasValue) return null;
+        if (!Finite(value.Value)) throw new ArgumentException("Dynamic observation double is not finite.");
+        return BitConverter.Int64BitsToDouble(unchecked((long)RoundMantissaBits(value.Value, 40)));
+    }
+
+    private static string? DoubleCanonical(double? value)
+    {
+        if (!value.HasValue) return null;
+        if (!Finite(value.Value)) throw new ArgumentException("Dynamic observation double is not finite.");
+        var transport = BitConverter.Int64BitsToDouble(unchecked((long)RoundMantissaBits(value.Value, 40)));
+        var bits = RoundMantissaBits(transport, 36);
+        if ((bits & 0x7fffffffffffffffUL) == 0) bits = 0;
+        return bits.ToString("x16", CultureInfo.InvariantCulture);
+    }
+
+    private static ulong RoundMantissaBits(double value, int retainedBits)
+    {
+        var bits = unchecked((ulong)BitConverter.DoubleToInt64Bits(value));
+        var sign = bits & 0x8000000000000000UL;
+        var magnitude = bits & 0x7fffffffffffffffUL;
+        if (magnitude == 0 || (magnitude & 0x7ff0000000000000UL) == 0x7ff0000000000000UL) return bits;
+        var clearedBits = 52 - retainedBits;
+        var quantum = 1UL << clearedBits;
+        var remainderMask = quantum - 1UL;
+        var remainder = magnitude & remainderMask;
+        var rounded = magnitude & ~remainderMask;
+        var halfway = quantum >> 1;
+        if (remainder > halfway || remainder == halfway && ((rounded / quantum) & 1UL) != 0) rounded += quantum;
+        // A finite maximum-magnitude parameter must not normalize to infinity.
+        if ((rounded & 0x7ff0000000000000UL) == 0x7ff0000000000000UL) rounded = magnitude & ~remainderMask;
+        return sign | rounded;
+    }
 
     private static void ValidatePoint(DynamicPointV1? point, bool required = false)
     {

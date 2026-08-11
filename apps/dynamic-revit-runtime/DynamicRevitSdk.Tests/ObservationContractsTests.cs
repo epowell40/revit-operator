@@ -18,12 +18,45 @@ public sealed class ObservationContractsTests
         var envelope = DynamicObservationPolicyV1.BuildPage(selector, DocumentFingerprint, SessionId,
             new[] { Element("z-element", 30, 12.5), Element("a-element", 10, 4.25), Element("m-element", 20, 8.75) });
 
-        Assert.Equal("sha256:86d57659b3a1955b45fde712ee57e3a07c9eaf69b45346b6815532e2b28b7a6e", DynamicObservationContractV1.ManifestHash);
-        Assert.Equal("sha256:dd32cca9b62eee6ddcfc3d843d1f20b8faa634bb847a5f66705fcc17adfd8ae3", envelope.ScopeHash);
-        Assert.Equal("sha256:2be5c621d7207077c8fac8f70f8e16635bb9f0b2658260bf211704ffbce74f0b", envelope.RevisionHash);
-        Assert.Equal("sha256:3ad11aa3ee3d16a25afa0e41a1df24d598988f8090186de05792f287feff0f9a", envelope.EnvelopeHash);
+        Assert.Equal("sha256:e97d589a1a42224893bfb6af1d4379dd5ee7aeffc4603d511b49d1cb29a22bf1", DynamicObservationContractV1.ManifestHash);
+        Assert.Equal("sha256:5250896bc15318bdf5e586517643ad3ec315c2c3a4c550f1f1f12b2807c2ef36", envelope.ScopeHash);
+        Assert.Equal("sha256:8cc3ad6b4f852a96edd2f05bf09dc47b6c10f71bf1400e656299beafd6cacebf", envelope.RevisionHash);
+        Assert.Equal("sha256:ad13d3588246825d5b99b95def03b761a34c7765685b548fcf19da25614e90da", envelope.EnvelopeHash);
         Assert.Equal(new[] { "revit-element:a-element", "revit-element:m-element" }, envelope.Elements.Select(value => value.Element.StableId));
         Assert.NotNull(envelope.NextCursor);
+    }
+
+    [Theory]
+    [InlineData(64.50565087321395, 64.50565087321394)]
+    [InlineData(-7.83333333333325, -7.833333333333249)]
+    [InlineData(0.0001234567890123456, 0.0001234567890123457)]
+    [InlineData(123456789.01234567, 123456789.01234566)]
+    public void Observation_canonical_is_stable_across_net48_json_transport_precision(double hostValue, double transportedValue)
+    {
+        var host = Element("transport-element", 42, hostValue);
+        var transported = Element("transport-element", 42, transportedValue);
+        transported.CoreStateHash = host.CoreStateHash;
+
+        Assert.NotEqual(BitConverter.DoubleToInt64Bits(hostValue), BitConverter.DoubleToInt64Bits(transportedValue));
+        Assert.Equal(DynamicObservationPolicyV1.ElementCanonical(host), DynamicObservationPolicyV1.ElementCanonical(transported));
+    }
+
+    [Theory]
+    [InlineData(-12.142041764185293)]
+    [InlineData(50.414451599191409)]
+    [InlineData(-0.000000000000006137491269689685)]
+    public void Transport_normalization_has_guard_bits_for_adjacent_net48_net8_parses(double source)
+    {
+        var normalized = DynamicObservationPolicyV1.NormalizeTransportDouble(source)!.Value;
+        var lower = BitConverter.Int64BitsToDouble(BitConverter.DoubleToInt64Bits(normalized) - 1);
+        var upper = BitConverter.Int64BitsToDouble(BitConverter.DoubleToInt64Bits(normalized) + 1);
+        var expected = Element("guarded", 44, normalized);
+        var fromLowerTransport = Element("guarded", 44, lower); fromLowerTransport.CoreStateHash = expected.CoreStateHash;
+        var fromUpperTransport = Element("guarded", 44, upper); fromUpperTransport.CoreStateHash = expected.CoreStateHash;
+
+        Assert.Equal(DynamicObservationPolicyV1.ElementCanonical(expected), DynamicObservationPolicyV1.ElementCanonical(fromLowerTransport));
+        Assert.Equal(DynamicObservationPolicyV1.ElementCanonical(expected), DynamicObservationPolicyV1.ElementCanonical(fromUpperTransport));
+        Assert.InRange(Math.Abs(normalized - source), 0, Math.Abs(source) * 1e-11 + 1e-300);
     }
 
     [Fact]
@@ -34,8 +67,10 @@ public sealed class ObservationContractsTests
         Assert.Equal(DynamicObservationContractV1.ManifestSchema, document.RootElement.GetProperty("schema").GetString());
         Assert.Equal(DynamicObservationContractV1.ManifestHash, document.RootElement.GetProperty("contractManifestHash").GetString());
         Assert.True(document.RootElement.GetProperty("readOnly").GetBoolean());
+        Assert.True(document.RootElement.GetProperty("activeViewCandidateHydration").GetBoolean());
+        Assert.True(document.RootElement.GetProperty("hostExactCoreStateHash").GetBoolean());
         var expectedSdkIdentity = DynamicWire.Sha256(DynamicRevitSdkVersion.Value + "\n" + DynamicRevitSdkVersion.GraphSchema +
-            "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash);
+            "\nDynamicTaskInput\nDynamicElementDto\nMoveElement\nSetParameter\nBoundedStructuredReport\nDynamicWorkerAdmission\nCanonicalInputHashV1\nNoSystemTextJsonDependencyV1\nAuthenticatedLauncherSessionV1\n" + DynamicObservationContractV1.ManifestHash + "\n" + DynamicBuildingSystemsObservationContractV1.ManifestHash + "\n" + DynamicCoreOperationManifestV1.ManifestHash + "\n" + DynamicResultReferenceManifestV1.ManifestHash + "\n" + DynamicAnnotationOperationManifestV1.ManifestHash + "\n" + DynamicMepMutationManifestV1.ManifestHash);
         Assert.Equal(expectedSdkIdentity, DynamicRevitSdkVersion.ManifestHash);
     }
 
@@ -73,6 +108,8 @@ public sealed class ObservationContractsTests
         right.IncludeTypeParameters = true;
         Assert.NotEqual(DynamicObservationPolicyV1.ScopeHash(left), DynamicObservationPolicyV1.ScopeHash(right));
         right.IncludeTypeParameters = false; right.PageSize = 63;
+        Assert.NotEqual(DynamicObservationPolicyV1.ScopeHash(left), DynamicObservationPolicyV1.ScopeHash(right));
+        right.PageSize = 64; right.VisibleInViewElementId = 200;
         Assert.NotEqual(DynamicObservationPolicyV1.ScopeHash(left), DynamicObservationPolicyV1.ScopeHash(right));
     }
 
@@ -172,6 +209,7 @@ public sealed class ObservationContractsTests
             Transform = IdentityTransform()
         },
         Transform = IdentityTransform(),
+        CoreStateHash = DynamicWire.Sha256("core-state-" + uniqueId + "-" + x.ToString(System.Globalization.CultureInfo.InvariantCulture)),
         Parameters = new[] { new DynamicParameterValueV1 { Identity = "parameter:builtin:-1001203", Name = "Mark", StorageKind = "string", HasValue = true, RawString = "M-" + id, FormattedValue = "M-" + id, Scope = "instance", Writable = true } }
     };
 

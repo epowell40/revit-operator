@@ -16,7 +16,7 @@ public static class DynamicCoreOperationsV1
     public const string EffectSchema = "dynamic-revit-core-operation-effect/v1";
     public const string PreviewSchema = "dynamic-revit-core-operation-preview/v1";
     public const string ApplyReceiptSchema = "dynamic-revit-core-operation-apply-receipt/v1";
-    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v3";
+    public const string CanonicalVersion = "dynamic-revit-core-operation-canonical/v4";
     public const int MaximumOperations = 256;
     public const int MaximumAttributes = 16;
 }
@@ -58,7 +58,9 @@ public static class DynamicCoreOperationManifestV1
         typeof(DynamicCoreOperationApplyAuthorizationV1), typeof(DynamicCoreOperationReadbackV1),
         typeof(DynamicCoreOperationPreviewV1), typeof(DynamicCoreOperationApplyReceiptV1),
         typeof(DynamicCoreConnectorSignatureEntryV1), typeof(DynamicCoreExactOrientationStateV1),
-        typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1)
+        typeof(IDynamicCoreOperationApplyAuthorizationLedgerV1), typeof(DynamicContextRuleConditionV1), typeof(DynamicContextRuleActionV1),
+        typeof(DynamicContextRuleRecordV1), typeof(DynamicVerifiedContextRuleV1), typeof(DynamicContextRulePolicyV1),
+        typeof(DynamicCoreProgramResultV1), typeof(DynamicCoreProgramContextV1), typeof(IDynamicCoreRevitProgramV1)
     };
     private static readonly DynamicCoreOperationDescriptorV1[] Descriptors =
     {
@@ -76,6 +78,8 @@ public static class DynamicCoreOperationManifestV1
     private static readonly IReadOnlyList<DynamicCoreOperationDescriptorV1> ReadOnlyDescriptors = Array.AsReadOnly(Descriptors);
     private static readonly string ContractSurfaceHashValue = DynamicWire.Sha256(string.Join("\n", ContractTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
     private static readonly string ManifestHashValue = DynamicWire.Sha256(DynamicCanonical.Join(DynamicCoreOperationsV1.ManifestSchema, DynamicCoreOperationsV1.CanonicalVersion, ContractSurfaceHashValue,
+        DynamicContextRuleContractV1.RecordSchema, DynamicContextRuleContractV1.BindingSchema, DynamicContextRuleContractV1.CanonicalVersion,
+        DynamicContextRuleContractV1.MaximumConditions.ToString(CultureInfo.InvariantCulture), DynamicContextRuleContractV1.MaximumCategories.ToString(CultureInfo.InvariantCulture),
         string.Join("\n", Descriptors.OrderBy(value => value.Kind, StringComparer.Ordinal).Select(Canonical))));
 
     public static IReadOnlyList<DynamicCoreOperationDescriptorV1> All => ReadOnlyDescriptors;
@@ -121,7 +125,11 @@ public static class DynamicCoreOperationCanonicalNumberV1
     {
         if (double.IsNaN(value) || double.IsInfinity(value)) throw new ArgumentException("A canonical core-operation number must be finite.", nameof(value));
         if (value == 0d) return "0";
-        var formatted = value.ToString("R", CultureInfo.InvariantCulture);
+        // G17 is stable for an IEEE-754 double across the .NET Framework host and
+        // the .NET 8 worker. The legacy R formatter can choose different shortest
+        // spellings for the same bits on those runtimes, which makes an otherwise
+        // authentic operation graph fail exact admission.
+        var formatted = value.ToString("G17", CultureInfo.InvariantCulture);
         var exponentIndex = formatted.IndexOfAny(new[] { 'E', 'e' });
         if (exponentIndex < 0) return formatted;
         var exponent = int.Parse(formatted.Substring(exponentIndex + 1), NumberStyles.Integer, CultureInfo.InvariantCulture);
@@ -144,15 +152,24 @@ public sealed class DynamicCoreOperationGraphBuilderV1
     private readonly string _documentFingerprint;
     private readonly long _documentRevision;
     private readonly int _budget;
+    private readonly string _contextRuleRecordId;
+    private readonly string _contextRuleRecordHash;
+    private readonly string _contextRuleBindingHash;
     private readonly List<DynamicOperationNodeV1> _nodes = new();
     private string? _prior;
 
     public DynamicCoreOperationGraphBuilderV1(string inputHash, string documentFingerprint, long documentRevision, int operationBudget)
+        : this(inputHash, documentFingerprint, documentRevision, operationBudget, "", "", "") { }
+
+    public DynamicCoreOperationGraphBuilderV1(string inputHash, string documentFingerprint, long documentRevision, int operationBudget,
+        string contextRuleRecordId, string contextRuleRecordHash, string contextRuleBindingHash)
     {
         RequireHash(inputHash, nameof(inputHash)); RequireHash(documentFingerprint, nameof(documentFingerprint));
         if (documentRevision < 0) throw new ArgumentOutOfRangeException(nameof(documentRevision));
         if (operationBudget < 1 || operationBudget > DynamicCoreOperationsV1.MaximumOperations) throw new ArgumentOutOfRangeException(nameof(operationBudget));
         _inputHash = inputHash; _documentFingerprint = documentFingerprint; _documentRevision = documentRevision; _budget = operationBudget;
+        _contextRuleRecordId = contextRuleRecordId ?? ""; _contextRuleRecordHash = contextRuleRecordHash ?? ""; _contextRuleBindingHash = contextRuleBindingHash ?? "";
+        DynamicOperationGraphV1Admission.ValidateContextBinding(new DynamicOperationGraphV1 { ContextRuleRecordId = _contextRuleRecordId, ContextRuleRecordHash = _contextRuleRecordHash, ContextRuleBindingHash = _contextRuleBindingHash });
     }
 
     public string SetString(string targetUniqueId, string parameterIdentity, string scope, string value, string expectedTargetStateHash, string expectedParameterStateHash,
@@ -214,6 +231,7 @@ public sealed class DynamicCoreOperationGraphBuilderV1
         var graph = new DynamicOperationGraphV1
         {
             InputHash = _inputHash, DocumentFingerprint = _documentFingerprint, DocumentRevision = _documentRevision,
+            ContextRuleRecordId = _contextRuleRecordId, ContextRuleRecordHash = _contextRuleRecordHash, ContextRuleBindingHash = _contextRuleBindingHash,
             Nodes = _nodes.Select(Clone).ToArray()
         };
         graph.GraphHash = DynamicOperationGraphV1Admission.GraphHash(graph);
@@ -366,6 +384,7 @@ public static class DynamicCoreOperationAdmissionV1
         if (tryConsumeBinding != null && !tryConsumeBinding(DynamicCoreOperationManifestBindingPolicyV1.BindingHash(binding))) throw new InvalidOperationException("Core-operation manifest binding was replayed.");
         DynamicCanonical.RequireHashes(graph.InputHash, graph.DocumentFingerprint, graph.GraphHash, context.HostAdapterManifestHash,
             context.ViewScopeHash, context.LevelScopeHash, context.WorksetScopeHash, context.PhaseScopeHash, context.FileCapabilitySetHash);
+        DynamicOperationGraphV1Admission.ValidateContextBinding(graph);
         if (graph.GraphHash != DynamicOperationGraphV1Admission.GraphHash(graph)) throw new ArgumentException("Core-operation graph hash is invalid.");
         budget.Validate();
         if (!budget.TargetDocumentFingerprints.Contains(graph.DocumentFingerprint, StringComparer.Ordinal) || graph.Nodes.Count > budget.MaximumOperationCount ||

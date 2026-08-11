@@ -26,7 +26,7 @@ namespace RevitBridge.Logic.Handlers
         {
             var p = string.IsNullOrEmpty(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             if (p.textNoteId == 0) throw new InvalidOperationException("set-text-note-text.textNoteId is required.");
-            var nextText = NormalizeUserText(p.newText ?? "");
+            var nextText = TextNoteTextCanonicalizer.Normalize(p.newText ?? "");
 
             Document targetDoc;
             string scope;
@@ -56,7 +56,7 @@ namespace RevitBridge.Logic.Handlers
 
             var before = tn.Text ?? "";
             var changed = !string.Equals(before, nextText, StringComparison.Ordinal);
-            var expectedOldText = p.expectedOldText == null ? null : NormalizeUserText(p.expectedOldText);
+            var expectedOldText = p.expectedOldText == null ? null : TextNoteTextCanonicalizer.Normalize(p.expectedOldText);
 
             var requiredConfirm = (string?)null;
             var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
@@ -82,7 +82,11 @@ namespace RevitBridge.Logic.Handlers
                     tx.Start();
                     before = tn.Text ?? "";
                     changed = !string.Equals(before, nextText, StringComparison.Ordinal);
-                    if (expectedOldText != null && !string.Equals(before, expectedOldText, StringComparison.Ordinal))
+                    // Revit can surface semantically identical TextNote line endings as CR,
+                    // CRLF, or LF depending on how the note was created/read. Bind the
+                    // stale-state guard to the same canonical text form used for requests,
+                    // while retaining the raw `before` value in the receipt.
+                    if (expectedOldText != null && !string.Equals(TextNoteTextCanonicalizer.Normalize(before), expectedOldText, StringComparison.Ordinal))
                     {
                         tx.RollBack();
                         return Task.FromResult<object>(new
@@ -125,23 +129,11 @@ namespace RevitBridge.Logic.Handlers
                 before,
                 after = apply ? nextText : before,
                 text = apply ? nextText : before,
-                normalizedText = NormalizeUserText(apply ? nextText : before),
+                normalizedText = TextNoteTextCanonicalizer.Normalize(apply ? nextText : before),
                 changed,
                 requiredConfirm,
                 confirmReceived
             });
-        }
-
-        private static string NormalizeUserText(string s)
-        {
-            // Allow callers to pass literal "\n" / "\r\n" and have it become an actual line break.
-            // (JSON strings already support "\n", but some callers escape it twice.)
-            var t = s ?? "";
-            if (t.IndexOf("\\n", StringComparison.Ordinal) >= 0 || t.IndexOf("\\r", StringComparison.Ordinal) >= 0)
-            {
-                t = t.Replace("\\r\\n", "\n").Replace("\\n", "\n").Replace("\\r", "\n");
-            }
-            return t.Replace("\r\n", "\n").Replace('\r', '\n');
         }
 
         private static long? SafeOwnerViewId(TextNote textNote)

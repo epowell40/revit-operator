@@ -1,0 +1,18 @@
+{
+  "schema": "dynamic-revit-result-reference-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractManifestHash": "sha256:03a7a296eb10044416078851fa5f30a3048fda1e50316a9d9ae0785536f97701",
+  "contractSurfaceHash": "sha256:72f6f0015f2796f12befb2f94b3421ca61a8022e94e75ed3790dbef8af73f55d",
+  "graphSchema": "dynamic-revit-result-reference-graph/v1",
+  "outputFactSchema": "dynamic-revit-result-output-fact/v1",
+  "receiptSchema": "dynamic-revit-result-reference-receipt/v1",
+  "programResultSchema": "dynamic-revit-result-reference-program-result/v1",
+  "canonicalVersion": "dynamic-revit-result-reference-canonical/v1",
+  "maximumNodes": 256,
+  "maximumOutputsPerNode": 16,
+  "maximumReferencesPerNode": 64,
+  "maximumAttributesPerNode": 64,
+  "maximumBuildingSystemsPages": 2048,
+  "maximumTrustedExternalTargets": 2048,
+  "productionExposed": false
+}

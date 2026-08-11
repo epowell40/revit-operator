@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Text.Json;
 using Autodesk.Revit.DB;
 using RevitBridge.Common;
 using RevitOperator.DynamicRevitSdk;
@@ -9,8 +10,9 @@ using RevitOperator.DynamicRevitSdk;
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
     /// <summary>
-    /// Read-only Revit projection for observation-core/v1. This adapter is intentionally not
-    /// registered as a route or production capability and never opens a transaction.
+    /// Read-only Revit projection for observation-core/v1. This adapter is registered only by
+    /// the exact development/laboratory runtime boundary, is not a production capability, and
+    /// never opens a transaction.
     /// </summary>
     internal static class DynamicObservationRevitAdapterV1
     {
@@ -28,6 +30,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 candidates = requestedElements.OrderBy(value => value, StringComparer.Ordinal)
                     .Select(value => Safe(() => document.GetElement(value))).Where(value => value != null).Cast<Element>();
             }
+            else if (selector.VisibleInViewElementId is long visibleViewId)
+            {
+                candidates = new FilteredElementCollector(document, ElementIdCompat.Create(visibleViewId)).WhereElementIsNotElementType().Cast<Element>();
+            }
             else
             {
                 candidates = new FilteredElementCollector(document).WhereElementIsNotElementType().Cast<Element>();
@@ -40,9 +46,43 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             if (bounded.Length > DynamicObservationContractV1.MaximumObservedElements)
                 throw new InvalidOperationException("Dynamic observation scope exceeds the bounded element count; provide narrower element, category, or owner-view selectors.");
 
-            var observed = bounded.Select(element => Project(document, element, selector)).ToArray();
+            // Quantize every floating fact before hashing and transport. The SDK canonical then
+            // uses a coarser guarded bit identity, so net48/net8 formatter differences and an
+            // adjacent parse result cannot change the authenticated observation envelope.
+            var observed = bounded.Select(element => NormalizeTransport(Project(document, element, selector)))
+                .Select(TransportClone).ToArray();
             return DynamicObservationPolicyV1.BuildPage(selector, DynamicRuntimeSnapshotHandler.Fingerprint(document),
                 DynamicRuntimeSnapshotHandler.Session(document), observed);
+        }
+
+        private static DynamicObservedElementV1 TransportClone(DynamicObservedElementV1 value) =>
+            JsonSerializer.Deserialize<DynamicObservedElementV1>(JsonSerializer.Serialize(value, DynamicRuntimeV1Wire.Camel), DynamicRuntimeV1Wire.Camel)
+            ?? throw new InvalidOperationException("Dynamic observation transport normalization failed.");
+
+        private static DynamicObservedElementV1 NormalizeTransport(DynamicObservedElementV1 value)
+        {
+            Normalize(value.PointLocation);
+            value.PointRotationRadians = DynamicObservationPolicyV1.NormalizeTransportDouble(value.PointRotationRadians);
+            if (value.CurveLocation != null) { Normalize(value.CurveLocation.Start); Normalize(value.CurveLocation.End); }
+            if (value.BoundingBox != null) { Normalize(value.BoundingBox.Min); Normalize(value.BoundingBox.Max); Normalize(value.BoundingBox.Transform); }
+            Normalize(value.Transform);
+            foreach (var parameter in value.Parameters ?? Array.Empty<DynamicParameterValueV1>())
+                parameter.RawDouble = DynamicObservationPolicyV1.NormalizeTransportDouble(parameter.RawDouble);
+            return value;
+        }
+
+        private static void Normalize(DynamicTransformV1? value)
+        {
+            if (value == null) return;
+            Normalize(value.Origin); Normalize(value.BasisX); Normalize(value.BasisY); Normalize(value.BasisZ);
+        }
+
+        private static void Normalize(DynamicPointV1? value)
+        {
+            if (value == null) return;
+            value.X = DynamicObservationPolicyV1.NormalizeTransportDouble(value.X)!.Value;
+            value.Y = DynamicObservationPolicyV1.NormalizeTransportDouble(value.Y)!.Value;
+            value.Z = DynamicObservationPolicyV1.NormalizeTransportDouble(value.Z)!.Value;
         }
 
         private static DynamicObservedElementV1 Project(Document document, Element element, DynamicObservationSelectorV1 selector)
@@ -71,6 +111,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 Transform = InstanceTransform(element),
                 IsPinned = Safe(() => element.Pinned),
                 IsGrouped = Id(Safe(() => element.GroupId)) >= 0,
+                CoreStateHash = DynamicCoreOperationHostV1.CoreTrustedElementStateHash(element),
                 Parameters = Parameters(element, type, selector)
             };
             DynamicObservationPolicyV1.ValidateElement(result);

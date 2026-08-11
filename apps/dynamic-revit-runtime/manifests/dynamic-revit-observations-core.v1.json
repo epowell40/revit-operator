@@ -1,12 +1,14 @@
 {
   "schema": "dynamic-revit-observation-contract-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:86d57659b3a1955b45fde712ee57e3a07c9eaf69b45346b6815532e2b28b7a6e",
+  "contractManifestHash": "sha256:e97d589a1a42224893bfb6af1d4379dd5ee7aeffc4603d511b49d1cb29a22bf1",
   "selectorSchema": "dynamic-revit-observation-selector/v1",
   "envelopeSchema": "dynamic-revit-observation-envelope/v1",
   "cursorSchema": "dynamic-revit-observation-cursor/v1",
-  "canonicalVersion": "dynamic-revit-observation-canonical/v1",
+  "canonicalVersion": "dynamic-revit-observation-canonical/v4",
   "readOnly": true,
+  "activeViewCandidateHydration": true,
+  "hostExactCoreStateHash": true,
   "limits": {
     "maximumRequestBytes": 65536,
     "maximumPageSize": 256,

@@ -17,7 +17,11 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity Sdk { get; set; } = new();
     public PackageArtifactIdentity SandboxPolicy { get; set; } = new();
     public PackageArtifactIdentity ObservationContract { get; set; } = new();
+    public PackageArtifactIdentity BuildingSystemsObservationContract { get; set; } = new();
     public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
+    public PackageArtifactIdentity ResultReferenceContract { get; set; } = new();
+    public PackageArtifactIdentity AnnotationOperationsContract { get; set; } = new();
+    public PackageArtifactIdentity MepMutationContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
     public string SandboxProfileVersion { get; set; } = "";
     public string HostCapabilitiesManifestSha256 { get; set; } = "";
@@ -89,10 +93,18 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "sdk", package.Sdk, result);
         VerifyArtifact(root, "sandbox policy", package.SandboxPolicy, result);
         VerifyArtifact(root, "observation contract", package.ObservationContract, result);
+        VerifyArtifact(root, "building-systems observation contract", package.BuildingSystemsObservationContract, result);
         VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
+        VerifyArtifact(root, "result-reference contract", package.ResultReferenceContract, result);
+        VerifyArtifact(root, "annotation operations contract", package.AnnotationOperationsContract, result);
+        VerifyArtifact(root, "MEP mutation contract", package.MepMutationContract, result);
         VerifySandboxPolicy(root, package, result);
         VerifyObservationContract(root, package, result);
+        VerifyBuildingSystemsObservationContract(root, package, result);
         VerifyCoreOperationsContract(root, package, result);
+        VerifyResultReferenceContract(root, package, result);
+        VerifyAnnotationOperationsContract(root, package, result);
+        VerifyMepMutationContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
         {
             var packagedCapabilitiesPath = Path.Combine(root, relativeCapabilitiesPath.Replace('/', Path.DirectorySeparatorChar));
@@ -121,7 +133,7 @@ public static class RuntimePackageVerifier
             VerifyArtifact(root, "Revit " + capability.RevitYear + " host", host.Artifact, result);
         }
         foreach (var unexpected in hosts.Where(host => hostCapabilities.Hosts.All(capability => capability.RevitYear != host.RevitYear))) result.Errors.Add($"Unexpected Revit {unexpected.RevitYear} host artifact.");
-        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.CoreOperationsContract }.Concat(hosts.Select(host => host.Artifact))
+        var artifactPaths = new[] { package.Sdk, package.SandboxPolicy, package.ObservationContract, package.BuildingSystemsObservationContract, package.CoreOperationsContract, package.ResultReferenceContract, package.AnnotationOperationsContract, package.MepMutationContract }.Concat(hosts.Select(host => host.Artifact))
             .Where(artifact => artifact is not null).Select(artifact => NormalizeRelativePath(artifact.RelativePath))
             .Concat(new[] { NormalizeRelativePath(package.Supervisor?.RelativePath), NormalizeRelativePath(package.Worker?.RelativePath) })
             .ToArray();
@@ -207,7 +219,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var rootValue = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "limits" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "activeViewCandidateHydration", "hostExactCoreStateHash", "limits" };
             var fields = rootValue.ValueKind == JsonValueKind.Object ? rootValue.EnumerateObject().Select(value => value.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 rootValue.GetProperty("schema").GetString() != DynamicObservationContractV1.ManifestSchema ||
@@ -217,7 +229,9 @@ public static class RuntimePackageVerifier
                 rootValue.GetProperty("envelopeSchema").GetString() != DynamicObservationContractV1.EnvelopeSchema ||
                 rootValue.GetProperty("cursorSchema").GetString() != DynamicObservationContractV1.CursorSchema ||
                 rootValue.GetProperty("canonicalVersion").GetString() != DynamicObservationContractV1.CanonicalVersion ||
-                rootValue.GetProperty("readOnly").ValueKind != JsonValueKind.True)
+                rootValue.GetProperty("readOnly").ValueKind != JsonValueKind.True ||
+                rootValue.GetProperty("activeViewCandidateHydration").ValueKind != JsonValueKind.True ||
+                rootValue.GetProperty("hostExactCoreStateHash").ValueKind != JsonValueKind.True)
                 throw new InvalidDataException("Observation contract manifest identity or field set is invalid.");
             var limits = rootValue.GetProperty("limits");
             var expectedLimits = new Dictionary<string, int>(StringComparer.Ordinal)
@@ -242,6 +256,53 @@ public static class RuntimePackageVerifier
         }
     }
 
+    private static void VerifyBuildingSystemsObservationContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.BuildingSystemsObservationContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.BuildingSystemsObservationContract.RelativePath, "building-systems observation contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.BuildingSystemsObservationContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "selectorSchema", "envelopeSchema", "cursorSchema", "canonicalVersion", "readOnly", "productionExposed", "limits" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestSchema ||
+                string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicBuildingSystemsObservationContractV1.ContractSurfaceHash ||
+                value.GetProperty("selectorSchema").GetString() != DynamicBuildingSystemsObservationContractV1.SelectorSchema ||
+                value.GetProperty("envelopeSchema").GetString() != DynamicBuildingSystemsObservationContractV1.EnvelopeSchema ||
+                value.GetProperty("cursorSchema").GetString() != DynamicBuildingSystemsObservationContractV1.CursorSchema ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicBuildingSystemsObservationContractV1.CanonicalVersion ||
+                value.GetProperty("readOnly").ValueKind != JsonValueKind.True || value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Building-systems observation manifest identity or field set is invalid.");
+            var expectedLimits = new Dictionary<string, int>(StringComparer.Ordinal)
+            {
+                ["maximumRequestBytes"] = DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes,
+                ["maximumPageSize"] = DynamicBuildingSystemsObservationContractV1.MaximumPageSize,
+                ["maximumObservedFacts"] = DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts,
+                ["maximumElementSelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumElementSelectors,
+                ["maximumCategorySelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumCategorySelectors,
+                ["maximumKindSelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumKindSelectors,
+                ["maximumParameterSelectors"] = DynamicBuildingSystemsObservationContractV1.MaximumParameterSelectors,
+                ["maximumParametersPerFact"] = DynamicBuildingSystemsObservationContractV1.MaximumParametersPerFact,
+                ["maximumConnectorsPerFact"] = DynamicBuildingSystemsObservationContractV1.MaximumConnectorsPerFact,
+                ["maximumConnectionsPerConnector"] = DynamicBuildingSystemsObservationContractV1.MaximumConnectionsPerConnector,
+                ["maximumSystemMembers"] = DynamicBuildingSystemsObservationContractV1.MaximumSystemMembers,
+                ["maximumAnnotationTextBytes"] = DynamicBuildingSystemsObservationContractV1.MaximumAnnotationTextBytes,
+                ["maximumTaggedTargets"] = DynamicBuildingSystemsObservationContractV1.MaximumTaggedTargets
+            };
+            var limits = value.GetProperty("limits"); var observed = limits.ValueKind == JsonValueKind.Object ? limits.EnumerateObject().ToArray() : [];
+            if (observed.Length != expectedLimits.Count || observed.Select(property => property.Name).Distinct(StringComparer.Ordinal).Count() != observed.Length ||
+                observed.Any(property => !expectedLimits.TryGetValue(property.Name, out var expected) || property.Value.ValueKind != JsonValueKind.Number || property.Value.GetInt32() != expected))
+                throw new InvalidDataException("Building-systems observation manifest limits are invalid.");
+        }
+        catch (Exception ex) { result.Errors.Add("Building-systems observation manifest content is invalid: " + ex.Message); }
+    }
+
     private static void VerifyCoreOperationsContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
     {
         if (package.CoreOperationsContract is null) return;
@@ -252,7 +313,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var value = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "canonicalVersion", "maximumOperations", "maximumAttributes", "productionExposed", "primitives" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "canonicalVersion", "contextRuleRecordSchema", "contextRuleBindingSchema", "contextRuleCanonicalVersion", "maximumContextRuleConditions", "maximumContextRuleCategories", "maximumOperations", "maximumAttributes", "productionExposed", "primitives" };
             var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 value.GetProperty("schema").GetString() != DynamicCoreOperationsV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
@@ -260,6 +321,11 @@ public static class RuntimePackageVerifier
                 value.GetProperty("contractSurfaceHash").GetString() != DynamicCoreOperationManifestV1.ContractSurfaceHash ||
                 value.GetProperty("primitiveManifestHash").GetString() != DynamicPrimitiveManifestV1.ManifestHash ||
                 value.GetProperty("canonicalVersion").GetString() != DynamicCoreOperationsV1.CanonicalVersion ||
+                value.GetProperty("contextRuleRecordSchema").GetString() != DynamicContextRuleContractV1.RecordSchema ||
+                value.GetProperty("contextRuleBindingSchema").GetString() != DynamicContextRuleContractV1.BindingSchema ||
+                value.GetProperty("contextRuleCanonicalVersion").GetString() != DynamicContextRuleContractV1.CanonicalVersion ||
+                value.GetProperty("maximumContextRuleConditions").GetInt32() != DynamicContextRuleContractV1.MaximumConditions ||
+                value.GetProperty("maximumContextRuleCategories").GetInt32() != DynamicContextRuleContractV1.MaximumCategories ||
                 value.GetProperty("maximumOperations").GetInt32() != DynamicCoreOperationsV1.MaximumOperations ||
                 value.GetProperty("maximumAttributes").GetInt32() != DynamicCoreOperationsV1.MaximumAttributes ||
                 value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
@@ -285,6 +351,118 @@ public static class RuntimePackageVerifier
         {
             result.Errors.Add("Core operations contract manifest content is invalid: " + ex.Message);
         }
+    }
+
+    private static void VerifyResultReferenceContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.ResultReferenceContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.ResultReferenceContract.RelativePath, "result-reference contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.ResultReferenceContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "maximumBuildingSystemsPages", "maximumTrustedExternalTargets", "productionExposed" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicResultReferenceContractV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicResultReferenceManifestV1.ContractSurfaceHash ||
+                value.GetProperty("graphSchema").GetString() != DynamicResultReferenceContractV1.GraphSchema ||
+                value.GetProperty("outputFactSchema").GetString() != DynamicResultReferenceContractV1.OutputFactSchema ||
+                value.GetProperty("receiptSchema").GetString() != DynamicResultReferenceContractV1.ReceiptSchema ||
+                value.GetProperty("programResultSchema").GetString() != DynamicResultReferenceContractV1.ProgramResultSchema ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicResultReferenceContractV1.CanonicalVersion ||
+                value.GetProperty("maximumNodes").GetInt32() != DynamicResultReferenceContractV1.MaximumNodes ||
+                value.GetProperty("maximumOutputsPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumOutputsPerNode ||
+                value.GetProperty("maximumReferencesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumReferencesPerNode ||
+                value.GetProperty("maximumAttributesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumAttributesPerNode ||
+                value.GetProperty("maximumBuildingSystemsPages").GetInt32() != DynamicResultReferenceContractV1.MaximumBuildingSystemsPages ||
+                value.GetProperty("maximumTrustedExternalTargets").GetInt32() != DynamicResultReferenceContractV1.MaximumTrustedExternalTargets ||
+                value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Result-reference contract manifest identity or field set is invalid.");
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add("Result-reference contract manifest content is invalid: " + ex.Message);
+        }
+    }
+
+    private static void VerifyAnnotationOperationsContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.AnnotationOperationsContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.AnnotationOperationsContract.RelativePath, "annotation operations contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.AnnotationOperationsContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path)); var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "resultReferenceManifestHash", "readbackSchema", "previewSchema", "canonicalVersion", "maximumTextLength", "productionExposed", "primitives" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicAnnotationOperationsV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicAnnotationOperationManifestV1.ManifestHash || value.GetProperty("contractSurfaceHash").GetString() != DynamicAnnotationOperationManifestV1.ContractSurfaceHash ||
+                value.GetProperty("resultReferenceManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash || value.GetProperty("readbackSchema").GetString() != DynamicAnnotationOperationsV1.ReadbackSchema ||
+                value.GetProperty("previewSchema").GetString() != DynamicAnnotationOperationsV1.PreviewSchema || value.GetProperty("canonicalVersion").GetString() != DynamicAnnotationOperationsV1.CanonicalVersion ||
+                value.GetProperty("maximumTextLength").GetInt32() != DynamicAnnotationOperationsV1.MaximumTextLength || value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Annotation operations manifest identity or field set is invalid.");
+            var primitives = value.GetProperty("primitives").EnumerateArray().ToArray();
+            if (primitives.Length != DynamicAnnotationOperationManifestV1.All.Count) throw new InvalidDataException("Annotation primitive count is invalid.");
+            foreach (var descriptor in DynamicAnnotationOperationManifestV1.All)
+            {
+                var primitive = primitives.Single(item => item.GetProperty("kind").GetString() == descriptor.Kind);
+                var primitiveFields = primitive.EnumerateObject().Select(property => property.Name).ToArray();
+                if (primitiveFields.Length != 6 || primitiveFields.Any(field => !new[] { "kind", "version", "effectClass", "externalTargetCount", "outputCount", "requiredAttributes" }.Contains(field, StringComparer.Ordinal)) ||
+                    primitive.GetProperty("version").GetString() != descriptor.PrimitiveVersion || primitive.GetProperty("effectClass").GetString() != descriptor.EffectClass ||
+                    primitive.GetProperty("externalTargetCount").GetInt32() != descriptor.ExternalTargetCount || primitive.GetProperty("outputCount").GetInt32() != descriptor.OutputCount ||
+                    !primitive.GetProperty("requiredAttributes").EnumerateArray().Select(item => item.GetString()).SequenceEqual(descriptor.RequiredAttributes, StringComparer.Ordinal))
+                    throw new InvalidDataException("Annotation primitive descriptor does not match the SDK.");
+            }
+        }
+        catch (Exception ex) { result.Errors.Add("Annotation operations contract manifest content is invalid: " + ex.Message); }
+    }
+
+    private static void VerifyMepMutationContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.MepMutationContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.MepMutationContract.RelativePath, "MEP mutation contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.MepMutationContract.RelativePath)); if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path)); var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "primitiveManifestHash", "resultReferenceManifestHash", "canonicalVersion", "maximumOperations", "maximumEffects", "maximumOutputs", "primitives", "productionExposed" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicMepMutationContractV1.ManifestSchema ||
+                value.GetProperty("contractManifestHash").GetString() != DynamicMepMutationManifestV1.ManifestHash ||
+                value.GetProperty("contractSurfaceHash").GetString() != DynamicMepMutationManifestV1.ContractSurfaceHash ||
+                value.GetProperty("primitiveManifestHash").GetString() != DynamicPrimitiveManifestV1.ManifestHash ||
+                value.GetProperty("resultReferenceManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash ||
+                value.GetProperty("canonicalVersion").GetString() != DynamicMepMutationContractV1.CanonicalVersion ||
+                value.GetProperty("maximumOperations").GetInt32() != DynamicMepMutationContractV1.MaximumOperations ||
+                value.GetProperty("maximumEffects").GetInt32() != DynamicMepMutationContractV1.MaximumEffects ||
+                value.GetProperty("maximumOutputs").GetInt32() != DynamicMepMutationContractV1.MaximumOutputs ||
+                value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("MEP mutation manifest identity or exact field set is invalid.");
+            var kinds = value.GetProperty("primitives").EnumerateArray().Select(item => item.GetProperty("kind").GetString() ?? "").ToArray();
+            if (kinds.Length != DynamicMepMutationManifestV1.All.Count || !new HashSet<string>(kinds, StringComparer.Ordinal).SetEquals(DynamicMepMutationManifestV1.All.Select(item => item.Kind)))
+                throw new InvalidDataException("MEP mutation primitive set is incomplete or substituted.");
+            foreach (var primitive in value.GetProperty("primitives").EnumerateArray())
+            {
+                var primitiveFields = primitive.EnumerateObject().Select(property => property.Name).ToArray();
+                var expectedPrimitiveFields = new[] { "kind", "version", "effectClass", "externalTargetMinimum", "externalTargetMaximum", "resultReferenceMinimum", "resultReferenceMaximum", "outputs", "attributes" };
+                var descriptor = DynamicMepMutationManifestV1.Find(primitive.GetProperty("kind").GetString() ?? "") ?? throw new InvalidDataException("MEP mutation primitive is unknown.");
+                if (primitiveFields.Length != expectedPrimitiveFields.Length || primitiveFields.Any(field => !expectedPrimitiveFields.Contains(field, StringComparer.Ordinal)) ||
+                    primitive.GetProperty("version").GetString() != descriptor.PrimitiveVersion || primitive.GetProperty("effectClass").GetString() != descriptor.EffectClass ||
+                    primitive.GetProperty("externalTargetMinimum").GetInt32() != descriptor.ExternalTargetMinimum || primitive.GetProperty("externalTargetMaximum").GetInt32() != descriptor.ExternalTargetMaximum ||
+                    primitive.GetProperty("resultReferenceMinimum").GetInt32() != descriptor.ResultReferenceMinimum || primitive.GetProperty("resultReferenceMaximum").GetInt32() != descriptor.ResultReferenceMaximum ||
+                    primitive.GetProperty("outputs").GetInt32() != descriptor.OutputCount ||
+                    !primitive.GetProperty("attributes").EnumerateArray().Select(item => item.GetString() ?? "").SequenceEqual(descriptor.RequiredAttributes, StringComparer.Ordinal))
+                    throw new InvalidDataException("MEP mutation primitive descriptor differs from the exact SDK contract.");
+            }
+        }
+        catch (Exception ex) { result.Errors.Add("MEP mutation contract manifest content is invalid: " + ex.Message); }
     }
 
     private static string NormalizeRelativePath(string? path) => (path ?? "").Replace('\\', '/').TrimStart('/');

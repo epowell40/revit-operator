@@ -8,6 +8,24 @@ if (args.Length == 1 && args[0] == "--sdk-manifest-hash")
     Console.WriteLine(DynamicRevitSdkProductionVersion.ManifestHash);
     return 0;
 }
+if (args.Length == 1 && args[0] == "--sdk-manifest-components")
+{
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+    {
+        production = DynamicRevitSdkProductionVersion.ManifestHash,
+        productionSurface = DynamicRevitSdkProductionVersion.ContractSurfaceHash,
+        primitives = DynamicPrimitiveManifestV1.ManifestHash,
+        observations = DynamicObservationContractV1.ManifestHash,
+        buildingSystems = DynamicBuildingSystemsObservationContractV1.ManifestHash,
+        coreOperations = DynamicCoreOperationManifestV1.ManifestHash,
+        resultReferences = DynamicResultReferenceManifestV1.ManifestHash,
+        annotations = DynamicAnnotationOperationManifestV1.ManifestHash,
+        annotationSurface = DynamicAnnotationOperationManifestV1.ContractSurfaceHash,
+        mepMutations = DynamicMepMutationManifestV1.ManifestHash,
+        mepMutationSurface = DynamicMepMutationManifestV1.ContractSurfaceHash
+    }));
+    return 0;
+}
 
 if (args.Length == 2 && args[0] == "--directory-hash")
 {

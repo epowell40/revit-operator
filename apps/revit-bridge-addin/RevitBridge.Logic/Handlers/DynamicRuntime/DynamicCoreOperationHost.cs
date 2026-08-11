@@ -12,14 +12,15 @@ using RevitOperator.DynamicRevitSdk;
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
     /// <summary>
-    /// Additive v1 adapter for signed core-operation graphs. It is intentionally not registered as
-    /// an HTTP route or advertised capability. Preview is always a rolled-back TransactionGroup;
-    /// apply additionally requires an exact preview effect-set authorization.
+    /// Additive v1 adapter for signed core-operation graphs. It is registered only by the exact
+    /// development/laboratory runtime boundary and is never an advertised production capability.
+    /// Preview is always a rolled-back TransactionGroup; apply additionally requires an exact
+    /// preview effect-set authorization.
     /// </summary>
     internal static class DynamicCoreOperationHostV1
     {
         private const int BaselineLimit = 50000;
-        private const string AdapterSurface = "dynamic-revit-core-operation-host/v3\nset_parameter/v1:exact-owner\nrotate_element/v1:exact-orientation-state-v1\nchange_type/v1:connector-signature-v3\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
+        private const string AdapterSurface = "dynamic-revit-core-operation-host/v4\nset_parameter/v1:exact-owner-readback-effect\nrotate_element/v1:exact-orientation-state-v1\nchange_type/v1:connector-signature-v3\ndelete_element/v1:preview-only\napply-authorization:durable-one-use";
         private static readonly ConcurrentDictionary<string, byte> ConsumedBindings = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
 
         internal static string HostAdapterManifestHash(string revitYear) => DynamicWire.Sha256(string.Join("\n", new[]
@@ -159,6 +160,15 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                         catch { if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack(); throw; }
                     }
                     if (trackingFailure != null) throw new InvalidOperationException("Core-operation DocumentChanged capture failed.", trackingFailure);
+                    if (node.Kind != "delete_element")
+                    {
+                        if (readback.BeforeStateHash == readback.AfterStateHash)
+                            throw new InvalidOperationException("Core-operation mutation produced no trusted state change.");
+                        // Revit can omit a parameter-only owner from DocumentChanged even though the
+                        // exact post-transaction readback proves its state changed. Bind the primary
+                        // mutation owner explicitly; all collateral IDs remain event-derived.
+                        current.Modified.Add(primary);
+                    }
                     if (exactDeleted != null)
                     {
                         var returned = new HashSet<long>(exactDeleted.Select(ElementIdCompat.GetValue));
@@ -294,13 +304,19 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private static Dictionary<long, Baseline> CaptureBaseline(Document document)
         {
             var result = new Dictionary<long, Baseline>();
-            foreach (var element in new FilteredElementCollector(document))
+            foreach (var element in AllElements(document))
             {
                 if (result.Count >= BaselineLimit) throw new InvalidOperationException("Core-operation exact baseline exceeds 50000 elements.");
                 var id = ElementIdCompat.GetValue(element.Id);
                 result[id] = new Baseline { UniqueId = element.UniqueId ?? "", StateHash = CoreTrustedElementStateHash(element) };
             }
             return result;
+        }
+
+        private static IEnumerable<Element> AllElements(Document document)
+        {
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsNotElementType()) yield return element;
+            foreach (var element in new FilteredElementCollector(document).WhereElementIsElementType()) yield return element;
         }
 
         private static bool VerifyRollback(Document document, IReadOnlyDictionary<long, Baseline> baseline, IEnumerable<long> affected)
@@ -382,7 +398,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             return document.GetElement(typeId) ?? throw new InvalidOperationException("Type-scoped parameter owner no longer exists.");
         }
 
-        private static string CoreTrustedElementStateHash(Element element, bool requireExactOrientation = false)
+        internal static string CoreTrustedElementStateHash(Element element, bool requireExactOrientation = false)
         {
             var fields = new List<string> { "base:" + DynamicRuntimePreviewHandler.TrustedElementStateHash(element) };
             try

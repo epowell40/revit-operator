@@ -215,6 +215,121 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("\"/revit/dynamic-runtime/preview\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/authorize-apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/apply\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/observe-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/observe-building-systems-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/result-reference-facts-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/mep-result-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/mep-result-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/mep-result-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/annotation-result-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/annotation-result-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/annotation-result-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/core-preview-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/core-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
+            Assert.Contains("\"/revit/dynamic-runtime/core-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
+
+            var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeV1ActivationHandlers.cs"));
+            Assert.Contains("REVIT_OPERATOR_MODE\"), \"development\", StringComparison.Ordinal", activation);
+            Assert.Contains("OPERATOR_TOOL_EXPOSURE_PROFILE\"), \"laboratory\", StringComparison.Ordinal", activation);
+            Assert.Contains("DurableCoreOperationApplyAuthorizationLedgerV1", activation);
+            Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1", activation);
+            Assert.Contains("DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes", activation);
+            Assert.Contains("authorization_granted = false", activation);
+        }
+
+        [Fact]
+        public void DynamicAnnotationActivationIsLabBoundAuthenticatedAndRollbackVerified()
+        {
+            var root = FindRepositoryRoot();
+            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            Assert.Contains("/revit/dynamic-runtime/annotation-result-preview-v1", server);
+            Assert.Contains("/revit/dynamic-runtime/annotation-result-authorize-v1", server);
+            Assert.Contains("/revit/dynamic-runtime/annotation-result-apply-v1", server);
+
+            var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceActivationHandlers.cs"));
+            Assert.Equal(
+                3,
+                activation.Split(
+                    new[] { "DynamicRuntimeV1LaboratoryBoundary.Require();" },
+                    StringSplitOptions.None).Length - 1);
+            Assert.Contains("DynamicRuntimeBootstrapRegistry.VerifyRequest", activation);
+            Assert.Contains("DynamicRuntimeAdmissionRegistry.RequireV1Identity", activation);
+            Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged", activation);
+            Assert.Contains("Authorizations.TryRemove", activation);
+            Assert.Contains("ledger.TryConsume(seal.AuthorizationHash)", activation);
+            Assert.Contains("retry_permitted = false", activation);
+
+            var host = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceMutationHost.cs"));
+            Assert.Contains("DynamicAnnotationOperationPolicyV1.ValidatePreviewAgainstGraph", host);
+            Assert.Contains("DynamicResultReferencePolicyV1.Validate(graph, budget, Kinds, admissionTargets)", host);
+            Assert.Contains("DocumentChanged += changed", host);
+            Assert.Contains("VerifyRollback(document, baseline", host);
+            Assert.Contains("VerifyLive(document, application, outputs, readbacks)", host);
+            Assert.Contains("host.Commit()", host);
+        }
+
+        [Fact]
+        public void FindTextNotesHydratesBoundedStableAnnotationSelectorFactsWithoutChangingRisk()
+        {
+            var root = FindRepositoryRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "FindTextNotesHandler.cs"));
+            Assert.Contains("MaximumResultCount = 500", handler);
+            Assert.Contains("MaximumTextUtf8Bytes = 4096", handler);
+            Assert.Contains("uniqueId = RequiredUniqueId(tn, \"TextNote\")", handler);
+            Assert.Contains("textTypeUniqueId", handler);
+            Assert.Contains("ownerViewUniqueId", handler);
+            Assert.Contains("location = Point(coord)", handler);
+            Assert.Contains("boundingBox", handler);
+            Assert.Contains("TimeSpan.FromMilliseconds(250)", handler);
+
+            var schema = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("find-text-notes max must be between 1 and 500", schema);
+            var risk = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+            Assert.Contains("\"/revit/find-text-notes\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", risk);
+        }
+
+        [Fact]
+        public void DynamicRollbackBaselinesApplyExplicitRevitCollectorFilters()
+        {
+            var root = FindRepositoryRoot();
+            foreach (var file in new[] { "DynamicCoreOperationHost.cs", "DynamicMepResultReferenceMutationHost.cs", "DynamicAnnotationResultReferenceMutationHost.cs" })
+            {
+                var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", file));
+                Assert.Contains("foreach (var element in AllElements(document))", source);
+                Assert.Contains("new FilteredElementCollector(document).WhereElementIsNotElementType()", source);
+                Assert.Contains("new FilteredElementCollector(document).WhereElementIsElementType()", source);
+                Assert.DoesNotContain("foreach (var element in new FilteredElementCollector(document))", source);
+            }
+        }
+
+        [Fact]
+        public void DynamicCoreEffectsBindTheExactReadbackProvenMutationOwner()
+        {
+            var root = FindRepositoryRoot();
+            var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicCoreOperationHost.cs"));
+            Assert.Contains("dynamic-revit-core-operation-host/v4", source);
+            Assert.Contains("if (readback.BeforeStateHash == readback.AfterStateHash)", source);
+            Assert.Contains("current.Modified.Add(primary);", source);
+            Assert.Contains("current.Modified.OrderBy(value => value).ToArray()", source);
+            Assert.Contains("DynamicCoreOperationEffectPolicyV1.ValidateAgainstGraph(effects, graph, budget)", source);
+        }
+
+        [Fact]
+        public void DynamicMepOutputsRemainProvenWhileRevitCollateralIsFullyAccounted()
+        {
+            var root = FindRepositoryRoot();
+            var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicMepResultReferenceMutationHost.cs"));
+            Assert.Contains("outputIds.IsSubsetOf(current.Added)", source);
+            Assert.Contains("!baseline.ContainsKey(id) && !createdDuringGraph.Contains(id)", source);
+            Assert.Contains("scannedElementCount > BaselineLimit + 256", source);
+            Assert.Contains("foreach (var element in AllElements(document))", source);
+            Assert.Contains("createdDuringGraph.UnionWith(current.Added)", source);
+            Assert.Contains("changes.Added.Select(id => document.GetElement", source);
+            Assert.Contains("AddedCount = changes.Added.Count", source);
+            Assert.Contains("addedCategoriesDuringGraph[addedCategory]", source);
+            Assert.Contains("addedCategories.Any(pair => !allowedCategories.Contains(pair.Key))", source);
+            Assert.Contains("addedIds.Length > budget.MaximumCreates", source);
+            Assert.DoesNotContain("outputIds.SetEquals(current.Added)", source);
         }
 
         [Fact]

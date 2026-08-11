@@ -10,6 +10,20 @@ public sealed class CoreOperationsTests
     private const long Now = 2_000_000_000;
 
     [Fact]
+    public void ContextRuleIdentityIsInsideCoreGraphAndManifestAdmission()
+    {
+        var builder = new DynamicCoreOperationGraphBuilderV1(H("input"), H("document"), 12, 1, "rule-1", H("record"), H("binding"));
+        builder.SetString("a", "parameter:builtin:1", "instance", "approved", H("state"), H("parameter"));
+        var graph = builder.Build();
+        Assert.Equal("rule-1", graph.ContextRuleRecordId); Assert.Equal(H("record"), graph.ContextRuleRecordHash); Assert.Equal(H("binding"), graph.ContextRuleBindingHash);
+        var originalHash = graph.GraphHash; graph.ContextRuleRecordHash = H("substituted");
+        Assert.NotEqual(originalHash, DynamicOperationGraphV1Admission.GraphHash(graph));
+        var budget = Budget(); var context = Context(graph, budget); var binding = Binding(graph, context);
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationAdmissionV1.Validate(graph, budget, context, binding, Key, Now, "preview"));
+        Assert.Throws<ArgumentException>(() => new DynamicCoreOperationGraphBuilderV1(H("input"), H("document"), 12, 1, "rule-1", "", H("binding")));
+    }
+
+    [Fact]
     public void TypedBuildersHaveExactVersionedCanonicalGoldenIdentities()
     {
         var graph = Graph();
@@ -18,9 +32,9 @@ public sealed class CoreOperationsTests
         Assert.All(graph.Nodes, node => Assert.Equal(node.NodeId, DynamicOperationGraphV1Admission.NodeId(node)));
         Assert.Equal("internal_revit_units", graph.Nodes[0].Attributes["value_semantics"]);
         Assert.Equal("double", graph.Nodes[0].Attributes["expected_storage_kind"]);
-        Assert.Equal("sha256:54ccd5547e936917e79bff795bf1b1ba914d528a72f42a03e5711c2d1093d4f4", graph.GraphHash);
-        Assert.Equal("sha256:2e4f3ffb7f73a824dd4a5765919a66759ad60a57c28881b35da89cbcfdedc70b", DynamicCoreOperationManifestV1.ManifestHash);
-        Assert.Equal("sha256:fd5077423276e9d15271ab98567d7459ce52f2591bf12e757ef3c719bd74c717", DynamicCoreOperationManifestV1.ContractSurfaceHash);
+        Assert.Equal("sha256:3f4f59e59f3e514160fbfd1700924ff60e3737308908893ef1c56ea9de5f6ae7", graph.GraphHash);
+        Assert.Equal("sha256:e5edda31a4ea266f3ad1f94dcfb7b648c128982f30c82888b27f4ce49dc167bd", DynamicCoreOperationManifestV1.ManifestHash);
+        Assert.Equal("sha256:944c23138a6212ad29eadc1285edd9262a65bbc65f22cdc45bd7ddb68c11b7ab", DynamicCoreOperationManifestV1.ContractSurfaceHash);
     }
 
     [Fact]
@@ -33,6 +47,8 @@ public sealed class CoreOperationsTests
         Assert.Equal(DynamicCoreOperationManifestV1.ContractSurfaceHash, root.GetProperty("contractSurfaceHash").GetString());
         Assert.Equal(DynamicPrimitiveManifestV1.ManifestHash, root.GetProperty("primitiveManifestHash").GetString());
         Assert.False(root.GetProperty("productionExposed").GetBoolean());
+        Assert.Equal(DynamicContextRuleContractV1.RecordSchema, root.GetProperty("contextRuleRecordSchema").GetString());
+        Assert.Equal(DynamicContextRuleContractV1.BindingSchema, root.GetProperty("contextRuleBindingSchema").GetString());
         Assert.Equal(DynamicCoreOperationManifestV1.All.Select(value => value.Kind).Order(), root.GetProperty("primitives").EnumerateArray().Select(value => value.GetProperty("kind").GetString()).Order());
     }
 
@@ -155,9 +171,12 @@ public sealed class CoreOperationsTests
     {
         Assert.Equal("0", DynamicCoreOperationCanonicalNumberV1.Format(-0d));
         Assert.Equal("1e20", DynamicCoreOperationCanonicalNumberV1.Format(1e20));
+        Assert.Equal("-9.3926755249342779", DynamicCoreOperationCanonicalNumberV1.Format(-9.392675524934278d));
+        Assert.Equal(-9.392675524934278d, DynamicCoreOperationCanonicalNumberV1.ParseExact("-9.3926755249342779", "redline_coordinate"));
         Assert.Equal(1e20, DynamicCoreOperationCanonicalNumberV1.ParseExact("1e20", "test"));
         Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("-0", "test"));
         Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("1E+20", "test"));
+        Assert.Throws<ArgumentException>(() => DynamicCoreOperationCanonicalNumberV1.ParseExact("-9.392675524934278", "redline_coordinate"));
 
         var node = Clone(Graph().Nodes[1]);
         ((Dictionary<string, string>)node.Attributes)["axis_origin_feet"] = "1.0,2,3";
