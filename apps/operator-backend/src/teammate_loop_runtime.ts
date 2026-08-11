@@ -404,7 +404,6 @@ function stateFor(req: ChatRequest): TeammateLoopState {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
-  if (call.effect === "discovery" && /(?:tool-doc|revit_tool_doc)$/.test(call.path) && state.tool_doc_calls >= 1) return "tool_doc_lookup_already_used";
   if (call.effect === "unknown") return "unknown_revit_contract_requires_one_tool_doc_lookup";
   if (contract.turn_kind === "conversation") return "conceptual_turn_does_not_require_revit";
   if (call.effect !== "discovery" && contract.context_state !== "live") return "live_revit_context_required";

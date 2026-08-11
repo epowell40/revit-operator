@@ -9,6 +9,11 @@ test("scoped duct resize is classified as a write", () => {
 test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/context"), false);
   assert.equal(pathLooksWrite("/revit/sheets"), false);
+  assert.equal(pathLooksWrite("/revit/find-text-notes"), false);
+  assert.equal(pathLooksWrite("/revit/locate-elements"), false);
+  assert.equal(pathLooksWrite("/revit/plan-family-evolution"), false);
+  assert.equal(pathLooksWrite("/revit/read-family-evolution"), false);
+  assert.equal(pathLooksWrite("/revit/apply-family-evolution"), true);
 });
 
 test("native API policy is read-only over GET but mutating over POST", () => {
@@ -17,6 +22,9 @@ test("native API policy is read-only over GET but mutating over POST", () => {
 });
 
 test("conditional audit and type-maintenance routes inspect the request body", () => {
+  assert.equal(pathLooksWrite("/revit/visibility", { action: "get" }), false);
+  assert.equal(conditionalActionPathEffect("/revit/visibility", { action: "hide_category", dryRun: true }), "preview");
+  assert.equal(conditionalActionPathEffect("/revit/visibility", { action: "hide_category" }), "apply");
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "audit" }), false);
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }), true);
 

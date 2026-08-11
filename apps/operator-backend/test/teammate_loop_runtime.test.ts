@@ -299,7 +299,7 @@ test("Codex MCP host guard classifies conditional route bodies by their actual e
   }
 });
 
-test("empty-text continuation preserves the original turn and tool docs are bounded to one call", () => {
+test("empty-text continuation preserves the original turn and tool discovery may inspect multiple contracts", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";
   const preview = guardGenericTeammateDecision(request(text), response([{
@@ -328,8 +328,8 @@ test("empty-text continuation preserves the original turn and tool docs are boun
     assert.equal(first.allowed, true);
     recordTeammateMcpResult(owner, first, { content: [{ type: "text", text: "{}" }] });
     const second = guardTeammateMcpCall(owner, { tool: "revit_tool_doc", arguments: { method: "POST", path: "/revit/set-parameters" } });
-    assert.equal(second.allowed, false);
-    assert.match(second.message || "", /already used/i);
+    assert.equal(second.allowed, true);
+    assert.equal(second.call?.effect, "discovery");
   } finally {
     endTeammateLoopOwner(lease);
   }
