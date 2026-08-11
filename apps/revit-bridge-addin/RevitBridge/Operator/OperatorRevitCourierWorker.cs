@@ -89,13 +89,26 @@ namespace RevitBridge.Operator
                 {
                     jobId = ReadRequiredString(job, "id", 200);
                     sessionId = ReadRequiredString(job, "session_id", 200);
-                    if (!OperatorCourierRuntimeProfile.IsExactDevelopmentLaboratory(
+                    var hasGeneralAgentAdmission = job.TryGetProperty("general_agent_admission", out _);
+                    if (hasGeneralAgentAdmission)
+                    {
+                        if (!OperatorCourierRuntimeProfile.TryValidateGeneralAgentJob(job, out var generalAgentError))
+                            throw new OperatorCourierCertificationException(
+                                "GENERAL_AGENT_COURIER_ADMISSION_INVALID",
+                                generalAgentError);
+                        if (job.TryGetProperty("laboratory_evidence", out _)
+                            || job.TryGetProperty("laboratory_move_evidence_admission", out _))
+                            throw new OperatorCourierCertificationException(
+                                "GENERAL_AGENT_COURIER_ADMISSION_INVALID",
+                                "General Agent and laboratory courier admissions are mutually exclusive.");
+                    }
+                    else if (!OperatorCourierRuntimeProfile.IsExactDevelopmentLaboratory(
                         Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"),
                         Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE")))
                     {
                         throw new OperatorCourierCertificationException(
                             "CERTIFICATION_FINAL_LEGACY_V1_REJECTED",
-                            "Legacy v1 courier jobs may execute only when REVIT_OPERATOR_MODE=development and OPERATOR_TOOL_EXPOSURE_PROFILE=laboratory.");
+                            "Legacy v1 courier jobs require an authenticated General Agent admission or the exact development laboratory profile.");
                     }
 
                     correlationId = ReadRequiredString(job, "correlation_id", 160);

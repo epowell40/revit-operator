@@ -18,6 +18,7 @@ import {
   type LaboratoryEvidenceDispatch
 } from "./laboratory_evidence.js";
 import { verifyLaboratoryExecutionReceipt } from "./laboratory_execution_receipt.js";
+import { getSidecarAgentProfileState } from "../capabilities/sidecar_agent_profile.js";
 
 export const REVIT_COURIER_JOB_VERSION = "revit-operator.revit-tool-job.v1";
 export const REVIT_COURIER_RESULT_VERSION = "revit-operator.revit-tool-result.v1";
@@ -38,6 +39,7 @@ export type RevitToolJobV1 = {
   target_document_path?: string | null;
   body?: unknown;
   laboratory_evidence?: LaboratoryEvidenceDispatch;
+  general_agent_admission?: GeneralAgentCourierAdmission;
   created_at: string;
   expires_at: string;
   status: "pending" | "running" | "succeeded" | "failed";
@@ -48,6 +50,21 @@ export type RevitToolJobV1 = {
   } | null;
   finished_at?: string | null;
   error?: string | null;
+};
+
+type GeneralAgentCourierAdmission = {
+  schema: "revit-operator.general-agent-courier-admission.v1";
+  source: "backend_general_agent";
+  runtime_mode: "hosted" | "production";
+  exposure_profile: "general";
+  capability_profile: "general_agent";
+  general_agent_ready: true;
+  method: "GET" | "POST";
+  path: string;
+  channel: "search" | "generic_call" | "typed_mcp" | "deterministic_workflow";
+  alias: string;
+  request_hash: string;
+  effect_hash: string;
 };
 
 export type RevitToolJob = RevitToolJobV1 | CertifiedCourierJobV2;
@@ -196,6 +213,42 @@ function writeJsonExclusiveAtomic(filePath: string, value: unknown): void {
 
 function rawSha256(value: string): string {
   return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+function requireGeneralAgentJobBinding(job: RevitToolJobV1): GeneralAgentCourierAdmission {
+  const admission = job.general_agent_admission;
+  const profile = getSidecarAgentProfileState();
+  const keys = admission && typeof admission === "object" && !Array.isArray(admission)
+    ? Object.keys(admission).sort()
+    : [];
+  const expectedKeys = [
+    "alias", "capability_profile", "channel", "effect_hash", "exposure_profile", "general_agent_ready",
+    "method", "path", "request_hash", "runtime_mode", "schema", "source"
+  ].sort();
+  if (!admission
+    || keys.length !== expectedKeys.length
+    || expectedKeys.some((key, index) => keys[index] !== key)
+    || profile.general_agent_ready !== true
+    || profile.capability_profile !== "general_agent"
+    || profile.tool_exposure_profile !== "general"
+    || admission.schema !== "revit-operator.general-agent-courier-admission.v1"
+    || admission.source !== "backend_general_agent"
+    || admission.runtime_mode !== profile.runtime_mode
+    || (admission.runtime_mode !== "hosted" && admission.runtime_mode !== "production")
+    || admission.exposure_profile !== "general"
+    || admission.capability_profile !== "general_agent"
+    || admission.general_agent_ready !== true
+    || admission.method !== job.method
+    || admission.path !== job.path
+    || !/^[a-z][a-z0-9_]{0,127}$/.test(admission.alias)
+    || !["search", "generic_call", "typed_mcp", "deterministic_workflow"].includes(admission.channel)
+    || !/^sha256:[0-9a-f]{64}$/.test(admission.request_hash)
+    || !/^sha256:[0-9a-f]{64}$/.test(admission.effect_hash)
+    || Object.prototype.hasOwnProperty.call(job, "turn_token")
+    || (job.turn_token_sha256 !== null && (typeof job.turn_token_sha256 !== "string" || !/^sha256:[0-9a-f]{64}$/.test(job.turn_token_sha256)))) {
+    throw new Error("General Agent courier admission is malformed or does not match the active authenticated backend profile and exact job route.");
+  }
+  return admission;
 }
 
 function executionContextFromState(state: CourierCompletionChallengeState): CertifiedCourierExecutionContext {
@@ -737,14 +790,25 @@ function writeCertificationTerminal(job: RevitToolJob, error: RevitCourierCertif
 
 function validCertifiedJobForClaim(job: RevitToolJob): boolean {
   if (job.version === REVIT_COURIER_JOB_VERSION) {
+    const legacyDenied = job.general_agent_admission === undefined && !isRevitCourierDevelopmentLaboratory();
     try {
-      requireCourierLaboratoryEvidenceJobBinding(job);
+      if (job.general_agent_admission !== undefined) {
+        if (job.laboratory_evidence !== undefined) throw new Error("General Agent and laboratory courier admissions are mutually exclusive.");
+        requireGeneralAgentJobBinding(job);
+      } else {
+        if (!isRevitCourierDevelopmentLaboratory()) throw new Error("Legacy v1 Revit courier jobs require an authenticated General Agent admission or the exact development laboratory profile.");
+        requireCourierLaboratoryEvidenceJobBinding(job);
+      }
       return true;
     } catch (error) {
       writeTerminal(job, {
         status: "failed",
-        error: error instanceof Error ? error.message : "Laboratory evidence job binding is invalid.",
-        code: "CERTIFICATION_LABORATORY_EVIDENCE_JOB_INVALID",
+        error: error instanceof Error ? error.message : "General Agent or laboratory job binding is invalid.",
+        code: job.general_agent_admission !== undefined
+          ? "GENERAL_AGENT_COURIER_ADMISSION_INVALID"
+          : legacyDenied
+            ? "CERTIFICATION_LEGACY_V1_DENIED"
+            : "CERTIFICATION_LABORATORY_EVIDENCE_JOB_INVALID",
         retryable: false,
         outcome_unknown: false
       });
@@ -840,10 +904,12 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
       });
       continue;
     }
-    if (job.version === REVIT_COURIER_JOB_VERSION && !isRevitCourierDevelopmentLaboratory()) {
+    if (job.version === REVIT_COURIER_JOB_VERSION
+      && job.general_agent_admission === undefined
+      && !isRevitCourierDevelopmentLaboratory()) {
       writeCertificationTerminal(job, new RevitCourierCertificationError(
         "CERTIFICATION_LEGACY_V1_DENIED",
-        "Legacy v1 Revit courier jobs are denied outside the explicit development laboratory profile."
+        "Legacy v1 Revit courier jobs require an authenticated General Agent admission or the exact development laboratory profile."
       ));
       continue;
     }
@@ -988,7 +1054,8 @@ export function failRevitToolJob(input: FinishInput): RevitToolJob {
   // failure cannot prove that dispatch did not occur. Only a signed success
   // receipt may settle known success; every competing failure is unknown and
   // nonretryable.
-  const outcomeUnknown = (job.version === REVIT_COURIER_JOB_VERSION && job.laboratory_evidence !== undefined)
+  const outcomeUnknown = (job.version === REVIT_COURIER_JOB_VERSION
+      && (job.laboratory_evidence !== undefined || job.general_agent_admission !== undefined))
     || (isCertifiedFamilyJob(job) && fs.existsSync(challengeIssuedPath(job.id)))
     || resultRecord?.outcomeUnknown === true;
   return writeTerminal(job, {

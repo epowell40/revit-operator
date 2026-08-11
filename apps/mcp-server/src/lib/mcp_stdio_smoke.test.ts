@@ -228,6 +228,21 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
   assert.equal(laboratoryNames.includes("operator_run_dynamic_revit_program"), true, "Laboratory mode must expose the gated Dynamic Runtime launcher.");
+
+  const hostedGeneralNames = await listToolsForExposureEnv({
+    REVIT_OPERATOR_MODE: "hosted",
+    OPERATOR_BRAIN: "codex",
+    OPERATOR_OPENAI_API_KEY: "test-provider-key"
+  });
+  assert.deepEqual(hostedGeneralNames, laboratoryNames, "Authenticated hosted General Agent mode must expose the complete typed Revit catalog, including project queries and writes.");
+  for (const required of [
+    "revit_search_tools",
+    "revit_call_tool",
+    "revit_query_elements",
+    "revit_set_parameters",
+    "revit_create_sheet",
+    "revit_list_schedules"
+  ]) assert.equal(hostedGeneralNames.includes(required), true, `Hosted General Agent catalog is missing ${required}.`);
 });
 
 test("MCP stdio server registers repaired tools and rejects semantic write controls before backend execution", async (t) => {

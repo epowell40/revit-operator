@@ -60,6 +60,7 @@ function writePolicyVariant(mutate: (policy: any) => void): { policyPath: string
 function policyVariantEnv(variant: { policyPath: string; policyHash: string }): NodeJS.ProcessEnv {
   return {
     REVIT_OPERATOR_MODE: "hosted",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "certified",
     OPERATOR_TOOL_EXPOSURE_POLICY_PATH: variant.policyPath,
     OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: variant.policyHash
   };
@@ -68,6 +69,7 @@ function policyVariantEnv(variant: { policyPath: string; policyHash: string }): 
 function certifiedEnv(policyPath = sourcePolicyPath): NodeJS.ProcessEnv {
   return {
     REVIT_OPERATOR_MODE: "hosted",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "certified",
     OPERATOR_TOOL_EXPOSURE_POLICY_PATH: policyPath,
     OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: sourcePolicyHash
   };
@@ -102,6 +104,37 @@ test("runtime modes default hosted/production/development closed and expose only
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "local", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }).mode, "certified");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "self_hosted" }).mode, "certified");
   assert.equal(getToolExposureRuntimeDecision({ REVIT_OPERATOR_MODE: "future" }).mode, "certified");
+});
+
+test("authenticated hosted production defaults to full General Agent exposure while explicit certified remains available", () => {
+  for (const runtimeMode of ["hosted", "production"] as const) {
+    const env = {
+      REVIT_OPERATOR_MODE: runtimeMode,
+      OPERATOR_BRAIN: "codex",
+      OPERATOR_OPENAI_API_KEY: "test-provider-key"
+    };
+    const runtime = getToolExposureRuntimeDecision(env);
+    assert.equal(runtime.mode, "general");
+    assert.equal(runtime.certified, false);
+    assert.match(runtime.reason, /General Agent exposure is active/i);
+    const decision = evaluateToolExposure({
+      method: "POST",
+      path: "/revit/query",
+      body: { category: "Air Terminals", limit: 5000 },
+      channel: "typed_mcp",
+      alias: "revit_query_elements",
+      env
+    });
+    assert.equal(decision.allowed, true);
+    assert.equal(decision.mode, "general");
+    assert.deepEqual(decision.reasonCodes, ["GENERAL_AGENT_MODE_ACTIVE"]);
+  }
+  assert.equal(getToolExposureRuntimeDecision({
+    REVIT_OPERATOR_MODE: "hosted",
+    OPERATOR_BRAIN: "codex",
+    OPERATOR_OPENAI_API_KEY: "test-provider-key",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "certified"
+  }).mode, "certified");
 });
 
 test("cross-runtime canonical JSON fixture has fixed NFC bytes and SHA-256", () => {
