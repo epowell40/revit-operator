@@ -167,13 +167,19 @@ export function getToolExposureRuntimeDecision(env: NodeJS.ProcessEnv = process.
   }
 
   if (runtimeMode === "hosted" || runtimeMode === "production") {
-    if (hostedGeneralReady && (rawRequestedProfile === "" || rawRequestedProfile === "general")) {
+    // A ready authenticated production deployment is the General Agent product.
+    // Do not let a stale deployment variable silently put the user back onto the
+    // retired certified-only surface. Laboratory semantics are also ignored here;
+    // production continues to use the authenticated General Agent transport.
+    if (hostedGeneralReady) {
       return {
         runtimeMode,
         mode: "general",
         certified: false,
         explicitLaboratory: false,
-        reason: "authenticated hosted General Agent exposure is active"
+        reason: rawRequestedProfile && rawRequestedProfile !== "general"
+          ? `authenticated hosted General Agent exposure is active; ignoring retired ${rawRequestedProfile} profile override`
+          : "authenticated hosted General Agent exposure is active"
       };
     }
     return {
