@@ -35,7 +35,10 @@ type TeammateLoopState = {
   apply_action_id: string | null;
   verification_action_ids: string[];
   apply_attempts: number;
+  stage_apply_attempts: number;
   apply_succeeded: boolean;
+  apply_signature: string;
+  completed_apply_signatures: Set<string>;
   apply_target_tokens: Set<string>;
   apply_expected_values: Set<string>;
   apply_operation: string;
@@ -89,6 +92,19 @@ function isConceptualQuestion(text: string): boolean {
   return !liveCue && /\b(?:explain|what (?:does|is|are)|how (?:does|do|is|are|can|could|should|would)|why (?:does|do|is|are)|should (?:i|we)|tell me about)\b/i.test(text);
 }
 
+const MUTATION_VERB_SOURCE = [
+  "add", "adjust", "align", "annotate", "apply", "assign", "change", "connect", "convert", "copy", "create",
+  "cut", "delete", "dimension", "disconnect", "draw", "duplicate", "edit", "export", "extend", "filter", "fix",
+  "group", "hide", "import", "increase", "isolate", "join", "link", "load", "lock", "make", "match", "mirror",
+  "modify", "move", "offset", "pin", "place", "print", "purge", "reduce", "reload", "remove", "rename", "replace",
+  "resize", "rotate", "route", "run", "set", "sort", "split", "step", "sync", "tag", "trim", "unhide", "unload",
+  "unlock", "unpin", "update"
+].join("|");
+
+function containsMutationVerb(text: string): boolean {
+  return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text);
+}
+
 export function classifyAgentTurn(userText: string | null | undefined): AgentTurnKind {
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
@@ -97,7 +113,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
     /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|write)/.test(text);
   if (previewOnly) return "inspection";
   if (isConceptualQuestion(text) && !/\b(?:then|and)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";
-  const explicitMutation = /\b(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/.test(text);
+  const explicitMutation = containsMutationVerb(text);
   if (explicitMutation) return "mutation";
   if (!/^\s*(?:why|what|how|is|are|does|do|can you tell|could you tell)\b/.test(text) &&
       /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/.test(text)) return "mutation";
@@ -116,10 +132,7 @@ function hasNoWriteAuthority(text: string): boolean {
 function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): boolean {
   if (kind !== "mutation" || noWrite || isConceptualQuestion(text)) return false;
   if (/\b(?:should|can|could|would)\s+(?:i|we)\b/i.test(text)) return false;
-  if (/^(?:please\s+)?(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
-  if (/(?:^|[,;:]\s+|[.!?]\s+)(?:please\s+)?(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
-  if (/\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
-  if (/\b(?:i\s+(?:want|need)\s+you\s+to|please)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
+  if (containsMutationVerb(text.toLowerCase())) return true;
   return /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/i.test(text);
 }
 
@@ -231,6 +244,11 @@ function actionSignature(path: string, body: unknown): string {
   const source = objectValue(body);
   const ignored = new Set(["apply", "dryRun", "dry_run", "preview", "commit", "execute", "expectedPlanHash", "expected_plan_hash", "confirmationToken", "confirmation_token", "confirm", "confirmed"]);
   const envelope = Object.fromEntries(Object.entries(source).filter(([key]) => !ignored.has(key)));
+  if (normalizedPath === "/revit/native-api-mutation-ops") {
+    const transaction = objectValue(envelope.transaction);
+    envelope.transaction = Object.fromEntries(Object.entries(transaction)
+      .filter(([key]) => !["mode", "name", "commit", "execute", "confirm", "confirmed"].includes(key)));
+  }
   return sha256(JSON.stringify({ path: normalizedPath, body: stableValue(envelope) }));
 }
 
@@ -256,8 +274,11 @@ function targetTokens(value: unknown): string[] {
     }
     const scalar = `${node}`.trim().toLowerCase();
     if (!scalar || scalar.length > 260) return;
-    if (normalizedKey === "ids") tokens.add(`id:${scalar}`);
-    if (/(?:element|schedule|view|sheet|room|space|type|family|target|source|host|main).*ids?$/.test(normalizedKey)) tokens.add(`${normalizedKey.replace(/s$/, "")}:${scalar}`);
+    if (normalizedKey === "id" || normalizedKey === "ids") tokens.add(`id:${scalar}`);
+    if (/(?:element|schedule|view|sheet|room|space|type|family|target|source|host|main).*ids?$/.test(normalizedKey)) {
+      tokens.add(`${normalizedKey.replace(/s$/, "")}:${scalar}`);
+      tokens.add(`id:${scalar}`);
+    }
     if (/(?:parameter|field).*names?$/.test(normalizedKey) || normalizedKey === "parameter" || normalizedKey === "field") tokens.add(`parameter:${scalar}`);
     if (normalizedKey === "mark") tokens.add(`mark:${scalar}`);
   };
@@ -300,8 +321,11 @@ function operationFor(path: string, body: unknown): string {
 
 function previewFlags(value: unknown): { preview: boolean; apply: boolean } {
   const body = objectValue(value);
-  const preview = body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false;
-  const apply = body.apply === true || body.dryRun === false || body.dry_run === false || body.commit === true || body.execute === true;
+  const transactionMode = boundedString(objectValue(body.transaction).mode, 40).toLowerCase();
+  const preview = body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
+    || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode);
+  const apply = body.apply === true || body.dryRun === false || body.dry_run === false || body.commit === true || body.execute === true
+    || ["commit", "apply", "execute"].includes(transactionMode);
   return { preview: preview && !apply, apply: apply && !preview };
 }
 
@@ -389,7 +413,10 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     apply_action_id: null,
     verification_action_ids: [],
     apply_attempts: 0,
+    stage_apply_attempts: 0,
     apply_succeeded: false,
+    apply_signature: "",
+    completed_apply_signatures: new Set(),
     apply_target_tokens: new Set(),
     apply_expected_values: new Set(),
     apply_operation: "",
@@ -404,7 +431,6 @@ function stateFor(req: ChatRequest): TeammateLoopState {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
-  if (call.effect === "discovery" && /(?:tool-doc|revit_tool_doc)$/.test(call.path) && state.tool_doc_calls >= 1) return "tool_doc_lookup_already_used";
   if (call.effect === "unknown") return "unknown_revit_contract_requires_one_tool_doc_lookup";
   if (contract.turn_kind === "conversation") return "conceptual_turn_does_not_require_revit";
   if (call.effect !== "discovery" && contract.context_state !== "live") return "live_revit_context_required";
@@ -412,10 +438,23 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
     if (contract.no_write) return "user_no_write_limit";
     if (!contract.write_authorized) return "explicit_write_authority_required";
-    if (state.apply_attempts >= 1) return "single_apply_attempt_already_consumed";
+    if (state.stage_apply_attempts >= 1) return "single_apply_attempt_already_consumed";
     if (!state.successful_preview_signatures.has(call.signature)) return "matching_successful_preview_required";
   }
-  if (call.effect === "preview" && state.apply_attempts > 0) return "preview_after_apply_not_allowed";
+  if (call.effect === "preview" && state.stage_apply_attempts > 0) {
+    if (!state.apply_succeeded || !state.verified) return "preview_before_prior_apply_verification_not_allowed";
+    if (state.completed_apply_signatures.has(call.signature)) return "completed_apply_may_not_be_retried";
+    state.successful_preview_signatures.clear();
+    state.apply_action_id = null;
+    state.stage_apply_attempts = 0;
+    state.apply_succeeded = false;
+    state.apply_signature = "";
+    state.apply_target_tokens.clear();
+    state.apply_expected_values.clear();
+    state.apply_operation = "";
+    state.verified = false;
+    state.blocked_reason = null;
+  }
   return null;
 }
 
@@ -426,7 +465,9 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
   if (call.effect === "apply") {
     state.apply_attempts += 1;
+    state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
+    state.apply_signature = call.signature;
     state.apply_target_tokens = new Set(call.target_tokens);
     state.apply_expected_values = new Set(call.expected_values);
     state.apply_operation = call.operation;
@@ -471,11 +512,34 @@ function explicitVerification(value: unknown): boolean {
   return false;
 }
 
+function substantiveReadback(value: unknown, depth = 0): boolean {
+  if (value === null || value === undefined || depth > 8) return false;
+  if (typeof value === "string" && /^[\[{]/.test(value.trim())) {
+    try { return substantiveReadback(JSON.parse(value), depth + 1); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.length > 0 && value.some(item => substantiveReadback(item, depth + 1));
+  if (typeof value !== "object") return false;
+  const ignored = new Set(["ok", "success", "status", "action", "message", "open_prints_folder_url"]);
+  return Object.entries(value as Record<string, unknown>).some(([key, item]) => {
+    if (ignored.has(key.toLowerCase())) return false;
+    if (item === null || item === undefined || item === "") return false;
+    if (Array.isArray(item)) return item.length > 0;
+    if (typeof item === "object") return Object.keys(item as Record<string, unknown>).length > 0;
+    return true;
+  });
+}
+
 function verificationMatches(state: TeammateLoopState, evidence: unknown, requireExplicit: boolean): boolean {
   if (requireExplicit && !explicitVerification(evidence)) return false;
   const observed = evidenceValues(evidence);
   if (state.apply_expected_values.size > 0) return [...state.apply_expected_values].every(value => observed.has(value));
-  return explicitVerification(evidence);
+  return explicitVerification(evidence) || (!requireExplicit && substantiveReadback(evidence));
+}
+
+function markVerified(state: TeammateLoopState): void {
+  state.verified = true;
+  if (state.apply_signature) state.completed_apply_signatures.add(state.apply_signature);
+  state.contract.stage = "report";
 }
 
 function recordResult(state: TeammateLoopState, actionId: string, succeeded: boolean, evidence?: unknown): void {
@@ -488,10 +552,12 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     if (!succeeded) {
       state.blocked_reason = "apply_failed_or_outcome_unknown_no_retry";
       state.contract.stage = "blocked";
-    } else if (verificationMatches(state, evidence, true)) {
-      state.verified = true;
-      state.contract.stage = "report";
-    } else state.contract.stage = "verify";
+    } else {
+      for (const token of targetTokens(evidence)) state.apply_target_tokens.add(token);
+      if (verificationMatches(state, evidence, true)) {
+        markVerified(state);
+      } else state.contract.stage = "verify";
+    }
   }
   const applyIdentityTokens = [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   const verificationIdentityTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
@@ -500,8 +566,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
     : pending.target_tokens.some(token => state.apply_target_tokens.has(token));
   if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && verificationMatches(state, evidence, false)) {
-    state.verified = true;
-    state.contract.stage = "report";
+    markVerified(state);
   }
 }
 
@@ -521,6 +586,28 @@ function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_l
     apply_attempts: state.apply_attempts,
     verified: state.verified,
     blocked_reason: state.blocked_reason
+  };
+}
+
+const INCOMPLETE_MUTATION_REPORTS = [
+  /\[teammate_loop_blocked\]/i,
+  /\bassignment is blocked\b/i,
+  /\bcannot claim (?:the )?(?:revit )?change is complete\b/i,
+  /\brequest(?:ed)?(?: [^.\n]{0,80})? (?:is|was) not (?:yet )?complete\b/i,
+  /\bnot yet complete\b/i
+];
+
+export function reconcileTeammateReceiptWithAssistant(
+  value: ChatResponse["teammate_loop_receipt"] | undefined,
+  assistantText: string
+): ChatResponse["teammate_loop_receipt"] | undefined {
+  if (!value || value.turn_kind !== "mutation" || value.apply_attempts < 1) return value;
+  if (!INCOMPLETE_MUTATION_REPORTS.some(pattern => pattern.test(assistantText))) return value;
+  return {
+    ...value,
+    stage: "blocked",
+    verified: false,
+    blocked_reason: value.blocked_reason || "assistant_reported_incomplete"
   };
 }
 

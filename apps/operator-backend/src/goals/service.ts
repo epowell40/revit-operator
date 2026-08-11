@@ -1091,6 +1091,7 @@ export function formatActiveGoalContext(goal: GoalRecord | null): string {
     `recent_action_log:\n${recentActions.length ? recentActions.join("\n") : "- (none)"}`,
     `recent_evidence_log:\n${recentEvidence.length ? recentEvidence.join("\n") : "- (none)"}`,
     `recent_validation_log:\n${recentValidations.length ? recentValidations.join("\n") : "- (none)"}`,
-    "Goal Mode instructions: work toward the active goal, avoid repeating completed work, pick the next ready work item whose dependencies are complete, persist changed work-item/assumption state with progress, record evidence after meaningful actions, run validations when available, mark uncertainty as not complete, and request a completion audit before any complete status."
+    "Assignment state is owned and automatically journaled by the Revit Operator backend. Do not call Codex create_goal, get_goal, or update_goal tools from this embedded turn.",
+    "Goal Mode instructions: work toward the active goal, avoid repeating completed work, pick the next ready work item whose dependencies are complete, use live Revit evidence, and report completion or a concrete task blocker truthfully."
   ].join("\n");
 }

@@ -19,6 +19,13 @@ export type AutoGoalToolObservation = {
   output?: unknown;
 };
 
+export type AutoGoalTeammateReceipt = {
+  stage?: string | null;
+  verified?: boolean | null;
+  apply_attempts?: number | null;
+  blocked_reason?: string | null;
+};
+
 export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
   const current = getCurrentGoalForSession(sessionId);
   return current && ["paused", "blocked"].includes(current.status) ? current : null;
@@ -27,19 +34,34 @@ export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
 export function createAutoGoalTurnObserver(sessionId: string) {
   let successfulRevitTools = 0;
   let failedRevitTools = 0;
+  let lastCompletionRelevantSucceeded: boolean | null = null;
   return {
     observe(observation: AutoGoalToolObservation) {
+      const completionRelevant = isCompletionRelevant(observation);
       if (isCompletionEvidence(observation) && observation.success === true) successfulRevitTools += 1;
-      if (isCompletionRelevant(observation) && observation.success === false) failedRevitTools += 1;
+      if (completionRelevant && observation.success === false) failedRevitTools += 1;
+      if (completionRelevant && observation.success !== null) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
-    finish(turnId: string, assistantText: string) {
+    finish(turnId: string, assistantText: string, teammateReceipt?: AutoGoalTeammateReceipt | null) {
       try {
+        const receiptBlocked = teammateReceipt && (
+          teammateReceipt.stage === "blocked"
+          || ((teammateReceipt.apply_attempts ?? 0) > 0 && teammateReceipt.verified !== true)
+        );
+        if (receiptBlocked) {
+          blockAutoGoalFromTurn(
+            sessionId,
+            teammateReceipt.blocked_reason?.trim()
+              || "The Revit mutation did not produce a successful target-bound post-apply verification."
+          );
+          return;
+        }
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
-        const blockedOutcome = /\b(could not|cannot|can't|unable|blocked|not verified|failed)\b/i.test(assistantText);
-        if (!pendingApproval && !blockedOutcome && successfulRevitTools > 0 && failedRevitTools === 0) {
+        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution) (?:is|was )?blocked|concrete blocker|not fully verified)\b/i.test(assistantText);
+        if (!pendingApproval && !blockedOutcome && successfulRevitTools > 0 && lastCompletionRelevantSucceeded !== false) {
           completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: successfulRevitTools, assistant_summary: assistantText });
-        } else if (failedRevitTools > 0 || blockedOutcome) {
+        } else if ((failedRevitTools > 0 && (successfulRevitTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
           blockAutoGoalFromTurn(sessionId, failedRevitTools > 0
             ? "One or more live Revit tool calls failed; completion requires a clean verified turn."
             : assistantText || "The General Agent turn ended without a successful live Revit tool result.");

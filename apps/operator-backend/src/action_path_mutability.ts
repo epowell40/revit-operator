@@ -16,6 +16,8 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/room-contents",
   "/revit/linked-room-boundaries",
   "/revit/find-elements",
+  "/revit/find-text-notes",
+  "/revit/locate-elements",
   "/revit/resolve-mep-routing-context",
   "/revit/trace-connected-network",
   "/revit/find-elements-by-parameter",
@@ -53,7 +55,9 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/titleblock-label-map",
   "/revit/titleblock-date-candidates",
   "/revit/verify-parameter-on-sheet",
-  "/revit/capture-sheet-region"
+  "/revit/capture-sheet-region",
+  "/revit/plan-family-evolution",
+  "/revit/read-family-evolution"
 ]);
 
 function bodyRecord(body: unknown): Record<string, unknown> {
@@ -74,6 +78,11 @@ export function conditionalActionPathEffect(pathname: string, body?: unknown): C
   const row = bodyRecord(body);
   // This endpoint evaluates a plan inside a rollback-only transaction.
   if (normalized === "/revit/transaction-plan") return "preview";
+  if (normalized === "/revit/visibility") {
+    const action = typeof row.action === "string" ? row.action.trim().toLowerCase() : "get";
+    if (action === "get") return "read";
+    return row.dryRun === true || row.dry_run === true || row.preview === true || row.apply === false ? "preview" : "apply";
+  }
   if (normalized === "/revit/fire-damper-audit") {
     return typeof row.command === "string" && row.command.trim().toLowerCase() === "fix" ? "apply" : "read";
   }

@@ -9,9 +9,61 @@ import {
   endTeammateLoopOwner,
   guardGenericTeammateDecision,
   guardTeammateMcpCall,
+  reconcileTeammateReceiptWithAssistant,
   recordTeammateMcpResult,
   teammateLoopReceiptForOwner
 } from "../src/teammate_loop_runtime.js";
+
+test("verified mutation stages may continue while retries and unverified chaining remain blocked", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS, then set element 43 Manufacturer to JOSAM."));
+  try {
+    const run = (argumentsValue: Record<string, unknown>) => guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: argumentsValue });
+    const record = (gate: ReturnType<typeof run>, body: unknown) => recordTeammateMcpResult(owner, gate, { content: [{ type: "text", text: JSON.stringify(body) }] });
+    const firstPreview = run({ method: "POST", path: "/revit/set-parameters", body: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, dryRun: true } });
+    assert.equal(firstPreview.allowed, true);
+    record(firstPreview, { ok: true, dryRun: true });
+    const firstApply = run({ method: "POST", path: "/revit/set-parameters", body: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, dryRun: false, apply: true } });
+    assert.equal(firstApply.allowed, true);
+    record(firstApply, { ok: true, elementIds: [42] });
+    const firstRead = run({ method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] } });
+    record(firstRead, { ok: true, elementIds: [42], values: ["WATTS"] });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+
+    const secondPreview = run({ method: "POST", path: "/revit/set-parameters", body: { elementIds: [43], parameters: { Manufacturer: "JOSAM" }, dryRun: true } });
+    assert.equal(secondPreview.allowed, true);
+    record(secondPreview, { ok: true, dryRun: true });
+    const secondApply = run({ method: "POST", path: "/revit/set-parameters", body: { elementIds: [43], parameters: { Manufacturer: "JOSAM" }, dryRun: false, apply: true } });
+    assert.equal(secondApply.allowed, true);
+    record(secondApply, { ok: true, elementIds: [43] });
+    const secondRead = run({ method: "POST", path: "/revit/get-parameters", body: { elementIds: [43], parameterNames: ["Manufacturer"] } });
+    record(secondRead, { ok: true, elementIds: [43], values: ["JOSAM"] });
+    const finalReceipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(finalReceipt?.apply_attempts, 2);
+    assert.equal(finalReceipt?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("an assistant report of an incomplete mutation overrides an optimistic receipt", () => {
+  const receipt = reconcileTeammateReceiptWithAssistant({
+    schema: "revit-operator.teammate-loop-receipt.v1",
+    turn_kind: "mutation",
+    context_state: "live",
+    stage: "report",
+    preview_action_ids: ["mcp:1"],
+    apply_action_id: "mcp:2",
+    verification_action_ids: ["mcp:3"],
+    apply_attempts: 1,
+    verified: true,
+    blocked_reason: null
+  }, "The assignment is blocked. The requested new assignment is not yet complete.");
+  assert.equal(receipt?.stage, "blocked");
+  assert.equal(receipt?.verified, false);
+  assert.equal(receipt?.blocked_reason, "assistant_reported_incomplete");
+});
 
 const liveContext = {
   revit: {
@@ -62,6 +114,30 @@ test("structured contract distinguishes teammate modes and fails closed on stale
   assert.equal(buildTeammateTurnContract(request("For planning, explain how to change the expansion tank size.")).write_authorized, false);
   assert.equal(buildTeammateTurnContract(request("Preview only: update the expansion tank size.")).write_authorized, false);
   assert.equal(stale.context_state, "invalid");
+});
+
+test("ordinary Revit mutation verbs authorize writes instead of silently forcing inspection", () => {
+  const prompts = [
+    "Duplicate sheet M000 and give the new sheet the next available temporary number.",
+    "Apply the TEST HVAC COORDINATION TEMPLATE to the coordination view.",
+    "Hide Rooms in the active view and leave every other category unchanged.",
+    "Filter the equipment schedule so Mark begins with AHU.",
+    "Sort the schedule by Level and then Family and Type.",
+    "Rotate the selected annotation ninety degrees.",
+    "Offset the selected duct around the obstruction.",
+    "Reload the edited equipment family and assign its TEST-ONLY type.",
+    "Reduce the selected duct after the takeoff.",
+    "In the active view, make existing ductwork halftone."
+  ];
+  for (const prompt of prompts) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "mutation", prompt);
+    assert.equal(contract.write_authorized, true, prompt);
+    assert.equal(contract.preview_required, true, prompt);
+    assert.equal(contract.verification_required, true, prompt);
+  }
+  assert.equal(buildTeammateTurnContract(request("Show me sheet M000.")).turn_kind, "navigation");
+  assert.equal(buildTeammateTurnContract(request("How should we duplicate sheets?")).write_authorized, false);
 });
 
 test("transaction-plan is preview-only to the teammate loop", () => {
@@ -299,7 +375,7 @@ test("Codex MCP host guard classifies conditional route bodies by their actual e
   }
 });
 
-test("empty-text continuation preserves the original turn and tool docs are bounded to one call", () => {
+test("empty-text continuation preserves the original turn and tool discovery may inspect multiple contracts", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";
   const preview = guardGenericTeammateDecision(request(text), response([{
@@ -328,8 +404,44 @@ test("empty-text continuation preserves the original turn and tool docs are boun
     assert.equal(first.allowed, true);
     recordTeammateMcpResult(owner, first, { content: [{ type: "text", text: "{}" }] });
     const second = guardTeammateMcpCall(owner, { tool: "revit_tool_doc", arguments: { method: "POST", path: "/revit/set-parameters" } });
-    assert.equal(second.allowed, false);
-    assert.match(second.message || "", /already used/i);
+    assert.equal(second.allowed, true);
+    assert.equal(second.call?.effect, "discovery");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("native mutation rollback preview binds the matching commit call", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Duplicate sheet M000 with its eligible placed views."));
+  const operations = [
+    { id: "active_view", op: "get_property", target: "doc", property: "ActiveView" },
+    { id: "new_sheet_id", op: "call", memberId: "method:Autodesk.Revit.DB.ViewSheet.Duplicate(Autodesk.Revit.DB.SheetDuplicateOption)", target: "$active_view", args: ["DuplicateSheetWithViewsOnly"] }
+  ];
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST", path: "/revit/native-api-mutation-ops",
+        body: { operations, returns: ["new_sheet_id"], transaction: { mode: "rollback", name: "Preview duplicate", maxAffectedElements: 64, allowCreate: true, allowedExistingElementIds: [1420963] } }
+      }
+    });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(owner, preview, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, transaction: { status: "rolled_back", committed: false }, results: { new_sheet_id: 1543000 } }) }]
+    });
+
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST", path: "/revit/native-api-mutation-ops",
+        body: { operations, returns: ["new_sheet_id"], transaction: { mode: "commit", name: "Duplicate M000", maxAffectedElements: 64, allowCreate: true, allowedExistingElementIds: [1420963] } }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -374,6 +486,38 @@ test("verification must read back the applied target and concurrent Codex turns 
   } finally {
     endTeammateLoopOwner(leaseA);
     endTeammateLoopOwner(leaseB);
+  }
+});
+
+test("created resource identity from apply binds a substantive post-apply readback", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Create schedule TEST MECHANICAL EQUIPMENT."));
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/create-schedule", body: { name: "TEST MECHANICAL EQUIPMENT", dryRun: true } }
+    });
+    assert.equal(preview.allowed, true);
+    recordTeammateMcpResult(owner, preview, { content: [{ type: "text", text: JSON.stringify({ status: "Dry Run" }) }] });
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/create-schedule", body: { name: "TEST MECHANICAL EQUIPMENT", dryRun: false } }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({ status: "Success", schedule: { id: 1542917, name: "TEST MECHANICAL EQUIPMENT" } }) }] });
+    const verify = guardTeammateMcpCall(owner, {
+      tool: "revit_list_schedules",
+      arguments: { action: "detail", scheduleId: 1542917, includeFields: true }
+    });
+    assert.equal(verify.allowed, true);
+    recordTeammateMcpResult(owner, verify, { content: [{ type: "text", text: JSON.stringify({ status: "Ok", schedule: { id: 1542917, name: "TEST MECHANICAL EQUIPMENT", fieldCount: 4 } }) }] });
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.verified, true);
+    assert.equal(receipt?.stage, "report");
+    assert.equal(receipt?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
   }
 });
 

@@ -43,6 +43,7 @@ import {
   bindTeammateLoopOwnerTurn,
   endTeammateLoopOwner,
   guardTeammateMcpCall,
+  reconcileTeammateReceiptWithAssistant,
   recordTeammateMcpResult,
   teammateLoopSessionIdForOwner,
   teammateLoopReceiptForLease
@@ -183,7 +184,7 @@ export function getOperatorAgentBaseInstructions(): string {
     "Existing-conditions registration must not require rooms, spaces, room tags, or matching room names. Treat them as useful but potentially absent or stale. When the record plan and current model differ, prefer common stable geometry in this order: exterior envelope/corners, stairs and elevators, shafts, grids and columns, then persistent interior geometry. Record accepted and rejected controls plus transform residuals. Do not use changed interior partitions or a name match as the only registration basis; preserve supported relative geometry as provisional and iterate when exact registration remains unresolved.",
     "After one successful broad inventory export, avoid repeating it in a loop. Reuse the returned `frameId`, sampled inventory, and mapping to continue with targeted cluster/pick/context tools.",
     "For wall-hosted or same-room placements, prefer host-aware/exemplar-driven workflows over generic XYZ placement. Resolve the room wall, inspect nearby same-room exemplars, project to host-local chainage when needed, then place/adjust on the resolved host.",
-    "For raw Revit API exploration, use `revit_native_api_search` / `revit_native_api_catalog` first, then call via `revit_native_api_call` only when no normal /revit/* primitive exists.",
+    "For raw Revit API exploration, use `revit_native_api_search` / `revit_native_api_catalog` first. Use `revit_native_api_call` only for non-mutating members when no normal /revit/* primitive exists. Never invoke a mutating member through `revit_native_api_call`: its `dryRun:true` flag does not create a Revit transaction. For a mutating native member, call `/revit/native-api-mutation-ops` through `revit_call_tool`, first with `transaction.mode:\"rollback\"`, then once with the identical operations/targets and `transaction.mode:\"commit\"`, followed by target-bound readback.",
     "If native API calls are blocked, inspect/set profile with `revit_native_api_policy` / `revit_native_api_set_policy` (balanced|broad|unrestricted) and respect enterprise locks.",
     "Execution ladder: try a dedicated `/revit/*` primitive first; if that is unclear or absent, use tool discovery (`revit_search_tools` / `revit_tool_registry` / `revit_tool_doc` / `revit_tool_examples`); if still missing, use native API search/call; if the remaining blocker is UI state, use computer-use observe/act/guard; only ask the user after those lanes are exhausted.",
     "Do not stop with a vague statement like 'I can't find the command'. Search the live tool surface, search the native API, inspect UI state, and keep going until you either execute or hit a concrete blocker.",
@@ -1147,6 +1148,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   assistantText = assistantText || assistantDeltas;
+  teammateReceipt = reconcileTeammateReceiptWithAssistant(teammateReceipt, assistantText);
   if (teammateReceipt && teammateReceipt.apply_attempts > 0 && !teammateReceipt.verified) {
     teammateReceipt = {
       ...teammateReceipt,
@@ -1179,7 +1181,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   if (freshEvidenceRequirement.required && assistantText) cb.onDelta?.(assistantText);
   cb.onDone?.(assistantText);
-  assignmentObserver.finish(turnId, assistantText);
+  assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.completed", {
       thread_id: threadId,
