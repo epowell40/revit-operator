@@ -759,17 +759,24 @@ export function createRevitBatchJob(input: CreateRevitBatchJobInput, access?: Re
     ...binding,
     params,
     source,
-    approval: {
-      required: approval.required !== false,
-      approved_at: approval.required === false ? nowIso() : null,
-      sample_count: asPositiveInt(approval.sample_count, 3, 1, 12)
-    },
+    approval: {},
     planning_progress: null,
     preview_items: previewItems,
     items,
     result: asObject(input.result),
     events: [],
     error: pendingCount <= 0 ? "This batch job has no runnable items." : null
+  };
+  const previewHash = batchPreviewSha256(job);
+  job.approval = {
+    required: approval.required !== false,
+    approved_at: approval.required === false ? nowIso() : null,
+    approved_by: approval.required === false ? "system:not_required" : null,
+    preview_hash: previewHash,
+    approved_preview_hash: approval.required === false ? previewHash : null,
+    preview_binding_schema: "revit-operator.batch-preview-binding.v1",
+    preview_hash_verified: true,
+    sample_count: asPositiveInt(approval.sample_count, 3, 1, 12)
   };
   const saved = appendEvent(saveJob(job), "created", `Created batch job '${title}'.`);
   if (saved.status === "queued") {
@@ -808,17 +815,39 @@ export function approveRevitBatchJob(jobId: string, access?: RevitBatchAccessCon
   const saved = mutateJob(jobId, access, (current) => {
     if (current.status !== "awaiting_approval") throw new Error("Only jobs awaiting approval can be approved.");
     if (!current.items.some((item) => item.status === "pending")) throw new Error("This batch job has no pending items.");
+    const previewHash = batchPreviewSha256(current);
+    if (current.approval?.preview_binding_schema !== "revit-operator.batch-preview-binding.v1" ||
+        current.approval?.preview_hash_verified !== true || current.approval?.preview_hash !== previewHash) {
+      throw new Error("Batch preview identity changed or is not server-bound; recreate the preview before approval.");
+    }
+    const principal = access?.owner
+      ? `${access.owner.tenant_id}:${access.owner.user_id}`
+      : access?.session_id ? `local-session:${access.session_id}` : "local:shared-token";
     return appendEvent(saveJob({
       ...current,
       status: "queued",
       approval: {
         ...(current.approval || {}),
-        approved_at: nowIso()
+        approved_at: nowIso(),
+        approved_by: principal,
+        approved_preview_hash: previewHash
       },
       error: null
     }), "approved", `Approved batch job '${current.title}'.`);
   });
   return toPublicJob(saved);
+}
+
+function batchPreviewSha256(job: Pick<RevitBatchJobRecord, "id" | "job_type" | "params" | "source" | "preview_items"> & Partial<Pick<RevitBatchJobRecord, "target_context">>): string {
+  return `sha256:${settlementSha256({
+    schema: "revit-operator.batch-preview-binding.v1",
+    job_id: job.id,
+    job_type: job.job_type,
+    target_context: job.target_context ?? null,
+    params: job.params,
+    source: job.source,
+    preview_items: job.preview_items
+  })}`;
 }
 
 export function pauseRevitBatchJob(jobId: string, access?: RevitBatchAccessContext): JsonMap {

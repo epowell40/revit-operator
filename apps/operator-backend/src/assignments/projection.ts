@@ -406,12 +406,18 @@ function taskApprovals(task: JsonMap): AssignmentProjection["approvals"] {
   const required = explicitBoolean(approval.required);
   const approvedAt = text(approval.approved_at) || null;
   const previewHash = text(approval.preview_hash ?? approval.preview_receipt_hash) || null;
+  const approvedPreviewHash = text(approval.approved_preview_hash) || null;
+  const principalId = text(approval.principal_id ?? approval.approved_by) || null;
+  const serverBound = text(object(task.source).backend_surface) === "revit_batch" &&
+    approval.preview_binding_schema === "revit-operator.batch-preview-binding.v1" &&
+    approval.preview_hash_verified === true && /^sha256:[0-9a-f]{64}$/.test(previewHash || "");
+  const approvalBound = serverBound && (!approvedAt || (approvedPreviewHash === previewHash && !!principalId));
   const status = required === false ? "not_required" : approvedAt ? "approved" : text(task.status) === "awaiting_approval" ? "awaiting" : "unknown";
   return [{
     kind: "execution", status, required, decided_at: approvedAt,
-    principal_id: text(approval.principal_id ?? approval.approved_by) || null,
+    principal_id: principalId,
     preview_hash: previewHash,
-    binding_status: previewHash ? "bound" : approvedAt ? "unbound" : "unknown"
+    binding_status: approvalBound ? "bound" : approvedAt || previewHash ? "unbound" : "unknown"
   }];
 }
 
