@@ -12,7 +12,7 @@
     "start": "node dist/src/index.js",
     "triage:issues": "tsx src/tools/triage_issues.ts",
     "upload:queue": "tsx src/tools/upload_queue.ts",
-    "test": "node --test --test-concurrency=1 dist/test/*.test.js",
+    "test": "node scripts/run-tests.mjs",
     "check:skills-manifest": "tsx src/tools/check_skill_library_manifest.ts",
     "check:tool-contracts": "tsx src/tools/check_tool_contracts.ts",
     "check:repo": "npm run check:skills-manifest && npm run check:tool-contracts",

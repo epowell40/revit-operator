@@ -85,7 +85,7 @@ export type EnvironmentProfile = {
 
 export type DemoReadinessResult = {
   ready: boolean;
-  status: "ready" | "limited" | "needs_setup";
+  status: "ready" | "unavailable" | "needs_setup";
   title: string;
   checks: Array<{ name: string; ok: boolean; status: string; detail?: string; suggested_fix?: string }>;
   suggested_fix?: string;
@@ -609,7 +609,7 @@ export function runDemoReadinessCheck(profile = ensureEnvironmentProfile()): Dem
   checks.push({ name: "PDF export", ok: profile.tools.pdf_export?.available !== false, status: profile.tools.pdf_export?.available === false ? "Unavailable" : "Available" });
   checks.push({ name: "Computer use", ok: profile.capabilities.can_use_computer_control, status: profile.capabilities.can_use_computer_control ? "Available" : "Fallback disabled" });
   const failed = checks.filter(c => !c.ok);
-  const status = failed.length === 0 ? "ready" : failed.some(c => ["Backend", "Exports folder", "Action log"].includes(c.name)) ? "needs_setup" : "limited";
+  const status = failed.length === 0 ? "ready" : failed.some(c => ["Backend", "Exports folder", "Action log"].includes(c.name)) ? "needs_setup" : "unavailable";
   return {
     ready: status === "ready",
     status,

@@ -57,7 +57,9 @@ test("structured contract distinguishes teammate modes and fails closed on stale
   assert.equal(action.context_state, "live");
   assert.equal(action.max_apply_attempts, 1);
   assert.equal(action.write_authorized, true);
+  assert.equal(buildTeammateTurnContract(request("For EPIC-0443 acceptance testing in this sample model, change sheet M000 from Cover Sheet to Test Cover Sheet.")).write_authorized, true);
   assert.equal(buildTeammateTurnContract(request("How can I change the expansion tank size?")).write_authorized, false);
+  assert.equal(buildTeammateTurnContract(request("For planning, explain how to change the expansion tank size.")).write_authorized, false);
   assert.equal(buildTeammateTurnContract(request("Preview only: update the expansion tank size.")).write_authorized, false);
   assert.equal(stale.context_state, "invalid");
 });
@@ -174,6 +176,55 @@ test("Codex MCP host guard enforces preview, one apply attempt, and readback", (
     assert.equal(readback.allowed, true);
     recordTeammateMcpResult(owner, readback, { content: [{ type: "text", text: JSON.stringify({ ok: true, values: ["WATTS"] }) }] });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("Codex MCP host guard accepts independently returned target identity during readback", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { changes: [{ elementId: 42, parameterName: "Manufacturer", value: "WATTS" }], dryRun: true, apply: false }
+    });
+    assert.equal(preview.allowed, true);
+    recordTeammateMcpResult(owner, preview, { content: [{ type: "text", text: JSON.stringify({ ok: true, dryRun: true }) }] });
+
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { changes: [{ elementId: 42, parameterName: "Manufacturer", value: "WATTS" }], dryRun: false, apply: true }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
+
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_list_elements",
+      arguments: { query: "target element" }
+    });
+    assert.equal(readback.allowed, true);
+    recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [{ elementId: 42, Manufacturer: "WATTS" }] }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("Codex MCP host guard admits host-owned discovery and strategy tools", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Count the air devices in this project by type."));
+  try {
+    for (const tool of ["operator_discover_capabilities", "operator_record_execution_strategy"]) {
+      const gate = guardTeammateMcpCall(owner, { tool, arguments: { need: "air device inventory" } });
+      assert.equal(gate.allowed, true, `${tool} should be admitted as host-owned discovery`);
+      assert.equal(gate.call?.effect, "discovery");
+      recordTeammateMcpResult(owner, gate, { content: [{ type: "text", text: "{}" }] });
+    }
   } finally {
     endTeammateLoopOwner(lease);
   }

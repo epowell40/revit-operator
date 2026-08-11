@@ -16,6 +16,7 @@ import {
   createGoal,
   formatActiveGoalContext,
   getActiveGoalForSession,
+  listGoals,
   markAgentGoalBlocked,
   markAgentGoalComplete,
   requestGoalCompletionAudit,
@@ -25,6 +26,7 @@ import {
   type GoalRecord
 } from "../src/goals/service.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
+import { completeAutoGoalFromValidatedTurn, recordAutoGoalToolObservation } from "../src/goals/auto_goal_runtime.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   createLocalGoalEvidenceAuthority,
@@ -796,11 +798,43 @@ test("session-specific goal lookup never falls back to an unbound goal", () => {
   });
 });
 
-test("auto goal classifier enters goal mode for spatial redline outcomes", () => {
+test("auto goal classifier creates assignments for live Revit work", () => {
   const decision = classifyAutoGoalRequest("Add receptacles where marked in these redlines and verify the placement.");
   assert.equal(decision.shouldStart, true);
   assert.ok(decision.signals.length >= 2);
 
   const single = classifyAutoGoalRequest("Open sheet E101.");
-  assert.equal(single.shouldStart, false);
+  assert.equal(single.shouldStart, true);
+
+  const airCount = classifyAutoGoalRequest("Please count the air devices on the project and break the different types down too.");
+  assert.equal(airCount.shouldStart, true);
+  assert.ok(airCount.signals.includes("live Revit model work"));
+
+  const conceptual = classifyAutoGoalRequest("Explain why construction documents use schedules.");
+  assert.equal(conceptual.shouldStart, false);
+});
+
+test("successful live tools complete a quick auto assignment with trusted evidence", () => {
+  withWorkspace(() => {
+    setAgentGoal("session-auto-complete", {
+      title: "Count air devices",
+      objective: "Count all air devices and break down their types.",
+      acceptance_criteria: ["The count is returned.", "The result uses live Revit evidence."],
+      work_budget: { mode: "auto_goal" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    recordAutoGoalToolObservation("session-auto-complete", { tool: "revit_call_tool", success: true, status: "completed" });
+    completeAutoGoalFromValidatedTurn("session-auto-complete", {
+      turn_id: "turn-air-count",
+      successful_tools: 3,
+      assistant_summary: "Found 509 air terminals across seven types."
+    });
+    const completed = getActiveGoalForSession("session-auto-complete");
+    assert.equal(completed, null);
+    const persisted = listGoals(10).find(goal => goal.related_session_id === "session-auto-complete");
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.completion_audit?.complete, true);
+    assert.equal(persisted?.work_items[0]?.status, "complete");
+    assert.equal(persisted?.validation_log.length, 2);
+  });
 });

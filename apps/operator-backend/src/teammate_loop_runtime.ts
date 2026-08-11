@@ -52,7 +52,17 @@ const statesByOwner = new WeakMap<object, { unbound: Set<TeammateLoopOwnerLease>
 const MAX_STATE_AGE_MS = 5 * 60_000;
 const NAVIGATION_PATHS = new Set(["/revit/activate-view"]);
 const DISCOVERY_PATHS = new Set(["/revit/ping", "/revit/context", "/revit/write-grant-status", "/revit/tool-registry", "/revit/tool-search", "/revit/tool-doc", "/revit/tool-examples"]);
-const DISCOVERY_TOOLS = new Set(["revit_ping", "revit_get_context", "revit_write_grant_status", "revit_search_tools", "revit_tool_registry", "revit_tool_doc", "revit_tool_examples"]);
+const DISCOVERY_TOOLS = new Set([
+  "operator_discover_capabilities",
+  "operator_record_execution_strategy",
+  "revit_ping",
+  "revit_get_context",
+  "revit_write_grant_status",
+  "revit_search_tools",
+  "revit_tool_registry",
+  "revit_tool_doc",
+  "revit_tool_examples"
+]);
 const DEFAULT_PREVIEW_TOOLS = new Set(["revit_update_schedule_cell", "revit_replace_schedule_values", "revit_set_parameters"]);
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -107,6 +117,7 @@ function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): b
   if (kind !== "mutation" || noWrite || isConceptualQuestion(text)) return false;
   if (/\b(?:should|can|could|would)\s+(?:i|we)\b/i.test(text)) return false;
   if (/^(?:please\s+)?(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
+  if (/(?:^|[,;:]\s+|[.!?]\s+)(?:please\s+)?(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
   if (/\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
   if (/\b(?:i\s+(?:want|need)\s+you\s+to|please)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|rename|set|update|resize|route|connect|disconnect|replace|sync|print|export)\b/i.test(text)) return true;
   return /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/i.test(text);
@@ -226,7 +237,7 @@ function actionSignature(path: string, body: unknown): string {
 function targetTokens(value: unknown): string[] {
   const tokens = new Set<string>();
   const visit = (node: unknown, key = "", depth = 0): void => {
-    if (depth > 5 || tokens.size >= 64) return;
+    if (depth > 8 || tokens.size >= 64) return;
     const normalizedKey = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
     if (Array.isArray(node)) {
       for (const item of node) visit(item, key, depth + 1);
@@ -240,6 +251,9 @@ function targetTokens(value: unknown): string[] {
       return;
     }
     if (node === null || node === undefined) return;
+    if (typeof node === "string" && /^[\[{]/.test(node.trim())) {
+      try { visit(JSON.parse(node), key, depth + 1); return; } catch {}
+    }
     const scalar = `${node}`.trim().toLowerCase();
     if (!scalar || scalar.length > 260) return;
     if (normalizedKey === "ids") tokens.add(`id:${scalar}`);
@@ -480,7 +494,8 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     } else state.contract.stage = "verify";
   }
   const applyIdentityTokens = [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
-  const verificationIdentityTokens = pending.target_tokens.filter(token => !token.startsWith("parameter:"));
+  const verificationIdentityTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
+    .filter(token => !token.startsWith("parameter:"));
   const targetBound = applyIdentityTokens.length > 0
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
     : pending.target_tokens.some(token => state.apply_target_tokens.has(token));
@@ -599,6 +614,13 @@ function ownerState(owner: object, turnIdValue: unknown): TeammateLoopState | un
   }
   const leases = [...registry.unbound, ...registry.by_turn.values()];
   return leases.length === 1 ? leases[0].state : undefined;
+}
+
+export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknown): string | null {
+  const state = ownerState(owner, turnIdValue);
+  if (!state) return null;
+  const separator = state.key.lastIndexOf("::");
+  return separator >= 0 ? state.key.slice(0, separator) : null;
 }
 
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown }): TeammateMcpGate {

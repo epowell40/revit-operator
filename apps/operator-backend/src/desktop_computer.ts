@@ -1,4 +1,8 @@
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
+import {
+  getSidecarAgentProfileState,
+  type SidecarAgentProfileState
+} from "./capabilities/sidecar_agent_profile.js";
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -31,12 +35,14 @@ export function getDesktopComputerConfig(): {
   provider: "backend";
   model: string;
   reasoning_effort: string;
+  sidecar_agent_profile: SidecarAgentProfileState;
 } {
   return {
     available: !!resolveOpenAiApiKey(),
     provider: "backend",
     model: resolveDesktopComputerModel(),
-    reasoning_effort: resolveDesktopComputerReasoningEffort()
+    reasoning_effort: resolveDesktopComputerReasoningEffort(),
+    sidecar_agent_profile: getSidecarAgentProfileState()
   };
 }
 

@@ -110,6 +110,7 @@ import {
   DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES,
   DirectRevitExecutionAuthorizationError
 } from "./capabilities/direct_revit_execution_authorization.js";
+import { getSidecarAgentProfileState } from "./capabilities/sidecar_agent_profile.js";
 import {
   getSafeReadCapabilityService,
   SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT,
@@ -144,6 +145,11 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { classifyAutoGoalRequest } from "./goals/auto_goal.js";
+import {
+  ASSIGNMENT_PROJECTION_SCHEMA,
+  getAssignmentProjection,
+  listAssignmentProjections
+} from "./assignments/projection.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -675,6 +681,8 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname.startsWith("/api/agent-goal/") ||
     pathname === "/api/goals" ||
     pathname.startsWith("/api/goals/") ||
+    pathname === "/api/assignments" ||
+    pathname.startsWith("/api/assignments/") ||
     pathname === "/api/tasks" ||
     pathname.startsWith("/api/tasks/") ||
     pathname === "/api/teach/skills/register" ||
@@ -1133,6 +1141,28 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/environment/demo-readiness") {
       const profile = ensureEnvironmentProfile({ refreshIfStale: true });
       return writeJson(res, 200, { ok: true, result: runDemoReadinessCheck(profile) });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/assignments") {
+      const limit = Math.max(1, Math.min(200, Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50));
+      const sessionId = trimText(url.searchParams.get("session_id"), 160);
+      const lifecycle = trimText(url.searchParams.get("lifecycle"), 80);
+      if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
+      const assignments = listAssignmentProjections({
+        limit,
+        session_id: sessionId || undefined,
+        lifecycle: lifecycle || undefined
+      });
+      return writeJson(res, 200, { ok: true, schema: ASSIGNMENT_PROJECTION_SCHEMA, assignments });
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/assignments/")) {
+      const assignmentId = trimText(decodeURIComponent(url.pathname.slice("/api/assignments/".length)), 240);
+      if (!assignmentId) return writeJson(res, 400, { error: "assignment id is required." });
+      const assignment = getAssignmentProjection(assignmentId);
+      if (!assignment) return writeJson(res, 404, { error: "Assignment not found." });
+      if (assignment.target.session_id && !sessionAccessAllowed(res, assignment.target.session_id, auth.principal)) return;
+      return writeJson(res, 200, { ok: true, schema: ASSIGNMENT_PROJECTION_SCHEMA, assignment });
     }
 
     if (req.method === "GET" && url.pathname === "/api/goals") {
@@ -3849,6 +3879,7 @@ const server = http.createServer(async (req, res) => {
         workspace_root: ws.root,
         revit_transport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase(),
         revit_courier_enabled: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase() === "courier",
+        sidecar_agent_profile: getSidecarAgentProfileState(),
         codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,
@@ -3958,6 +3989,12 @@ function maybeStartAutoGoal(
       current_phase: "observe",
       current_step: "Capability-aware preflight",
       progress_summary: `Auto-entered goal mode (${decision.signals.join("; ")}).`,
+      work_items: [{
+        id: "auto.revit-work",
+        title: "Complete and verify the requested Revit work",
+        status: "in_progress",
+        planned_actions: ["Inspect the live model", "Perform the bounded request", "Verify and report the result"]
+      }],
       work_budget: {
         mode: "auto_goal",
         source,
