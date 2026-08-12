@@ -30,6 +30,39 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(expected, OperatorNativeHttpRuntimeProfile.IsExactDevelopmentLaboratory(runtimeMode, profile));
         }
 
+        [Theory]
+        [InlineData("hosted", "general", "deployment", true)]
+        [InlineData("production", "general", "deployment", true)]
+        [InlineData("local", "general", "deployment", true)]
+        [InlineData("Hosted", "general", "deployment", false)]
+        [InlineData("hosted", "certified", "deployment", false)]
+        [InlineData("hosted", "general", "bundled", false)]
+        [InlineData("development", "general", "deployment", false)]
+        public void DeploymentGeneralAgentRequiresExactProfile(
+            string runtimeMode,
+            string profile,
+            string trustSource,
+            bool expected)
+        {
+            Assert.Equal(expected, OperatorNativeHttpRuntimeProfile.IsExactDeploymentGeneralAgent(runtimeMode, profile, trustSource));
+        }
+
+        [Fact]
+        public void HostedGeneralAgentAuthorizesArbitraryCanonicalRevitOperationWithoutCertifiedAllowlist()
+        {
+            var request = Prepare("POST", "/revit/export-pdf", "{}");
+            var values = AuthorizationValues(request, "{}");
+            values["runtime_mode"] = "local";
+            values["exposure_profile"] = "general";
+            values["policy_trust_source"] = "deployment";
+
+            Assert.NotNull(VerifyResponse(
+                request,
+                values,
+                expectedRuntimeMode: "local",
+                useProductionAuthority: true));
+        }
+
         [Fact]
         public void RequestFenceAcceptsOnlyCanonicalBoundedRevitRequests()
         {
@@ -396,7 +429,9 @@ namespace RevitBridge.Common.Tests
             OperatorNativeHttpRequest request,
             Dictionary<string, object?> values,
             bool rehash = true,
-            TimeSpan? roundTrip = null)
+            TimeSpan? roundTrip = null,
+            string expectedRuntimeMode = "local",
+            bool useProductionAuthority = false)
         {
             var authorization = new Dictionary<string, object?>(values, StringComparer.Ordinal);
             if (rehash || !authorization.ContainsKey("authorization_hash"))
@@ -406,8 +441,11 @@ namespace RevitBridge.Common.Tests
                 ["ok"] = true,
                 ["authorization"] = authorization
             });
-            return OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
-                Utf8(response), request, "local", DateTimeOffset.UtcNow, roundTrip ?? TimeSpan.FromMilliseconds(5), StructuralTestAuthority);
+            return useProductionAuthority
+                ? OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
+                    Utf8(response), request, expectedRuntimeMode, DateTimeOffset.UtcNow, roundTrip ?? TimeSpan.FromMilliseconds(5))
+                : OperatorNativeHttpAuthorizationVerifier.VerifySuccess(
+                    Utf8(response), request, expectedRuntimeMode, DateTimeOffset.UtcNow, roundTrip ?? TimeSpan.FromMilliseconds(5), StructuralTestAuthority);
         }
 
         private static Dictionary<string, object?> AuthorizationValues(OperatorNativeHttpRequest request, string canonicalBody)

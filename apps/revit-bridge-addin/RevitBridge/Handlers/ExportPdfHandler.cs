@@ -287,14 +287,18 @@ namespace RevitBridge.Handlers
                         effectiveSelector.query = sheetQuery;
                     }
 
-                    if ((p.all ?? false) && !effectiveSelector.max.HasValue)
-                    {
-                        effectiveSelector.max = 500;
-                    }
-
                     if (!effectiveSelector.max.HasValue && p.max.HasValue && p.max.Value > 0)
                     {
                         effectiveSelector.max = Math.Min(p.max.Value, 2000);
+                    }
+
+                    // An explicit caller bound must win over the broad `all` convenience
+                    // default. Applying `all` first used to replace max:3 with max:500,
+                    // which could export an entire discipline when only a bounded sample
+                    // was requested.
+                    if ((p.all ?? false) && !effectiveSelector.max.HasValue)
+                    {
+                        effectiveSelector.max = 500;
                     }
 
                     if (semanticGroups.Count > 0)
