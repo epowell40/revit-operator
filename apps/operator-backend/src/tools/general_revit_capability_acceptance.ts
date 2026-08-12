@@ -191,6 +191,19 @@ function dynamicReceiptActions(state: JsonRecord): JsonRecord[] {
   });
 }
 
+function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
+  const receipts = Array.isArray(state.functionToolReceipts) ? state.functionToolReceipts.map(asRecord) : [];
+  return receipts.map((receipt, index) => ({
+    action_id: String(receipt.call_id || `function-${index + 1}`),
+    method: "POST",
+    path: String(receipt.path || ""),
+    request_effect: String(receipt.request_effect || "read"),
+    request_dispatched: receipt.request_dispatched === true,
+    status: String(receipt.status || "failed"),
+    receipt
+  }));
+}
+
 async function runComputerCase(baseUrl: string, testCase: GeneralRevitCapabilityCase): Promise<{ attempt: JsonRecord; sessionId: string }> {
   await requestJson(baseUrl, "/api/computer/reset", { method: "POST", body: "{}" }, 30_000);
   let runResponse: JsonRecord = {};
@@ -214,7 +227,7 @@ async function runComputerCase(baseUrl: string, testCase: GeneralRevitCapability
     state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
   }
   if (state.running === true && !transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
-  const actions = dynamicReceiptActions(state);
+  const actions = [...sidecarFunctionReceiptActions(state), ...dynamicReceiptActions(state)];
   const successfulActions = actions.filter((action) => action.request_dispatched === true);
   const applySucceeded = successfulActions.some((action) => action.request_effect === "apply");
   const receiptSucceeded = successfulActions.length > 0;

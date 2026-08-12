@@ -21,6 +21,15 @@ namespace RevitBridge.Common
                 && string.Equals(exposureProfile, "laboratory", StringComparison.Ordinal);
         }
 
+        public static bool IsExactDeploymentGeneralAgent(string? runtimeMode, string? exposureProfile, string? trustSource)
+        {
+            return (string.Equals(runtimeMode, "local", StringComparison.Ordinal)
+                    || string.Equals(runtimeMode, "hosted", StringComparison.Ordinal)
+                    || string.Equals(runtimeMode, "production", StringComparison.Ordinal))
+                && string.Equals(exposureProfile, "general", StringComparison.Ordinal)
+                && string.Equals(trustSource, "deployment", StringComparison.Ordinal);
+        }
+
         public static string NormalizeCertifiedRuntimeMode(string? runtimeMode)
         {
             var normalized = (runtimeMode ?? "local").Trim().ToLowerInvariant().Replace('-', '_');
@@ -552,8 +561,12 @@ namespace RevitBridge.Common
                     || !Sha256.IsMatch(evidenceRecordHash) || !Sha256.IsMatch(requestHash) || !Sha256.IsMatch(effectHash)
                     || !Sha256.IsMatch(authorizationHash))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_HASH_INVALID", "Native Revit authorization response contains an invalid digest.");
+                var deploymentGeneralAgent = OperatorNativeHttpRuntimeProfile.IsExactDeploymentGeneralAgent(
+                    runtimeMode,
+                    exposureProfile,
+                    trustSource);
                 if ((channel != "search" && channel != "generic_call" && channel != "typed_mcp")
-                    || (exposureProfile != "certified" && exposureProfile != "general")
+                    || (exposureProfile != "certified" && !deploymentGeneralAgent)
                     || (trustSource != "bundled" && trustSource != "deployment")
                     || runtimeMode != OperatorNativeHttpRuntimeProfile.NormalizeCertifiedRuntimeMode(expectedRuntimeMode))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_PROFILE_INVALID", "Native Revit authorization response has an invalid channel, runtime, profile, or trust source.");
@@ -591,8 +604,11 @@ namespace RevitBridge.Common
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_HASH_MISMATCH", "Native Revit authorization hash is invalid.");
 
                 // authorization_hash is deliberately only an unkeyed receipt
-                // mix-up/corruption binding. Authority comes from the compiled
-                // policy below, never from a digest supplied by the backend.
+                // mix-up/corruption binding. Certified-profile authority comes
+                // from the compiled policy below. Hosted General Agent authority
+                // comes from the exact deployment-backed profile returned by the
+                // configured authenticated HTTPS backend; it intentionally is not
+                // reduced to the static certified allowlist.
                 var independentlyComputedRequestHash = requestFamilyAdmission == null
                     ? OperatorNativeToolExposureRequestHash.Compute(method, path, canonicalBodyJson)
                     : requestFamilyAdmission.RequestInstanceHash;
@@ -600,18 +616,21 @@ namespace RevitBridge.Common
                     throw Protocol(
                         "CERTIFICATION_DIRECT_REQUEST_HASH_MISMATCH",
                         "Native Revit authorization request hash does not bind the exact effective request bytes.");
-                authority.RequireAuthorized(new OperatorNativeToolExposureBinding(
-                    method,
-                    path,
-                    canonicalBodyJson,
-                    policyHash,
-                    policyRecordHash,
-                    evidenceRecordHash,
-                    requestHash,
-                    effectHash,
-                    channel,
-                    alias,
-                    requestFamilyAdmission));
+                if (!deploymentGeneralAgent)
+                {
+                    authority.RequireAuthorized(new OperatorNativeToolExposureBinding(
+                        method,
+                        path,
+                        canonicalBodyJson,
+                        policyHash,
+                        policyRecordHash,
+                        evidenceRecordHash,
+                        requestHash,
+                        effectHash,
+                        channel,
+                        alias,
+                        requestFamilyAdmission));
+                }
 
                 var elapsed = authorizationRoundTrip ?? TimeSpan.Zero;
                 if (elapsed < TimeSpan.Zero || elapsed >= TimeSpan.FromMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds))
