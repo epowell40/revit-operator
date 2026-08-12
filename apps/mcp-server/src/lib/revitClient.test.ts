@@ -167,7 +167,7 @@ test("generic Revit dispatch hard-rejects the reserved certified namespace for d
   }
 });
 
-test("certified admission denies unknown, uncertified, generic schedule, and grant-backed writes before bridge dispatch", async () => {
+test("non-exact production admission denies unknown, uncertified, generic schedule, and grant-backed writes before bridge dispatch", async () => {
   let requests = 0;
   const server = http.createServer((_request, response) => {
     requests += 1;
@@ -176,7 +176,7 @@ test("certified admission denies unknown, uncertified, generic schedule, and gra
   });
   const port = await listen(server);
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
-  process.env.REVIT_OPERATOR_MODE = "hosted";
+  process.env.REVIT_OPERATOR_MODE = "production ";
   delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
     ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -213,7 +213,7 @@ test("certified admission denies unknown, uncertified, generic schedule, and gra
   }
 });
 
-test("callRevit admits only the actual bound typed alias before direct dispatch", async () => {
+test("non-exact production callRevit admits only the actual bound typed alias before direct dispatch", async () => {
   let requests = 0;
   let observed: http.IncomingMessage | undefined;
   const server = http.createServer((request, response) => {
@@ -225,7 +225,7 @@ test("callRevit admits only the actual bound typed alias before direct dispatch"
   const port = await listen(server);
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
   const variant = writePingExposurePolicy();
-  process.env.REVIT_OPERATOR_MODE = "hosted";
+  process.env.REVIT_OPERATOR_MODE = "production ";
   delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH = variant.policyPath;
   process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256 = variant.policyHash;

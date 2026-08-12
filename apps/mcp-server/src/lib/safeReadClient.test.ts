@@ -274,9 +274,9 @@ test("laboratory SafeRead alias sends exact bytes, exact headers, stable/per-cal
   }
 });
 
-test("SafeRead certified admission denies the new alias before discovery or transport", async () => {
+test("non-exact production SafeRead admission denies the new alias before discovery or transport", async () => {
   const before = { mode: process.env.REVIT_OPERATOR_MODE, profile: process.env.OPERATOR_TOOL_EXPOSURE_PROFILE };
-  process.env.REVIT_OPERATOR_MODE = "hosted";
+  process.env.REVIT_OPERATOR_MODE = "production ";
   delete process.env.OPERATOR_TOOL_EXPOSURE_PROFILE;
   try {
     await assert.rejects(

@@ -32,10 +32,17 @@ test("general Revit corpus covers the user basics and the retained redline opera
     "v05_apply_view_template", "r13_schedule_airflow_sync", "r14_tag_designation_sync",
     "r15_bulk_visible_status_rule", "r16_tag_layout_cleanup", "r17_add_connected_accessory",
     "r18_move_connected_accessory", "r19_delete_bounded_route_preflight", "x01_native_api_fallback"
+    , "lh01_bulk_hru_to_eru_marks", "lh02_hru_schedule_transform_verify", "lh03_sheet_view_area_migration",
+    "lh04_titleblock_initials_discovery", "lh05_create_similar_receptacles", "lh06_visibility_range_template",
+    "lh07_family_clearance_evolution", "dp01_individual_bw_pdf_set", "dp02_combined_discipline_pdf",
+    "cx01_dynamic_hru_to_eru_program"
   ]) {
     assert.ok(corpus.cases.some((entry) => entry.case_id === expectedCase), `missing ${expectedCase}`);
   }
   assert.match(corpus.purpose, /general-purpose Revit work/i);
+  assert.equal(corpus.cases.filter((entry) => entry.source === "long_horizon").length, 7);
+  assert.equal(corpus.cases.filter((entry) => entry.source === "document_production").length, 2);
+  assert.equal(corpus.cases.filter((entry) => entry.source === "code_execution").length, 1);
 });
 
 test("every corpus capability has a public backend and bridge execution lane", () => {
@@ -156,6 +163,25 @@ test("execution failures remain non-refusals while still failing completion", ()
   assert.equal(result.tier, "failed");
   assert.equal(result.non_refusal, true);
   assert.equal(result.completed, false);
+});
+
+test("generated-code preview, apply, and readback receipts score as verified UI execution", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "cx01_dynamic_hru_to_eru_program")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Changed 37 HRU marks to ERU and verified zero HRU marks remain.",
+    effect_state: "apply_dispatched",
+    actions: [
+      { path: "/revit/dynamic-runtime/preview", request_effect: "preview", request_dispatched: true, status: "success" },
+      { path: "/revit/dynamic-runtime/apply", request_effect: "apply", request_dispatched: true, status: "success" }
+    ],
+    receipts: [{ schema: "dynamic-revit-apply-receipt/v1", outcome: "committed_verified" }],
+    verification_results: [{ readback: { remaining_hru: 0, eru: 37 } }]
+  });
+  assert.equal(result.tier, "verified");
+  assert.equal(result.apply_dispatched, true);
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
 });
 
 test("a blocked mutation receipt overrides a contradictory completed assignment", () => {

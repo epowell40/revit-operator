@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-  [ValidateSet("smoke", "redline", "full")]
+  [ValidateSet("smoke", "redline", "long-horizon", "production", "code-execution", "full")]
   [string]$Suite = "smoke",
   [string]$Sidecar = "http://127.0.0.1:3908",
   [switch]$Apply,

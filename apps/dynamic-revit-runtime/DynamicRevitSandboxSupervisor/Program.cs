@@ -13,6 +13,8 @@ namespace RevitOperator.DynamicRevitSandboxSupervisor;
 
 internal static class Program
 {
+    private static readonly TimeSpan BridgeRequestTimeout = TimeSpan.FromSeconds(90);
+    internal static TimeSpan BridgeRequestTimeoutForTests => BridgeRequestTimeout;
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = true };
     private static readonly JsonSerializerOptions WireJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, WriteIndented = false };
     private static readonly JsonSerializerOptions SnakeJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = false, WriteIndented = false };
@@ -667,7 +669,10 @@ internal static class Program
 
     private static async Task<HttpPostResult> SendPost(string baseUrl, string path, string token, string writeGrant, string json, string correlation)
     {
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        // Revit external events run on the UI thread and can legitimately wait behind regeneration,
+        // printing, or another add-in callback. Keep the network envelope above the bounded worker
+        // and apply deadlines so a healthy queued event is not abandoned while still in the host.
+        using var client = new HttpClient { Timeout = BridgeRequestTimeout };
         using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + path) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
         request.Headers.TryAddWithoutValidation("X-Operator-Token", token);
         request.Headers.TryAddWithoutValidation("X-Operator-Write-Grant", writeGrant);

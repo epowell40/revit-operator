@@ -277,6 +277,8 @@ function targetTokens(value: unknown): string[] {
     }
     const scalar = `${node}`.trim().toLowerCase();
     if (!scalar || scalar.length > 260) return;
+    const exportedViewMatch = scalar.match(/(?:^|[\\/])revit_(\d+)_/i);
+    if (exportedViewMatch) tokens.add(`id:${exportedViewMatch[1]}`);
     if (normalizedKey === "id" || normalizedKey === "ids") tokens.add(`id:${scalar}`);
     if (/(?:element|schedule|view|sheet|room|space|type|family|target|source|host|main).*ids?$/.test(normalizedKey)) {
       tokens.add(`${normalizedKey.replace(/s$/, "")}:${scalar}`);
@@ -363,7 +365,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const operation = operationFor(tool, args);
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation });
   if (DISCOVERY_TOOLS.has(tool)) return call("discovery");
-  if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:policy|catalog|search)|transaction_validate)/.test(tool)) {
+  if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
   }
   if (/^revit_(?:activate_|highlight_)/.test(tool)) return call("navigation");
