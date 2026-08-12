@@ -632,7 +632,10 @@ namespace RevitBridge.Operator
             var body = JsonSerializer.Serialize(payload, OperatorUiProtocol.JsonOptions);
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            deadline.CancelAfter(TimeSpan.FromSeconds(3));
+            // Hosted authorization can briefly contend with agent traffic or a
+            // just-activated release. Keep this bounded, but do not turn a
+            // healthy remote authorization into a routine pre-dispatch refusal.
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
             var roundTrip = Stopwatch.StartNew();
             try
             {

@@ -877,12 +877,13 @@ namespace RevitBridge.Handlers
 
             if (appearance.stripedRows.HasValue)
             {
-                var applied = TrySetBoolProperty(
+                var applied = TrySetScheduleBoolProperty(
                     schedule,
-                    new[] { "ShowStripeRows", "ShowStripedRows", "UseStripedRowsOnSheets", "UseStripedRows" },
-                    appearance.stripedRows.Value);
+                    new[] { "HasStripedRows" },
+                    appearance.stripedRows.Value,
+                    out var readback);
                 changed |= applied;
-                results.Add(new { setting = "stripedRows", status = applied ? "Applied" : "Skipped", value = appearance.stripedRows.Value });
+                results.Add(new { setting = "stripedRows", status = applied ? "Applied" : "Skipped", value = appearance.stripedRows.Value, readback });
             }
 
             if (appearance.freezeHeaders.HasValue)
