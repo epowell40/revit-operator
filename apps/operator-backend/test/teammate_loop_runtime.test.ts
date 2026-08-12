@@ -662,6 +662,41 @@ test("schedule filter predicates do not masquerade as exact written values durin
   }
 });
 
+test("a later dry-run inspection does not erase already verified Revit work", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Create and verify a filtered schedule, then inspect its matching rows."));
+  try {
+    const create = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/create-schedule", body: { name: "TEST", category: "OST_MechanicalEquipment", dryRun: false } }
+    });
+    assert.equal(create.allowed, true);
+    recordTeammateMcpResult(owner, create, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", schedule: { id: 1542996, name: "TEST" } }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+
+    const inspect = guardTeammateMcpCall(owner, {
+      tool: "revit_replace_schedule_values",
+      arguments: {
+        scheduleIds: [1542996], fieldNames: ["Mark"], valueContains: "HRU2",
+        replaceFrom: "__NO_MATCH__", replaceTo: "__NO_CHANGE__", dryRun: true, apply: false
+      }
+    });
+    assert.equal(inspect.allowed, true);
+    recordTeammateMcpResult(owner, inspect, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Dry Run", changes: [] }) }]
+    });
+
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.verified, true);
+    assert.equal(receipt?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("continuation identity, transaction binding, and expected-value verification fail closed", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";
