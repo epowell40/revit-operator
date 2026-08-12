@@ -19,6 +19,7 @@ test("known read-only POST endpoints remain read-only", () => {
 test("native API policy is read-only over GET but mutating over POST", () => {
   assert.equal(pathLooksWrite("/revit/native-api-policy", undefined, "GET"), false);
   assert.equal(pathLooksWrite("/revit/native-api-policy", { policy: "certified" }, "POST"), true);
+  assert.equal(pathLooksWrite("/revit/native-api-ops", { operations: [{ op: "get_property" }] }, "POST"), false);
 });
 
 test("conditional audit and type-maintenance routes inspect the request body", () => {
