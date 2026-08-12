@@ -236,3 +236,25 @@ test("an assistant-reported incomplete mutation cannot be scored verified", () =
   assert.equal(result.completed, false);
   assert.equal(result.verified, false);
 });
+
+test("a read-only fallback cannot pass a mutation benchmark", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "dp01_individual_bw_pdf_set")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Identified three suitable sheets. No exports were performed.",
+    effect_state: "not_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_list_sheets completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] }
+      }]
+    }
+  });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.apply_dispatched, false);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+  assert.match(result.summary, /did not dispatch a verified apply operation/i);
+});

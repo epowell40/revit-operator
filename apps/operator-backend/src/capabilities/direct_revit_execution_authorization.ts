@@ -20,6 +20,7 @@ import {
   type CertifiedRequestFamilyAdmission,
   type ValidatedCertifiedRequestFamilyAdmission
 } from "./certified_request_family_admission.js";
+import { getSidecarAgentProfileState } from "./sidecar_agent_profile.js";
 
 export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION = "revit-operator.revit-direct-final-authorization.v1";
 export const DIRECT_REVIT_EXECUTION_AUTHORIZATION_V2_VERSION = "revit-operator.revit-direct-final-authorization.v2";
@@ -66,7 +67,7 @@ export type DirectRevitExecutionAuthorization = {
   channel: DirectRevitExecutionChannel;
   alias: string;
   runtime_mode: string;
-  exposure_profile: "certified";
+  exposure_profile: "certified" | "general";
   policy_trust_source: "bundled" | "deployment";
   authorization_stage?: "preflight" | "final";
   request_family_admission?: CertifiedRequestFamilyAdmission;
@@ -120,6 +121,63 @@ function mapTrustedPolicyError(error: TrustedToolExposurePolicyError): DirectRev
     return new DirectRevitExecutionAuthorizationError(error.code, error.message, 403, false);
   }
   return new DirectRevitExecutionAuthorizationError(error.code, error.message, 503, true);
+}
+
+function isHostedGeneralAgentReady(env: NodeJS.ProcessEnv): boolean {
+  const profile = getSidecarAgentProfileState(env);
+  return profile.general_agent_ready === true
+    && profile.capability_profile === "general_agent"
+    && profile.tool_exposure_profile === "general"
+    && (profile.runtime_mode === "hosted" || profile.runtime_mode === "production");
+}
+
+/**
+ * The authenticated hosted product is a general Revit worker, not a static
+ * certification allowlist. Bind each well-formed request to an exact receipt
+ * while keeping the legacy native-admission wire shape used by ROSB/1.
+ */
+function generalAgentAdmissionRecord(input: {
+  method: "GET" | "POST";
+  path: string;
+  requestHash: string;
+  effectHash?: string;
+}): {
+  policy_hash: string;
+  policy_record_hash: string;
+  evidence_record_hash: string;
+  effect_hash: string;
+} {
+  const effectHash = input.effectHash ?? sha256({
+    schema: "revit-operator.general-agent-direct-effect.v1",
+    method: input.method,
+    path: input.path,
+    request_hash: input.requestHash
+  } as never);
+  const evidenceRecordHash = sha256({
+    schema: "revit-operator.general-agent-direct-evidence.v1",
+    authority: "authenticated_hosted_general_agent",
+    method: input.method,
+    path: input.path
+  } as never);
+  const policyRecordHash = sha256({
+    schema: "revit-operator.general-agent-direct-record.v1",
+    method: input.method,
+    path: input.path,
+    request_hash: input.requestHash,
+    effect_hash: effectHash,
+    evidence_record_hash: evidenceRecordHash
+  } as never);
+  const policyHash = sha256({
+    schema: "revit-operator.general-agent-direct-policy.v1",
+    authority: "backend_environment",
+    capability_profile: "general_agent"
+  } as never);
+  return {
+    policy_hash: policyHash,
+    policy_record_hash: policyRecordHash,
+    evidence_record_hash: evidenceRecordHash,
+    effect_hash: effectHash
+  };
 }
 
 export function authorizeDirectRevitExecution(
@@ -261,6 +319,34 @@ export function authorizeDirectRevitExecution(
 
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   try {
+    const hostedGeneralAgent = isHostedGeneralAgentReady(env) && !requestFamilyAdmission;
+    if (hostedGeneralAgent) {
+      const record = generalAgentAdmissionRecord({ method, path: toolPath, requestHash });
+      const payload = {
+        version: DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION as typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION,
+        phase: "certification_native_direct_admission" as const,
+        authorized_at: now.toISOString(),
+        valid_for_ms: DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS as typeof DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS,
+        request_id: requestId,
+        method,
+        path: toolPath,
+        body_present: bodyPresent,
+        source_body_sha256: bodySha256(bodyJson),
+        canonical_body_json: canonicalBodyJson,
+        body_sha256: bodySha256(canonicalBodyJson),
+        policy_hash: record.policy_hash,
+        policy_record_hash: record.policy_record_hash,
+        evidence_record_hash: record.evidence_record_hash,
+        request_hash: requestHash,
+        effect_hash: record.effect_hash,
+        channel,
+        alias,
+        runtime_mode: runtimeMode,
+        exposure_profile: "general" as const,
+        policy_trust_source: "deployment" as const
+      };
+      return { ...payload, authorization_hash: sha256(payload as never) };
+    }
     const trusted = loadTrustedToolExposurePolicy(env);
     const evaluation = evaluateTrustedToolExposurePolicy({
       policy: trusted.policy,

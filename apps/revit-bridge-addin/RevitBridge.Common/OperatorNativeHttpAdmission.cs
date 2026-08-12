@@ -552,7 +552,8 @@ namespace RevitBridge.Common
                     || !Sha256.IsMatch(evidenceRecordHash) || !Sha256.IsMatch(requestHash) || !Sha256.IsMatch(effectHash)
                     || !Sha256.IsMatch(authorizationHash))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_HASH_INVALID", "Native Revit authorization response contains an invalid digest.");
-                if ((channel != "search" && channel != "generic_call" && channel != "typed_mcp") || exposureProfile != "certified"
+                if ((channel != "search" && channel != "generic_call" && channel != "typed_mcp")
+                    || (exposureProfile != "certified" && exposureProfile != "general")
                     || (trustSource != "bundled" && trustSource != "deployment")
                     || runtimeMode != OperatorNativeHttpRuntimeProfile.NormalizeCertifiedRuntimeMode(expectedRuntimeMode))
                     throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_PROFILE_INVALID", "Native Revit authorization response has an invalid channel, runtime, profile, or trust source.");

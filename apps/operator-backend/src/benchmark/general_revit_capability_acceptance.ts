@@ -278,12 +278,13 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const durable = durableLifecycle(attempt);
   const assistantIncomplete = assistantReportsIncompleteMutation(attempt);
   const refusalReason = capabilityRefusalReason(attempt, expectedPathObserved);
+  const requiredApplyMissing = testCase.expected_effect === "apply" && !applyDispatched;
   const completed = attempt.ok !== false && expectedPathObserved && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete
-    && (dispatched || durable.completed);
+    && !requiredApplyMissing && (dispatched || durable.completed);
   const verified = completed && (teammate.verified || hasStructuredVerificationEvidence(attempt) || durable.verified);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
-  else if (attempt.ok === false || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete) tier = "failed";
+  else if (attempt.ok === false || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || requiredApplyMissing) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";
@@ -303,7 +304,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     outcome_unknown: outcomeUnknown,
     refusal_reason: refusalReason,
     summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
-      : tier === "failed" ? "Attempt failed or has an uncertain outcome."
+      : tier === "failed" ? requiredApplyMissing
+        ? "Mutation case did not dispatch a verified apply operation."
+        : "Attempt failed or has an uncertain outcome."
         : tier === "verified" ? "Expected Revit lane completed with structured verification evidence."
           : tier === "previewed" ? "Expected non-mutating Revit preview lane completed."
             : tier === "completed" ? "Expected Revit lane completed; independent verification was not present."

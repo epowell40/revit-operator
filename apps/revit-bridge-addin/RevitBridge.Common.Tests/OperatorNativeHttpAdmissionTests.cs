@@ -257,6 +257,8 @@ namespace RevitBridge.Common.Tests
             RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"value\":\"é\"}")));
             RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"value\":\"line\\r\\nnext\"}")));
 
+            Assert.NotNull(VerifyResponse(request, With(baseline, "exposure_profile", "general")));
+
             // Native does not guess at ECMAScript number canonicalization. A
             // hash-bound backend canonical fraction is valid and is dispatched
             // byte-for-byte after the final backend refresh repeats it.

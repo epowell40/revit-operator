@@ -582,6 +582,35 @@ test("direct authorization enforces the raw 2 MiB body ceiling and returns struc
   })), 503, "CERTIFICATION_POLICY_UNAVAILABLE");
 });
 
+test("authenticated hosted General Agent binds arbitrary canonical Revit reads and writes without a static capability allowlist", () => {
+  const env: NodeJS.ProcessEnv = {
+    REVIT_OPERATOR_MODE: "hosted",
+    OPERATOR_AUTH_MODE: "principal_jwt",
+    OPERATOR_BRAIN: "codex",
+    OPERATOR_OPENAI_API_KEY: "test-provider-key"
+  };
+  const bodyJson = JSON.stringify({
+    sheetIds: [1420963, 1420964, 1420965],
+    combine: false,
+    colorMode: "black_and_white"
+  });
+  const authorization = authorizeDirectRevitExecution(directRequest({
+    path: "/revit/export-pdf",
+    body_json: bodyJson,
+    runtime_mode: "hosted"
+  }), env, new Date("2026-08-12T13:00:00.000Z"));
+
+  assert.equal(authorization.path, "/revit/export-pdf");
+  assert.equal(authorization.exposure_profile, "general");
+  assert.equal(authorization.policy_trust_source, "deployment");
+  assert.equal(authorization.canonical_body_json, JSON.stringify({
+    colorMode: "black_and_white",
+    combine: false,
+    sheetIds: [1420963, 1420964, 1420965]
+  }));
+  assert.match(authorization.authorization_hash, /^sha256:[0-9a-f]{64}$/);
+});
+
 test("escape-heavy near-limit native wrapper fits the bounded HTTP authorization ceiling", () => {
   const sourceBodyJson = JSON.stringify({ value: "<".repeat(DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES - 32) });
   const sourceBytes = Buffer.byteLength(sourceBodyJson, "utf8");
