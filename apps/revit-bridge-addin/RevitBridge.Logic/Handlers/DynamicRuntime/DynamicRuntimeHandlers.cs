@@ -20,6 +20,45 @@ using RevitOperator.DynamicRevitSdk;
 
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
+    /// <summary>
+    /// Resolves the trusted generated-code runtime shipped beside the Revit add-in.
+    /// Environment pins remain an explicit development override, while installed
+    /// workstations derive the same complete directory identities used by the
+    /// supervisor and worker admission protocol from the deployed payload itself.
+    /// </summary>
+    internal static class DynamicRuntimeTrustBoundary
+    {
+        private const string LauncherPinVariable = "REVIT_OPERATOR_DYNAMIC_RUNTIME_LAUNCHER_SHA256";
+        private const string WorkerPinVariable = "REVIT_OPERATOR_DYNAMIC_RUNTIME_WORKER_SHA256";
+
+        public static string LauncherPackageHash() => ResolveHash(LauncherPinVariable, "supervisor");
+        public static string WorkerPackageHash() => ResolveHash(WorkerPinVariable, "worker");
+
+        public static void RequireInstalledOrConfigured()
+        {
+            _ = LauncherPackageHash();
+            _ = WorkerPackageHash();
+        }
+
+        private static string ResolveHash(string environmentVariable, string packageDirectoryName)
+        {
+            var configured = Environment.GetEnvironmentVariable(environmentVariable) ?? "";
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                if (!DynamicRuntimePreviewHandler.IsHash(configured))
+                    throw new InvalidOperationException(environmentVariable + " is not a canonical SHA-256 identity.");
+                return configured;
+            }
+
+            var assemblyDirectory = Path.GetDirectoryName(typeof(DynamicRuntimeTrustBoundary).Assembly.Location)
+                ?? throw new InvalidOperationException("Dynamic Revit host assembly location is unavailable.");
+            var packageDirectory = Path.Combine(assemblyDirectory, "dynamic-runtime", packageDirectoryName);
+            if (!Directory.Exists(packageDirectory))
+                throw new InvalidOperationException("The trusted Dynamic Revit " + packageDirectoryName + " package is not installed beside the Revit add-in.");
+            return DynamicRuntimePackageDirectoryIdentity.Compute(packageDirectory);
+        }
+    }
+
     internal static class DynamicRuntimeBootstrapRegistry
     {
         private sealed class BootstrapRequest { public string? challengeNonce { get; set; } public string? runtimeInstanceId { get; set; } public string? sessionKeyBase64 { get; set; } public string? launcherExecutableHash { get; set; } }
@@ -55,7 +94,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                     var key = Convert.FromBase64String(request.sessionKeyBase64 ?? "");
                     if (key.Length != 32) throw new InvalidOperationException("Dynamic bootstrap session key must be 256 bits.");
                     var observedLauncherHash = PackageHashForProcess(checked((int)observedLauncherPid));
-                    var pinnedLauncherHash = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RUNTIME_LAUNCHER_SHA256") ?? "";
+                    var pinnedLauncherHash = DynamicRuntimeTrustBoundary.LauncherPackageHash();
                     if (!FixedEquals(observedLauncherHash, request.launcherExecutableHash) || !FixedEquals(pinnedLauncherHash, request.launcherExecutableHash)) throw new InvalidOperationException("Dynamic bootstrap launcher package did not match the kernel-observed or laboratory-pinned package.");
                     Sessions[request.runtimeInstanceId] = new Session { Key = key, ExpiresUtc = DateTime.UtcNow.AddMinutes(10), LauncherProcessId = checked((int)observedLauncherPid), LauncherHash = observedLauncherHash };
                     foreach (var expired in Sessions.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Sessions.TryRemove(expired, out _);
@@ -139,8 +178,8 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private static readonly ConcurrentDictionary<string, byte> UsedCorrelations = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
         public static void Register(string runtimeId, string keyBase64, string launcherHash, string workerExecutableHash, string workerRuntimePackageHash, string compilerRuntimeHash, string sdkArtifactHash, string sandboxProfile, int workerProcessId, string startupNonceHash, string taskDirectoryIdentity, long expiresUnixSeconds)
         {
-            var trustedLauncherHash = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RUNTIME_LAUNCHER_SHA256") ?? "";
-            var trustedWorkerHash = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RUNTIME_WORKER_SHA256") ?? "";
+            var trustedLauncherHash = DynamicRuntimeTrustBoundary.LauncherPackageHash();
+            var trustedWorkerHash = DynamicRuntimeTrustBoundary.WorkerPackageHash();
             var runtimeValid = !string.IsNullOrWhiteSpace(runtimeId) && runtimeId.Length <= 128;
             var launcherFormatValid = DynamicRuntimePreviewHandler.IsHash(launcherHash);
             var workerExecutableFormatValid = DynamicRuntimePreviewHandler.IsHash(workerExecutableHash);

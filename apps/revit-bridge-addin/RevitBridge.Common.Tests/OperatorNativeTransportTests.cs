@@ -229,16 +229,27 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("\"/revit/dynamic-runtime/core-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
 
             var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeV1ActivationHandlers.cs"));
-            Assert.Contains("REVIT_OPERATOR_MODE\"), \"development\", StringComparison.Ordinal", activation);
-            Assert.Contains("OPERATOR_TOOL_EXPOSURE_PROFILE\"), \"laboratory\", StringComparison.Ordinal", activation);
+            Assert.Contains("DynamicRuntimeTrustBoundary.RequireInstalledOrConfigured()", activation);
+            var runtime = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeHandlers.cs"));
+            Assert.Contains("Path.Combine(assemblyDirectory, \"dynamic-runtime\", packageDirectoryName)", runtime);
+            Assert.Contains("DynamicRuntimePackageDirectoryIdentity.Compute(packageDirectory)", runtime);
+            Assert.Contains("DynamicRuntimeTrustBoundary.LauncherPackageHash()", runtime);
+            Assert.Contains("DynamicRuntimeTrustBoundary.WorkerPackageHash()", runtime);
             Assert.Contains("DurableCoreOperationApplyAuthorizationLedgerV1", activation);
             Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1", activation);
             Assert.Contains("DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes", activation);
             Assert.Contains("authorization_granted = false", activation);
+
+            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            Assert.Contains("rawPath.StartsWith(\"/revit/dynamic-runtime/\"", server);
+            Assert.Contains("string.Equals(req.HttpMethod, \"POST\"", server);
+            Assert.Contains("!hasQuery", server);
+            Assert.Contains("OperatorSecurity.TokenMatches(token)", server);
+            Assert.DoesNotContain("DYNAMIC_RUNTIME_EXPERIMENT_ONLY", server);
         }
 
         [Fact]
-        public void DynamicAnnotationActivationIsLabBoundAuthenticatedAndRollbackVerified()
+        public void DynamicAnnotationActivationIsInstalledRuntimeBoundAuthenticatedAndRollbackVerified()
         {
             var root = FindRepositoryRoot();
             var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
@@ -359,7 +370,9 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("CERTIFICATION_LABORATORY_FAMILY_ADMISSION_FORBIDDEN", server);
             Assert.Contains("OperatorNativeTransportProtocol.TransportPath", server);
             Assert.Contains("OperatorNativeTransportHttpAdapter.OpenCertifiedRequest", server);
-            Assert.Contains("if (laboratoryBypass && !protectedLaboratoryEvidence)", server);
+            Assert.Contains("if ((laboratoryBypass && !protectedLaboratoryEvidence) || directDynamicRuntime)", server);
+            Assert.Contains("rawPath.StartsWith(\"/revit/dynamic-runtime/\"", server);
+            Assert.Contains("&& !hasQuery", server);
             Assert.Contains("if (effectiveRequest != null && !protectedLaboratoryEvidence)", server);
             Assert.Contains("does not manufacture an L4 policy decision", server);
             var eventDispatch = server.IndexOf("result = await _eventService.Run", StringComparison.Ordinal);

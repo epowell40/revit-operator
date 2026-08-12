@@ -537,6 +537,116 @@
       "dispatch_any_of": ["/revit/tool-search", "/revit/native-api-search", "/revit/native-api-catalog", "/revit/native-api-call"],
       "expected_effect": "read",
       "epic0441_task_refs": ["n28_novel_holdout", "n29_novel_holdout", "n30_novel_holdout"]
+    },
+    {
+      "case_id": "lh01_bulk_hru_to_eru_marks",
+      "source": "long_horizon",
+      "operation_family": "parameter_edit",
+      "prompt": "In this disposable Snowdon model, find every mechanical-equipment instance whose Mark begins with HRU and change only that prefix to ERU. Preserve every remaining character exactly, preflight collisions and read-only/grouped targets, apply the complete bounded set, then query all affected IDs and prove the HRU count is zero and the ERU replacement count equals the original HRU count.",
+      "probe_prompt": "Find every mechanical-equipment instance whose Mark begins with HRU and produce a collision-aware HRU-to-ERU transformation table preserving every suffix exactly. Report writable, grouped, duplicate, and blocked targets plus the exact apply/readback plan, but do not change the model.",
+      "capability_paths": ["/revit/find-elements", "/revit/update-parameter-by-query", "/revit/get-parameters"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/update-parameter-by-query", "/revit/set-parameter", "/revit/get-parameters"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r01_schedule_value_edit", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "lh02_hru_schedule_transform_verify",
+      "source": "long_horizon",
+      "operation_family": "schedule_configure",
+      "prompt": "Create a temporary mechanical-equipment QA schedule for the HRU-to-ERU naming migration, add Mark, Family, and Type fields, filter it to the affected ERU equipment, sort by Mark, verify its row count against a direct model query, and report any duplicate or blank Marks without changing unrelated schedule values.",
+      "probe_prompt": "Inspect the mechanical-equipment schedule capabilities and produce the complete plan for a temporary HRU-to-ERU QA schedule with Mark, Family, and Type fields, an ERU filter, Mark sorting, duplicate checks, and independent model-count verification. Do not create or configure the schedule.",
+      "capability_paths": ["/revit/create-schedule", "/revit/configure-schedule", "/revit/find-elements"],
+      "dispatch_any_of": ["/revit/create-schedule", "/revit/configure-schedule", "/revit/find-elements", "/revit/schedules"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g23_schedule_configure", "r01_schedule_value_edit"]
+    },
+    {
+      "case_id": "lh03_sheet_view_area_migration",
+      "source": "long_horizon",
+      "operation_family": "sheet_create",
+      "prompt": "Build a bounded two-area coordination package in the disposable model: duplicate two suitable plan views with detailing, name them AREA A and AREA B coordination plans, create two temporary sheets, place the matching views without overlap, then verify sheet numbers, view names, viewport ownership, and titleblock presence.",
+      "probe_prompt": "Find two suitable source plan views and preview a complete two-area coordination package with duplicated detailed views, AREA A and AREA B names, two temporary sheets, non-overlapping viewport placements, and final ownership/titleblock verification. Do not create views or sheets.",
+      "capability_paths": ["/revit/duplicate-view", "/revit/create-sheet", "/revit/place-view"],
+      "dispatch_any_of": ["/revit/duplicate-view", "/revit/create-sheet", "/revit/place-view", "/revit/views", "/revit/sheets"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package"]
+    },
+    {
+      "case_id": "lh04_titleblock_initials_discovery",
+      "source": "long_horizon",
+      "operation_family": "parameter_edit",
+      "prompt": "On exactly three temporary test sheets, determine how the title block exposes authored-by and checked-by initials—sheet parameter, titleblock instance/type parameter, project parameter, or family text—then set authored-by to EP and checked-by to QA using the correct backing data, and verify the visible/readable value separately on each sheet.",
+      "probe_prompt": "Inspect exactly three suitable test sheets and determine whether authored-by and checked-by initials come from sheet parameters, titleblock instance/type parameters, project parameters, or family text. Produce an evidence-backed per-sheet edit and verification plan, but do not change anything.",
+      "capability_paths": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter", "/revit/plan-family-evolution"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "lh05_create_similar_receptacles",
+      "source": "long_horizon",
+      "operation_family": "add",
+      "prompt": "Find one known-good hosted receptacle in a suitable room, create two similar receptacles at safe bounded positions on the same host, preserve family, type, orientation, visible tag-driving parameters, workset, and electrical circuit where supported, then verify host, type, coordinates, and circuit for both new instances.",
+      "probe_prompt": "Find one known-good hosted receptacle and preview creating two similar receptacles at safe bounded locations on the same host. Report exact exemplar, host slots, family/type, orientation, parameters, workset, circuit expectations, and verification plan, but do not create anything.",
+      "capability_paths": ["/revit/create-similar-from-instance", "/revit/get-parameters", "/revit/get-connectors"],
+      "dispatch_any_of": ["/revit/create-similar-from-instance", "/revit/find-elements", "/revit/get-parameters", "/revit/get-connectors"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["n28_novel_holdout", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "lh06_visibility_range_template",
+      "source": "long_horizon",
+      "operation_family": "view_template",
+      "prompt": "Duplicate a suitable floor plan for a disposable visibility test, correct its view range so elements from the floor below are excluded, hide an available clearance or accessibility subcategory/filter if present, create a named view template from the corrected settings, apply it to the duplicate, and verify view range, visibility, and template assignment with before/after captures.",
+      "probe_prompt": "Find one suitable floor plan and inspect its current view range, visible lower-level elements, available clearance/accessibility categories or filters, and template compatibility. Produce a duplicate-adjust-template-apply-capture plan, but do not change the model.",
+      "capability_paths": ["/revit/duplicate-view", "/revit/views", "/revit/visibility", "/revit/create-view"],
+      "dispatch_any_of": ["/revit/duplicate-view", "/revit/views", "/revit/visibility", "/revit/create-view", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r21_graphics_override", "g22_sheet_view_package"]
+    },
+    {
+      "case_id": "lh07_family_clearance_evolution",
+      "source": "long_horizon",
+      "operation_family": "family_edit",
+      "prompt": "Choose one disposable equipment family instance that lacks a visible service-clearance representation, evolve a copied test family/type to add a controllable symbolic or model clearance representation, reload it without overwriting unrelated production types, apply it only to a copied test instance, enable its visibility in a test plan, and verify the clearance appears in the captured view.",
+      "probe_prompt": "Find one equipment family instance without a visible service-clearance representation and produce a bounded family-evolution plan for a copied test family/type, including clearance geometry, visibility control, reload conflict handling, isolated instance swap, plan visibility, and screenshot verification. Do not edit or reload the family.",
+      "capability_paths": ["/revit/plan-family-evolution", "/revit/apply-family-evolution", "/revit/export-view-frame"],
+      "dispatch_any_of": ["/revit/plan-family-evolution", "/revit/apply-family-evolution", "/revit/open-family-doc", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["n29_novel_holdout", "n30_novel_holdout"]
+    },
+    {
+      "case_id": "dp01_individual_bw_pdf_set",
+      "source": "document_production",
+      "operation_family": "print_export",
+      "prompt": "Export a bounded three-sheet mechanical test set as individual black-and-white PDFs into the benchmark output folder, naming each file with the exact pattern TEST-{sheetNumber}-{sheetName}.pdf. Preflight the selected sheets and paths, export, then verify every file exists, is nonempty, has one page, and matches the requested sheet identity.",
+      "probe_prompt": "Select a bounded three-sheet mechanical test set and preflight individual black-and-white PDF export with exact TEST-{sheetNumber}-{sheetName}.pdf naming. Report resolved sheets, output paths, color mode, and post-export file/page verification plan, but do not export files.",
+      "capability_paths": ["/revit/sheets", "/revit/export-pdf"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g25_export_publish"]
+    },
+    {
+      "case_id": "dp02_combined_discipline_pdf",
+      "source": "document_production",
+      "operation_family": "print_export",
+      "prompt": "Resolve one bounded mechanical sub-discipline sheet set, export it as one combined color PDF named TEST-MECHANICAL-ISSUE.pdf in the benchmark output folder, then verify the file exists, is nonempty, has the same page count and ordering as the preflight sheet list, and record a content hash.",
+      "probe_prompt": "Resolve one bounded mechanical sub-discipline sheet set and preflight a combined color PDF named TEST-MECHANICAL-ISSUE.pdf, including exact sheet order, output path, page-count check, and content-hash verification. Do not export files.",
+      "capability_paths": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g25_export_publish"]
+    },
+    {
+      "case_id": "cx01_dynamic_hru_to_eru_program",
+      "source": "code_execution",
+      "operation_family": "code_execution",
+      "prompt": "Use the generated C# Dynamic Revit program tool—not a typed bulk-update primitive—to inspect all mechanical equipment Marks, select every writable Mark beginning with HRU, preserve each suffix exactly while replacing only the prefix with ERU, report counts and collision checks, run a rollback preview, apply the exact program, and verify committed readback proves every selected ID has its expected ERU Mark.",
+      "probe_prompt": "Use the generated C# Dynamic Revit program tool to compile and run a rollback preview over mechanical equipment Marks, selecting every writable HRU prefix and reporting the exact ERU replacement, collision checks, and affected IDs. Do not apply or commit the changes.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-parameters"],
+      "dispatch_any_of": ["/revit/dynamic-runtime/preview", "/revit/dynamic-runtime/apply", "/revit/find-elements", "/revit/get-parameters"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["n28_novel_holdout", "r01_schedule_value_edit"]
     }
   ]
 }

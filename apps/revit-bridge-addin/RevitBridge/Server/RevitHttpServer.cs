@@ -637,6 +637,11 @@ namespace RevitBridge.Server
                 var queryIndex = rawUrl.IndexOf('?');
                 var rawPath = queryIndex >= 0 ? rawUrl.Substring(0, queryIndex) : rawUrl;
                 var hasQuery = queryIndex >= 0;
+                var directDynamicRuntime =
+                    string.Equals(req.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
+                    && rawPath.StartsWith("/revit/dynamic-runtime/", StringComparison.OrdinalIgnoreCase)
+                    && !hasQuery
+                    && (req.ContentType ?? "").StartsWith("application/json", StringComparison.OrdinalIgnoreCase);
                 var protectedLaboratoryEvidence = laboratoryBypass
                     && string.Equals(
                         Environment.GetEnvironmentVariable("OPERATOR_CERTIFICATION_PROTECTED_LABORATORY"),
@@ -649,7 +654,7 @@ namespace RevitBridge.Server
                 OperatorNativeHttpRequest? effectiveRequest = null;
                 string path;
                 string requestBody;
-                if (laboratoryBypass && !protectedLaboratoryEvidence)
+                if ((laboratoryBypass && !protectedLaboratoryEvidence) || directDynamicRuntime)
                 {
                     correlationId = OperatorCorrelationId.NormalizeOrCreate(req.Headers["X-Operator-Correlation-Id"], correlationId);
                     resp.Headers["X-Operator-Correlation-Id"] = correlationId;
@@ -770,16 +775,6 @@ namespace RevitBridge.Server
                     }
                     path = effectiveRequest.Path;
                     requestBody = effectiveRequest.BodyJson;
-                }
-
-                if (path.StartsWith("/revit/dynamic-runtime/", StringComparison.OrdinalIgnoreCase) && !laboratoryBypass)
-                {
-                    throw new OperatorNativeHttpAdmissionException(
-                        "DYNAMIC_RUNTIME_EXPERIMENT_ONLY",
-                        "Dynamic Revit Runtime endpoints are available only in the exact development laboratory profile.",
-                        403,
-                        false,
-                        "healthy");
                 }
 
                 // Bridge-layer write gate:

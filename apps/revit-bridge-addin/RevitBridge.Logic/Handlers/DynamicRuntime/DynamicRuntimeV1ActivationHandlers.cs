@@ -16,17 +16,15 @@ using RevitOperator.DynamicRevitSdk;
 namespace RevitBridge.Logic.Handlers.DynamicRuntime
 {
     /// <summary>
-    /// Narrow activation boundary for the reviewed observation and core-operation v1 adapters.
-    /// Every handler also performs its own exact development/laboratory check so an alternate
-    /// in-process dispatcher cannot accidentally bypass the HTTP exposure gate.
+    /// Activation boundary for the reviewed observation and core-operation v1 adapters.
+    /// Every handler requires the complete installed supervisor and worker identities;
+    /// callers must still pass the authenticated launcher/worker protocol.
     /// </summary>
     internal static class DynamicRuntimeV1LaboratoryBoundary
     {
         internal static void Require()
         {
-            if (!string.Equals(Environment.GetEnvironmentVariable("REVIT_OPERATOR_MODE"), "development", StringComparison.Ordinal) ||
-                !string.Equals(Environment.GetEnvironmentVariable("OPERATOR_TOOL_EXPOSURE_PROFILE"), "laboratory", StringComparison.Ordinal))
-                throw new InvalidOperationException("Dynamic runtime v1 adapters are available only in the exact development/laboratory profile.");
+            DynamicRuntimeTrustBoundary.RequireInstalledOrConfigured();
         }
     }
 

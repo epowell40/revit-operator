@@ -11,7 +11,7 @@ export type GeneralRevitExpectedEffect = "read" | "preview" | "apply";
 
 export type GeneralRevitCapabilityCase = {
   case_id: string;
-  source: "user_basic" | "user_extended" | "redline_corpus";
+  source: "user_basic" | "user_extended" | "redline_corpus" | "long_horizon" | "document_production" | "code_execution";
   operation_family: string;
   prompt: string;
   probe_prompt: string;
@@ -139,7 +139,7 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     if (!/\b(?:do not|don't)\b/i.test(testCase.probe_prompt)) throw new Error(`Probe ${testCase.case_id} must explicitly remain non-mutating.`);
     if (testCase.capability_paths.length === 0 || testCase.dispatch_any_of.length === 0) throw new Error(`Case ${testCase.case_id} has no concrete execution lane.`);
     for (const candidate of [...testCase.capability_paths, ...testCase.dispatch_any_of]) {
-      if (!/^\/revit\/[a-z0-9-]+$/.test(candidate)) throw new Error(`Case ${testCase.case_id} has invalid Revit path ${candidate}.`);
+      if (!/^\/revit\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(candidate)) throw new Error(`Case ${testCase.case_id} has invalid Revit path ${candidate}.`);
     }
   }
   for (const required of corpus.required_operation_families) {

@@ -51,9 +51,10 @@ async function requestJson(baseUrl: string, pathname: string, options: RequestIn
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`${pathname} exceeded ${timeoutMs}ms.`)), timeoutMs);
   try {
+    const origin = new URL(baseUrl).origin;
     const response = await fetch(new URL(pathname, `${baseUrl}/`), {
       ...options,
-      headers: { "content-type": "application/json", ...(options.headers || {}) },
+      headers: { "content-type": "application/json", origin, ...(options.headers || {}) },
       signal: controller.signal
     });
     const text = await response.text();
@@ -68,13 +69,18 @@ async function requestJson(baseUrl: string, pathname: string, options: RequestIn
 
 function selectCases(cases: GeneralRevitCapabilityCase[]): GeneralRevitCapabilityCase[] {
   const suite = flag("--suite", "full").toLowerCase();
-  if (!["smoke", "redline", "full"].includes(suite)) throw new Error(`Unknown suite '${suite}'. Expected smoke, redline, or full.`);
+  if (!["smoke", "redline", "long-horizon", "production", "code-execution", "full"].includes(suite)) {
+    throw new Error(`Unknown suite '${suite}'. Expected smoke, redline, long-horizon, production, code-execution, or full.`);
+  }
   const requestedIds = new Set(flagValues("--case"));
   const requestedSources = new Set(flagValues("--source"));
   const unknownIds = [...requestedIds].filter((caseId) => !cases.some((entry) => entry.case_id === caseId));
   if (unknownIds.length > 0) throw new Error(`Unknown case id(s): ${unknownIds.join(", ")}`);
   const filtered = cases.filter((entry) => (suite !== "smoke" || SMOKE_CASE_IDS.has(entry.case_id))
     && (suite !== "redline" || entry.source === "redline_corpus")
+    && (suite !== "long-horizon" || entry.source === "long_horizon")
+    && (suite !== "production" || entry.source === "document_production")
+    && (suite !== "code-execution" || entry.source === "code_execution")
     && (requestedIds.size === 0 || requestedIds.has(entry.case_id))
     && (requestedSources.size === 0 || requestedSources.has(entry.source)));
   const limit = Number.parseInt(flag("--limit", `${filtered.length}`), 10);
@@ -161,31 +167,116 @@ function extractToolCalls(attempt: JsonRecord): JsonRecord[] {
   return calls;
 }
 
+function assistantTextFromComputerState(state: JsonRecord): string {
+  const messages = Array.isArray(state.messages) ? state.messages.map(asRecord) : [];
+  return messages.filter((message) => message.role === "assistant")
+    .map((message) => String(message.text || "").trim())
+    .filter(Boolean)
+    .at(-1) || "";
+}
+
+function dynamicReceiptActions(state: JsonRecord): JsonRecord[] {
+  const receipts = Array.isArray(state.dynamicProgramReceipts) ? state.dynamicProgramReceipts.map(asRecord) : [];
+  return receipts.map((receipt, index) => {
+    const mode = String(receipt.requested_mode || "preview").toLowerCase() === "apply" ? "apply" : "preview";
+    return {
+      action_id: String(receipt.run_id || `dynamic-${index + 1}`),
+      method: "POST",
+      path: `/revit/dynamic-runtime/${mode}`,
+      request_effect: mode,
+      request_dispatched: receipt.execution_ok === true,
+      status: receipt.execution_ok === true ? "success" : "failed",
+      receipt
+    };
+  });
+}
+
+async function runComputerCase(baseUrl: string, testCase: GeneralRevitCapabilityCase): Promise<{ attempt: JsonRecord; sessionId: string }> {
+  await requestJson(baseUrl, "/api/computer/reset", { method: "POST", body: "{}" }, 30_000);
+  let runResponse: JsonRecord = {};
+  let transportError = "";
+  const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
+  try {
+    runResponse = await requestJson(baseUrl, "/api/computer/run", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
+        message_id: id(`capability-${testCase.case_id}`)
+      })
+    }, Math.min(timeoutMs, 30_000));
+  } catch (error) {
+    transportError = error instanceof Error ? error.message : String(error);
+  }
+  const pollingDeadline = Date.now() + timeoutMs;
+  let state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  while (state.running === true && Date.now() < pollingDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  }
+  if (state.running === true && !transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
+  const actions = dynamicReceiptActions(state);
+  const successfulActions = actions.filter((action) => action.request_dispatched === true);
+  const applySucceeded = successfulActions.some((action) => action.request_effect === "apply");
+  const receiptSucceeded = successfulActions.length > 0;
+  const receiptsPresent = actions.length > 0;
+  const receiptExpectationMet = !receiptsPresent
+    || (testCase.expected_effect === "apply" ? applySucceeded : receiptSucceeded);
+  const stateError = String(state.error || "").trim();
+  const attempt = {
+    ...runResponse,
+    ok: transportError === "" && stateError === "" && receiptExpectationMet && runResponse.ok !== false,
+    assistant_message: assistantTextFromComputerState(state),
+    error: transportError || stateError || null,
+    effect_state: applySucceeded ? "apply_dispatched" : receiptSucceeded ? "read_only_dispatched" : "not_dispatched",
+    actions,
+    rounds: [],
+    receipts: successfulActions.map((action) => action.receipt),
+    verification_results: successfulActions.map((action) => ({
+      path: action.path,
+      status: action.status,
+      receipt: action.receipt
+    })),
+    computer_state: state
+  };
+  return { attempt, sessionId: String(state.backendSessionId || "").trim() };
+}
+
 async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, suiteContext: JsonRecord): Promise<JsonRecord> {
   const startedAt = nowIso();
   const startedMs = Date.now();
   const initialState = await requestJson(baseUrl, "/api/revit/health", {}, 30_000);
-  const session = await requestJson(baseUrl, "/api/session/new", { method: "POST", body: "{}" }, 30_000);
-  const sessionId = String(session.session_id || "").trim();
-  if (!sessionId) throw new Error("Sidecar did not create a backend session.");
+  const useComputer = process.argv.includes("--ui")
+    || ["long_horizon", "document_production", "code_execution"].includes(testCase.source);
+  let sessionId = "";
   let attempt: JsonRecord;
-  try {
-    attempt = await requestJson(baseUrl, "/api/chat", {
-      method: "POST",
-      body: JSON.stringify({
-        version: "operator.backend.v1",
-        session_id: sessionId,
-        message_id: id(`capability-${testCase.case_id}`),
-        user_text: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
-        context: { ui: { client: "operator-desktop", surface: "general-revit-capability-acceptance" } }
-      })
-    }, Number.parseInt(flag("--timeout-ms", "180000"), 10) || 180_000);
-  } catch (error) {
-    attempt = { ok: false, error: error instanceof Error ? error.message : String(error), effect_state: "not_dispatched" };
+  if (useComputer) {
+    const computerResult = await runComputerCase(baseUrl, testCase);
+    attempt = computerResult.attempt;
+    sessionId = computerResult.sessionId;
+  } else {
+    const session = await requestJson(baseUrl, "/api/session/new", { method: "POST", body: "{}" }, 30_000);
+    sessionId = String(session.session_id || "").trim();
+    if (!sessionId) throw new Error("Sidecar did not create a backend session.");
+    try {
+      attempt = await requestJson(baseUrl, "/api/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          version: "operator.backend.v1",
+          session_id: sessionId,
+          message_id: id(`capability-${testCase.case_id}`),
+          user_text: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
+          context: { ui: { client: "operator-desktop", surface: "general-revit-capability-acceptance" } }
+        })
+      }, Number.parseInt(flag("--timeout-ms", "180000"), 10) || 180_000);
+    } catch (error) {
+      attempt = { ok: false, error: error instanceof Error ? error.message : String(error), effect_state: "not_dispatched" };
+    }
   }
   const [finalState, assignmentProjection] = await Promise.all([
     requestJson(baseUrl, "/api/revit/health", {}, 30_000).catch((error) => ({ ok: false, error: String(error) })),
-    requestJson(baseUrl, `/api/assignments?limit=10&session_id=${encodeURIComponent(sessionId)}`, {}, 30_000)
+    (sessionId
+      ? requestJson(baseUrl, `/api/assignments?limit=10&session_id=${encodeURIComponent(sessionId)}`, {}, 30_000)
+      : Promise.resolve({ ok: false, error: "Computer run did not expose a backend session id." }))
       .catch((error) => ({ ok: false, error: String(error) }))
   ]);
   const evaluatedAttempt = { ...attempt, assignment_projection: assignmentProjection };
@@ -254,9 +345,9 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|full] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE | --output-dir DIR] [--baseline FILE] [--label TEXT] [--list-cases] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|long-horizon|production|code-execution|full] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE | --output-dir DIR] [--baseline FILE] [--label TEXT] [--list-cases] [--ui] [--apply] [--require-completion]",
       "",
-      "The corpus is representative regression coverage, not a capability allowlist. By default the runner sends non-mutating probe_prompt. --apply sends the production prompt and permits model mutation."
+      "The corpus is representative regression coverage, not a capability allowlist. By default the runner sends non-mutating probe_prompt. --apply sends the production prompt and permits model mutation. Long-horizon, document-production, and code-execution suites use the same computer-agent lane as the Sidecar UI; --ui opts any other suite into that lane."
     ].join("\n"));
     return;
   }

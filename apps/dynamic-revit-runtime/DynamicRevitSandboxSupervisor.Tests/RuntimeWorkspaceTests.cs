@@ -10,6 +10,13 @@ namespace DynamicRevitSandboxSupervisor.Tests;
 public sealed class RuntimeWorkspaceTests
 {
     [Fact]
+    public void BridgeTimeoutOutlivesBoundedWorkerAndApplyWindows()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(90), Program.BridgeRequestTimeoutForTests);
+        Assert.True(Program.BridgeRequestTimeoutForTests > TimeSpan.FromSeconds(35));
+    }
+
+    [Fact]
     public void SignedContextRuleIsExactScopedExpiringAndFailsClosedOutsideLaboratory()
     {
         using var temporary = new TemporaryDirectory(); var root = temporary.CreateDirectory("context");

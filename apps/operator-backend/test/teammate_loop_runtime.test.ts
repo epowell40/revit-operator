@@ -612,6 +612,54 @@ test("created resource identity from apply binds a substantive post-apply readba
   }
 });
 
+test("focused exported-view capture filename verifies a newly created view", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Duplicate L2 and create a view template from the duplicate."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/duplicate-view", body: { viewId: 9948, newName: "VISIBILITY TEST - L2", withDetailing: true } }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ success: true, viewId: 1542985, name: "VISIBILITY TEST - L2" }) }]
+    });
+
+    const capture = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/export-image", body: { fileName: "Visibility Test After" } }
+    });
+    assert.equal(capture.allowed, true);
+    assert.equal(capture.call?.effect, "read");
+    recordTeammateMcpResult(owner, capture, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", imagePath: "artifacts/captures/Revit_1542985_20260812081613 - Floor Plan - VISIBILITY TEST - L2.jpg" }) }]
+    });
+
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.verified, true);
+    assert.equal(receipt?.stage, "report");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("read-only native API ops are admitted as inspection evidence", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Inspect the active view range."));
+  try {
+    const read = guardTeammateMcpCall(owner, {
+      tool: "revit_native_api_ops",
+      arguments: { operations: [{ id: "view", op: "get_property", target: "uidoc", property: "ActiveView" }], returns: ["view"] }
+    });
+    assert.equal(read.allowed, true);
+    assert.equal(read.call?.effect, "read");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("read-only native API operations verify an applied target without consuming a second apply slot", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
