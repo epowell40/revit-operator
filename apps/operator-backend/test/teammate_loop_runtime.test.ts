@@ -107,7 +107,7 @@ test("structured contract distinguishes teammate modes and fails closed on stale
   assert.equal(location.turn_kind, "inspection");
   assert.equal(action.turn_kind, "mutation");
   assert.equal(action.context_state, "live");
-  assert.equal(action.max_apply_attempts, 1);
+  assert.equal(action.max_apply_attempts, 32);
   assert.equal(action.write_authorized, true);
   assert.equal(buildTeammateTurnContract(request("For EPIC-0443 acceptance testing in this sample model, change sheet M000 from Cover Sheet to Test Cover Sheet.")).write_authorized, true);
   assert.equal(buildTeammateTurnContract(request("How can I change the expansion tank size?")).write_authorized, false);
@@ -221,7 +221,7 @@ test("generic provider loop permits atomic direct apply while retaining explicit
   assert.equal(ambiguous.teammate_loop_receipt?.blocked_reason, "material_ambiguity_requires_clarification");
 });
 
-test("an atomic duplicate-view primitive may apply directly and complete after target-bound readback", () => {
+test("atomic Revit primitives may advance through distinct verified writes without preview twins", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Duplicate view 9948 as OPERATOR SMOKE HVAC PLAN."));
@@ -239,6 +239,23 @@ test("an atomic duplicate-view primitive may apply directly and complete after t
     recordTeammateMcpResult(owner, apply, {
       content: [{ type: "text", text: JSON.stringify({ status: "Success", sourceViewId: 9948, view: { id: 1543100, name: "OPERATOR SMOKE HVAC PLAN" } }) }]
     });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+
+    const hideRooms = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/visibility",
+        body: { action: "hide_category", viewId: 1543100, categoryName: "Rooms", dryRun: false }
+      }
+    });
+    assert.equal(hideRooms.allowed, true);
+    assert.equal(hideRooms.call?.effect, "apply");
+    recordTeammateMcpResult(owner, hideRooms, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", view: { id: 1543100 }, category: { name: "Rooms", hidden: true } }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 2);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
 
     const verify = guardTeammateMcpCall(owner, {
       tool: "revit_list_views",
@@ -254,7 +271,7 @@ test("an atomic duplicate-view primitive may apply directly and complete after t
   }
 });
 
-test("Codex MCP host guard supports preview while enforcing one apply attempt and readback", () => {
+test("Codex MCP host guard supports preview while blocking an unverified repeated apply", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
@@ -278,7 +295,7 @@ test("Codex MCP host guard supports preview while enforcing one apply attempt an
       arguments: { method: "POST", path: "/revit/set-parameters", body: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true, dryRun: false } }
     });
     assert.equal(retry.allowed, false);
-    assert.match(retry.message || "", /single apply attempt/i);
+    assert.match(retry.message || "", /prior apply verification/i);
 
     const readback = guardTeammateMcpCall(owner, {
       tool: "revit_call_tool",
