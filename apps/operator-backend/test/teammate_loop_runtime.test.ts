@@ -561,6 +561,56 @@ test("created resource identity from apply binds a substantive post-apply readba
   }
 });
 
+test("schedule filter predicates do not masquerade as exact written values during verification", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Filter schedule OPERATOR SMOKE ME EQUIPMENT where Mark begins with OPERATOR-SMOKE."));
+  const body = {
+    query: "OPERATOR SMOKE ME EQUIPMENT",
+    exact: true,
+    filters: [{ field: "Mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
+    replaceFilters: true,
+    dryRun: true
+  };
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/configure-schedule", body }
+    });
+    assert.equal(preview.allowed, true);
+    recordTeammateMcpResult(owner, preview, { content: [{ type: "text", text: JSON.stringify({ status: "Dry Run" }) }] });
+
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/configure-schedule", body: { ...body, dryRun: false } }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT" } }) }]
+    });
+
+    const verify = guardTeammateMcpCall(owner, {
+      tool: "revit_list_schedules",
+      arguments: { action: "detail", scheduleId: 1543072, includeFields: true, includeData: true }
+    });
+    assert.equal(verify.allowed, true);
+    recordTeammateMcpResult(owner, verify, {
+      content: [{ type: "text", text: JSON.stringify({
+        status: "Ok",
+        schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT", fieldCount: 3 },
+        table: { body: { rows: [{ cells: ["HeatRecoveryUnit", "OPERATOR-SMOKE-001", "L2"] }] } }
+      }) }]
+    });
+
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.verified, true);
+    assert.equal(receipt?.stage, "report");
+    assert.equal(receipt?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("continuation identity, transaction binding, and expected-value verification fail closed", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";

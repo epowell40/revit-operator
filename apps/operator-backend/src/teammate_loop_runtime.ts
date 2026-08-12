@@ -304,7 +304,8 @@ function expectedValues(value: unknown): string[] {
     if (node === null || node === undefined) return;
     const normalizedKey = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
     const normalizedParent = parent.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    if (normalizedParent === "parameters" || ["value", "newvalue", "replaceto", "targetvalue"].includes(normalizedKey)) {
+    const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
+    if (normalizedParent === "parameters" || (!valueIsPredicate && ["value", "newvalue", "replaceto", "targetvalue"].includes(normalizedKey))) {
       values.add(JSON.stringify(node));
     }
   };
