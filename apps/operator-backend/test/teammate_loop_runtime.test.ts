@@ -127,7 +127,8 @@ test("ordinary Revit mutation verbs authorize writes instead of silently forcing
     "Offset the selected duct around the obstruction.",
     "Reload the edited equipment family and assign its TEST-ONLY type.",
     "Reduce the selected duct after the takeoff.",
-    "In the active view, make existing ductwork halftone."
+    "In the active view, make existing ductwork halftone.",
+    "In this disposable Snowdon test model, duplicate sheet M000 as Z-OP-001; otherwise create it with the same title block and explain the difference."
   ];
   for (const prompt of prompts) {
     const contract = buildTeammateTurnContract(request(prompt));

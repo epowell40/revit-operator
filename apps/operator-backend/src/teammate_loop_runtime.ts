@@ -111,9 +111,12 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   const previewOnly =
     /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|writ)/.test(text) ||
     /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|write)/.test(text);
-  if (previewOnly) return "inspection";
-  if (isConceptualQuestion(text) && !/\b(?:then|and)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";
   const explicitMutation = containsMutationVerb(text);
+  if (previewOnly) return "inspection";
+  const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
+  if (isConceptualQuestion(text)
+      && (!explicitMutation || explicitlyConceptualFraming)
+      && !/\b(?:then|and|also|otherwise)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";
   if (explicitMutation) return "mutation";
   if (!/^\s*(?:why|what|how|is|are|does|do|can you tell|could you tell)\b/.test(text) &&
       /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/.test(text)) return "mutation";
@@ -130,7 +133,7 @@ function hasNoWriteAuthority(text: string): boolean {
 }
 
 function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): boolean {
-  if (kind !== "mutation" || noWrite || isConceptualQuestion(text)) return false;
+  if (kind !== "mutation" || noWrite) return false;
   if (/\b(?:should|can|could|would)\s+(?:i|we)\b/i.test(text)) return false;
   if (containsMutationVerb(text.toLowerCase())) return true;
   return /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/i.test(text);
