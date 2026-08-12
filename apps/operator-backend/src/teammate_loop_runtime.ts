@@ -740,11 +740,40 @@ function mcpResultSucceeded(result: unknown): boolean {
   return true;
 }
 
+function recoveredLiveContextIdentity(result: unknown): { state: TeammateContextState; signature: string | null } | null {
+  const root = objectValue(result);
+  const content = Array.isArray(root.content) ? root.content : [];
+  for (const item of content) {
+    const text = boundedString(objectValue(item).text, 2_000_000);
+    if (!text || !text.startsWith("{")) continue;
+    try {
+      const context = objectValue(JSON.parse(text));
+      const identity = contextIdentity({ revit: { ...context, source: { live: true } } }, "inspection");
+      if (identity.state === "live" && identity.signature) return identity;
+    } catch {}
+  }
+  return null;
+}
+
 export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, result: unknown): void {
   const state = gate.state;
   if (!state || !gate.allowed || !gate.call) return;
   const [actionId] = gate.call.path.split("|", 1);
-  recordResult(state, actionId, mcpResultSucceeded(result), result);
+  const succeeded = mcpResultSucceeded(result);
+  const separator = gate.call.path.indexOf("|");
+  const observedPath = separator >= 0 ? gate.call.path.slice(separator + 1) : gate.call.path;
+  if (succeeded && (observedPath === "revit_get_context" || observedPath === "/revit/context")) {
+    const identity = recoveredLiveContextIdentity(result);
+    if (identity) {
+      state.contract.context_state = "live";
+      state.contract.document_signature = identity.signature;
+      if (state.blocked_reason === "live_revit_context_required" || state.blocked_reason === "document_identity_changed_or_unavailable") {
+        state.blocked_reason = null;
+      }
+      if (state.contract.stage === "blocked") state.contract.stage = "ground";
+    }
+  }
+  recordResult(state, actionId, succeeded, result);
 }
 
 export function teammateLoopReceiptForOwner(owner: object): NonNullable<ChatResponse["teammate_loop_receipt"]> | undefined {

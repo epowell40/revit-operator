@@ -306,6 +306,45 @@ test("Codex MCP host guard admits host-owned discovery and strategy tools", () =
   }
 });
 
+test("a successful live context discovery repairs an initially missing turn context", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, { ...request("Count the air devices in this project by type."), context: {} });
+  try {
+    const initiallyBlocked = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { category: "OST_DuctTerminal", limit: 10000 } }
+    });
+    assert.equal(initiallyBlocked.allowed, false);
+    assert.match(initiallyBlocked.message || "", /live revit context required/i);
+
+    const contextGate = guardTeammateMcpCall(owner, { tool: "revit_get_context", arguments: {} });
+    assert.equal(contextGate.allowed, true);
+    recordTeammateMcpResult(owner, contextGate, {
+      content: [{ type: "text", text: JSON.stringify({
+        version: "Autodesk Revit 2024",
+        process_id: 15096,
+        courier_executor_id: "DESKTOP-LE40HOT-revit-courier-15096",
+        document: {
+          title: "Snowdon Towers Sample HVAC",
+          path: "C:\\models\\snowdon-hvac.rvt",
+          projectIdentity: { fingerprint: "bda089a9" }
+        }
+      }) }]
+    });
+
+    assert.equal(teammateLoopReceiptForOwner(owner)?.context_state, "live");
+    const recoveredQuery = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { category: "OST_DuctTerminal", limit: 10000 } }
+    });
+    assert.equal(recoveredQuery.allowed, true);
+    assert.equal(recoveredQuery.call?.effect, "read");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("Codex MCP host guard classifies conditional route bodies by their actual effect", () => {
   __testOnlyResetTeammateLoopState();
   const inspectionOwner = {};
