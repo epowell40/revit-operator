@@ -612,6 +612,58 @@ test("created resource identity from apply binds a substantive post-apply readba
   }
 });
 
+test("read-only native API operations verify an applied target without consuming a second apply slot", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Enable striped rows on schedule 1542984."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST", path: "/revit/configure-schedule",
+        body: { scheduleId: 1542984, appearance: { stripedRows: true }, dryRun: false }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", scheduleId: 1542984 }) }]
+    });
+
+    const verify = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST", path: "/revit/native-api-ops",
+        body: {
+          operations: [{ id: "schedule", op: "call", target: "doc", args: [1542984] }],
+          returns: ["$schedule"]
+        }
+      }
+    });
+    assert.equal(verify.allowed, true);
+    assert.equal(verify.call?.effect, "read");
+    recordTeammateMcpResult(owner, verify, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Ok", results: { schedule: { id: 1542984, HasStripedRows: true } } }) }]
+    });
+    const verified = teammateLoopReceiptForOwner(owner);
+    assert.equal(verified?.verified, true);
+    assert.equal(verified?.stage, "report");
+    assert.equal(verified?.blocked_reason, null);
+
+    const distinctApply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST", path: "/revit/configure-schedule",
+        body: { scheduleId: 1542984, filters: [{ field: "Mark", op: "begins_with", value: "HRU2" }], dryRun: false }
+      }
+    });
+    assert.equal(distinctApply.allowed, true);
+    assert.equal(distinctApply.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("schedule filter predicates do not masquerade as exact written values during verification", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

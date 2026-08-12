@@ -11,6 +11,7 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/tool-examples",
   "/revit/native-api-catalog",
   "/revit/native-api-search",
+  "/revit/native-api-ops",
   "/revit/self-test",
   "/revit/rooms",
   "/revit/room-contents",

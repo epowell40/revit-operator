@@ -94,7 +94,7 @@ function isConceptualQuestion(text: string): boolean {
 
 const MUTATION_VERB_SOURCE = [
   "add", "adjust", "align", "annotate", "apply", "assign", "change", "connect", "convert", "copy", "create",
-  "cut", "delete", "dimension", "disconnect", "draw", "duplicate", "edit", "export", "extend", "filter", "fix",
+  "cut", "delete", "dimension", "disable", "disconnect", "draw", "duplicate", "edit", "enable", "export", "extend", "filter", "fix",
   "group", "hide", "import", "increase", "isolate", "join", "link", "load", "lock", "make", "match", "mirror",
   "modify", "move", "offset", "pin", "place", "print", "purge", "reduce", "reload", "remove", "rename", "replace",
   "resize", "rotate", "route", "run", "set", "sort", "split", "step", "sync", "tag", "trim", "unhide", "unload",
