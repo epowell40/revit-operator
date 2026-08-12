@@ -16,7 +16,7 @@ export type TeammateTurnContract = {
   no_write: boolean;
   write_authorized: boolean;
   preview_required: boolean;
-  max_apply_attempts: 1;
+  max_apply_attempts: 32;
   verification_required: boolean;
   user_text_sha256: string;
   document_signature: string | null;
@@ -200,7 +200,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
     no_write: noWrite,
     write_authorized: authorized,
     preview_required: false,
-    max_apply_attempts: 1,
+    max_apply_attempts: 32,
     verification_required: turnKind === "mutation",
     user_text_sha256: sha256(text),
     document_signature: identity.signature
@@ -442,7 +442,20 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
     if (contract.no_write) return "user_no_write_limit";
     if (!contract.write_authorized) return "explicit_write_authority_required";
-    if (state.stage_apply_attempts >= 1) return "single_apply_attempt_already_consumed";
+    if (state.stage_apply_attempts >= 1) {
+      if (!state.apply_succeeded || !state.verified) return "prior_apply_verification_required";
+      if (state.completed_apply_signatures.has(call.signature)) return "completed_apply_may_not_be_retried";
+      state.successful_preview_signatures.clear();
+      state.apply_action_id = null;
+      state.stage_apply_attempts = 0;
+      state.apply_succeeded = false;
+      state.apply_signature = "";
+      state.apply_target_tokens.clear();
+      state.apply_expected_values.clear();
+      state.apply_operation = "";
+      state.verified = false;
+      state.blocked_reason = null;
+    }
   }
   if (call.effect === "preview" && state.stage_apply_attempts > 0) {
     if (!state.apply_succeeded || !state.verified) return "preview_before_prior_apply_verification_not_allowed";
@@ -557,7 +570,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       state.contract.stage = "blocked";
     } else {
       for (const token of targetTokens(evidence)) state.apply_target_tokens.add(token);
-      if (verificationMatches(state, evidence, true)) {
+      if (verificationMatches(state, evidence, false)) {
         markVerified(state);
       } else state.contract.stage = "verify";
     }
