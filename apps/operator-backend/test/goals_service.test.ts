@@ -917,6 +917,25 @@ test("an explicit task-level blocker still blocks after a successful discovery o
   });
 });
 
+test("a rejected mutation cannot be server-signed by a later transaction preview", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-auto-preview-after-rejection", {
+      title: "Duplicate a view", objective: "Duplicate and verify an HVAC floor plan.",
+      acceptance_criteria: ["The duplicated view is verified."], work_budget: { mode: "auto_goal" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-auto-preview-after-rejection");
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/views", body: { action: "list" } }, result: { views: [{ id: 9948, name: "L2" }] } });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, arguments: { path: "/revit/duplicate-view", body: { viewId: 9948 } }, error: "matching successful preview required" });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/transaction-plan", body: { actions: [{ kind: "duplicateView" }] } }, result: { warnings: ["unknown kind"] } });
+    observer.finish("turn-view-rejected", "Blocked by the enforced preview gate. Apply was rejected and verification is incomplete.");
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.completion_audit?.complete ?? false, false);
+    assert.equal(persisted?.validation_log.length, 0);
+  });
+});
+
 test("a blocked mutation receipt overrides successful tool observations in durable assignment state", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-receipt-blocked", {

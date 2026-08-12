@@ -199,7 +199,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
     stage,
     no_write: noWrite,
     write_authorized: authorized,
-    preview_required: turnKind === "mutation",
+    preview_required: false,
     max_apply_attempts: 1,
     verification_required: turnKind === "mutation",
     user_text_sha256: sha256(text),
@@ -229,7 +229,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     : contract.ambiguity === "material"
       ? "Paraphrase the likely intent and ask one focused question; take no Revit action."
       : contract.turn_kind === "mutation"
-        ? "Use live context; discover one exact contract if needed; preview the same target; apply once only; verify by readback/capture before success."
+        ? "Use live context; discover one exact contract if needed; preview when the primitive supports it or the preview is useful, but atomic Revit primitives may apply directly; verify by readback/capture before success."
         : "Use live context and the smallest read/navigation step; discover one exact contract if needed; never mutate the model.";
   return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
 }
@@ -443,7 +443,6 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     if (contract.no_write) return "user_no_write_limit";
     if (!contract.write_authorized) return "explicit_write_authority_required";
     if (state.stage_apply_attempts >= 1) return "single_apply_attempt_already_consumed";
-    if (!state.successful_preview_signatures.has(call.signature)) return "matching_successful_preview_required";
   }
   if (call.effect === "preview" && state.stage_apply_attempts > 0) {
     if (!state.apply_succeeded || !state.verified) return "preview_before_prior_apply_verification_not_allowed";

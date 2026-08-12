@@ -134,7 +134,7 @@ test("ordinary Revit mutation verbs authorize writes instead of silently forcing
     const contract = buildTeammateTurnContract(request(prompt));
     assert.equal(contract.turn_kind, "mutation", prompt);
     assert.equal(contract.write_authorized, true, prompt);
-    assert.equal(contract.preview_required, true, prompt);
+    assert.equal(contract.preview_required, false, prompt);
     assert.equal(contract.verification_required, true, prompt);
   }
   assert.equal(buildTeammateTurnContract(request("Show me sheet M000.")).turn_kind, "navigation");
@@ -195,15 +195,16 @@ test("generic provider loop binds preview to one apply and requires post-apply v
   assert.equal(complete.teammate_loop_receipt?.stage, "report");
 });
 
-test("generic provider loop blocks direct apply, mismatched apply, retry, and no-write mutation", () => {
+test("generic provider loop permits atomic direct apply while retaining explicit no-write and ambiguity limits", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";
   const direct = guardGenericTeammateDecision(request(text), response([{
     action_id: "apply-direct", method: "POST", path: "/revit/set-parameters",
     body: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true, dryRun: false }
   }]));
-  assert.equal(direct.actions.length, 0);
-  assert.equal(direct.teammate_loop_receipt?.blocked_reason, "matching_successful_preview_required");
+  assert.equal(direct.actions.length, 1);
+  assert.equal(direct.teammate_loop_receipt?.apply_attempts, 1);
+  assert.equal(direct.teammate_loop_receipt?.blocked_reason, null);
 
   __testOnlyResetTeammateLoopState();
   const noWrite = guardGenericTeammateDecision(request("Show what would be affected before deleting element 42."), response([{
@@ -220,7 +221,40 @@ test("generic provider loop blocks direct apply, mismatched apply, retry, and no
   assert.equal(ambiguous.teammate_loop_receipt?.blocked_reason, "material_ambiguity_requires_clarification");
 });
 
-test("Codex MCP host guard enforces preview, one apply attempt, and readback", () => {
+test("an atomic duplicate-view primitive may apply directly and complete after target-bound readback", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Duplicate view 9948 as OPERATOR SMOKE HVAC PLAN."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/duplicate-view",
+        body: { viewId: 9948, newName: "OPERATOR SMOKE HVAC PLAN", withDetailing: false }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", sourceViewId: 9948, view: { id: 1543100, name: "OPERATOR SMOKE HVAC PLAN" } }) }]
+    });
+
+    const verify = guardTeammateMcpCall(owner, {
+      tool: "revit_list_views",
+      arguments: { viewId: 1543100, includeTemplates: true }
+    });
+    assert.equal(verify.allowed, true);
+    recordTeammateMcpResult(owner, verify, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Ok", views: [{ id: 1543100, name: "OPERATOR SMOKE HVAC PLAN", viewType: "FloorPlan" }] }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("Codex MCP host guard supports preview while enforcing one apply attempt and readback", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));

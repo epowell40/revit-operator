@@ -58,7 +58,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           return;
         }
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
-        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution) (?:is|was )?blocked|concrete blocker|not fully verified)\b/i.test(assistantText);
+        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText);
         if (!pendingApproval && !blockedOutcome && successfulRevitTools > 0 && lastCompletionRelevantSucceeded !== false) {
           completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: successfulRevitTools, assistant_summary: assistantText });
         } else if ((failedRevitTools > 0 && (successfulRevitTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
@@ -109,6 +109,12 @@ function isCompletionRelevant(observation: AutoGoalToolObservation): boolean {
     const args = observation.arguments && typeof observation.arguments === "object" ? observation.arguments as Record<string, unknown> : {};
     const route = `${args.path || ""}`.trim().toLowerCase();
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return false;
+    if (route === "/revit/transaction-plan") return false;
+    const body = args.body && typeof args.body === "object" ? args.body as Record<string, unknown> : {};
+    const transaction = body.transaction && typeof body.transaction === "object" ? body.transaction as Record<string, unknown> : {};
+    const transactionMode = `${transaction.mode || ""}`.trim().toLowerCase();
+    if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
+        || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return false;
   }
   return true;
 }
