@@ -468,7 +468,6 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     state.apply_target_tokens.clear();
     state.apply_expected_values.clear();
     state.apply_operation = "";
-    state.verified = false;
     state.blocked_reason = null;
   }
   return null;
@@ -480,6 +479,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "discovery" && /(?:tool-doc|revit_tool_doc)$/.test(call.path)) state.tool_doc_calls += 1;
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
   if (call.effect === "apply") {
+    state.verified = false;
     state.apply_attempts += 1;
     state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
