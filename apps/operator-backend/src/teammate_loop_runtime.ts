@@ -113,7 +113,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
     /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|write)/.test(text);
   const explicitMutation = containsMutationVerb(text);
   if (previewOnly) return "inspection";
-  const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
+  const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
   if (isConceptualQuestion(text)
       && (!explicitMutation || explicitlyConceptualFraming)
       && !/\b(?:then|and|also|otherwise)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";

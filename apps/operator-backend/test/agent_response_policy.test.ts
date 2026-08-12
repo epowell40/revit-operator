@@ -92,7 +92,8 @@ test("per-turn teammate contract requires live grounding, focused clarification,
   assert.match(mutation, /"turn_kind":"mutation"/);
   assert.match(mutation, /"context_state":"live"/);
   assert.match(mutation, /discover one exact contract/i);
-  assert.match(mutation, /apply once only/i);
+  assert.match(mutation, /"max_apply_attempts":32/);
+  assert.match(mutation, /atomic Revit primitives may apply directly/i);
   assert.match(mutation, /verify by readback\/capture/i);
   assert.match(preview, /"turn_kind":"inspection"/);
   assert.match(preview, /"context_state":"missing"/);
