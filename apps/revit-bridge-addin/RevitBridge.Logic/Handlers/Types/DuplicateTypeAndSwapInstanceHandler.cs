@@ -39,23 +39,8 @@ namespace RevitBridge.Logic.Handlers
                 .Select(x => new Change { parameterName = x.parameterName.Trim(), value = x.value ?? "" })
                 .ToList();
 
-            const int ConfirmThreshold = 10;
             var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
             string? requiredConfirm = null;
-            if (!p.dryRun && changes.Count > ConfirmThreshold)
-            {
-                requiredConfirm = BulkConfirmUtil.ExpectedApplyChanges(changes.Count);
-                if (!BulkConfirmUtil.EqualsNormalized(p.confirm, requiredConfirm))
-                {
-                    throw new OperatorToolUserErrorException(
-                        message: "Bulk type parameter edit requires typed confirmation.",
-                        code: "bulk_confirm_required",
-                        requiredConfirm: requiredConfirm,
-                        confirmReceived: confirmReceived,
-                        maxChangesPerCall: 10,
-                        hint: "Retry with confirm set to the requiredConfirm string (exact, but markdown like **...** is ok).");
-                }
-            }
 
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");

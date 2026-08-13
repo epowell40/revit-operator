@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using RevitBridge.Common;
+using RevitBridge.Common.Semantic;
 
 namespace RevitBridge.Logic.Handlers
 {
@@ -57,6 +58,7 @@ namespace RevitBridge.Logic.Handlers
             public long? linkInstanceId { get; set; }
             public string linkName { get; set; }
             public string category { get; set; }
+            public string family { get; set; }
             public string type { get; set; }
             public string name { get; set; } // Instance name or Mark
             public string level { get; set; }
@@ -71,6 +73,7 @@ namespace RevitBridge.Logic.Handlers
             var doc = uidoc.Document;
             var request = JsonSerializer.Deserialize<QuantifyRequest>(jsonData) ?? new QuantifyRequest();
             var response = new QuantifyResponse();
+            var intent = QuantifyIntentResolver.Resolve(request.intent);
 
             var scope = (request.scope ?? "host").Trim().ToLowerInvariant();
             if (scope != "host" && scope != "links" && scope != "both") scope = "host";
@@ -81,22 +84,22 @@ namespace RevitBridge.Logic.Handlers
             var excludeKeywords = NormalizeKeywords(request.filters?.keywords_exclude);
             var paramFilters = NormalizeParamFilters(request.filters?.parameters);
 
-            // 1) Resolve categories
-            var categories = new List<BuiltInCategory>();
-            if (request.categories != null && request.categories.Any())
-            {
-                foreach (var catName in request.categories)
-                {
-                    if (Enum.TryParse<BuiltInCategory>(catName, out var bic))
-                        categories.Add(bic);
-                }
-            }
+            // 1) Resolve categories. Accept the same exact document-visible names and
+            // BuiltInCategory tokens as the general find/parameter primitives. Unknown or
+            // ambiguous names fail closed instead of broadening into an unfiltered query.
+            if (request.categories == null || request.categories.Count == 0)
+                throw new ArgumentException("At least one exact category name or BuiltInCategory token is required. No unfiltered query was run.");
+
+            var categories = ResolveRequestedCategories(doc, request.categories);
+            var categoryIds = new HashSet<long>(categories.Select(category => category.Id));
+            if (categoryIds.Count == 0)
+                throw new ArgumentException("Category filter resolved to no category ids. No unfiltered query was run.");
 
             ElementFilter catFilter = null;
             if (categories.Count == 1)
-                catFilter = new ElementCategoryFilter(categories[0]);
+                catFilter = new ElementCategoryFilter(ElementIdCompat.Create(categories[0].Id));
             else if (categories.Count > 1)
-                catFilter = new LogicalOrFilter(categories.Select(c => new ElementCategoryFilter(c)).Cast<ElementFilter>().ToList());
+                catFilter = new LogicalOrFilter(categories.Select(c => new ElementCategoryFilter(ElementIdCompat.Create(c.Id))).Cast<ElementFilter>().ToList());
 
             // 2) Collect + filter across host and (optionally) links
             var hostIdsForResultSet = new List<long>();
@@ -105,7 +108,7 @@ namespace RevitBridge.Logic.Handlers
 
             if (includeHost)
             {
-                CollectForDoc(doc, "host", null, null, catFilter, request, includeKeywords, excludeKeywords, paramFilters, hostIdsForResultSet, allRows, roomUnresolvedCounts);
+                CollectForDoc(doc, "host", null, null, catFilter, categoryIds, request, includeKeywords, excludeKeywords, paramFilters, hostIdsForResultSet, allRows, roomUnresolvedCounts);
             }
 
             var linkedCount = 0;
@@ -127,7 +130,7 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     linkedCount++;
-                    CollectForDoc(linkDoc, "link", RevitBridge.Common.ElementIdCompat.GetValue(li.Id), li.Name, catFilter, request, includeKeywords, excludeKeywords, paramFilters, hostIdsForResultSet: null, allRows, roomUnresolvedCounts);
+                    CollectForDoc(linkDoc, "link", RevitBridge.Common.ElementIdCompat.GetValue(li.Id), li.Name, catFilter, categoryIds, request, includeKeywords, excludeKeywords, paramFilters, hostIdsForResultSet: null, allRows, roomUnresolvedCounts);
                 }
             }
 
@@ -171,7 +174,6 @@ namespace RevitBridge.Logic.Handlers
             }
 
             // 6) Rows (honor intent)
-            var intent = (request.intent ?? "").Trim();
             if (intent.Equals("count", StringComparison.OrdinalIgnoreCase))
             {
                 response.rows.Clear();
@@ -182,6 +184,22 @@ namespace RevitBridge.Logic.Handlers
             }
 
             return Task.FromResult<object>(response);
+        }
+
+        private static IReadOnlyList<StrictCategoryResolution> ResolveRequestedCategories(Document doc, IReadOnlyCollection<string> requested)
+        {
+            var catalog = new List<StrictCategoryDescriptor>();
+            foreach (Category category in doc.Settings.Categories)
+            {
+                var id = ElementIdCompat.GetValue(category.Id);
+                catalog.Add(new StrictCategoryDescriptor
+                {
+                    Id = id,
+                    Name = category.Name ?? string.Empty,
+                    BuiltInToken = StrictCategoryResolver.TryGetEnumName(typeof(BuiltInCategory), id)
+                });
+            }
+            return StrictCategoryResolver.Resolve(requested, catalog);
         }
 
         private string GetLevelName(Document doc, Element e)
@@ -277,6 +295,7 @@ namespace RevitBridge.Logic.Handlers
             long? linkInstanceId,
             string linkName,
             ElementFilter catFilter,
+            HashSet<long> categoryIds,
             QuantifyRequest request,
             List<string> includeKeywords,
             List<string> excludeKeywords,
@@ -291,6 +310,12 @@ namespace RevitBridge.Logic.Handlers
 
             foreach (var e in collector.ToElements())
             {
+                // Defense in depth: never trust a collector filter alone for a bounded
+                // project-wide count. This prevents a resolver/filter regression from
+                // silently broadening a requested category into the whole document.
+                var elementCategoryId = e.Category == null ? 0 : ElementIdCompat.GetValue(e.Category.Id);
+                if (!categoryIds.Contains(elementCategoryId)) continue;
+
                 // Level Filter
                 var levelName = GetLevelName(targetDoc, e);
                 if (!string.IsNullOrEmpty(request.filters?.level))
@@ -336,6 +361,7 @@ namespace RevitBridge.Logic.Handlers
                 }
 
                 var typeEl = targetDoc.GetElement(e.GetTypeId()) as ElementType;
+                var familySymbol = typeEl as FamilySymbol;
                 var row = new QuantifyRow
                 {
                     id = RevitBridge.Common.ElementIdCompat.GetValue(e.Id),
@@ -343,6 +369,7 @@ namespace RevitBridge.Logic.Handlers
                     linkInstanceId = linkInstanceId,
                     linkName = linkName,
                     category = e.Category?.Name,
+                    family = familySymbol?.Family?.Name ?? typeEl?.FamilyName ?? string.Empty,
                     type = typeEl?.Name ?? e.Name,
                     name = e.Name,
                     level = levelName
@@ -468,6 +495,7 @@ namespace RevitBridge.Logic.Handlers
             if (key == "level") return row.level ?? "Unassigned";
             if (key == "room") return row.room ?? "Unplaced";
             if (key == "category") return row.category ?? "Unknown";
+            if (key == "family") return row.family ?? "Unknown";
             return row.type ?? "Unknown";
         }
     }

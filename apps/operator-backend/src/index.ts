@@ -146,6 +146,7 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { classifyAutoGoalRequest } from "./goals/auto_goal.js";
+import { supersedeBlockedAutoGoalForFreshRequest } from "./goals/auto_goal_runtime.js";
 import {
   ASSIGNMENT_PROJECTION_SCHEMA,
   getAssignmentProjection,
@@ -3980,9 +3981,10 @@ function maybeStartAutoGoal(
 ): void {
   try {
     if (toolResultCount > 0) return;
-    if (getCurrentGoalForSession(sessionId)) return;
     const decision = classifyAutoGoalRequest(userText);
     if (!decision.shouldStart) return;
+    const current = getCurrentGoalForSession(sessionId);
+    if (current && !supersedeBlockedAutoGoalForFreshRequest(sessionId)) return;
     const owner = sessionOwnerForPrincipal(principal);
     const context = objectRecord(requestContext);
     const revit = objectRecord(context.revit);

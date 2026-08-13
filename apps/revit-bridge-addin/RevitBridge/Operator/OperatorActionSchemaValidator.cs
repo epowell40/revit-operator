@@ -4094,36 +4094,6 @@ namespace RevitBridge.Operator
                     }
                 }
 
-                // Bulk set-parameter requires typed confirmation when applying.
-                try
-                {
-                    var changesCount = changes.GetArrayLength();
-                    var dryRun = obj.Value.TryGetProperty("dryRun", out var dr) && (dr.ValueKind == JsonValueKind.True || dr.ValueKind == JsonValueKind.False) && dr.GetBoolean();
-                    var apply = !(obj.Value.TryGetProperty("apply", out var ap) && (ap.ValueKind == JsonValueKind.True || ap.ValueKind == JsonValueKind.False) && ap.GetBoolean() == false);
-
-                    if (apply && !dryRun && changesCount > 25)
-                    {
-                        var expected = BulkConfirmUtil.ExpectedApplyChanges(changesCount);
-                        var gotRaw = obj.Value.TryGetProperty("confirm", out var c) && c.ValueKind == JsonValueKind.String ? (c.GetString() ?? "") : "";
-                        if (!BulkConfirmUtil.EqualsNormalized(gotRaw, expected))
-                        {
-                            var gotNorm = BulkConfirmUtil.Normalize(gotRaw);
-                            userError = new OperatorToolUserErrorException(
-                                message: "Bulk parameter edit requires typed confirmation.",
-                                code: "bulk_confirm_required",
-                                requiredConfirm: expected,
-                                confirmReceived: gotNorm,
-                                maxChangesPerCall: 10,
-                                hint: "Retry with confirm set to the requiredConfirm string (exact, but markdown like **...** is ok). If OPERATOR_BULK_CONFIRM_SIMPLE=1, you can also use confirm:\"yes\".");
-                            error = userError.Message;
-                            return false;
-                        }
-                    }
-                }
-                catch
-                {
-                    // best effort; handler will still enforce
-                }
                 return true;
             }
 
@@ -7719,7 +7689,7 @@ namespace RevitBridge.Operator
                 // QuantifyRequest:
                 // {
                 //   intent: "count"|"list"|"count_and_list",
-                //   categories: ["OST_Doors", ...],
+                //   categories: ["OST_Doors" | "Doors", ...],
                 //   filters?: { level?: string, keywords_include?: string[], keywords_exclude?: string[] },
                 //   group_by?: ["Level"|"Room"|"Type"],
                 //   room_resolution?: boolean
@@ -7735,10 +7705,10 @@ namespace RevitBridge.Operator
                     error = "quantify.intent is required.";
                     return false;
                 }
-                var intent = (intentEl.GetString() ?? "").Trim().ToLowerInvariant();
-                if (intent != "count" && intent != "list" && intent != "count_and_list")
+                var intent = (intentEl.GetString() ?? "").Trim();
+                if (intent.Length == 0 || intent.Length > 160)
                 {
-                    error = "quantify.intent must be 'count', 'list', or 'count_and_list'.";
+                    error = "quantify.intent must be a bounded count/list intent.";
                     return false;
                 }
 
@@ -7787,11 +7757,11 @@ namespace RevitBridge.Operator
                         error = "quantify.categories entries must be non-empty and reasonably sized.";
                         return false;
                     }
-                    if (!s.StartsWith("OST_", StringComparison.OrdinalIgnoreCase))
-                    {
-                        error = "quantify.categories must use BuiltInCategory names like 'OST_Doors'.";
-                        return false;
-                    }
+                }
+                if (catCount == 0)
+                {
+                    error = "quantify.categories must contain at least one exact category name or BuiltInCategory token.";
+                    return false;
                 }
 
                 if (obj.Value.TryGetProperty("filters", out var filters) && filters.ValueKind != JsonValueKind.Null)

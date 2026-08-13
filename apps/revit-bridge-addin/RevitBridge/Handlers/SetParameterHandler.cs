@@ -35,8 +35,8 @@ namespace RevitBridge.Handlers
             public bool? apply { get; set; }
             public bool? dryRun { get; set; }
 
-            // Optional bulk safety: when changing many elements, require a typed confirmation phrase.
-            // Recommended phrase: "APPLY {count} CHANGES"
+            // Back-compat only. Authorization is provided by the active write grant;
+            // ordinary parameter edits do not require a second typed confirmation.
             public string? confirm { get; set; }
 
             // Optional UX helper: allow excluding some elements from the changes list.
@@ -62,24 +62,9 @@ namespace RevitBridge.Handlers
             var isDryRun = (p.dryRun ?? false) || (p.apply.HasValue && p.apply.Value == false);
             var apply = !isDryRun;
 
-            const int ConfirmThreshold = 25;
             var requestedCount = changes.Count;
             var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
             string? requiredConfirm = null;
-            if (apply && changes.Count > ConfirmThreshold)
-            {
-                requiredConfirm = BulkConfirmUtil.ExpectedApplyChanges(requestedCount);
-                if (!BulkConfirmUtil.EqualsNormalized(p.confirm, requiredConfirm))
-                {
-                    throw new OperatorToolUserErrorException(
-                        message: "Bulk parameter edit requires typed confirmation.",
-                        code: "bulk_confirm_required",
-                        requiredConfirm: requiredConfirm,
-                        confirmReceived: confirmReceived,
-                        maxChangesPerCall: 10,
-                        hint: "Retry with confirm set to the requiredConfirm string (exact, but markdown like **...** is ok). If OPERATOR_BULK_CONFIRM_SIMPLE=1, you can also use confirm:\"yes\".");
-                }
-            }
 
             var exclude = new HashSet<long>((p.excludeElementIds ?? new List<long>()).Where(x => x > 0));
             var excludedCount = exclude.Count;

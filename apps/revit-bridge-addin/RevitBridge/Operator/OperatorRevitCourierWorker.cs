@@ -20,6 +20,7 @@ namespace RevitBridge.Operator
         private readonly string _executorId = ExecutorIdForCurrentProcess();
         private readonly SemaphoreSlim _runGate = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+        private int _hostDocumentAvailable;
         private static readonly int[] ExternalEventBusyRetryDelaysMs = { 100, 200, 400, 800, 1600, 2000, 2000, 2000 };
         private Timer? _timer;
 
@@ -41,6 +42,16 @@ namespace RevitBridge.Operator
         {
             if (_timer != null) return;
             _timer = new Timer(_ => _ = RunOnceAsync(), null, TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(2));
+        }
+
+        internal void SetHostDocumentUnavailable()
+        {
+            Volatile.Write(ref _hostDocumentAvailable, 0);
+        }
+
+        internal void SetHostDocumentAvailable()
+        {
+            Volatile.Write(ref _hostDocumentAvailable, 1);
         }
 
         internal static string ExecutorIdForCurrentProcess()
@@ -69,6 +80,10 @@ namespace RevitBridge.Operator
                 // A completed Revit action must be acknowledged before this worker accepts more work.
                 // This replays durable completion evidence after a transient backend outage or pane/Revit restart.
                 if (await FlushOnePendingCompletionAsync().ConfigureAwait(false)) return;
+                // ExternalEvent.Raise can be accepted while Revit is on Home even though
+                // Revit will never invoke the callback. Do not claim or probe courier work
+                // until a real document has opened in this process.
+                if (Volatile.Read(ref _hostDocumentAvailable) == 0) return;
                 if (await HoldForOpenHostCircuitAsync().ConfigureAwait(false)) return;
 
                 var claimJson = await _backendClient.ClaimNextRevitCourierJobJsonAsync(null, _executorId, _cts.Token).ConfigureAwait(false);

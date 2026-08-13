@@ -300,6 +300,24 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void QuantifyAcceptsExactDocumentCategoryNamesAndStillFailsClosed()
+        {
+            var root = FindRepositoryRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "QuantifyElementsHandler.cs"));
+            Assert.Contains("StrictCategoryResolver.Resolve(requested, catalog)", handler);
+            Assert.Contains("Category filter could not be applied exactly", File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Common", "Semantic", "StrictCategoryResolver.cs")));
+            Assert.Contains("No unfiltered query was run", handler);
+            Assert.Contains("var categoryIds = new HashSet<long>", handler);
+            Assert.Contains("if (!categoryIds.Contains(elementCategoryId)) continue", handler);
+            Assert.Contains("family = familySymbol?.Family?.Name ?? typeEl?.FamilyName", handler);
+            Assert.Contains("if (key == \"family\")", handler);
+
+            var schema = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("exact category name or BuiltInCategory token", schema);
+            Assert.DoesNotContain("quantify.categories must use BuiltInCategory names", schema);
+        }
+
+        [Fact]
         public void DynamicRollbackBaselinesApplyExplicitRevitCollectorFilters()
         {
             var root = FindRepositoryRoot();
@@ -457,6 +475,32 @@ namespace RevitBridge.Common.Tests
             RejectAuth(() => OperatorNativeTransportCodec.OpenResponse(Token, protectedRequest, responseProtectionFailure.BodyUtf8, Now));
         }
 
+
+        [Fact]
+        public void OrdinaryParameterWritesUseTheSessionGrantWithoutASecondTypedConfirmation()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var ordinaryParameterHandlers = new[]
+            {
+                Path.Combine(root, "RevitBridge", "Handlers", "SetParameterHandler.cs"),
+                Path.Combine(root, "RevitBridge.Logic", "Handlers", "UpdateParameterByQueryHandler.cs"),
+                Path.Combine(root, "RevitBridge.Logic", "Handlers", "UpdatePanelParameterHandler.cs"),
+                Path.Combine(root, "RevitBridge.Logic", "Handlers", "Types", "SetTypeParametersHandler.cs"),
+                Path.Combine(root, "RevitBridge.Logic", "Handlers", "Types", "DuplicateTypeAndSwapInstanceHandler.cs")
+            };
+            foreach (var path in ordinaryParameterHandlers)
+            {
+                var source = File.ReadAllText(path);
+                Assert.DoesNotContain("bulk_confirm_required", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("requires typed confirmation", source, StringComparison.OrdinalIgnoreCase);
+            }
+
+            var validator = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.DoesNotContain("Bulk set-parameter requires typed confirmation", validator, StringComparison.Ordinal);
+            var server = File.ReadAllText(Path.Combine(root, "RevitBridge", "Server", "RevitHttpServer.cs"));
+            Assert.Contains("OperatorWriteGrant.ValidateAndConsumeIfNeeded", server, StringComparison.Ordinal);
+        }
+
         private static OperatorNativeTransportProtectedRequest Protect(string method, string path, string body, DateTimeOffset at)
             => OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, method, path, body, "grant", at);
 
@@ -506,6 +550,15 @@ namespace RevitBridge.Common.Tests
                 current = current.Parent;
             }
             throw new DirectoryNotFoundException("Repository root not found.");
+        }
+
+        private static string FindRevitBridgeAddinRoot()
+        {
+            var root = FindRepositoryRoot();
+            var publicRoot = Path.Combine(root, "apps", "revit-bridge-addin");
+            return Directory.Exists(publicRoot)
+                ? publicRoot
+                : Path.Combine(root, "revit-bridge-addin");
         }
     }
 }

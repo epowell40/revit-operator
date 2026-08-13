@@ -137,6 +137,18 @@ namespace RevitBridge.Services
             return AwaitResult<T>(tcs.Task);
         }
 
+        internal bool ExecutePendingOnIdling(UIApplication app)
+        {
+            // ExternalEvent.Raise may report Accepted while Revit is transitioning out of
+            // document load, yet never deliver that first callback. Idling is itself an
+            // authoritative Revit API-thread callback, so use it as a lossless fallback
+            // pump for the same single-item queue. A later ExternalEvent callback simply
+            // observes an empty queue and is harmless.
+            if (_queue.IsEmpty) return false;
+            Execute(app);
+            return true;
+        }
+
         private async Task RetryPendingRaiseAsync(QueueItem item)
         {
             for (var attempt = 0; attempt < 4 && !item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending; attempt++)

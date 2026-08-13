@@ -508,7 +508,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
     state.apply_expected_values = new Set(call.expected_values);
     state.apply_operation = call.operation;
     state.contract.stage = "apply";
-  } else if (state.apply_attempts > 0 && (call.effect === "read" || call.effect === "navigation")) {
+  } else if (state.stage_apply_attempts > 0 && (call.effect === "read" || call.effect === "navigation")) {
     state.verification_action_ids.push(actionId);
     state.contract.stage = "verify";
   } else if (call.effect === "preview") state.contract.stage = "preview";
@@ -578,6 +578,38 @@ function markVerified(state: TeammateLoopState): void {
   state.contract.stage = "report";
 }
 
+function knownNoEffectFailure(evidence: unknown): boolean {
+  const root = objectValue(evidence);
+  if (root.request_dispatched === false && root.outcome_unknown !== true) return true;
+  const texts: string[] = [];
+  const visit = (value: unknown, depth = 0): void => {
+    if (depth > 8 || texts.length >= 128 || value === null || value === undefined) return;
+    if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
+    if (typeof value === "object") { for (const item of Object.values(value as Record<string, unknown>)) visit(item, depth + 1); return; }
+    if (typeof value !== "string") return;
+    texts.push(value);
+    const trimmed = value.trim();
+    if (/^[\[{]/.test(trimmed)) {
+      try { visit(JSON.parse(trimmed), depth + 1); } catch {}
+    }
+  };
+  visit(evidence);
+  return texts.some(value => /\bbulk_confirm_required\b|bulk (?:query-based |panel-|type )?parameter (?:edit|update) requires typed confirmation/i.test(value));
+}
+
+function clearKnownNoEffectApply(state: TeammateLoopState): void {
+  state.stage_apply_attempts = Math.max(0, state.stage_apply_attempts - 1);
+  state.apply_action_id = null;
+  state.apply_succeeded = false;
+  state.apply_signature = "";
+  state.apply_target_tokens.clear();
+  state.apply_expected_values.clear();
+  state.apply_operation = "";
+  state.verified = false;
+  state.blocked_reason = null;
+  state.contract.stage = state.successful_preview_signatures.size > 0 ? "preview" : "apply";
+}
+
 function recordResult(state: TeammateLoopState, actionId: string, succeeded: boolean, evidence?: unknown): void {
   const pending = state.pending.get(actionId);
   if (!pending) return;
@@ -586,8 +618,11 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
     if (!succeeded) {
-      state.blocked_reason = "apply_failed_or_outcome_unknown_no_retry";
-      state.contract.stage = "blocked";
+      if (knownNoEffectFailure(evidence)) clearKnownNoEffectApply(state);
+      else {
+        state.blocked_reason = "apply_failed_or_outcome_unknown_no_retry";
+        state.contract.stage = "blocked";
+      }
     } else {
       for (const token of targetTokens(evidence)) state.apply_target_tokens.add(token);
       if (verificationMatches(state, evidence, false)) {
@@ -607,7 +642,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
 }
 
 function ingestToolResults(state: TeammateLoopState, results: ToolResult[] | undefined): void {
-  for (const result of results || []) recordResult(state, result.action_id, resultSucceeded(result), result.result_json);
+  for (const result of results || []) recordResult(state, result.action_id, resultSucceeded(result), result);
 }
 
 function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_loop_receipt"]> {

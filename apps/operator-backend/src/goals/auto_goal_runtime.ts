@@ -4,7 +4,8 @@ import {
   getActiveGoalForSession,
   getCurrentGoalForSession,
   markAgentGoalBlocked,
-  markAgentGoalComplete
+  markAgentGoalComplete,
+  transitionGoal
 } from "./service.js";
 
 export type AutoGoalToolObservation = {
@@ -47,6 +48,13 @@ export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
   return current && ["paused", "blocked"].includes(current.status) ? current : null;
 }
 
+export function supersedeBlockedAutoGoalForFreshRequest(sessionId?: string | null): boolean {
+  const current = getCurrentGoalForSession(sessionId);
+  if (current?.status !== "blocked" || current.work_budget?.mode !== "auto_goal") return false;
+  transitionGoal(current.id, "canceled", "Superseded by a fresh executable user request after the prior automatic assignment blocked.");
+  return true;
+}
+
 export function createAutoGoalTurnObserver(sessionId: string) {
   let successfulReadTools = 0;
   let successfulPreviewTools = 0;
@@ -57,13 +65,14 @@ export function createAutoGoalTurnObserver(sessionId: string) {
     observe(observation: AutoGoalToolObservation) {
       const effect = observationEffect(observation);
       const completionRelevant = effect !== "discovery";
+      const knownNoEffectFailure = isKnownNoEffectFailure(observation);
       if (isCompletionEvidence(observation) && observation.success === true) {
         if (effect === "apply") successfulApplyTools += 1;
         else if (effect === "preview") successfulPreviewTools += 1;
         else if (effect === "read") successfulReadTools += 1;
       }
-      if (completionRelevant && observation.success === false) failedRevitTools += 1;
-      if (completionRelevant && observation.success !== null) lastCompletionRelevantSucceeded = observation.success;
+      if (completionRelevant && observation.success === false && !knownNoEffectFailure) failedRevitTools += 1;
+      if (completionRelevant && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
     finish(turnId: string, assistantText: string, teammateReceipt?: AutoGoalTeammateReceipt | null) {
@@ -95,7 +104,12 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         if (unexpectedApply) {
           blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
         } else if (!pendingApproval && !blockedOutcome && evidenceTools > 0 && lastCompletionRelevantSucceeded !== false) {
-          completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: evidenceTools, assistant_summary: assistantText });
+          completeAutoGoalFromValidatedTurn(sessionId, {
+            turn_id: turnId,
+            successful_tools: evidenceTools,
+            failed_tools: failedRevitTools,
+            assistant_summary: assistantText
+          });
         } else if ((failedRevitTools > 0 && (evidenceTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
           blockAutoGoalFromTurn(sessionId, failedRevitTools > 0
             ? "One or more live Revit tool calls failed; completion requires a clean verified turn."
@@ -198,7 +212,7 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
 
 export function completeAutoGoalFromValidatedTurn(
   sessionId: string,
-  input: { turn_id: string; successful_tools: number; assistant_summary: string }
+  input: { turn_id: string; successful_tools: number; failed_tools?: number; assistant_summary: string }
 ): void {
   let goal = activeAutoGoal(sessionId);
   if (!goal || input.successful_tools < 1) return;
@@ -212,11 +226,15 @@ export function completeAutoGoalFromValidatedTurn(
     }
   });
   const evidenceRefs: string[] = [];
+  const recoveredFailures = Math.max(0, input.failed_tools ?? 0);
+  const executionMethod = recoveredFailures > 0
+    ? `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded.`
+    : `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls and no failed calls.`;
   for (const criterion of goal.acceptance_criteria) {
     const validated = appendTrustedServerGoalValidation(goal.id, {
       criterion,
       validator_id: `codex-turn:${input.turn_id}`,
-      method: `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls and no failed calls.`,
+      method: executionMethod,
       status: "pass"
     });
     const entry = validated.validation_log.at(-1);
@@ -228,8 +246,18 @@ export function completeAutoGoalFromValidatedTurn(
       status: "pass",
       evidence_refs: evidenceRefs[index] ? [evidenceRefs[index]] : []
     })),
-    evidence_summary: `${input.successful_tools} successful live Revit tool calls were observed and the General Agent returned a result.`
+    evidence_summary: `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
   });
+}
+
+function isKnownNoEffectFailure(observation: AutoGoalToolObservation): boolean {
+  if (observation.success !== false) return false;
+  const result = observationObject(observation.result ?? observation.output);
+  if (result.request_dispatched === false && result.outcome_unknown !== true) return true;
+  let serialized = `${observation.error || ""}`;
+  try { serialized += ` ${JSON.stringify(observation.result ?? observation.output ?? "")}`; } catch {}
+  return /revit_external_event_busy/i.test(serialized)
+    && /outcome_unknown[\s"':=]+false/i.test(serialized);
 }
 
 export function blockAutoGoalFromTurn(sessionId: string, reason: string): void {

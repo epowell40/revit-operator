@@ -3,6 +3,7 @@ using System.IO;
 using System.Reflection;
 using Autodesk.Revit.DB.Events;
 using Autodesk.Revit.UI;
+using Autodesk.Revit.UI.Events;
 using RevitBridge.Common;
 using RevitBridge.Operator;
 using RevitBridge.Server;
@@ -18,6 +19,7 @@ namespace RevitBridge
         private RevitHttpServer _server;
         private RevitEventService _eventService;
         private OperatorRevitCourierWorker? _revitCourierWorker;
+        private int _openDocumentCount;
         internal OperatorDialogComputerUse? DialogComputerUse { get; private set; }
 
         public Result OnStartup(UIControlledApplication application)
@@ -27,6 +29,7 @@ namespace RevitBridge
 
             application.ControlledApplication.DocumentOpened += OnDocumentOpened;
             application.ControlledApplication.DocumentClosing += OnDocumentClosing;
+            application.Idling += OnIdling;
 
             try
             {
@@ -66,7 +69,7 @@ namespace RevitBridge
                     ensureWriteGrant: OperatorWriteGrant.ReadStatus,
                     getLogger: () => null);
                 _revitCourierWorker.Start();
-                WriteStartupLog("Application-lifetime Revit courier worker started.");
+                WriteStartupLog("Application-lifetime Revit courier worker started; courier dispatch is waiting for an open document.");
             }
             catch (Exception ex)
             {
@@ -153,6 +156,7 @@ namespace RevitBridge
             WriteStartupLog("OnShutdown begin.");
             application.ControlledApplication.DocumentOpened -= OnDocumentOpened;
             application.ControlledApplication.DocumentClosing -= OnDocumentClosing;
+            application.Idling -= OnIdling;
             try
             {
                 WriteStartupLog("Operator Desktop launch notification shutdown begin.");
@@ -202,12 +206,41 @@ namespace RevitBridge
         {
             try { OperatorNativeDocumentSessionAuthority.RegisterOpenedDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session registration failed closed: {ex.GetType().FullName}: {ex.Message}"); }
+            var instance = Instance;
+            if (instance != null)
+            {
+                System.Threading.Interlocked.Increment(ref instance._openDocumentCount);
+            }
+        }
+
+        private static void OnIdling(object sender, IdlingEventArgs args)
+        {
+            var instance = Instance;
+            // DocumentOpened can fire while Revit is still loading/rendering the model.
+            // The first actual Idling callback is the authoritative signal that the UI
+            // thread can execute a newly raised ExternalEvent.
+            if (instance != null && System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0)
+            {
+                instance._revitCourierWorker?.SetHostDocumentAvailable();
+                if (sender is UIApplication uiApplication)
+                    instance._eventService?.ExecutePendingOnIdling(uiApplication);
+            }
         }
 
         private static void OnDocumentClosing(object sender, DocumentClosingEventArgs args)
         {
             try { OperatorNativeDocumentSessionAuthority.InvalidateClosingDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session invalidation failed closed: {ex.GetType().FullName}: {ex.Message}"); }
+            var instance = Instance;
+            if (instance != null)
+            {
+                var remaining = System.Threading.Interlocked.Decrement(ref instance._openDocumentCount);
+                instance._revitCourierWorker?.SetHostDocumentUnavailable();
+                if (remaining <= 0)
+                {
+                    System.Threading.Interlocked.Exchange(ref instance._openDocumentCount, 0);
+                }
+            }
         }
 
         private static OperatorApprovalMode GetCourierApprovalMode()

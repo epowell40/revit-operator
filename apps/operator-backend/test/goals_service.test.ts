@@ -28,7 +28,7 @@ import {
   type GoalRecord
 } from "../src/goals/service.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
-import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation } from "../src/goals/auto_goal_runtime.js";
+import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation, supersedeBlockedAutoGoalForFreshRequest } from "../src/goals/auto_goal_runtime.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   createLocalGoalEvidenceAuthority,
@@ -927,6 +927,26 @@ test("successful live tools complete a quick auto assignment with trusted eviden
   });
 });
 
+test("a recovered Revit tool failure remains visible in trusted completion evidence", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-auto-recovered", {
+      title: "Count air devices", objective: "Count live Revit air devices.",
+      acceptance_criteria: ["The live count is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "read" },
+      work_items: [{ id: "auto.revit-work", title: "Count", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-auto-recovered");
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, arguments: { path: "/revit/quantify" }, error: "invalid category token" });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/quantify" }, result: { total: 509 } });
+    observer.finish("turn-recovered", "Found 509 air terminals.");
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.match(JSON.stringify(persisted?.validation_log[0]?.evidence || {}), /after 1 earlier failed call; the final completion-relevant call succeeded/);
+    assert.match(`${persisted?.action_log.find(entry => entry.summary.includes("failed"))?.summary || ""}`, /invalid category token/);
+  });
+});
+
 test("auto goal completion requires clean Revit evidence and rejects unrelated successes", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-mixed", {
@@ -1099,6 +1119,78 @@ test("only the current paused or blocked assignment gates dispatch and prevents 
       title: "Duplicate", objective: "Must not start.", acceptance_criteria: ["No duplicate."]
     }), /explicitly resume or clear/);
     assert.equal(listGoals(10).filter(goal => goal.related_session_id === "session-current-only").length, 2);
+  });
+});
+
+test("a verified apply is not poisoned by a later known pre-dispatch busy response", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-verified-before-busy", {
+      title: "Rename HRUs", objective: "Rename all HRUs to ERUs and verify the Mark values.",
+      acceptance_criteria: ["Every changed Mark is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-verified-before-busy");
+    observer.observe({
+      server: "revit_operator", tool: "run_dynamic_revit_program", success: true,
+      arguments: { mode: "apply" }, result: { committed: true, verified: true, modifiedCount: 37 }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "run_dynamic_revit_program", success: false,
+      arguments: { mode: "read" },
+      error: "Bridge returned 409: {\"code\":\"revit_external_event_busy\",\"retryable\":true,\"outcome_unknown\":false}"
+    });
+    observer.finish("turn-verified-before-busy", "Renamed and verified all 37 equipment Marks.");
+    assert.equal(getGoal(goal.id)?.status, "complete");
+  });
+});
+
+test("a fresh executable request may supersede a blocked automatic assignment", () => {
+  withWorkspace(() => {
+    const blocked = setAgentGoal("session-fresh-retry", {
+      title: "Rename HRUs",
+      objective: "Rename all HRUs to ERUs and keep the numbers.",
+      acceptance_criteria: ["All matching Mark values are changed and verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" }
+    });
+    markAgentGoalBlocked("session-fresh-retry", "Known pre-dispatch write rejection.");
+
+    assert.equal(supersedeBlockedAutoGoalForFreshRequest("session-fresh-retry"), true);
+    assert.equal(getGoal(blocked.id)?.status, "canceled");
+    assert.equal(getCurrentGoalForSession("session-fresh-retry"), null);
+
+    const retry = setAgentGoal("session-fresh-retry", {
+      title: "Rename HRUs retry",
+      objective: "Rename all HRUs to ERUs and keep the numbers.",
+      acceptance_criteria: ["All matching Mark values are changed and verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" }
+    });
+    assert.equal(retry.status, "active");
+    assert.notEqual(retry.id, blocked.id);
+  });
+});
+
+test("fresh-request supersession never clears paused or manual assignments", () => {
+  withWorkspace(() => {
+    const paused = setAgentGoal("session-paused", {
+      title: "Paused",
+      objective: "Pause this assignment.",
+      acceptance_criteria: ["Resume explicitly."],
+      work_budget: { mode: "auto_goal" }
+    });
+    transitionGoal(paused.id, "paused", "User paused.");
+    assert.equal(supersedeBlockedAutoGoalForFreshRequest("session-paused"), false);
+    assert.equal(getGoal(paused.id)?.status, "paused");
+
+    const manual = setAgentGoal("session-manual", {
+      title: "Manual",
+      objective: "A manually structured assignment.",
+      acceptance_criteria: ["Resume explicitly."],
+      work_budget: { mode: "manual" }
+    });
+    markAgentGoalBlocked("session-manual", "Needs a decision.");
+    assert.equal(supersedeBlockedAutoGoalForFreshRequest("session-manual"), false);
+    assert.equal(getGoal(manual.id)?.status, "blocked");
   });
 });
 
