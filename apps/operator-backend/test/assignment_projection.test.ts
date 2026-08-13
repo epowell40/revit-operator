@@ -90,6 +90,12 @@ test("projection does not manufacture a percentage when no checkpoints exist", (
   });
 });
 
+test("goal projection exposes the requested read, preview, or apply effect", () => {
+  const assignment = projectGoalAssignment(goal({ work_budget: { mode: "auto_goal", requested_effect: "preview" } }));
+  assert.equal(assignment.execution.requested_effect, "preview");
+  assert.equal(projectGoalAssignment(goal({ work_budget: { requested_effect: "invented" } })).execution.requested_effect, null);
+});
+
 test("task projection preserves preview approval, target binding, effects, and uncertain truth", () => {
   const assignment = projectTaskAssignment({
     id: "task-1",

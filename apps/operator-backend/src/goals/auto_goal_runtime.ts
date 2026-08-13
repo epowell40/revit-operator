@@ -26,19 +26,29 @@ export type AutoGoalTeammateReceipt = {
   blocked_reason?: string | null;
 };
 
+type AutoGoalRequestedEffect = "read" | "preview" | "apply";
+type AutoGoalObservationEffect = AutoGoalRequestedEffect | "discovery";
+
 export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
   const current = getCurrentGoalForSession(sessionId);
   return current && ["paused", "blocked"].includes(current.status) ? current : null;
 }
 
 export function createAutoGoalTurnObserver(sessionId: string) {
-  let successfulRevitTools = 0;
+  let successfulReadTools = 0;
+  let successfulPreviewTools = 0;
+  let successfulApplyTools = 0;
   let failedRevitTools = 0;
   let lastCompletionRelevantSucceeded: boolean | null = null;
   return {
     observe(observation: AutoGoalToolObservation) {
-      const completionRelevant = isCompletionRelevant(observation);
-      if (isCompletionEvidence(observation) && observation.success === true) successfulRevitTools += 1;
+      const effect = observationEffect(observation);
+      const completionRelevant = effect !== "discovery";
+      if (isCompletionEvidence(observation) && observation.success === true) {
+        if (effect === "apply") successfulApplyTools += 1;
+        else if (effect === "preview") successfulPreviewTools += 1;
+        else if (effect === "read") successfulReadTools += 1;
+      }
       if (completionRelevant && observation.success === false) failedRevitTools += 1;
       if (completionRelevant && observation.success !== null) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
@@ -59,9 +69,18 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         }
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
         const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText);
-        if (!pendingApproval && !blockedOutcome && successfulRevitTools > 0 && lastCompletionRelevantSucceeded !== false) {
-          completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: successfulRevitTools, assistant_summary: assistantText });
-        } else if ((failedRevitTools > 0 && (successfulRevitTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
+        const requestedEffect = requestedEffectForSession(sessionId);
+        const evidenceTools = requestedEffect === "apply"
+          ? successfulApplyTools
+          : requestedEffect === "preview"
+            ? successfulPreviewTools
+            : successfulReadTools + successfulPreviewTools + successfulApplyTools;
+        const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
+        if (unexpectedApply) {
+          blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
+        } else if (!pendingApproval && !blockedOutcome && evidenceTools > 0 && lastCompletionRelevantSucceeded !== false) {
+          completeAutoGoalFromValidatedTurn(sessionId, { turn_id: turnId, successful_tools: evidenceTools, assistant_summary: assistantText });
+        } else if ((failedRevitTools > 0 && (evidenceTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
           blockAutoGoalFromTurn(sessionId, failedRevitTools > 0
             ? "One or more live Revit tool calls failed; completion requires a clean verified turn."
             : assistantText || "The General Agent turn ended without a successful live Revit tool result.");
@@ -80,7 +99,7 @@ function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
 }
 
 function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
-  if (!isCompletionRelevant(observation)) return false;
+  if (observationEffect(observation) === "discovery") return false;
   const result = observation.result ?? observation.output;
   if (result === null || result === undefined) return false;
   if (typeof result === "string") return result.trim().length > 0;
@@ -89,8 +108,8 @@ function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
   return true;
 }
 
-function isCompletionRelevant(observation: AutoGoalToolObservation): boolean {
-  if (!isLiveRevitObservation(observation)) return false;
+function observationEffect(observation: AutoGoalToolObservation): AutoGoalObservationEffect {
+  if (!isLiveRevitObservation(observation)) return "discovery";
   const tool = observation.tool.trim().toLowerCase();
   const discoveryTools = new Set([
     "operator_runtime_probe",
@@ -104,24 +123,39 @@ function isCompletionRelevant(observation: AutoGoalToolObservation): boolean {
     "revit_tool_examples",
     "revit_write_grant_status"
   ]);
-  if (discoveryTools.has(tool) || /(?:^|_)(?:discovery|strategy|documentation|examples)$/.test(tool)) return false;
+  if (discoveryTools.has(tool) || /(?:^|_)(?:discovery|strategy|documentation|examples)$/.test(tool)) return "discovery";
+  const args = observation.arguments && typeof observation.arguments === "object" ? observation.arguments as Record<string, unknown> : {};
+  const body = args.body && typeof args.body === "object" ? args.body as Record<string, unknown> : args;
+  const transaction = body.transaction && typeof body.transaction === "object" ? body.transaction as Record<string, unknown> : {};
+  const transactionMode = `${transaction.mode || body.mode || ""}`.trim().toLowerCase();
+  if (body.apply === true || body.dryRun === false || body.dry_run === false
+      || ["apply", "commit", "committed"].includes(transactionMode)) return "apply";
+  if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
+      || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
   if (tool === "revit_call_tool") {
-    const args = observation.arguments && typeof observation.arguments === "object" ? observation.arguments as Record<string, unknown> : {};
     const route = `${args.path || ""}`.trim().toLowerCase();
-    if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return false;
-    if (route === "/revit/transaction-plan") return false;
-    const body = args.body && typeof args.body === "object" ? args.body as Record<string, unknown> : {};
-    const transaction = body.transaction && typeof body.transaction === "object" ? body.transaction as Record<string, unknown> : {};
-    const transactionMode = `${transaction.mode || ""}`.trim().toLowerCase();
-    if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
-        || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return false;
+    if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
+    if (route === "/revit/transaction-plan") return "discovery";
+    if (/\/(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|reload|configure|replace|place|assign|link)(?:-|\/|$)/.test(route)) return "apply";
   }
-  return true;
+  if (/revit_(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|reload|configure|replace|place|assign|link)/.test(tool)) return "apply";
+  return "read";
 }
 
 function activeAutoGoal(sessionId: string) {
   const goal = getActiveGoalForSession(sessionId);
   return goal?.work_budget?.mode === "auto_goal" ? goal : null;
+}
+
+function requestedEffectForSession(sessionId: string): AutoGoalRequestedEffect {
+  const goal = activeAutoGoal(sessionId);
+  const declared = `${goal?.work_budget?.requested_effect || ""}`.trim().toLowerCase();
+  if (declared === "read" || declared === "preview" || declared === "apply") return declared;
+  const objective = `${goal?.objective || ""}`;
+  if (/\b(preview|preflight|dry[- ]?run|rollback|do not commit|don't commit)\b/i.test(objective)) return "preview";
+  if (/\b(create|duplicate|add|place|move|rotate|change|update|edit|delete|remove|rename|set|apply|connect|route|reload|export|print)\b/i.test(objective)
+      && !/\b(read[- ]only|do not (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|don't (?:change|modify|edit|create|apply|commit|export|print|delete|remove))\b/i.test(objective)) return "apply";
+  return "read";
 }
 
 export function recordAutoGoalToolObservation(sessionId: string, observation: AutoGoalToolObservation): void {

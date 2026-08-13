@@ -402,7 +402,11 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         }
         private sealed class ElementState { public long Id; public string UniqueId = ""; public string Hash = ""; }
         private sealed class PendingChange { public XYZ? Point; public string? ParameterValue; }
-        private const int ExecutionDeadlineMilliseconds = 5000;
+        // Snowdon-scale rollback verification walks the live document and can
+        // legitimately take more than five seconds on a cold Revit API thread.
+        // Keep the handler bounded while allowing a real bulk operation to
+        // finish its preview and rollback proof instead of failing at ~4.9 s.
+        private const int ExecutionDeadlineMilliseconds = 15000;
         private const int RollbackBaselineElementLimit = 25000;
         private static readonly JsonSerializerOptions WireJson = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
         public Task<object> Handle(UIApplication app, string jsonData)

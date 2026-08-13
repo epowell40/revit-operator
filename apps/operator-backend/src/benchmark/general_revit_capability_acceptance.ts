@@ -18,7 +18,12 @@ export type GeneralRevitCapabilityCase = {
   capability_paths: string[];
   dispatch_any_of: string[];
   expected_effect: GeneralRevitExpectedEffect;
+  probe_expected_effect?: Exclude<GeneralRevitExpectedEffect, "apply">;
   epic0441_task_refs: string[];
+  prompt_specificity?: "terse" | "ordinary" | "detailed" | "ambiguous_actionable" | "research_required";
+  corpus_task_type?: string;
+  grounding_demand?: "low" | "medium" | "high";
+  research_demand?: "none" | "optional" | "required";
 };
 
 export type GeneralRevitCapabilityCorpus = {
@@ -34,8 +39,37 @@ export type GeneralRevitCapabilityCorpus = {
     clarification_for_missing_target_is_accepted: true;
     capability_subset_refusal_is_failure: true;
   };
+  corpus_evidence: {
+    taxonomy_path: string;
+    actionable_comment_total: number;
+    top_task_type_comment_total: number;
+    task_types: Array<{
+      rank: number;
+      task_type_id: string;
+      corpus_count: number;
+      coverage_kind: "direct" | "proxy" | "gap";
+      case_ids: string[];
+    }>;
+  };
   required_operation_families: string[];
   cases: GeneralRevitCapabilityCase[];
+};
+
+export type GeneralRevitCorpusCoverage = {
+  taxonomy_path: string;
+  actionable_comment_total: number;
+  top_task_type_comment_total: number;
+  mapped_comment_total: number;
+  directly_covered_comment_total: number;
+  mapped_top_task_type_rate: number;
+  direct_top_task_type_rate: number;
+  mapped_actionable_comment_rate: number;
+  direct_actionable_comment_rate: number;
+  covered_task_type_count: number;
+  top_task_type_count: number;
+  case_count: number;
+  prompt_specificity: Record<string, number>;
+  task_types: GeneralRevitCapabilityCorpus["corpus_evidence"]["task_types"];
 };
 
 type ActionLike = {
@@ -85,12 +119,74 @@ export type GeneralRevitSummary = {
   verification_rate: number;
 };
 
+export function generalRevitExecutionCase(
+  testCase: GeneralRevitCapabilityCase,
+  applyRequested: boolean
+): GeneralRevitCapabilityCase {
+  if (applyRequested || testCase.expected_effect === "read") return testCase;
+  return { ...testCase, expected_effect: testCase.probe_expected_effect ?? "preview" };
+}
+
+export function generalRevitPromptSpecificity(testCase: GeneralRevitCapabilityCase): string {
+  if (testCase.prompt_specificity) return testCase.prompt_specificity;
+  if (testCase.operation_family === "research_and_compliance") return "research_required";
+  const words = testCase.prompt.trim().split(/\s+/).length;
+  if (words <= 16) return "terse";
+  if (words <= 32) return "ordinary";
+  return "detailed";
+}
+
+export function generalRevitGroundingDemand(testCase: GeneralRevitCapabilityCase): "low" | "medium" | "high" {
+  if (testCase.grounding_demand) return testCase.grounding_demand;
+  if (["project_query", "native_fallback"].includes(testCase.operation_family)) return "low";
+  if (["tag", "text_edit", "add", "delete", "move", "rotate", "type_change", "size_transition", "route", "reroute_offset", "family_edit", "visual_verification"].includes(testCase.operation_family)) return "high";
+  return "medium";
+}
+
+export function generalRevitResearchDemand(testCase: GeneralRevitCapabilityCase): "none" | "optional" | "required" {
+  if (testCase.research_demand) return testCase.research_demand;
+  if (testCase.operation_family === "research_and_compliance") return "required";
+  if (["native_fallback", "family_edit", "print_export"].includes(testCase.operation_family)) return "optional";
+  return "none";
+}
+
+export function summarizeGeneralRevitCorpusCoverage(corpus: GeneralRevitCapabilityCorpus): GeneralRevitCorpusCoverage {
+  const mapped = corpus.corpus_evidence.task_types.filter((entry) => entry.coverage_kind !== "gap" && entry.case_ids.length > 0);
+  const direct = mapped.filter((entry) => entry.coverage_kind === "direct");
+  const specificity: Record<string, number> = {};
+  for (const entry of corpus.cases) {
+    const bucket = generalRevitPromptSpecificity(entry);
+    specificity[bucket] = (specificity[bucket] || 0) + 1;
+  }
+  const mappedCommentTotal = mapped.reduce((sum, entry) => sum + entry.corpus_count, 0);
+  const directCommentTotal = direct.reduce((sum, entry) => sum + entry.corpus_count, 0);
+  return {
+    taxonomy_path: corpus.corpus_evidence.taxonomy_path,
+    actionable_comment_total: corpus.corpus_evidence.actionable_comment_total,
+    top_task_type_comment_total: corpus.corpus_evidence.top_task_type_comment_total,
+    mapped_comment_total: mappedCommentTotal,
+    directly_covered_comment_total: directCommentTotal,
+    mapped_top_task_type_rate: mappedCommentTotal / corpus.corpus_evidence.top_task_type_comment_total,
+    direct_top_task_type_rate: directCommentTotal / corpus.corpus_evidence.top_task_type_comment_total,
+    mapped_actionable_comment_rate: mappedCommentTotal / corpus.corpus_evidence.actionable_comment_total,
+    direct_actionable_comment_rate: directCommentTotal / corpus.corpus_evidence.actionable_comment_total,
+    covered_task_type_count: mapped.length,
+    top_task_type_count: corpus.corpus_evidence.task_types.length,
+    case_count: corpus.cases.length,
+    prompt_specificity: Object.fromEntries(Object.entries(specificity).sort(([left], [right]) => left.localeCompare(right))),
+    task_types: corpus.corpus_evidence.task_types
+  };
+}
+
 const CAPABILITY_REFUSAL_PATTERNS: RegExp[] = [
-  /\b(?:i\s+)?(?:can(?:not|'t)|am unable to|do not|don't)\s+(?:provide|perform|execute|make|change|edit|create|duplicate|print|access|query|inspect|use)\b/i,
+  /\b(?:i\s+)?(?:can(?:not|'t)|am unable to|do not|don't)\s+(?:provide|produce|perform|execute|make|change|edit|create|duplicate|print|access|query|inspect|use)\b/i,
   /\b(?:only|merely)\s+(?:exposes?|supports?|allows?)\s+(?:document|view|context|read[- ]only)/i,
   /\b(?:tools?|capabilit(?:y|ies)|write access|project[- ]wide quer(?:y|ies))\s+(?:is|are)\s+not (?:available|exposed|supported|enabled)/i,
   /\bnot available in (?:this|the) (?:profile|mode|runtime)\b/i,
+  /\bnot exposed in (?:this|the) (?:profile|mode|runtime)\b/i,
   /\bcertified(?:[- ]only)? (?:profile|mode|runtime)\b/i,
+  /\bcertified read[- ]only (?:surface|profile|mode|runtime)\b/i,
+  /\b(?:surface|profile|mode|runtime) (?:does not|doesn't) expose\b/i,
   /\bno (?:tool|capability|access|permission)s? to\b/i,
   /\bread[- ]only profile\b/i
 ];
@@ -127,7 +223,7 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
   for (const [key, value] of Object.entries(corpus.truth_policy)) {
     if (key !== "tiers" && value !== true) throw new Error(`Truth policy ${key} must remain enabled.`);
   }
-  if (corpus.cases.length < 20) throw new Error("General Revit corpus must cover at least twenty representative tasks.");
+  if (corpus.cases.length !== 100) throw new Error("General Revit corpus must contain exactly one hundred representative tasks.");
   const ids = new Set<string>();
   const families = new Set<string>();
   for (const testCase of corpus.cases) {
@@ -135,7 +231,8 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     if (ids.has(testCase.case_id)) throw new Error(`Duplicate case id ${testCase.case_id}.`);
     ids.add(testCase.case_id);
     families.add(testCase.operation_family);
-    if (testCase.prompt.trim().length < 30 || testCase.probe_prompt.trim().length < 40) throw new Error(`Case ${testCase.case_id} is underspecified.`);
+    if (testCase.prompt.trim().length < 12 || testCase.probe_prompt.trim().length < 30) throw new Error(`Case ${testCase.case_id} has no meaningful user or probe prompt.`);
+    if (testCase.probe_expected_effect && !["read", "preview"].includes(testCase.probe_expected_effect)) throw new Error(`Case ${testCase.case_id} has an invalid safe-probe effect.`);
     if (!/\b(?:do not|don't)\b/i.test(testCase.probe_prompt)) throw new Error(`Probe ${testCase.case_id} must explicitly remain non-mutating.`);
     if (testCase.capability_paths.length === 0 || testCase.dispatch_any_of.length === 0) throw new Error(`Case ${testCase.case_id} has no concrete execution lane.`);
     for (const candidate of [...testCase.capability_paths, ...testCase.dispatch_any_of]) {
@@ -144,6 +241,21 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
   }
   for (const required of corpus.required_operation_families) {
     if (!families.has(required)) throw new Error(`Missing required operation family ${required}.`);
+  }
+  const evidence = corpus.corpus_evidence;
+  if (!evidence || evidence.actionable_comment_total <= 0 || evidence.top_task_type_comment_total <= 0) {
+    throw new Error("General Revit corpus evidence is missing aggregate redline counts.");
+  }
+  const evidenceCount = evidence.task_types.reduce((sum, entry) => sum + entry.corpus_count, 0);
+  if (evidenceCount !== evidence.top_task_type_comment_total) throw new Error("General Revit top task-type evidence total is inconsistent.");
+  if (evidence.task_types.length !== 15) throw new Error("General Revit corpus evidence must retain the frozen top fifteen task types.");
+  for (const entry of evidence.task_types) {
+    if (!entry.task_type_id || entry.corpus_count <= 0) throw new Error("General Revit corpus evidence has an invalid task type.");
+    if (entry.coverage_kind === "gap" && entry.case_ids.length > 0) throw new Error(`${entry.task_type_id}: a gap cannot claim mapped cases.`);
+    if (entry.coverage_kind !== "gap" && entry.case_ids.length === 0) throw new Error(`${entry.task_type_id}: mapped coverage has no cases.`);
+    for (const caseId of entry.case_ids) {
+      if (!ids.has(caseId)) throw new Error(`${entry.task_type_id}: unknown mapped case ${caseId}.`);
+    }
   }
 }
 
@@ -183,10 +295,11 @@ function durableRevitToolNames(attempt: GeneralRevitAttempt): string[] {
   return [...new Set(names)];
 }
 
-function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; blocked: boolean; verified: boolean } {
+function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] } {
   let completed = false;
   let blocked = false;
   let verified = false;
+  const requestedEffects = new Set<GeneralRevitExpectedEffect>();
   for (const assignment of durableAssignments(attempt)) {
     const lifecycle = assignment.lifecycle && typeof assignment.lifecycle === "object" && !Array.isArray(assignment.lifecycle)
       ? assignment.lifecycle as { phase?: unknown; source_status?: unknown } : {};
@@ -202,8 +315,12 @@ function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; b
         const status = criterion && typeof criterion === "object" ? String((criterion as { status?: unknown }).status || "").toLowerCase() : "";
         return ["pass", "passed", "verified"].includes(status);
       }));
+    const execution = assignment.execution && typeof assignment.execution === "object" && !Array.isArray(assignment.execution)
+      ? assignment.execution as { requested_effect?: unknown } : {};
+    const requestedEffect = String(execution.requested_effect || "").trim().toLowerCase();
+    if (requestedEffect === "read" || requestedEffect === "preview" || requestedEffect === "apply") requestedEffects.add(requestedEffect);
   }
-  return { completed, blocked, verified };
+  return { completed, blocked, verified, requestedEffects: [...requestedEffects] };
 }
 
 function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: boolean; blocked: boolean; verified: boolean } {
@@ -232,12 +349,24 @@ function assistantReportsIncompleteMutation(attempt: GeneralRevitAttempt): boole
   return /\[teammate_loop_blocked\]|\bassignment is blocked\b|\bcannot claim (?:the )?(?:revit )?change is complete\b|\brequest(?:ed)?(?: [^.\n]{0,80})? (?:is|was) not (?:yet )?complete\b|\bnot yet complete\b/i.test(text);
 }
 
+function assistantReportsTaskBlocked(attempt: GeneralRevitAttempt): boolean {
+  const text = combinedMessage(attempt);
+  return /(?:^|\n)\s*(?:#{1,6}\s*)?blocked\b/i.test(text)
+    || /\bno qualifying [^.\n]{0,120} (?:exists|was found|could be found)\b/i.test(text)
+    || /\b(?:could not|was unable to) (?:produce|complete|execute|preview|apply)\b/i.test(text);
+}
+
 export function capabilityRefusalReason(attempt: GeneralRevitAttempt, expectedPathObserved = false): string | null {
   if (expectedPathObserved) return null;
   const text = combinedMessage(attempt);
   if (!text || MISSING_TARGET_PATTERNS.some((pattern) => pattern.test(text))) return null;
   const match = CAPABILITY_REFUSAL_PATTERNS.find((pattern) => pattern.test(text));
   return match ? text.slice(0, 500) : null;
+}
+
+function isMissingTargetClarification(attempt: GeneralRevitAttempt): boolean {
+  const text = combinedMessage(attempt);
+  return !!text && MISSING_TARGET_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function hasStructuredVerificationEvidence(value: unknown, depth = 0): boolean {
@@ -269,6 +398,17 @@ export function evaluateGeneralRevitCapabilityAttempt(
     ...durableTools.map((tool) => `mcp:${tool}`)
   ])];
   const expectedPathObserved = observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate)) || durableTools.length > 0;
+  const substantiveFailedAction = rows.some((row, index) => {
+    const failedPath = String(row.path || "");
+    if (row.status !== "failed" || !/^\/revit\/(?!health$|context$|ping$)/.test(failedPath)) return false;
+    return !rows.slice(index + 1).some((later) => String(later.path || "") === failedPath
+      && later.status === "success" && later.request_dispatched !== false);
+  });
+  const successfulExpectedPathObserved = durableTools.length > 0 || rows.some((row) => {
+    const candidate = String(row.path || "").trim();
+    if (!testCase.dispatch_any_of.includes(candidate) || row.status === "failed" || row.request_dispatched === false) return false;
+    return row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched";
+  });
   const teammate = teammateLoopTruth(attempt);
   const applyDispatched = teammate.mutationAttempted || attempt.effect_state === "apply_dispatched"
     || rows.some((row) => row.request_effect === "apply" && row.request_dispatched === true);
@@ -277,14 +417,25 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
   const assistantIncomplete = assistantReportsIncompleteMutation(attempt);
-  const refusalReason = capabilityRefusalReason(attempt, expectedPathObserved);
-  const requiredApplyMissing = testCase.expected_effect === "apply" && !applyDispatched;
-  const completed = attempt.ok !== false && expectedPathObserved && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete
-    && !requiredApplyMissing && (dispatched || durable.completed);
+  const assistantBlocked = assistantReportsTaskBlocked(attempt);
+  const missingTargetClarification = isMissingTargetClarification(attempt);
+  const refusalReason = capabilityRefusalReason(attempt, successfulExpectedPathObserved);
+  const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
+    && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
+  const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);
+  const requestedEffectSatisfied = testCase.expected_effect === "apply"
+    ? applyDispatched
+    : testCase.expected_effect === "preview"
+      ? directPreviewDispatched || durableEffectCompleted
+      : successfulExpectedPathObserved;
+  const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
+  const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
+    && (dispatched || durable.completed);
   const verified = completed && (teammate.verified || hasStructuredVerificationEvidence(attempt) || durable.verified);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
-  else if (attempt.ok === false || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || requiredApplyMissing) tier = "failed";
+  else if (missingTargetClarification && attempt.ok !== false && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
+  else if (attempt.ok === false || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";
@@ -304,8 +455,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     outcome_unknown: outcomeUnknown,
     refusal_reason: refusalReason,
     summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
-      : tier === "failed" ? requiredApplyMissing
-        ? "Mutation case did not dispatch a verified apply operation."
+      : tier === "failed" ? requiredEffectMissing
+        ? testCase.expected_effect === "apply"
+          ? "Mutation case did not dispatch a verified apply operation."
+          : `Case did not produce the requested ${testCase.expected_effect} effect.`
         : "Attempt failed or has an uncertain outcome."
         : tier === "verified" ? "Expected Revit lane completed with structured verification evidence."
           : tier === "previewed" ? "Expected non-mutating Revit preview lane completed."

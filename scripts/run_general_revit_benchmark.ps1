@@ -1,33 +1,46 @@
 [CmdletBinding()]
 param(
-  [ValidateSet("smoke", "redline", "long-horizon", "production", "code-execution", "full")]
+  [ValidateSet("smoke", "redline", "challenge", "terse", "research", "long-horizon", "production", "code-execution", "full")]
   [string]$Suite = "smoke",
-  [string]$Sidecar = "http://127.0.0.1:3908",
+  [string]$Fixture = "",
+  [string]$Sidecar = "http://127.0.0.1:3907",
+  [int]$TimeoutMs = 300000,
   [switch]$Apply,
+  [switch]$Ui,
   [switch]$RequireCompletion,
   [switch]$ListCases,
+  [switch]$RescoreOnly,
+  [string]$Resume = "",
   [string]$Baseline = "",
   [string]$Label = ""
 )
 
 $ErrorActionPreference = "Stop"
-$publicRoot = Split-Path -Parent $PSScriptRoot
-$backendRoot = Join-Path $publicRoot "apps\operator-backend"
-$outputDir = Join-Path $backendRoot "local-work\benchmarks\general-revit"
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$backendRoot = Join-Path $repoRoot "apps\operator-backend"
+$outputDir = Join-Path $repoRoot "local-work\benchmarks\general-revit"
 
 if (-not (Test-Path -LiteralPath $backendRoot)) {
   throw "Operator backend was not found at $backendRoot"
+}
+if ($Fixture -and $Fixture -notin @("snowdon_hvac", "snowdon_plumbing", "snowdon_electrical")) {
+  throw "Fixture must be snowdon_hvac, snowdon_plumbing, or snowdon_electrical."
 }
 
 $runnerArgs = @(
   "run", "probe:general-revit-capabilities", "--",
   "--suite", $Suite,
   "--sidecar", $Sidecar,
+  "--timeout-ms", $TimeoutMs,
   "--output-dir", $outputDir
 )
+if ($Fixture) { $runnerArgs += @("--fixture", $Fixture) }
 if ($Apply) { $runnerArgs += "--apply" }
+if ($Ui) { $runnerArgs += "--ui" }
 if ($RequireCompletion) { $runnerArgs += "--require-completion" }
 if ($ListCases) { $runnerArgs += "--list-cases" }
+if ($RescoreOnly) { $runnerArgs += "--rescore-only" }
+if ($Resume) { $runnerArgs += @("--resume", (Resolve-Path -LiteralPath $Resume).Path) }
 if ($Baseline) { $runnerArgs += @("--baseline", (Resolve-Path -LiteralPath $Baseline).Path) }
 if ($Label) { $runnerArgs += @("--label", $Label) }
 

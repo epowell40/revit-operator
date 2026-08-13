@@ -80,13 +80,17 @@ const MAX_LEDGER_BYTES = 16 * 1024 * 1024;
 const MAX_REQUIREMENTS = 10_000;
 const MAX_TEXT_CHARS = 2_000;
 const MAX_QUERY_CHARS = 1_000;
+// A planning lease may outlive its owner when a process is killed or a machine
+// restarts. Codex turns are capped at 30 minutes, so a one-minute release grace
+// keeps a live turn protected without letting an orphan fence all future work.
+const MAX_PLANNING_LEASE_MS = 31 * 60_000;
 const SCOPE_PRECEDENCE: Record<RequirementScopeKind, number> = {
   engineer: 100,
   office: 200,
   client: 300,
   project: 400
 };
-const activePlanningLeases = new Map<string, Map<string, string>>();
+const activePlanningLeases = new Map<string, Map<string, { receipt_sha256: string; expires_at_ms: number }>>();
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -117,14 +121,29 @@ function isPlanningLeaseProcessAlive(pid: unknown): boolean {
   }
 }
 
+function planningLeaseRecordIsActive(parsed: { pid?: unknown; created_at?: unknown; expires_at?: unknown }, nowMs = Date.now()): boolean {
+  const expiresAt = Date.parse(String(parsed.expires_at ?? ""));
+  if (Number.isFinite(expiresAt)) {
+    if (expiresAt <= nowMs) return false;
+  } else {
+    const createdAt = Date.parse(String(parsed.created_at ?? ""));
+    // Legacy leases did not carry expires_at. Preserve fail-closed behavior for
+    // malformed evidence, but bound a well-formed legacy lease by the same
+    // maximum turn lifetime so Windows PID reuse cannot create a permanent fence.
+    if (!Number.isFinite(createdAt)) return true;
+    if (createdAt + MAX_PLANNING_LEASE_MS <= nowMs) return false;
+  }
+  return isPlanningLeaseProcessAlive(parsed.pid);
+}
+
 function hasActiveFilesystemPlanningLease(leaseDir: string): boolean {
   for (const entry of fs.readdirSync(leaseDir, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) return true;
     try {
       const parsed = JSON.parse(
         fs.readFileSync(path.join(leaseDir, entry.name), "utf8")
-      ) as { pid?: unknown };
-      if (isPlanningLeaseProcessAlive(parsed.pid)) return true;
+      ) as { pid?: unknown; created_at?: unknown; expires_at?: unknown };
+      if (planningLeaseRecordIsActive(parsed)) return true;
     } catch {
       // Malformed lease evidence is fail-closed.
       return true;
@@ -133,9 +152,10 @@ function hasActiveFilesystemPlanningLease(leaseDir: string): boolean {
   return false;
 }
 
-export function beginRequirementsPlanningLease(receiptSha256: string): RequirementsPlanningLease {
+export function beginRequirementsPlanningLease(receiptSha256: string, durationMs = MAX_PLANNING_LEASE_MS): RequirementsPlanningLease {
   const hash = String(receiptSha256 ?? "").trim().toLowerCase();
   if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("receipt_sha256 is invalid for a requirements planning lease.");
+  const boundedDurationMs = Math.max(60_000, Math.min(MAX_PLANNING_LEASE_MS, Math.trunc(durationMs)));
   return withRequirementsWriteLock(() => {
     const ledger_path = ledgerPath();
     const token = `reqlease_${randomUUID()}`;
@@ -143,9 +163,16 @@ export function beginRequirementsPlanningLease(receiptSha256: string): Requireme
     const lease_path = path.join(leaseDir, `${token}.json`);
     fs.mkdirSync(leaseDir, { recursive: true });
     let fd: number | null = null;
+    const createdAt = new Date();
     try {
       fd = fs.openSync(lease_path, "wx");
-      fs.writeFileSync(fd, JSON.stringify({ token, receipt_sha256: hash, pid: process.pid, created_at: nowIso() }) + "\n", "utf8");
+      fs.writeFileSync(fd, JSON.stringify({
+        token,
+        receipt_sha256: hash,
+        pid: process.pid,
+        created_at: createdAt.toISOString(),
+        expires_at: new Date(createdAt.getTime() + boundedDurationMs).toISOString()
+      }) + "\n", "utf8");
       fs.fsyncSync(fd);
     } catch (error) {
       if (fd !== null) {
@@ -155,8 +182,8 @@ export function beginRequirementsPlanningLease(receiptSha256: string): Requireme
       throw error;
     }
     try { fs.closeSync(fd); } catch { /* best effort */ }
-    const leases = activePlanningLeases.get(ledger_path) ?? new Map<string, string>();
-    leases.set(token, hash);
+    const leases = activePlanningLeases.get(ledger_path) ?? new Map<string, { receipt_sha256: string; expires_at_ms: number }>();
+    leases.set(token, { receipt_sha256: hash, expires_at_ms: createdAt.getTime() + boundedDurationMs });
     activePlanningLeases.set(ledger_path, leases);
     return { ledger_path, lease_path, token, receipt_sha256: hash };
   });
@@ -177,7 +204,14 @@ export function endRequirementsPlanningLease(lease: RequirementsPlanningLease | 
 
 function assertRequirementsWriteUnlocked(p = ledgerPath()): void {
   const leases = activePlanningLeases.get(p);
-  if (leases && leases.size > 0) throw new Error("Requirements write blocked by an active planning lease; retry after the current plan finishes.");
+  if (leases) {
+    const nowMs = Date.now();
+    for (const [token, lease] of leases) {
+      if (lease.expires_at_ms <= nowMs) leases.delete(token);
+    }
+    if (leases.size === 0) activePlanningLeases.delete(p);
+    else throw new Error("Requirements write blocked by an active planning lease; retry after the current plan finishes.");
+  }
   const leaseDir = planningLeaseDirectory(p);
   try {
     if (hasActiveFilesystemPlanningLease(leaseDir)) {

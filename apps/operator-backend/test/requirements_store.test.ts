@@ -532,6 +532,67 @@ test("dead-process planning lease remains auditable but does not block a restart
   assert.equal(fs.existsSync(leasePath), true);
 });
 
+test("expired legacy planning lease cannot permanently fence work when its pid is reused", () => {
+  const root = mkWorkspace();
+  const ref = scope("engineer", "local");
+  const receipt = resolveRequirements({ scope_refs: [ref] });
+  const leaseDir = `${path.join(root, "memory", "requirements.v1.jsonl")}.planning-leases`;
+  const leasePath = path.join(leaseDir, "reqlease_reused_pid.json");
+  fs.mkdirSync(leaseDir, { recursive: true });
+  fs.writeFileSync(
+    leasePath,
+    JSON.stringify({
+      token: "reqlease_reused_pid",
+      receipt_sha256: receipt.receipt_sha256,
+      pid: process.pid,
+      created_at: "2026-01-01T00:00:00.000Z"
+    }) + "\n",
+    "utf8"
+  );
+
+  assert.equal(
+    createRequirement({
+      scope: ref,
+      key: "tags.recovery",
+      text: "Expired owner evidence must not block this write."
+    }).requirement.revision,
+    1
+  );
+  assert.equal(fs.existsSync(leasePath), true);
+});
+
+test("planning lease records an explicit bounded expiry", () => {
+  mkWorkspace();
+  const receipt = resolveRequirements({ scope_refs: [scope("engineer", "local")] });
+  const lease = beginRequirementsPlanningLease(receipt.receipt_sha256, 60_000);
+  try {
+    const record = JSON.parse(fs.readFileSync(lease.lease_path, "utf8")) as { created_at: string; expires_at: string };
+    const duration = Date.parse(record.expires_at) - Date.parse(record.created_at);
+    assert.equal(duration, 60_000);
+  } finally {
+    endRequirementsPlanningLease(lease);
+  }
+});
+
+test("an expired same-process planning lease cannot permanently fence work", () => {
+  mkWorkspace();
+  const ref = scope("engineer", "local");
+  const receipt = resolveRequirements({ scope_refs: [ref] });
+  const lease = beginRequirementsPlanningLease(receipt.receipt_sha256, 60_000);
+  const realDateNow = Date.now;
+  try {
+    Date.now = () => realDateNow() + 60_001;
+    assert.equal(createRequirement({
+      scope: ref,
+      key: "tags.same_process_recovery",
+      text: "Expired in-memory owner evidence must not block this write."
+    }).requirement.revision, 1);
+  } finally {
+    Date.now = realDateNow;
+    endRequirementsPlanningLease(lease);
+  }
+});
+
 test("OpenAI requirements policy formats prompts and blocks a stale action response", () => {
   mkWorkspace();
   const request: ChatRequest = {

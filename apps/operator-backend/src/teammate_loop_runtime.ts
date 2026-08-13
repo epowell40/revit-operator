@@ -72,6 +72,17 @@ function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function structuredActionBody(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 1_000_000 || !/^[\[{]/.test(trimmed)) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
 function boundedString(value: unknown, max: number): string {
   return typeof value === "string" && value.length <= max ? value.trim() : "";
 }
@@ -338,21 +349,25 @@ function previewFlags(value: unknown): { preview: boolean; apply: boolean } {
 function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): PendingCall {
   const methodName = `${method || ""}`.trim().toUpperCase();
   const path = `${pathValue || ""}`.trim().toLowerCase();
-  const signature = actionSignature(path, body);
-  const target_tokens = targetTokens(body);
-  const expected_values = expectedValues(body);
-  const operation = operationFor(path, body);
+  // MCP adapters may carry an HTTP request body as serialized JSON. Classify
+  // that wire form identically to an object body so dry-runs are not mistaken
+  // for applies and preview/apply signatures remain comparable.
+  const normalizedBody = structuredActionBody(body);
+  const signature = actionSignature(path, normalizedBody);
+  const target_tokens = targetTokens(normalizedBody);
+  const expected_values = expectedValues(normalizedBody);
+  const operation = operationFor(path, normalizedBody);
   const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (DISCOVERY_PATHS.has(path)) return call("discovery");
   if (methodName === "GET") return call("read");
   if (methodName === "POST" && path === "/revit/transaction-plan") return call("preview");
   if (methodName === "POST" && !path.startsWith("/revit/")) return call("unknown");
-  const conditionalEffect = methodName === "POST" ? conditionalActionPathEffect(path, body) : undefined;
+  const conditionalEffect = methodName === "POST" ? conditionalActionPathEffect(path, normalizedBody) : undefined;
   if (conditionalEffect !== undefined) return call(conditionalEffect);
-  if (methodName === "POST" && !pathLooksWrite(path, body)) return call("read");
+  if (methodName === "POST" && !pathLooksWrite(path, normalizedBody)) return call("read");
   if (methodName !== "POST" || !path.startsWith("/revit/")) return call("unknown");
-  const flags = previewFlags(body);
+  const flags = previewFlags(normalizedBody);
   return call(flags.preview ? "preview" : "apply");
 }
 

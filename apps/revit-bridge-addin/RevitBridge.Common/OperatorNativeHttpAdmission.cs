@@ -633,14 +633,8 @@ namespace RevitBridge.Common
                 }
 
                 var elapsed = authorizationRoundTrip ?? TimeSpan.Zero;
-                if (elapsed < TimeSpan.Zero || elapsed >= TimeSpan.FromMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds))
-                    throw new OperatorNativeHttpAdmissionException(
-                        "CERTIFICATION_DIRECT_AUTHORIZATION_EXPIRED",
-                        "Native Revit authorization response is not current.",
-                        503,
-                        true,
-                        "unavailable",
-                        true);
+                if (elapsed < TimeSpan.Zero)
+                    throw Protocol("CERTIFICATION_DIRECT_AUTHORIZATION_TIME_INVALID", "Native Revit authorization duration is invalid.");
                 var receipt = new OperatorNativeHttpAuthorizationReceipt(
                     requestId,
                     method,
@@ -652,7 +646,13 @@ namespace RevitBridge.Common
                     canonicalBodyJson,
                     bodySha256,
                     authorizedAtUtc,
-                    nowUtc.ToUniversalTime().AddMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds - elapsed.TotalMilliseconds),
+                    // The backend stamps authorized_at when it creates the
+                    // response, not when the native request begins. Start the
+                    // one-use local dispatch window when that exact HTTPS
+                    // response is received. Subtracting the full hosted round
+                    // trip made every otherwise valid response taking >= 5s
+                    // expire before Revit could consume it.
+                    nowUtc.ToUniversalTime().AddMilliseconds(OperatorNativeHttpAuthorizationReceipt.ValidForMilliseconds),
                     authorizationHash);
                 return receipt;
             }
