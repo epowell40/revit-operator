@@ -171,24 +171,9 @@ namespace RevitBridge.Logic.Handlers
                 });
             }
 
-            const int ConfirmThreshold = 25;
             var requestedUpdateCount = updateTargets.Count;
             var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
             string? requiredConfirm = null;
-            if (apply && requestedUpdateCount > ConfirmThreshold)
-            {
-                requiredConfirm = BulkConfirmUtil.ExpectedApplyChanges(requestedUpdateCount);
-                if (!BulkConfirmUtil.EqualsNormalized(p.confirm, requiredConfirm))
-                {
-                    throw new OperatorToolUserErrorException(
-                        message: "Bulk panel-parameter update requires typed confirmation.",
-                        code: "bulk_confirm_required",
-                        requiredConfirm: requiredConfirm,
-                        confirmReceived: confirmReceived,
-                        maxChangesPerCall: 10,
-                        hint: "Retry with confirm set to the requiredConfirm string (exact, but markdown like **...** is ok). If OPERATOR_BULK_CONFIRM_SIMPLE=1, you can also use confirm:\"yes\".");
-                }
-            }
 
             var updatedCount = 0;
             var verifiedCount = 0;

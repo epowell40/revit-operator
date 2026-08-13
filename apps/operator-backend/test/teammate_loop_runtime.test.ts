@@ -323,6 +323,35 @@ test("Codex MCP host guard supports preview while blocking an unverified repeate
   }
 });
 
+test("known pre-dispatch mutation failures may be corrected and retried", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Rename all HRU Marks to ERU while preserving each suffix."));
+  const args = {
+    changes: [{ elementId: 42, parameterName: "Mark", value: "ERU101", expectedOldValue: "HRU101" }],
+    dryRun: false,
+    apply: true
+  };
+  try {
+    const first = guardTeammateMcpCall(owner, { tool: "revit_set_parameters", arguments: args });
+    assert.equal(first.allowed, true);
+    recordTeammateMcpResult(owner, first, {
+      isError: true,
+      content: [{ type: "text", text: "RevitCourierError: revit_action_failed: Bulk parameter edit requires typed confirmation." }]
+    });
+    const afterFailure = teammateLoopReceiptForOwner(owner);
+    assert.equal(afterFailure?.blocked_reason, null);
+    assert.equal(afterFailure?.stage, "apply");
+
+    const retry = guardTeammateMcpCall(owner, { tool: "revit_set_parameters", arguments: args });
+    assert.equal(retry.allowed, true);
+    assert.equal(retry.call?.effect, "apply");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 2);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("Codex MCP host guard treats serialized HTTP bodies like object bodies", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

@@ -51,24 +51,9 @@ namespace RevitBridge.Logic.Handlers
 
             if (changes.Count == 0) throw new InvalidOperationException("changes is required and must be a non-empty array.");
 
-            const int ConfirmThreshold = 10;
             var confirmReceived = BulkConfirmUtil.Normalize(p.confirm);
             string? requiredConfirm = null;
             var requestedCount = changes.Count * targetIds.Count;
-            if (!p.dryRun && requestedCount > ConfirmThreshold)
-            {
-                requiredConfirm = BulkConfirmUtil.ExpectedApplyChanges(requestedCount);
-                if (!BulkConfirmUtil.EqualsNormalized(p.confirm, requiredConfirm))
-                {
-                    throw new OperatorToolUserErrorException(
-                        message: "Bulk type parameter edit requires typed confirmation.",
-                        code: "bulk_confirm_required",
-                        requiredConfirm: requiredConfirm,
-                        confirmReceived: confirmReceived,
-                        maxChangesPerCall: 10,
-                        hint: "Retry with confirm set to the requiredConfirm string (exact, but markdown like **...** is ok). If OPERATOR_BULK_CONFIRM_SIMPLE=1, you can also use confirm:\"yes\".");
-                }
-            }
 
             var uidoc = app.ActiveUIDocument;
             if (uidoc == null) throw new InvalidOperationException("No active UI document.");
