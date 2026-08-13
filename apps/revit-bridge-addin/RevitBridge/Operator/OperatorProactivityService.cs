@@ -146,6 +146,12 @@ namespace RevitBridge.Operator
                 WarningsSnapshot? snapshot = null;
                 try
                 {
+                    // Revit can accept an ExternalEvent while it is still on Home or
+                    // opening a document without ever invoking the callback. Never let
+                    // this best-effort watcher own the single-flight queue indefinitely;
+                    // cancellation removes the pending item and releases the slot.
+                    using var hostReadTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    hostReadTimeout.CancelAfter(TimeSpan.FromSeconds(5));
                     snapshot = await _eventService.Run(app =>
                     {
                         var doc = app?.ActiveUIDocument?.Document;
@@ -157,7 +163,7 @@ namespace RevitBridge.Operator
                             DocumentPath = doc.PathName ?? "",
                             WarningCount = warnings?.Count ?? 0
                         };
-                    }).ConfigureAwait(false);
+                    }, hostReadTimeout.Token).ConfigureAwait(false);
                 }
                 catch
                 {
