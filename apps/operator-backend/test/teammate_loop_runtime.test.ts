@@ -355,6 +355,27 @@ test("Codex MCP host guard treats serialized HTTP bodies like object bodies", ()
   }
 });
 
+test("Codex MCP host guard recognizes generated-program preview mode in serialized arguments", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("In the Revit model, preview changing all Mechanical Equipment Mark parameters from HRU to ERU; do not commit."));
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "run_dynamic_revit_program",
+      arguments: JSON.stringify({ mode: "preview", source: "context.Plan.SetParameter(element, 'Mark', 'ERU-1');" })
+    });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(owner, preview, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, requested_mode: "preview", rollback_truth: true }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.stage, "preview");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("Codex MCP host guard accepts independently returned target identity during readback", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

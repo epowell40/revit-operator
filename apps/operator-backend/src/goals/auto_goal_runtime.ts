@@ -29,6 +29,19 @@ export type AutoGoalTeammateReceipt = {
 type AutoGoalRequestedEffect = "read" | "preview" | "apply";
 type AutoGoalObservationEffect = AutoGoalRequestedEffect | "discovery";
 
+function observationObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+  const text = value.trim();
+  if (!text || text.length > 1_000_000 || !text.startsWith("{")) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
   const current = getCurrentGoalForSession(sessionId);
   return current && ["paused", "blocked"].includes(current.status) ? current : null;
@@ -68,7 +81,10 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           return;
         }
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
-        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText);
+        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
+          || /(?:^|\n)\s*(?:#{1,6}\s*)?blocked\b/i.test(assistantText)
+          || /\bno qualifying [^.\n]{0,120} (?:exists|was found|could be found)\b/i.test(assistantText)
+          || /\b(?:requested |named )?(?:target|schedule|sheet|view|family|type|element) (?:was |is )?not found\b/i.test(assistantText);
         const requestedEffect = requestedEffectForSession(sessionId);
         const evidenceTools = requestedEffect === "apply"
           ? successfulApplyTools
@@ -124,10 +140,11 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
     "revit_write_grant_status"
   ]);
   if (discoveryTools.has(tool) || /(?:^|_)(?:discovery|strategy|documentation|examples)$/.test(tool)) return "discovery";
-  const args = observation.arguments && typeof observation.arguments === "object" ? observation.arguments as Record<string, unknown> : {};
-  const body = args.body && typeof args.body === "object" ? args.body as Record<string, unknown> : args;
-  const transaction = body.transaction && typeof body.transaction === "object" ? body.transaction as Record<string, unknown> : {};
-  const transactionMode = `${transaction.mode || body.mode || ""}`.trim().toLowerCase();
+  const args = observationObject(observation.arguments);
+  const parsedBody = observationObject(args.body);
+  const body = Object.keys(parsedBody).length > 0 ? parsedBody : args;
+  const transaction = observationObject(body.transaction);
+  const transactionMode = `${transaction.mode || body.mode || args.mode || ""}`.trim().toLowerCase();
   if (body.apply === true || body.dryRun === false || body.dry_run === false
       || ["apply", "commit", "committed"].includes(transactionMode)) return "apply";
   if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
@@ -137,6 +154,10 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
     if (route === "/revit/transaction-plan") return "discovery";
     if (/\/(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|reload|configure|replace|place|assign|link)(?:-|\/|$)/.test(route)) return "apply";
+  }
+  if (tool === "run_dynamic_revit_program") {
+    if (["preview", "rollback", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
+    if (["apply", "commit", "committed"].includes(transactionMode)) return "apply";
   }
   if (/revit_(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|reload|configure|replace|place|assign|link)/.test(tool)) return "apply";
   return "read";
