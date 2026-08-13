@@ -153,6 +153,9 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /Do not infer sheet totals/);
   assert.match(instructions, /Schedule-row edit rule/);
   assert.match(instructions, /revit_update_schedule_cell/);
+  assert.match(instructions, /Preview execution rule/);
+  assert.match(instructions, /do not stop at a prose plan/);
+  assert.match(instructions, /run_dynamic_revit_program.*mode:\"preview\"/);
 });
 
 test("Codex instructions keep negative searches scoped and require physical MEP serving connections", () => {

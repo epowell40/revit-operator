@@ -120,8 +120,8 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
   const previewOnly =
-    /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|writ)/.test(text) ||
-    /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|write)/.test(text);
+    /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ)/.test(text) ||
+    /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|commit|write)/.test(text);
   const explicitMutation = containsMutationVerb(text);
   if (previewOnly) return "inspection";
   const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
@@ -139,8 +139,8 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
 function hasNoWriteAuthority(text: string): boolean {
   return /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text) ||
     /\b(?:just|only)\s+(?:show|inspect|preview|check|tell|list|find)\b/i.test(text) ||
-    /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|writ)/i.test(text) ||
-    /\b(?:do not|don't|dont|no)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|write)/i.test(text);
+    /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ)/i.test(text) ||
+    /\b(?:do not|don't|dont|no)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|commit|write)/i.test(text);
 }
 
 function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): boolean {
@@ -338,7 +338,7 @@ function operationFor(path: string, body: unknown): string {
 
 function previewFlags(value: unknown): { preview: boolean; apply: boolean } {
   const body = objectValue(value);
-  const transactionMode = boundedString(objectValue(body.transaction).mode, 40).toLowerCase();
+  const transactionMode = (boundedString(objectValue(body.transaction).mode, 40) || boundedString(body.mode, 40)).toLowerCase();
   const preview = body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
     || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode);
   const apply = body.apply === true || body.dryRun === false || body.dry_run === false || body.commit === true || body.execute === true
@@ -373,7 +373,7 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
 
 function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const tool = `${toolValue || ""}`.trim();
-  const args = objectValue(argsValue);
+  const args = objectValue(structuredActionBody(argsValue));
   if (tool === "revit_call_tool") return classifyPathCall(args.method, args.path, args.body);
   const target_tokens = targetTokens(args);
   const expected_values = expectedValues(args);
@@ -387,6 +387,9 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   if (tool === "revit_transaction_plan") return call("preview", "revit_transaction");
   if (tool === "revit_transaction_apply") return call("apply", "revit_transaction");
   const flags = previewFlags(args);
+  if (tool === "run_dynamic_revit_program") {
+    return call(flags.preview ? "preview" : flags.apply ? "apply" : "unknown", "revit_dynamic_program");
+  }
   if (flags.preview || (DEFAULT_PREVIEW_TOOLS.has(tool) && !flags.apply)) return call("preview");
   if (/^revit_(?:set_|update_|replace_|delete_|move_|rotate_|create_|place_|route_|connect_|disconnect_|transaction_apply)/.test(tool) || flags.apply) {
     return call("apply");

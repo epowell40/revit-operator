@@ -852,6 +852,40 @@ test("auto goal completion requires evidence at the requested read, preview, or 
   });
 });
 
+test("auto goal effect classification preserves serialized rollback previews from generic and dynamic tools", () => {
+  withWorkspace(() => {
+    const genericGoal = setAgentGoal("session-serialized-preview", {
+      title: "Preview tags", objective: "Preview tagging the selected equipment; do not commit.",
+      acceptance_criteria: ["The rollback preview is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview", status: "in_progress" }]
+    });
+    const generic = createAutoGoalTurnObserver("session-serialized-preview");
+    generic.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/tag-elements", body: JSON.stringify({ apply: false, dryRun: true, elementIds: [42] }) },
+      result: { preview: true, affectedIds: [42], rollbackVerified: true }
+    });
+    generic.finish("turn-serialized-preview", "Previewed one tag and verified rollback.");
+    assert.equal(getGoal(genericGoal.id)?.status, "complete");
+
+    const dynamicGoal = setAgentGoal("session-dynamic-preview", {
+      title: "Preview marks", objective: "Preview changing HRU Marks; do not commit.",
+      acceptance_criteria: ["The generated-program rollback preview is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview", status: "in_progress" }]
+    });
+    const dynamic = createAutoGoalTurnObserver("session-dynamic-preview");
+    dynamic.observe({
+      server: "revit_operator", tool: "run_dynamic_revit_program", success: true,
+      arguments: JSON.stringify({ mode: "preview", source: "context.Plan.SetParameter(element, \"Mark\", \"ERU-1\");" }),
+      result: { requested_mode: "preview", rollback_truth: true, projected_changed_element_ids: [42] }
+    });
+    dynamic.finish("turn-dynamic-preview", "Previewed one generated-program change and verified rollback.");
+    assert.equal(getGoal(dynamicGoal.id)?.status, "complete");
+  });
+});
+
 test("an apply operation during a read-only assignment is blocked for reconciliation", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-effect-unexpected-apply", {
@@ -966,6 +1000,31 @@ test("an explicit task-level blocker still blocks after a successful discovery o
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, result: { partial_count: 20 } });
     observer.finish("turn-partial-query", "I could not complete the requested task because the model query was truncated; the result is not fully verified.");
     assert.equal(getGoal(goal.id)?.status, "blocked");
+  });
+});
+
+test("a blocked heading or missing qualifying target cannot be server-signed as completion", () => {
+  withWorkspace(() => {
+    for (const [sessionId, assistantText] of [
+      ["session-blocked-heading", "## Blocked — no qualifying row\nThe schedule has no writable airflow row."],
+      ["session-missing-target", "The requested schedule was not found in the active Revit model."]
+    ]) {
+      const goal = setAgentGoal(sessionId, {
+        title: "Update schedule", objective: "Preview the requested schedule update.",
+        acceptance_criteria: ["The schedule preview is verified."],
+        work_budget: { mode: "auto_goal", requested_effect: "preview" },
+        work_items: [{ id: "auto.revit-work", title: "Preview", status: "in_progress" }]
+      });
+      const observer = createAutoGoalTurnObserver(sessionId);
+      observer.observe({
+        server: "revit_operator", tool: "revit_call_tool", success: true,
+        arguments: { path: "/revit/update-schedule-cell", body: JSON.stringify({ apply: false, dryRun: true }) },
+        result: { ok: true, candidateCount: 0 }
+      });
+      observer.finish(`turn-${sessionId}`, assistantText);
+      assert.equal(getGoal(goal.id)?.status, "blocked");
+      assert.equal(getGoal(goal.id)?.completion_audit?.complete ?? false, false);
+    }
   });
 });
 
