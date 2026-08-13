@@ -141,6 +141,20 @@ test("ordinary Revit mutation verbs authorize writes instead of silently forcing
   assert.equal(buildTeammateTurnContract(request("How should we duplicate sheets?")).write_authorized, false);
 });
 
+test("benchmark-safe read and preview prompts remain live Revit work, not conceptual conversation", () => {
+  const prompts = [
+    "Count all air devices in the project and break the total down by family and type. You may inspect an existing air-device schedule. Do not change the model.",
+    "Find one mechanical-equipment instance whose Mark is writable, preview changing only that instance's Mark to TEST-AHU-01, and report the exact target and readback plan. Do not apply the change."
+  ];
+  for (const prompt of prompts) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "inspection", prompt);
+    assert.equal(contract.context_state, "live", prompt);
+    assert.equal(contract.no_write, true, prompt);
+    assert.equal(contract.stage, "discover", prompt);
+  }
+});
+
 test("transaction-plan is preview-only to the teammate loop", () => {
   __testOnlyResetTeammateLoopState();
   const preview = guardGenericTeammateDecision(request("Preview the transaction plan before applying it."), response([{
@@ -304,6 +318,38 @@ test("Codex MCP host guard supports preview while blocking an unverified repeate
     assert.equal(readback.allowed, true);
     recordTeammateMcpResult(owner, readback, { content: [{ type: "text", text: JSON.stringify({ ok: true, values: ["WATTS"] }) }] });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("Codex MCP host guard treats serialized HTTP bodies like object bodies", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/set-parameters",
+        body: JSON.stringify({ elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: false, dryRun: true })
+      }
+    });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(owner, preview, { content: [{ type: "text", text: JSON.stringify({ ok: true, dryRun: true }) }] });
+
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/set-parameters",
+        body: JSON.stringify({ elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true, dryRun: false })
+      }
+    });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
   } finally {
     endTeammateLoopOwner(lease);
   }

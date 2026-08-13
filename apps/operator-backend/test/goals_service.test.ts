@@ -804,6 +804,7 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   const decision = classifyAutoGoalRequest("Add receptacles where marked in these redlines and verify the placement.");
   assert.equal(decision.shouldStart, true);
   assert.ok(decision.signals.length >= 2);
+  assert.equal(decision.requestedEffect, "apply");
 
   const single = classifyAutoGoalRequest("Open sheet E101.");
   assert.equal(single.shouldStart, true);
@@ -811,9 +812,60 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   const airCount = classifyAutoGoalRequest("Please count the air devices on the project and break the different types down too.");
   assert.equal(airCount.shouldStart, true);
   assert.ok(airCount.signals.includes("live Revit model work"));
+  assert.equal(airCount.requestedEffect, "read");
+
+  const preview = classifyAutoGoalRequest("Preview changing all HRU Marks to ERU, but do not commit it.");
+  assert.equal(preview.requestedEffect, "preview");
 
   const conceptual = classifyAutoGoalRequest("Explain why construction documents use schedules.");
   assert.equal(conceptual.shouldStart, false);
+});
+
+test("auto goal completion requires evidence at the requested read, preview, or apply effect", () => {
+  withWorkspace(() => {
+    const previewGoal = setAgentGoal("session-effect-preview", {
+      title: "Preview marks", objective: "Preview changing HRU Marks; do not commit.",
+      acceptance_criteria: ["The preview is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview", status: "in_progress" }]
+    });
+    const readOnly = createAutoGoalTurnObserver("session-effect-preview");
+    readOnly.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/find-elements", body: {} }, result: { count: 37 } });
+    readOnly.finish("turn-read-only", "Found 37 candidates.");
+    assert.equal(getGoal(previewGoal.id)?.status, "active");
+
+    const preview = createAutoGoalTurnObserver("session-effect-preview");
+    preview.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/set-parameter", body: { dryRun: true, apply: false } }, result: { candidateCount: 37, rolledBack: true } });
+    preview.finish("turn-preview", "Previewed 37 changes and verified rollback.");
+    assert.equal(getGoal(previewGoal.id)?.status, "complete");
+
+    const applyGoal = setAgentGoal("session-effect-apply", {
+      title: "Apply marks", objective: "Change all HRU Marks to ERU.",
+      acceptance_criteria: ["The changes are applied and verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Apply", status: "in_progress" }]
+    });
+    const applyPreviewOnly = createAutoGoalTurnObserver("session-effect-apply");
+    applyPreviewOnly.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/set-parameter", body: { dryRun: true, apply: false } }, result: { candidateCount: 37 } });
+    applyPreviewOnly.finish("turn-apply-preview", "Preview complete; apply has not run.");
+    assert.equal(getGoal(applyGoal.id)?.status, "active");
+  });
+});
+
+test("an apply operation during a read-only assignment is blocked for reconciliation", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-effect-unexpected-apply", {
+      title: "Inspect marks", objective: "Inspect Marks without changing them.",
+      acceptance_criteria: ["The inspection is reported."],
+      work_budget: { mode: "auto_goal", requested_effect: "read" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-effect-unexpected-apply");
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/set-parameter", body: { apply: true, dryRun: false } }, result: { committed: true } });
+    observer.finish("turn-unexpected-apply", "Inspection complete.");
+    assert.equal(getGoal(goal.id)?.status, "blocked");
+    assert.match(getGoal(goal.id)?.blocker || "", /effect reconciliation/);
+  });
 });
 
 test("successful live tools complete a quick auto assignment with trusted evidence", () => {
@@ -1009,6 +1061,26 @@ test("current session lookup is not evicted by unrelated global goal history", (
     assert.throws(() => setAgentGoal("session-outside-window", {
       title: "Duplicate", objective: "Must not start.", acceptance_criteria: ["No duplicate."]
     }), /explicitly resume or clear/);
+  });
+});
+
+test("active session progress and clearing are not evicted by unrelated global goal history", () => {
+  withWorkspace(() => {
+    const active = setAgentGoal("session-active-outside-window", {
+      title: "Active assignment", objective: "Remain writable.", acceptance_criteria: ["Progress can be recorded."]
+    });
+    for (let index = 0; index < 205; index += 1) {
+      createGoal({
+        title: `Newer unrelated ${index}`,
+        objective: "Unrelated durable history.",
+        acceptance_criteria: ["History exists."],
+        related_session_id: `newer-other-session-${index}`
+      });
+    }
+    assert.equal(getActiveGoalForSession("session-active-outside-window")?.id, active.id);
+    assert.equal(appendGoalProgress("session-active-outside-window", { summary: "Still reachable." }).id, active.id);
+    assert.equal(clearAgentGoal("session-active-outside-window", "Done testing.")?.id, active.id);
+    assert.equal(getGoal(active.id)?.status, "canceled");
   });
 });
 

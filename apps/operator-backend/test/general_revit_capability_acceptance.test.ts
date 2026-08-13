@@ -4,10 +4,16 @@ import path from "node:path";
 import test from "node:test";
 import {
   evaluateGeneralRevitCapabilityAttempt,
+  generalRevitExecutionCase,
+  generalRevitGroundingDemand,
+  generalRevitPromptSpecificity,
+  generalRevitResearchDemand,
   loadGeneralRevitCapabilityCorpus,
+  summarizeGeneralRevitCorpusCoverage,
   summarizeGeneralRevitCapabilityReport
 } from "../src/benchmark/general_revit_capability_acceptance.js";
 import { loadEpic0441Campaign } from "../src/benchmark/epic0441_campaign.js";
+import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../src/benchmark/general_revit_sample_fixtures.js";
 import { backendRoot, repoRoot } from "../src/benchmark/files.js";
 
 const corpus = loadGeneralRevitCapabilityCorpus();
@@ -18,7 +24,7 @@ function source(relativePath: string): string {
 
 test("general Revit corpus covers the user basics and the retained redline operation families", () => {
   assert.equal(new Set(corpus.cases.map((entry) => entry.case_id)).size, corpus.cases.length);
-  assert.ok(corpus.cases.length >= 40);
+  assert.equal(corpus.cases.length, 100);
   for (const family of corpus.required_operation_families) {
     assert.ok(corpus.cases.some((entry) => entry.operation_family === family), `missing ${family}`);
   }
@@ -43,6 +49,39 @@ test("general Revit corpus covers the user basics and the retained redline opera
   assert.equal(corpus.cases.filter((entry) => entry.source === "long_horizon").length, 7);
   assert.equal(corpus.cases.filter((entry) => entry.source === "document_production").length, 2);
   assert.equal(corpus.cases.filter((entry) => entry.source === "code_execution").length, 1);
+  assert.ok(corpus.cases.filter((entry) => entry.case_id.startsWith("c")).length >= 45);
+  assert.ok(corpus.cases.filter((entry) => entry.prompt.split(/\s+/).length <= 16).length >= 15);
+  assert.ok(corpus.cases.filter((entry) => entry.operation_family === "research_and_compliance").length >= 4);
+  assert.ok(corpus.cases.filter((entry) => entry.operation_family === "schedule_configure").length >= 9);
+  assert.ok(corpus.cases.filter((entry) => ["tag", "text_edit", "move", "type_change"].includes(entry.operation_family)).length >= 17);
+});
+
+test("corpus coverage truthfully maps the frozen top fifteen and prompt-specificity cohorts", () => {
+  const coverage = summarizeGeneralRevitCorpusCoverage(corpus);
+  assert.equal(coverage.case_count, 100);
+  assert.equal(coverage.top_task_type_count, 15);
+  assert.equal(coverage.covered_task_type_count, 15);
+  assert.equal(coverage.top_task_type_comment_total, 5599);
+  assert.equal(coverage.mapped_comment_total, 5599);
+  assert.equal(coverage.directly_covered_comment_total, 5599);
+  assert.equal(coverage.mapped_top_task_type_rate, 1);
+  assert.ok(coverage.mapped_actionable_comment_rate > 0.8);
+  assert.equal(Object.values(coverage.prompt_specificity).reduce((sum, count) => sum + count, 0), 100);
+  assert.ok((coverage.prompt_specificity.terse || 0) >= 15);
+  assert.ok((coverage.prompt_specificity.research_required || 0) >= 4);
+  assert.equal(generalRevitPromptSpecificity(corpus.cases.find((entry) => entry.case_id === "c01_hru_eru_terse")!), "terse");
+  assert.equal(generalRevitGroundingDemand(corpus.cases.find((entry) => entry.case_id === "c27_connect_diffuser_terse")!), "high");
+  assert.equal(generalRevitResearchDemand(corpus.cases.find((entry) => entry.case_id === "c41_ashrae170_or_diffuser_review")!), "required");
+});
+
+test("sample fixture adapters bind discipline-specific tasks without changing the frozen prompts", () => {
+  const fixtures = loadGeneralRevitSampleFixtures(corpus.cases);
+  assert.equal(generalRevitFixtureForCase(fixtures, "q01_air_device_inventory"), "snowdon_hvac");
+  assert.equal(generalRevitFixtureForCase(fixtures, "r09_pipe_size_transition"), "snowdon_plumbing");
+  assert.equal(generalRevitFixtureForCase(fixtures, "c20_add_duplex_match_circuit"), "snowdon_electrical");
+  assert.equal(fixtures.fixtures.snowdon_hvac.document_title, "Snowdon Towers Sample HVAC");
+  assert.equal(fixtures.fixtures.snowdon_plumbing.sample_filename, "Snowdon Towers Sample Plumbing.rvt");
+  assert.equal(fixtures.fixtures.snowdon_electrical.sample_filename, "Snowdon Towers Sample Electrical.rvt");
 });
 
 test("every corpus capability has a public backend and bridge execution lane", () => {
@@ -84,6 +123,18 @@ test("the original context-only response is classified as an in-scope capability
   assert.equal(result.completed, false);
 });
 
+test("a certified read-only surface fallback remains a capability refusal", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "lh04_titleblock_initials_discovery")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The certified read-only surface exposes only document/view context. It does not expose sheet contents, titleblock instances, parameters, or family text, so I cannot complete the requested audit.",
+    effect_state: "not_dispatched"
+  });
+  assert.equal(result.tier, "refused");
+  assert.equal(result.non_refusal, false);
+  assert.equal(result.completed, false);
+});
+
 test("an exact-target clarification is accepted but is not mislabeled completion", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!;
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
@@ -91,6 +142,19 @@ test("an exact-target clarification is accepted but is not mislabeled completion
     assistant_message: "Nothing is selected. Please select the equipment instance or give me its exact Mark so I change the right one.",
     effect_state: "not_dispatched",
     rounds: []
+  });
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+});
+
+test("a durable blocked assignment remains an accepted clarification when essential spatial grounding is missing", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "r03_add_family_instance")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "I’m blocked by missing spatial context: the active view is the Cover Sheet, with no selection or test location. Please activate the target plan and select a nearby device—or provide a room number.",
+    assignment_projection: { assignments: [{ lifecycle: { phase: "blocked" } }] }
   });
   assert.equal(result.tier, "accepted");
   assert.equal(result.non_refusal, true);
@@ -118,6 +182,26 @@ test("planned, previewed, completed, and verified remain distinct truth tiers", 
   assert.equal(verified.tier, "verified");
   assert.equal(verified.completed, true);
   assert.equal(verified.verified, true);
+});
+
+test("safe mode scores the safe probe contract without weakening production mutation truth", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "c03_level4_enlarged_plan_terse")!;
+  assert.equal(productionCase.expected_effect, "apply");
+  const safeCase = generalRevitExecutionCase(productionCase, false);
+  assert.equal(safeCase.expected_effect, "preview");
+  assert.equal(productionCase.expected_effect, "apply");
+  assert.equal(generalRevitExecutionCase(productionCase, true), productionCase);
+  const inspectionProbe = generalRevitExecutionCase({ ...productionCase, probe_expected_effect: "read" }, false);
+  assert.equal(inspectionProbe.expected_effect, "read");
+
+  const result = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: safeCase.dispatch_any_of[0], request_effect: "preview", request_dispatched: true }]
+  });
+  assert.equal(result.tier, "previewed");
+  assert.equal(result.completed, true);
+  assert.equal(result.apply_dispatched, false);
 });
 
 test("aggregate results never turn non-refusal into a completion claim", () => {
@@ -157,12 +241,88 @@ test("durable assignment evidence closes the flight-recorder loop for MCP-native
   assert.deepEqual(result.observed_paths, ["mcp:revit_call_tool"]);
 });
 
+test("durable read evidence cannot satisfy a preview contract without matching effect truth", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, false);
+  const assignment = {
+    lifecycle: { phase: "complete" },
+    evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+    verification: { state: "verified", criteria: [{ status: "pass" }] },
+    execution: { requested_effect: "read" }
+  };
+  const failed = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assignment_projection: { assignments: [assignment] } });
+  assert.equal(failed.tier, "failed");
+  assert.equal(failed.completed, false);
+  const previewed = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assignment_projection: { assignments: [{ ...assignment, execution: { requested_effect: "preview" } }] }
+  });
+  assert.equal(previewed.tier, "verified");
+  assert.equal(previewed.completed, true);
+});
+
 test("execution failures remain non-refusals while still failing completion", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "b06_edit_loaded_family")!;
   const result = evaluateGeneralRevitCapabilityAttempt(entry, { ok: false, error: "The Revit call timed out.", effect_state: "not_dispatched" });
   assert.equal(result.tier, "failed");
   assert.equal(result.non_refusal, true);
   assert.equal(result.completed, false);
+});
+
+test("a failed substantive Revit tool is a truthful execution failure", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "cx01_dynamic_hru_to_eru_program")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The sandbox worker failed during startup and no preview was produced.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/dynamic-runtime", request_effect: "preview", request_dispatched: false, status: "failed" }]
+  });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.completed, false);
+});
+
+test("a later successful retry recovers the same substantive Revit lane without erasing failure history", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c01_hru_eru_terse")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Preview complete; rollback verified.",
+    effect_state: "read_only_dispatched",
+    actions: [
+      { path: "/revit/dynamic-runtime", request_effect: "preview", request_dispatched: false, status: "failed" },
+      { path: "/revit/dynamic-runtime", request_effect: "preview", request_dispatched: true, status: "success", receipt: { readback: { count: 37 } } },
+      { path: "/revit/dynamic-runtime/preview", request_effect: "preview", request_dispatched: true, status: "success", receipt: { rollback_verified: true } }
+    ]
+  });
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+});
+
+test("a failed tool attempt does not suppress a terminal capability refusal", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c01_hru_eru_terse")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "I can’t produce the requested preview. Element discovery is not exposed in this profile and the Revit connection is not live.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/dynamic-runtime", request_effect: "preview", request_dispatched: false, status: "failed" }]
+  });
+  assert.equal(result.tier, "refused");
+  assert.equal(result.non_refusal, false);
+  assert.equal(result.completed, false);
+});
+
+test("grounded evidence that proves a requested edit is blocked is not completion", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s05_schedule_value_edit")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "## Blocked — nothing applied\nNo qualifying row exists in the current schedules to preview safely.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/update-schedule-cell", request_effect: "preview", request_dispatched: true, status: "success", receipt: { readback: { rows: 0 } } }]
+  });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
 });
 
 test("generated-code preview, apply, and readback receipts score as verified UI execution", () => {

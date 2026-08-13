@@ -60,6 +60,22 @@ namespace RevitBridge.Common
             return TryLoadFromPath(GetStorePath());
         }
 
+        public static OperatorAuthTokenSet? PreferPersistedSnapshot(
+            OperatorAuthTokenSet? current,
+            OperatorAuthTokenSet? persisted)
+        {
+            if (persisted == null || string.IsNullOrWhiteSpace(persisted.RefreshToken)) return current;
+            if (current == null || string.IsNullOrWhiteSpace(current.RefreshToken)) return persisted;
+            if (!string.Equals(current.RefreshToken, persisted.RefreshToken, StringComparison.Ordinal)) return persisted;
+            if (persisted.LastRefreshUtc.HasValue &&
+                (!current.LastRefreshUtc.HasValue || persisted.LastRefreshUtc.Value > current.LastRefreshUtc.Value))
+            {
+                return persisted;
+            }
+
+            return current;
+        }
+
         public static bool Save(OperatorAuthTokenSet tokens)
         {
             return SaveToPath(GetStorePath(), tokens);

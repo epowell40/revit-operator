@@ -784,7 +784,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (requirementsReceipt) {
     try {
       const plannedReceiptSha256 = requirementsReceipt.receipt_sha256;
-      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256);
+      requirementsLease = beginRequirementsPlanningLease(plannedReceiptSha256, codexTurnTimeoutMs() + 60_000);
       const leasedReceipt = resolveRequirementsForChat(req);
       if (leasedReceipt.status !== "resolved" || leasedReceipt.receipt_sha256 !== plannedReceiptSha256) {
         endRequirementsPlanningLease(requirementsLease);

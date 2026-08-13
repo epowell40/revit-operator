@@ -11,6 +11,28 @@
     "clarification_for_missing_target_is_accepted": true,
     "capability_subset_refusal_is_failure": true
   },
+  "corpus_evidence": {
+    "taxonomy_path": "data/redline_hardening/redline_task_types.json",
+    "actionable_comment_total": 6990,
+    "top_task_type_comment_total": 5599,
+    "task_types": [
+      {"rank": 1, "task_type_id": "schedule_text_edit", "corpus_count": 1015, "coverage_kind": "direct", "case_ids": ["c04_fix_equipment_schedule", "c06_schedule_remark_note_sync", "c08_schedule_heading_cleanup", "c09_bulk_schedule_comments", "c10_schedule_filter_underspecified", "c11_schedule_driven_equipment_rename", "r13_schedule_airflow_sync"]},
+      {"rank": 2, "task_type_id": "existing_tag_work", "corpus_count": 715, "coverage_kind": "direct", "case_ids": ["c16_tag_missing_equipment_terse", "c17_tag_collision_cleanup_terse", "c18_tag_designation_bulk", "c19_match_neighbor_tag_type", "r02_add_tag", "r14_tag_designation_sync", "r16_tag_layout_cleanup"]},
+      {"rank": 3, "task_type_id": "text_note_edit", "corpus_count": 643, "coverage_kind": "direct", "case_ids": ["c12_replace_outdated_note_terse", "c13_add_coordination_note", "c14_bulk_note_terminology", "c15_move_notes_clear", "r01_text_note_edit"]},
+      {"rank": 4, "task_type_id": "add_mep_accessory", "corpus_count": 630, "coverage_kind": "direct", "case_ids": ["r17_add_connected_accessory", "c21_add_another_selected_device"]},
+      {"rank": 5, "task_type_id": "pipe_size_transition", "corpus_count": 560, "coverage_kind": "direct", "case_ids": ["r09_pipe_size_transition", "c26_pipe_size_terse"]},
+      {"rank": 6, "task_type_id": "tag_value_text_edit", "corpus_count": 422, "coverage_kind": "direct", "case_ids": ["r14_tag_designation_sync", "c18_tag_designation_bulk"]},
+      {"rank": 7, "task_type_id": "pipe_route_creation", "corpus_count": 302, "coverage_kind": "direct", "case_ids": ["r11_pipe_route"]},
+      {"rank": 8, "task_type_id": "duct_size_transition", "corpus_count": 283, "coverage_kind": "direct", "case_ids": ["r08_duct_size_transition", "c25_duct_12x10_markup"]},
+      {"rank": 9, "task_type_id": "move_mep_accessory", "corpus_count": 212, "coverage_kind": "direct", "case_ids": ["r18_move_connected_accessory", "c23_move_damper_upstream"]},
+      {"rank": 10, "task_type_id": "type_change_mep_accessory", "corpus_count": 202, "coverage_kind": "direct", "case_ids": ["r07_type_change", "c22_accessory_type_match"]},
+      {"rank": 11, "task_type_id": "delete_mep_accessory", "corpus_count": 174, "coverage_kind": "direct", "case_ids": ["r04_delete_preview", "c24_delete_duplicate_device"]},
+      {"rank": 12, "task_type_id": "duct_route_creation", "corpus_count": 134, "coverage_kind": "direct", "case_ids": ["r10_duct_route", "c27_connect_diffuser_terse", "c29_add_branch_match_neighbor"]},
+      {"rank": 13, "task_type_id": "add_tag", "corpus_count": 110, "coverage_kind": "direct", "case_ids": ["r02_add_tag", "c16_tag_missing_equipment_terse"]},
+      {"rank": 14, "task_type_id": "delete_pipe_route", "corpus_count": 102, "coverage_kind": "direct", "case_ids": ["r19_delete_bounded_route_preflight"]},
+      {"rank": 15, "task_type_id": "delete_duct_route", "corpus_count": 95, "coverage_kind": "direct", "case_ids": ["r19_delete_bounded_route_preflight"]}
+    ]
+  },
   "required_operation_families": [
     "project_query",
     "parameter_edit",
@@ -39,6 +61,7 @@
     "route",
     "reroute_offset",
     "graphics_override",
+    "research_and_compliance",
     "native_fallback",
     "visual_verification"
   ],
@@ -547,6 +570,7 @@
       "capability_paths": ["/revit/find-elements", "/revit/update-parameter-by-query", "/revit/get-parameters"],
       "dispatch_any_of": ["/revit/find-elements", "/revit/update-parameter-by-query", "/revit/set-parameter", "/revit/get-parameters"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["r01_schedule_value_edit", "n28_novel_holdout"]
     },
     {
@@ -558,6 +582,7 @@
       "capability_paths": ["/revit/create-schedule", "/revit/configure-schedule", "/revit/find-elements"],
       "dispatch_any_of": ["/revit/create-schedule", "/revit/configure-schedule", "/revit/find-elements", "/revit/schedules"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["g23_schedule_configure", "r01_schedule_value_edit"]
     },
     {
@@ -580,6 +605,7 @@
       "capability_paths": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter"],
       "dispatch_any_of": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter", "/revit/plan-family-evolution"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]
     },
     {
@@ -602,6 +628,7 @@
       "capability_paths": ["/revit/duplicate-view", "/revit/views", "/revit/visibility", "/revit/create-view"],
       "dispatch_any_of": ["/revit/duplicate-view", "/revit/views", "/revit/visibility", "/revit/create-view", "/revit/export-view-frame"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["r21_graphics_override", "g22_sheet_view_package"]
     },
     {
@@ -613,6 +640,7 @@
       "capability_paths": ["/revit/plan-family-evolution", "/revit/apply-family-evolution", "/revit/export-view-frame"],
       "dispatch_any_of": ["/revit/plan-family-evolution", "/revit/apply-family-evolution", "/revit/open-family-doc", "/revit/export-view-frame"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["n29_novel_holdout", "n30_novel_holdout"]
     },
     {
@@ -624,6 +652,7 @@
       "capability_paths": ["/revit/sheets", "/revit/export-pdf"],
       "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["g25_export_publish"]
     },
     {
@@ -635,6 +664,7 @@
       "capability_paths": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
       "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": ["g25_export_publish"]
     },
     {
@@ -647,6 +677,504 @@
       "dispatch_any_of": ["/revit/dynamic-runtime/preview", "/revit/dynamic-runtime/apply", "/revit/find-elements", "/revit/get-parameters"],
       "expected_effect": "apply",
       "epic0441_task_refs": ["n28_novel_holdout", "r01_schedule_value_edit"]
+    },
+    {
+      "case_id": "q02_air_devices_terse",
+      "source": "redline_corpus",
+      "operation_family": "project_query",
+      "prompt": "How many diffusers are in here? Break them out by type.",
+      "probe_prompt": "How many diffusers are in here? Break them out by type. Do not change anything.",
+      "capability_paths": ["/revit/find-elements", "/revit/schedules"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/schedules", "/revit/tool-search"],
+      "expected_effect": "read",
+      "epic0441_task_refs": ["g23_schedule_configure", "g26_context_rule"]
+    },
+    {
+      "case_id": "c01_hru_eru_terse",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Change all the HRUs to ERUs. Keep the numbers.",
+      "probe_prompt": "Change all the HRUs to ERUs. Keep the numbers. Figure out the exact scope and show me the change, but do not commit it.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-parameters", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/dynamic-runtime/preview", "/revit/dynamic-runtime/apply", "/revit/find-elements", "/revit/update-parameter-by-query"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r01_schedule_value_edit", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "c02_clean_level2_view_names",
+      "source": "redline_corpus",
+      "operation_family": "view_rename",
+      "prompt": "Clean up the Level 2 HVAC view names so they follow the pattern already used on the other levels.",
+      "probe_prompt": "Clean up the Level 2 HVAC view names so they follow the pattern already used on the other levels. Inspect the pattern and preview the exact renames; do not apply them.",
+      "capability_paths": ["/revit/views", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/views", "/revit/set-parameter", "/revit/native-api-search"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "g26_context_rule"]
+    },
+    {
+      "case_id": "c03_level4_enlarged_plan_terse",
+      "source": "redline_corpus",
+      "operation_family": "enlarged_plan",
+      "prompt": "Make an enlarged mechanical plan for Level 4 around the live/work units.",
+      "probe_prompt": "Make an enlarged mechanical plan for Level 4 around the live/work units. Resolve a sensible source and crop region, then preview it; do not create anything.",
+      "capability_paths": ["/revit/views", "/revit/duplicate-view", "/revit/visibility"],
+      "dispatch_any_of": ["/revit/views", "/revit/duplicate-view", "/revit/visibility", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "c04_fix_equipment_schedule",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "Fix the mechanical equipment schedule. It is missing the useful information and the order is a mess.",
+      "probe_prompt": "Fix the mechanical equipment schedule. It is missing the useful information and the order is a mess. Inspect it, infer the local schedule convention, and preview a bounded repair; do not change it.",
+      "capability_paths": ["/revit/schedules", "/revit/configure-schedule"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/configure-schedule", "/revit/export-schedule-csv"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g23_schedule_configure", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "c05_schedule_counts_totals",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "Add counts and totals to the equipment schedule where they make sense, without changing its data.",
+      "probe_prompt": "Add counts and totals to the equipment schedule where they make sense. Inspect fields and grouping, then preview the exact schedule-definition changes; do not change its data or definition.",
+      "capability_paths": ["/revit/schedules", "/revit/configure-schedule"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/configure-schedule"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g23_schedule_configure"]
+    },
+    {
+      "case_id": "c06_schedule_remark_note_sync",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Put NOTE 1 on one unambiguous equipment row and add the matching explanatory note directly below the schedule on its sheet.",
+      "probe_prompt": "Find an unambiguous equipment schedule row and its placed schedule, then preview adding a NOTE 1 row marker plus a matching explanatory note below it. Do not modify the schedule or sheet.",
+      "capability_paths": ["/revit/schedules", "/revit/set-parameter", "/revit/create-text"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/set-parameter", "/revit/create-text", "/revit/sheets"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r01_schedule_value_edit", "r02_text_note_edit", "g23_schedule_configure"]
+    },
+    {
+      "case_id": "c07_duplicate_schedule_for_qa",
+      "source": "redline_corpus",
+      "operation_family": "schedule_create",
+      "prompt": "Make me a QA copy of the mechanical equipment schedule and filter it to equipment with blank Marks.",
+      "probe_prompt": "Make me a QA copy of the mechanical equipment schedule and filter it to equipment with blank Marks. Resolve the source and preview the duplicate/filter definition; do not create it.",
+      "capability_paths": ["/revit/schedules", "/revit/create-schedule", "/revit/configure-schedule"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/create-schedule", "/revit/configure-schedule"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g23_schedule_configure", "r01_schedule_value_edit"]
+    },
+    {
+      "case_id": "c08_schedule_heading_cleanup",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "Clean up the headings in the equipment schedule so they are readable and use the project's normal terminology.",
+      "probe_prompt": "Clean up the headings in the equipment schedule so they are readable and use the project's normal terminology. Compare nearby schedules and preview exact heading changes; do not apply them.",
+      "capability_paths": ["/revit/schedules", "/revit/configure-schedule"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/configure-schedule", "/revit/export-schedule-csv"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g23_schedule_configure", "g26_context_rule"]
+    },
+    {
+      "case_id": "c09_bulk_schedule_comments",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "Mark every ERU in the equipment schedule as OWNER REVIEW in Comments, and leave everything else alone.",
+      "probe_prompt": "Mark every ERU in the equipment schedule as OWNER REVIEW in Comments, and leave everything else alone. Resolve the backing instances and preview the exact affected IDs and original values; do not apply.",
+      "capability_paths": ["/revit/schedules", "/revit/find-elements", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/update-parameter-by-query", "/revit/set-parameter", "/revit/dynamic-runtime/preview"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r01_schedule_value_edit", "r04_bulk_status_rule"]
+    },
+    {
+      "case_id": "c10_schedule_filter_underspecified",
+      "source": "redline_corpus",
+      "operation_family": "schedule_configure",
+      "prompt": "This schedule is too long. Only show the units we are actually coordinating on Level 4.",
+      "probe_prompt": "This schedule is too long. Only show the units we are actually coordinating on Level 4. Inspect the schedule and model context, then preview the most defensible filter or ask one targeted question; do not apply changes.",
+      "capability_paths": ["/revit/schedules", "/revit/configure-schedule", "/revit/find-elements"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/configure-schedule", "/revit/find-elements"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g23_schedule_configure", "g26_context_rule"]
+    },
+    {
+      "case_id": "c11_schedule_driven_equipment_rename",
+      "source": "redline_corpus",
+      "operation_family": "schedule_value_edit",
+      "prompt": "In the mechanical equipment schedule, change HRU401A and HRU401B to ERU401A and ERU401B and make sure the plan tags follow.",
+      "probe_prompt": "Resolve HRU401A and HRU401B through the equipment schedule, verify their backing parameters and tag-driving values, and preview renaming them to ERU401A and ERU401B. Do not apply.",
+      "capability_paths": ["/revit/schedules", "/revit/get-parameters", "/revit/set-parameter", "/revit/export-visible-elements"],
+      "dispatch_any_of": ["/revit/schedules", "/revit/get-parameters", "/revit/set-parameter", "/revit/export-visible-elements"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r01_schedule_value_edit", "r03_tag_designation_edit"]
+    },
+    {
+      "case_id": "c12_replace_outdated_note_terse",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Fix the old ventilation note on this sheet.",
+      "probe_prompt": "Fix the old ventilation note on this sheet. Find plausible note targets and infer the intended current wording from nearby sheets or report the ambiguity; do not edit anything.",
+      "capability_paths": ["/revit/find-text-notes", "/revit/set-text-note-text"],
+      "dispatch_any_of": ["/revit/find-text-notes", "/revit/set-text-note-text", "/revit/sheets"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r02_text_note_edit", "g26_context_rule"]
+    },
+    {
+      "case_id": "c13_add_coordination_note",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Add a coordination note by the Level 4 mechanical plan telling the contractor to verify routing in field.",
+      "probe_prompt": "Find the Level 4 mechanical plan context and preview a concise VERIFY ROUTING IN FIELD coordination note placed clear of graphics. Do not create the note.",
+      "capability_paths": ["/revit/views", "/revit/create-text", "/revit/export-view-frame"],
+      "dispatch_any_of": ["/revit/views", "/revit/create-text", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r02_text_note_edit", "g22_sheet_view_package"]
+    },
+    {
+      "case_id": "c14_bulk_note_terminology",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Every mechanical note that says HRU needs to say ERU. Don't touch tags or equipment Marks.",
+      "probe_prompt": "Find mechanical TextNotes containing HRU, distinguish them from tags and model parameters, and preview exact text-only HRU-to-ERU replacements with original values. Do not apply.",
+      "capability_paths": ["/revit/find-text-notes", "/revit/replace-text-note"],
+      "dispatch_any_of": ["/revit/find-text-notes", "/revit/replace-text-note", "/revit/dynamic-runtime/preview"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r02_text_note_edit", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "c15_move_notes_clear",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Move the notes off the ductwork on M104 and make the leaders readable.",
+      "probe_prompt": "Inspect M104 for notes overlapping ductwork and crowded leaders, then preview bounded note moves that preserve meaning and targets. Do not move anything.",
+      "capability_paths": ["/revit/find-text-notes", "/revit/move-elements", "/revit/export-view-frame"],
+      "dispatch_any_of": ["/revit/find-text-notes", "/revit/move-elements", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r02_text_note_edit", "r06_move_tag_cleanup"]
+    },
+    {
+      "case_id": "c16_tag_missing_equipment_terse",
+      "source": "redline_corpus",
+      "operation_family": "tag",
+      "prompt": "Tag the untagged equipment on M104.",
+      "probe_prompt": "Find untagged mechanical equipment visible on M104, match the neighboring tag convention, and preview the exact additions; do not create tags.",
+      "capability_paths": ["/revit/export-visible-elements", "/revit/tag-elements"],
+      "dispatch_any_of": ["/revit/export-visible-elements", "/revit/tag-elements", "/revit/views"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r05_add_tag", "g26_context_rule"]
+    },
+    {
+      "case_id": "c17_tag_collision_cleanup_terse",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Clean up the tags around the live/work units. They're all on top of each other.",
+      "probe_prompt": "Inspect tag layout around the live/work units, identify a bounded crowded cluster, and preview clearer positions and leaders. Do not change tag targets, text, or positions.",
+      "capability_paths": ["/revit/export-visible-elements", "/revit/move-elements", "/revit/export-view-frame"],
+      "dispatch_any_of": ["/revit/export-visible-elements", "/revit/move-elements", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r06_move_tag_cleanup"]
+    },
+    {
+      "case_id": "c18_tag_designation_bulk",
+      "source": "redline_corpus",
+      "operation_family": "text_edit",
+      "prompt": "Update the HRU tags to read ERU, but don't break the equipment schedule.",
+      "probe_prompt": "Trace how HRU tag text is driven, identify the shared backing data with the equipment schedule, and preview an HRU-to-ERU update that keeps both synchronized. Do not apply.",
+      "capability_paths": ["/revit/export-visible-elements", "/revit/get-parameters", "/revit/set-parameter", "/revit/schedules"],
+      "dispatch_any_of": ["/revit/export-visible-elements", "/revit/get-parameters", "/revit/set-parameter", "/revit/schedules"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r03_tag_designation_edit", "r01_schedule_value_edit"]
+    },
+    {
+      "case_id": "c19_match_neighbor_tag_type",
+      "source": "redline_corpus",
+      "operation_family": "type_change",
+      "prompt": "Make the odd equipment tag on M104 match the others.",
+      "probe_prompt": "Find any equipment-tag type outlier on M104, compare compatible neighboring tags, and preview changing only a clearly unambiguous outlier. Do not apply.",
+      "capability_paths": ["/revit/export-visible-elements", "/revit/change-element-type"],
+      "dispatch_any_of": ["/revit/export-visible-elements", "/revit/change-element-type", "/revit/views"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r06_move_tag_cleanup", "r13_type_change_accessory"]
+    },
+    {
+      "case_id": "c20_add_duplex_match_circuit",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "ADD DUPLEX RECEPTACLE - MATCH CIRCUIT P403/1 - at the marked location in Unit 403.",
+      "probe_prompt": "For the Unit 403 duplex-receptacle redline, resolve a nearby hosted exemplar and circuit P403/1, then preview placement at the marked location with host, type, orientation, and circuit evidence. Do not create it.",
+      "capability_paths": ["/revit/create-similar-from-instance", "/revit/get-parameters", "/revit/get-connectors"],
+      "dispatch_any_of": ["/revit/create-similar-from-instance", "/revit/find-elements", "/revit/get-parameters", "/revit/get-connectors"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r07_add_family_instance", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "c21_add_another_selected_device",
+      "source": "redline_corpus",
+      "operation_family": "add",
+      "prompt": "Add another one here like the selected device.",
+      "probe_prompt": "Add another one here like the selected device. Inspect the selection and current view location; if either is missing, ask one targeted question. Otherwise preview create-similar; do not apply it.",
+      "capability_paths": ["/revit/context", "/revit/create-similar-from-instance"],
+      "dispatch_any_of": ["/revit/context", "/revit/create-similar-from-instance", "/revit/get-parameters"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r07_add_family_instance", "g26_context_rule"]
+    },
+    {
+      "case_id": "c22_accessory_type_match",
+      "source": "redline_corpus",
+      "operation_family": "type_change",
+      "prompt": "Change the odd damper to match the one on the parallel branch.",
+      "probe_prompt": "Find a clearly identifiable damper type outlier and a compatible parallel-branch precedent, then preview the type change with connector and instance-data checks. Do not apply.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-connectors", "/revit/change-element-type"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-connectors", "/revit/change-element-type"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r13_type_change_accessory"]
+    },
+    {
+      "case_id": "c23_move_damper_upstream",
+      "source": "redline_corpus",
+      "operation_family": "move",
+      "prompt": "Move the damper upstream so it clears the elbow.",
+      "probe_prompt": "Find one unambiguous damper too close to an elbow, determine a bounded upstream relocation that preserves connectivity, and preview the move. Do not apply.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-connectors", "/revit/move-elements"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-connectors", "/revit/move-elements"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r11_move_accessory"]
+    },
+    {
+      "case_id": "c24_delete_duplicate_device",
+      "source": "redline_corpus",
+      "operation_family": "delete",
+      "prompt": "Delete the duplicate device and clean up whatever it is connected to.",
+      "probe_prompt": "Find a genuinely duplicated device candidate, trace what it is connected to, and preview the complete deletion/disconnection impact. Do not delete anything.",
+      "capability_paths": ["/revit/find-elements", "/revit/trace-connected-network", "/revit/delete"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/trace-connected-network", "/revit/delete"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r19_delete_accessory_preflight", "r20_delete_route_preflight"]
+    },
+    {
+      "case_id": "c25_duct_12x10_markup",
+      "source": "redline_corpus",
+      "operation_family": "size_transition",
+      "prompt": "12x10 SUPPLY DUCT at the marked Unit 405 branch.",
+      "probe_prompt": "Interpret the Unit 405 12x10 SUPPLY DUCT markup, ground the marked branch segment and transition location, and preview the exact resize while preserving connectivity. Do not apply.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-connectors", "/revit/reroute-mep-route-segment"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-connectors", "/revit/reroute-mep-route-segment"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r10_duct_size_transition", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "c26_pipe_size_terse",
+      "source": "redline_corpus",
+      "operation_family": "size_transition",
+      "prompt": "Make this branch 2 inches after the tee.",
+      "probe_prompt": "Make this branch 2 inches after the tee. Resolve the selected or contextually marked pipe branch and preview the transition with connector/readback checks; do not apply.",
+      "capability_paths": ["/revit/context", "/revit/get-connectors", "/revit/reroute-mep-route-segment"],
+      "dispatch_any_of": ["/revit/context", "/revit/get-connectors", "/revit/reroute-mep-route-segment"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r09_pipe_size_transition", "g26_context_rule"]
+    },
+    {
+      "case_id": "c27_connect_diffuser_terse",
+      "source": "redline_corpus",
+      "operation_family": "route",
+      "prompt": "Connect the loose diffuser to the supply.",
+      "probe_prompt": "Find a clearly unconnected air terminal and the nearest compatible supply connection, then preview the shortest standards-consistent route. Do not create or connect anything.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-connectors", "/revit/mep-route-workflow"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-connectors", "/revit/mep-route-workflow"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r16_duct_route", "g26_context_rule"]
+    },
+    {
+      "case_id": "c28_reroute_conflict_terse",
+      "source": "redline_corpus",
+      "operation_family": "reroute_offset",
+      "prompt": "Reroute this duct around the conflict.",
+      "probe_prompt": "Reroute this duct around the conflict. Use the current selection or marked context to identify both, then preview a minimal connected offset; ask one targeted question if grounding is insufficient. Do not apply.",
+      "capability_paths": ["/revit/context", "/revit/get-connectors", "/revit/reroute-mep-route-segment"],
+      "dispatch_any_of": ["/revit/context", "/revit/get-connectors", "/revit/reroute-mep-route-segment"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r18_duct_reroute", "g26_context_rule"]
+    },
+    {
+      "case_id": "c29_add_branch_match_neighbor",
+      "source": "redline_corpus",
+      "operation_family": "route",
+      "prompt": "Add the missing branch to the unit and match the one next door.",
+      "probe_prompt": "Identify one clearly missing unit branch and the analogous neighboring branch, then preview copying its topology, system, level, size, and fittings to the target. Do not create anything.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-connectors", "/revit/mep-branch-network-workflow"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-connectors", "/revit/mep-branch-network-workflow"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r08_add_mep_accessory", "r16_duct_route", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "c30_hide_arch_rooms_level4",
+      "source": "redline_corpus",
+      "operation_family": "view_visibility",
+      "prompt": "Turn off the architectural room stuff on the Level 4 mechanical plans. Leave the MEP spaces alone.",
+      "probe_prompt": "Inspect Level 4 mechanical-plan visibility and distinguish architectural Rooms/room tags from MEP Spaces/space tags, then preview the narrowest applicable changes. Do not apply.",
+      "capability_paths": ["/revit/views", "/revit/visibility"],
+      "dispatch_any_of": ["/revit/views", "/revit/visibility", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r21_graphics_override", "g26_context_rule"]
+    },
+    {
+      "case_id": "c31_fix_view_range_terse",
+      "source": "redline_corpus",
+      "operation_family": "view_settings",
+      "prompt": "Fix the view range. I shouldn't see the floor below.",
+      "probe_prompt": "Fix the view range so the floor below is not visible. Inspect the active plan's associated level and current planes, then preview the smallest defensible change. Do not apply.",
+      "capability_paths": ["/revit/context", "/revit/views", "/revit/visibility"],
+      "dispatch_any_of": ["/revit/context", "/revit/views", "/revit/visibility"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r21_graphics_override", "g26_context_rule"]
+    },
+    {
+      "case_id": "c32_make_coordination_template_terse",
+      "source": "redline_corpus",
+      "operation_family": "view_template",
+      "prompt": "Turn this into our mechanical coordination template and use it on the other coordination plans.",
+      "probe_prompt": "Inspect the active view and other coordination plans, identify what settings should be controlled, and preview creating and applying a mechanical coordination template. Do not change views.",
+      "capability_paths": ["/revit/context", "/revit/views", "/revit/create-view"],
+      "dispatch_any_of": ["/revit/context", "/revit/views", "/revit/create-view", "/revit/visibility"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "r21_graphics_override"]
+    },
+    {
+      "case_id": "c33_match_view_graphics_across_level",
+      "source": "redline_corpus",
+      "operation_family": "graphics_override",
+      "prompt": "Make the other Level 4 HVAC plans look like M104 without changing their scale or crop.",
+      "probe_prompt": "Compare M104 graphics with other Level 4 HVAC plans, exclude scale/crop and target-specific extents, then preview transferable visibility/filter/template changes. Do not apply.",
+      "capability_paths": ["/revit/views", "/revit/visibility", "/revit/export-view-frame"],
+      "dispatch_any_of": ["/revit/views", "/revit/visibility", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["r21_graphics_override", "g22_sheet_view_package"]
+    },
+    {
+      "case_id": "c34_sheet_numbers_dashes_to_dots",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Change the dashes in the mechanical sheet numbers to dots. Keep the ordering and don't touch other disciplines.",
+      "probe_prompt": "Inventory mechanical sheet numbers containing dashes, check the proposed dot forms for uniqueness and ordering, and preview exact old/new values. Do not rename sheets.",
+      "capability_paths": ["/revit/sheets", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/set-parameter", "/revit/dynamic-runtime/preview"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "c35_area1_area2_to_ab",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Area 1 and Area 2 are now Area A and Area B. Update the mechanical views and sheets consistently.",
+      "probe_prompt": "Find mechanical view and sheet names/numbers using Area 1 or Area 2, infer the Area A/B mapping, check collisions and placed-view relationships, and preview exact changes. Do not apply.",
+      "capability_paths": ["/revit/views", "/revit/sheets", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/views", "/revit/sheets", "/revit/set-parameter", "/revit/dynamic-runtime/preview"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "c36_titleblock_initials_all_mech",
+      "source": "redline_corpus",
+      "operation_family": "parameter_edit",
+      "prompt": "Put EP for drawn by and QA for checked by on all the mechanical sheets.",
+      "probe_prompt": "Inspect how Drawn By and Checked By are driven on mechanical title blocks, distinguish sheet/instance/type/project/family sources, and preview the exact bounded update. Do not apply.",
+      "capability_paths": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter", "/revit/plan-family-evolution"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "c37_print_current_mechanical_set",
+      "source": "redline_corpus",
+      "operation_family": "print_export",
+      "prompt": "Print the current mechanical set in black and white. One PDF per sheet.",
+      "probe_prompt": "Resolve what constitutes the current mechanical sheet set, preflight one black-and-white PDF per sheet with safe names and bounded count, and report the output plan. Do not export files.",
+      "capability_paths": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "expected_effect": "apply",
+      "probe_expected_effect": "read",
+      "epic0441_task_refs": ["g25_export_publish", "g26_context_rule"]
+    },
+    {
+      "case_id": "c38_export_each_mechanical_subdiscipline",
+      "source": "redline_corpus",
+      "operation_family": "print_export",
+      "prompt": "Give me separate bound PDFs for each mechanical subdiscipline, with filenames that sort in sheet order.",
+      "probe_prompt": "Infer mechanical subdisciplines from sheet numbering/names, preflight one ordered combined PDF per group with collision-safe sortable names, and report sheets and paths. Do not export.",
+      "capability_paths": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
+      "expected_effect": "apply",
+      "probe_expected_effect": "read",
+      "epic0441_task_refs": ["g25_export_publish", "n29_novel_holdout"]
+    },
+    {
+      "case_id": "c39_add_service_clearance_terse",
+      "source": "redline_corpus",
+      "operation_family": "family_edit",
+      "prompt": "Add service clearance to this equipment and make it show up on plan.",
+      "probe_prompt": "Inspect the selected equipment family and plan visibility, determine an appropriate controllable service-clearance representation in a copied test family/type, and preview the evolution. Do not edit or reload the family.",
+      "capability_paths": ["/revit/context", "/revit/plan-family-evolution", "/revit/export-view-frame"],
+      "dispatch_any_of": ["/revit/context", "/revit/plan-family-evolution", "/revit/open-family-doc", "/revit/export-view-frame"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["n29_novel_holdout", "g26_context_rule"]
+    },
+    {
+      "case_id": "c40_fix_family_label",
+      "source": "redline_corpus",
+      "operation_family": "family_edit",
+      "prompt": "The family label still says HRU. Make it follow the equipment Mark instead.",
+      "probe_prompt": "Inspect whether the selected family's visible HRU label is fixed text, a label parameter, nested annotation, or model tag, then preview the correct parameterized repair. Do not edit or reload.",
+      "capability_paths": ["/revit/context", "/revit/plan-family-evolution", "/revit/get-parameters"],
+      "dispatch_any_of": ["/revit/context", "/revit/plan-family-evolution", "/revit/open-family-doc", "/revit/get-parameters"],
+      "expected_effect": "apply",
+      "epic0441_task_refs": ["n29_novel_holdout", "r03_tag_designation_edit"]
+    },
+    {
+      "case_id": "c41_ashrae170_or_diffuser_review",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "This operating room layout doesn't comply with ASHRAE 170. Fix the air distribution.",
+      "probe_prompt": "Assess whether any Snowdon room is a defensible operating-room analog, research the current authoritative ASHRAE 170 air-distribution requirements without disclosing project data, inspect available terminal families and layout, and produce a cited, model-grounded correction plan or explain why the premise cannot be applied. Do not change the model.",
+      "capability_paths": ["/revit/find-elements", "/revit/get-parameters", "/revit/views"],
+      "dispatch_any_of": ["/revit/find-elements", "/revit/get-parameters", "/revit/views", "/revit/native-api-search"],
+      "expected_effect": "read",
+      "epic0441_task_refs": ["n28_novel_holdout", "g26_context_rule"]
+    },
+    {
+      "case_id": "c42_research_revit_template_controls",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "Figure out why the view template won't let me change visibility here and fix the right setting.",
+      "probe_prompt": "Inspect the active view/template control state, research Autodesk documentation if the controlling parameter behavior is unclear, identify the actual owner of the visibility setting, and preview the minimal fix. Do not change the model.",
+      "capability_paths": ["/revit/context", "/revit/views", "/revit/visibility", "/revit/native-api-search"],
+      "dispatch_any_of": ["/revit/context", "/revit/views", "/revit/visibility", "/revit/native-api-search"],
+      "expected_effect": "preview",
+      "epic0441_task_refs": ["r21_graphics_override", "n28_novel_holdout"]
+    },
+    {
+      "case_id": "c43_research_revit2026_api_change",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "Make this work in Revit 2026 too. The API call we used for element IDs is obsolete.",
+      "probe_prompt": "Research the authoritative Revit 2026 API change for obsolete element-ID access, inspect the available native fallback surface, and propose a version-compatible implementation and verification plan. Do not edit the model.",
+      "capability_paths": ["/revit/native-api-search", "/revit/context"],
+      "dispatch_any_of": ["/revit/native-api-search", "/revit/context", "/revit/tool-search"],
+      "expected_effect": "read",
+      "epic0441_task_refs": ["n28_novel_holdout", "g27_program_reuse"]
+    },
+    {
+      "case_id": "c44_research_pdf_color_failure",
+      "source": "redline_corpus",
+      "operation_family": "research_and_compliance",
+      "prompt": "The issue set keeps coming out grayscale. Figure out the Revit/PDF setting and get me a color preflight.",
+      "probe_prompt": "Inspect the active Revit PDF/print capabilities and settings, research authoritative Autodesk guidance if needed, and produce a color-export preflight for a bounded issue set. Do not export files or change persistent printer settings.",
+      "capability_paths": ["/revit/print-sets", "/revit/sheets", "/revit/export-pdf"],
+      "dispatch_any_of": ["/revit/print-sets", "/revit/sheets", "/revit/export-pdf", "/revit/native-api-search"],
+      "expected_effect": "preview",
+      "probe_expected_effect": "read",
+      "epic0441_task_refs": ["g25_export_publish", "n28_novel_holdout"]
     }
   ]
 }

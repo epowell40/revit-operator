@@ -84,5 +84,35 @@ namespace RevitBridge.Common.Tests
                 try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
             }
         }
+
+        [Fact]
+        public void PreferPersistedSnapshot_RecoversFromEmptyOrStaleProcessState()
+        {
+            var now = DateTime.UtcNow;
+            var persisted = new OperatorAuthTokenSet
+            {
+                AccessToken = "shared-access",
+                RefreshToken = "shared-refresh",
+                LastRefreshUtc = now
+            };
+
+            Assert.Same(persisted, OperatorAuthTokenStore.PreferPersistedSnapshot(null, persisted));
+
+            var stale = new OperatorAuthTokenSet
+            {
+                AccessToken = "stale-access",
+                RefreshToken = "stale-refresh",
+                LastRefreshUtc = now.AddMinutes(-5)
+            };
+            Assert.Same(persisted, OperatorAuthTokenStore.PreferPersistedSnapshot(stale, persisted));
+
+            var newer = new OperatorAuthTokenSet
+            {
+                AccessToken = "newer-access",
+                RefreshToken = "shared-refresh",
+                LastRefreshUtc = now.AddMinutes(5)
+            };
+            Assert.Same(newer, OperatorAuthTokenStore.PreferPersistedSnapshot(newer, persisted));
+        }
     }
 }

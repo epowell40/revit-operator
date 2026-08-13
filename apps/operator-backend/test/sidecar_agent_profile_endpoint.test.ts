@@ -63,7 +63,10 @@ test("health exposes the backend-authored Sidecar agent profile handshake", asyn
   });
   t.after(async () => {
     await stop(child);
-    fs.rmSync(workspace, { recursive: true, force: true });
+    // Windows can retain SQLite WAL/SHM handles for a few milliseconds after
+    // the backend process exits. Keep teardown bounded, but do not turn that
+    // transient filesystem state into a product-handshake failure.
+    fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const health = await waitForHealth(`http://127.0.0.1:${port}/health`, token);

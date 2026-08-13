@@ -298,8 +298,11 @@ namespace RevitBridge.Common.Tests
             var fractionalRequest = Prepare("POST", "/revit/ping", "{\"value\":1.5}");
             Assert.Equal("{\"value\":1.5}", Verify(fractionalRequest, "{\"value\":1.5}").CanonicalBodyJson);
 
+            var slowHosted = VerifyResponse(request, baseline, roundTrip: TimeSpan.FromMilliseconds(9000));
+            Assert.True(slowHosted.ExpiresAtUtc > DateTimeOffset.UtcNow.AddSeconds(4));
             var expired = Assert.Throws<OperatorNativeHttpAdmissionException>(() =>
-                VerifyResponse(request, baseline, roundTrip: TimeSpan.FromMilliseconds(5000)));
+                OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+                    slowHosted, request, slowHosted.ExpiresAtUtc.AddMilliseconds(1)));
             Assert.Equal("CERTIFICATION_DIRECT_AUTHORIZATION_EXPIRED", expired.Code);
             Assert.True(expired.Retryable);
             Assert.False(expired.OutcomeUnknown);

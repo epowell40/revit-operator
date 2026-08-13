@@ -4005,6 +4005,7 @@ function maybeStartAutoGoal(
         mode: "auto_goal",
         source,
         source_user_request: decision.objective,
+        requested_effect: decision.requestedEffect,
         executor_id: trimText(revit.courier_executor_id, 180) || null,
         document_fingerprint: trimText(projectIdentity.fingerprint, 128) || null,
         document_title: trimText(document.title, 260) || null,

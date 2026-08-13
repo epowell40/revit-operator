@@ -964,7 +964,7 @@ export function completeGoalAfterAudit(goalId: string): GoalRecord {
 
 export function getActiveGoalForSession(sessionId?: string | null): GoalRecord | null {
   const sid = clip(sessionId, 180);
-  const goals = listGoals(100);
+  const goals = readAllGoals();
   const candidates = goals.filter(g => g.status === "active" && (!sid || g.related_session_id === sid));
   return candidates[0] ?? null;
 }
@@ -1010,7 +1010,7 @@ export function setAgentGoal(sessionId: string, input: AgentGoalSetInput): GoalR
 
 export function clearAgentGoal(sessionId: string, reason?: unknown): GoalRecord | null {
   const sid = clip(sessionId, 180);
-  const goals = listGoals(100);
+  const goals = readAllGoals();
   const goal = goals.find(g =>
     (g.status === "active" || g.status === "blocked" || g.status === "paused") &&
     (!sid || g.related_session_id === sid)

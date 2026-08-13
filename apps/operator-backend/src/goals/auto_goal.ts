@@ -6,6 +6,9 @@ const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply
 const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|show me|list|find)\b/i;
 const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection)\b/i;
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|add|place|move|rotate|change|update|edit|delete|remove|rename|verify)\b/i;
+const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|move|rotate|change|update|edit|delete|remove|rename|set|apply|fix|connect|route|reload)\b/i;
+const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|rollback|show me (?:the )?change|do not commit|don't commit)\b/i;
+const NON_MUTATING_REQUEST = /\b(read[- ]only|do not (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|don't (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|without (?:changing|modifying|editing|creating|applying|committing|exporting|printing|deleting|removing))\b/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
@@ -14,6 +17,7 @@ export type AutoGoalDecision = {
   title: string;
   objective: string;
   acceptanceCriteria: string[];
+  requestedEffect: "read" | "preview" | "apply";
 };
 
 export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
@@ -31,12 +35,18 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   let score = signals.length;
   if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
   const shouldStart = liveModelRequest || score >= 2;
+  const requestedEffect = PREVIEW_REQUEST.test(text)
+    ? "preview"
+    : MUTATION_OPERATION.test(text) && !NON_MUTATING_REQUEST.test(text)
+      ? "apply"
+      : "read";
   return {
     shouldStart,
     score,
     signals,
     title: makeTitle(text),
     objective: text,
+    requestedEffect,
     acceptanceCriteria: liveModelRequest
       ? [
           "The requested Revit work is completed or a concrete blocker is reported.",
@@ -51,7 +61,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
 }
 
 function empty(text: string): AutoGoalDecision {
-  return { shouldStart: false, score: 0, signals: [], title: makeTitle(text), objective: text, acceptanceCriteria: [] };
+  return { shouldStart: false, score: 0, signals: [], title: makeTitle(text), objective: text, acceptanceCriteria: [], requestedEffect: "read" };
 }
 
 function makeTitle(text: string): string {

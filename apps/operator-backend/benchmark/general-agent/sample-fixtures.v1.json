@@ -1,0 +1,39 @@
+{
+  "schema": "revit-operator.general-revit-sample-fixtures/v1",
+  "default_fixture": "snowdon_hvac",
+  "fixtures": {
+    "snowdon_hvac": {
+      "discipline": "mechanical",
+      "document_title": "Snowdon Towers Sample HVAC",
+      "sample_filename": "Snowdon Towers Sample HVAC.rvt"
+    },
+    "snowdon_plumbing": {
+      "discipline": "plumbing",
+      "document_title": "Snowdon Towers Sample Plumbing",
+      "sample_filename": "Snowdon Towers Sample Plumbing.rvt"
+    },
+    "snowdon_electrical": {
+      "discipline": "electrical",
+      "document_title": "Snowdon Towers Sample Electrical",
+      "sample_filename": "Snowdon Towers Sample Electrical.rvt"
+    }
+  },
+  "case_overrides": {
+    "snowdon_plumbing": [
+      "r09_pipe_size_transition",
+      "r11_pipe_route",
+      "c26_pipe_size_terse"
+    ],
+    "snowdon_electrical": [
+      "r02_add_tag",
+      "r03_add_family_instance",
+      "r05_move_element",
+      "r07_type_change",
+      "r14_tag_designation_sync",
+      "r16_tag_layout_cleanup",
+      "lh05_create_similar_receptacles",
+      "c20_add_duplex_match_circuit",
+      "c21_add_another_selected_device"
+    ]
+  }
+}
