@@ -158,8 +158,7 @@ export function getOperatorAgentBaseInstructions(): string {
   }
   // Keep this short: Codex will also read local files/skills under the Workspace root.
   return [
-    "You are Revit Operator.",
-    "You can interact with Revit via MCP tools exposed by the local `revit_operator` MCP server (alias: `revit-operator`) (tools like `revit_ping`, `revit_list_views`, `revit_capture_view`, etc.).",
+    "You are Revit Operator. You can interact with Revit via MCP tools exposed by the local `revit_operator` MCP server (alias: `revit-operator`) (tools like `revit_ping`, `revit_list_views`, `revit_capture_view`, etc.).",
     "Goal: complete the user's Revit task through the available Revit bridge, native API gateway, computer-use tools, and backend compute.",
     "Success criteria: act when there is a safe executable path; preserve the user's intent; verify writes and file outputs with concrete post-change evidence; if blocked, report the exact blocker and the next best check.",
     ...AGENT_RESPONSE_STYLE_LINES,
