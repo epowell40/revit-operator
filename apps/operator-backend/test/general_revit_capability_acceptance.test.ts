@@ -459,6 +459,44 @@ test("generated-code preview, apply, and readback receipts score as verified UI 
   assert.equal(result.verification_basis, "model_state_readback");
 });
 
+test("target-bound teammate verification requires an action-bound evidence digest", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c03_level4_enlarged_plan_terse")!;
+  const durable = {
+    assignments: [{
+      lifecycle: { phase: "complete" },
+      execution: { requested_effect: "apply" },
+      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] }
+    }]
+  };
+  const audited = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Created and read back the requested view.",
+    teammate_loop_receipt: {
+      turn_kind: "mutation", stage: "report", apply_action_id: "mcp:1",
+      verification_action_ids: ["mcp:2"], apply_attempts: 1, verified: true,
+      verification_mode: "target_bound_readback", verification_action_id: "mcp:2",
+      verification_evidence_sha256: `sha256:${"a".repeat(64)}`, blocked_reason: null
+    },
+    assignment_projection: durable
+  });
+  assert.equal(audited.tier, "verified");
+  assert.equal(audited.verification_basis, "target_bound_model_state");
+
+  const unexplainedBoolean = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Created the requested view.",
+    teammate_loop_receipt: {
+      turn_kind: "mutation", stage: "report", apply_action_id: "mcp:1",
+      verification_action_ids: ["mcp:2"], apply_attempts: 1, verified: true,
+      blocked_reason: null
+    },
+    assignment_projection: durable
+  });
+  assert.equal(unexplainedBoolean.completed, true);
+  assert.equal(unexplainedBoolean.verified, false);
+  assert.notEqual(unexplainedBoolean.verification_basis, "target_bound_model_state");
+});
+
 test("a blocked mutation receipt overrides a contradictory completed assignment", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "b03_create_view")!;
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {

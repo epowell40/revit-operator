@@ -145,6 +145,9 @@ export type ChatResponse = {
     verification_action_ids: string[];
     apply_attempts: number;
     verified: boolean;
+    verification_mode: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
+    verification_action_id: string | null;
+    verification_evidence_sha256: string | null;
     blocked_reason: string | null;
   };
   aec_query_receipt?: {

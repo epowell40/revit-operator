@@ -354,12 +354,25 @@ function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: b
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { mutationAttempted: false, blocked: false, verified: false };
   }
-  const receipt = value as { turn_kind?: unknown; stage?: unknown; blocked_reason?: unknown; apply_attempts?: unknown; verified?: unknown };
+  const receipt = value as {
+    turn_kind?: unknown; stage?: unknown; blocked_reason?: unknown; apply_attempts?: unknown; verified?: unknown;
+    apply_action_id?: unknown; verification_action_ids?: unknown; verification_mode?: unknown;
+    verification_action_id?: unknown; verification_evidence_sha256?: unknown;
+  };
   const mutationAttempted = receipt.turn_kind === "mutation" && Number(receipt.apply_attempts) > 0;
   const blocked = receipt.stage === "blocked"
     || (typeof receipt.blocked_reason === "string" && receipt.blocked_reason.trim().length > 0)
     || (mutationAttempted && receipt.verified !== true);
-  return { mutationAttempted, blocked, verified: mutationAttempted && receipt.verified === true && !blocked };
+  const mode = String(receipt.verification_mode || "");
+  const actionId = String(receipt.verification_action_id || "");
+  const evidenceHash = String(receipt.verification_evidence_sha256 || "");
+  const actionIds = Array.isArray(receipt.verification_action_ids) ? receipt.verification_action_ids.map(String) : [];
+  const auditBound = /^sha256:[a-f0-9]{64}$/.test(evidenceHash) && (
+    (mode === "explicit_apply_receipt" && actionId !== "" && actionId === String(receipt.apply_action_id || ""))
+    || (mode === "target_bound_readback" && actionId !== "" && actionIds.includes(actionId))
+    || (mode === "trusted_dynamic_program_receipt" && actionId === "dynamic_program")
+  );
+  return { mutationAttempted, blocked, verified: mutationAttempted && receipt.verified === true && auditBound && !blocked };
 }
 
 function combinedMessage(attempt: GeneralRevitAttempt): string {
