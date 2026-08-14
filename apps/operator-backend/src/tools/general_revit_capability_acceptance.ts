@@ -407,7 +407,7 @@ async function ensureFixtureActive(
   const prompt = [
     "Benchmark fixture transition. The user explicitly authorized opening, saving, or discarding changes in Autodesk sample models for this test campaign; do not ask for confirmation.",
     `In the currently running Revit instance, use the Revit bridge primitive revit_open_model to open and activate exactly: ${samplePath}`,
-    "Use audit=false, detach=false, and discardExistingOpenDocument=true. If that exact target document is already open but inactive, you are explicitly authorized to close it without saving and reopen it so it becomes active. Do not modify model content. Do not launch another Revit process and do not use Windows file association.",
+    "Use audit=false, detach=false, discardExistingOpenDocument=true, and continueOnUnresolvedReferences=true. If that exact target document is already open but inactive, you are explicitly authorized to close it without saving and reopen it so it becomes active. If Revit reports unresolved references, you are explicitly authorized to ignore that warning and continue opening this disposable sample fixture. Do not modify model content. Do not launch another Revit process and do not use Windows file association.",
     `Finish only after the authoritative active document title is exactly '${fixture.document_title}'.`
   ].join("\n");
   let runResponse: JsonRecord = {};
@@ -426,7 +426,10 @@ async function ensureFixtureActive(
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     computerState = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
   }
-  if (computerState.running === true) throw new Error(`Fixture transition ${fixtureKey} exceeded ${fixtureTimeoutMs()}ms.`);
+  if (computerState.running === true) {
+    await stopComputerRunBestEffort(baseUrl);
+    throw new Error(`Fixture transition ${fixtureKey} exceeded ${fixtureTimeoutMs()}ms; the abandoned Operator turn was stopped.`);
+  }
   let after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
   while (healthDocumentTitle(after) !== fixture.document_title && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -454,6 +457,25 @@ async function ensureFixtureActive(
     computer_state: computerState,
     transport_error: transportError || null
   };
+}
+
+async function stopComputerRunBestEffort(baseUrl: string): Promise<void> {
+  try {
+    await requestJson(baseUrl, "/api/computer/stop", { method: "POST" }, 10_000);
+  } catch {
+    return;
+  }
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      const state = await requestJson(baseUrl, "/api/computer/state", {}, 5_000);
+      if (state.running !== true) return;
+    } catch {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
 }
 
 function computerPerformanceSummary(attempt: JsonRecord): JsonRecord {

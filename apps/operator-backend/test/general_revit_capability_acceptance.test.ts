@@ -44,7 +44,11 @@ test("benchmark groups cases by fixture and fails closed on an unpinned mixed-mo
   assert.match(runner, /Selected cases span multiple sample models/);
   assert.match(runner, /revit_open_model/);
   assert.match(runner, /discardExistingOpenDocument=true/);
+  assert.match(runner, /continueOnUnresolvedReferences=true/);
+  assert.match(runner, /ignore that warning and continue opening this disposable sample fixture/);
   assert.match(runner, /explicitly authorized to close it without saving and reopen it/);
+  assert.match(runner, /await stopComputerRunBestEffort\(baseUrl\)/);
+  assert.match(runner, /the abandoned Operator turn was stopped/);
   assert.match(runner, /fixture_transitions:/);
   assert.match(runner, /preferredFixture !== activeFixtureKey/);
   assert.match(runner, /Fixture transition .* failed:/);
