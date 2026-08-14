@@ -545,12 +545,21 @@ function clearVerification(state: TeammateLoopState): void {
   state.verification_evidence_sha256 = null;
 }
 
+function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
+  return call.effect === "apply" && (call.path === "revit_open_model" || call.path === "/revit/open-model");
+}
+
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
   if (call.effect === "unknown") return "unknown_revit_contract_requires_one_tool_doc_lookup";
   if (contract.turn_kind === "conversation") return "conceptual_turn_does_not_require_revit";
-  if (call.effect !== "discovery" && contract.context_state !== "live") return "live_revit_context_required";
+  // Opening the first document is the one exact mutation that must be able to
+  // establish live document context. All ordinary reads, navigation, previews,
+  // and model writes remain fail-closed until a document identity is live.
+  if (call.effect !== "discovery" && contract.context_state !== "live" && !isContextFreeDocumentBootstrapCall(call)) {
+    return "live_revit_context_required";
+  }
   if (call.effect === "apply") {
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
     if (contract.no_write) return "user_no_write_limit";

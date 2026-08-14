@@ -1509,7 +1509,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:6749041e5b1ece52fa3221e3351404feb1d5aa1d0534f9350c330cf39e085b4f"
+      "sha256": "sha256:25cbde666fa83909821cffaf9d4f2ede5c12fe561913d209b68c0feb517d7411"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -2541,7 +2541,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:edcb83703838bf68f72dddfafa869f348da3522d58c2dde2499192398bf2466c"
+      "sha256": "sha256:ef2a93beea7dfe84795eb5da12072930aba93ffed26ceca1f52d6bc1b5329a90"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4589,7 +4589,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:889a7b90c9afd9c5ac90321bbda9d9699fcac5b47f38b4f8d095346977f01584",
+  "inputs_hash": "sha256:9837d3e35bc41fc1696f706e5f60ad0b9c84553806c525da55bc9992ebc7b032",
   "result": {
     "passed": true,
     "checks": [
