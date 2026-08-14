@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 import {
@@ -155,7 +156,7 @@ test("ordinary Revit mutation verbs authorize writes instead of silently forcing
 
 test("all acceptance prompts preserve their requested read, preview, or apply authority", () => {
   const manifest = JSON.parse(readFileSync(
-    new URL("../benchmark/general-agent/revit-capability-acceptance.v1.json", import.meta.url),
+    resolve(process.cwd(), "benchmark/general-agent/revit-capability-acceptance.v1.json"),
     "utf8"
   )) as { cases: AcceptanceCase[] };
 
