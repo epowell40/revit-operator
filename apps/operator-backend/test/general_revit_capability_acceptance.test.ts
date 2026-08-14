@@ -235,13 +235,13 @@ test("safe mode scores the safe probe contract without weakening production muta
 });
 
 test("aggregate results never turn non-refusal into a completion claim", () => {
-  const entry = corpus.cases[0];
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!, false);
   const accepted = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message: "Which equipment should I change?" });
   const completed = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "509 total: Supply Grille - Double Deflection - Curve Face Rectangular Neck 266; Return Grille - Double Deflection - Curve Face Rectangular Neck 138; Air Terminal-Exhaust Cap-FB 37; Air Terminal-Supply Cap-FB 37; Supply Diffuser - Square - Hosted 28; Return Grille - Perforated - Rectangular Face Rectangular Neck 2; Supply Diffuser with Plenum - Linear Slot - Hosted 1.",
     effect_state: "read_only_dispatched",
-    rounds: [{ actions: [{ path: entry.dispatch_any_of[0] }] }]
+    rounds: [{ actions: [{ path: entry.dispatch_any_of[0], request_effect: "preview" }] }]
   });
   const summary = summarizeGeneralRevitCapabilityReport([accepted, completed]);
   assert.equal(summary.non_refusal_count, 2);
@@ -332,8 +332,45 @@ test("durable read evidence cannot satisfy a preview contract without matching e
     ok: true,
     assignment_projection: { assignments: [{ ...assignment, execution: { requested_effect: "preview" } }] }
   });
-  assert.equal(previewed.tier, "verified");
+  assert.equal(previewed.tier, "previewed");
   assert.equal(previewed.completed, true);
+  assert.equal(previewed.verified, false);
+  assert.equal(previewed.verification_basis, "durable_server_validation");
+});
+
+test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {
+  const entry = { ...corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, expected_effect: "apply" as const };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    effect_state: "apply_dispatched",
+    actions: [{ path: "/revit/configure-schedule", request_effect: "apply", request_dispatched: true, status: "success" }],
+    verification_results: [{ path: "/revit/configure-schedule", status: "success", receipt: { status: "Success" } }],
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "apply" }
+      }]
+    }
+  });
+  assert.equal(result.tier, "completed");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, false);
+  assert.equal(result.verification_basis, "durable_server_validation");
+});
+
+test("grounded verification checks remain eligible model-state evidence", () => {
+  const entry = { ...corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, expected_effect: "apply" as const };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    effect_state: "apply_dispatched",
+    actions: [{ path: "/revit/configure-schedule", request_effect: "apply", request_dispatched: true, status: "success" }],
+    verification_results: [{ name: "filter_count", ok: true, expected: 1, actual: 1 }]
+  });
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "model_state_readback");
 });
 
 test("execution failures remain non-refusals while still failing completion", () => {

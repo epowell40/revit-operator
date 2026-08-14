@@ -406,6 +406,37 @@ function hasStructuredVerificationEvidence(value: unknown, depth = 0): boolean {
   return false;
 }
 
+function verificationChecksPass(value: unknown): boolean {
+  const rows = Array.isArray(value) ? value : [value];
+  if (rows.length === 0) return false;
+  return rows.every((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const row = entry as Record<string, unknown>;
+    const named = typeof row.name === "string" && row.name.trim().length > 0;
+    const grounded = Object.prototype.hasOwnProperty.call(row, "expected")
+      || Object.prototype.hasOwnProperty.call(row, "actual")
+      || (Array.isArray(row.evidence_refs) && row.evidence_refs.length > 0);
+    return row.ok === true && named && grounded;
+  });
+}
+
+function hasModelStateReadbackEvidence(value: unknown, depth = 0): boolean {
+  if (value === null || value === undefined || depth > 8) return false;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return false;
+    try { return hasModelStateReadbackEvidence(JSON.parse(text), depth + 1); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.some((entry) => hasModelStateReadbackEvidence(entry, depth + 1));
+  if (typeof value !== "object") return false;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (["readback", "read_back"].includes(key) && nonEmptyEvidenceValue(child)) return true;
+    if (["verification_result", "verification_results"].includes(key) && verificationChecksPass(child)) return true;
+    if (hasModelStateReadbackEvidence(child, depth + 1)) return true;
+  }
+  return false;
+}
+
 function nestedEvidenceMatches(
   value: unknown,
   predicate: (key: string, child: unknown) => boolean,
@@ -433,12 +464,12 @@ function nonEmptyEvidenceValue(value: unknown): boolean {
 function verificationBasis(
   testCase: GeneralRevitCapabilityCase,
   attempt: GeneralRevitAttempt,
-  verified: boolean,
+  completed: boolean,
   answerAssertionPassed: boolean | null,
   teammate: { mutationAttempted: boolean; blocked: boolean; verified: boolean },
   durable: { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] }
 ): GeneralRevitVerificationBasis {
-  if (!verified) return "none";
+  if (!completed) return "none";
   if (testCase.answer_assertions && answerAssertionPassed === true) return "fixture_semantic_oracle";
   if (teammate.verified) return "target_bound_model_state";
   if (nestedEvidenceMatches(attempt, (key, child) =>
@@ -451,15 +482,12 @@ function verificationBasis(
     ? attempt.teammate_loop_receipt as { preview_action_ids?: unknown } : {};
   if (testCase.expected_effect === "preview" && Array.isArray(teammateReceipt.preview_action_ids)
       && teammateReceipt.preview_action_ids.length > 0) return "structured_preview_receipt";
-  if (nestedEvidenceMatches(attempt, (key, child) =>
-    ["readback", "read_back", "verification_result", "verification_results"].includes(key) && nonEmptyEvidenceValue(child))) {
-    return "model_state_readback";
-  }
+  if (hasModelStateReadbackEvidence(attempt)) return "model_state_readback";
   if (nestedEvidenceMatches(attempt, (key, child) =>
     ["artifact", "artifacts", "artifact_id", "artifact_ids", "artifact_path", "artifact_paths"].includes(key)
       && nonEmptyEvidenceValue(child))) return "artifact_evidence";
   if (durable.verified) return "durable_server_validation";
-  return "generic_structured_receipt";
+  return hasStructuredVerificationEvidence(attempt) ? "generic_structured_receipt" : "none";
 }
 
 export function evaluateGeneralRevitCapabilityAttempt(
@@ -526,8 +554,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
   const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
     && (dispatched || durable.completed);
-  const verified = completed && (teammate.verified || hasStructuredVerificationEvidence(attempt) || durable.verified);
-  const basis = verificationBasis(testCase, attempt, verified, answerAssertionPassed, teammate, durable);
+  const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
+  const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (missingTargetClarification && attempt.ok !== false && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";

@@ -519,7 +519,7 @@ async function runComputerCase(
     actions,
     rounds: [],
     receipts: successfulActions.map((action) => action.receipt),
-    verification_results: successfulActions.map((action) => ({
+    action_results: successfulActions.map((action) => ({
       path: action.path,
       status: action.status,
       receipt: action.receipt
@@ -661,9 +661,9 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-timeout-ms N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-timeout-ms N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
-      "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit."
+      "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
     return;
   }
@@ -701,6 +701,7 @@ async function main(): Promise<void> {
   const resumePath = flag("--resume");
   const resumedCheckpoint = resumePath ? readJsonFile<JsonRecord>(path.resolve(resumePath)) : null;
   const rescoreOnly = process.argv.includes("--rescore-only");
+  const allowCorpusDrift = rescoreOnly && process.argv.includes("--allow-corpus-drift");
   if (rescoreOnly && !resumedCheckpoint) throw new Error("--rescore-only requires --resume CHECKPOINT.");
   if (!rescoreOnly && !requestedFixture && !orchestrateFixtures && selectedFixtureKeys.size > 1) {
     throw new Error("Selected cases span multiple sample models. Use --orchestrate-fixtures or run one explicit --fixture cohort at a time.");
@@ -772,7 +773,7 @@ async function main(): Promise<void> {
   };
   if (resumedCheckpoint) {
     const priorContext = asRecord(resumedCheckpoint.suite_context);
-    if (String(priorContext.corpus_sha256 || "") !== String(suiteContext.corpus_sha256)) {
+    if (String(priorContext.corpus_sha256 || "") !== String(suiteContext.corpus_sha256) && !allowCorpusDrift) {
       throw new Error("Resume checkpoint was produced from a different benchmark corpus.");
     }
     if (String(resumedCheckpoint.suite || "") !== suite || priorContext.apply_requested !== applyRequested) {
