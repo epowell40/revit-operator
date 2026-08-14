@@ -19,6 +19,7 @@ namespace RevitBridge.Logic.Handlers
             public bool audit { get; set; } = false;
             public bool detach { get; set; } = false;
             public bool discardExistingOpenDocument { get; set; } = false;
+            public bool continueOnUnresolvedReferences { get; set; } = false;
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -62,7 +63,14 @@ namespace RevitBridge.Logic.Handlers
                     });
                 }
 
-                return Task.FromResult(ReopenInactiveDocument(app, existing, modelPath, opts, filePath));
+                return Task.FromResult(ReopenInactiveDocument(
+                    app,
+                    existing,
+                    modelPath,
+                    opts,
+                    filePath,
+                    p.continueOnUnresolvedReferences,
+                    armUnresolvedReferencesGuard: true));
             }
 
             var linkedReferences = FindLinkedDocumentReferences(app, filePath);
@@ -82,6 +90,7 @@ namespace RevitBridge.Logic.Handlers
                 }
 
                 var unloadedLinks = UnloadLinkedDocumentReferences(linkedReferences);
+                ArmUnresolvedReferencesGuardIfRequested(p.continueOnUnresolvedReferences);
                 UIDocument openedLinkedDocument = app.OpenAndActivateDocument(modelPath, opts, false);
                 return Task.FromResult<object>(new
                 {
@@ -94,6 +103,7 @@ namespace RevitBridge.Logic.Handlers
 
             try 
             {
+                ArmUnresolvedReferencesGuardIfRequested(p.continueOnUnresolvedReferences);
                 UIDocument uidoc = app.OpenAndActivateDocument(modelPath, opts, false);
                 return Task.FromResult<object>(new 
                 { 
@@ -114,7 +124,14 @@ namespace RevitBridge.Logic.Handlers
                     }
 
                     if (p.discardExistingOpenDocument)
-                        return Task.FromResult(ReopenInactiveDocument(app, racedOpenDocument, modelPath, opts, filePath));
+                        return Task.FromResult(ReopenInactiveDocument(
+                            app,
+                            racedOpenDocument,
+                            modelPath,
+                            opts,
+                            filePath,
+                            p.continueOnUnresolvedReferences,
+                            armUnresolvedReferencesGuard: false));
 
                     throw new InvalidOperationException(
                         $"The requested model is open but inactive. Retry with discardExistingOpenDocument=true only when discarding unsaved changes is explicitly authorized: {filePath}",
@@ -129,12 +146,16 @@ namespace RevitBridge.Logic.Handlers
             Document existing,
             ModelPath modelPath,
             OpenOptions opts,
-            string filePath)
+            string filePath,
+            bool continueOnUnresolvedReferences,
+            bool armUnresolvedReferencesGuard)
         {
             var discardedUnsavedChanges = existing.IsModified;
             if (!existing.Close(false))
                 throw new InvalidOperationException($"Revit did not close the inactive document before reopening it: {filePath}");
 
+            if (armUnresolvedReferencesGuard)
+                ArmUnresolvedReferencesGuardIfRequested(continueOnUnresolvedReferences);
             UIDocument reopened = app.OpenAndActivateDocument(modelPath, opts, false);
             return new
             {
@@ -143,6 +164,43 @@ namespace RevitBridge.Logic.Handlers
                 path = reopened.Document.PathName,
                 discardedUnsavedChanges
             };
+        }
+
+        private static void ArmUnresolvedReferencesGuardIfRequested(bool requested)
+        {
+            if (!requested) return;
+
+            var appType = Type.GetType("RevitBridge.App, RevitBridge", throwOnError: false);
+            var instance = appType?.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var service = instance?.GetType()
+                .GetProperty("DialogComputerUse", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(instance)
+                ?? throw new InvalidOperationException(
+                    "continueOnUnresolvedReferences requires the Revit dialog guardian, but it is unavailable in this session.");
+            var requestType = service.GetType().GetNestedType("GuardParams", BindingFlags.Public)
+                ?? throw new InvalidOperationException("The Revit dialog guardian request contract is unavailable.");
+            var request = Activator.CreateInstance(requestType)
+                ?? throw new InvalidOperationException("The Revit dialog guardian request could not be created.");
+
+            SetGuardProperty(requestType, request, "buttonText", "Ignore and continue opening the project");
+            SetGuardProperty(requestType, request, "interactionMode", "message_then_mouse");
+            SetGuardProperty(requestType, request, "cursorRestoreMode", "keep");
+            SetGuardProperty(requestType, request, "titleContains", "Unresolved References");
+            SetGuardProperty(requestType, request, "messageContains", "Revit could not find or read");
+            SetGuardProperty(requestType, request, "maxTriggers", 1);
+            SetGuardProperty(requestType, request, "ttlMs", 120000);
+            SetGuardProperty(requestType, request, "includeScreenshotAfter", false);
+
+            var armGuard = service.GetType().GetMethod("ArmGuard", BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException("The Revit dialog guardian cannot arm rules in this session.");
+            armGuard.Invoke(service, new[] { request });
+        }
+
+        private static void SetGuardProperty(Type requestType, object request, string name, object value)
+        {
+            var property = requestType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"The Revit dialog guardian does not expose '{name}'.");
+            property.SetValue(request, value);
         }
 
         private static Document? FindOpenDocument(UIApplication app, string filePath)

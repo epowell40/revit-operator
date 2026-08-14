@@ -513,6 +513,7 @@ namespace RevitBridge.Common.Tests
             {
                 var handler = File.ReadAllText(Path.Combine(root, relativePath));
                 Assert.Contains("discardExistingOpenDocument { get; set; } = false", handler, StringComparison.Ordinal);
+                Assert.Contains("continueOnUnresolvedReferences { get; set; } = false", handler, StringComparison.Ordinal);
                 Assert.Contains("Already Open Inactive", handler, StringComparison.Ordinal);
                 Assert.Contains("completionEligible = false", handler, StringComparison.Ordinal);
                 Assert.Contains("requestedEffectSatisfied = false", handler, StringComparison.Ordinal);
@@ -525,13 +526,19 @@ namespace RevitBridge.Common.Tests
                 Assert.Contains("FindLinkedDocumentReferences(app", handler, StringComparison.Ordinal);
                 Assert.Contains("InvokeUnload(linkType)", handler, StringComparison.Ordinal);
                 Assert.Contains("Unloaded Link and Activated", handler, StringComparison.Ordinal);
+                Assert.Contains("ArmUnresolvedReferencesGuardIfRequested", handler, StringComparison.Ordinal);
+                Assert.Contains("Ignore and continue opening the project", handler, StringComparison.Ordinal);
+                Assert.Contains("Unresolved References", handler, StringComparison.Ordinal);
+                Assert.Contains("Revit could not find or read", handler, StringComparison.Ordinal);
                 Assert.Equal(3, handler.Split(new[] { "ReopenInactiveDocument(" }, StringSplitOptions.None).Length - 1);
             }
 
             var validator = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
             Assert.Contains("ValidateOptionalBool(obj.Value, \"discardExistingOpenDocument\"", validator, StringComparison.Ordinal);
+            Assert.Contains("ValidateOptionalBool(obj.Value, \"continueOnUnresolvedReferences\"", validator, StringComparison.Ordinal);
             var manifest = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorToolManifest.cs"));
             Assert.Contains("must be explicitly authorized", manifest, StringComparison.Ordinal);
+            Assert.Contains("continueOnUnresolvedReferences=true", manifest, StringComparison.Ordinal);
         }
 
         private static OperatorNativeTransportProtectedRequest Protect(string method, string path, string body, DateTimeOffset at)
