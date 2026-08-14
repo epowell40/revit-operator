@@ -220,8 +220,9 @@ function runCli(): void {
     const trustedSource = fs.readFileSync(trustedAuthorityPath, "utf8");
     fs.writeFileSync(trustedAuthorityPath, updateBundledPolicyHash(generated, trustedSource), "utf8");
     const catalogRoot = findRepoRoot(backendRoot);
-    const repoRoot = path.basename(catalogRoot).toLowerCase() === "apps" ? path.dirname(catalogRoot) : catalogRoot;
-    const mcpAuthorityPath = path.join(repoRoot, "apps", "mcp-server", "src", "lib", "toolExposurePolicy.ts");
+    const mcpAuthorityPath = fs.existsSync(path.join(catalogRoot, "apps", "mcp-server"))
+      ? path.join(catalogRoot, "apps", "mcp-server", "src", "lib", "toolExposurePolicy.ts")
+      : path.join(catalogRoot, "mcp-server", "src", "lib", "toolExposurePolicy.ts");
     const mcpSource = fs.readFileSync(mcpAuthorityPath, "utf8");
     fs.writeFileSync(mcpAuthorityPath, updateMcpBundledPolicyHash(generated, mcpSource), "utf8");
     const authorityPath = csharpAuthorityPath(catalogRoot);

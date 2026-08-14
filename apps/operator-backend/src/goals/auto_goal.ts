@@ -1,3 +1,5 @@
+import { isAffirmativeDocumentLifecycleMutation } from "../teammate_loop_runtime.js";
+
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
 const SPATIAL = /\b(room|wall|sheet|view|redline|markup|receptacle|outlet|device|tag|near|adjacent|along|align|move|rotate|place|add)\b/i;
@@ -35,9 +37,10 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   let score = signals.length;
   if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
   const shouldStart = liveModelRequest || score >= 2;
+  const documentLifecycleMutation = isAffirmativeDocumentLifecycleMutation(text);
   const requestedEffect = PREVIEW_REQUEST.test(text)
     ? "preview"
-    : MUTATION_OPERATION.test(text) && !NON_MUTATING_REQUEST.test(text)
+    : documentLifecycleMutation || (MUTATION_OPERATION.test(text) && !NON_MUTATING_REQUEST.test(text))
       ? "apply"
       : "read";
   return {
