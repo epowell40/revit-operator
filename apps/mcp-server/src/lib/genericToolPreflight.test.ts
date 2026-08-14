@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mcpPreDispatchFailureResult, preflightKnownGenericToolBody } from "./genericToolPreflight.js";
+import {
+  genericToolRegistryLookupFailure,
+  genericToolUnknownPathFailure,
+  mcpPreDispatchFailureResult,
+  preflightKnownGenericToolBody
+} from "./genericToolPreflight.js";
 
 test("known generic tools reject missing required fields before dispatch with retry-safe truth", () => {
   const failure = preflightKnownGenericToolBody({
@@ -25,6 +30,29 @@ test("known generic tools reject missing required fields before dispatch with re
   assert.equal(result.isError, true);
   assert.deepEqual(result.structuredContent, failure);
   assert.deepEqual(JSON.parse(result.content[0]!.text), failure);
+});
+
+test("registry admission failures preserve that the target mutation was not dispatched", () => {
+  const failure = genericToolRegistryLookupFailure(
+    "POST",
+    "/revit/open-model",
+    "courier deadline elapsed; outcome_unknown=true for GET /revit/tool-registry"
+  );
+  assert.equal(failure.code, "mcp_registry_validation_unavailable");
+  assert.equal(failure.phase, "registry_validation");
+  assert.equal(failure.request_dispatched, false);
+  assert.equal(failure.outcome_unknown, false);
+  assert.match(failure.error, /before the target request was dispatched/);
+  assert.match(failure.error, /outcome_unknown=true for GET \/revit\/tool-registry/);
+});
+
+test("unknown generic routes are retry-safe admission failures rather than model-operation failures", () => {
+  const failure = genericToolUnknownPathFailure("GET", "/revit/not-a-route");
+  assert.equal(failure.code, "mcp_unknown_tool_path");
+  assert.equal(failure.method, "GET");
+  assert.equal(failure.request_dispatched, false);
+  assert.equal(failure.outcome_unknown, false);
+  assert.match(failure.error, /target request was not dispatched/);
 });
 
 test("valid bodies, GET tools, and contracts without unconditional requirements pass preflight", () => {

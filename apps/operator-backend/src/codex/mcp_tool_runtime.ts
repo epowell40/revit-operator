@@ -23,6 +23,26 @@ export function resolveOperatorMcpServerSpec(backendCwd: string): { serverJs: st
   return { serverJs, cwd: path.dirname(path.dirname(serverJs)) };
 }
 
+export const EAGER_OPERATOR_MCP_TOOLS = new Set([
+  "operator_runtime_probe",
+  "operator_discover_capabilities",
+  "operator_record_execution_strategy",
+  "revit_ping",
+  "revit_get_context",
+  "revit_open_model",
+  "revit_list_sheets",
+  "revit_list_schedules",
+  "revit_update_schedule_cell",
+  "revit_replace_schedule_values",
+  "revit_set_parameters",
+  "revit_write_grant_status",
+  "revit_search_tools",
+  "revit_tool_registry",
+  "revit_tool_doc",
+  "revit_tool_examples",
+  "revit_call_tool"
+]);
+
 export class CodexMcpToolRuntime {
   private client: Client | null = null;
   private transport: StdioClientTransport | null = null;
@@ -103,24 +123,6 @@ export class CodexMcpToolRuntime {
     if (!client) throw new Error("Revit Operator MCP runtime is not connected.");
     const timeout = toolTimeoutMs(this.opts.spawnEnv);
     const listed = await client.listTools(undefined, { timeout, maxTotalTimeout: timeout });
-    const eager = new Set([
-      "operator_runtime_probe",
-      "operator_discover_capabilities",
-      "operator_record_execution_strategy",
-      "revit_ping",
-      "revit_get_context",
-      "revit_list_sheets",
-      "revit_list_schedules",
-      "revit_update_schedule_cell",
-      "revit_replace_schedule_values",
-      "revit_set_parameters",
-      "revit_write_grant_status",
-      "revit_search_tools",
-      "revit_tool_registry",
-      "revit_tool_doc",
-      "revit_tool_examples",
-      "revit_call_tool"
-    ]);
     this.dynamicNamespace = {
       type: "namespace",
       name: "revit_operator",
@@ -130,7 +132,7 @@ export class CodexMcpToolRuntime {
         name: tool.name,
         description: tool.description ?? "Revit Operator tool",
         inputSchema: tool.inputSchema,
-        deferLoading: !eager.has(tool.name)
+        deferLoading: !EAGER_OPERATOR_MCP_TOOLS.has(tool.name)
       }))
     };
     return this.dynamicNamespace;

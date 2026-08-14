@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
-import { resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
+import { EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
@@ -153,6 +153,10 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /Do not infer sheet totals/);
   assert.match(instructions, /Schedule-row edit rule/);
   assert.match(instructions, /revit_update_schedule_cell/);
+});
+
+test("core Revit lifecycle recovery is available before deferred capability discovery", () => {
+  assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_open_model"), true);
 });
 
 test("Codex instructions reuse known primitives before capability discovery", () => {
