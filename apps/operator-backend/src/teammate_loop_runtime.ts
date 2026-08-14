@@ -118,7 +118,22 @@ const MUTATION_VERB_SOURCE = [
 ].join("|");
 
 function containsMutationVerb(text: string): boolean {
-  return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text);
+  return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text)
+    || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
+}
+
+function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
+  if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
+      || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)
+      || /\b(?:preview|analysis)\s+only\b/i.test(text)) return true;
+  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text) && /\b(?:do not|don't|dont|never|without)\b/i.test(text)) return true;
+  if (/\bwithout\s+(?:making|applying|committing|saving)\s+(?:any\s+)?changes?\b/i.test(text)) return true;
+  if (/\bbefore\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ|creat|renam|print)/i.test(text)) return true;
+  return /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:change|modify|edit|delete|remove|apply|commit|write|create|rename|print|mutate)\b[^.!?;\n]{0,40}\b(?:the\s+)?(?:model|project|document|anything|it|the\s+change)\b/i.test(text);
+}
+
+function hasRevitWorkSubject(text: string): boolean {
+  return /\b(?:revit|model|project|element|equipment|device|fixture|terminal|duct|pipe|fitting|accessor|connector|family|type|parameter|mark|comment|note|tag|dimension|annotation|room|space|level|view|template|sheet|schedule|title\s*block|viewport|plan|section|elevation|detail|crop|scale|visibility|graphics|filter|workset|phase|system|circuit|panel|print|pdf)\w*\b/.test(text);
 }
 
 function containsDocumentLifecycleMutation(text: string): boolean {
@@ -156,9 +171,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   if (!text) return "conversation";
   const documentLifecycleMutation = containsDocumentLifecycleMutation(text);
   const documentLifecycleDenied = deniesDocumentLifecycleMutation(text);
-  const previewOnly =
-    /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ)/.test(text) ||
-    /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|commit|write)/.test(text);
+  const previewOnly = hasPreviewOrGlobalNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
   // state even when the user correctly says not to edit model elements.
@@ -171,8 +184,14 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   if (explicitMutation) return "mutation";
   if (!/^\s*(?:why|what|how|is|are|does|do|can you tell|could you tell)\b/.test(text) &&
       /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/.test(text)) return "mutation";
+  if (/\b(?:only\s+show|show\s+only)\b/.test(text) && hasRevitWorkSubject(text)) return "mutation";
   if (/\b(?:open|show|activate|take me to|go to|zoom to|select|highlight)\b/.test(text)) return "navigation";
   if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|current|active|selected)\b/.test(text)) return "inspection";
+  // Delegated Revit work is commonly written as a terse redline or noun phrase
+  // (for example, "12x10 SUPPLY DUCT at the marked branch"). Once a turn has a
+  // concrete Revit subject and is neither a question nor explicitly read-only,
+  // default to doing the work instead of requiring a magic mutation verb.
+  if (hasRevitWorkSubject(text)) return "mutation";
   return "conversation";
 }
 
@@ -181,18 +200,13 @@ function hasNoWriteAuthority(text: string): boolean {
     return deniesDocumentLifecycleMutation(text)
       || /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text);
   }
-  return /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text) ||
-    /\b(?:just|only)\s+(?:show|inspect|preview|check|tell|list|find)\b/i.test(text) ||
-    /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ)/i.test(text) ||
-    /\b(?:do not|don't|dont|no)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|commit|write)/i.test(text);
+  return hasPreviewOrGlobalNoWriteFraming(text);
 }
 
 function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): boolean {
   if (kind !== "mutation" || noWrite) return false;
   if (/\b(?:should|can|could|would)\s+(?:i|we)\b/i.test(text)) return false;
-  if (containsDocumentLifecycleMutation(text)) return true;
-  if (containsMutationVerb(text.toLowerCase())) return true;
-  return /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/i.test(text);
+  return true;
 }
 
 function ambiguityFor(text: string, kind: AgentTurnKind): "none" | "low" | "material" {
