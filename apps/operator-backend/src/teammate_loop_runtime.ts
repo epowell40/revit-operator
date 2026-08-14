@@ -44,6 +44,9 @@ type TeammateLoopState = {
   apply_expected_values: Set<string>;
   apply_operation: string;
   verified: boolean;
+  verification_mode: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
+  verification_action_id: string | null;
+  verification_evidence_sha256: string | null;
   tool_doc_calls: number;
   documented_tool_routes: Map<string, DocumentedToolRoute>;
   blocked_reason: string | null;
@@ -524,12 +527,22 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     apply_expected_values: new Set(),
     apply_operation: "",
     verified: false,
+    verification_mode: "none",
+    verification_action_id: null,
+    verification_evidence_sha256: null,
     tool_doc_calls: 0,
     documented_tool_routes: new Map(),
     blocked_reason: null
   };
   statesByTurn.set(key, state);
   return state;
+}
+
+function clearVerification(state: TeammateLoopState): void {
+  state.verified = false;
+  state.verification_mode = "none";
+  state.verification_action_id = null;
+  state.verification_evidence_sha256 = null;
 }
 
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
@@ -553,7 +566,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
       state.apply_target_tokens.clear();
       state.apply_expected_values.clear();
       state.apply_operation = "";
-      state.verified = false;
+      clearVerification(state);
       state.blocked_reason = null;
     }
   }
@@ -579,7 +592,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
   if (call.effect === "discovery" && /(?:tool-doc|revit_tool_doc)$/.test(call.path)) state.tool_doc_calls += 1;
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
   if (call.effect === "apply") {
-    state.verified = false;
+    clearVerification(state);
     state.apply_attempts += 1;
     state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
@@ -617,6 +630,11 @@ function evidenceValues(value: unknown): Set<string> {
 }
 
 function explicitVerification(value: unknown): boolean {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return false;
+    try { return explicitVerification(JSON.parse(text)); } catch { return false; }
+  }
   if (Array.isArray(value)) return value.some(explicitVerification);
   if (!value || typeof value !== "object") return false;
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
@@ -652,8 +670,16 @@ function verificationMatches(state: TeammateLoopState, evidence: unknown, requir
   return explicitVerification(evidence) || (!requireExplicit && substantiveReadback(evidence));
 }
 
-function markVerified(state: TeammateLoopState): void {
+function markVerified(
+  state: TeammateLoopState,
+  mode: Exclude<TeammateLoopState["verification_mode"], "none">,
+  actionId: string,
+  evidence: unknown
+): void {
   state.verified = true;
+  state.verification_mode = mode;
+  state.verification_action_id = actionId;
+  state.verification_evidence_sha256 = `sha256:${sha256(JSON.stringify(stableValue(evidence)))}`;
   if (state.apply_signature) state.completed_apply_signatures.add(state.apply_signature);
   state.contract.stage = "report";
 }
@@ -691,7 +717,7 @@ function clearKnownNoEffectApply(state: TeammateLoopState): void {
   state.apply_target_tokens.clear();
   state.apply_expected_values.clear();
   state.apply_operation = "";
-  state.verified = false;
+  clearVerification(state);
   state.blocked_reason = null;
   state.contract.stage = state.successful_preview_signatures.size > 0 ? "preview" : "apply";
 }
@@ -711,8 +737,12 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       }
     } else {
       for (const token of targetTokens(evidence)) state.apply_target_tokens.add(token);
-      if (verificationMatches(state, evidence, false)) {
-        markVerified(state);
+      // An apply response is execution evidence, not an independent observation.
+      // Admit same-call verification only when the primitive returns an explicit
+      // verified/complete receipt (and, when present, the requested values). A
+      // generic non-empty success payload must advance to a target-bound readback.
+      if (verificationMatches(state, evidence, true)) {
+        markVerified(state, "explicit_apply_receipt", actionId, evidence);
       } else state.contract.stage = "verify";
     }
   }
@@ -723,7 +753,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
     : pending.target_tokens.some(token => state.apply_target_tokens.has(token));
   if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && verificationMatches(state, evidence, false)) {
-    markVerified(state);
+    markVerified(state, "target_bound_readback", actionId, evidence);
   }
 }
 
@@ -742,6 +772,9 @@ function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_l
     verification_action_ids: state.verification_action_ids.slice(-8),
     apply_attempts: state.apply_attempts,
     verified: state.verified,
+    verification_mode: state.verification_mode,
+    verification_action_id: state.verification_action_id,
+    verification_evidence_sha256: state.verification_evidence_sha256,
     blocked_reason: state.blocked_reason
   };
 }
@@ -764,6 +797,9 @@ export function reconcileTeammateReceiptWithAssistant(
     ...value,
     stage: "blocked",
     verified: false,
+    verification_mode: "none",
+    verification_action_id: null,
+    verification_evidence_sha256: null,
     blocked_reason: value.blocked_reason || "assistant_reported_incomplete"
   };
 }
@@ -779,6 +815,9 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
         state.apply_attempts = 1;
         state.apply_succeeded = true;
         state.verified = true;
+        state.verification_mode = "trusted_dynamic_program_receipt";
+        state.verification_action_id = "dynamic_program";
+        state.verification_evidence_sha256 = `sha256:${sha256(JSON.stringify(stableValue(dynamicReceipt)))}`;
         state.contract.stage = "report";
       } else {
         state.contract.stage = "preview";

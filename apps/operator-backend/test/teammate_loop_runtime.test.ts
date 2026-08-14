@@ -58,6 +58,9 @@ test("an assistant report of an incomplete mutation overrides an optimistic rece
     verification_action_ids: ["mcp:3"],
     apply_attempts: 1,
     verified: true,
+    verification_mode: "target_bound_readback",
+    verification_action_id: "mcp:3",
+    verification_evidence_sha256: `sha256:${"a".repeat(64)}`,
     blocked_reason: null
   }, "The assignment is blocked. The requested new assignment is not yet complete.");
   assert.equal(receipt?.stage, "blocked");
@@ -251,7 +254,7 @@ test("atomic Revit primitives may advance through distinct verified writes witho
     assert.equal(apply.allowed, true);
     assert.equal(apply.call?.effect, "apply");
     recordTeammateMcpResult(owner, apply, {
-      content: [{ type: "text", text: JSON.stringify({ status: "Success", sourceViewId: 9948, view: { id: 1543100, name: "OPERATOR SMOKE HVAC PLAN" } }) }]
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", verified: true, sourceViewId: 9948, view: { id: 1543100, name: "OPERATOR SMOKE HVAC PLAN" } }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
 
@@ -266,7 +269,7 @@ test("atomic Revit primitives may advance through distinct verified writes witho
     assert.equal(hideRooms.allowed, true);
     assert.equal(hideRooms.call?.effect, "apply");
     recordTeammateMcpResult(owner, hideRooms, {
-      content: [{ type: "text", text: JSON.stringify({ status: "Success", view: { id: 1543100 }, category: { name: "Rooms", hidden: true } }) }]
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", verified: true, view: { id: 1543100 }, category: { name: "Rooms", hidden: true } }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 2);
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
@@ -804,6 +807,8 @@ test("created resource identity from apply binds a substantive post-apply readba
     });
     assert.equal(apply.allowed, true);
     recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({ status: "Success", schedule: { id: 1542917, name: "TEST MECHANICAL EQUIPMENT" } }) }] });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.stage, "verify");
     const verify = guardTeammateMcpCall(owner, {
       tool: "revit_list_schedules",
       arguments: { action: "detail", scheduleId: 1542917, includeFields: true }
@@ -814,6 +819,37 @@ test("created resource identity from apply binds a substantive post-apply readba
     assert.equal(receipt?.verified, true);
     assert.equal(receipt?.stage, "report");
     assert.equal(receipt?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("a generic successful apply payload cannot impersonate independent verification", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true, dryRun: false }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+    });
+    const afterApply = teammateLoopReceiptForOwner(owner);
+    assert.equal(afterApply?.verified, false);
+    assert.equal(afterApply?.stage, "verify");
+
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_get_parameters",
+      arguments: { elementIds: [42], parameterNames: ["Manufacturer"] }
+    });
+    assert.equal(readback.allowed, true);
+    recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -980,7 +1016,7 @@ test("a later dry-run inspection does not erase already verified Revit work", ()
     });
     assert.equal(create.allowed, true);
     recordTeammateMcpResult(owner, create, {
-      content: [{ type: "text", text: JSON.stringify({ status: "Success", schedule: { id: 1542996, name: "TEST" } }) }]
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", verified: true, schedule: { id: 1542996, name: "TEST" } }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
 
