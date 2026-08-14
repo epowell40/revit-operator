@@ -143,6 +143,11 @@ function deniesDocumentLifecycleMutation(text: string): boolean {
   return !containsDocumentLifecycleMutation(affirmativeText);
 }
 
+export function isAffirmativeDocumentLifecycleMutation(userText: string | null | undefined): boolean {
+  const text = `${userText || ""}`.replace(/\s+/g, " ").trim();
+  return !!text && containsDocumentLifecycleMutation(text) && !deniesDocumentLifecycleMutation(text);
+}
+
 export function classifyAgentTurn(userText: string | null | undefined): AgentTurnKind {
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";

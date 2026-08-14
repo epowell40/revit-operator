@@ -817,6 +817,13 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   const preview = classifyAutoGoalRequest("Preview changing all HRU Marks to ERU, but do not commit it.");
   assert.equal(preview.requestedEffect, "preview");
 
+  const fixtureTransition = classifyAutoGoalRequest(
+    "Use revit_open_model to open Snowdon Towers Sample Plumbing.rvt. Do not modify model content."
+  );
+  assert.equal(fixtureTransition.requestedEffect, "apply");
+  const inspectBeforeOpen = classifyAutoGoalRequest("Before opening the Revit model, inspect the path only.");
+  assert.equal(inspectBeforeOpen.requestedEffect, "read");
+
   const conceptual = classifyAutoGoalRequest("Explain why construction documents use schedules.");
   assert.equal(conceptual.shouldStart, false);
 });
