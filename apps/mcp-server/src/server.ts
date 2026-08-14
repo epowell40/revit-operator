@@ -39,7 +39,12 @@ import { fetchWebEvidenceToWorkspace, getWebResearchPolicyFromEnv } from "./lib/
 import { bestLineReplacement, replaceLineRange, similarityScore } from "./lib/textMatch.js";
 import { registerSemanticMepRouteTool } from "./tools/semanticMepRouteTool.js";
 import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
-import { mcpPreDispatchFailureResult, preflightKnownGenericToolBody } from "./lib/genericToolPreflight.js";
+import {
+  genericToolRegistryLookupFailure,
+  genericToolUnknownPathFailure,
+  mcpPreDispatchFailureResult,
+  preflightKnownGenericToolBody
+} from "./lib/genericToolPreflight.js";
 import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
@@ -1045,9 +1050,11 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       }
       if ((certifiedMode || !!args.requireKnownPath) && !known) {
         if (registryLookupError) {
-          throw new Error(`Tool registry lookup failed (${registryLookupError}). Cannot enforce requireKnownPath for ${method} ${pathInput}.`);
+          return mcpPreDispatchFailureResult(
+            genericToolRegistryLookupFailure(method, pathInput, registryLookupError)
+          );
         }
-        throw new Error(`Unknown tool path for this bridge: ${method} ${pathInput}. Run revit_search_tools first.`);
+        return mcpPreDispatchFailureResult(genericToolUnknownPathFailure(method, pathInput));
       }
 
       const normalizedBody = method === "GET" ? undefined : normalizeRawJsonBody(args.body);
