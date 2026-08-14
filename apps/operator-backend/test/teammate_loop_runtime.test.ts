@@ -352,6 +352,87 @@ test("known pre-dispatch mutation failures may be corrected and retried", () => 
   }
 });
 
+test("structured request-validation failures do not consume the mutation stage", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Open the Snowdon Plumbing Revit model."));
+  try {
+    const first = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/open-model", body: { path: "C:\\models\\plumbing.rvt" } }
+    });
+    assert.equal(first.allowed, true);
+    assert.equal(first.call?.effect, "apply");
+    recordTeammateMcpResult(owner, first, {
+      isError: true,
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          ok: false,
+          code: "mcp_request_validation_failed",
+          phase: "request_validation",
+          request_dispatched: false,
+          outcome_unknown: false,
+          retryable: true,
+          error: "POST /revit/open-model is missing required field: filePath."
+        })
+      }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+
+    const corrected = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/open-model", body: { filePath: "C:\\models\\plumbing.rvt" } }
+    });
+    assert.equal(corrected.allowed, true);
+    assert.equal(corrected.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("typed document lifecycle tools are first-class mutations", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Open and activate C:\\models\\plumbing.rvt in Revit."));
+  try {
+    const open = guardTeammateMcpCall(owner, {
+      tool: "revit_open_model",
+      arguments: { filePath: "C:\\models\\plumbing.rvt", discardExistingOpenDocument: true }
+    });
+    assert.equal(open.allowed, true);
+    assert.equal(open.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("a successful tool document teaches the host the canonical typed route effect", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Use the documented custom mutation to update the Revit model."));
+  try {
+    const beforeDoc = guardTeammateMcpCall(owner, { tool: "revit_custom_mutation", arguments: { value: 1 } });
+    assert.equal(beforeDoc.allowed, false);
+    assert.match(beforeDoc.message || "", /unknown revit contract/i);
+
+    const doc = guardTeammateMcpCall(owner, {
+      tool: "revit_tool_doc",
+      arguments: { method: "POST", path: "/revit/custom-mutation" }
+    });
+    assert.equal(doc.allowed, true);
+    recordTeammateMcpResult(owner, doc, {
+      content: [{ type: "text", text: JSON.stringify({ method: "POST", path: "/revit/custom-mutation", required_fields: ["value"] }) }]
+    });
+
+    const afterDoc = guardTeammateMcpCall(owner, { tool: "revit_custom_mutation", arguments: { value: 1 } });
+    assert.equal(afterDoc.allowed, true);
+    assert.equal(afterDoc.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("Revit document lifecycle commands authorize execution without treating no-element-edit wording as read-only", () => {
   const open = buildTeammateTurnContract(request(
     "Use revit_open_model to open C:\\Program Files\\Autodesk\\Revit 2024\\Samples\\Snowdon Towers Sample Plumbing.rvt. Do not modify the model."

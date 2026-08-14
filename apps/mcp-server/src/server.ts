@@ -39,6 +39,7 @@ import { fetchWebEvidenceToWorkspace, getWebResearchPolicyFromEnv } from "./lib/
 import { bestLineReplacement, replaceLineRange, similarityScore } from "./lib/textMatch.js";
 import { registerSemanticMepRouteTool } from "./tools/semanticMepRouteTool.js";
 import { assertRevitBridgePath } from "./lib/revitPathPolicy.js";
+import { mcpPreDispatchFailureResult, preflightKnownGenericToolBody } from "./lib/genericToolPreflight.js";
 import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
@@ -1022,6 +1023,7 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       assertRevitBridgePath(pathInput);
 
       let registry: ToolRegistryPayload | null = null;
+      let registryEntry: RegistryToolEntry | undefined;
       let registryLookupError = "";
       const certifiedMode = isCertifiedToolExposureMode();
       let known = false;
@@ -1036,9 +1038,10 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         } catch (e) {
           registryLookupError = String(e ?? "");
         }
-        known = (registry?.tools ?? []).some(
+        registryEntry = (registry?.tools ?? []).find(
           t => String(t.method ?? "").toUpperCase() === method && String(t.path ?? "") === pathInput
-        ) || EXTRA_DISCOVERY_PATHS.has(pathInput);
+        );
+        known = !!registryEntry || EXTRA_DISCOVERY_PATHS.has(pathInput);
       }
       if ((certifiedMode || !!args.requireKnownPath) && !known) {
         if (registryLookupError) {
@@ -1048,6 +1051,8 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       }
 
       const normalizedBody = method === "GET" ? undefined : normalizeRawJsonBody(args.body);
+      const preflightFailure = preflightKnownGenericToolBody(registryEntry, normalizedBody);
+      if (preflightFailure) return mcpPreDispatchFailureResult(preflightFailure);
       const data = method === "GET"
         ? await callRevit(pathInput, method, undefined, { channel: "generic_call" })
         : await callRevit(pathInput, method, normalizedBody, { channel: "generic_call" });
