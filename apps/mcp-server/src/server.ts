@@ -380,7 +380,12 @@ type ToolRegistryPayload = {
   tools?: RegistryToolEntry[];
 };
 
-const TOOL_REGISTRY_CACHE_MS = Math.max(1_000, Number.parseInt(process.env.OPERATOR_TOOL_REGISTRY_CACHE_MS ?? "15000", 10) || 15000);
+// Tool routes and schemas are add-in/runtime metadata, not document state. Keep
+// them for the MCP process session so a normal 30-60 second reasoning turn does
+// not expire the cache before the next task. Every discovery tool retains an
+// registry/search discovery retains an explicit forceRefresh escape hatch for
+// a newly loaded add-in/runtime.
+const TOOL_REGISTRY_CACHE_MS = Math.max(1_000, Number.parseInt(process.env.OPERATOR_TOOL_REGISTRY_CACHE_MS ?? "1800000", 10) || 1_800_000);
 const EXTRA_DISCOVERY_PATHS = new Set<string>([
   "/revit/ping",
   "/revit/context",
@@ -397,6 +402,13 @@ const EXTRA_DISCOVERY_PATHS = new Set<string>([
   "/revit/native-api-ops"
 ]);
 let cachedToolRegistry: { fetchedAt: number; rawPayload: ToolRegistryPayload | null } = { fetchedAt: 0, rawPayload: null };
+const cachedToolMetadata = new Map<string, { fetchedAt: number; value: unknown }>();
+
+function freshCachedToolRegistry(now = Date.now()): ToolRegistryPayload | null {
+  return cachedToolRegistry.rawPayload && now - cachedToolRegistry.fetchedAt < TOOL_REGISTRY_CACHE_MS
+    ? cachedToolRegistry.rawPayload
+    : null;
+}
 
 function normalizeRegistryMethod(v: unknown): RegistryMethod | null {
   const m = String(v ?? "").trim().toUpperCase();
@@ -521,10 +533,11 @@ function compactToolForList(t: RegistryToolEntry, score?: number): Record<string
 
 async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayload> {
   const now = Date.now();
-  if (!forceRefresh && cachedToolRegistry.rawPayload && now - cachedToolRegistry.fetchedAt < TOOL_REGISTRY_CACHE_MS) {
+  const cached = !forceRefresh ? freshCachedToolRegistry(now) : null;
+  if (cached) {
     return {
-      ...cachedToolRegistry.rawPayload,
-      tools: filterRegistryEntriesForSearch(cachedToolRegistry.rawPayload.tools ?? [])
+      ...cached,
+      tools: filterRegistryEntriesForSearch(cached.tools ?? [])
     };
   }
   const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, { channel: "search" });
@@ -664,7 +677,13 @@ server.tool("revit_tool_doc", "Describe a Revit HTTP tool (request schema + cano
       if (!isToolRouteExposedForSearch(args.method, String(args.path ?? "").trim())) {
         throw new Error(`Tool documentation is hidden because search exposure is not certified for ${args.method} ${args.path}.`);
       }
-      const data = await callRevit("/revit/tool-doc", "POST", args);
+      const cacheKey = `/revit/tool-doc\u0000${args.method}\u0000${String(args.path ?? "").trim()}`;
+      const cached = cachedToolMetadata.get(cacheKey);
+      let data = cached && Date.now() - cached.fetchedAt < TOOL_REGISTRY_CACHE_MS ? cached.value : null;
+      if (data === null) {
+        data = await callRevit("/revit/tool-doc", "POST", args);
+        cachedToolMetadata.set(cacheKey, { fetchedAt: Date.now(), value: data });
+      }
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -677,7 +696,13 @@ server.tool("revit_tool_examples", "Get runnable examples for a Revit HTTP tool.
       if (!isToolRouteExposedForSearch(args.method, String(args.path ?? "").trim())) {
         throw new Error(`Tool examples are hidden because search exposure is not certified for ${args.method} ${args.path}.`);
       }
-      const data = await callRevit("/revit/tool-examples", "POST", args);
+      const cacheKey = `/revit/tool-examples\u0000${args.method}\u0000${String(args.path ?? "").trim()}`;
+      const cached = cachedToolMetadata.get(cacheKey);
+      let data = cached && Date.now() - cached.fetchedAt < TOOL_REGISTRY_CACHE_MS ? cached.value : null;
+      if (data === null) {
+        data = await callRevit("/revit/tool-examples", "POST", args);
+        cachedToolMetadata.set(cacheKey, { fetchedAt: Date.now(), value: data });
+      }
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -897,7 +922,11 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
       const max = Math.max(1, Math.min(100, Number(args.max ?? 20) || 20));
       const includeSchemas = !!args.includeSchemas;
 
-      if (!pathPrefix && !includeSchemas) {
+      // If capability discovery already loaded the session registry, rank it
+      // locally instead of issuing a second live Revit request for the same
+      // metadata. A cold search may still use the bridge's compact search
+      // endpoint, and forceRefresh intentionally bypasses this reuse.
+      if (!pathPrefix && !includeSchemas && !freshCachedToolRegistry() && !args.forceRefresh) {
         try {
           const directBody: Record<string, unknown> = { query, max: Math.min(max, 12) };
           if (method) directBody.method = method;

@@ -33,6 +33,8 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0", app);
             Assert.Contains("_revitCourierWorker?.SetHostDocumentAvailable()", app);
             Assert.Contains("_eventService?.ExecutePendingOnIdling(uiApplication)", app);
+            Assert.Contains("_eventService?.HasPendingWork == true", app);
+            Assert.Contains("args.SetRaiseWithoutDelay()", app);
             Assert.Contains("_revitCourierWorker?.SetHostDocumentUnavailable()", app);
             Assert.DoesNotContain("SetHostDocumentAvailableAfterDelay", app);
 
@@ -41,6 +43,12 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("internal bool ExecutePendingOnIdling(UIApplication app)", eventService);
             Assert.Contains("if (_queue.IsEmpty) return false", eventService);
             Assert.Contains("Execute(app)", eventService);
+            Assert.Contains("MaintainRaiseUntilStartedAsync(item)", eventService);
+            Assert.Contains("TimeSpan.FromMilliseconds(250)", eventService);
+            Assert.Contains("PostMessage(windowHandle, WmNull", eventService);
+            Assert.Contains("SignalHostMessageLoop();", eventService);
+            Assert.DoesNotContain("if (request == ExternalEventRequest.Accepted) return", eventService);
+            Assert.DoesNotContain("revit_external_event_still_pending", eventService);
         }
 
         private static string ReadRepoFile(params string[] relativeSegments)

@@ -352,6 +352,21 @@ test("known pre-dispatch mutation failures may be corrected and retried", () => 
   }
 });
 
+test("Revit document lifecycle commands authorize execution without treating no-element-edit wording as read-only", () => {
+  const open = buildTeammateTurnContract(request(
+    "Use revit_open_model to open C:\\Program Files\\Autodesk\\Revit 2024\\Samples\\Snowdon Towers Sample Plumbing.rvt. Do not modify the model."
+  ));
+  assert.equal(open.turn_kind, "mutation");
+  assert.equal(open.no_write, false);
+  assert.equal(open.write_authorized, true);
+  assert.equal(open.verification_required, true);
+
+  const inspectOnly = buildTeammateTurnContract(request("Before opening the Revit model, inspect the path only."));
+  assert.equal(inspectOnly.turn_kind, "inspection");
+  assert.equal(inspectOnly.write_authorized, false);
+  assert.equal(buildTeammateTurnContract(request("Open the Level 2 equipment schedule.")).turn_kind, "navigation");
+});
+
 test("Codex MCP host guard treats serialized HTTP bodies like object bodies", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

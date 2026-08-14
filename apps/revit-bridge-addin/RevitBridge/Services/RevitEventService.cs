@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Autodesk.Revit.UI;
@@ -54,6 +56,13 @@ namespace RevitBridge.Services
         private readonly ConcurrentQueue<QueueItem> _queue = new ConcurrentQueue<QueueItem>();
         private readonly ExternalEvent _externalEvent;
         private int _inFlight;
+
+        private static readonly TimeSpan BackgroundWakeInterval = TimeSpan.FromMilliseconds(250);
+        private const uint WmNull = 0x0000;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool PostMessage(IntPtr windowHandle, uint message, IntPtr wParam, IntPtr lParam);
 
         public RevitEventService()
         {
@@ -119,23 +128,20 @@ namespace RevitBridge.Services
                     retryable: false,
                     item.CorrelationId));
             }
-            else if (request == ExternalEventRequest.TimedOut)
+            else
             {
-                FailQueuedItem(item, new RevitEventQueueException(
-                    "revit_external_event_raise_timed_out",
-                    "Revit did not accept the Operator external event because host synchronization timed out.",
-                    retryable: true,
-                    item.CorrelationId));
-            }
-            else if (request == ExternalEventRequest.Pending)
-            {
-                // A narrow race is possible when a new request arrives as Execute is returning.
-                // Retry the raise after Revit has left the current handler; never enqueue a
-                // second action while this request is outstanding.
-                _ = RetryPendingRaiseAsync(item);
+                // Accepted is not proof that Revit invoked the callback. In particular, a
+                // minimized/background Revit window can acknowledge the signal and then stop
+                // servicing the UI idle queue until it is foregrounded. Keep re-signalling the
+                // same single-flight ExternalEvent while the item is still pending. Revit
+                // coalesces these raises, so this cannot enqueue duplicate model work.
+                SignalHostMessageLoop();
+                _ = MaintainRaiseUntilStartedAsync(item);
             }
             return AwaitResult<T>(tcs.Task);
         }
+
+        internal bool HasPendingWork => Volatile.Read(ref _inFlight) != 0 && !_queue.IsEmpty;
 
         internal bool ExecutePendingOnIdling(UIApplication app)
         {
@@ -149,16 +155,17 @@ namespace RevitBridge.Services
             return true;
         }
 
-        private async Task RetryPendingRaiseAsync(QueueItem item)
+        private async Task MaintainRaiseUntilStartedAsync(QueueItem item)
         {
-            for (var attempt = 0; attempt < 4 && !item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending; attempt++)
+            while (!item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending)
             {
-                await Task.Delay(25 * (attempt + 1)).ConfigureAwait(false);
+                await Task.Delay(BackgroundWakeInterval).ConfigureAwait(false);
                 if (item.Completion.Task.IsCompleted || Volatile.Read(ref item.ExecutionState) != QueueItem.Pending) return;
                 ExternalEventRequest request;
                 try
                 {
                     request = _externalEvent.Raise();
+                    SignalHostMessageLoop();
                 }
                 catch (Exception ex)
                 {
@@ -170,7 +177,6 @@ namespace RevitBridge.Services
                     return;
                 }
 
-                if (request == ExternalEventRequest.Accepted) return;
                 if (request == ExternalEventRequest.Denied)
                 {
                     FailQueuedItem(item, new RevitEventQueueException(
@@ -180,24 +186,28 @@ namespace RevitBridge.Services
                         item.CorrelationId));
                     return;
                 }
-                if (request == ExternalEventRequest.TimedOut && attempt == 3)
-                {
-                    FailQueuedItem(item, new RevitEventQueueException(
-                        "revit_external_event_raise_timed_out",
-                        "Revit repeatedly failed to accept the pending Operator external event.",
-                        retryable: true,
-                        item.CorrelationId));
-                    return;
-                }
+                // Accepted, Pending, and TimedOut all remain known pre-execution states.
+                // Continue until Revit starts the callback or the caller's cancellation token
+                // removes the queue item. The HTTP/task deadline therefore remains the single
+                // bounded stop condition and releases the in-flight slot deterministically.
             }
+        }
 
-            if (!item.Completion.Task.IsCompleted && Volatile.Read(ref item.ExecutionState) == QueueItem.Pending)
+        private static void SignalHostMessageLoop()
+        {
+            // ExternalEvent.Raise can leave its signal acknowledged but unserviced when Revit
+            // is minimized. WM_NULL carries no command or input; it only wakes the existing
+            // Revit UI message pump so the host can reach Idling/ExternalEvent dispatch without
+            // activation, focus stealing, restoring the window, or Revit API access off-thread.
+            try
             {
-                FailQueuedItem(item, new RevitEventQueueException(
-                    "revit_external_event_still_pending",
-                    "Revit did not begin the pending Operator external event after bounded raise retries.",
-                    retryable: true,
-                    item.CorrelationId));
+                var windowHandle = Process.GetCurrentProcess().MainWindowHandle;
+                if (windowHandle != IntPtr.Zero)
+                    PostMessage(windowHandle, WmNull, IntPtr.Zero, IntPtr.Zero);
+            }
+            catch
+            {
+                // The repeated ExternalEvent signal and Idling fallback remain available.
             }
         }
 
@@ -288,7 +298,7 @@ namespace RevitBridge.Services
                 // first can wake the next hosted courier request while _inFlight is still 1,
                 // producing a false revit_external_event_busy response between sequential
                 // Revit actions. A Raise made before this handler returns is safely handled
-                // by ExternalEventRequest.Pending and RetryPendingRaiseAsync.
+                // by ExternalEventRequest.Pending and MaintainRaiseUntilStartedAsync.
                 Interlocked.Exchange(ref _inFlight, 0);
             }
 

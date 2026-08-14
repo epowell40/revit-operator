@@ -25,7 +25,9 @@ test("Revit ExternalEvent scheduler is single-flight and reports raise failures"
   assert.match(source, /Interlocked\.CompareExchange\(ref _inFlight, 1, 0\)/);
   assert.doesNotMatch(source, /while\s*\(\s*_queue\.TryDequeue/);
   assert.match(source, /ExternalEventRequest\.Denied/);
-  assert.match(source, /ExternalEventRequest\.TimedOut/);
+  assert.match(source, /Accepted, Pending, and TimedOut all remain known pre-execution states/);
+  assert.match(source, /MaintainRaiseUntilStartedAsync\(item\)/);
+  assert.doesNotMatch(source, /revit_external_event_still_pending/);
   assert.match(source, /revit_external_event_busy/);
   assert.match(source, /cancellationToken\.Register\(\(\) => CancelQueuedItem\(item\)\)/);
   assert.match(source, /QueueItem\.CancelledBeforeStart/);

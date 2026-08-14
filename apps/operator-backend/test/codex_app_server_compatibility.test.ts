@@ -155,6 +155,15 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
+test("Codex instructions reuse known primitives before capability discovery", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /reuse an exact primitive/i);
+  assert.match(instructions, /Call `operator_discover_capabilities` only when/i);
+  assert.match(instructions, /session-cached/i);
+  assert.match(instructions, /document\/model results are never satisfied from that cache/i);
+  assert.doesNotMatch(instructions, /call `operator_discover_capabilities` first/i);
+});
+
 test("Codex instructions keep negative searches scoped and require physical MEP serving connections", () => {
   const instructions = getOperatorAgentBaseInstructions();
   assert.match(instructions, /Negative-result scope rule/);
