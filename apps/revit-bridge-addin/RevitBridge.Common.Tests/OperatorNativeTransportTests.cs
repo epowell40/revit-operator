@@ -501,6 +501,30 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("OperatorWriteGrant.ValidateAndConsumeIfNeeded", server, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void OpenModelOnlyDiscardsAndReopensAnInactiveDocumentWithExplicitAuthorization()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            foreach (var relativePath in new[]
+            {
+                Path.Combine("RevitBridge", "Handlers", "OpenModelHandler.cs"),
+                Path.Combine("RevitBridge.Logic", "Handlers", "OpenModelHandler.cs")
+            })
+            {
+                var handler = File.ReadAllText(Path.Combine(root, relativePath));
+                Assert.Contains("discardExistingOpenDocument { get; set; } = false", handler, StringComparison.Ordinal);
+                Assert.Contains("Already Open Inactive", handler, StringComparison.Ordinal);
+                Assert.Contains("requiresExplicitDiscardAndReopen = true", handler, StringComparison.Ordinal);
+                Assert.Contains("existing.Close(false)", handler, StringComparison.Ordinal);
+                Assert.Contains("Reopened and Activated", handler, StringComparison.Ordinal);
+            }
+
+            var validator = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("ValidateOptionalBool(obj.Value, \"discardExistingOpenDocument\"", validator, StringComparison.Ordinal);
+            var manifest = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorToolManifest.cs"));
+            Assert.Contains("must be explicitly authorized", manifest, StringComparison.Ordinal);
+        }
+
         private static OperatorNativeTransportProtectedRequest Protect(string method, string path, string body, DateTimeOffset at)
             => OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, method, path, body, "grant", at);
 

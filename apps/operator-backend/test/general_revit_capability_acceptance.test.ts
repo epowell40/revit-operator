@@ -41,6 +41,8 @@ test("benchmark groups cases by fixture and fails closed on an unpinned mixed-mo
   assert.match(runner, /async function ensureFixtureActive/);
   assert.match(runner, /Selected cases span multiple sample models/);
   assert.match(runner, /revit_open_model/);
+  assert.match(runner, /discardExistingOpenDocument=true/);
+  assert.match(runner, /explicitly authorized to close it without saving and reopen it/);
   assert.match(runner, /fixture_transitions:/);
   assert.match(runner, /preferredFixture !== activeFixtureKey/);
   assert.match(runner, /Fixture transition .* failed:/);

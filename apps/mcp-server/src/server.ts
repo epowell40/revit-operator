@@ -3157,11 +3157,12 @@ server.tool("revit_sync_model", "Synchronize with Central and Relinquish All.",
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_open_model", "Open a Revit model file.",
+server.tool("revit_open_model", "Open and activate a Revit model file. If the exact file is already open but inactive, it is reported without claiming activation unless discardExistingOpenDocument is explicitly enabled.",
   {
     filePath: z.string().describe("Full path to the .rvt file."),
     audit: z.boolean().default(false).describe("Audit the model on open."),
-    detach: z.boolean().default(false).describe("Detach from central.")
+    detach: z.boolean().default(false).describe("Detach from central."),
+    discardExistingOpenDocument: z.boolean().default(false).describe("If the exact document is already open but inactive, close it without saving and reopen it as the active document. This can discard unsaved changes and must be explicitly authorized.")
   },
   async (args) => {
     try {

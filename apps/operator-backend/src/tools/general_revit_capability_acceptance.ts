@@ -392,7 +392,7 @@ async function ensureFixtureActive(
   const prompt = [
     "Benchmark fixture transition. The user explicitly authorized opening, saving, or discarding changes in Autodesk sample models for this test campaign; do not ask for confirmation.",
     `In the currently running Revit instance, use the Revit bridge primitive revit_open_model to open and activate exactly: ${samplePath}`,
-    "Use audit=false and detach=false. Do not modify the model. Do not launch another Revit process and do not use Windows file association.",
+    "Use audit=false, detach=false, and discardExistingOpenDocument=true. If that exact target document is already open but inactive, you are explicitly authorized to close it without saving and reopen it so it becomes active. Do not modify model content. Do not launch another Revit process and do not use Windows file association.",
     `Finish only after the authoritative active document title is exactly '${fixture.document_title}'.`
   ].join("\n");
   let runResponse: JsonRecord = {};

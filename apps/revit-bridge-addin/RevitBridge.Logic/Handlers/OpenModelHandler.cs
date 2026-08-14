@@ -15,6 +15,7 @@ namespace RevitBridge.Logic.Handlers
             public string filePath { get; set; }
             public bool audit { get; set; } = false;
             public bool detach { get; set; } = false;
+            public bool discardExistingOpenDocument { get; set; } = false;
         }
 
         public Task<object> Handle(UIApplication app, string jsonData)
@@ -37,6 +38,39 @@ namespace RevitBridge.Logic.Handlers
                 opts.DetachFromCentralOption = DetachFromCentralOption.DetachAndPreserveWorksets;
             }
 
+            var existing = FindOpenDocument(app, filePath);
+            if (existing != null)
+            {
+                var active = app.ActiveUIDocument?.Document;
+                if (active != null && active.Equals(existing))
+                    return Task.FromResult<object>(new { status = "Already Active", title = existing.Title, path = existing.PathName });
+
+                if (!p.discardExistingOpenDocument)
+                {
+                    return Task.FromResult<object>(new
+                    {
+                        status = "Already Open Inactive",
+                        title = existing.Title,
+                        path = existing.PathName,
+                        activeTitle = active?.Title,
+                        requiresExplicitDiscardAndReopen = true
+                    });
+                }
+
+                var discardedUnsavedChanges = existing.IsModified;
+                if (!existing.Close(false))
+                    throw new InvalidOperationException($"Revit did not close the inactive document before reopening it: {filePath}");
+
+                UIDocument reopened = app.OpenAndActivateDocument(modelPath, opts, false);
+                return Task.FromResult<object>(new
+                {
+                    status = "Reopened and Activated",
+                    title = reopened.Document.Title,
+                    path = reopened.Document.PathName,
+                    discardedUnsavedChanges
+                });
+            }
+
             try 
             {
                 UIDocument uidoc = app.OpenAndActivateDocument(modelPath, opts, false);
@@ -49,19 +83,32 @@ namespace RevitBridge.Logic.Handlers
             }
             catch (Exception ex)
             {
-                // If it fails (e.g., already open), we might try to just activate it?
-                foreach(Document d in app.Application.Documents)
+                var racedOpenDocument = FindOpenDocument(app, filePath);
+                if (racedOpenDocument != null)
                 {
-                    if (d.PathName.Equals(filePath, StringComparison.OrdinalIgnoreCase))
+                    var active = app.ActiveUIDocument?.Document;
+                    if (active != null && active.Equals(racedOpenDocument))
                     {
-                        // Already open, try to activate (limited API for activation without open)
-                        // But OpenAndActivate usually handles switching if already open? 
-                        // Sometimes it throws if already active.
-                        return Task.FromResult<object>(new { status = "Already Open", title = d.Title });
+                        return Task.FromResult<object>(new { status = "Already Active", title = racedOpenDocument.Title, path = racedOpenDocument.PathName });
                     }
+
+                    throw new InvalidOperationException(
+                        $"The requested model is open but inactive. Retry with discardExistingOpenDocument=true only when discarding unsaved changes is explicitly authorized: {filePath}",
+                        ex);
                 }
-                throw ex;
+                throw;
             }
+        }
+
+        private static Document? FindOpenDocument(UIApplication app, string filePath)
+        {
+            foreach (Document document in app.Application.Documents)
+            {
+                if (string.Equals(document.PathName, filePath, StringComparison.OrdinalIgnoreCase))
+                    return document;
+            }
+
+            return null;
         }
     }
 }
