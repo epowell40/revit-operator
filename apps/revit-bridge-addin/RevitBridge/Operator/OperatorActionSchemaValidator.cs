@@ -666,7 +666,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/open-model", StringComparison.OrdinalIgnoreCase))
             {
-                // { filePath: string, audit?: bool, detach?: bool }
+                // { filePath: string, audit?: bool, detach?: bool, discardExistingOpenDocument?: bool }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "open-model body must be an object.";
@@ -676,6 +676,7 @@ namespace RevitBridge.Operator
                 if (!ValidateRequiredString(obj.Value, "filePath", maxLen: 512, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "audit", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "detach", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "discardExistingOpenDocument", out error)) return false;
                 return true;
             }
 
