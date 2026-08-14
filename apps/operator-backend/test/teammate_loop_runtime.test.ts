@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "../src/contracts.js";
 import {
@@ -6,6 +7,7 @@ import {
   beginTeammateLoopOwner,
   bindTeammateLoopOwnerTurn,
   buildTeammateTurnContract,
+  classifyAgentTurn,
   endTeammateLoopOwner,
   guardGenericTeammateDecision,
   guardTeammateMcpCall,
@@ -13,6 +15,13 @@ import {
   recordTeammateMcpResult,
   teammateLoopReceiptForOwner
 } from "../src/teammate_loop_runtime.js";
+
+type AcceptanceCase = {
+  case_id: string;
+  prompt: string;
+  probe_prompt: string;
+  expected_effect: "read" | "preview" | "apply";
+};
 
 test("verified mutation stages may continue while retries and unverified chaining remain blocked", () => {
   __testOnlyResetTeammateLoopState();
@@ -142,6 +151,29 @@ test("ordinary Revit mutation verbs authorize writes instead of silently forcing
   }
   assert.equal(buildTeammateTurnContract(request("Show me sheet M000.")).turn_kind, "navigation");
   assert.equal(buildTeammateTurnContract(request("How should we duplicate sheets?")).write_authorized, false);
+});
+
+test("all acceptance prompts preserve their requested read, preview, or apply authority", () => {
+  const manifest = JSON.parse(readFileSync(
+    new URL("../benchmark/general-agent/revit-capability-acceptance.v1.json", import.meta.url),
+    "utf8"
+  )) as { cases: AcceptanceCase[] };
+
+  for (const entry of manifest.cases) {
+    const prompt = entry.expected_effect === "apply" ? entry.prompt : entry.probe_prompt;
+    const contract = buildTeammateTurnContract(request(prompt));
+    const diagnostic = `${entry.case_id}: ${prompt}`;
+    if (entry.expected_effect === "apply") {
+      assert.equal(classifyAgentTurn(prompt), "mutation", diagnostic);
+      assert.equal(contract.no_write, false, diagnostic);
+      assert.equal(contract.write_authorized, true, diagnostic);
+    } else {
+      assert.notEqual(classifyAgentTurn(prompt), "conversation", diagnostic);
+      assert.notEqual(classifyAgentTurn(prompt), "mutation", diagnostic);
+      assert.equal(contract.no_write, true, diagnostic);
+      assert.equal(contract.write_authorized, false, diagnostic);
+    }
+  }
 });
 
 test("benchmark-safe read and preview prompts remain live Revit work, not conceptual conversation", () => {
