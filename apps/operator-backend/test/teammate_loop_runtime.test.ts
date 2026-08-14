@@ -361,9 +361,24 @@ test("Revit document lifecycle commands authorize execution without treating no-
   assert.equal(open.write_authorized, true);
   assert.equal(open.verification_required, true);
 
+  const fixtureTransition = buildTeammateTurnContract(request(
+    "Use revit_open_model to open and activate C:\\Program Files\\Autodesk\\Revit 2024\\Samples\\Snowdon Towers Sample Plumbing.rvt. Do not modify model content, do not launch another Revit process, and do not use Windows file association. If the target is already open but inactive, close it without saving and reopen it."
+  ));
+  assert.equal(fixtureTransition.turn_kind, "mutation");
+  assert.equal(fixtureTransition.no_write, false);
+  assert.equal(fixtureTransition.write_authorized, true);
+  const openWithoutSave = buildTeammateTurnContract(request("Open the Revit model, then close it without saving."));
+  assert.equal(openWithoutSave.turn_kind, "mutation");
+  assert.equal(openWithoutSave.no_write, false);
+  assert.equal(openWithoutSave.write_authorized, true);
+
   const inspectOnly = buildTeammateTurnContract(request("Before opening the Revit model, inspect the path only."));
   assert.equal(inspectOnly.turn_kind, "inspection");
   assert.equal(inspectOnly.write_authorized, false);
+  const explicitDenial = buildTeammateTurnContract(request("Do not open the Revit model; inspect the path only."));
+  assert.equal(explicitDenial.turn_kind, "inspection");
+  assert.equal(explicitDenial.no_write, true);
+  assert.equal(explicitDenial.write_authorized, false);
   assert.equal(buildTeammateTurnContract(request("Open the Level 2 equipment schedule.")).turn_kind, "navigation");
 });
 

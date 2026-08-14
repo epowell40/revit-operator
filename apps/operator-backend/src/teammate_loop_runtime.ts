@@ -123,9 +123,22 @@ function containsDocumentLifecycleMutation(text: string): boolean {
 }
 
 function deniesDocumentLifecycleMutation(text: string): boolean {
-  return /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:open|reopen|close|save)\b/i.test(text)
-    || /\b(?:do not|don't|dont|never)\b[^.!?\n]{0,80}\b(?:open|reopen|close|save)\b/i.test(text)
-    || /\b(?:preview|inspect|show)\s+only\b[^.!?\n]{0,100}\b(?:open|reopen|close|save)\b/i.test(text);
+  const directDenial = /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:open|reopen|close|save)\b/i;
+  const deferredInspection = /\bbefore\s+(?:opening|reopening|closing|saving)\b[^.!?;\n]{0,100}\b(?:inspect|show|preview|check|confirm)\b/i;
+  const inspectionWithoutLifecycle = /\b(?:inspect|show|preview|check|confirm)\b[^.!?;\n]{0,100}\bwithout\s+(?:first\s+)?(?:opening|reopening|closing|saving)\b/i;
+  const previewOnly = /\b(?:preview|inspect|show)\s+only\b[^.!?;\n]{0,100}\b(?:open|reopen|close|save)\b/i;
+  if (!directDenial.test(text) && !deferredInspection.test(text) && !inspectionWithoutLifecycle.test(text) && !previewOnly.test(text)) return false;
+
+  // A lifecycle turn can authorize one application-state change while denying
+  // another (for example, "open it, then close without saving"). Strip only
+  // the denied/inspection clauses and keep the turn writable when an
+  // affirmative lifecycle command remains.
+  const affirmativeText = text
+    .replace(new RegExp(directDenial.source, "gi"), " ")
+    .replace(new RegExp(deferredInspection.source, "gi"), " ")
+    .replace(new RegExp(inspectionWithoutLifecycle.source, "gi"), " ")
+    .replace(new RegExp(previewOnly.source, "gi"), " ");
+  return !containsDocumentLifecycleMutation(affirmativeText);
 }
 
 export function classifyAgentTurn(userText: string | null | undefined): AgentTurnKind {
