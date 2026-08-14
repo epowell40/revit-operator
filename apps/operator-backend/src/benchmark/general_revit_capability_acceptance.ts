@@ -8,6 +8,16 @@ export const GENERAL_REVIT_RESULT_TIERS = [
 
 export type GeneralRevitResultTier = (typeof GENERAL_REVIT_RESULT_TIERS)[number];
 export type GeneralRevitExpectedEffect = "read" | "preview" | "apply";
+export type GeneralRevitVerificationBasis =
+  | "none"
+  | "fixture_semantic_oracle"
+  | "target_bound_model_state"
+  | "rollback_verified_preview"
+  | "model_state_readback"
+  | "artifact_evidence"
+  | "structured_preview_receipt"
+  | "durable_server_validation"
+  | "generic_structured_receipt";
 
 export type GeneralRevitCapabilityCase = {
   case_id: string;
@@ -110,6 +120,7 @@ export type GeneralRevitEvaluation = {
   answer_assertion_available: boolean;
   answer_assertion_passed: boolean | null;
   answer_assertion_failures: string[];
+  verification_basis: GeneralRevitVerificationBasis;
   summary: string;
 };
 
@@ -395,6 +406,62 @@ function hasStructuredVerificationEvidence(value: unknown, depth = 0): boolean {
   return false;
 }
 
+function nestedEvidenceMatches(
+  value: unknown,
+  predicate: (key: string, child: unknown) => boolean,
+  depth = 0
+): boolean {
+  if (value === null || value === undefined || depth > 8) return false;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return false;
+    try { return nestedEvidenceMatches(JSON.parse(text), predicate, depth + 1); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.some((entry) => nestedEvidenceMatches(entry, predicate, depth + 1));
+  if (typeof value !== "object") return false;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (predicate(key, child) || nestedEvidenceMatches(child, predicate, depth + 1)) return true;
+  }
+  return false;
+}
+
+function nonEmptyEvidenceValue(value: unknown): boolean {
+  return value !== null && value !== undefined && value !== false && value !== ""
+    && (!Array.isArray(value) || value.length > 0);
+}
+
+function verificationBasis(
+  testCase: GeneralRevitCapabilityCase,
+  attempt: GeneralRevitAttempt,
+  verified: boolean,
+  answerAssertionPassed: boolean | null,
+  teammate: { mutationAttempted: boolean; blocked: boolean; verified: boolean },
+  durable: { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] }
+): GeneralRevitVerificationBasis {
+  if (!verified) return "none";
+  if (testCase.answer_assertions && answerAssertionPassed === true) return "fixture_semantic_oracle";
+  if (teammate.verified) return "target_bound_model_state";
+  if (nestedEvidenceMatches(attempt, (key, child) =>
+    (["rollback_truth", "rollback_verified"].includes(key) && child === true)
+    || (key === "rollback_status" && `${child}`.toLowerCase() === "rolledback")
+    || (key === "rollback_verified_element_ids" && Array.isArray(child) && child.length > 0))) {
+    return "rollback_verified_preview";
+  }
+  const teammateReceipt = attempt.teammate_loop_receipt && typeof attempt.teammate_loop_receipt === "object"
+    ? attempt.teammate_loop_receipt as { preview_action_ids?: unknown } : {};
+  if (testCase.expected_effect === "preview" && Array.isArray(teammateReceipt.preview_action_ids)
+      && teammateReceipt.preview_action_ids.length > 0) return "structured_preview_receipt";
+  if (nestedEvidenceMatches(attempt, (key, child) =>
+    ["readback", "read_back", "verification_result", "verification_results"].includes(key) && nonEmptyEvidenceValue(child))) {
+    return "model_state_readback";
+  }
+  if (nestedEvidenceMatches(attempt, (key, child) =>
+    ["artifact", "artifacts", "artifact_id", "artifact_ids", "artifact_path", "artifact_paths"].includes(key)
+      && nonEmptyEvidenceValue(child))) return "artifact_evidence";
+  if (durable.verified) return "durable_server_validation";
+  return "generic_structured_receipt";
+}
+
 export function evaluateGeneralRevitCapabilityAttempt(
   testCase: GeneralRevitCapabilityCase,
   attempt: GeneralRevitAttempt | null | undefined
@@ -404,7 +471,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
       case_id: testCase.case_id, tier: "not_run", non_refusal: false, completed: false, verified: false,
       expected_path_observed: false, observed_paths: [], dispatched: false, apply_dispatched: false,
       outcome_unknown: false, refusal_reason: null, answer_assertion_available: !!testCase.answer_assertions,
-      answer_assertion_passed: null, answer_assertion_failures: [], summary: "Case was not run."
+      answer_assertion_passed: null, answer_assertion_failures: [], verification_basis: "none", summary: "Case was not run."
     };
   }
   const rows = actionRows(attempt);
@@ -460,6 +527,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
     && (dispatched || durable.completed);
   const verified = completed && (teammate.verified || hasStructuredVerificationEvidence(attempt) || durable.verified);
+  const basis = verificationBasis(testCase, attempt, verified, answerAssertionPassed, teammate, durable);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (missingTargetClarification && attempt.ok !== false && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
@@ -485,6 +553,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     answer_assertion_available: !!testCase.answer_assertions,
     answer_assertion_passed: answerAssertionPassed,
     answer_assertion_failures: answerAssertionFailures,
+    verification_basis: basis,
     summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
       : tier === "failed" ? answerAssertionPassed === false
         ? "Tool-backed execution completed, but the fixture-grounded answer assertions failed."
