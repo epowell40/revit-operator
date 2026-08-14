@@ -24,6 +24,7 @@ export type TeammateTurnContract = {
 
 type Effect = "read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
 type PendingCall = { effect: Effect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
+type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
 type TeammateLoopState = {
   key: string;
@@ -44,6 +45,7 @@ type TeammateLoopState = {
   apply_operation: string;
   verified: boolean;
   tool_doc_calls: number;
+  documented_tool_routes: Map<string, DocumentedToolRoute>;
   blocked_reason: string | null;
 };
 
@@ -426,10 +428,47 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
     return call(flags.preview ? "preview" : flags.apply ? "apply" : "unknown", "revit_dynamic_program");
   }
   if (flags.preview || (DEFAULT_PREVIEW_TOOLS.has(tool) && !flags.apply)) return call("preview");
-  if (/^revit_(?:set_|update_|replace_|delete_|move_|rotate_|create_|place_|route_|connect_|disconnect_|transaction_apply)/.test(tool) || flags.apply) {
+  if (/^revit_(?:set_|update_|replace_|delete_|move_|rotate_|create_|place_|route_|connect_|disconnect_|transaction_apply|open_|close_|save_|sync_)/.test(tool) || flags.apply) {
     return call("apply");
   }
   return call("unknown");
+}
+
+function canonicalTypedAliasForRoute(pathValue: unknown): string | null {
+  const path = `${pathValue || ""}`.trim().toLowerCase();
+  if (!path.startsWith("/revit/") || path.length <= "/revit/".length) return null;
+  const suffix = path.slice("/revit/".length);
+  if (!/^[a-z0-9][a-z0-9/-]*$/.test(suffix)) return null;
+  return `revit_${suffix.replace(/[/-]+/g, "_")}`;
+}
+
+function documentedToolRouteFromResult(result: unknown): { alias: string; route: DocumentedToolRoute } | null {
+  const root = objectValue(result);
+  const content = Array.isArray(root.content) ? root.content : [];
+  for (const item of content) {
+    const text = boundedString(objectValue(item).text, 2_000_000);
+    if (!text || !text.startsWith("{")) continue;
+    try {
+      const doc = objectValue(JSON.parse(text));
+      const method = `${doc.method || ""}`.trim().toUpperCase();
+      const path = `${doc.path || ""}`.trim().toLowerCase();
+      const alias = canonicalTypedAliasForRoute(path);
+      if ((method === "GET" || method === "POST") && alias) {
+        return { alias, route: { method, path } as DocumentedToolRoute };
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function classifyDocumentedMcpCall(state: TeammateLoopState, toolValue: unknown, argsValue: unknown): PendingCall {
+  const direct = classifyMcpCall(toolValue, argsValue);
+  if (direct.effect !== "unknown") return direct;
+  const tool = `${toolValue || ""}`.trim();
+  const documented = state.documented_tool_routes.get(tool);
+  return documented
+    ? classifyPathCall(documented.method, documented.path, structuredActionBody(argsValue))
+    : direct;
 }
 
 function turnKey(req: Pick<ChatRequest, "session_id" | "message_id">): string {
@@ -481,6 +520,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     apply_operation: "",
     verified: false,
     tool_doc_calls: 0,
+    documented_tool_routes: new Map(),
     blocked_reason: null
   };
   statesByTurn.set(key, state);
@@ -617,10 +657,16 @@ function knownNoEffectFailure(evidence: unknown): boolean {
   const root = objectValue(evidence);
   if (root.request_dispatched === false && root.outcome_unknown !== true) return true;
   const texts: string[] = [];
+  let structuredNoDispatch = false;
   const visit = (value: unknown, depth = 0): void => {
     if (depth > 8 || texts.length >= 128 || value === null || value === undefined) return;
     if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
-    if (typeof value === "object") { for (const item of Object.values(value as Record<string, unknown>)) visit(item, depth + 1); return; }
+    if (typeof value === "object") {
+      const row = value as Record<string, unknown>;
+      if (row.request_dispatched === false && row.outcome_unknown !== true) structuredNoDispatch = true;
+      for (const item of Object.values(row)) visit(item, depth + 1);
+      return;
+    }
     if (typeof value !== "string") return;
     texts.push(value);
     const trimmed = value.trim();
@@ -629,7 +675,7 @@ function knownNoEffectFailure(evidence: unknown): boolean {
     }
   };
   visit(evidence);
-  return texts.some(value => /\bbulk_confirm_required\b|bulk (?:query-based |panel-|type )?parameter (?:edit|update) requires typed confirmation/i.test(value));
+  return structuredNoDispatch || texts.some(value => /\bbulk_confirm_required\b|bulk (?:query-based |panel-|type )?parameter (?:edit|update) requires typed confirmation/i.test(value));
 }
 
 function clearKnownNoEffectApply(state: TeammateLoopState): void {
@@ -819,7 +865,7 @@ export function teammateLoopSessionIdForOwner(owner: object, turnIdValue: unknow
 export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; arguments?: unknown; turnId?: unknown }): TeammateMcpGate {
   const state = ownerState(owner, params.turnId);
   if (!state) return { allowed: false, message: "[teammate_loop_missing] No active host teammate-loop contract exists for this Revit call." };
-  const call = classifyMcpCall(params.tool, params.arguments);
+  const call = classifyDocumentedMcpCall(state, params.tool, params.arguments);
   const reason = gateCall(state, call);
   if (reason) {
     state.blocked_reason = reason;
@@ -868,6 +914,10 @@ export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, re
   const succeeded = mcpResultSucceeded(result);
   const separator = gate.call.path.indexOf("|");
   const observedPath = separator >= 0 ? gate.call.path.slice(separator + 1) : gate.call.path;
+  if (succeeded && observedPath === "revit_tool_doc") {
+    const documented = documentedToolRouteFromResult(result);
+    if (documented) state.documented_tool_routes.set(documented.alias, documented.route);
+  }
   if (succeeded && (observedPath === "revit_get_context" || observedPath === "/revit/context")) {
     const identity = recoveredLiveContextIdentity(result);
     if (identity) {
