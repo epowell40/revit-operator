@@ -69,7 +69,7 @@ namespace RevitBridge
                     ensureWriteGrant: OperatorWriteGrant.ReadStatus,
                     getLogger: () => null);
                 _revitCourierWorker.Start();
-                WriteStartupLog("Application-lifetime Revit courier worker started; courier dispatch is waiting for an open document.");
+                WriteStartupLog("Application-lifetime Revit courier worker started; context-free bootstrap dispatch is available on Revit Home.");
             }
             catch (Exception ex)
             {
@@ -219,9 +219,10 @@ namespace RevitBridge
             // DocumentOpened can fire while Revit is still loading/rendering the model.
             // The first actual Idling callback is the authoritative signal that the UI
             // thread can execute a newly raised ExternalEvent.
-            if (instance != null && System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0)
+            if (instance != null)
             {
-                instance._revitCourierWorker?.SetHostDocumentAvailable();
+                if (System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0)
+                    instance._revitCourierWorker?.SetHostDocumentAvailable();
                 if (sender is UIApplication uiApplication)
                 {
                     // If a background request is waiting, ask Revit to keep this idle session
@@ -243,11 +244,12 @@ namespace RevitBridge
             if (instance != null)
             {
                 var remaining = System.Threading.Interlocked.Decrement(ref instance._openDocumentCount);
-                instance._revitCourierWorker?.SetHostDocumentUnavailable();
                 if (remaining <= 0)
                 {
                     System.Threading.Interlocked.Exchange(ref instance._openDocumentCount, 0);
+                    instance._revitCourierWorker?.SetHostDocumentUnavailable();
                 }
+                else instance._revitCourierWorker?.SetHostDocumentAvailable();
             }
         }
 

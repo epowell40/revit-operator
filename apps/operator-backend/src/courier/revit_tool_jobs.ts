@@ -130,6 +130,7 @@ type ClaimInput = {
   session_id?: string | null;
   executor_id: string;
   session_allowed?: (sessionId: string) => boolean;
+  context_free_only?: boolean;
 };
 type FinishInput = { session_id: string; job_id: string; executor_id: string; result?: unknown; error?: string; retryable?: boolean };
 type AuthorizeInput = { session_id: string; job_id: string; executor_id: string; authorization_stage?: "preflight" | "final" };
@@ -849,6 +850,17 @@ function enumerateJobIds(): string[] {
   }
 }
 
+export function isRevitCourierContextFreeJob(job: Pick<RevitToolJob, "method" | "path">): boolean {
+  const method = `${job?.method || ""}`.trim().toUpperCase();
+  const jobPath = `${job?.path || ""}`.trim().toLowerCase();
+  if (method === "POST" && jobPath === "/revit/open-model") return true;
+  return method === "GET" && new Set([
+    "/revit/ping",
+    "/revit/context",
+    "/revit/capabilities"
+  ]).has(jobPath);
+}
+
 export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | null } {
   const sessionId = input.session_id == null || `${input.session_id}`.trim() === ""
     ? null
@@ -860,6 +872,7 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
     .filter((job): job is RevitToolJob => !!job &&
       (sessionId === null || job.session_id === sessionId) &&
       (!job.target_executor_id || job.target_executor_id === executorId) &&
+      (!input.context_free_only || isRevitCourierContextFreeJob(job)) &&
       (input.session_allowed?.(job.session_id) ?? true))
     .sort((a, b) => `${a.created_at}|${a.id}`.localeCompare(`${b.created_at}|${b.id}`));
 

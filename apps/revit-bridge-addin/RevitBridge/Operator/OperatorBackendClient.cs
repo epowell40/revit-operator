@@ -562,13 +562,14 @@ namespace RevitBridge.Operator
             return json ?? "";
         }
 
-        public async Task<string> ClaimNextRevitCourierJobJsonAsync(string? sessionId, string executorId, CancellationToken cancellationToken)
+        public async Task<string> ClaimNextRevitCourierJobJsonAsync(string? sessionId, string executorId, bool contextFreeOnly, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(executorId)) throw new ArgumentException("executorId is required.");
             var body = JsonSerializer.Serialize(new
             {
                 session_id = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId,
                 executor_id = executorId,
+                context_free_only = contextFreeOnly,
                 wait_ms = 10000
             }, OperatorUiProtocol.JsonOptions);
             using var resp = await SendWithAuthAsync(
