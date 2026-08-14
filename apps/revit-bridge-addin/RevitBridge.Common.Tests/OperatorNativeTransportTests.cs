@@ -517,6 +517,7 @@ namespace RevitBridge.Common.Tests
                 Assert.Contains("requiresExplicitDiscardAndReopen = true", handler, StringComparison.Ordinal);
                 Assert.Contains("existing.Close(false)", handler, StringComparison.Ordinal);
                 Assert.Contains("Reopened and Activated", handler, StringComparison.Ordinal);
+                Assert.Contains("if (document.IsLinked) continue;", handler, StringComparison.Ordinal);
                 Assert.Equal(3, handler.Split(new[] { "ReopenInactiveDocument(" }, StringSplitOptions.None).Length - 1);
             }
 

@@ -135,6 +135,10 @@ namespace RevitBridge.Handlers
         {
             foreach (Document document in app.Application.Documents)
             {
+                // A linked model is present in Application.Documents but cannot
+                // be activated, saved, or closed as a top-level UI document.
+                // Do not mistake a host's loaded link for an inactive project.
+                if (document.IsLinked) continue;
                 if (string.Equals(document.PathName, filePath, StringComparison.OrdinalIgnoreCase))
                     return document;
             }

@@ -117,6 +117,10 @@ namespace RevitBridge.Logic.Handlers
         {
             foreach (Document document in app.Application.Documents)
             {
+                // Linked documents cannot be activated, saved, or closed as
+                // top-level UI documents. Ignore them when resolving an
+                // already-open project that may be discarded and reopened.
+                if (document.IsLinked) continue;
                 if (string.Equals(document.PathName, filePath, StringComparison.OrdinalIgnoreCase))
                     return document;
             }
