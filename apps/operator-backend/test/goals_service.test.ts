@@ -1152,6 +1152,60 @@ test("a verified apply is not poisoned by a later known pre-dispatch busy respon
   });
 });
 
+test("an explicit no-effect success cannot server-sign apply completion", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-explicit-no-effect", {
+      title: "Open plumbing model", objective: "Open and activate the plumbing sample model.",
+      acceptance_criteria: ["The plumbing model is active."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Open model", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-explicit-no-effect");
+    observer.observe({
+      server: "revit_operator", tool: "revit_open_model", success: true,
+      arguments: { filePath: "Snowdon Towers Sample Plumbing.rvt", discardExistingOpenDocument: false },
+      result: {
+        status: "Already Loaded As Link",
+        completionEligible: false,
+        requiresExplicitUnloadAndOpen: true,
+        linkedHosts: [{ hostTitle: "Snowdon Towers Sample HVAC" }]
+      }
+    });
+    observer.finish("turn-explicit-no-effect", "The target is loaded as a link and must be explicitly unloaded before it can be activated.");
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.completion_audit?.complete ?? false, false);
+    assert.equal(persisted?.validation_log.length, 0);
+  });
+});
+
+test("a substantive retry may recover after an explicit no-effect response", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-explicit-no-effect-recovered", {
+      title: "Open plumbing model", objective: "Open and activate the plumbing sample model.",
+      acceptance_criteria: ["The plumbing model is active."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Open model", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-explicit-no-effect-recovered");
+    observer.observe({
+      server: "revit_operator", tool: "revit_open_model", success: true,
+      arguments: { filePath: "Snowdon Towers Sample Plumbing.rvt", discardExistingOpenDocument: false },
+      result: { status: "Already Loaded As Link", requiresExplicitUnloadAndOpen: true }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_open_model", success: true,
+      arguments: { filePath: "Snowdon Towers Sample Plumbing.rvt", discardExistingOpenDocument: true },
+      result: { status: "Unloaded Link and Activated", title: "Snowdon Towers Sample Plumbing" }
+    });
+    observer.finish("turn-explicit-no-effect-recovered", "Opened and activated the plumbing sample model after unloading its link from the HVAC host.");
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.completion_audit?.complete, true);
+    assert.match(JSON.stringify(persisted?.validation_log[0]?.evidence || {}), /after 1 earlier failed call/);
+  });
+});
+
 test("a fresh executable request may supersede a blocked automatic assignment", () => {
   withWorkspace(() => {
     const blocked = setAgentGoal("session-fresh-retry", {

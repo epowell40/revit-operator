@@ -514,6 +514,8 @@ namespace RevitBridge.Common.Tests
                 var handler = File.ReadAllText(Path.Combine(root, relativePath));
                 Assert.Contains("discardExistingOpenDocument { get; set; } = false", handler, StringComparison.Ordinal);
                 Assert.Contains("Already Open Inactive", handler, StringComparison.Ordinal);
+                Assert.Contains("completionEligible = false", handler, StringComparison.Ordinal);
+                Assert.Contains("requestedEffectSatisfied = false", handler, StringComparison.Ordinal);
                 Assert.Contains("requiresExplicitDiscardAndReopen = true", handler, StringComparison.Ordinal);
                 Assert.Contains("existing.Close(false)", handler, StringComparison.Ordinal);
                 Assert.Contains("Reopened and Activated", handler, StringComparison.Ordinal);

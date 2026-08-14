@@ -56,6 +56,8 @@ namespace RevitBridge.Logic.Handlers
                         title = existing.Title,
                         path = existing.PathName,
                         activeTitle = active?.Title,
+                        completionEligible = false,
+                        requestedEffectSatisfied = false,
                         requiresExplicitDiscardAndReopen = true
                     });
                 }
@@ -72,6 +74,8 @@ namespace RevitBridge.Logic.Handlers
                     {
                         status = "Already Loaded As Link",
                         path = filePath,
+                        completionEligible = false,
+                        requestedEffectSatisfied = false,
                         requiresExplicitUnloadAndOpen = true,
                         linkedHosts = DescribeLinkedDocumentReferences(linkedReferences)
                     });

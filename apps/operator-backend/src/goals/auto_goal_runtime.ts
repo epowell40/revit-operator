@@ -66,13 +66,15 @@ export function createAutoGoalTurnObserver(sessionId: string) {
       const effect = observationEffect(observation);
       const completionRelevant = effect !== "discovery";
       const knownNoEffectFailure = isKnownNoEffectFailure(observation);
-      if (isCompletionEvidence(observation) && observation.success === true) {
+      const explicitNoEffect = isExplicitNoEffectObservation(observation);
+      if (!explicitNoEffect && isCompletionEvidence(observation) && observation.success === true) {
         if (effect === "apply") successfulApplyTools += 1;
         else if (effect === "preview") successfulPreviewTools += 1;
         else if (effect === "read") successfulReadTools += 1;
       }
-      if (completionRelevant && observation.success === false && !knownNoEffectFailure) failedRevitTools += 1;
-      if (completionRelevant && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
+      if (completionRelevant && ((observation.success === false && !knownNoEffectFailure) || explicitNoEffect)) failedRevitTools += 1;
+      if (completionRelevant && explicitNoEffect) lastCompletionRelevantSucceeded = false;
+      else if (completionRelevant && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
     finish(turnId: string, assistantText: string, teammateReceipt?: AutoGoalTeammateReceipt | null) {
@@ -130,12 +132,35 @@ function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
 
 function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
   if (observationEffect(observation) === "discovery") return false;
+  if (isExplicitNoEffectObservation(observation)) return false;
   const result = observation.result ?? observation.output;
   if (result === null || result === undefined) return false;
   if (typeof result === "string") return result.trim().length > 0;
   if (Array.isArray(result)) return result.length > 0;
   if (typeof result === "object") return Object.keys(result as object).length > 0;
   return true;
+}
+
+function objectContainsExplicitNoEffect(value: unknown, depth = 0): boolean {
+  if (depth > 6 || value === null || value === undefined) return false;
+  if (typeof value === "string") {
+    const parsed = observationObject(value);
+    return Object.keys(parsed).length > 0 && objectContainsExplicitNoEffect(parsed, depth + 1);
+  }
+  if (Array.isArray(value)) return value.some((entry) => objectContainsExplicitNoEffect(entry, depth + 1));
+  if (typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.completionEligible === false || record.completion_eligible === false) return true;
+  if (record.requestedEffectSatisfied === false || record.requested_effect_satisfied === false) return true;
+  if (record.requiresExplicitDiscardAndReopen === true || record.requires_explicit_discard_and_reopen === true) return true;
+  if (record.requiresExplicitUnloadAndOpen === true || record.requires_explicit_unload_and_open === true) return true;
+  const status = `${record.status || ""}`.trim().toLowerCase();
+  if (["already open inactive", "already loaded as link", "requires explicit action"].includes(status)) return true;
+  return Object.values(record).some((entry) => objectContainsExplicitNoEffect(entry, depth + 1));
+}
+
+function isExplicitNoEffectObservation(observation: AutoGoalToolObservation): boolean {
+  return objectContainsExplicitNoEffect(observation.result ?? observation.output);
 }
 
 function observationEffect(observation: AutoGoalToolObservation): AutoGoalObservationEffect {
@@ -167,13 +192,13 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
     const route = `${args.path || ""}`.trim().toLowerCase();
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
     if (route === "/revit/transaction-plan") return "discovery";
-    if (/\/(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|reload|configure|replace|place|assign|link)(?:-|\/|$)/.test(route)) return "apply";
+    if (/\/(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|open|reload|configure|replace|place|assign|link)(?:-|\/|$)/.test(route)) return "apply";
   }
   if (tool === "run_dynamic_revit_program") {
     if (["preview", "rollback", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
     if (["apply", "commit", "committed"].includes(transactionMode)) return "apply";
   }
-  if (/revit_(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|reload|configure|replace|place|assign|link)/.test(tool)) return "apply";
+  if (/revit_(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|open|reload|configure|replace|place|assign|link)/.test(tool)) return "apply";
   return "read";
 }
 
