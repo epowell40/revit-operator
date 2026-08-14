@@ -80,13 +80,14 @@ namespace RevitBridge.Operator
                 // A completed Revit action must be acknowledged before this worker accepts more work.
                 // This replays durable completion evidence after a transient backend outage or pane/Revit restart.
                 if (await FlushOnePendingCompletionAsync().ConfigureAwait(false)) return;
-                // ExternalEvent.Raise can be accepted while Revit is on Home even though
-                // Revit will never invoke the callback. Do not claim or probe courier work
-                // until a real document has opened in this process.
-                if (Volatile.Read(ref _hostDocumentAvailable) == 0) return;
-                if (await HoldForOpenHostCircuitAsync().ConfigureAwait(false)) return;
+                // Revit Home has no document identity, but it must still be able to claim
+                // the small context-free bootstrap surface needed to inspect readiness and
+                // open the first model. The backend filters this claim before leasing it,
+                // and the worker validates the exact route again below.
+                var contextFreeOnly = Volatile.Read(ref _hostDocumentAvailable) == 0;
+                if (!contextFreeOnly && await HoldForOpenHostCircuitAsync().ConfigureAwait(false)) return;
 
-                var claimJson = await _backendClient.ClaimNextRevitCourierJobJsonAsync(null, _executorId, _cts.Token).ConfigureAwait(false);
+                var claimJson = await _backendClient.ClaimNextRevitCourierJobJsonAsync(null, _executorId, contextFreeOnly, _cts.Token).ConfigureAwait(false);
                 using var claimDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(claimJson) ? "{}" : claimJson);
                 if (!claimDocument.RootElement.TryGetProperty("job", out var job) || job.ValueKind != JsonValueKind.Object) return;
 
@@ -209,6 +210,13 @@ namespace RevitBridge.Operator
                     throw new OperatorCourierCertificationException(
                         "CERTIFICATION_FINAL_JOB_VERSION_INVALID",
                         "Unsupported Revit courier job version; no Revit action was executed.");
+                }
+
+                if (contextFreeOnly && !IsContextFreeWithoutDocument(method, path))
+                {
+                    throw new OperatorCourierCertificationException(
+                        "GENERAL_AGENT_HOME_BOOTSTRAP_ROUTE_INVALID",
+                        "A document-bound courier job was returned while Revit had no open document; no Revit action was executed.");
                 }
 
                 var risk = OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, bodyJson)
@@ -636,6 +644,17 @@ namespace RevitBridge.Operator
             var text = (value.GetString() ?? "").Trim();
             if (text.Length > maxLength) throw new InvalidOperationException("Revit courier job has invalid " + name + ".");
             return text;
+        }
+
+        internal static bool IsContextFreeWithoutDocument(string? method, string? path)
+        {
+            var normalizedMethod = (method ?? "").Trim().ToUpperInvariant();
+            var normalizedPath = (path ?? "").Trim();
+            if (normalizedMethod == "POST" && string.Equals(normalizedPath, "/revit/open-model", StringComparison.OrdinalIgnoreCase)) return true;
+            if (normalizedMethod != "GET") return false;
+            return string.Equals(normalizedPath, "/revit/ping", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedPath, "/revit/context", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedPath, "/revit/capabilities", StringComparison.OrdinalIgnoreCase);
         }
 
         private static void TryReadFailureIdentity(JsonElement job, ref string? sessionId, ref string? jobId)

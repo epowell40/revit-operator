@@ -67,6 +67,27 @@ function writeJob(root: string, overrides: Record<string, unknown> = {}): string
   return id;
 }
 
+test("context-free courier claims skip document-bound work while Revit is on Home", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-home-bootstrap-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const documentBoundId = writeJob(root, { method: "POST", path: "/revit/create-sheet" });
+  const openModelId = writeJob(root, { method: "POST", path: "/revit/open-model" });
+
+  const bootstrapClaim = claimNextRevitToolJob({
+    session_id: "session-a",
+    executor_id: "worker-1",
+    context_free_only: true
+  }).job;
+  assert.equal(bootstrapClaim?.id, openModelId);
+  assert.notEqual(bootstrapClaim?.id, documentBoundId);
+  assert.equal(claimNextRevitToolJob({
+    session_id: "session-a",
+    executor_id: "worker-1",
+    context_free_only: true
+  }).job, null);
+  assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, documentBoundId);
+});
+
 test("hosted General Agent v1 jobs require and preserve an exact route-bound admission", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-general-"));
   process.env.OPERATOR_WORKSPACE_ROOT = root;

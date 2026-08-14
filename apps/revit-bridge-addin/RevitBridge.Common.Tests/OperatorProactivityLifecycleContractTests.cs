@@ -19,16 +19,21 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void CourierCannotClaimExternalEventWorkUntilAHostDocumentIsOpen()
+        public void CourierClaimsOnlyContextFreeBootstrapWorkUntilAHostDocumentIsOpen()
         {
             var worker = ReadRepoFile(
                 "revit-bridge-addin", "RevitBridge", "Operator", "OperatorRevitCourierWorker.cs");
             var app = ReadRepoFile("revit-bridge-addin", "RevitBridge", "App.cs");
 
-            Assert.Contains("Volatile.Read(ref _hostDocumentAvailable) == 0", worker);
+            Assert.Contains("var contextFreeOnly = Volatile.Read(ref _hostDocumentAvailable) == 0", worker);
             Assert.True(
-                worker.IndexOf("Volatile.Read(ref _hostDocumentAvailable) == 0", StringComparison.Ordinal)
+                worker.IndexOf("var contextFreeOnly = Volatile.Read(ref _hostDocumentAvailable) == 0", StringComparison.Ordinal)
                 < worker.IndexOf("ClaimNextRevitCourierJobJsonAsync", StringComparison.Ordinal));
+            Assert.Contains("ClaimNextRevitCourierJobJsonAsync(null, _executorId, contextFreeOnly", worker);
+            Assert.Contains("contextFreeOnly && !IsContextFreeWithoutDocument(method, path)", worker);
+            Assert.Contains("/revit/open-model", worker);
+            Assert.Contains("/revit/ping", worker);
+            Assert.DoesNotContain("if (Volatile.Read(ref _hostDocumentAvailable) == 0) return", worker);
             Assert.Contains("application.Idling += OnIdling", app);
             Assert.Contains("System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0", app);
             Assert.Contains("_revitCourierWorker?.SetHostDocumentAvailable()", app);

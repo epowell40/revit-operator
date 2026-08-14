@@ -1367,6 +1367,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req, 1_000_000);
       const sessionId = trimCourierContextIdentity((body as any)?.session_id ?? (body as any)?.sessionId, 200);
       const executorId = trimCourierContextIdentity((body as any)?.executor_id ?? (body as any)?.executorId, 200);
+      const contextFreeOnly = (body as any)?.context_free_only === true;
       const waitMs = Math.max(0, Math.min(15_000, Number.parseInt(`${(body as any)?.wait_ms ?? 10_000}`, 10) || 0));
       if (!executorId) return writeJson(res, 400, { error: "executor_id is required." });
       if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
@@ -1380,10 +1381,10 @@ const server = http.createServer(async (req, res) => {
           };
       try {
         const deadline = Date.now() + waitMs;
-        let claim = claimNextRevitToolJob({ session_id: sessionId || null, executor_id: executorId, session_allowed: sessionAllowed });
+        let claim = claimNextRevitToolJob({ session_id: sessionId || null, executor_id: executorId, session_allowed: sessionAllowed, context_free_only: contextFreeOnly });
         while (!claim.job && Date.now() < deadline) {
           await new Promise(resolve => setTimeout(resolve, Math.min(250, Math.max(1, deadline - Date.now()))));
-          claim = claimNextRevitToolJob({ session_id: sessionId || null, executor_id: executorId, session_allowed: sessionAllowed });
+          claim = claimNextRevitToolJob({ session_id: sessionId || null, executor_id: executorId, session_allowed: sessionAllowed, context_free_only: contextFreeOnly });
         }
         return writeJson(res, 200, { ok: true, ...claim });
       } catch (error) {
