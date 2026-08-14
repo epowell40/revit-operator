@@ -223,7 +223,15 @@ namespace RevitBridge
             {
                 instance._revitCourierWorker?.SetHostDocumentAvailable();
                 if (sender is UIApplication uiApplication)
+                {
+                    // If a background request is waiting, ask Revit to keep this idle session
+                    // alive and pump the exact same single-flight item on the API thread. This
+                    // complements the non-UI wake loop in RevitEventService without keeping an
+                    // otherwise idle Revit process in continuous-idle mode.
+                    if (instance._eventService?.HasPendingWork == true)
+                        args.SetRaiseWithoutDelay();
                     instance._eventService?.ExecutePendingOnIdling(uiApplication);
+                }
             }
         }
 

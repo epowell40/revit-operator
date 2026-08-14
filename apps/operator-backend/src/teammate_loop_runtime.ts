@@ -116,14 +116,31 @@ function containsMutationVerb(text: string): boolean {
   return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text);
 }
 
+function containsDocumentLifecycleMutation(text: string): boolean {
+  return /\b(?:open|reopen|close|save)\b[^.!?\n]{0,180}(?:\b(?:revit\s+)?(?:model|project|document)\b|\.rvt\b)/i.test(text)
+    || /(?:\b(?:revit\s+)?(?:model|project|document)\b|\.rvt\b)[^.!?\n]{0,180}\b(?:open|reopen|close|save)\b/i.test(text)
+    || /\brevit_open_model\b|\/revit\/open-model\b/i.test(text);
+}
+
+function deniesDocumentLifecycleMutation(text: string): boolean {
+  return /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:open|reopen|close|save)\b/i.test(text)
+    || /\b(?:do not|don't|dont|never)\b[^.!?\n]{0,80}\b(?:open|reopen|close|save)\b/i.test(text)
+    || /\b(?:preview|inspect|show)\s+only\b[^.!?\n]{0,100}\b(?:open|reopen|close|save)\b/i.test(text);
+}
+
 export function classifyAgentTurn(userText: string | null | undefined): AgentTurnKind {
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
+  const documentLifecycleMutation = containsDocumentLifecycleMutation(text);
+  const documentLifecycleDenied = deniesDocumentLifecycleMutation(text);
   const previewOnly =
     /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ)/.test(text) ||
     /\b(?:do not|don't)\b[^.!?\n]{0,60}\b(?:change|modify|edit|delete|remove|apply|commit|write)/.test(text);
   const explicitMutation = containsMutationVerb(text);
-  if (previewOnly) return "inspection";
+  // Opening/saving/closing a Revit document changes authoritative application
+  // state even when the user correctly says not to edit model elements.
+  if (documentLifecycleMutation && !documentLifecycleDenied) return "mutation";
+  if (previewOnly || documentLifecycleDenied) return "inspection";
   const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
   if (isConceptualQuestion(text)
       && (!explicitMutation || explicitlyConceptualFraming)
@@ -137,6 +154,10 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
 }
 
 function hasNoWriteAuthority(text: string): boolean {
+  if (containsDocumentLifecycleMutation(text)) {
+    return deniesDocumentLifecycleMutation(text)
+      || /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text);
+  }
   return /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text) ||
     /\b(?:just|only)\s+(?:show|inspect|preview|check|tell|list|find)\b/i.test(text) ||
     /\b(?:before|without)\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ)/i.test(text) ||
@@ -146,6 +167,7 @@ function hasNoWriteAuthority(text: string): boolean {
 function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): boolean {
   if (kind !== "mutation" || noWrite) return false;
   if (/\b(?:should|can|could|would)\s+(?:i|we)\b/i.test(text)) return false;
+  if (containsDocumentLifecycleMutation(text)) return true;
   if (containsMutationVerb(text.toLowerCase())) return true;
   return /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/i.test(text);
 }

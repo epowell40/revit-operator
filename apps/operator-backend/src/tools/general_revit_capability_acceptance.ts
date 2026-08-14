@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import {
   evaluateGeneralRevitCapabilityAttempt,
@@ -68,6 +69,22 @@ function sha256(value: unknown): string {
 
 function id(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function healthTimeoutMs(): number {
+  const parsed = Number.parseInt(flag("--health-timeout-ms", "120000"), 10);
+  return Number.isFinite(parsed) ? Math.max(30_000, Math.min(10 * 60_000, parsed)) : 120_000;
+}
+
+function fixtureTimeoutMs(): number {
+  const parsed = Number.parseInt(flag("--fixture-timeout-ms", "300000"), 10);
+  return Number.isFinite(parsed) ? Math.max(60_000, Math.min(15 * 60_000, parsed)) : 300_000;
+}
+
+function executionSurface(): "operator_computer_general_agent" | "legacy_chat_diagnostic" {
+  return process.argv.includes("--legacy-chat")
+    ? "legacy_chat_diagnostic"
+    : "operator_computer_general_agent";
 }
 
 async function requestJson(baseUrl: string, pathname: string, options: RequestInit = {}, timeoutMs = 120_000): Promise<JsonRecord> {
@@ -181,6 +198,7 @@ function markdownReport(report: JsonRecord): string {
   const baseline = asRecord(report.baseline_comparison);
   const baselineSummary = asRecord(baseline.summary);
   const traces = Array.isArray(report.task_traces) ? report.task_traces.map(asRecord) : [];
+  const computerAgent = asRecord(asRecord(report.suite_context).computer_agent);
   const lines = [
     "# General Revit benchmark result",
     "",
@@ -188,6 +206,10 @@ function markdownReport(report: JsonRecord): string {
     `- Label: ${String(report.label || "unlabeled")}`,
     `- Generated: ${String(report.generated_at || "")}`,
     `- Mode: ${asRecord(report.suite_context).mutation_policy || "unknown"}`,
+    `- Execution surface: ${asRecord(report.suite_context).execution_surface || "unknown"}`,
+    `- Computer model: ${String(computerAgent.outer_model || "unknown")}`,
+    `- Planner: ${String(computerAgent.planner_model || "unknown")} / ${String(computerAgent.planner_reasoning_effort || "unknown")}`,
+    `- Executor: ${String(computerAgent.executor_model || "unknown")} / ${String(computerAgent.executor_reasoning_effort || "unknown")}`,
     `- Cases: ${numberValue(summary.total)}`,
     `- Non-refusal: ${percent(summary.non_refusal_rate)} (${numberValue(summary.non_refusal_count)}/${numberValue(summary.total)})`,
     `- Completion: ${percent(summary.completion_rate)} (${numberValue(summary.completed_count)}/${numberValue(summary.total)})`,
@@ -196,6 +218,7 @@ function markdownReport(report: JsonRecord): string {
     `- Failed: ${numberValue(summary.failure_count)}`,
     `- Wrong sample fixture: ${numberValue(report.fixture_mismatch_count)}`,
     `- Fixture unverifiable: ${numberValue(report.fixture_unverifiable_count)}`,
+    `- Fixture-grounded answer checks: ${numberValue(report.selected_answer_assertion_case_count)}/${numberValue(summary.total)}`,
     ""
   ];
   if (baseline.path) {
@@ -343,6 +366,110 @@ function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
   }));
 }
 
+async function ensureFixtureActive(
+  baseUrl: string,
+  fixtureKey: string,
+  fixture: { document_title: string; sample_filename: string },
+  fixtureRoot: string
+): Promise<JsonRecord> {
+  const startedAt = nowIso();
+  const startedMs = Date.now();
+  const before = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  if (healthDocumentTitle(before) === fixture.document_title) {
+    return {
+      fixture: fixtureKey,
+      expected_document_title: fixture.document_title,
+      action: "already_active",
+      started_at: startedAt,
+      finished_at: nowIso(),
+      duration_ms: Date.now() - startedMs,
+      before,
+      after: before
+    };
+  }
+  const samplePath = path.resolve(fixtureRoot, fixture.sample_filename);
+  if (!fs.existsSync(samplePath)) throw new Error(`Fixture file does not exist: ${samplePath}`);
+  const prompt = [
+    "Benchmark fixture transition. The user explicitly authorized opening, saving, or discarding changes in Autodesk sample models for this test campaign; do not ask for confirmation.",
+    `In the currently running Revit instance, use the Revit bridge primitive revit_open_model to open and activate exactly: ${samplePath}`,
+    "Use audit=false and detach=false. Do not modify the model. Do not launch another Revit process and do not use Windows file association.",
+    `Finish only after the authoritative active document title is exactly '${fixture.document_title}'.`
+  ].join("\n");
+  let runResponse: JsonRecord = {};
+  let transportError = "";
+  try {
+    runResponse = await requestJson(baseUrl, "/api/computer/run", {
+      method: "POST",
+      body: JSON.stringify({ prompt, message_id: id(`fixture-${fixtureKey}`) })
+    }, Math.min(fixtureTimeoutMs(), 30_000));
+  } catch (error) {
+    transportError = error instanceof Error ? error.message : String(error);
+  }
+  const deadline = Date.now() + fixtureTimeoutMs();
+  let computerState = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  while (computerState.running === true && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    computerState = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  }
+  if (computerState.running === true) throw new Error(`Fixture transition ${fixtureKey} exceeded ${fixtureTimeoutMs()}ms.`);
+  let after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  while (healthDocumentTitle(after) !== fixture.document_title && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  }
+  const observedTitle = healthDocumentTitle(after);
+  if (observedTitle !== fixture.document_title) {
+    const stateError = String(computerState.error || "").trim();
+    throw new Error(
+      `Fixture transition ${fixtureKey} failed: expected '${fixture.document_title}', observed '${observedTitle || "none"}'. `
+      + (stateError || transportError || "The Operator did not activate the requested model.")
+    );
+  }
+  return {
+    fixture: fixtureKey,
+    expected_document_title: fixture.document_title,
+    sample_path: samplePath,
+    action: "opened",
+    started_at: startedAt,
+    finished_at: nowIso(),
+    duration_ms: Date.now() - startedMs,
+    before,
+    after,
+    operator_response: runResponse,
+    computer_state: computerState,
+    transport_error: transportError || null
+  };
+}
+
+function computerPerformanceSummary(attempt: JsonRecord): JsonRecord {
+  const state = asRecord(attempt.computer_state);
+  const receipts = Array.isArray(state.performanceReceipts) ? state.performanceReceipts.map(asRecord) : [];
+  const byPhase: Record<string, JsonRecord> = {};
+  for (const receipt of receipts) {
+    const phase = String(receipt.phase || "unknown");
+    const current = byPhase[phase] || { count: 0, total_ms: 0, max_ms: 0, request_bytes: 0, response_bytes: 0 };
+    const durationMs = numberValue(receipt.duration_ms);
+    current.count = numberValue(current.count) + 1;
+    current.total_ms = numberValue(current.total_ms) + durationMs;
+    current.max_ms = Math.max(numberValue(current.max_ms), durationMs);
+    current.request_bytes = numberValue(current.request_bytes) + numberValue(receipt.request_bytes);
+    current.response_bytes = numberValue(current.response_bytes) + numberValue(receipt.response_bytes);
+    byPhase[phase] = current;
+  }
+  const progress = asRecord(state.progress);
+  const startedAt = Date.parse(String(progress.startedAt || ""));
+  const completedAt = Date.parse(String(progress.completedAt || progress.updatedAt || ""));
+  return {
+    schema: "revit-operator.computer-performance-summary/v1",
+    product_run_ms: Number.isFinite(startedAt) && Number.isFinite(completedAt) ? Math.max(0, completedAt - startedAt) : null,
+    receipt_count: receipts.length,
+    total_request_bytes: receipts.reduce((sum, receipt) => sum + numberValue(receipt.request_bytes), 0),
+    total_response_bytes: receipts.reduce((sum, receipt) => sum + numberValue(receipt.response_bytes), 0),
+    by_phase: byPhase,
+    receipts
+  };
+}
+
 async function runComputerCase(
   baseUrl: string,
   testCase: GeneralRevitCapabilityCase,
@@ -403,9 +530,14 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   const applyRequested = suiteContext.apply_requested === true;
   const executionCase = generalRevitExecutionCase(testCase, applyRequested);
   const executionExpectedEffect = executionCase.expected_effect;
-  const initialState = await requestJson(baseUrl, "/api/revit/health", {}, 30_000);
-  const useComputer = process.argv.includes("--ui")
-    || ["long_horizon", "document_production", "code_execution"].includes(testCase.source);
+  // Hosted production uses the durable Revit courier. A healthy background or
+  // minimized workstation can legitimately need more than 30 seconds to claim,
+  // execute, and settle the certified context job. Treat that as benchmark
+  // transport latency, not a model failure, while keeping the wait bounded.
+  const initialHealthStartedAt = Date.now();
+  const initialState = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  const initialHealthDurationMs = Date.now() - initialHealthStartedAt;
+  const useComputer = executionSurface() === "operator_computer_general_agent";
   let sessionId = "";
   let attempt: JsonRecord;
   if (useComputer) {
@@ -431,8 +563,13 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       attempt = { ok: false, error: error instanceof Error ? error.message : String(error), effect_state: "not_dispatched" };
     }
   }
+  let finalHealthDurationMs = 0;
+  const finalHealthStartedAt = Date.now();
+  const finalHealthPromise = requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs())
+    .catch((error) => ({ ok: false, error: String(error) }))
+    .finally(() => { finalHealthDurationMs = Date.now() - finalHealthStartedAt; });
   const [finalState, assignmentProjection] = await Promise.all([
-    requestJson(baseUrl, "/api/revit/health", {}, 30_000).catch((error) => ({ ok: false, error: String(error) })),
+    finalHealthPromise,
     (sessionId
       ? requestJson(baseUrl, `/api/assignments?limit=10&session_id=${encodeURIComponent(sessionId)}`, {}, 30_000)
       : Promise.resolve({ ok: false, error: "Computer run did not expose a backend session id." }))
@@ -503,7 +640,13 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       duration_ms: Date.now() - startedMs,
       token_count: null,
       tool_call_count: toolCalls.length,
-      round_count: Array.isArray(attempt.rounds) ? attempt.rounds.length : 0
+      round_count: Array.isArray(attempt.rounds) ? attempt.rounds.length : 0,
+      harness_health_ms: {
+        initial: initialHealthDurationMs,
+        final: finalHealthDurationMs,
+        total: initialHealthDurationMs + finalHealthDurationMs
+      },
+      computer_performance: computerPerformanceSummary(attempt)
     }
   };
 }
@@ -513,21 +656,29 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--baseline FILE] [--label TEXT] [--list-cases] [--ui] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-timeout-ms N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
-      "The corpus is representative regression coverage, not a capability allowlist. By default the runner sends and scores the non-mutating probe_prompt; --apply sends and scores the production mutation. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Long-horizon, document-production, and code-execution suites use the same computer-agent lane as the Sidecar UI; --ui opts any other suite into that lane."
+      "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit."
     ].join("\n"));
     return;
   }
   const corpus = loadGeneralRevitCapabilityCorpus();
   const fixtureConfig = loadGeneralRevitSampleFixtures(corpus.cases);
   const requestedFixture = flag("--fixture").trim().toLowerCase();
+  const orchestrateFixtures = process.argv.includes("--orchestrate-fixtures");
+  if (requestedFixture && orchestrateFixtures) throw new Error("Use either --fixture or --orchestrate-fixtures, not both.");
   if (requestedFixture && !fixtureConfig.fixtures[requestedFixture]) {
     throw new Error(`Unknown General Revit sample fixture '${requestedFixture}'.`);
   }
   const applyRequested = process.argv.includes("--apply");
-  const selected = selectCases(corpus.cases).filter((entry) => !requestedFixture
+  let selected = selectCases(corpus.cases).filter((entry) => !requestedFixture
     || generalRevitFixtureForCase(fixtureConfig, entry.case_id) === requestedFixture);
+  const selectedFixtureKeys = new Set(selected.map((entry) => generalRevitFixtureForCase(fixtureConfig, entry.case_id)));
+  if (orchestrateFixtures) {
+    const fixtureOrder = Object.keys(fixtureConfig.fixtures);
+    selected = [...selected].sort((left, right) => fixtureOrder.indexOf(generalRevitFixtureForCase(fixtureConfig, left.case_id))
+      - fixtureOrder.indexOf(generalRevitFixtureForCase(fixtureConfig, right.case_id)));
+  }
   if (selected.length === 0) throw new Error("No cases matched the requested filters.");
   if (process.argv.includes("--list-cases")) {
     console.log(JSON.stringify(selected.map((entry) => ({
@@ -546,6 +697,9 @@ async function main(): Promise<void> {
   const resumedCheckpoint = resumePath ? readJsonFile<JsonRecord>(path.resolve(resumePath)) : null;
   const rescoreOnly = process.argv.includes("--rescore-only");
   if (rescoreOnly && !resumedCheckpoint) throw new Error("--rescore-only requires --resume CHECKPOINT.");
+  if (!rescoreOnly && !requestedFixture && !orchestrateFixtures && selectedFixtureKeys.size > 1) {
+    throw new Error("Selected cases span multiple sample models. Use --orchestrate-fixtures or run one explicit --fixture cohort at a time.");
+  }
   let runId = String(resumedCheckpoint?.run_id || `${fileStamp()}-${suite}-${applyRequested ? "apply" : "safe"}`);
   const explicitOutput = flag("--output");
   const outputDir = flag("--output-dir");
@@ -558,17 +712,23 @@ async function main(): Promise<void> {
       : path.resolve(`general-revit-capability-report-${Date.now()}.json`);
   const summaryOutput = resolvedOutputDir ? path.join(resolvedOutputDir, runId, "summary.md") : output.replace(/\.json$/i, ".md");
   const priorSuiteContext = asRecord(resumedCheckpoint?.suite_context);
+  const priorComputerAgent = asRecord(priorSuiteContext.computer_agent);
   const [config, grant] = rescoreOnly
-    ? [{ runtimeProfile: asRecord(priorSuiteContext.runtime_profile) }, asRecord(priorSuiteContext.write_grant)]
+    ? [{
+      runtimeProfile: asRecord(priorSuiteContext.runtime_profile),
+      computerModel: priorComputerAgent.outer_model,
+      speedDefaults: priorComputerAgent
+    }, asRecord(priorSuiteContext.write_grant)]
     : await Promise.all([
       requestJson(sidecar, "/api/config", {}, 30_000),
       requestJson(sidecar, "/api/revit/write-grant", {}, 30_000)
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
+  const speedDefaults = asRecord(config.speedDefaults);
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
   let fixturePreflight: JsonRecord = {};
   if (requestedFixture && !rescoreOnly) {
-    fixturePreflight = await requestJson(sidecar, "/api/revit/health", {}, 30_000);
+    fixturePreflight = await requestJson(sidecar, "/api/revit/health", {}, healthTimeoutMs());
     const activeTitle = String(asRecord(asRecord(fixturePreflight.context).document).title || "").trim();
     const expectedTitle = fixtureConfig.fixtures[requestedFixture].document_title;
     if (activeTitle !== expectedTitle) {
@@ -577,13 +737,24 @@ async function main(): Promise<void> {
   }
   const suiteContext = {
     sidecar,
+    execution_surface: executionSurface(),
     runtime_profile: runtimeProfile,
     write_grant: safeGrant(grant),
+    computer_agent: {
+      outer_model: String(config.computerModel || speedDefaults.executor_model || "unknown"),
+      split_planner_executor: speedDefaults.split_planner_executor === true,
+      planner_model: String(speedDefaults.planner_model || "unknown"),
+      planner_reasoning_effort: String(speedDefaults.planner_reasoning_effort || "unknown"),
+      executor_model: String(speedDefaults.executor_model || config.computerModel || "unknown"),
+      executor_reasoning_effort: String(speedDefaults.executor_reasoning_effort || "unknown")
+    },
     corpus_schema: corpus.schema_version,
     corpus_sha256: sha256(corpus),
     fixture_schema: fixtureConfig.schema,
     fixture_config_sha256: sha256(fixtureConfig),
-    fixture_selection: requestedFixture || "mixed_unpinned",
+    fixture_selection: requestedFixture || (orchestrateFixtures ? "orchestrated" : "single_fixture_unpinned"),
+    fixture_root: orchestrateFixtures ? path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples")) : null,
+    fixture_transitions: [] as JsonRecord[],
     fixture_preflight: requestedFixture ? {
       document_title: asRecord(asRecord(fixturePreflight.context).document).title ?? null,
       document_path: asRecord(asRecord(fixturePreflight.context).document).path ?? null,
@@ -629,15 +800,24 @@ async function main(): Promise<void> {
       corpusTaskTypesByCase.set(caseId, values);
     }
   }
+  let activeFixtureKey = "";
+  const fixtureRoot = path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples"));
   for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
+    const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
+    if (orchestrateFixtures && preferredFixture !== activeFixtureKey) {
+      console.log(`[fixture] ${preferredFixture}`);
+      const transition = await ensureFixtureActive(sidecar, preferredFixture, fixtureConfig.fixtures[preferredFixture], fixtureRoot);
+      (suiteContext.fixture_transitions as JsonRecord[]).push(transition);
+      activeFixtureKey = preferredFixture;
+    }
     console.log(`[${traces.length + 1}/${selected.length}] ${testCase.case_id}`);
     traces.push(await runCase(
       sidecar,
       testCase,
       suiteContext,
       corpusTaskTypesByCase.get(testCase.case_id) || [],
-      generalRevitFixtureForCase(fixtureConfig, testCase.case_id),
-      fixtureConfig.fixtures[generalRevitFixtureForCase(fixtureConfig, testCase.case_id)].document_title
+      preferredFixture,
+      fixtureConfig.fixtures[preferredFixture].document_title
     ));
     writeJsonFile(checkpointOutput, {
       schema: "revit-operator.general-revit-capability-checkpoint/v1",
@@ -659,6 +839,8 @@ async function main(): Promise<void> {
   const corpusCoverage = summarizeGeneralRevitCorpusCoverage(corpus);
   const fixtureMismatchCount = traces.filter((trace) => asRecord(trace.fixture_applicability).fixture_match === false).length;
   const fixtureUnverifiableCount = traces.filter((trace) => asRecord(trace.fixture_applicability).fixture_match == null).length;
+  const answerAssertionCaseCount = corpus.cases.filter((entry) => !!entry.answer_assertions).length;
+  const selectedAnswerAssertionCaseCount = selected.filter((entry) => !!entry.answer_assertions).length;
   const baselinePath = flag("--baseline");
   const baselineReport = baselinePath ? readJsonFile<JsonRecord>(path.resolve(baselinePath)) : null;
   const baselineComparison = baselineReport ? {
@@ -683,12 +865,14 @@ async function main(): Promise<void> {
     summary_by_fixture: summaryByFixture,
     fixture_mismatch_count: fixtureMismatchCount,
     fixture_unverifiable_count: fixtureUnverifiableCount,
+    answer_assertion_case_count: answerAssertionCaseCount,
+    selected_answer_assertion_case_count: selectedAnswerAssertionCaseCount,
     summary_by_corpus_task_type: summaryByCorpusTaskType,
     corpus_coverage: corpusCoverage,
     baseline_comparison: baselineComparison,
     baseline_case_deltas: caseDeltas,
     task_traces: traces,
-    report_sha256: sha256({ suiteContext, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, caseDeltas, traces })
+    report_sha256: sha256({ suiteContext, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, traces })
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));

@@ -743,3 +743,13 @@ test("MCP stdio tools/list follows trusted aliases and cached registry data is r
   assert.match((revoked as any).content[0].text, /disabled|TOOL_EXPOSURE_POLICY_ROLLBACK_REJECTED/i);
   assert.equal(bridgeRequests, 1, "Cached raw registry data should be re-filtered without another bridge dispatch.");
 });
+
+test("capability metadata is session-cached while explicit refresh remains available", () => {
+  const serverSource = fs.readFileSync(path.resolve(process.cwd(), "src/server.ts"), "utf8");
+  assert.match(serverSource, /OPERATOR_TOOL_REGISTRY_CACHE_MS \?\? "1800000"/);
+  assert.match(serverSource, /function freshCachedToolRegistry/);
+  assert.match(serverSource, /const cachedToolMetadata = new Map/);
+  assert.match(serverSource, /callRevit\("\/revit\/tool-doc", "POST", args\)/);
+  assert.match(serverSource, /callRevit\("\/revit\/tool-examples", "POST", args\)/);
+  assert.match(serverSource, /!freshCachedToolRegistry\(\) && !args\.forceRefresh/);
+});

@@ -22,6 +22,30 @@ function source(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot(), relativePath), "utf8");
 }
 
+test("benchmark defaults to the product General Agent surface and labels legacy chat diagnostic-only", () => {
+  const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  assert.match(runner, /const useComputer = executionSurface\(\) === "operator_computer_general_agent"/);
+  assert.match(runner, /process\.argv\.includes\("--legacy-chat"\)/);
+  assert.match(runner, /execution_surface: executionSurface\(\)/);
+  assert.match(runner, /harness_health_ms:/);
+  assert.match(runner, /computer_performance: computerPerformanceSummary\(attempt\)/);
+  assert.match(runner, /fixturePreflight = await requestJson\(sidecar, "\/api\/revit\/health", \{\}, healthTimeoutMs\(\)\)/);
+  assert.match(runner, /selected_answer_assertion_case_count:/);
+  assert.match(runner, /--legacy-chat is retained only for transport diagnostics/);
+  assert.doesNotMatch(runner, /const useComputer = process\.argv\.includes\("--ui"\)/);
+});
+
+test("benchmark groups cases by fixture and fails closed on an unpinned mixed-model run", () => {
+  const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  assert.match(runner, /--orchestrate-fixtures/);
+  assert.match(runner, /async function ensureFixtureActive/);
+  assert.match(runner, /Selected cases span multiple sample models/);
+  assert.match(runner, /revit_open_model/);
+  assert.match(runner, /fixture_transitions:/);
+  assert.match(runner, /preferredFixture !== activeFixtureKey/);
+  assert.match(runner, /Fixture transition .* failed:/);
+});
+
 test("general Revit corpus covers the user basics and the retained redline operation families", () => {
   assert.equal(new Set(corpus.cases.map((entry) => entry.case_id)).size, corpus.cases.length);
   assert.equal(corpus.cases.length, 100);
@@ -209,6 +233,7 @@ test("aggregate results never turn non-refusal into a completion claim", () => {
   const accepted = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message: "Which equipment should I change?" });
   const completed = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
+    assistant_message: "509 total: Supply Grille - Double Deflection - Curve Face Rectangular Neck 266; Return Grille - Double Deflection - Curve Face Rectangular Neck 138; Air Terminal-Exhaust Cap-FB 37; Air Terminal-Supply Cap-FB 37; Supply Diffuser - Square - Hosted 28; Return Grille - Perforated - Rectangular Face Rectangular Neck 2; Supply Diffuser with Plenum - Linear Slot - Hosted 1.",
     effect_state: "read_only_dispatched",
     rounds: [{ actions: [{ path: entry.dispatch_any_of[0] }] }]
   });
@@ -222,7 +247,7 @@ test("durable assignment evidence closes the flight-recorder loop for MCP-native
   const entry = corpus.cases.find((candidate) => candidate.case_id === "q01_air_device_inventory")!;
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
-    assistant_message: "Found 509 air terminals across seven family/type groups.",
+    assistant_message: "509 total: Supply Grille - Double Deflection - Curve Face Rectangular Neck 266; Return Grille - Double Deflection - Curve Face Rectangular Neck 138; Air Terminal-Exhaust Cap-FB 37; Air Terminal-Supply Cap-FB 37; Supply Diffuser - Square - Hosted 28; Return Grille - Perforated - Rectangular Face Rectangular Neck 2; Supply Diffuser with Plenum - Linear Slot - Hosted 1.",
     effect_state: "not_dispatched",
     assignment_projection: {
       assignments: [{
@@ -239,6 +264,49 @@ test("durable assignment evidence closes the flight-recorder loop for MCP-native
   assert.equal(result.dispatched, true);
   assert.equal(result.completed, true);
   assert.deepEqual(result.observed_paths, ["mcp:revit_call_tool"]);
+});
+
+test("fixture-grounded air-terminal inventory requires the exact seven-group reconciliation", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "q01_air_device_inventory")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "509 air terminals. The largest group has 267 and the rest are omitted.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" }]
+  });
+  assert.equal(result.tier, "failed");
+  assert.equal(result.answer_assertion_passed, false);
+});
+
+test("fixture-grounded answer assertions reject a tool-backed but semantically wrong diffuser count", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "q02_air_devices_terse")!;
+  assert.ok(entry.answer_assertions);
+  const assignment_projection = {
+    assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      verification: { state: "verified", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }]
+  };
+  const correct = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "29 diffusers: 28 Supply Diffuser – Square – Hosted and 1 Supply Diffuser with Plenum — Linear Slot — Hosted.",
+    assignment_projection
+  });
+  assert.equal(correct.tier, "verified");
+  assert.equal(correct.answer_assertion_passed, true);
+
+  const wrong = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Diffuser count: 435, including supply and return grilles.",
+    assignment_projection
+  });
+  assert.equal(wrong.tier, "failed");
+  assert.equal(wrong.completed, false);
+  assert.equal(wrong.verified, false);
+  assert.equal(wrong.answer_assertion_passed, false);
+  assert.match(wrong.summary, /fixture-grounded answer assertions failed/i);
 });
 
 test("durable read evidence cannot satisfy a preview contract without matching effect truth", () => {

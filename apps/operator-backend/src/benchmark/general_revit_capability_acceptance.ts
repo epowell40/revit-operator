@@ -24,6 +24,10 @@ export type GeneralRevitCapabilityCase = {
   corpus_task_type?: string;
   grounding_demand?: "low" | "medium" | "high";
   research_demand?: "none" | "optional" | "required";
+  answer_assertions?: {
+    must_match: string[];
+    must_not_match?: string[];
+  };
 };
 
 export type GeneralRevitCapabilityCorpus = {
@@ -103,6 +107,9 @@ export type GeneralRevitEvaluation = {
   apply_dispatched: boolean;
   outcome_unknown: boolean;
   refusal_reason: string | null;
+  answer_assertion_available: boolean;
+  answer_assertion_passed: boolean | null;
+  answer_assertion_failures: string[];
   summary: string;
 };
 
@@ -237,6 +244,14 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     if (testCase.capability_paths.length === 0 || testCase.dispatch_any_of.length === 0) throw new Error(`Case ${testCase.case_id} has no concrete execution lane.`);
     for (const candidate of [...testCase.capability_paths, ...testCase.dispatch_any_of]) {
       if (!/^\/revit\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(candidate)) throw new Error(`Case ${testCase.case_id} has invalid Revit path ${candidate}.`);
+    }
+    if (testCase.answer_assertions) {
+      if (!Array.isArray(testCase.answer_assertions.must_match) || testCase.answer_assertions.must_match.length === 0) {
+        throw new Error(`Case ${testCase.case_id} answer assertions require at least one must_match pattern.`);
+      }
+      for (const pattern of [...testCase.answer_assertions.must_match, ...(testCase.answer_assertions.must_not_match || [])]) {
+        try { new RegExp(pattern, "i"); } catch { throw new Error(`Case ${testCase.case_id} has an invalid answer assertion regex.`); }
+      }
     }
   }
   for (const required of corpus.required_operation_families) {
@@ -388,7 +403,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
     return {
       case_id: testCase.case_id, tier: "not_run", non_refusal: false, completed: false, verified: false,
       expected_path_observed: false, observed_paths: [], dispatched: false, apply_dispatched: false,
-      outcome_unknown: false, refusal_reason: null, summary: "Case was not run."
+      outcome_unknown: false, refusal_reason: null, answer_assertion_available: !!testCase.answer_assertions,
+      answer_assertion_passed: null, answer_assertion_failures: [], summary: "Case was not run."
     };
   }
   const rows = actionRows(attempt);
@@ -420,6 +436,18 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const assistantBlocked = assistantReportsTaskBlocked(attempt);
   const missingTargetClarification = isMissingTargetClarification(attempt);
   const refusalReason = capabilityRefusalReason(attempt, successfulExpectedPathObserved);
+  const answerText = typeof attempt.assistant_message === "string" ? attempt.assistant_message : "";
+  const answerAssertionFailures = testCase.answer_assertions
+    ? [
+        ...testCase.answer_assertions.must_match
+          .filter((pattern) => !new RegExp(pattern, "i").test(answerText))
+          .map((pattern) => `missing:${pattern}`),
+        ...(testCase.answer_assertions.must_not_match || [])
+          .filter((pattern) => new RegExp(pattern, "i").test(answerText))
+          .map((pattern) => `forbidden:${pattern}`)
+      ]
+    : [];
+  const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
   const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
     && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
   const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);
@@ -429,13 +457,13 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ? directPreviewDispatched || durableEffectCompleted
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
-  const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
+  const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
     && (dispatched || durable.completed);
   const verified = completed && (teammate.verified || hasStructuredVerificationEvidence(attempt) || durable.verified);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (missingTargetClarification && attempt.ok !== false && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
-  else if (attempt.ok === false || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing) tier = "failed";
+  else if (attempt.ok === false || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || answerAssertionPassed === false) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";
@@ -454,8 +482,13 @@ export function evaluateGeneralRevitCapabilityAttempt(
     apply_dispatched: applyDispatched,
     outcome_unknown: outcomeUnknown,
     refusal_reason: refusalReason,
+    answer_assertion_available: !!testCase.answer_assertions,
+    answer_assertion_passed: answerAssertionPassed,
+    answer_assertion_failures: answerAssertionFailures,
     summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
-      : tier === "failed" ? requiredEffectMissing
+      : tier === "failed" ? answerAssertionPassed === false
+        ? "Tool-backed execution completed, but the fixture-grounded answer assertions failed."
+        : requiredEffectMissing
         ? testCase.expected_effect === "apply"
           ? "Mutation case did not dispatch a verified apply operation."
           : `Case did not produce the requested ${testCase.expected_effect} effect.`
