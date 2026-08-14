@@ -1585,7 +1585,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:b453c846a950be4469ab3ade0bd115449ca66562b0177f2fb76e03b115954df8"
+      "sha256": "sha256:3910712ba4aa42e98b381a4c26544e926a73b96668953bc09a05eb4ff31e280a"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -4589,7 +4589,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:39f71fc8ca62eda25aecec286467f523a4b98fc016d64338b0be087529a8869e",
+  "inputs_hash": "sha256:a47de07fbacda31e84455910575081c4c6abcf8ab9b5a0b850982cfb71c35e53",
   "result": {
     "passed": true,
     "checks": [
