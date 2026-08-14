@@ -371,6 +371,16 @@ function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
   }));
 }
 
+function teammateLoopReceiptFromFunctionState(state: JsonRecord): JsonRecord | null {
+  const receipts = Array.isArray(state.functionToolReceipts) ? state.functionToolReceipts.map(asRecord) : [];
+  for (let index = receipts.length - 1; index >= 0; index -= 1) {
+    const result = asRecord(receipts[index].result);
+    const receipt = asRecord(result.teammate_loop_receipt);
+    if (receipt.schema === "revit-operator.teammate-loop-receipt.v1") return receipt;
+  }
+  return null;
+}
+
 async function ensureFixtureActive(
   baseUrl: string,
   fixtureKey: string,
@@ -503,6 +513,7 @@ async function runComputerCase(
   }
   if (state.running === true && !transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
   const actions = [...sidecarFunctionReceiptActions(state), ...dynamicReceiptActions(state)];
+  const teammateLoopReceipt = teammateLoopReceiptFromFunctionState(state);
   const successfulActions = actions.filter((action) => action.request_dispatched === true);
   const applySucceeded = successfulActions.some((action) => action.request_effect === "apply");
   const receiptSucceeded = successfulActions.length > 0;
@@ -524,6 +535,7 @@ async function runComputerCase(
       status: action.status,
       receipt: action.receipt
     })),
+    ...(teammateLoopReceipt ? { teammate_loop_receipt: teammateLoopReceipt } : {}),
     computer_state: state
   };
   return { attempt, sessionId: String(state.backendSessionId || "").trim() };
