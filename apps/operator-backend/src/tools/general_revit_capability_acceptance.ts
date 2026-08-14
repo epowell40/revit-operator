@@ -255,6 +255,10 @@ function markdownReport(report: JsonRecord): string {
     lines.push(`| ${fixture} | ${numberValue(row.total)} | ${percent(row.non_refusal_rate)} | ${percent(row.completion_rate)} | ${percent(row.verification_rate)} |`);
   }
   lines.push("");
+  const byVerificationBasis = asRecord(report.summary_by_verification_basis);
+  lines.push("## Verification basis", "", "| Basis | Cases |", "|---|---:|");
+  for (const [basis, count] of Object.entries(byVerificationBasis)) lines.push(`| ${basis} | ${numberValue(count)} |`);
+  lines.push("", "These labels describe the strongest recorded evidence for each case; they do not make generic receipts equivalent to fixture-grounded semantic or target-bound model-state proof.", "");
   const byCorpusType = asRecord(report.summary_by_corpus_task_type);
   lines.push("## Results by redline task type", "", "| Corpus task type | Cases | Non-refusal | Completion | Verification |", "|---|---:|---:|---:|---:|");
   for (const [taskType, value] of Object.entries(byCorpusType)) {
@@ -277,11 +281,12 @@ function markdownReport(report: JsonRecord): string {
     lines.push(`| ${numberValue(row.rank)} | ${String(row.task_type_id || "")} | ${numberValue(row.corpus_count).toLocaleString()} | ${String(row.coverage_kind || "gap")} | ${ids.join(", ")} |`);
   }
   lines.push("");
-  lines.push("## Cases", "", "| Case | Source | Operation | Tier | Duration |", "|---|---|---|---|---:|");
+  lines.push("## Cases", "", "| Case | Source | Operation | Tier | Verification basis | Duration |", "|---|---|---|---|---|---:|");
   for (const trace of traces) {
     const score = asRecord(trace.success_failure_score);
     const efficiency = asRecord(trace.efficiency);
-    lines.push(`| ${String(trace.case_id || "").replaceAll("|", "\\|")} | ${String(trace.source || "")} | ${String(trace.operation_family || "")} | ${String(score.tier || "not_run")} | ${(numberValue(efficiency.duration_ms) / 1000).toFixed(1)}s |`);
+    const evaluation = asRecord(asRecord(trace.verification_results).evaluation);
+    lines.push(`| ${String(trace.case_id || "").replaceAll("|", "\\|")} | ${String(trace.source || "")} | ${String(trace.operation_family || "")} | ${String(score.tier || "not_run")} | ${String(evaluation.verification_basis || "none")} | ${(numberValue(efficiency.duration_ms) / 1000).toFixed(1)}s |`);
   }
   lines.push("", "The suite is representative regression coverage, not a Revit capability allowlist. Non-refusal is not completion, and assistant prose alone is not verification.", "");
   return lines.join("\n");
@@ -832,6 +837,8 @@ async function main(): Promise<void> {
   }
   const evaluations = traces.map((trace) => asRecord(asRecord(trace.verification_results).evaluation));
   const summary = summarizeGeneralRevitCapabilityReport(evaluations as never);
+  const summaryByVerificationBasis = Object.fromEntries([...new Set(evaluations.map((entry) => String(entry.verification_basis || "none")))]
+    .sort().map((basis) => [basis, evaluations.filter((entry) => String(entry.verification_basis || "none") === basis).length]));
   const summaryByOperationFamily = groupedSummary(traces, "operation_family");
   const summaryBySpecificity = groupedSummary(traces, "prompt_specificity");
   const summaryByFixture = groupedSummary(traces, "preferred_fixture");
@@ -863,6 +870,7 @@ async function main(): Promise<void> {
     summary_by_operation_family: summaryByOperationFamily,
     summary_by_specificity: summaryBySpecificity,
     summary_by_fixture: summaryByFixture,
+    summary_by_verification_basis: summaryByVerificationBasis,
     fixture_mismatch_count: fixtureMismatchCount,
     fixture_unverifiable_count: fixtureUnverifiableCount,
     answer_assertion_case_count: answerAssertionCaseCount,
@@ -872,7 +880,7 @@ async function main(): Promise<void> {
     baseline_comparison: baselineComparison,
     baseline_case_deltas: caseDeltas,
     task_traces: traces,
-    report_sha256: sha256({ suiteContext, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, traces })
+    report_sha256: sha256({ suiteContext, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, traces })
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));

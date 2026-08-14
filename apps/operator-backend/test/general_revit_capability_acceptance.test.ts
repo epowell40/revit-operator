@@ -31,6 +31,8 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /computer_performance: computerPerformanceSummary\(attempt\)/);
   assert.match(runner, /fixturePreflight = await requestJson\(sidecar, "\/api\/revit\/health", \{\}, healthTimeoutMs\(\)\)/);
   assert.match(runner, /selected_answer_assertion_case_count:/);
+  assert.match(runner, /summary_by_verification_basis:/);
+  assert.match(runner, /verification_basis/);
   assert.match(runner, /--legacy-chat is retained only for transport diagnostics/);
   assert.doesNotMatch(runner, /const useComputer = process\.argv\.includes\("--ui"\)/);
 });
@@ -173,6 +175,7 @@ test("an exact-target clarification is accepted but is not mislabeled completion
   assert.equal(result.non_refusal, true);
   assert.equal(result.completed, false);
   assert.equal(result.verified, false);
+  assert.equal(result.verification_basis, "none");
 });
 
 test("a durable blocked assignment remains an accepted clarification when essential spatial grounding is missing", () => {
@@ -208,6 +211,7 @@ test("planned, previewed, completed, and verified remain distinct truth tiers", 
   assert.equal(verified.tier, "verified");
   assert.equal(verified.completed, true);
   assert.equal(verified.verified, true);
+  assert.equal(verified.verification_basis, "model_state_readback");
 });
 
 test("safe mode scores the safe probe contract without weakening production mutation truth", () => {
@@ -266,6 +270,7 @@ test("durable assignment evidence closes the flight-recorder loop for MCP-native
   assert.equal(result.dispatched, true);
   assert.equal(result.completed, true);
   assert.deepEqual(result.observed_paths, ["mcp:revit_call_tool"]);
+  assert.equal(result.verification_basis, "fixture_semantic_oracle");
 });
 
 test("fixture-grounded air-terminal inventory requires the exact seven-group reconciliation", () => {
@@ -298,6 +303,7 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   });
   assert.equal(correct.tier, "verified");
   assert.equal(correct.answer_assertion_passed, true);
+  assert.equal(correct.verification_basis, "fixture_semantic_oracle");
 
   const wrong = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
@@ -366,6 +372,7 @@ test("a later successful retry recovers the same substantive Revit lane without 
   assert.equal(result.tier, "verified");
   assert.equal(result.completed, true);
   assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "rollback_verified_preview");
 });
 
 test("a failed tool attempt does not suppress a terminal capability refusal", () => {
@@ -412,6 +419,7 @@ test("generated-code preview, apply, and readback receipts score as verified UI 
   assert.equal(result.apply_dispatched, true);
   assert.equal(result.completed, true);
   assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "model_state_readback");
 });
 
 test("a blocked mutation receipt overrides a contradictory completed assignment", () => {
