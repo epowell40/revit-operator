@@ -57,18 +57,7 @@ namespace RevitBridge.Logic.Handlers
                     });
                 }
 
-                var discardedUnsavedChanges = existing.IsModified;
-                if (!existing.Close(false))
-                    throw new InvalidOperationException($"Revit did not close the inactive document before reopening it: {filePath}");
-
-                UIDocument reopened = app.OpenAndActivateDocument(modelPath, opts, false);
-                return Task.FromResult<object>(new
-                {
-                    status = "Reopened and Activated",
-                    title = reopened.Document.Title,
-                    path = reopened.Document.PathName,
-                    discardedUnsavedChanges
-                });
+                return Task.FromResult(ReopenInactiveDocument(app, existing, modelPath, opts, filePath));
             }
 
             try 
@@ -92,12 +81,36 @@ namespace RevitBridge.Logic.Handlers
                         return Task.FromResult<object>(new { status = "Already Active", title = racedOpenDocument.Title, path = racedOpenDocument.PathName });
                     }
 
+                    if (p.discardExistingOpenDocument)
+                        return Task.FromResult(ReopenInactiveDocument(app, racedOpenDocument, modelPath, opts, filePath));
+
                     throw new InvalidOperationException(
                         $"The requested model is open but inactive. Retry with discardExistingOpenDocument=true only when discarding unsaved changes is explicitly authorized: {filePath}",
                         ex);
                 }
                 throw;
             }
+        }
+
+        private static object ReopenInactiveDocument(
+            UIApplication app,
+            Document existing,
+            ModelPath modelPath,
+            OpenOptions opts,
+            string filePath)
+        {
+            var discardedUnsavedChanges = existing.IsModified;
+            if (!existing.Close(false))
+                throw new InvalidOperationException($"Revit did not close the inactive document before reopening it: {filePath}");
+
+            UIDocument reopened = app.OpenAndActivateDocument(modelPath, opts, false);
+            return new
+            {
+                status = "Reopened and Activated",
+                title = reopened.Document.Title,
+                path = reopened.Document.PathName,
+                discardedUnsavedChanges
+            };
         }
 
         private static Document? FindOpenDocument(UIApplication app, string filePath)
