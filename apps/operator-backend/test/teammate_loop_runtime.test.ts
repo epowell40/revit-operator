@@ -410,6 +410,56 @@ test("typed document lifecycle tools are first-class mutations", () => {
   }
 });
 
+test("explicit open-model establishes the first live document while unrelated Home mutations stay blocked", () => {
+  const homeContext = {
+    revit: {
+      source: { live: true },
+      process_id: 70412,
+      courier_executor_id: "executor-home",
+      readiness: { revit_launched: true, document_loaded: false },
+      document: null
+    }
+  };
+  const openRequest = {
+    ...request("Use revit_open_model to open and activate C:\\models\\plumbing.rvt in Revit."),
+    context: homeContext
+  };
+  assert.equal(buildTeammateTurnContract(openRequest).context_state, "invalid");
+
+  for (const call of [
+    { tool: "revit_open_model", arguments: { filePath: "C:\\models\\plumbing.rvt", discardExistingOpenDocument: true } },
+    { tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/open-model", body: { filePath: "C:\\models\\plumbing.rvt" } } }
+  ]) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, openRequest);
+    try {
+      const open = guardTeammateMcpCall(owner, call);
+      assert.equal(open.allowed, true);
+      assert.equal(open.call?.effect, "apply");
+    } finally {
+      endTeammateLoopOwner(lease);
+    }
+  }
+
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, {
+    ...request("Set element 42 Manufacturer to WATTS."),
+    context: homeContext
+  });
+  try {
+    const unrelatedMutation = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true }
+    });
+    assert.equal(unrelatedMutation.allowed, false);
+    assert.match(unrelatedMutation.message || "", /live revit context required/i);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("a successful tool document teaches the host the canonical typed route effect", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
