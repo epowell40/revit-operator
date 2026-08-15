@@ -859,6 +859,45 @@ test("auto goal completion requires evidence at the requested read, preview, or 
   });
 });
 
+test("an already-satisfied apply assignment completes only as a substantive, zero-apply verified no-op", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-verified-noop", {
+      title: "Clean view names", objective: "Rename Level 2 HVAC floor plans only when they do not match the established level-name pattern.",
+      acceptance_criteria: ["Every Level 2 HVAC floor plan follows the established pattern."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and rename", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-verified-noop");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/views", body: { action: "list", discipline: "Mechanical" } },
+      result: { views: [{ id: 9948, name: "L2", levelName: "L2" }, { id: 9949, name: "L3", levelName: "L3" }] }
+    });
+    observer.finish(
+      "turn-verified-noop",
+      "Pattern: view names match their associated level names. L2 already conforms. Renames: none required; no model changes made.",
+      { stage: "discover", verified: false, apply_attempts: 0 }
+    );
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.work_budget?.completion_mode, "verified_noop");
+    assert.equal(persisted?.completion_audit?.complete, true);
+    assert.match(persisted?.completion_audit?.evidence_summary || "", /Verified no-op/);
+
+    const unsupported = setAgentGoal("session-unsupported-noop", {
+      title: "Rename a view", objective: "Rename the requested view.",
+      acceptance_criteria: ["The view is renamed."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Rename", status: "in_progress" }]
+    });
+    const unsupportedObserver = createAutoGoalTurnObserver("session-unsupported-noop");
+    unsupportedObserver.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/views" }, result: { views: [] } });
+    unsupportedObserver.finish("turn-unsupported-noop", "No model changes were made because the requested target was unavailable.");
+    assert.equal(getGoal(unsupported.id)?.status, "active");
+    assert.equal(getGoal(unsupported.id)?.completion_audit, null);
+  });
+});
+
 test("auto goal effect classification preserves serialized rollback previews from generic and dynamic tools", () => {
   withWorkspace(() => {
     const genericGoal = setAgentGoal("session-serialized-preview", {

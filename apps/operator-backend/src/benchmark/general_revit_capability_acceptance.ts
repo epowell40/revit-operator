@@ -325,11 +325,12 @@ function durableRevitToolNames(attempt: GeneralRevitAttempt): string[] {
   return [...new Set(names)];
 }
 
-function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] } {
+function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[]; completionModes: string[] } {
   let completed = false;
   let blocked = false;
   let verified = false;
   const requestedEffects = new Set<GeneralRevitExpectedEffect>();
+  const completionModes = new Set<string>();
   for (const assignment of durableAssignments(attempt)) {
     const lifecycle = assignment.lifecycle && typeof assignment.lifecycle === "object" && !Array.isArray(assignment.lifecycle)
       ? assignment.lifecycle as { phase?: unknown; source_status?: unknown } : {};
@@ -346,11 +347,13 @@ function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; b
         return ["pass", "passed", "verified"].includes(status);
       }));
     const execution = assignment.execution && typeof assignment.execution === "object" && !Array.isArray(assignment.execution)
-      ? assignment.execution as { requested_effect?: unknown } : {};
+      ? assignment.execution as { requested_effect?: unknown; completion_mode?: unknown } : {};
     const requestedEffect = String(execution.requested_effect || "").trim().toLowerCase();
     if (requestedEffect === "read" || requestedEffect === "preview" || requestedEffect === "apply") requestedEffects.add(requestedEffect);
+    const completionMode = String(execution.completion_mode || "").trim().toLowerCase();
+    if (completionMode) completionModes.add(completionMode);
   }
-  return { completed, blocked, verified, requestedEffects: [...requestedEffects] };
+  return { completed, blocked, verified, requestedEffects: [...requestedEffects], completionModes: [...completionModes] };
 }
 
 function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: boolean; blocked: boolean; verified: boolean } {
@@ -569,7 +572,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const verifiedNoop = testCase.expected_effect === "apply" && testCase.allow_verified_noop === true
     && answerAssertionPassed === true && successfulExpectedPathObserved && !applyDispatched
     && assistantReportsVerifiedNoop(attempt) && !assistantBlocked && !assistantIncomplete
-    && durable.completed && durable.verified && durable.requestedEffects.includes("read");
+    && durable.completed && durable.verified && durable.requestedEffects.includes("apply")
+    && durable.completionModes.includes("verified_noop");
   const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
     && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
   const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);

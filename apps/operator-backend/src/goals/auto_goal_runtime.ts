@@ -5,7 +5,8 @@ import {
   getCurrentGoalForSession,
   markAgentGoalBlocked,
   markAgentGoalComplete,
-  transitionGoal
+  transitionGoal,
+  updateGoal
 } from "./service.js";
 
 export type AutoGoalToolObservation = {
@@ -103,8 +104,24 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             ? successfulPreviewTools
             : successfulReadTools + successfulPreviewTools + successfulApplyTools;
         const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
+        const verifiedNoop = requestedEffect === "apply"
+          && successfulApplyTools === 0
+          && successfulReadTools > 0
+          && failedRevitTools === 0
+          && lastCompletionRelevantSucceeded === true
+          && (teammateReceipt?.apply_attempts ?? 0) === 0
+          && !teammateReceipt?.blocked_reason?.trim()
+          && assistantReportsAlreadySatisfiedNoop(assistantText);
         if (unexpectedApply) {
           blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
+        } else if (!pendingApproval && !blockedOutcome && verifiedNoop) {
+          completeAutoGoalFromValidatedTurn(sessionId, {
+            turn_id: turnId,
+            successful_tools: successfulReadTools + successfulPreviewTools,
+            failed_tools: 0,
+            assistant_summary: assistantText,
+            verified_noop: true
+          });
         } else if (!pendingApproval && !blockedOutcome && evidenceTools > 0 && lastCompletionRelevantSucceeded !== false) {
           completeAutoGoalFromValidatedTurn(sessionId, {
             turn_id: turnId,
@@ -139,6 +156,13 @@ function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
   if (Array.isArray(result)) return result.length > 0;
   if (typeof result === "object") return Object.keys(result as object).length > 0;
   return true;
+}
+
+function assistantReportsAlreadySatisfiedNoop(assistantText: string): boolean {
+  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText);
+  const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
+    || /\bnone required\b/i.test(assistantText);
+  return alreadySatisfied && noMutationNeeded;
 }
 
 function objectContainsExplicitNoEffect(value: unknown, depth = 0): boolean {
@@ -237,12 +261,19 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
 
 export function completeAutoGoalFromValidatedTurn(
   sessionId: string,
-  input: { turn_id: string; successful_tools: number; failed_tools?: number; assistant_summary: string }
+  input: { turn_id: string; successful_tools: number; failed_tools?: number; assistant_summary: string; verified_noop?: boolean }
 ): void {
   let goal = activeAutoGoal(sessionId);
   if (!goal || input.successful_tools < 1) return;
+  if (input.verified_noop) {
+    goal = updateGoal(goal.id, {
+      work_budget: { ...(goal.work_budget ?? {}), completion_mode: "verified_noop" }
+    });
+  }
   goal = appendGoalProgress(sessionId, {
-    summary: `Completed the requested Revit work using ${input.successful_tools} successful live tool call${input.successful_tools === 1 ? "" : "s"}.`,
+    summary: input.verified_noop
+      ? `Verified that the requested Revit state was already satisfied using ${input.successful_tools} substantive live evidence call${input.successful_tools === 1 ? "" : "s"}; no write was necessary.`
+      : `Completed the requested Revit work using ${input.successful_tools} successful live tool call${input.successful_tools === 1 ? "" : "s"}.`,
     work_item: {
       id: "auto.revit-work",
       title: "Complete and verify the requested Revit work",
@@ -252,7 +283,9 @@ export function completeAutoGoalFromValidatedTurn(
   });
   const evidenceRefs: string[] = [];
   const recoveredFailures = Math.max(0, input.failed_tools ?? 0);
-  const executionMethod = recoveredFailures > 0
+  const executionMethod = input.verified_noop
+    ? `Backend-observed General Agent turn established a verified no-op with ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? "" : "s"}, zero apply attempts, and an explicit already-satisfied result.`
+    : recoveredFailures > 0
     ? `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded.`
     : `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls and no failed calls.`;
   for (const criterion of goal.acceptance_criteria) {
@@ -271,7 +304,9 @@ export function completeAutoGoalFromValidatedTurn(
       status: "pass",
       evidence_refs: evidenceRefs[index] ? [evidenceRefs[index]] : []
     })),
-    evidence_summary: `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
+    evidence_summary: input.verified_noop
+      ? `Verified no-op: ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? " was" : "s were"} observed, the requested model state was already satisfied, and no apply was attempted.`
+      : `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
   });
 }
 

@@ -584,14 +584,14 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
   assert.equal(entry.allow_verified_noop, true);
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
-    assistant_message: "No rename was required. L2 already conforms to the level-name pattern used by L3, L4, and L5.",
+    assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",
     effect_state: "read_only_dispatched",
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
         evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
-        execution: { requested_effect: "read" }
+        execution: { requested_effect: "apply", completion_mode: "verified_noop" }
       }]
     }
   });
@@ -604,10 +604,26 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
 
   const ungrounded = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
-    assistant_message: "No rename was required. L2 already conforms to the level-name pattern used by L3, L4, and L5.",
+    assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",
     effect_state: "read_only_dispatched",
     actions: [{ path: "/revit/views", request_effect: "read", request_dispatched: true, status: "success" }]
   });
   assert.equal(ungrounded.tier, "failed");
   assert.equal(ungrounded.completed, false);
+
+  const untypedCompletion = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "apply" }
+      }]
+    }
+  });
+  assert.equal(untypedCompletion.tier, "failed");
+  assert.equal(untypedCompletion.verified, false);
 });
