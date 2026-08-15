@@ -218,6 +218,15 @@ function hasNoWriteAuthority(text: string): boolean {
   return hasPreviewOrGlobalNoWriteFraming(text);
 }
 
+// Keep durable assignment effect classification and the host-enforced teammate
+// loop on one no-write grammar. Scoped exclusions such as "do not modify
+// non-mechanical sheets" constrain an authorized mutation; they do not turn the
+// entire request into a read-only task.
+export function isExplicitNoWriteRequest(userText: string | null | undefined): boolean {
+  const text = `${userText || ""}`.replace(/\s+/g, " ").trim();
+  return !!text && hasNoWriteAuthority(text);
+}
+
 function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): boolean {
   if (kind !== "mutation" || noWrite) return false;
   if (/\b(?:should|can|could|would)\s+(?:i|we)\b/i.test(text)) return false;

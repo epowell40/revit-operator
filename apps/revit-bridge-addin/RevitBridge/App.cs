@@ -19,7 +19,6 @@ namespace RevitBridge
         private RevitHttpServer _server;
         private RevitEventService _eventService;
         private OperatorRevitCourierWorker? _revitCourierWorker;
-        private int _openDocumentCount;
         internal OperatorDialogComputerUse? DialogComputerUse { get; private set; }
 
         public Result OnStartup(UIControlledApplication application)
@@ -206,11 +205,6 @@ namespace RevitBridge
         {
             try { OperatorNativeDocumentSessionAuthority.RegisterOpenedDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session registration failed closed: {ex.GetType().FullName}: {ex.Message}"); }
-            var instance = Instance;
-            if (instance != null)
-            {
-                System.Threading.Interlocked.Increment(ref instance._openDocumentCount);
-            }
         }
 
         private static void OnIdling(object sender, IdlingEventArgs args)
@@ -221,10 +215,17 @@ namespace RevitBridge
             // thread can execute a newly raised ExternalEvent.
             if (instance != null)
             {
-                if (System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0)
-                    instance._revitCourierWorker?.SetHostDocumentAvailable();
                 if (sender is UIApplication uiApplication)
                 {
+                    // ActiveUIDocument is the authoritative host state on the Revit API
+                    // thread. A global open/close counter is unsafe here: EditFamily and
+                    // other transient documents can emit asymmetric lifecycle events and
+                    // make a still-open project look like Revit Home, which starves every
+                    // document-bound courier job while Revit is in the background.
+                    if (uiApplication.ActiveUIDocument?.Document != null)
+                        instance._revitCourierWorker?.SetHostDocumentAvailable();
+                    else
+                        instance._revitCourierWorker?.SetHostDocumentUnavailable();
                     // If a background request is waiting, ask Revit to keep this idle session
                     // alive and pump the exact same single-flight item on the API thread. This
                     // complements the non-UI wake loop in RevitEventService without keeping an
@@ -240,17 +241,6 @@ namespace RevitBridge
         {
             try { OperatorNativeDocumentSessionAuthority.InvalidateClosingDocument(args.Document); }
             catch (Exception ex) { WriteStartupLog($"Document session invalidation failed closed: {ex.GetType().FullName}: {ex.Message}"); }
-            var instance = Instance;
-            if (instance != null)
-            {
-                var remaining = System.Threading.Interlocked.Decrement(ref instance._openDocumentCount);
-                if (remaining <= 0)
-                {
-                    System.Threading.Interlocked.Exchange(ref instance._openDocumentCount, 0);
-                    instance._revitCourierWorker?.SetHostDocumentUnavailable();
-                }
-                else instance._revitCourierWorker?.SetHostDocumentAvailable();
-            }
         }
 
         private static OperatorApprovalMode GetCourierApprovalMode()

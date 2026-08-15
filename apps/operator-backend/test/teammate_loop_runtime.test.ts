@@ -442,6 +442,47 @@ test("known pre-dispatch mutation failures may be corrected and retried", () => 
   }
 });
 
+test("read-only titleblock inspection does not poison a later preview and apply", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(
+    "Update every mechanical sheet to Drawn By EP and Checked By QA. Do not modify non-mechanical sheets."
+  ));
+  try {
+    const inspect = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/get-titleblock-info", body: { sheetNumber: "M000" } }
+    });
+    assert.equal(inspect.allowed, true);
+    assert.equal(inspect.call?.effect, "read");
+    recordTeammateMcpResult(owner, inspect, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, sheetId: 1420963, titleblockInstanceId: 1420968 }) }]
+    });
+
+    const changes = [
+      { elementId: 1420963, parameterName: "Drawn By", value: "EP" },
+      { elementId: 1420963, parameterName: "Checked By", value: "QA" }
+    ];
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { changes, dryRun: true, apply: false }
+    });
+    assert.equal(preview.allowed, true);
+    recordTeammateMcpResult(owner, preview, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, dryRun: true }) }]
+    });
+
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { changes, dryRun: false, apply: true, confirm: "Apply the two titleblock values." }
+    });
+    assert.equal(apply.allowed, true);
+    assert.equal(apply.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("structured request-validation failures do not consume the mutation stage", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
