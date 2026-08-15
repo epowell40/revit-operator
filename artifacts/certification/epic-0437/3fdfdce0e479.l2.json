@@ -452,7 +452,7 @@
     },
     {
       "path": "apps/operator-backend/src/allowlist.ts",
-      "sha256": "sha256:df71a2fc5ca73c443afb5b6f9545a6e29beed0e1c7c7bc6ed3c5bff06e99a0f1"
+      "sha256": "sha256:63bfb499880f1372f853907dd7c4e280380e6704e603ea8c324b1779009f1c04"
     },
     {
       "path": "apps/operator-backend/src/artifacts/artifact_bus.ts",
@@ -4594,14 +4594,14 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Tooling/tool_examples.json",
-      "sha256": "sha256:49dfdcc5bfe70e61047f49e27a6cfa3647964964d8656efc2242b91087faded1"
+      "sha256": "sha256:6086a1c2aea12d6dc537007ab7ab2c1b2a7d82b00ee5315528f54e021cf9e734"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/packages.lock.json",
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:ae273271c07673069b117fd2f38777a91d3e690f986045383aa47e348333ea70",
+  "inputs_hash": "sha256:abd53cbd0f39393e50bd3f058c25a3305230c8eed45459ba5a21ac1da426dc6a",
   "result": {
     "passed": true,
     "checks": [

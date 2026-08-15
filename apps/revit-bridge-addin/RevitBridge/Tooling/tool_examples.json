@@ -824,6 +824,23 @@
     },
     {
       "method": "POST",
+      "path": "/revit/close-active-model",
+      "examples": [
+        {
+          "name": "Close a disposable sample model without saving",
+          "request": {
+            "discardUnsavedChanges": true
+          },
+          "expected_response_shape": {
+            "status": "Close Requested",
+            "discardUnsavedChanges": true,
+            "documentTitle": "Snowdon Towers Sample HVAC"
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/save-as",
       "examples": [
         {
