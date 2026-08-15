@@ -274,6 +274,54 @@ test("compact exact parameter reads excludes substring neighbors", () => {
   assert.equal(compacted.evidenceSample[0]?.value, "1-2");
 });
 
+test("compact bounded multi-element reads preserves every explicitly requested value including blanks", () => {
+  const elementIds = Array.from({ length: 17 }, (_, index) => 1400000 + index);
+  const requestedNames = ["Sheet Number", "Sheet Group", "Discipline", "Drawn By", "Checked By"];
+  const compacted = compactParameterReadResultForPrompt({
+    selector: "elementIds",
+    totalMatched: 17,
+    returnedCount: 17,
+    hasMore: false,
+    items: elementIds.map((id, index) => ({
+      id,
+      name: `M${String(index).padStart(3, "0")}`,
+      category: "Sheets",
+      parameterDetails: [
+        { name: "Unrequested", value: `noise-${index}`, storageType: "String", isReadOnly: false },
+        ...requestedNames.map((name) => ({
+          name,
+          value: name === "Checked By" && index === 16 ? "" : `${name}-${index}`,
+          storageType: "String",
+          isReadOnly: false
+        }))
+      ]
+    }))
+  }, {
+    maxEvidence: 85,
+    maxElementIds: 64,
+    preferredParameterNames: requestedNames
+  }) as any;
+
+  assert.deepEqual(compacted.requestedParameterNames, requestedNames);
+  assert.equal(compacted.evidenceSample.length, 85);
+  assert.equal(compacted.evidenceOmitted, 0);
+  assert.equal(compacted.evidenceSample.some((entry: any) => entry.parameterName === "Unrequested"), false);
+  assert.deepEqual(
+    compacted.evidenceSample.find((entry: any) => entry.elementId === elementIds[16] && entry.parameterName === "Checked By"),
+    {
+      elementId: elementIds[16],
+      elementName: "M016",
+      category: "Sheets",
+      parameterName: "Checked By",
+      value: "",
+      storageType: "String",
+      isReadOnly: false,
+      parameterId: null,
+      literalMatch: false
+    }
+  );
+});
+
 test("compact schedule reads preserves all bridge-bounded rows and explicit paging incompleteness", () => {
   const rows = Array.from({ length: 45 }, (_, index) => ({ rowIndex: index, cells: [`SA-${index}`, `B3-G-SA-${index}`] }));
   const compacted = compactScheduleReadResultForPrompt({

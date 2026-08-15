@@ -116,6 +116,42 @@ test("app-server dynamic Revit parameter reads are compacted before returning to
   assert.equal((response.contentItems[0] as { text: string }).text.includes("Panel 499"), false);
 });
 
+test("app-server preserves bounded explicit sheet parameter evidence in one compact response", () => {
+  const elementIds = Array.from({ length: 17 }, (_, index) => 1400000 + index);
+  const names = ["Sheet Number", "Sheet Group", "Discipline", "Drawn By", "Checked By"];
+  const response = adaptMcpToolCallResultToDynamicResponse(
+    { content: [{ type: "text", text: JSON.stringify({
+      selector: "elementIds",
+      totalMatched: 17,
+      returnedCount: 17,
+      hasMore: false,
+      items: elementIds.map((id, index) => ({
+        id,
+        name: `M${String(index).padStart(3, "0")}`,
+        category: "Sheets",
+        parameterDetails: names.map((name) => ({
+          name,
+          value: name === "Checked By" && index === 16 ? "" : `${name}-${index}`,
+          storageType: "String",
+          isReadOnly: false
+        }))
+      }))
+    }) }] },
+    { tool: "revit_call_tool", arguments: {
+      method: "POST",
+      path: "/revit/get-parameters",
+      body: { elementIds, names, includeEmpty: true }
+    } }
+  );
+  const compacted = JSON.parse((response.contentItems[0] as { text: string }).text);
+  assert.deepEqual(compacted.requestedParameterNames, names);
+  assert.equal(compacted.evidenceSample.length, 85);
+  assert.equal(compacted.evidenceOmitted, 0);
+  assert.equal(compacted.evidenceSample.at(-1).elementId, elementIds.at(-1));
+  assert.equal(compacted.evidenceSample.at(-1).parameterName, "Checked By");
+  assert.equal(compacted.evidenceSample.at(-1).value, "");
+});
+
 test("completed dynamic tool items retain exact tool arguments, output, and failures for journaling", () => {
   assert.deepEqual(adaptDynamicToolCompletedItem({
     type: "dynamicToolCall",

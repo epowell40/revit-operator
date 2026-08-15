@@ -866,7 +866,11 @@ export function compactVisibleElementsResult(
   return compacted;
 }
 
-export function compactParameterReadResultForPrompt(value: unknown, options?: { maxEvidence?: number; maxElementIds?: number }): unknown {
+export function compactParameterReadResultForPrompt(value: unknown, options?: {
+  maxEvidence?: number;
+  maxElementIds?: number;
+  preferredParameterNames?: readonly string[];
+}): unknown {
   const obj = asObject(value);
   if (!obj) return value;
   const items = Array.isArray(obj.items) ? obj.items : [];
@@ -877,6 +881,10 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
   const caseSensitive = pickBool(obj.caseSensitive) === true;
   const maxEvidence = Math.max(1, Math.min(100, options?.maxEvidence ?? 16));
   const maxElementIds = Math.max(1, Math.min(500, options?.maxElementIds ?? 500));
+  const preferredParameterNames = Array.from(new Set((options?.preferredParameterNames ?? [])
+    .map((name) => name.trim())
+    .filter(Boolean)));
+  const preferredParameterNameSet = new Set(preferredParameterNames.map((name) => name.toLowerCase()));
   const evidence: Array<Record<string, unknown> & { _score: number; _order: number }> = [];
   let order = 0;
 
@@ -890,8 +898,10 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
       if (!detail) continue;
       const parameterName = pickString(detail.name);
       const parameterValue = typeof detail.value === "string" ? detail.value : detail.value == null ? "" : String(detail.value);
-      if (!parameterName || !parameterValue) continue;
+      if (!parameterName) continue;
       const nameLower = parameterName.toLowerCase();
+      const preferredParameterMatch = preferredParameterNameSet.has(nameLower);
+      if (!parameterValue && !preferredParameterMatch) continue;
       const valueLower = parameterValue.toLowerCase();
       const literalMatch = literalLower
         ? exactLiteral
@@ -902,7 +912,7 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
       const shockMatch = /shock\s*arrest|(?:^|[-_\s])sa(?:[-_\s]|$)/i.test(`${parameterName} ${parameterValue} ${pickString(item.name) ?? ""}`);
       const codeMatch = /-[a-z0-9]+-/i.test(parameterValue);
       const isReadOnly = pickBool(detail.isReadOnly);
-      const score = (literalMatch ? 1000 : 0) + (designationMatch ? 500 : 0) + (shockMatch ? 250 : 0) + (codeMatch ? 100 : 0) + (isReadOnly === false ? 25 : 0);
+      const score = (preferredParameterMatch ? 2000 : 0) + (literalMatch ? 1000 : 0) + (designationMatch ? 500 : 0) + (shockMatch ? 250 : 0) + (codeMatch ? 100 : 0) + (isReadOnly === false ? 25 : 0);
       evidence.push({
         elementId,
         elementName: pickString(item.name),
@@ -920,9 +930,11 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
   }
 
   evidence.sort((a, b) => b._score - a._score || a._order - b._order);
-  const relevant = literal
-    ? evidence.filter((entry) => entry.literalMatch)
-    : evidence.filter((entry) => entry._score >= 100);
+  const relevant = preferredParameterNameSet.size > 0
+    ? evidence.filter((entry) => preferredParameterNameSet.has(String(entry.parameterName).toLowerCase()))
+    : literal
+      ? evidence.filter((entry) => entry.literalMatch)
+      : evidence.filter((entry) => entry._score >= 100);
   const selectedPool = relevant.length > 0 ? relevant : evidence;
   const matchingElementIds = Array.from(new Set(selectedPool.map((entry) => entry.elementId).filter((id): id is number => typeof id === "number"))).slice(0, maxElementIds);
   const parameterCounts = new Map<string, number>();
@@ -941,6 +953,7 @@ export function compactParameterReadResultForPrompt(value: unknown, options?: { 
     valueContains: containsLiteral,
     valueEquals: exactLiteral,
     caseSensitive,
+    requestedParameterNames: preferredParameterNames,
     writableOnly: obj.writableOnly ?? null,
     totalScanned: obj.totalScanned ?? null,
     totalMatched: obj.totalMatched ?? null,
