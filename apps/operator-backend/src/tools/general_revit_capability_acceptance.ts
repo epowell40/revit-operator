@@ -440,9 +440,32 @@ async function ensureFixtureActive(
   }
   const deadline = Date.now() + fixtureTimeoutMs();
   let computerState = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  let after: JsonRecord | null = null;
+  let targetVerifiedWhileAgentRunning = false;
+  const healthObservationErrors: string[] = [];
+  let nextHealthObservationAt = Date.now() + 5_000;
   while (computerState.running === true && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     computerState = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+    if (computerState.running === true && Date.now() >= nextHealthObservationAt) {
+      nextHealthObservationAt = Date.now() + 5_000;
+      const remainingMs = Math.max(1_000, deadline - Date.now());
+      try {
+        after = await requestJson(baseUrl, "/api/revit/health", {}, Math.min(45_000, remainingMs));
+      } catch (error) {
+        healthObservationErrors.push(error instanceof Error ? error.message : String(error));
+      }
+      if (after && healthDocumentTitle(after) === fixture.document_title) {
+        // Opening a document invalidates the old document-bound teammate turn.
+        // Once an independent live health read proves the exact new title, stop
+        // the now-redundant turn instead of waiting for it to verify against its
+        // stale pre-open binding until the fixture timeout expires.
+        targetVerifiedWhileAgentRunning = true;
+        await stopComputerRunBestEffort(baseUrl);
+        computerState = await waitForComputerIdle(baseUrl, Math.min(30_000, remainingMs), `Fixture transition ${fixtureKey}`);
+        break;
+      }
+    }
   }
   if (computerState.running === true) {
     await stopComputerRunBestEffort(baseUrl);
@@ -452,7 +475,9 @@ async function ensureFixtureActive(
     throw new Error(`Fixture transition ${fixtureKey} did not own the observed computer-use run; refusing to grade another runner's state.`);
   }
   if (transportError && !String(computerState.error || "").trim()) transportError = "";
-  let after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  after = after && healthDocumentTitle(after) === fixture.document_title
+    ? after
+    : await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
   while (healthDocumentTitle(after) !== fixture.document_title && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
@@ -477,7 +502,9 @@ async function ensureFixtureActive(
     after,
     operator_response: runResponse,
     computer_state: computerState,
-    transport_error: transportError || null
+    transport_error: transportError || null,
+    target_verified_while_agent_running: targetVerifiedWhileAgentRunning,
+    health_observation_errors: healthObservationErrors
   };
 }
 

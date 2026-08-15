@@ -831,6 +831,18 @@ test("auto goal classifier creates assignments for live Revit work", () => {
     "Use revit_open_model to open Snowdon Towers Sample Plumbing.rvt. Do not modify model content."
   );
   assert.equal(fixtureTransition.requestedEffect, "apply");
+  const titleBlockInitials = classifyAutoGoalRequest(
+    "Put EP for drawn by and QA for checked by on all the mechanical sheets."
+  );
+  assert.equal(titleBlockInitials.shouldStart, true);
+  assert.equal(titleBlockInitials.requestedEffect, "apply");
+  for (const prompt of [
+    "Fill the Comments parameter on every mechanical equipment instance.",
+    "Match the odd equipment tag to the adjacent tags.",
+    "Turn off Rooms in the Level 4 HVAC view."
+  ]) {
+    assert.equal(classifyAutoGoalRequest(prompt).requestedEffect, "apply", prompt);
+  }
   const inspectBeforeOpen = classifyAutoGoalRequest("Before opening the Revit model, inspect the path only.");
   assert.equal(inspectBeforeOpen.requestedEffect, "read");
 
