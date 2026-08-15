@@ -5,7 +5,7 @@ import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, render
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.equal(audit.tools.length, 215);
+  assert.equal(audit.tools.length, 216);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
   assert.equal(audit.summary.manifest_entries, audit.tools.length);
   assert.ok(audit.tools.every(tool => tool.evidence.live_safe === null));
