@@ -335,6 +335,7 @@ namespace RevitBridge.Operator
                 if (string.Equals(p, "/revit/computer-use-act", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/computer-use-guard", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Medium;
                 if (string.Equals(p, "/revit/open-model", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
+                if (string.Equals(p, "/revit/close-active-model", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/save-as", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/sync", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;
                 if (string.Equals(p, "/revit/worksets", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High;

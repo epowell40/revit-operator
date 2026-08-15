@@ -681,6 +681,18 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/close-active-model", StringComparison.OrdinalIgnoreCase))
+            {
+                // { discardUnsavedChanges?: bool }
+                if (!IsNullOrObject(body, out var obj))
+                {
+                    error = "close-active-model body must be an object.";
+                    return false;
+                }
+                if (obj.HasValue && !ValidateOptionalBool(obj.Value, "discardUnsavedChanges", out error)) return false;
+                return true;
+            }
+
             if (string.Equals(path, "/revit/save-as", StringComparison.OrdinalIgnoreCase))
             {
                 // { filePath:string, overwrite?, compact?, maximumBackups?, saveAsCentral?, dryRun? }

@@ -314,6 +314,7 @@ namespace RevitBridge.Operator
                 { "/revit/export-dwg", typeof(RevitBridge.Handlers.ExportDwgHandler.Params) },
                 { "/revit/export-ifc", typeof(RevitBridge.Handlers.ExportIfcHandler.Params) },
                 { "/revit/open-model", typeof(RevitBridge.Handlers.OpenModelHandler.Params) },
+                { "/revit/close-active-model", typeof(RevitBridge.Handlers.CloseActiveModelHandler.Params) },
                 { "/revit/save-as", typeof(RevitBridge.Handlers.SaveAsModelHandler.Params) },
                 { "/revit/sync", typeof(RevitBridge.Handlers.SyncModelHandler.Params) },
                 { "/revit/worksets", typeof(RevitBridge.Handlers.WorksetsHandler.Params) },
