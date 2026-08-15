@@ -3,6 +3,8 @@ param(
   [ValidateSet("smoke", "redline", "challenge", "terse", "research", "long-horizon", "production", "code-execution", "full")]
   [string]$Suite = "smoke",
   [string]$Fixture = "",
+  [string]$FixtureRoot = "C:\Program Files\Autodesk\Revit 2024\Samples",
+  [string[]]$Case = @(),
   [string]$Sidecar = "http://127.0.0.1:3907",
   [int]$TimeoutMs = 300000,
   [switch]$Apply,
@@ -34,7 +36,9 @@ $runnerArgs = @(
   "--timeout-ms", $TimeoutMs,
   "--output-dir", $outputDir
 )
-if ($Fixture) { $runnerArgs += @("--fixture", $Fixture) }
+if ($Fixture) { $runnerArgs += @("--fixture", $Fixture) } else { $runnerArgs += "--orchestrate-fixtures" }
+$runnerArgs += @("--fixture-root", $FixtureRoot)
+if ($Case.Count -gt 0) { $runnerArgs += @("--case", ($Case -join ",")) }
 if ($Apply) { $runnerArgs += "--apply" }
 if ($Ui) { $runnerArgs += "--ui" }
 if ($RequireCompletion) { $runnerArgs += "--require-completion" }
