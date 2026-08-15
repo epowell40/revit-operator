@@ -42,7 +42,7 @@ namespace RevitBridge.Common
     {
         private static readonly HashSet<string> SupportedSemanticGroups = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "power", "lighting", "electrical", "mechanical", "plumbing", "fire_alarm", "architectural"
+            "power", "lighting", "electrical", "mechanical", "hvac", "plumbing", "fire_alarm", "architectural"
         };
 
         public static ViewQueryPage Apply(IEnumerable<ViewQueryCandidate> source, ViewQueryFilter filter)
@@ -135,7 +135,8 @@ namespace RevitBridge.Common
                     case "power": if (ContainsAny(corpus, new[] { "power", "electrical power" })) return true; break;
                     case "lighting": if (ContainsAny(corpus, new[] { "lighting", "light plan" })) return true; break;
                     case "electrical": if (ContainsAny(corpus, new[] { "electrical", "power", "lighting" })) return true; break;
-                    case "mechanical": if (ContainsAny(corpus, new[] { "mechanical", "hvac", "duct", "ventilation" })) return true; break;
+                    case "mechanical":
+                    case "hvac": if (ContainsAny(corpus, new[] { "mechanical", "hvac", "duct", "ventilation" })) return true; break;
                     case "plumbing": if (ContainsAny(corpus, new[] { "plumbing", "domestic", "sanitary" })) return true; break;
                     case "fire_alarm": if (ContainsAny(corpus, new[] { "fire alarm", "fire-alarm", "firealarm" })) return true; break;
                     case "architectural": if (ContainsAny(corpus, new[] { "architectural", "floor plan" })) return true; break;

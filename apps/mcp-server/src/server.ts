@@ -665,7 +665,7 @@ server.tool("revit_query_views", "Query a bounded view index by exact level/type
   disciplines: z.array(z.string().min(1).max(80)).max(16).optional(),
   viewNames: z.array(z.string().min(1).max(160)).max(32).optional(),
   nameContainsAny: z.array(z.string().min(1).max(160)).max(32).optional(),
-  semanticGroups: z.array(z.enum(["power", "lighting", "electrical", "mechanical", "plumbing", "fire_alarm", "architectural"])).max(8).optional(),
+  semanticGroups: z.array(z.enum(["power", "lighting", "electrical", "mechanical", "hvac", "plumbing", "fire_alarm", "architectural"])).max(8).optional(),
   includeTemplates: z.boolean().default(false),
   offset: z.number().int().min(0).max(200000).default(0),
   limit: z.number().int().min(1).max(500).default(100)

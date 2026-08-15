@@ -738,7 +738,7 @@ namespace RevitBridge.Operator
                             { "disciplines", Arr(Str()) },
                             { "viewNames", Arr(Str()) },
                             { "nameContainsAny", Arr(Str()) },
-                            { "semanticGroups", Arr(Str(new[] { "power", "lighting", "electrical", "mechanical", "plumbing", "fire_alarm", "architectural" })) },
+                            { "semanticGroups", Arr(Str(new[] { "power", "lighting", "electrical", "mechanical", "hvac", "plumbing", "fire_alarm", "architectural" })) },
                             { "includeTemplates", Bool() },
                             { "offset", Int() },
                             { "limit", Int() }

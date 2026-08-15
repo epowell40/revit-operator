@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using RevitBridge.Common;
 using Xunit;
 
@@ -24,6 +25,15 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(1, result.Views[0].Id);
             Assert.Contains("level_names_exact", result.AppliedFilters);
             Assert.Contains("semantic_groups", result.AppliedFilters);
+        }
+
+        [Fact]
+        public void HvacSemanticGroupIsAnAliasForMechanicalViews()
+        {
+            var hvac = ViewQueryPolicy.Apply(Views, new ViewQueryFilter { SemanticGroups = new[] { "hvac" } });
+            var mechanical = ViewQueryPolicy.Apply(Views, new ViewQueryFilter { SemanticGroups = new[] { "mechanical" } });
+            Assert.Equal(new long[] { 4 }, hvac.Views.Select(view => view.Id).ToArray());
+            Assert.Equal(mechanical.Views.Select(view => view.Id), hvac.Views.Select(view => view.Id));
         }
 
         [Fact]
