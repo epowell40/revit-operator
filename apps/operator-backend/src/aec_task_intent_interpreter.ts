@@ -30,7 +30,7 @@ const schema = {
     },
     mutation: {
       type: "object", additionalProperties: false, required: ["kind", "requested"],
-      properties: { kind: { type: "string", enum: ["create", "move", "delete", "none"] }, requested: { type: "boolean" } }
+      properties: { kind: { type: "string", enum: ["create", "update", "move", "delete", "none"] }, requested: { type: "boolean" } }
     },
     spatial_constraints: { type: "array", items: { type: "string" }, maxItems: 32 },
     confidence: {
@@ -47,6 +47,7 @@ Use reference.kind=room only when the user identifies a distinct source/example 
 When the target room and requested layout are explicit but the user refers only to an unspecified comparable/typical/adjacent unit, use reference.kind=room with room_number=null and ambiguity=low or none. Deterministic read-only planning is responsible for selecting the unique suitable analog; the missing source number alone is not material ambiguity.
 The target room is the room being changed. Do not confuse it with a comparison room.
 Use place for one or a bounded set of new devices, move for existing devices, inspect for read-only questions, and other for unsupported/non-AEC requests.
+Use mutation.kind=update for requested edits to existing Revit state such as renaming, setting parameters, changing sheet or title-block values, schedule configuration, and view settings.
 Mark ambiguity=material when the requested mutation or target cannot be grounded safely. Do not invent room numbers, element IDs, documents, views, references, or constraints.
 Preserve exact identifiers as strings, including leading zeroes.`;
 

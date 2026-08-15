@@ -17,7 +17,7 @@ export type AecTaskIntentV1 = {
     room_number: string | null;
   };
   mutation: {
-    kind: "create" | "move" | "delete" | "none";
+    kind: "create" | "update" | "move" | "delete" | "none";
     requested: boolean;
   };
   spatial_constraints: string[];
@@ -91,7 +91,7 @@ export function normalizeAecTaskIntentV1(value: unknown, authoritativeUserText?:
       room_number: boundedString(reference.room_number, "reference.room_number", true)
     },
     mutation: {
-      kind: enumValue(mutation.kind, ["create", "move", "delete", "none"], "mutation.kind"),
+      kind: enumValue(mutation.kind, ["create", "update", "move", "delete", "none"], "mutation.kind"),
       requested: mutation.requested
     },
     spatial_constraints: stringArray(source.spatial_constraints, "spatial_constraints"),
