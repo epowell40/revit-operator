@@ -814,6 +814,16 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.ok(airCount.signals.includes("live Revit model work"));
   assert.equal(airCount.requestedEffect, "read");
 
+  const delegatedAirCount = classifyAutoGoalRequest(
+    "Inspect the open Revit model and count all HVAC air terminal diffusers. Break the total out by family/type and report the selection criteria used."
+  );
+  assert.equal(delegatedAirCount.shouldStart, true);
+  assert.equal(delegatedAirCount.requestedEffect, "read");
+
+  const explicitOpen = classifyAutoGoalRequest("Open this Revit model, then inspect its air terminals.");
+  assert.equal(explicitOpen.shouldStart, true);
+  assert.equal(explicitOpen.requestedEffect, "apply");
+
   const preview = classifyAutoGoalRequest("Preview changing all HRU Marks to ERU, but do not commit it.");
   assert.equal(preview.requestedEffect, "preview");
 

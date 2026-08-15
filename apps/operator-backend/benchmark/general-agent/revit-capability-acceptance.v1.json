@@ -736,7 +736,7 @@
         "must_match": [
           "\\bL2\\b",
           "(?:no rename was required|none required|already conforms?)",
-          "(?:pattern[^\\n]{0,160}level name|level name[^\\n]{0,160}pattern)"
+          "(?:pattern[^\\n]{0,160}level(?:\\s*/\\s*(?:block|area)){0,2} name|level(?:\\s*/\\s*(?:block|area)){0,2} name[^\\n]{0,160}pattern)"
         ],
         "must_not_match": [
           "(?:blocked|unable to inspect|could not inspect)"
