@@ -520,6 +520,20 @@ test("a successful tool document teaches the host the canonical typed route effe
 });
 
 test("Revit document lifecycle commands authorize execution without treating no-element-edit wording as read-only", () => {
+  const inspectOpenModel = buildTeammateTurnContract(request(
+    "Inspect the open Revit model and count all HVAC air terminal diffusers."
+  ));
+  assert.equal(inspectOpenModel.turn_kind, "inspection");
+  assert.equal(inspectOpenModel.no_write, false);
+  assert.equal(inspectOpenModel.write_authorized, false);
+
+  const explicitOpenModel = buildTeammateTurnContract(request(
+    "Open this Revit model, then inspect its air terminals."
+  ));
+  assert.equal(explicitOpenModel.turn_kind, "mutation");
+  assert.equal(explicitOpenModel.no_write, false);
+  assert.equal(explicitOpenModel.write_authorized, true);
+
   const open = buildTeammateTurnContract(request(
     "Use revit_open_model to open C:\\Program Files\\Autodesk\\Revit 2024\\Samples\\Snowdon Towers Sample Plumbing.rvt. Do not modify the model."
   ));

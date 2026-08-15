@@ -136,10 +136,21 @@ function hasRevitWorkSubject(text: string): boolean {
   return /\b(?:revit|model|project|element|equipment|device|fixture|terminal|duct|pipe|fitting|accessor|connector|family|type|parameter|mark|comment|note|tag|dimension|annotation|room|space|level|view|template|sheet|schedule|title\s*block|viewport|plan|section|elevation|detail|crop|scale|visibility|graphics|filter|workset|phase|system|circuit|panel|print|pdf)\w*\b/.test(text);
 }
 
+function withoutAdjectivalOpenDocumentState(text: string): string {
+  // "the open Revit model" describes the current model; it is not an
+  // imperative to open another document. Strip these adjectival state phrases
+  // before applying the deliberately broad lifecycle-command grammar.
+  return text.replace(
+    /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:revit\s+)?(?:model|project|document)\b/gi,
+    " "
+  );
+}
+
 function containsDocumentLifecycleMutation(text: string): boolean {
-  return /\b(?:open|reopen|close|save)\b[^.!?\n]{0,180}(?:\b(?:revit\s+)?(?:model|project|document)\b|\.rvt\b)/i.test(text)
-    || /(?:\b(?:revit\s+)?(?:model|project|document)\b|\.rvt\b)[^.!?\n]{0,180}\b(?:open|reopen|close|save)\b/i.test(text)
-    || /\brevit_open_model\b|\/revit\/open-model\b/i.test(text);
+  const commandText = withoutAdjectivalOpenDocumentState(text);
+  return /\b(?:open|reopen|close|save)\b[^.!?\n]{0,180}(?:\b(?:revit\s+)?(?:model|project|document)\b|\.rvt\b)/i.test(commandText)
+    || /(?:\b(?:revit\s+)?(?:model|project|document)\b|\.rvt\b)[^.!?\n]{0,180}\b(?:open|reopen|close|save)\b/i.test(commandText)
+    || /\brevit_open_model\b|\/revit\/open-model\b/i.test(commandText);
 }
 
 function deniesDocumentLifecycleMutation(text: string): boolean {
@@ -185,7 +196,8 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   if (!/^\s*(?:why|what|how|is|are|does|do|can you tell|could you tell)\b/.test(text) &&
       /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/.test(text)) return "mutation";
   if (/\b(?:only\s+show|show\s+only)\b/.test(text) && hasRevitWorkSubject(text)) return "mutation";
-  if (/\b(?:open|show|activate|take me to|go to|zoom to|select|highlight)\b/.test(text)) return "navigation";
+  const navigationText = withoutAdjectivalOpenDocumentState(text);
+  if (/\b(?:open|show|activate|take me to|go to|zoom to|select|highlight)\b/.test(navigationText)) return "navigation";
   if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|current|active|selected)\b/.test(text)) return "inspection";
   // Delegated Revit work is commonly written as a terse redline or noun phrase
   // (for example, "12x10 SUPPLY DUCT at the marked branch"). Once a turn has a

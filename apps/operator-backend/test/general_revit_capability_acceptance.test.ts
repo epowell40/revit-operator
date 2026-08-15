@@ -602,6 +602,50 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
   assert.equal(result.verification_basis, "fixture_semantic_oracle");
   assert.match(result.summary, /already satisfied/i);
 
+  const liveTraceResult = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Inspected and verified all 10 HVAC floor-plan views. The established pattern is view name = associated level/area name, preserving identifiers such as Block 35. The Level 2 view already conforms: L2 -> L2 (view ID 9948). No renames were required. No elements or other views were changed.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [
+          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Verified that the requested Revit state was already satisfied using 2 substantive live evidence calls; no write was necessary." }
+        ] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "apply", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(liveTraceResult.tier, "verified");
+  assert.equal(liveTraceResult.completed, true);
+  assert.equal(liveTraceResult.verified, true);
+  assert.equal(liveTraceResult.apply_dispatched, false);
+  assert.equal(liveTraceResult.verification_basis, "fixture_semantic_oracle");
+
+  const blockQualifiedLiveTraceResult = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Inspected all 10 Mechanical/HVAC floor-plan views. The established pattern is view name = associated level/block name. The Level 2 view already conforms: 9948: L2 -> level L2. No views were renamed, and no model content was altered. Final readback verified the name remains L2.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [
+          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Verified that the requested Revit state was already satisfied using 5 substantive live evidence calls; no write was necessary." }
+        ] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "apply", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(blockQualifiedLiveTraceResult.tier, "verified");
+  assert.equal(blockQualifiedLiveTraceResult.completed, true);
+  assert.equal(blockQualifiedLiveTraceResult.verified, true);
+  assert.equal(blockQualifiedLiveTraceResult.apply_dispatched, false);
+  assert.equal(blockQualifiedLiveTraceResult.verification_basis, "fixture_semantic_oracle");
+
   const ungrounded = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",

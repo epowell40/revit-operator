@@ -531,8 +531,7 @@ function computerPerformanceSummary(attempt: JsonRecord): JsonRecord {
 
 async function runComputerCase(
   baseUrl: string,
-  testCase: GeneralRevitCapabilityCase,
-  executionExpectedEffect: GeneralRevitCapabilityCase["expected_effect"]
+  testCase: GeneralRevitCapabilityCase
 ): Promise<{ attempt: JsonRecord; sessionId: string }> {
   const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
   await waitForComputerIdle(baseUrl, Math.min(timeoutMs, 60_000), `Case ${testCase.case_id}`);
@@ -571,13 +570,13 @@ async function runComputerCase(
   const successfulActions = actions.filter((action) => action.request_dispatched === true);
   const applySucceeded = successfulActions.some((action) => action.request_effect === "apply");
   const receiptSucceeded = successfulActions.length > 0;
-  const receiptsPresent = actions.length > 0;
-  const receiptExpectationMet = !receiptsPresent
-    || (executionExpectedEffect === "apply" ? applySucceeded : receiptSucceeded);
   const stateError = String(state.error || "").trim();
   const attempt = {
     ...runResponse,
-    ok: transportError === "" && stateError === "" && receiptExpectationMet && runResponse.ok !== false,
+    // Transport success and requested-effect success are separate facts. The
+    // evaluator below owns effect truth because it can also inspect the durable
+    // assignment and recognize a server-verified no-op without inventing a write.
+    ok: transportError === "" && stateError === "" && runResponse.ok !== false,
     assistant_message: assistantTextFromComputerState(state),
     error: transportError || stateError || null,
     effect_state: applySucceeded ? "apply_dispatched" : receiptSucceeded ? "read_only_dispatched" : "not_dispatched",
@@ -612,7 +611,7 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   let sessionId = "";
   let attempt: JsonRecord;
   if (useComputer) {
-    const computerResult = await runComputerCase(baseUrl, testCase, executionExpectedEffect);
+    const computerResult = await runComputerCase(baseUrl, testCase);
     attempt = computerResult.attempt;
     sessionId = computerResult.sessionId;
   } else {
