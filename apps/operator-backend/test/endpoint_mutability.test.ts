@@ -13,6 +13,10 @@ test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/locate-elements"), false);
   assert.equal(pathLooksWrite("/revit/plan-family-evolution"), false);
   assert.equal(pathLooksWrite("/revit/read-family-evolution"), false);
+  assert.equal(pathLooksWrite("/revit/spatial-context"), false);
+  assert.equal(pathLooksWrite("/revit/pick-at-pixel"), false);
+  assert.equal(pathLooksWrite("/revit/resolve-room-plan-view"), false);
+  assert.equal(pathLooksWrite("/revit/get-titleblock-info"), false);
   assert.equal(pathLooksWrite("/revit/apply-family-evolution"), true);
 });
 

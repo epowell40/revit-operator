@@ -1,4 +1,4 @@
-import { isAffirmativeDocumentLifecycleMutation } from "../teammate_loop_runtime.js";
+import { isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -10,7 +10,6 @@ const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|typ
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|apply|fix|connect|route|reload)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|rollback|show me (?:the )?change|do not commit|don't commit)\b/i;
-const NON_MUTATING_REQUEST = /\b(read[- ]only|do not (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|don't (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|without (?:changing|modifying|editing|creating|applying|committing|exporting|printing|deleting|removing))\b/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
@@ -40,7 +39,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   const documentLifecycleMutation = isAffirmativeDocumentLifecycleMutation(text);
   const requestedEffect = PREVIEW_REQUEST.test(text)
     ? "preview"
-    : documentLifecycleMutation || (MUTATION_OPERATION.test(text) && !NON_MUTATING_REQUEST.test(text))
+    : documentLifecycleMutation || (MUTATION_OPERATION.test(text) && !isExplicitNoWriteRequest(text))
       ? "apply"
       : "read";
   return {

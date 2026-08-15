@@ -836,6 +836,13 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   );
   assert.equal(titleBlockInitials.shouldStart, true);
   assert.equal(titleBlockInitials.requestedEffect, "apply");
+  const titleBlockWithScopedExclusion = classifyAutoGoalRequest(
+    "Update every mechanical drawing sheet so Drawn By is EP and Checked By is QA. First identify the writable parameters, then apply the changes and verify by readback. Do not modify non-mechanical sheets or any other content."
+  );
+  assert.equal(titleBlockWithScopedExclusion.requestedEffect, "apply");
+  assert.equal(classifyAutoGoalRequest(
+    "Inspect every mechanical sheet and report the initials. Do not modify the model."
+  ).requestedEffect, "read");
   for (const prompt of [
     "Fill the Comments parameter on every mechanical equipment instance.",
     "Match the odd equipment tag to the adjacent tags.",

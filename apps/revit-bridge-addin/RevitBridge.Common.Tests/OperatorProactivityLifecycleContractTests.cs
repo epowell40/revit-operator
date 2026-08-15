@@ -35,12 +35,14 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("/revit/ping", worker);
             Assert.DoesNotContain("if (Volatile.Read(ref _hostDocumentAvailable) == 0) return", worker);
             Assert.Contains("application.Idling += OnIdling", app);
-            Assert.Contains("System.Threading.Volatile.Read(ref instance._openDocumentCount) > 0", app);
+            Assert.Contains("uiApplication.ActiveUIDocument?.Document != null", app);
             Assert.Contains("_revitCourierWorker?.SetHostDocumentAvailable()", app);
+            Assert.Contains("_revitCourierWorker?.SetHostDocumentUnavailable()", app);
+            Assert.DoesNotContain("_openDocumentCount", app);
+            Assert.DoesNotContain("Interlocked.Decrement", app);
             Assert.Contains("_eventService?.ExecutePendingOnIdling(uiApplication)", app);
             Assert.Contains("_eventService?.HasPendingWork == true", app);
             Assert.Contains("args.SetRaiseWithoutDelay()", app);
-            Assert.Contains("_revitCourierWorker?.SetHostDocumentUnavailable()", app);
             Assert.DoesNotContain("SetHostDocumentAvailableAfterDelay", app);
 
             var eventService = ReadRepoFile(
