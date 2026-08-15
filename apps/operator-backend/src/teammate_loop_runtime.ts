@@ -42,6 +42,9 @@ type TeammateLoopState = {
   completed_apply_signatures: Set<string>;
   apply_target_tokens: Set<string>;
   apply_expected_values: Set<string>;
+  verification_observed_target_tokens: Set<string>;
+  verification_observed_values: Set<string>;
+  verification_has_substantive_readback: boolean;
   apply_operation: string;
   verified: boolean;
   verification_mode: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
@@ -368,6 +371,9 @@ function targetTokens(value: unknown): string[] {
     }
     if (/(?:parameter|field).*names?$/.test(normalizedKey) || normalizedKey === "parameter" || normalizedKey === "field") tokens.add(`parameter:${scalar}`);
     if (normalizedKey === "mark") tokens.add(`mark:${scalar}`);
+    if (["filepath", "documentpath", "path"].includes(normalizedKey) && /^(?:[a-z]:[\\/]|\\\\|\/)/i.test(scalar)) {
+      tokens.add(`path:${scalar.replace(/\\/g, "/")}`);
+    }
   };
   visit(value);
   return [...tokens].sort();
@@ -400,6 +406,7 @@ function expectedValues(value: unknown): string[] {
 function operationFor(path: string, body: unknown): string {
   const normalizedPath = path.toLowerCase();
   const serialized = JSON.stringify(body ?? null).toLowerCase();
+  if (/(?:create|duplicate|place|add)/.test(normalizedPath) || /"kind":"(?:create|duplicate|place|add)/.test(serialized)) return "create";
   if (normalizedPath.includes("delete") || /"kind":"delete"/.test(serialized)) return "delete";
   if (normalizedPath.includes("parameter") || /"kind":"setparameters"/.test(serialized) || /"parameters"/.test(serialized)) return "set_parameters";
   if (normalizedPath.includes("type")) return "change_type";
@@ -551,6 +558,9 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     completed_apply_signatures: new Set(),
     apply_target_tokens: new Set(),
     apply_expected_values: new Set(),
+    verification_observed_target_tokens: new Set(),
+    verification_observed_values: new Set(),
+    verification_has_substantive_readback: false,
     apply_operation: "",
     verified: false,
     verification_mode: "none",
@@ -569,6 +579,9 @@ function clearVerification(state: TeammateLoopState): void {
   state.verification_mode = "none";
   state.verification_action_id = null;
   state.verification_evidence_sha256 = null;
+  state.verification_observed_target_tokens.clear();
+  state.verification_observed_values.clear();
+  state.verification_has_substantive_readback = false;
 }
 
 function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
@@ -705,6 +718,53 @@ function verificationMatches(state: TeammateLoopState, evidence: unknown, requir
   return explicitVerification(evidence) || (!requireExplicit && substantiveReadback(evidence));
 }
 
+function accumulatedReadbackMatches(state: TeammateLoopState): boolean {
+  if (!state.verification_has_substantive_readback) return false;
+  if (state.apply_expected_values.size > 0
+      && ![...state.apply_expected_values].every(value => state.verification_observed_values.has(value))) return false;
+  const applyIds = [...state.apply_target_tokens].filter(token => token.startsWith("id:"));
+  const applyIdentityTokens = applyIds.length > 0
+    ? applyIds
+    : [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
+  if (applyIdentityTokens.length > 0) {
+    return state.apply_operation === "create"
+      ? applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token))
+      : applyIdentityTokens.every(token => state.verification_observed_target_tokens.has(token));
+  }
+  return [...state.apply_target_tokens].some(token => state.verification_observed_target_tokens.has(token));
+}
+
+function explicitDocumentOpenCompletion(call: PendingCall, evidence: unknown): boolean {
+  if (call.path !== "revit_open_model" && call.path !== "/revit/open-model") return false;
+  const requestedPaths = new Set(call.target_tokens.filter(token => token.startsWith("path:")));
+  if (requestedPaths.size === 0) return false;
+  let matched = false;
+  const visit = (value: unknown, depth = 0): void => {
+    if (matched || value === null || value === undefined || depth > 8) return;
+    if (typeof value === "string" && /^[\[{]/.test(value.trim())) {
+      try { visit(JSON.parse(value), depth + 1); } catch {}
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+    const row = value as Record<string, unknown>;
+    const status = `${row.status || ""}`.trim().toLowerCase();
+    const title = `${row.title || ""}`.trim();
+    const resultPaths = targetTokens({ path: row.path }).filter(token => token.startsWith("path:"));
+    if (["success", "already active", "reopened and activated", "unloaded link and activated"].includes(status)
+        && title && resultPaths.some(token => requestedPaths.has(token))) {
+      matched = true;
+      return;
+    }
+    for (const child of Object.values(row)) visit(child, depth + 1);
+  };
+  visit(evidence);
+  return matched;
+}
+
 function markVerified(
   state: TeammateLoopState,
   mode: Exclude<TeammateLoopState["verification_mode"], "none">,
@@ -776,19 +836,30 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       // Admit same-call verification only when the primitive returns an explicit
       // verified/complete receipt (and, when present, the requested values). A
       // generic non-empty success payload must advance to a target-bound readback.
-      if (verificationMatches(state, evidence, true)) {
+      if (verificationMatches(state, evidence, true) || explicitDocumentOpenCompletion(pending, evidence)) {
         markVerified(state, "explicit_apply_receipt", actionId, evidence);
       } else state.contract.stage = "verify";
     }
   }
-  const applyIdentityTokens = [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   const verificationIdentityTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
     .filter(token => !token.startsWith("parameter:"));
+  const applyIdentityTokens = [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   const targetBound = applyIdentityTokens.length > 0
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
     : pending.target_tokens.some(token => state.apply_target_tokens.has(token));
-  if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && verificationMatches(state, evidence, false)) {
-    markVerified(state, "target_bound_readback", actionId, evidence);
+  if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && substantiveReadback(evidence)) {
+    for (const token of [...pending.target_tokens, ...targetTokens(evidence)]) {
+      state.verification_observed_target_tokens.add(token);
+    }
+    for (const value of evidenceValues(evidence)) state.verification_observed_values.add(value);
+    state.verification_has_substantive_readback = true;
+    if (accumulatedReadbackMatches(state)) {
+      markVerified(state, "target_bound_readback", actionId, {
+        verification_action_ids: state.verification_action_ids,
+        target_tokens: [...state.verification_observed_target_tokens].sort(),
+        observed_values: [...state.verification_observed_values].sort()
+      });
+    }
   }
 }
 

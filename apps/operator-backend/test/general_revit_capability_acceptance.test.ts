@@ -52,6 +52,9 @@ test("benchmark groups cases by fixture and fails closed on an unpinned mixed-mo
   assert.match(runner, /explicitly authorized to close it without saving and reopen it/);
   assert.match(runner, /await stopComputerRunBestEffort\(baseUrl\)/);
   assert.match(runner, /the abandoned Operator turn was stopped/);
+  assert.match(runner, /targetVerifiedWhileAgentRunning/);
+  assert.match(runner, /healthDocumentTitle\(after\) === fixture\.document_title/);
+  assert.match(runner, /stale pre-open binding until the fixture timeout expires/);
   assert.match(runner, /fixture_transitions:/);
   assert.match(runner, /preferredFixture !== activeFixtureKey/);
   assert.match(runner, /Fixture transition .* failed:/);

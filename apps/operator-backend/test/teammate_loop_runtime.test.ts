@@ -245,6 +245,60 @@ test("generic provider loop binds preview to one apply and requires post-apply v
   assert.equal(complete.teammate_loop_receipt?.stage, "report");
 });
 
+test("bulk post-apply verification may accumulate target-bound readback across parameters", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Put EP in Drawn By and QA in Checked By for sheets 42 and 43."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: {
+        changes: [
+          { elementId: 42, parameters: { "Drawn By": "EP", "Checked By": "QA" } },
+          { elementId: 43, parameters: { "Drawn By": "EP", "Checked By": "QA" } }
+        ],
+        apply: true,
+        dryRun: false
+      }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, affectedElementIds: [42, 43] }) }]
+    });
+
+    const drawnBy = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [42, 43], parameterNames: ["Drawn By"] } }
+    });
+    assert.equal(drawnBy.allowed, true);
+    recordTeammateMcpResult(owner, drawnBy, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [
+        { elementId: 42, parameters: { "Drawn By": "EP" } },
+        { elementId: 43, parameters: { "Drawn By": "EP" } }
+      ] }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+
+    const checkedBy = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [42, 43], parameterNames: ["Checked By"] } }
+    });
+    assert.equal(checkedBy.allowed, true);
+    recordTeammateMcpResult(owner, checkedBy, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [
+        { elementId: 42, parameters: { "Checked By": "QA" } },
+        { elementId: 43, parameters: { "Checked By": "QA" } }
+      ] }) }]
+    });
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.verified, true);
+    assert.equal(receipt?.verification_mode, "target_bound_readback");
+    assert.equal(receipt?.verification_action_ids.length, 2);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("generic provider loop permits atomic direct apply while retaining explicit no-write and ambiguity limits", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";
@@ -438,6 +492,11 @@ test("typed document lifecycle tools are first-class mutations", () => {
     });
     assert.equal(open.allowed, true);
     assert.equal(open.call?.effect, "apply");
+    recordTeammateMcpResult(owner, open, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", title: "plumbing", path: "C:\\models\\plumbing.rvt" }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verification_mode, "explicit_apply_receipt");
   } finally {
     endTeammateLoopOwner(lease);
   }

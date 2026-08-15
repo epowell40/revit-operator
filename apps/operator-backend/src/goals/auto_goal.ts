@@ -4,11 +4,11 @@ const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
 const SPATIAL = /\b(room|wall|sheet|view|redline|markup|receptacle|outlet|device|tag|near|adjacent|along|align|move|rotate|place|add)\b/i;
 const VISUAL = /\b(redline|markup|screenshot|capture|image|pdf|shown|marked|visual)\b/i;
-const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply|update|fix|add|place|print)\b/i;
+const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply|update|fix|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|print)\b/i;
 const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|show me|list|find)\b/i;
 const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection)\b/i;
-const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|add|place|move|rotate|change|update|edit|delete|remove|rename|verify)\b/i;
-const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|move|rotate|change|update|edit|delete|remove|rename|set|apply|fix|connect|route|reload)\b/i;
+const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
+const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|apply|fix|connect|route|reload)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|rollback|show me (?:the )?change|do not commit|don't commit)\b/i;
 const NON_MUTATING_REQUEST = /\b(read[- ]only|do not (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|don't (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|without (?:changing|modifying|editing|creating|applying|committing|exporting|printing|deleting|removing))\b/i;
 
