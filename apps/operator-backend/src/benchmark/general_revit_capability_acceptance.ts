@@ -29,6 +29,7 @@ export type GeneralRevitCapabilityCase = {
   dispatch_any_of: string[];
   expected_effect: GeneralRevitExpectedEffect;
   probe_expected_effect?: Exclude<GeneralRevitExpectedEffect, "apply">;
+  allow_verified_noop?: boolean;
   epic0441_task_refs: string[];
   prompt_specificity?: "terse" | "ordinary" | "detailed" | "ambiguous_actionable" | "research_required";
   corpus_task_type?: string;
@@ -251,6 +252,9 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     families.add(testCase.operation_family);
     if (testCase.prompt.trim().length < 12 || testCase.probe_prompt.trim().length < 30) throw new Error(`Case ${testCase.case_id} has no meaningful user or probe prompt.`);
     if (testCase.probe_expected_effect && !["read", "preview"].includes(testCase.probe_expected_effect)) throw new Error(`Case ${testCase.case_id} has an invalid safe-probe effect.`);
+    if (testCase.allow_verified_noop && (testCase.expected_effect !== "apply" || !testCase.answer_assertions)) {
+      throw new Error(`Case ${testCase.case_id} may allow a verified no-op only for an apply case with fixture answer assertions.`);
+    }
     if (!/\b(?:do not|don't)\b/i.test(testCase.probe_prompt)) throw new Error(`Probe ${testCase.case_id} must explicitly remain non-mutating.`);
     if (testCase.capability_paths.length === 0 || testCase.dispatch_any_of.length === 0) throw new Error(`Case ${testCase.case_id} has no concrete execution lane.`);
     for (const candidate of [...testCase.capability_paths, ...testCase.dispatch_any_of]) {
@@ -419,6 +423,12 @@ function hasStructuredVerificationEvidence(value: unknown, depth = 0): boolean {
   return false;
 }
 
+function assistantReportsVerifiedNoop(attempt: GeneralRevitAttempt): boolean {
+  const text = combinedMessage(attempt);
+  return /\bno (?:rename|change|edit|update|modification|action|write)s? (?:was|were|is|are)?\s*(?:required|needed|necessary)\b/i.test(text)
+    || /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(text);
+}
+
 function verificationChecksPass(value: unknown): boolean {
   const rows = Array.isArray(value) ? value : [value];
   if (rows.length === 0) return false;
@@ -556,11 +566,15 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ]
     : [];
   const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
+  const verifiedNoop = testCase.expected_effect === "apply" && testCase.allow_verified_noop === true
+    && answerAssertionPassed === true && successfulExpectedPathObserved && !applyDispatched
+    && assistantReportsVerifiedNoop(attempt) && !assistantBlocked && !assistantIncomplete
+    && durable.completed && durable.verified && durable.requestedEffects.includes("read");
   const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
     && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
   const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);
   const requestedEffectSatisfied = testCase.expected_effect === "apply"
-    ? applyDispatched
+    ? applyDispatched || verifiedNoop
     : testCase.expected_effect === "preview"
       ? directPreviewDispatched || durableEffectCompleted
       : successfulExpectedPathObserved;
@@ -603,6 +617,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
           ? "Mutation case did not dispatch a verified apply operation."
           : `Case did not produce the requested ${testCase.expected_effect} effect.`
         : "Attempt failed or has an uncertain outcome."
+        : verifiedNoop ? "Fixture-grounded readback verified that the requested state was already satisfied; no write was necessary."
         : tier === "verified" ? "Expected Revit lane completed with structured verification evidence."
           : tier === "previewed" ? "Expected non-mutating Revit preview lane completed."
             : tier === "completed" ? "Expected Revit lane completed; independent verification was not present."
