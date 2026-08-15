@@ -255,7 +255,7 @@ public sealed class ProductionContractsTests
     {
         CapabilityId = id, Kind = "selected_input", Access = "read", Scope = "file", CanonicalLocationHash = H("path-" + id),
         AllowedExtensions = new[] { ".rfa" }, MaximumOutputCount = 0, MaximumOutputBytes = 0, TaskIdHash = H("task"),
-        ProgramHash = program, DocumentFingerprint = H("document"), PrincipalIdHash = H("principal"), ExpiresUnixSeconds = Now() + 60, MaximumUseCount = 1
+        ProgramHash = program, DocumentFingerprint = H("document"), PrincipalIdHash = H("principal"), ExpiresUnixSeconds = 2_000_000_000, MaximumUseCount = 1
     };
 
     private static DynamicOperationNodeV1 Node(string kind, string[] targets, string[] dependencies, params (string Key, string Value)[] attributes)
