@@ -160,7 +160,9 @@ function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
 function assistantReportsAlreadySatisfiedNoop(assistantText: string): boolean {
   const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText);
   const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
-    || /\bnone required\b/i.test(assistantText);
+    || /\bnone required\b/i.test(assistantText)
+    || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
+    || /\bno (?:revit |model )?(?:elements?|views?|sheets?|famil(?:y|ies)|types?|parameters?) (?:was|were|is|are)?\s*(?:modified|changed|edited|updated|renamed|created|deleted|moved|written)\b/i.test(assistantText);
   return alreadySatisfied && noMutationNeeded;
 }
 
