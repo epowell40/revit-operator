@@ -884,6 +884,26 @@ test("an already-satisfied apply assignment completes only as a substantive, zer
     assert.equal(persisted?.completion_audit?.complete, true);
     assert.match(persisted?.completion_audit?.evidence_summary || "", /Verified no-op/);
 
+    const terminalPhrasing = setAgentGoal("session-terminal-verified-noop", {
+      title: "Clean view names", objective: "Rename Level 2 HVAC floor plans only when they do not match the established level-name pattern.",
+      acceptance_criteria: ["Every Level 2 HVAC floor plan follows the established pattern."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and rename", status: "in_progress" }]
+    });
+    const terminalObserver = createAutoGoalTurnObserver("session-terminal-verified-noop");
+    terminalObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/views", body: { action: "list", includeTemplates: false } },
+      result: [{ type: "inputText", text: JSON.stringify({ status: "ok", views: [{ id: 9948, name: "L2", levelName: "L2" }] }) }]
+    });
+    terminalObserver.finish(
+      "turn-terminal-verified-noop",
+      "Level 2 floor plan L2 already conforms. Final readback confirms L2. Renames: none. No elements were modified.",
+      { stage: "discover", verified: false, apply_attempts: 0 }
+    );
+    assert.equal(getGoal(terminalPhrasing.id)?.status, "complete");
+    assert.equal(getGoal(terminalPhrasing.id)?.work_budget?.completion_mode, "verified_noop");
+
     const unsupported = setAgentGoal("session-unsupported-noop", {
       title: "Rename a view", objective: "Rename the requested view.",
       acceptance_criteria: ["The view is renamed."],
