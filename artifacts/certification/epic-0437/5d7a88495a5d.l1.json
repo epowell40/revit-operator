@@ -668,7 +668,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:09dd0262c176a2e9e88b50e85c2315b29ee75e75c66f546f24a688b7ef3e57ab"
+      "sha256": "sha256:b112b97b9ae86a1e3ed0c5363ea1e1b76989c95216e6b727aff7abb8c0db57c7"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -696,7 +696,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/openai_brain.ts",
-      "sha256": "sha256:63680390167613fbf0e39ebed376745f1e718932ef63f2ebfc5e1ec6ed0865a7"
+      "sha256": "sha256:4227bb06f7666b0e430cdc69c7dd9e010e31e5ca2629dab3bd86eedc7ab590ef"
     },
     {
       "path": "apps/operator-backend/src/brains/redline_fast_path_state.ts",
@@ -1845,7 +1845,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:9dfd4526dfa90aa5301253d214461776db05ba295440fbdedfb4f669df915fcb"
+      "sha256": "sha256:249eb610076c130f5d68ad0d5bf777d26706911ed0f8ed40248ad9fccd1580c1"
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
@@ -2273,7 +2273,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:cfb5b1a6acbdd166effb778d1bc8ba9b3bf0ec70f88718ffcbc96e5ff8ed46f9"
+      "sha256": "sha256:4684965d8a318ff5edb816ed0c56421e9a564e100dc3a41839e685222d28e098"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -4589,7 +4589,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:916372b1f109273e34a05f43636f4a3ad440f200b01435c34fbf7cb07f5e6ba4",
+  "inputs_hash": "sha256:b7ec60f8e5c642a2b53bbef9eb757f38d4e04526afebed2f0e975f9dc13c7510",
   "result": {
     "passed": true,
     "checks": [
