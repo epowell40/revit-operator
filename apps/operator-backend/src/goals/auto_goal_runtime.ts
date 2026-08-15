@@ -107,7 +107,6 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         const verifiedNoop = requestedEffect === "apply"
           && successfulApplyTools === 0
           && successfulReadTools > 0
-          && failedRevitTools === 0
           && lastCompletionRelevantSucceeded === true
           && (teammateReceipt?.apply_attempts ?? 0) === 0
           && !teammateReceipt?.blocked_reason?.trim()
@@ -118,7 +117,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           completeAutoGoalFromValidatedTurn(sessionId, {
             turn_id: turnId,
             successful_tools: successfulReadTools + successfulPreviewTools,
-            failed_tools: 0,
+            failed_tools: failedRevitTools,
             assistant_summary: assistantText,
             verified_noop: true
           });
@@ -284,7 +283,7 @@ export function completeAutoGoalFromValidatedTurn(
   const evidenceRefs: string[] = [];
   const recoveredFailures = Math.max(0, input.failed_tools ?? 0);
   const executionMethod = input.verified_noop
-    ? `Backend-observed General Agent turn established a verified no-op with ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? "" : "s"}, zero apply attempts, and an explicit already-satisfied result.`
+    ? `Backend-observed General Agent turn established a verified no-op with ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? "" : "s"}${recoveredFailures > 0 ? ` after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded` : " and no failed calls"}, zero apply attempts, and an explicit already-satisfied result.`
     : recoveredFailures > 0
     ? `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded.`
     : `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls and no failed calls.`;
@@ -305,7 +304,7 @@ export function completeAutoGoalFromValidatedTurn(
       evidence_refs: evidenceRefs[index] ? [evidenceRefs[index]] : []
     })),
     evidence_summary: input.verified_noop
-      ? `Verified no-op: ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? " was" : "s were"} observed, the requested model state was already satisfied, and no apply was attempted.`
+      ? `Verified no-op: ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? " was" : "s were"} observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""}, the requested model state was already satisfied, and no apply was attempted.`
       : `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
   });
 }

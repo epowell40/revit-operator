@@ -898,6 +898,39 @@ test("an already-satisfied apply assignment completes only as a substantive, zer
   });
 });
 
+test("a verified no-op can recover from an exploratory Revit error only after a later substantive read succeeds", () => {
+  withWorkspace(() => {
+    const recovered = setAgentGoal("session-recovered-verified-noop", {
+      title: "Clean view names", objective: "Rename Level 2 HVAC floor plans only when they do not match the established level-name pattern.",
+      acceptance_criteria: ["Every Level 2 HVAC floor plan follows the established pattern."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and rename", status: "in_progress" }]
+    });
+    const recoveredObserver = createAutoGoalTurnObserver("session-recovered-verified-noop");
+    recoveredObserver.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, arguments: { path: "/revit/views", body: { semanticGroups: ["unsupported"] } }, error: "unsupported semantic group" });
+    recoveredObserver.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/views", body: { disciplines: ["Mechanical"] } }, result: { views: [{ id: 9948, name: "L2", levelName: "L2" }] } });
+    recoveredObserver.finish("turn-recovered-verified-noop", "Pattern: each HVAC floor-plan view matches its associated level name. L2 already conforms. No rename was needed; no elements were changed.", { stage: "discover", verified: false, apply_attempts: 0 });
+    const completed = getGoal(recovered.id);
+    assert.equal(completed?.status, "complete");
+    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
+    assert.match(completed?.completion_audit?.evidence_summary || "", /after 1 recovered failure/);
+    assert.match(JSON.stringify(completed?.validation_log[0]?.evidence || {}), /after 1 earlier failed call; the final completion-relevant call succeeded/);
+
+    const unrecovered = setAgentGoal("session-unrecovered-verified-noop", {
+      title: "Clean view names", objective: "Rename Level 2 HVAC floor plans only when needed.",
+      acceptance_criteria: ["Every Level 2 HVAC floor plan follows the established pattern."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and rename", status: "in_progress" }]
+    });
+    const unrecoveredObserver = createAutoGoalTurnObserver("session-unrecovered-verified-noop");
+    unrecoveredObserver.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/views" }, result: { views: [{ id: 9948, name: "L2" }] } });
+    unrecoveredObserver.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, arguments: { path: "/revit/views" }, error: "final readback failed" });
+    unrecoveredObserver.finish("turn-unrecovered-verified-noop", "L2 already conforms and no rename was needed.");
+    assert.equal(getGoal(unrecovered.id)?.status, "blocked");
+    assert.equal(getGoal(unrecovered.id)?.completion_audit, null);
+  });
+});
+
 test("auto goal effect classification preserves serialized rollback previews from generic and dynamic tools", () => {
   withWorkspace(() => {
     const genericGoal = setAgentGoal("session-serialized-preview", {
