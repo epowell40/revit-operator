@@ -495,6 +495,10 @@
       "sha256": "sha256:3a4057afabf2efb3440bc7dd31e66ebc9f2f566606957a0cd39054161531a5a5"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/computer_run_settlement.ts",
+      "sha256": "sha256:e017e0b9bd6f5bd3e0897dbe7e5af9b646e840116e06ee73b9cf82313f2c2290"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/config.ts",
       "sha256": "sha256:05187e14cfc25ead6fd69aa5803319cd6e66879e6e2511dd98ddfab6dd7bda25"
     },
@@ -1585,7 +1589,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:b0472473f32056a3d423ad96758d5037a72cd7c691f0141b8f8c2bff6b9ee4e9"
+      "sha256": "sha256:8fa6329c6f4fd110ae7fbdf446b64f20608e833a234220413918da11f5d51ffe"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -1854,6 +1858,10 @@
     {
       "path": "apps/operator-backend/test/codex_config.test.ts",
       "sha256": "sha256:aadeeeedbbd9a822057b3184004489aea9585f13aff6bf924aea16efb9c88645"
+    },
+    {
+      "path": "apps/operator-backend/test/computer_run_settlement.test.ts",
+      "sha256": "sha256:89d5e9456187343b03b2156d464eec97da1683e5c9c4d986a0473a0d17f74b3a"
     },
     {
       "path": "apps/operator-backend/test/deterministic_raster_registration.test.ts",
@@ -2273,7 +2281,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:4684965d8a318ff5edb816ed0c56421e9a564e100dc3a41839e685222d28e098"
+      "sha256": "sha256:e7894b6b777079638d172566e7143a50b7e13c60d06b42ad685d958978a913b6"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -4589,7 +4597,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:859cb8b7be84bac607fd81d79fd86f956f6ff2e4890994384fdc65c755c55d35",
+  "inputs_hash": "sha256:89df6db2363e70fdefe2a014e6dbc4696cbd2ce5ddd0fcdaa5888947fc027d62",
   "result": {
     "passed": true,
     "checks": [

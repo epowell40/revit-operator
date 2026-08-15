@@ -36,14 +36,26 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /async function waitForComputerIdle/);
   assert.match(runner, /computerStateHasMessage\(state, messageId\)/);
   assert.match(runner, /refusing to grade another runner's state/);
+  assert.match(runner, /settleTimedOutComputerRun/);
+  assert.match(runner, /the benchmark is stopping instead of contaminating later cases with live-context contention/);
   assert.match(runner, /--legacy-chat is retained only for transport diagnostics/);
   assert.doesNotMatch(runner, /const useComputer = process\.argv\.includes\("--ui"\)/);
+});
+
+test("benchmark wrapper orchestrates sample fixtures by default unless one is pinned", () => {
+  const wrapperRoot = path.basename(repoRoot()).toLowerCase() === "apps" ? path.resolve(repoRoot(), "..") : repoRoot();
+  const wrapper = fs.readFileSync(path.join(wrapperRoot, "scripts", "run_general_revit_benchmark.ps1"), "utf8");
+  assert.match(wrapper, /if \(\$Fixture\) \{ \$runnerArgs \+= @\("--fixture", \$Fixture\) \} else \{ \$runnerArgs \+= "--orchestrate-fixtures" \}/);
+  assert.match(wrapper, /--fixture-root/);
+  assert.match(wrapper, /--case/);
 });
 
 test("benchmark groups cases by fixture and fails closed on an unpinned mixed-model run", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
   assert.match(runner, /--orchestrate-fixtures/);
   assert.match(runner, /async function ensureFixtureActive/);
+  assert.match(runner, /\/api\/benchmark\/revit-fixture\/open/);
+  assert.match(runner, /opened_deterministically/);
   assert.match(runner, /Selected cases span multiple sample models/);
   assert.match(runner, /revit_open_model/);
   assert.match(runner, /discardExistingOpenDocument=true/);

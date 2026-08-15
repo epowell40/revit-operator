@@ -18,6 +18,7 @@ import {
   generalRevitFixtureForCase,
   loadGeneralRevitSampleFixtures
 } from "../benchmark/general_revit_sample_fixtures.js";
+import { settleTimedOutComputerRun } from "../benchmark/computer_run_settlement.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -421,6 +422,35 @@ async function ensureFixtureActive(
   const samplePath = path.resolve(fixtureRoot, fixture.sample_filename);
   if (!fs.existsSync(samplePath)) throw new Error(`Fixture file does not exist: ${samplePath}`);
   await waitForComputerIdle(baseUrl, Math.min(fixtureTimeoutMs(), 60_000), `Fixture transition ${fixtureKey}`);
+  try {
+    const deterministic = await requestJson(baseUrl, "/api/benchmark/revit-fixture/open", {
+      method: "POST",
+      body: JSON.stringify({
+        fixture: fixtureKey,
+        sample_path: samplePath,
+        expected_document_title: fixture.document_title
+      })
+    }, fixtureTimeoutMs());
+    const after = asRecord(deterministic.health);
+    if (healthDocumentTitle(after) !== fixture.document_title) {
+      throw new Error(`Deterministic fixture transition ${fixtureKey} returned without the exact authoritative target title.`);
+    }
+    return {
+      fixture: fixtureKey,
+      expected_document_title: fixture.document_title,
+      sample_path: samplePath,
+      action: "opened_deterministically",
+      started_at: startedAt,
+      finished_at: nowIso(),
+      duration_ms: Date.now() - startedMs,
+      before,
+      after,
+      deterministic_response: deterministic
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/POST \/api\/benchmark\/revit-fixture\/open returned 404:/.test(message)) throw error;
+  }
   const prompt = [
     "Benchmark fixture transition. The user explicitly authorized opening, saving, or discarding changes in Autodesk sample models for this test campaign; do not ask for confirmation.",
     `In the currently running Revit instance, use the Revit bridge primitive revit_open_model to open and activate exactly: ${samplePath}`,
@@ -583,7 +613,26 @@ async function runComputerCase(
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
   }
-  if (state.running === true && !transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
+  let timeoutSettlement: JsonRecord | null = null;
+  if (state.running === true) {
+    if (!transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
+    timeoutSettlement = await settleTimedOutComputerRun({
+      initialState: state,
+      stopRun: async () => {
+        await requestJson(baseUrl, "/api/computer/stop", { method: "POST" }, 10_000);
+      },
+      readState: () => requestJson(baseUrl, "/api/computer/state", {}, 5_000),
+      settleTimeoutMs: 30_000,
+      pollIntervalMs: 250
+    });
+    state = asRecord(timeoutSettlement.state);
+    if (state.running === true) {
+      throw new Error(
+        `Case ${testCase.case_id} exceeded ${timeoutMs}ms and the timed-out Operator run did not become idle; `
+        + "the benchmark is stopping instead of contaminating later cases with live-context contention."
+      );
+    }
+  }
   const ownsObservedRun = computerStateHasMessage(state, messageId);
   if (!ownsObservedRun) {
     transportError = transportError
@@ -616,6 +665,7 @@ async function runComputerCase(
       receipt: action.receipt
     })),
     ...(teammateLoopReceipt ? { teammate_loop_receipt: teammateLoopReceipt } : {}),
+    harness_timeout_settlement: timeoutSettlement,
     computer_state: state
   };
   return { attempt, sessionId: String(state.backendSessionId || "").trim() };
