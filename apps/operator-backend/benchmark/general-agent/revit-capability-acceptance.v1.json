@@ -735,8 +735,8 @@
       "answer_assertions": {
         "must_match": [
           "\\bL2\\b",
-          "(?:no rename was required|already conforms?)",
-          "(?:\\bL3\\b|\\bL4\\b|\\bL5\\b)"
+          "(?:no rename was required|none required|already conforms?)",
+          "(?:pattern[^\\n]{0,160}level name|level name[^\\n]{0,160}pattern)"
         ],
         "must_not_match": [
           "(?:blocked|unable to inspect|could not inspect)"

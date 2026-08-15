@@ -957,7 +957,11 @@ export function completeGoalAfterAudit(goalId: string): GoalRecord {
   if (!goal) throw new Error("Goal not found.");
   if (goal.status !== "active") throw new Error(`Cannot complete a ${goal.status} goal.`);
   if (!goal.completion_audit?.complete) throw new Error("Goal cannot be marked complete until completion audit passes.");
-  const refreshed = requestGoalCompletionAudit(goal.id, { criteria_results: goal.completion_audit.criteria_results });
+  const refreshed = requestGoalCompletionAudit(goal.id, {
+    criteria_results: goal.completion_audit.criteria_results,
+    evidence_summary: goal.completion_audit.evidence_summary,
+    recommendation: goal.completion_audit.recommendation
+  });
   if (!refreshed.completion_audit?.complete) throw new Error("Goal cannot be marked complete because its completion evidence no longer passes verification.");
   return saveGoal({ ...refreshed, status: "complete", progress_summary: "Goal completed after passing completion audit." });
 }

@@ -118,6 +118,7 @@ export type AssignmentProjection = {
   execution: {
     substrate: string | null;
     requested_effect: "read" | "preview" | "apply" | null;
+    completion_mode: "verified_noop" | null;
     task_ids: string[];
     batch_job_ids: string[];
   };
@@ -389,6 +390,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
       requested_effect: ["read", "preview", "apply"].includes(text(workBudget.requested_effect).toLowerCase())
         ? text(workBudget.requested_effect).toLowerCase() as "read" | "preview" | "apply"
         : null,
+      completion_mode: text(workBudget.completion_mode).toLowerCase() === "verified_noop" ? "verified_noop" : null,
       task_ids: stringList(workBudget.task_ids),
       batch_job_ids: stringList(workBudget.batch_job_ids)
     },
@@ -523,6 +525,7 @@ export function projectTaskAssignment(task: JsonMap): AssignmentProjection {
     execution: {
       substrate: text(task.executor_kind) || null,
       requested_effect: null,
+      completion_mode: null,
       task_ids: taskId ? [taskId] : [],
       batch_job_ids: batchJobId ? [batchJobId] : []
     },
@@ -578,6 +581,7 @@ function mergeTaskIntoGoal(goal: AssignmentProjection, task: AssignmentProjectio
     execution: {
       substrate: goal.execution.substrate ?? task.execution.substrate,
       requested_effect: goal.execution.requested_effect ?? task.execution.requested_effect,
+      completion_mode: goal.execution.completion_mode ?? task.execution.completion_mode,
       task_ids: unique([...goal.execution.task_ids, ...task.execution.task_ids]),
       batch_job_ids: unique([...goal.execution.batch_job_ids, ...task.execution.batch_job_ids])
     },

@@ -460,7 +460,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/projection.ts",
-      "sha256": "sha256:388e70f1a913d6eb3a1acaf14342af6cca229eea78b37167f466f85150c869fa"
+      "sha256": "sha256:3766e06f6fdad18b446fc6b075dc5138a9bcca9ee180af9b2e5f9657e8d5edcd"
     },
     {
       "path": "apps/operator-backend/src/attachments/extract.ts",
@@ -540,7 +540,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:f12eef4685b91ac8f276d9fbc07a65099a10b48a313442b770ff182f830bcceb"
+      "sha256": "sha256:e4948f24b5635750a53fd3a6567d1a7dbf9d330ce2d0ee338452be9878081dd5"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_sample_fixtures.ts",
@@ -1237,11 +1237,11 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:7474573abc194c32b663981aebb3cc30b062ffbc42edd7220e83a2100d2eba17"
+      "sha256": "sha256:44b0ef04bdc7e2a6d4a4f46dc39e91a8c2e9bf2c0a8850ab22070cb052158f23"
     },
     {
       "path": "apps/operator-backend/src/goals/service.ts",
-      "sha256": "sha256:73c97edb36ce933cc0d146672bb26c2c55dc9ffcd66bb0eccba41a4f563070aa"
+      "sha256": "sha256:e1b06d4be192b6e9fa6962fdea3131ece2cbad72b567691ea0b354d62bafee71"
     },
     {
       "path": "apps/operator-backend/src/http.ts",
@@ -1789,7 +1789,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_projection.test.ts",
-      "sha256": "sha256:459f2a17e2ae62b27174ac0edc39aa28c5c4cbfdbcf2b6781620e3bb0082e508"
+      "sha256": "sha256:1d79164245fe9b6141109a630f585a64285022c9492823f55e1d0d686bd96cf5"
     },
     {
       "path": "apps/operator-backend/test/attachment_upload_request.test.ts",
@@ -2273,7 +2273,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:235fa76b0ca73951a8ffc5fe6be75f0a3a59a85d1bd253e94412019105b34406"
+      "sha256": "sha256:4a6beb67aee715fa304e92c1cf971399c5180095e9e496a9225a511c9bc176c6"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2281,7 +2281,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:a7fe073f14fdfea58ab82c30e9cebbf2c80c0f3a8df2329b52752e9e9d99a063"
+      "sha256": "sha256:fb178379ad3d8b4be0afd0fa457ce9bdd1b866be31fda42cd61ce7dfcb37bf57"
     },
     {
       "path": "apps/operator-backend/test/improvement_jobs.test.ts",
@@ -4589,7 +4589,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:f7f50eb961955c2a0518f83c602690519d880b9417c43f31e4569c7a21e14248",
+  "inputs_hash": "sha256:e01507353c099c162eb1a30bc0ad280afc82c331e4284ad1f40fe5b16bfd11c6",
   "result": {
     "passed": true,
     "checks": [
