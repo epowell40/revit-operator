@@ -155,6 +155,14 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
+test("Codex instructions route sheet parameter readback directly through sheet-aware evidence", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /Sheet\/titleblock parameter reads and verification must be sheet-aware/);
+  assert.match(instructions, /call `revit_verify_parameter_on_sheet` directly/);
+  assert.match(instructions, /do not probe sheet or titleblock element IDs with generic `revit_get_parameters` first/);
+  assert.match(instructions, /Fall back only when the sheet-aware primitive returns no match/);
+});
+
 test("core Revit lifecycle recovery is available before deferred capability discovery", () => {
   assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_open_model"), true);
 });

@@ -94,6 +94,27 @@ test("general Revit corpus covers the user basics and the retained redline opera
   assert.ok(corpus.cases.filter((entry) => ["tag", "text_edit", "move", "type_change"].includes(entry.operation_family)).length >= 17);
 });
 
+test("titleblock mutation coverage is paired with the live read-only regression wording", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech");
+  assert.ok(entry);
+  assert.equal(entry.expected_effect, "apply");
+  assert.equal(entry.probe_expected_effect, undefined);
+  assert.equal(
+    entry.probe_prompt,
+    "Independently read back every mechanical sheet. Return each sheet number with its Drawn By and Checked By values, and count any mismatches from EP / QA. Do not change anything."
+  );
+});
+
+test("both backend agent prompts prefer sheet-aware parameter readback before generic parameter scans", () => {
+  const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
+  const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
+  for (const prompt of [codexPrompt, openAiPrompt]) {
+    assert.match(prompt, /Sheet\/titleblock parameter reads and verification must be sheet-aware/);
+    assert.match(prompt, /do not probe sheet or titleblock element IDs with generic/);
+    assert.match(prompt, /Fall back only when the sheet-aware primitive returns no match/);
+  }
+});
+
 test("corpus coverage truthfully maps the frozen top fifteen and prompt-specificity cohorts", () => {
   const coverage = summarizeGeneralRevitCorpusCoverage(corpus);
   assert.equal(coverage.case_count, 100);

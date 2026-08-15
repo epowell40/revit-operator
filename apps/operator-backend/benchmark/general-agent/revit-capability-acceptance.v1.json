@@ -1112,7 +1112,7 @@
       "source": "redline_corpus",
       "operation_family": "parameter_edit",
       "prompt": "Put EP for drawn by and QA for checked by on all the mechanical sheets.",
-      "probe_prompt": "Inspect how Drawn By and Checked By are driven on mechanical title blocks, distinguish sheet/instance/type/project/family sources, and preview the exact bounded update. Do not apply.",
+      "probe_prompt": "Independently read back every mechanical sheet. Return each sheet number with its Drawn By and Checked By values, and count any mismatches from EP / QA. Do not change anything.",
       "capability_paths": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter"],
       "dispatch_any_of": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter", "/revit/plan-family-evolution"],
       "expected_effect": "apply",
