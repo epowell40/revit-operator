@@ -541,6 +541,30 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("continueOnUnresolvedReferences=true", manifest, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void CloseActiveModelPostsNativeCloseAfterExplicitDiscardAuthorization()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "CloseActiveModelHandler.cs"));
+            Assert.Contains("discardUnsavedChanges { get; set; } = false", handler, StringComparison.Ordinal);
+            Assert.Contains("wasModified && !p.discardUnsavedChanges", handler, StringComparison.Ordinal);
+            Assert.Contains("requiresExplicitDiscard = true", handler, StringComparison.Ordinal);
+            Assert.Contains("PostableCommand.Close", handler, StringComparison.Ordinal);
+            Assert.Contains("app.CanPostCommand(commandId)", handler, StringComparison.Ordinal);
+            Assert.Contains("app.PostCommand(commandId)", handler, StringComparison.Ordinal);
+            Assert.Contains("messageContains = \"save changes\"", handler, StringComparison.Ordinal);
+            Assert.Contains("button = \"no\"", handler, StringComparison.Ordinal);
+            Assert.Contains("verificationRequired = true", handler, StringComparison.Ordinal);
+
+            var validator = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("/revit/close-active-model", validator, StringComparison.Ordinal);
+            Assert.Contains("ValidateOptionalBool(obj.Value, \"discardUnsavedChanges\"", validator, StringComparison.Ordinal);
+            var allowlist = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorActionAllowlist.cs"));
+            Assert.Contains("/revit/close-active-model", allowlist, StringComparison.Ordinal);
+            var server = File.ReadAllText(Path.Combine(root, "RevitBridge", "Server", "RevitHttpServer.cs"));
+            Assert.Contains("{ \"/revit/close-active-model\", new CloseActiveModelHandler() }", server, StringComparison.Ordinal);
+        }
+
         private static OperatorNativeTransportProtectedRequest Protect(string method, string path, string body, DateTimeOffset at)
             => OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, method, path, body, "grant", at);
 

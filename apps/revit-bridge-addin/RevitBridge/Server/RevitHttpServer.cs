@@ -136,6 +136,7 @@ namespace RevitBridge.Server
                 { "/revit/get-lighting-data", new GetLightingDataHandler() },
                 { "/revit/sync", new SyncModelHandler() },
                 { "/revit/open-model", new OpenModelHandler() },
+                { "/revit/close-active-model", new CloseActiveModelHandler() },
                 { "/revit/save-as", new SaveAsModelHandler() },
                 { "/revit/worksets", new WorksetsHandler() },
                 { "/revit/project-parameters", new ProjectParametersHandler() },

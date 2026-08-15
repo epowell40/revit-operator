@@ -31,6 +31,7 @@ const defaultAllowed: Allowlist = {
     "/revit/computer-use-act",
     "/revit/computer-use-guard",
     "/revit/open-model",
+    "/revit/close-active-model",
     "/revit/save-as",
     "/revit/sync",
     "/revit/worksets",

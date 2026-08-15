@@ -52,6 +52,7 @@ namespace RevitBridge.Operator
                 { "/revit/computer-use-act", new ComputerUseActHandler() },
                 { "/revit/computer-use-guard", new ComputerUseGuardHandler() },
                 { "/revit/open-model", new OpenModelHandler() },
+                { "/revit/close-active-model", new CloseActiveModelHandler() },
                 { "/revit/save-as", new SaveAsModelHandler() },
                 { "/revit/sync", new SyncModelHandler() },
                 { "/revit/worksets", new WorksetsHandler() },
