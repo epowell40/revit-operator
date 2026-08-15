@@ -731,6 +731,17 @@
       "capability_paths": ["/revit/views", "/revit/set-parameter"],
       "dispatch_any_of": ["/revit/views", "/revit/set-parameter", "/revit/native-api-search"],
       "expected_effect": "apply",
+      "allow_verified_noop": true,
+      "answer_assertions": {
+        "must_match": [
+          "\\bL2\\b",
+          "(?:no rename was required|already conforms?)",
+          "(?:\\bL3\\b|\\bL4\\b|\\bL5\\b)"
+        ],
+        "must_not_match": [
+          "(?:blocked|unable to inspect|could not inspect)"
+        ]
+      },
       "epic0441_task_refs": ["g22_sheet_view_package", "g26_context_rule"]
     },
     {

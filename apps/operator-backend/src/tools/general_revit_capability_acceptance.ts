@@ -381,6 +381,22 @@ function teammateLoopReceiptFromFunctionState(state: JsonRecord): JsonRecord | n
   return null;
 }
 
+function computerStateHasMessage(state: JsonRecord, messageId: string): boolean {
+  return Array.isArray(state.messages)
+    && state.messages.some((value) => String(asRecord(value).id || "") === messageId);
+}
+
+async function waitForComputerIdle(baseUrl: string, timeoutMs: number, label: string): Promise<JsonRecord> {
+  const deadline = Date.now() + timeoutMs;
+  let state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  while (state.running === true && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  }
+  if (state.running === true) throw new Error(`${label} could not start because the prior computer-use run did not become idle within ${timeoutMs}ms.`);
+  return state;
+}
+
 async function ensureFixtureActive(
   baseUrl: string,
   fixtureKey: string,
@@ -404,6 +420,7 @@ async function ensureFixtureActive(
   }
   const samplePath = path.resolve(fixtureRoot, fixture.sample_filename);
   if (!fs.existsSync(samplePath)) throw new Error(`Fixture file does not exist: ${samplePath}`);
+  await waitForComputerIdle(baseUrl, Math.min(fixtureTimeoutMs(), 60_000), `Fixture transition ${fixtureKey}`);
   const prompt = [
     "Benchmark fixture transition. The user explicitly authorized opening, saving, or discarding changes in Autodesk sample models for this test campaign; do not ask for confirmation.",
     `In the currently running Revit instance, use the Revit bridge primitive revit_open_model to open and activate exactly: ${samplePath}`,
@@ -412,10 +429,11 @@ async function ensureFixtureActive(
   ].join("\n");
   let runResponse: JsonRecord = {};
   let transportError = "";
+  const messageId = id(`fixture-${fixtureKey}`);
   try {
     runResponse = await requestJson(baseUrl, "/api/computer/run", {
       method: "POST",
-      body: JSON.stringify({ prompt, message_id: id(`fixture-${fixtureKey}`) })
+      body: JSON.stringify({ prompt, message_id: messageId })
     }, Math.min(fixtureTimeoutMs(), 30_000));
   } catch (error) {
     transportError = error instanceof Error ? error.message : String(error);
@@ -430,6 +448,10 @@ async function ensureFixtureActive(
     await stopComputerRunBestEffort(baseUrl);
     throw new Error(`Fixture transition ${fixtureKey} exceeded ${fixtureTimeoutMs()}ms; the abandoned Operator turn was stopped.`);
   }
+  if (!computerStateHasMessage(computerState, messageId)) {
+    throw new Error(`Fixture transition ${fixtureKey} did not own the observed computer-use run; refusing to grade another runner's state.`);
+  }
+  if (transportError && !String(computerState.error || "").trim()) transportError = "";
   let after = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
   while (healthDocumentTitle(after) !== fixture.document_title && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -512,16 +534,18 @@ async function runComputerCase(
   testCase: GeneralRevitCapabilityCase,
   executionExpectedEffect: GeneralRevitCapabilityCase["expected_effect"]
 ): Promise<{ attempt: JsonRecord; sessionId: string }> {
+  const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
+  await waitForComputerIdle(baseUrl, Math.min(timeoutMs, 60_000), `Case ${testCase.case_id}`);
   await requestJson(baseUrl, "/api/computer/reset", { method: "POST", body: "{}" }, 30_000);
   let runResponse: JsonRecord = {};
   let transportError = "";
-  const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
+  const messageId = id(`capability-${testCase.case_id}`);
   try {
     runResponse = await requestJson(baseUrl, "/api/computer/run", {
       method: "POST",
       body: JSON.stringify({
         prompt: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
-        message_id: id(`capability-${testCase.case_id}`)
+        message_id: messageId
       })
     }, Math.min(timeoutMs, 30_000));
   } catch (error) {
@@ -534,6 +558,14 @@ async function runComputerCase(
     state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
   }
   if (state.running === true && !transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
+  const ownsObservedRun = computerStateHasMessage(state, messageId);
+  if (!ownsObservedRun) {
+    transportError = transportError
+      ? `${transportError} The final computer state did not contain this case's message id.`
+      : `The final computer state did not contain this case's message id; refusing to grade another runner's state.`;
+  } else if (transportError && state.running !== true && !String(state.error || "").trim()) {
+    transportError = "";
+  }
   const actions = [...sidecarFunctionReceiptActions(state), ...dynamicReceiptActions(state)];
   const teammateLoopReceipt = teammateLoopReceiptFromFunctionState(state);
   const successfulActions = actions.filter((action) => action.request_dispatched === true);

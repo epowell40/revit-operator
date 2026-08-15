@@ -33,6 +33,9 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /selected_answer_assertion_case_count:/);
   assert.match(runner, /summary_by_verification_basis:/);
   assert.match(runner, /verification_basis/);
+  assert.match(runner, /async function waitForComputerIdle/);
+  assert.match(runner, /computerStateHasMessage\(state, messageId\)/);
+  assert.match(runner, /refusing to grade another runner's state/);
   assert.match(runner, /--legacy-chat is retained only for transport diagnostics/);
   assert.doesNotMatch(runner, /const useComputer = process\.argv\.includes\("--ui"\)/);
 });
@@ -574,4 +577,37 @@ test("a read-only fallback cannot pass a mutation benchmark", () => {
   assert.equal(result.completed, false);
   assert.equal(result.verified, false);
   assert.match(result.summary, /did not dispatch a verified apply operation/i);
+});
+
+test("a fixture-oracled no-op can verify an already-satisfied conditional mutation without inventing a write", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c02_clean_level2_view_names")!;
+  assert.equal(entry.allow_verified_noop, true);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "No rename was required. L2 already conforms to the level-name pattern used by L3, L4, and L5.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.apply_dispatched, false);
+  assert.equal(result.verification_basis, "fixture_semantic_oracle");
+  assert.match(result.summary, /already satisfied/i);
+
+  const ungrounded = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "No rename was required. L2 already conforms to the level-name pattern used by L3, L4, and L5.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/views", request_effect: "read", request_dispatched: true, status: "success" }]
+  });
+  assert.equal(ungrounded.tier, "failed");
+  assert.equal(ungrounded.completed, false);
 });
