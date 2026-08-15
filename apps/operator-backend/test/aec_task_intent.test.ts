@@ -57,6 +57,25 @@ test("AecTaskIntentV1 is a strict bounded serializable contract with authoritati
   ]) assert.throws(() => normalizeAecTaskIntentV1(invalid));
 });
 
+test("AecTaskIntentV1 represents ordinary updates without misclassifying them as no-write intent", () => {
+  const source: AecTaskIntentV1 = {
+    schema: AEC_TASK_INTENT_V1_SCHEMA,
+    operation: "other",
+    object_class: "other",
+    target: { document: null, view: null, room_number: null, element_ids: [] },
+    reference: { kind: "none", room_number: null },
+    mutation: { kind: "update", requested: true },
+    spatial_constraints: [],
+    confidence: { value: 0.93, ambiguity: "none", reasons: ["existing title-block values are being edited"] },
+    evidence: { user_text: "Put EP for drawn by and QA for checked by on all the mechanical sheets." }
+  };
+
+  const normalized = normalizeAecTaskIntentV1(source);
+  assert.equal(normalized.mutation.kind, "update");
+  assert.equal(normalized.mutation.requested, true);
+  assert.equal(resolveAecWorkflow(normalized), null);
+});
+
 test("provider-neutral semantic results route ten materially different utterances through one deterministic registry entry", async () => {
   for (const [index, prompt] of prompts.entries()) {
     let observed = "";
