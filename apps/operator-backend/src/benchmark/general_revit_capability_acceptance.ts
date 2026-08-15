@@ -576,11 +576,18 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && durable.completionModes.includes("verified_noop");
   const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
     && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
+  const teammateReceipt = attempt.teammate_loop_receipt && typeof attempt.teammate_loop_receipt === "object"
+    && !Array.isArray(attempt.teammate_loop_receipt)
+    ? attempt.teammate_loop_receipt as { preview_action_ids?: unknown }
+    : {};
+  const teammatePreviewDispatched = testCase.expected_effect === "preview"
+    && Array.isArray(teammateReceipt.preview_action_ids)
+    && teammateReceipt.preview_action_ids.some((value) => typeof value === "string" && value.trim().length > 0);
   const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);
   const requestedEffectSatisfied = testCase.expected_effect === "apply"
     ? applyDispatched || verifiedNoop
     : testCase.expected_effect === "preview"
-      ? directPreviewDispatched || durableEffectCompleted
+      ? directPreviewDispatched || teammatePreviewDispatched || durableEffectCompleted
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
   const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked

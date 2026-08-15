@@ -277,6 +277,34 @@ test("safe mode scores the safe probe contract without weakening production muta
   assert.equal(result.apply_dispatched, false);
 });
 
+test("a nested teammate preview receipt satisfies the preview effect through delegate_revit_task", () => {
+  const safeCase = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "r02_add_tag")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "", request_effect: "read", request_dispatched: true, status: "success" }],
+    teammate_loop_receipt: {
+      turn_kind: "inspection",
+      stage: "report",
+      preview_action_ids: ["mcp:1", "mcp:2"],
+      apply_attempts: 0,
+      verified: false,
+      blocked_reason: null
+    },
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] }
+      }]
+    }
+  });
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "structured_preview_receipt");
+  assert.equal(result.apply_dispatched, false);
+});
+
 test("aggregate results never turn non-refusal into a completion claim", () => {
   const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!, false);
   const accepted = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message: "Which equipment should I change?" });

@@ -947,6 +947,30 @@ test("an already-satisfied apply assignment completes only as a substantive, zer
   });
 });
 
+test("read-only export evidence does not impersonate an apply during a structured dry-run preview", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-with-export", {
+      title: "Preview one tag", objective: "Preview adding one matching tag; do not create it.",
+      acceptance_criteria: ["The tag preview is grounded and no model change is committed."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview tag", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-with-export");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { method: "POST", path: "/revit/export-visible-elements", body: { viewId: 1626564 } },
+      result: { count: 42, artifact_path: "capture.jpg" }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { method: "POST", path: "/revit/tag-elements", body: { elementIds: [1544911], dryRun: true } },
+      result: { status: "Dry Run", dryRun: true, plannedToTag: 1 }
+    });
+    observer.finish("turn-preview-with-export", "Preview complete; no model changes were applied.");
+    assert.equal(getGoal(goal.id)?.status, "complete");
+  });
+});
+
 test("a verified no-op can recover from an exploratory Revit error only after a later substantive read succeeds", () => {
   withWorkspace(() => {
     const recovered = setAgentGoal("session-recovered-verified-noop", {

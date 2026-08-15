@@ -1,3 +1,4 @@
+import { pathLooksWrite } from "../action_path_mutability.js";
 import {
   appendGoalProgress,
   appendTrustedServerGoalValidation,
@@ -217,7 +218,8 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
     const route = `${args.path || ""}`.trim().toLowerCase();
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
     if (route === "/revit/transaction-plan") return "discovery";
-    if (/\/(?:create|duplicate|set|update|delete|move|rotate|rename|apply|connect|route|export|print|open|reload|configure|replace|place|assign|link)(?:-|\/|$)/.test(route)) return "apply";
+    const method = `${args.method || "POST"}`.trim().toUpperCase() || "POST";
+    return pathLooksWrite(route, body, method) ? "apply" : "read";
   }
   if (tool === "run_dynamic_revit_program") {
     if (["preview", "rollback", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
