@@ -553,6 +553,29 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
   assert.equal(result.answer_assertion_passed, true);
   assert.equal(result.tier, "verified");
   assert.equal(result.verification_basis, "fixture_semantic_oracle");
+
+  const exactLatestLiveReceipt = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "## View Range preview",
+      "- **Chosen view:** `L2` — ID `9948`, non-template Mechanical Floor Plan.",
+      "| Bottom | L2 | 0 ft |",
+      "| View Depth | L2 | 0 ft |",
+      "Underlay is disabled.",
+      "**No change.** Bottom and View Depth already stop at L2, so the View Range does not extend to the floor below. Altering it would not be defensible without evidence that View Range is causing the visibility.",
+      '{ "status": "no_op", "viewId": 9948, "proposedChanges": [], "dryRun": true, "applied": false, "modelModified": false }'
+    ].join("\n"),
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+        verification: { state: "verified", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "preview", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(exactLatestLiveReceipt.answer_assertion_passed, true);
+  assert.equal(exactLatestLiveReceipt.tier, "verified");
 });
 
 test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {

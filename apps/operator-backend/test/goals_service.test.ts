@@ -848,6 +848,11 @@ test("auto goal classifier creates assignments for live Revit work", () => {
     "Read-only discovery only; do not edit, create, save, reload, or swap anything. Find one loaded Mechanical Equipment family and return a family-evolution plan with exact future steps. This is a plan/preview only—perform no model modifications and no family reload."
   );
   assert.equal(expandedReadOnlyFamilyEvolutionPlan.requestedEffect, "read");
+  const exactLiveReadOnlyFamilyEvolutionPlan = classifyAutoGoalRequest(
+    "READ-ONLY ONLY. Do not modify, save, edit, open Family Editor, create types, reload families, or swap instances. In the currently open model, find exactly one loaded Mechanical Equipment family instance that is editable. Produce a precise family-evolution plan for creating a TEST-ONLY type. Then state read-only proposed steps: 1) edit family, 2) duplicate source type, 3) parameter handling, 4) reload, 5) swap only a pilot instance, 6) verification and rollback. No model edits whatsoever."
+  );
+  assert.equal(exactLiveReadOnlyFamilyEvolutionPlan.shouldStart, true);
+  assert.equal(exactLiveReadOnlyFamilyEvolutionPlan.requestedEffect, "read");
   assert.equal(classifyAutoGoalRequest(
     "Read-only discovery and executable PREVIEW only—find one writable schedule value and preview a rollback transaction. Do not apply."
   ).requestedEffect, "preview");
@@ -1493,6 +1498,32 @@ test("a corrected MCP argument rejection can finish a grounded already-satisfied
     assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
     assert.match(JSON.stringify(completed?.validation_log[0]?.evidence || {}), /schema or registry rejection was recorded before dispatch/i);
     assert.match(completed?.action_log.find((entry) => entry.summary.includes("failed"))?.summary || "", /MCP error -32602/i);
+  });
+});
+
+test("a structured no-op preview with an empty change set completes as verified no-op", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-structured-view-range-noop", {
+      title: "Fix the view range",
+      objective: "Preview the smallest defensible view-range change without applying it.",
+      acceptance_criteria: ["The selected plan and its current view range are verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview the view range", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-structured-view-range-noop");
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: true,
+      result: { viewId: 9948, viewName: "L2", bottom: { level: "L2", offset: 0 }, viewDepth: { level: "L2", offset: 0 }, underlay: "None" }
+    });
+    observer.finish("turn-structured-view-range-noop", [
+      "## View Range preview",
+      "Chosen view: L2 — ID 9948.",
+      "No change. Bottom and View Depth already stop at L2. Altering it would not be defensible without evidence that View Range is causing the visibility.",
+      '{ "status": "no_op", "proposedChanges": [], "dryRun": true, "applied": false, "modelModified": false }'
+    ].join("\n"));
+    const completed = getGoal(goal.id);
+    assert.equal(completed?.status, "complete");
+    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
   });
 });
 
