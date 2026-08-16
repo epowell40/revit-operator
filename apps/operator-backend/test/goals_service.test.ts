@@ -826,6 +826,11 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(namedOpenModelCapture.shouldStart, true);
   assert.equal(namedOpenModelCapture.requestedEffect, "read");
 
+  const openButtonCommand = classifyAutoGoalRequest(
+    "Click the Open button to open Snowdon Towers Sample HVAC model, then inspect its air terminals."
+  );
+  assert.equal(openButtonCommand.requestedEffect, "apply");
+
   const explicitOpen = classifyAutoGoalRequest("Open this Revit model, then inspect its air terminals.");
   assert.equal(explicitOpen.shouldStart, true);
   assert.equal(explicitOpen.requestedEffect, "apply");

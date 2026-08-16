@@ -145,7 +145,7 @@ function withoutAdjectivalOpenDocumentState(text: string): string {
   // document. Strip these article-led adjectival state phrases before applying
   // the deliberately broad lifecycle-command grammar.
   return text.replace(
-    /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:[^.!?;\n]{0,120}?\s+)?(?:model|project|document)\b/gi,
+    /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:(?:(?!\b(?:open|reopen|close|save)\b)[^.!?;\n]){0,120}?\s+)?(?:model|project|document)\b/gi,
     " "
   );
 }
