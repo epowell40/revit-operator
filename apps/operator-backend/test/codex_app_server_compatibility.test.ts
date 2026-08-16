@@ -191,6 +191,15 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
+test("Codex instructions diagnose cross-floor visibility beyond view depth", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /View-visibility diagnosis rule/);
+  assert.match(instructions, /exact PlanViewRange planes/);
+  assert.match(instructions, /Underlay base\/top\/orientation/);
+  assert.match(instructions, /applied view template/);
+  assert.match(instructions, /Never attribute below-floor visibility to View Depth alone/);
+});
+
 test("Codex instructions route sheet parameter readback directly through sheet-aware evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();
   assert.match(instructions, /Sheet\/titleblock parameter reads and verification must be sheet-aware/);
