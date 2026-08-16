@@ -606,6 +606,29 @@
       "dispatch_any_of": ["/revit/create-schedule", "/revit/configure-schedule", "/revit/find-elements", "/revit/schedules"],
       "expected_effect": "apply",
       "probe_expected_effect": "read",
+      "answer_assertions": {
+        "must_match": [
+          "Heat Recovery Unit Summary[^\\n]*1488968",
+          "(?:37 item rows|Grand total\\s*:\\s*37)",
+          "Family\\s*:\\s*`?HeatRecoveryUnit`?",
+          "Type\\s*:\\s*`?Heat Recovery Unit \\(HRU\\)`?",
+          "(?:current state[\\s\\S]{0,300}Mark begins[^\\n]*ERU[^\\n]*\\*{0,2}0\\*{0,2}|document-wide[^\\n]*ERU[^\\n]*\\*{0,2}0[^\\n]*ERU elements)",
+          "TEMP - HRU to ERU QA",
+          "Mark begins with `?ERU`?",
+          "Mark[^\\n]*(?:—|-)\\s*Ascending",
+          "Expected (?:schedule rows|count)[^\\n]*\\*{0,2}37\\*{0,2}",
+          "(?:Current duplicates\\s*:\\s*\\*{0,2}none|no projected duplicates)",
+          "Model count\\s*=\\s*schedule row count",
+          "No blank Marks",
+          "No duplicate Marks",
+          "(?:No model changes|model changes\\s*:\\s*none)"
+        ],
+        "must_not_match": [
+          "(?:Independent model count where Mark begins[^\\n]*ERU|Current ERU (?:model )?count|document-wide[^\\n]*ERU search)[^\\n]*[1-9]\\d*",
+          "Current duplicates\\s*:\\s*(?:\\*{0,2}[1-9]\\d*|present|found)",
+          "model changes\\s*:\\s*(?:true|applied|performed)"
+        ]
+      },
       "epic0441_task_refs": ["g23_schedule_configure", "r01_schedule_value_edit"]
     },
     {
