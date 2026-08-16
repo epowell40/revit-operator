@@ -92,6 +92,7 @@ type ActionLike = {
   request_effect?: unknown;
   request_dispatched?: unknown;
   status?: unknown;
+  receipt?: unknown;
 };
 
 export type GeneralRevitAttempt = {
@@ -482,6 +483,44 @@ function nestedEvidenceMatches(
   return false;
 }
 
+function hasCommittedVerifiedDynamicApplyReceipt(value: unknown, depth = 0): boolean {
+  if (value === null || value === undefined || depth > 10) return false;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return false;
+    try { return hasCommittedVerifiedDynamicApplyReceipt(JSON.parse(text), depth + 1); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.some((entry) => hasCommittedVerifiedDynamicApplyReceipt(entry, depth + 1));
+  if (typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  if (row.schema === "dynamic-revit-apply-receipt/v1" && row.outcome === "committed_verified") {
+    const changedIds = Array.isArray(row.changed_element_ids) ? row.changed_element_ids : [];
+    const operations = Array.isArray(row.operation_results) ? row.operation_results : [];
+    return changedIds.length > 0 && operations.length > 0 && operations.every((operation) => {
+      if (!operation || typeof operation !== "object" || Array.isArray(operation)) return false;
+      const result = operation as Record<string, unknown>;
+      return typeof result.target === "string" && result.target.trim().length > 0
+        && Object.prototype.hasOwnProperty.call(result, "before")
+        && Object.prototype.hasOwnProperty.call(result, "after")
+        && result.before !== result.after;
+    });
+  }
+  return Object.values(row).some((child) => hasCommittedVerifiedDynamicApplyReceipt(child, depth + 1));
+}
+
+function dynamicRuntimeEffectMatches(row: ActionLike, expectedEffect: GeneralRevitExpectedEffect): boolean {
+  const path = String(row.path || "").trim();
+  if (!/^\/revit\/dynamic-runtime(?:\/(?:preview|apply))?$/.test(path)) return false;
+  const effect = String(row.request_effect || "").trim();
+  return effect === expectedEffect || (expectedEffect === "read" && effect === "preview");
+}
+
+function successfulDynamicRuntimeAlternative(row: ActionLike, expectedEffect: GeneralRevitExpectedEffect): boolean {
+  if (!dynamicRuntimeEffectMatches(row, expectedEffect) || row.status === "failed" || row.request_dispatched === false) return false;
+  if (expectedEffect === "apply") return hasCommittedVerifiedDynamicApplyReceipt(row.receipt);
+  return row.request_dispatched === true;
+}
+
 function nonEmptyEvidenceValue(value: unknown): boolean {
   return value !== null && value !== undefined && value !== false && value !== ""
     && (!Array.isArray(value) || value.length > 0);
@@ -508,6 +547,7 @@ function verificationBasis(
     ? attempt.teammate_loop_receipt as { preview_action_ids?: unknown } : {};
   if (testCase.expected_effect === "preview" && Array.isArray(teammateReceipt.preview_action_ids)
       && teammateReceipt.preview_action_ids.length > 0) return "structured_preview_receipt";
+  if (hasCommittedVerifiedDynamicApplyReceipt(attempt)) return "model_state_readback";
   if (hasModelStateReadbackEvidence(attempt)) return "model_state_readback";
   if (nestedEvidenceMatches(attempt, (key, child) =>
     ["artifact", "artifacts", "artifact_id", "artifact_ids", "artifact_path", "artifact_paths"].includes(key)
@@ -534,7 +574,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     ...rows.map((row) => String(row.path || "").trim()).filter(Boolean),
     ...durableTools.map((tool) => `mcp:${tool}`)
   ])];
-  const expectedPathObserved = observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate)) || durableTools.length > 0;
+  const expectedPathObserved = observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
+    || durableTools.length > 0
+    || rows.some((row) => dynamicRuntimeEffectMatches(row, testCase.expected_effect));
   const substantiveFailedAction = rows.some((row, index) => {
     const failedPath = String(row.path || "");
     if (row.status !== "failed" || !/^\/revit\/(?!health$|context$|ping$)/.test(failedPath)) return false;
@@ -545,7 +587,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     const candidate = String(row.path || "").trim();
     if (!testCase.dispatch_any_of.includes(candidate) || row.status === "failed" || row.request_dispatched === false) return false;
     return row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched";
-  });
+  }) || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect));
   const teammate = teammateLoopTruth(attempt);
   const applyDispatched = teammate.mutationAttempted || attempt.effect_state === "apply_dispatched"
     || rows.some((row) => row.request_effect === "apply" && row.request_dispatched === true);

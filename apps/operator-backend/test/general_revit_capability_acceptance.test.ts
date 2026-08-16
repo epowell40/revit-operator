@@ -530,6 +530,64 @@ test("generated-code preview, apply, and readback receipts score as verified UI 
   assert.equal(result.verification_basis, "model_state_readback");
 });
 
+test("a committed verified Dynamic Revit program is a valid general fallback for a typed mutation case", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "lh01_bulk_hru_to_eru_marks")!;
+  const applyReceipt = JSON.stringify({
+    schema: "dynamic-revit-apply-receipt/v1",
+    outcome: "committed_verified",
+    changed_element_ids: [1366896],
+    operation_results: [{
+      operation_id: "sha256:test",
+      kind: "set_parameter",
+      target: "element-1366896",
+      parameter: "Mark",
+      before: "HRU109A",
+      after: "ERU109A"
+    }]
+  });
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Changed the complete bounded set and verified zero HRU marks remain.",
+    effect_state: "apply_dispatched",
+    actions: [{
+      path: "/revit/dynamic-runtime",
+      request_effect: "apply",
+      request_dispatched: true,
+      status: "success",
+      receipt: { result: { evidence: { applyReceipt } } }
+    }]
+  });
+  assert.equal(entry.dispatch_any_of.includes("/revit/dynamic-runtime"), false);
+  assert.equal(result.expected_path_observed, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "model_state_readback");
+});
+
+test("an ungrounded Dynamic Revit apply receipt cannot satisfy a typed mutation case", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "lh01_bulk_hru_to_eru_marks")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Applied the requested rename.",
+    effect_state: "apply_dispatched",
+    actions: [{
+      path: "/revit/dynamic-runtime",
+      request_effect: "apply",
+      request_dispatched: true,
+      status: "success",
+      receipt: { result: { evidence: { applyReceipt: JSON.stringify({
+        schema: "dynamic-revit-apply-receipt/v1",
+        outcome: "committed_verified"
+      }) } } }
+    }]
+  });
+  assert.equal(result.expected_path_observed, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+  assert.equal(result.tier, "planned");
+});
+
 test("target-bound teammate verification requires an action-bound evidence digest", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "c03_level4_enlarged_plan_terse")!;
   const durable = {
