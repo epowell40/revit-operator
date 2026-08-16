@@ -448,7 +448,7 @@
     },
     {
       "path": "apps/operator-backend/src/agent_response_policy.ts",
-      "sha256": "sha256:2a033c43382f79c566269754524cd6096c02afb88707d1b0883a0059eec7d66d"
+      "sha256": "sha256:2be1ff09487b3fca16e7f3bf9f686c2b23c28a6bac27d8d94677113a50eebff2"
     },
     {
       "path": "apps/operator-backend/src/allowlist.ts",
@@ -1237,7 +1237,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal.ts",
-      "sha256": "sha256:8487bbe989d3e08230b48b743bb267a1106101f4fb9f8601a3e691cd4833046e"
+      "sha256": "sha256:e69f104d9c8b3f6c411c2298e6153773d2735f5b5188a0a8646f4f086f4e5049"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
@@ -1777,7 +1777,7 @@
     },
     {
       "path": "apps/operator-backend/test/agent_response_policy.test.ts",
-      "sha256": "sha256:643660dd95f1d87efcd65f4a6b52630266d388921b8499eca98a2698b9d907cb"
+      "sha256": "sha256:accb108ed1e6a32d6f267ae3a3b254f3b0873a18522a65d15a5995586952adc1"
     },
     {
       "path": "apps/operator-backend/test/allowlist.test.ts",
@@ -2281,7 +2281,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:6d6f6e3173eb37b3f13f14cf3cf6697ce1597f3ca46f752aad8cd859a8a27503"
+      "sha256": "sha256:96a96f4285274bb5d8a402e7b50419c3424e5ae1b4e2edf90417aa5673ea70ed"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2289,7 +2289,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:6ac8a26a9c667a39fd64adb14a200ab44978989f5fc827e80f4d84dc48e12f05"
+      "sha256": "sha256:51ae21c0df8fc533e53a7fd5b6a942023d0bd6770be4d56972fd8ae76e3d8219"
     },
     {
       "path": "apps/operator-backend/test/improvement_jobs.test.ts",
@@ -3538,7 +3538,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/FamilyEvolutionHandlers.cs",
-      "sha256": "sha256:513742dc017fee0cbe5fee9b1dc741a88631d856af6e420a5948cc2cd051dd6f"
+      "sha256": "sha256:d79eabf4a3649127e253a671e9404896b028b880a3ea670c494b486d57e261cb"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/FindFamilyTextNotesHandler.cs",
@@ -4601,7 +4601,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:901abf07b4c95c186b4dd11a1773dbf0774a40445acb7997e595b92ea88cc34a",
+  "inputs_hash": "sha256:fc00255c9c22d8b2b02af3f117aadd439c32d8be35bdba9f5963c285a3fbb928",
   "result": {
     "passed": true,
     "checks": [

@@ -106,6 +106,15 @@ test("general Revit corpus covers the user basics and the retained redline opera
   assert.ok(corpus.cases.filter((entry) => ["tag", "text_edit", "move", "type_change"].includes(entry.operation_family)).length >= 17);
 });
 
+test("Snowdon-safe probes use live fixture targets and recover from an unsuitable active view", () => {
+  const schedule = corpus.cases.find((entry) => entry.case_id === "r13_schedule_airflow_sync");
+  const viewRange = corpus.cases.find((entry) => entry.case_id === "c31_fix_view_range_terse");
+  assert.match(schedule?.probe_prompt || "", /Supply Air Pressure Drop/i);
+  assert.doesNotMatch(schedule?.probe_prompt || "", /Supply Airflow/i);
+  assert.match(viewRange?.probe_prompt || "", /active view is not a plan/i);
+  assert.match(viewRange?.probe_prompt || "", /find one eligible non-template mechanical floor plan yourself/i);
+});
+
 test("titleblock mutation coverage is paired with the live read-only regression wording", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech");
   assert.ok(entry);

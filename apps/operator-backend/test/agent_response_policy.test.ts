@@ -23,6 +23,8 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /Ask one focused clarifying question/i);
   assert.match(policy, /conversational Revit\/BIM expert, not a tool dispatcher/i);
   assert.match(policy, /Ground model-specific answers with the live model/i);
+  assert.match(policy, /active view and current selection as starting context, not as a limit/i);
+  assert.match(policy, /find an eligible view, sheet, schedule, element, or family yourself/i);
   assert.match(policy, /state the most likely interpretation/i);
   assert.match(policy, /identify the likely requested schedule and where it is placed/i);
   assert.match(policy, /Progress updates should be sparse and useful/i);

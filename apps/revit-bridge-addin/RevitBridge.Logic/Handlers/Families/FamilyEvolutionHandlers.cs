@@ -697,7 +697,7 @@ namespace RevitBridge.Logic.Handlers
                     var geometry = curve.GeometryCurve;
                     if (geometry != null)
                     {
-                        detail += "|curve=" + PointKey(geometry.GetEndPoint(0)) + ">" + PointKey(geometry.GetEndPoint(1));
+                        detail += "|curve=" + DescribeCurveForFingerprint(geometry);
                     }
                 }
                 else if (element is ReferencePlane referencePlane)
@@ -709,6 +709,26 @@ namespace RevitBridge.Logic.Handlers
 
             if (fields.Count == 0) fields.Add(Field("family", familyDoc.Title ?? ""));
             return FamilyEvolutionPlan.ComputePlanHash(fields);
+        }
+
+        private static string DescribeCurveForFingerprint(Curve geometry)
+        {
+            var kind = geometry.GetType().FullName ?? geometry.GetType().Name;
+            try
+            {
+                if (geometry.IsBound)
+                    return kind + ":" + PointKey(geometry.GetEndPoint(0)) + ">" + PointKey(geometry.GetEndPoint(1));
+                if (geometry is Line line)
+                    return kind + ":unbound:origin=" + PointKey(line.Origin) + ":direction=" + PointKey(line.Direction);
+                if (geometry is Arc arc)
+                    return kind + ":unbound:center=" + PointKey(arc.Center) + ":radius="
+                        + FamilyEvolutionPlan.CanonicalNumber(arc.Radius);
+                return kind + ":unbound";
+            }
+            catch
+            {
+                return kind + ":unreadable";
+            }
         }
 
         private static void VerifyClearanceCurves(

@@ -9,7 +9,7 @@ const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|s
 const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection)\b/i;
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|apply|fix|connect|route|reload)\b/i;
-const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|rollback|show me (?:the )?change|do not commit|don't commit)\b/i;
+const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
