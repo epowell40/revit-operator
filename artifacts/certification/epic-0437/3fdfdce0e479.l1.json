@@ -2281,7 +2281,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:8f0b4bf126c24bae9acebd713df76b64fab521ee50e39ca9bf55271b38c7face"
+      "sha256": "sha256:5eab8f7a4d29afcd3e25d2e5a5f308a8531b485644ae1fe627d1d52fafe3220e"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2453,7 +2453,7 @@
     },
     {
       "path": "apps/operator-backend/test/revit_control_plane_contract.test.ts",
-      "sha256": "sha256:3f914f7008bce085a3f676cbf2538b0519b6dcaa3d7658277b630a39a9cd3db9"
+      "sha256": "sha256:5e43f3d5e53a877921a724d6611eeac2deaa212556d5dcd99565ea5c641cabc1"
     },
     {
       "path": "apps/operator-backend/test/revit_courier_contract.test.ts",
@@ -4554,7 +4554,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolIntrospection.cs",
-      "sha256": "sha256:0e58fb8e82a5e8a6c9ab8500f035db80130547b2c19786bea1e0791e2fca9841"
+      "sha256": "sha256:f5f1abab7bbca0e93eae59677ac62c1a0e49ae95f7985961bdea4fe0a661f2e5"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
@@ -4601,7 +4601,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:93f1c3549c34e1c221943a57fd2d2ff9e9be33d258d173bbfc2d16d9b445c08c",
+  "inputs_hash": "sha256:ef8f445e5b73c2bbf3d7dc8c175a67083ed4bad72b0013171132b3c37e4ec7ae",
   "result": {
     "passed": true,
     "checks": [

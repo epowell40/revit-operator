@@ -78,6 +78,21 @@ test("high-value spatial query contracts reject stale payloads before handler ex
   assert.equal(zoneQuery?.levelName, "Level 1");
 });
 
+test("create-view discovery exposes a conditional tagged union instead of requiring every string selector", () => {
+  const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+  const manual = schemas.slice(
+    schemas.indexOf('if (string.Equals(p, "/revit/create-view", StringComparison.OrdinalIgnoreCase))'),
+    schemas.indexOf("// Some tools accept null bodies intentionally"),
+  );
+  assert.match(schemas, /create-view is a tagged union/);
+  assert.match(manual, /required: Array\.Empty<string>\(\)/);
+  assert.match(manual, /rename_batch/);
+  assert.match(manual, /viewIds/);
+  assert.match(manual, /findText/);
+  assert.match(schemas, /Fields are conditional on action/);
+  assert.match(schemas, /rename_batch requires viewIds or nameContains/);
+});
+
 test("native API operation graph stays bounded, read-only, and request-ephemeral while supporting typed chaining", () => {
   const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
   const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
