@@ -1,6 +1,10 @@
 const READ_ONLY_PATHS = new Set<string>([
   "/revit/ping",
   "/revit/context",
+  // Activating a view changes only transient Revit UI/navigation state. It does
+  // not mutate authoritative model data and must remain usable during an
+  // inspection or preview-only assignment.
+  "/revit/activate-view",
   "/revit/state-snapshot",
   "/revit/computer-use-observe",
   "/revit/views",

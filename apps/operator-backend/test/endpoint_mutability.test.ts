@@ -8,6 +8,7 @@ test("scoped duct resize is classified as a write", () => {
 
 test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/context"), false);
+  assert.equal(pathLooksWrite("/revit/activate-view", { viewId: 9948 }), false);
   assert.equal(pathLooksWrite("/revit/sheets"), false);
   assert.equal(pathLooksWrite("/revit/find-text-notes"), false);
   assert.equal(pathLooksWrite("/revit/locate-elements"), false);

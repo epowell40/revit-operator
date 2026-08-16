@@ -1464,6 +1464,40 @@ test("a canonical non-dispatched registry rejection does not poison a corrected 
   });
 });
 
+test("view activation is navigation rather than an apply during a preview-only assignment", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-navigation", {
+      title: "Inspect view range",
+      objective: "Preview the smallest defensible view-range change without applying it.",
+      acceptance_criteria: ["The selected plan and its current visibility settings are verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-navigation");
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      success: true,
+      arguments: { method: "POST", path: "/revit/activate-view", body: { viewId: 9948, zoomToFit: false } },
+      result: { ok: true, activeViewId: 9948, activeViewName: "L2" }
+    });
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      success: true,
+      arguments: { method: "POST", path: "/revit/native-api-ops", body: { operations: [{ op: "call", memberId: "ViewPlan.GetViewRange" }] } },
+      result: { ok: true, read_only: true, bottom: "L2 + 0 ft", view_depth: "L2 + 0 ft", underlay: "None" }
+    });
+    observer.finish("turn-preview-navigation", [
+      "Chosen view L2 (9948).",
+      "Bottom and View Depth are L2 + 0 ft; Underlay is None.",
+      "No defensible change was identified; the Revit model was not modified."
+    ].join("\n"));
+    assert.equal(getGoal(goal.id)?.status, "complete");
+    assert.doesNotMatch(getGoal(goal.id)?.blocker || "", /effect reconciliation/);
+  });
+});
+
 test("a corrected MCP argument rejection can finish a grounded already-satisfied preview", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-view-range-noop", {
