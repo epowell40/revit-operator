@@ -292,7 +292,7 @@
       "source": "user_extended",
       "operation_family": "schedule_configure",
       "prompt": "On the schedule named TEST MECHANICAL EQUIPMENT, add a filter so Mark begins with AHU and verify the saved schedule definition.",
-      "probe_prompt": "Inspect the schedule named TEST MECHANICAL EQUIPMENT and preview adding a begins-with AHU filter on Mark. Do not change the schedule.",
+      "probe_prompt": "Discover one existing named mechanical-equipment schedule that has a Mark field, report its exact name, and preview adding a begins-with filter using a prefix present in its current Mark values. Do not change the schedule.",
       "capability_paths": ["/revit/schedules", "/revit/configure-schedule"],
       "dispatch_any_of": ["/revit/schedules", "/revit/configure-schedule"],
       "expected_effect": "preview",
