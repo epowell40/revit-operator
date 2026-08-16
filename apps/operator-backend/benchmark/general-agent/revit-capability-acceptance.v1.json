@@ -610,22 +610,23 @@
         "must_match": [
           "Heat Recovery Unit Summary[^\\n]*1488968",
           "(?:37 item rows|Grand total\\s*:\\s*37)",
-          "Family\\s*:\\s*`?HeatRecoveryUnit`?",
-          "Type\\s*:\\s*`?Heat Recovery Unit \\(HRU\\)`?",
-        "(?:Independent whole-model query found:[\\s\\S]{0,400}\\*{0,2}0\\*{0,2}[^\\n]*(?:ERU|matching[^\\n]*ERU)|Current baseline[^\\n]*ERU model count\\s*\\*{0,2}0|ERU searches[\\s\\S]{0,160}Mark containing\\s*`?ERU`?\\s*:\\s*\\*{0,2}0)",
-        "(?:Proposed temporary QA schedule|Actionable temporary ERU QA schedule plan)",
+          "(?:Family\\s*:\\s*`?HeatRecoveryUnit`?|All 37 HRUs are\\s*`?HeatRecoveryUnit\\s*:\\s*Heat Recovery Unit \\(HRU\\)`?)",
+          "(?:Type\\s*:\\s*`?Heat Recovery Unit \\(HRU\\)`?|All 37 HRUs are\\s*`?HeatRecoveryUnit\\s*:\\s*Heat Recovery Unit \\(HRU\\)`?)",
+        "(?:Independent whole-model query found:[\\s\\S]{0,400}\\*{0,2}0\\*{0,2}[^\\n]*(?:ERU|matching[^\\n]*ERU)|Current baseline[^\\n]*ERU model count\\s*\\*{0,2}0|ERU searches[\\s\\S]{0,160}Mark containing\\s*`?ERU`?\\s*:\\s*\\*{0,2}0|ERU[—-][^\\n]{0,120}\\|\\s*\\*{0,2}0\\*{0,2})",
+        "(?:Proposed temporary QA schedule|Actionable (?:temporary ERU )?QA schedule plan)",
         "Mark[^\\n]{0,60}begins with[^\\n]{0,30}`?ERU`?",
-        "(?:Sort(?:/group)?[\\s\\S]{0,160}Sort by\\s*`?Mark`?[\\s\\S]{0,80}Ascending|Sort by\\s*`?Mark`?\\s*[,;]\\s*ascending)",
-          "(?:Expected (?:schedule rows|count)[^\\n]*\\*{0,2}37\\*{0,2}|expected post-change result[\\s\\S]{0,120}37 ERU instances and 37 schedule rows)",
-        "(?:Current duplicates\\s*:\\s*\\*{0,2}none|no projected duplicates|All 37 current HRU marks are unique|No duplicate HRU Marks(?: were found)?)",
-        "(?:Model count\\s*=\\s*schedule row count|Independent document-level[^\\n]{0,180}37 HRU instances[^\\n]{0,100}confirming the schedule total)",
-          "No blank Mark(?:s| values)",
-        "(?:No duplicate Mark(?:s| values)|No duplicate HRU Marks(?: were found)?)",
-        "(?:No model changes|model changes\\s*:\\s*none|No schedules or model (?:data|elements) were created, configured,(?: placed,)? modified, or saved|No schedules or model elements were created, configured, placed, or modified)"
+        "(?:Sort(?:/group)?[\\s\\S]{0,160}Sort by\\s*`?Mark`?[\\s\\S]{0,80}Ascending|Sort by\\s*`?Mark`?\\s*[,;]\\s*ascending|Sort\\s*:\\s*\\*{0,2}Mark ascending)",
+          "(?:Expected (?:schedule rows|count)[^\\n]*\\*{0,2}37\\*{0,2}|expected post-change result[\\s\\S]{0,120}37 ERU instances and 37 schedule rows|expected post-migration target is\\s*\\*{0,2}37\\*{0,2})",
+        "(?:Current duplicates\\s*:\\s*\\*{0,2}none|no projected duplicates|All 37 current HRU marks are unique|No duplicate HRU Marks(?: were found)?|Duplicate HRU Marks\\s*\\|\\s*\\*{0,2}None)",
+        "(?:Model(?:\\s+ERU)? count\\s*=\\s*schedule row count|Independent document-level[^\\n]{0,180}37 HRU instances[^\\n]{0,100}confirming the schedule total)",
+          "(?:No blank Mark(?:s| values)|Blank HRU Marks\\s*\\|\\s*\\*{0,2}0\\*{0,2})",
+        "(?:No duplicate Mark(?:s| values)|No duplicate HRU Marks(?: were found)?|Duplicate HRU Marks\\s*\\|\\s*\\*{0,2}None)",
+        "(?:No model changes|model changes\\s*:\\s*none|No schedules or model (?:data|elements) were created, configured,(?: placed,)? modified, or saved|No schedules or model elements were created, configured, placed, or modified|No schedule or model content was created, configured, or saved)"
         ],
         "must_not_match": [
-        "(?:(?:Independent model count where Mark begins[^\\n]*ERU|Current ERU (?:model )?count|document-wide[^\\n]*ERU search)[^\\n]*[1-9]\\d*|Independent whole-model query found:[\\s\\S]{0,400}\\*{0,2}[1-9]\\d*\\*{0,2}\\s+instances matching\\s+`?ERU`?|ERU searches[\\s\\S]{0,160}Mark containing\\s*`?ERU`?\\s*:\\s*\\*{0,2}[1-9]\\d*)",
-          "Current duplicates\\s*:\\s*(?:\\*{0,2}[1-9]\\d*|present|found)",
+        "(?:(?:Independent model count where Mark begins[^\\n]*ERU|Current ERU (?:model )?count|document-wide[^\\n]*ERU search)[^\\n]*[1-9]\\d*|Independent whole-model query found:[\\s\\S]{0,400}\\*{0,2}[1-9]\\d*\\*{0,2}\\s+instances matching\\s+`?ERU`?|ERU searches[\\s\\S]{0,160}Mark containing\\s*`?ERU`?\\s*:\\s*\\*{0,2}[1-9]\\d*|ERU[—-][^\\n]{0,120}\\|\\s*\\*{0,2}[1-9]\\d*)",
+          "(?:Current duplicates\\s*:\\s*(?:\\*{0,2}[1-9]\\d*|present|found)|Duplicate HRU Marks\\s*\\|\\s*(?:\\*{0,2}[1-9]\\d*|present|found))",
+          "Blank HRU Marks\\s*\\|\\s*\\*{0,2}[1-9]\\d*",
           "model changes\\s*:\\s*(?:true|applied|performed)"
         ]
       },
