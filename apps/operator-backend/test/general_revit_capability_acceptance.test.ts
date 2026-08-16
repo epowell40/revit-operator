@@ -1062,6 +1062,31 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   assert.equal(liveVerified.tier, "verified");
   assert.equal(liveVerified.verified, true);
 
+  const latestLiveIncompleteResponse = [
+    "Relevant schedule: Heat Recovery Unit Summary — View ID 1488968.",
+    "Existing fields: Mark, Family, Type. Family: HeatRecoveryUnit. Type: Heat Recovery Unit (HRU).",
+    "Schedule total: 37 HRUs; Grand total: 37. Independent document-level Mechanical Equipment query: 37 HRU instances, confirming the schedule total.",
+    "ERU searches: Mark containing ERU: 0; Type containing ERU: 0; Family containing ERU: 0.",
+    "No duplicate HRU Marks were found in the 37 returned records.",
+    "Actionable temporary ERU QA schedule plan: use Mark begins with ERU and Sort by Mark, ascending.",
+    "No schedules or model elements were created, configured, placed, or modified."
+  ].join("\n");
+  const latestLiveIncomplete = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: latestLiveIncompleteResponse
+  });
+  assert.equal(latestLiveIncomplete.tier, "failed");
+  assert.equal(latestLiveIncomplete.answer_assertion_passed, false);
+  assert.equal(latestLiveIncomplete.answer_assertion_failures.length, 2);
+  assert.match(latestLiveIncomplete.answer_assertion_failures.join("\n"), /Expected|blank Mark/i);
+
+  const latestLiveComplete = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: `${latestLiveIncompleteResponse}\nExpected post-change result: 37 ERU instances and 37 schedule rows. No blank Mark values.`
+  });
+  assert.equal(latestLiveComplete.tier, "verified");
+  assert.equal(latestLiveComplete.answer_assertion_passed, true);
+
   const wrongExpectedCount = evaluateGeneralRevitCapabilityAttempt(entry, {
     ...attempt,
     assistant_message: assistantMessage.replace("Expected schedule rows after conversion: 37", "Expected schedule rows after conversion: 36")
