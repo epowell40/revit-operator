@@ -125,6 +125,7 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   assert.match(accessoryType?.probe_prompt || "", /matching MEP system or service classification and connector flow direction/i);
   assert.match(accessoryType?.probe_prompt || "", /Supply-to-Return or Return-to-Supply is not a compatible match/i);
   assert.ok(accessoryType?.answer_assertions);
+  assert.ok(accessoryType?.fixture_blocker_assertions);
   assert.doesNotMatch(accessoryType?.probe_prompt || "", /damper/i);
   assert.match(connectedMove?.probe_prompt || "", /Air Terminal or other connected HVAC family instance/i);
   assert.doesNotMatch(connectedMove?.probe_prompt || "", /damper/i);
@@ -198,6 +199,43 @@ test("the MEP peer oracle rejects the captured Supply-to-Return dry-run despite 
   });
   assert.equal(compatible.answer_assertion_passed, true);
   assert.equal(compatible.completed, true);
+});
+
+test("the MEP peer oracle accepts the captured Snowdon incompatibility blocker without awarding completion", () => {
+  const safeCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "c22_accessory_type_match")!,
+    false
+  );
+  const inspected = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
+    ]
+  };
+  const truthful = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    assistant_message: `## Blocked — no compatible peer type
+
+Live inspection found exactly 7 loaded Air Terminal types. No two different types preserve all required invariants.
+The closest geometric matches are Supply Air and Return Air, which is a cross-service substitution.
+No native type-change dry-run was executed, and nothing was applied or saved.`
+  });
+  assert.equal(truthful.tier, "accepted");
+  assert.equal(truthful.completed, false);
+  assert.equal(truthful.verified, false);
+  assert.equal(truthful.answer_assertion_passed, false);
+  assert.equal(truthful.fixture_blocker_assertion_passed, true);
+  assert.equal(truthful.fixture_blocker_accepted, true);
+  assert.match(truthful.summary, /sample lacks a semantically compatible target/i);
+
+  const vague = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    assistant_message: "## Blocked\nI couldn't find a good type, so I stopped."
+  });
+  assert.equal(vague.tier, "failed");
+  assert.equal(vague.fixture_blocker_accepted, false);
 });
 
 test("both backend agent prompts prefer sheet-aware parameter readback before generic parameter scans", () => {

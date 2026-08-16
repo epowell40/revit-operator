@@ -39,6 +39,10 @@ export type GeneralRevitCapabilityCase = {
     must_match: string[];
     must_not_match?: string[];
   };
+  fixture_blocker_assertions?: {
+    must_match: string[];
+    must_not_match?: string[];
+  };
 };
 
 export type GeneralRevitCapabilityCorpus = {
@@ -122,6 +126,10 @@ export type GeneralRevitEvaluation = {
   answer_assertion_available: boolean;
   answer_assertion_passed: boolean | null;
   answer_assertion_failures: string[];
+  fixture_blocker_assertion_available: boolean;
+  fixture_blocker_assertion_passed: boolean | null;
+  fixture_blocker_assertion_failures: string[];
+  fixture_blocker_accepted: boolean;
   verification_basis: GeneralRevitVerificationBasis;
   summary: string;
 };
@@ -261,12 +269,19 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     for (const candidate of [...testCase.capability_paths, ...testCase.dispatch_any_of]) {
       if (!/^\/revit\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(candidate)) throw new Error(`Case ${testCase.case_id} has invalid Revit path ${candidate}.`);
     }
-    if (testCase.answer_assertions) {
-      if (!Array.isArray(testCase.answer_assertions.must_match) || testCase.answer_assertions.must_match.length === 0) {
-        throw new Error(`Case ${testCase.case_id} answer assertions require at least one must_match pattern.`);
+    if (testCase.fixture_blocker_assertions && (testCase.expected_effect !== "apply" || !testCase.answer_assertions)) {
+      throw new Error(`Case ${testCase.case_id} may accept a fixture blocker only for an apply case with a separate completion oracle.`);
+    }
+    for (const [label, assertions] of [
+      ["answer", testCase.answer_assertions],
+      ["fixture blocker", testCase.fixture_blocker_assertions]
+    ] as const) {
+      if (!assertions) continue;
+      if (!Array.isArray(assertions.must_match) || assertions.must_match.length === 0) {
+        throw new Error(`Case ${testCase.case_id} ${label} assertions require at least one must_match pattern.`);
       }
-      for (const pattern of [...testCase.answer_assertions.must_match, ...(testCase.answer_assertions.must_not_match || [])]) {
-        try { new RegExp(pattern, "i"); } catch { throw new Error(`Case ${testCase.case_id} has an invalid answer assertion regex.`); }
+      for (const pattern of [...assertions.must_match, ...(assertions.must_not_match || [])]) {
+        try { new RegExp(pattern, "i"); } catch { throw new Error(`Case ${testCase.case_id} has an invalid ${label} assertion regex.`); }
       }
     }
   }
@@ -565,7 +580,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
       case_id: testCase.case_id, tier: "not_run", non_refusal: false, completed: false, verified: false,
       expected_path_observed: false, observed_paths: [], dispatched: false, apply_dispatched: false,
       outcome_unknown: false, refusal_reason: null, answer_assertion_available: !!testCase.answer_assertions,
-      answer_assertion_passed: null, answer_assertion_failures: [], verification_basis: "none", summary: "Case was not run."
+      answer_assertion_passed: null, answer_assertion_failures: [],
+      fixture_blocker_assertion_available: !!testCase.fixture_blocker_assertions,
+      fixture_blocker_assertion_passed: null, fixture_blocker_assertion_failures: [], fixture_blocker_accepted: false,
+      verification_basis: "none", summary: "Case was not run."
     };
   }
   const rows = actionRows(attempt);
@@ -611,6 +629,19 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ]
     : [];
   const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
+  const fixtureBlockerAssertionFailures = testCase.fixture_blocker_assertions
+    ? [
+        ...testCase.fixture_blocker_assertions.must_match
+          .filter((pattern) => !new RegExp(pattern, "i").test(answerText))
+          .map((pattern) => `missing:${pattern}`),
+        ...(testCase.fixture_blocker_assertions.must_not_match || [])
+          .filter((pattern) => new RegExp(pattern, "i").test(answerText))
+          .map((pattern) => `forbidden:${pattern}`)
+      ]
+    : [];
+  const fixtureBlockerAssertionPassed = testCase.fixture_blocker_assertions
+    ? fixtureBlockerAssertionFailures.length === 0
+    : null;
   const verifiedNoop = testCase.expected_effect === "apply" && testCase.allow_verified_noop === true
     && answerAssertionPassed === true && successfulExpectedPathObserved && !applyDispatched
     && assistantReportsVerifiedNoop(attempt) && !assistantBlocked && !assistantIncomplete
@@ -625,6 +656,11 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const teammatePreviewDispatched = testCase.expected_effect === "preview"
     && Array.isArray(teammateReceipt.preview_action_ids)
     && teammateReceipt.preview_action_ids.some((value) => typeof value === "string" && value.trim().length > 0);
+  const fixtureBlockerAccepted = fixtureBlockerAssertionPassed === true
+    && attempt.ok !== false && successfulExpectedPathObserved && dispatched
+    && !applyDispatched && !directPreviewDispatched && !teammatePreviewDispatched
+    && assistantBlocked && !outcomeUnknown && !substantiveFailedAction && !teammate.mutationAttempted
+    && !refusalReason;
   const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);
   const requestedEffectSatisfied = testCase.expected_effect === "apply"
     ? applyDispatched || verifiedNoop
@@ -639,6 +675,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (missingTargetClarification && attempt.ok !== false && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
+  else if (fixtureBlockerAccepted) tier = "accepted";
   else if (attempt.ok === false || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || answerAssertionPassed === false) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
@@ -661,6 +698,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     answer_assertion_available: !!testCase.answer_assertions,
     answer_assertion_passed: answerAssertionPassed,
     answer_assertion_failures: answerAssertionFailures,
+    fixture_blocker_assertion_available: !!testCase.fixture_blocker_assertions,
+    fixture_blocker_assertion_passed: fixtureBlockerAssertionPassed,
+    fixture_blocker_assertion_failures: fixtureBlockerAssertionFailures,
+    fixture_blocker_accepted: fixtureBlockerAccepted,
     verification_basis: basis,
     summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
       : tier === "failed" ? answerAssertionPassed === false
@@ -670,6 +711,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
           ? "Mutation case did not dispatch a verified apply operation."
           : `Case did not produce the requested ${testCase.expected_effect} effect.`
         : "Attempt failed or has an uncertain outcome."
+        : fixtureBlockerAccepted ? "Fixture-grounded inspection proved that this sample lacks a semantically compatible target; the agent correctly stopped without previewing or applying an invalid substitution."
         : verifiedNoop ? "Fixture-grounded readback verified that the requested state was already satisfied; no write was necessary."
         : tier === "verified" ? "Expected Revit lane completed with structured verification evidence."
           : tier === "previewed" ? "Expected non-mutating Revit preview lane completed."
