@@ -838,6 +838,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(exactExpandedLiveObserveAndVerify.shouldStart, true);
   assert.equal(exactExpandedLiveObserveAndVerify.requestedEffect, "read");
 
+  const readOnlyFamilyEvolutionPlan = classifyAutoGoalRequest(
+    "Read-only inspection only: find one editable loaded Mechanical Equipment family instance and provide a family-evolution plan with verification and rollback steps. Do not edit, save, load, reload, duplicate, or swap anything."
+  );
+  assert.equal(readOnlyFamilyEvolutionPlan.shouldStart, true);
+  assert.equal(readOnlyFamilyEvolutionPlan.requestedEffect, "read");
+
   const openButtonCommand = classifyAutoGoalRequest(
     "Click the Open button to open Snowdon Towers Sample HVAC model, then inspect its air terminals."
   );
