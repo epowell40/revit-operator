@@ -688,6 +688,22 @@
       "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
       "expected_effect": "apply",
       "probe_expected_effect": "read",
+      "answer_assertions": {
+        "must_match": [
+          "\\bM200\\b",
+          "\\bM201\\b",
+          "\\bM202\\b",
+          "\\bM203\\b",
+          "\\bM204\\b",
+          "\\bM205\\b",
+          "\\bM206\\b",
+          "(?:combined[\\s\\S]{0,120}color|color[\\s\\S]{0,120}combined)",
+          "(?:planned )?page count[^\\n]{0,30}\\b7\\b",
+          "TEST-MECHANICAL-ISSUE\\.pdf",
+          "(?:SHA-?256|content hash)",
+          "(?:no PDF was created|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
+        ]
+      },
       "epic0441_task_refs": ["g25_export_publish"]
     },
     {
@@ -746,7 +762,7 @@
       "answer_assertions": {
         "must_match": [
           "\\bL2\\b",
-          "(?:no rename was required|none required|already conforms?)",
+          "(?:no rename (?:was )?required|none required|already conforms?)",
           "(?:pattern[^\\n]{0,160}level(?:\\s*/\\s*(?:block|area)){0,2} name|level(?:\\s*/\\s*(?:block|area)){0,2} name[^\\n]{0,160}pattern)"
         ],
         "must_not_match": [

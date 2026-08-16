@@ -952,6 +952,63 @@ namespace RevitBridge.Operator
                     return OneOf(Null(), core);
                 }
 
+                // create-view is a tagged union. Its string selectors are conditional on
+                // action, but nullable-reference metadata is unavailable in the net48
+                // reflection build. The generic fallback would therefore advertise every
+                // string selector as simultaneously required and reject valid rename,
+                // template, and view-creation requests before Revit sees them. Keep the
+                // root permissive; OperatorActionSchemaValidator enforces the exact
+                // action-specific combinations immediately before handler execution.
+                if (string.Equals(p, "/revit/create-view", StringComparison.OrdinalIgnoreCase))
+                {
+                    var point = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "x", Num() },
+                            { "y", Num() },
+                            { "z", Num() }
+                        },
+                        required: new[] { "x", "y" },
+                        additionalProps: false);
+
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "action", Str(new[] { "create_floor_plan", "create_3d", "create_dependent", "create_callout", "create_section", "create_elevation", "create_camera", "create_drafting", "create_legend", "create_view_template", "rename_batch" }) },
+                            { "name", Str() },
+                            { "levelId", Int() },
+                            { "levelName", Str() },
+                            { "planType", Str(new[] { "floor", "ceiling", "engineering", "structural" }) },
+                            { "perspective", Bool() },
+                            { "sourceViewId", Int() },
+                            { "calloutType", Str(new[] { "detail", "section" }) },
+                            { "sectionHeight", Num() },
+                            { "sectionDepth", Num() },
+                            { "elevationIndex", Int() },
+                            { "templateId", Int() },
+                            { "templateName", Str() },
+                            { "scale", Int() },
+                            { "detailLevel", Str() },
+                            { "discipline", Str() },
+                            { "p1", point },
+                            { "p2", point },
+                            { "eye", point },
+                            { "target", point },
+                            { "up", point },
+                            { "viewIds", Arr(Int()) },
+                            { "nameContains", Str() },
+                            { "prefix", Str() },
+                            { "suffix", Str() },
+                            { "findText", Str() },
+                            { "replaceText", Str() },
+                            { "exact", Bool() },
+                            { "max", Int() },
+                            { "dryRun", Bool() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
                 // Some tools accept null bodies intentionally (back-compat and convenience).
                 if (string.Equals(p, "/revit/export-image", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(p, "/revit/export-view-frame", StringComparison.OrdinalIgnoreCase) ||
@@ -1082,6 +1139,15 @@ namespace RevitBridge.Operator
                     unitNotes.Add(new { unit = "degrees", fields = new[] { "angleDegrees" } });
                     unitNotes.Add(new { unit = "feet", fields = new[] { "axis.pointX", "axis.pointY", "axis.pointZ" } });
                     notes.Add("axis.mode=zThroughPoint creates a vertical axis through (pointX,pointY,pointZ); throughPoints creates an arbitrary 3D axis from that point to (endPointX,endPointY,endPointZ).");
+                }
+
+                if (p == "/revit/create-view")
+                {
+                    enumMap["action"] = new[] { "create_floor_plan", "create_3d", "create_dependent", "create_callout", "create_section", "create_elevation", "create_camera", "create_drafting", "create_legend", "create_view_template", "rename_batch" };
+                    enumMap["planType"] = new[] { "floor", "ceiling", "engineering", "structural" };
+                    enumMap["calloutType"] = new[] { "detail", "section" };
+                    notes.Add("Fields are conditional on action; the native validator reports the exact missing combination.");
+                    notes.Add("rename_batch requires viewIds or nameContains plus prefix, suffix, or findText; set dryRun=true to preview exact old/new names without applying them.");
                 }
 
                 if (p == "/revit/room-contents")

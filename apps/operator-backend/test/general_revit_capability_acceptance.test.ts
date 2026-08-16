@@ -129,6 +129,21 @@ test("titleblock mutation coverage is paired with the live read-only regression 
   );
 });
 
+test("fixture oracles accept truthful view-rename no-ops and verify the bounded HVAC PDF preflight", () => {
+  const viewNames = corpus.cases.find((candidate) => candidate.case_id === "c02_clean_level2_view_names");
+  const pdf = corpus.cases.find((candidate) => candidate.case_id === "dp02_combined_discipline_pdf");
+  assert.ok(viewNames?.answer_assertions);
+  assert.ok(pdf?.answer_assertions);
+  const noRenameAnswer = "L2 views 9948 and 1371629: No rename required; both already follow the level name pattern.";
+  for (const pattern of viewNames.answer_assertions.must_match) {
+    assert.match(noRenameAnswer, new RegExp(pattern, "i"));
+  }
+  const pdfAnswer = "Combined: Yes\nColor: Color\nM200 M201 M202 M203 M204 M205 M206; planned page count: 7; TEST-MECHANICAL-ISSUE.pdf; verify content hash with SHA-256. No PDF was created.";
+  for (const pattern of pdf.answer_assertions.must_match) {
+    assert.match(pdfAnswer, new RegExp(pattern, "i"));
+  }
+});
+
 test("both backend agent prompts prefer sheet-aware parameter readback before generic parameter scans", () => {
   const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
