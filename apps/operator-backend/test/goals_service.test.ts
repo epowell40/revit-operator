@@ -947,6 +947,50 @@ test("an already-satisfied apply assignment completes only as a substantive, zer
   });
 });
 
+test("a preview assignment with zero candidates completes as a substantive verified no-op", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-verified-noop", {
+      title: "Preview sheet number cleanup",
+      objective: "Preview replacing dashes in Mechanical sheet numbers with dots; do not apply changes.",
+      acceptance_criteria: ["Every dashed Mechanical sheet number has an exact collision-free preview, or live evidence proves there are no candidates."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-verified-noop");
+    observer.observe({
+      server: "revit_operator", tool: "revit_list_sheets", success: true,
+      arguments: { discipline: "Mechanical" },
+      result: { sheets: [{ id: 1, number: "M000" }, { id: 2, number: "M101" }, { id: 3, number: "M206" }] }
+    });
+    observer.finish(
+      "turn-preview-verified-noop",
+      "All Mechanical sheets were inspected. candidate_count: 0. Model changes: none. No renaming action is necessary.",
+      { stage: "report", verified: false, apply_attempts: 0 }
+    );
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.work_budget?.requested_effect, "preview");
+    assert.equal(persisted?.work_budget?.completion_mode, "verified_noop");
+    assert.equal(persisted?.completion_audit?.complete, true);
+
+    const unsupported = setAgentGoal("session-preview-unproved-noop", {
+      title: "Preview sheet number cleanup",
+      objective: "Preview replacing dashes in Mechanical sheet numbers with dots; do not apply changes.",
+      acceptance_criteria: ["The preview is grounded."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const unsupportedObserver = createAutoGoalTurnObserver("session-preview-unproved-noop");
+    unsupportedObserver.observe({
+      server: "revit_operator", tool: "revit_search_tools", success: true,
+      result: { tools: ["revit_list_sheets"] }
+    });
+    unsupportedObserver.finish("turn-preview-unproved-noop", "candidate_count: 0. Model changes: none.");
+    assert.equal(getGoal(unsupported.id)?.status, "active");
+    assert.equal(getGoal(unsupported.id)?.completion_audit, null);
+  });
+});
+
 test("read-only export evidence does not impersonate an apply during a structured dry-run preview", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-preview-with-export", {

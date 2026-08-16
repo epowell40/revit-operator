@@ -105,8 +105,9 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             ? successfulPreviewTools
             : successfulReadTools + successfulPreviewTools + successfulApplyTools;
         const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
-        const verifiedNoop = requestedEffect === "apply"
+        const verifiedNoop = requestedEffect !== "read"
           && successfulApplyTools === 0
+          && successfulPreviewTools === 0
           && successfulReadTools > 0
           && lastCompletionRelevantSucceeded === true
           && (teammateReceipt?.apply_attempts ?? 0) === 0
@@ -159,7 +160,8 @@ function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
 }
 
 function assistantReportsAlreadySatisfiedNoop(assistantText: string): boolean {
-  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText);
+  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText)
+    || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(assistantText);
   const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
     || /\bnone required\b/i.test(assistantText)
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)

@@ -702,8 +702,8 @@
       "answer_assertions": {
         "must_match": [
           "(?<!\\d)29(?!\\d)",
-          "Supply Diffuser\\s*[-–—]\\s*Square\\s*[-–—]\\s*Hosted",
-          "Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot\\s*[-–—]\\s*Hosted"
+          "(?=[^\\n]{0,160}Supply Diffuser\\s*[-–—]\\s*Square)(?=[^\\n]{0,160}(?<!\\d)28(?!\\d))[^\\n]{1,160}",
+          "(?=[^\\n]{0,160}Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot)(?=[^\\n]{0,160}(?<!\\d)1(?!\\d))[^\\n]{1,160}"
         ],
         "must_not_match": [
           "(?<!\\d)435(?!\\d)"
@@ -1094,6 +1094,18 @@
       "capability_paths": ["/revit/sheets", "/revit/set-parameter"],
       "dispatch_any_of": ["/revit/sheets", "/revit/set-parameter", "/revit/dynamic-runtime/preview"],
       "expected_effect": "apply",
+      "allow_verified_noop": true,
+      "answer_assertions": {
+        "must_match": [
+          "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|scope\\s*:\\s*all 17 sheets)",
+          "(?:Dashed candidates|candidate_count)\\s*:\\s*0",
+          "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false)"
+        ],
+        "must_not_match": [
+          "(?:Dashed candidates|candidate_count)\\s*:\\s*[1-9]\\d*",
+          "(?:blocked|unable to inspect|could not inspect)"
+        ]
+      },
       "epic0441_task_refs": ["g22_sheet_view_package", "n28_novel_holdout"]
     },
     {
