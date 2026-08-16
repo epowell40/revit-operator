@@ -140,11 +140,12 @@ function hasRevitWorkSubject(text: string): boolean {
 }
 
 function withoutAdjectivalOpenDocumentState(text: string): string {
-  // "the open Revit model" describes the current model; it is not an
-  // imperative to open another document. Strip these adjectival state phrases
-  // before applying the deliberately broad lifecycle-command grammar.
+  // "the open Revit model" and "the open Snowdon Towers Sample HVAC model"
+  // describe the current model; neither is an imperative to open another
+  // document. Strip these article-led adjectival state phrases before applying
+  // the deliberately broad lifecycle-command grammar.
   return text.replace(
-    /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:revit\s+)?(?:model|project|document)\b/gi,
+    /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:(?:(?!\b(?:open|reopen|close|save)\b)[^.!?;\n]){0,120}?\s+)?(?:model|project|document)\b/gi,
     " "
   );
 }

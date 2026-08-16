@@ -457,6 +457,19 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   assert.equal(naturalLanguage.tier, "verified");
   assert.equal(naturalLanguage.answer_assertion_passed, true);
 
+  const liveWording = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "Reviewed all **17 project sheets**. No mechanical sheet number contains a dash, so there are no proposed renames.",
+      "| Sheet Name | Old sheet number | Proposed dot number | Uniqueness status | Ordering status |",
+      "| *No matching sheets* | — | — | Not applicable | Not applicable |",
+      "No sheets were renamed or modified."
+    ].join("\n"),
+    assignment_projection: durableNoop
+  });
+  assert.equal(liveWording.tier, "verified");
+  assert.equal(liveWording.answer_assertion_passed, true);
+
   const proseOnly = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message,
