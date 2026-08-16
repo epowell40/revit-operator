@@ -125,7 +125,10 @@ test("structured contract distinguishes teammate modes and fails closed on stale
   assert.equal(buildTeammateTurnContract(request("For EPIC-0443 acceptance testing in this sample model, change sheet M000 from Cover Sheet to Test Cover Sheet.")).write_authorized, true);
   assert.equal(buildTeammateTurnContract(request("How can I change the expansion tank size?")).write_authorized, false);
   assert.equal(buildTeammateTurnContract(request("For planning, explain how to change the expansion tank size.")).write_authorized, false);
-  assert.equal(buildTeammateTurnContract(request("Preview only: update the expansion tank size.")).write_authorized, false);
+  const previewOnly = buildTeammateTurnContract(request("Preview only: update the expansion tank size."));
+  assert.equal(previewOnly.write_authorized, false);
+  assert.equal(previewOnly.preview_required, true);
+  assert.equal(buildTeammateTurnContract(request("Show me a preview of sheet M000.")).preview_required, false);
   assert.equal(stale.context_state, "invalid");
 });
 
@@ -189,6 +192,41 @@ test("benchmark-safe read and preview prompts remain live Revit work, not concep
     assert.equal(contract.no_write, true, prompt);
     assert.equal(contract.stage, "discover", prompt);
   }
+  assert.equal(buildTeammateTurnContract(request(prompts[0])).preview_required, false);
+  assert.equal(buildTeammateTurnContract(request(prompts[1])).preview_required, true);
+});
+
+test("schedule duplicate and heading-cleanup probe contracts require executable previews", () => {
+  const manifest = JSON.parse(readFileSync(
+    resolve(process.cwd(), "benchmark/general-agent/revit-capability-acceptance.v1.json"),
+    "utf8"
+  )) as { cases: AcceptanceCase[] };
+  for (const caseId of ["c07_duplicate_schedule_for_qa", "c08_schedule_heading_cleanup"]) {
+    const entry = manifest.cases.find(candidate => candidate.case_id === caseId);
+    assert.ok(entry?.probe_prompt, caseId);
+    const contract = buildTeammateTurnContract(request(entry.probe_prompt));
+    assert.equal(contract.turn_kind, "inspection", caseId);
+    assert.equal(contract.no_write, true, caseId);
+    assert.equal(contract.preview_required, true, caseId);
+  }
+});
+
+test("an explicit change preview cannot be reported complete without an executed preview receipt", () => {
+  __testOnlyResetTeammateLoopState();
+  const text = "Resolve the source schedule and preview the duplicate with a blank-Mark filter; do not create it.";
+  const proseOnly = guardGenericTeammateDecision(request(text), response([], [
+    "Read-only preview receipt",
+    "Status: Preview completed.",
+    "The duplicate would be named TEMP QA and filtered to blank Marks."
+  ].join("\n")));
+  assert.equal(proseOnly.actions.length, 0);
+  assert.equal(proseOnly.teammate_loop_receipt?.stage, "blocked");
+  assert.equal(proseOnly.teammate_loop_receipt?.blocked_reason, "executable_preview_not_completed");
+  assert.match(proseOnly.assistant_message, /executable preview not completed/i);
+
+  __testOnlyResetTeammateLoopState();
+  const noCandidate = guardGenericTeammateDecision(request(text), response([], "No matching preview-capable schedule target exists, so I did not claim a completed preview."));
+  assert.notEqual(noCandidate.teammate_loop_receipt?.blocked_reason, "executable_preview_not_completed");
 });
 
 test("transaction-plan is preview-only to the teammate loop", () => {

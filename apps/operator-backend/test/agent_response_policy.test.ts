@@ -26,6 +26,9 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /active view and current selection as starting context, not as a limit/i);
   assert.match(policy, /schema or argument-validation error/i);
   assert.match(policy, /do not spray adjacent routes/i);
+  assert.match(policy, /prose plan, table, or invented receipt is not an executed preview/i);
+  assert.match(policy, /create-schedule clone contract in dry-run mode/i);
+  assert.match(policy, /configure-schedule dry-run contract/i);
   assert.match(policy, /find an eligible view, sheet, schedule, element, or family yourself/i);
   assert.match(policy, /state the most likely interpretation/i);
   assert.match(policy, /identify the likely requested schedule and where it is placed/i);
