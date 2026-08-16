@@ -127,10 +127,10 @@ function containsMutationVerb(text: string): boolean {
 
 const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
   "\\b(?:do not|don't|dont|never)\\s+"
-  + "(?:(?:actually|ever)\\s+|(?:attempt|try)\\s+to\\s+)?"
+  + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"
   + "(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)"
-  + "(?:\\s*,?\\s*(?:(?:or|and)\\s+)?(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)){1,6}"
-  + "\\s+(?:the\\s+)?(?:model|project|document|anything|it)\\b",
+  + "(?:\\s*,?\\s*(?:(?:or|and)\\s+)?(?:(?:actually|ever|otherwise)\\s+)?(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)){1,6}"
+  + "\\s+(?:the\\s+)?(?:revit\\s+)?(?:model|project|document|anything|it)\\b",
   "i"
 );
 

@@ -832,6 +832,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(exactLiveObserveAndVerify.shouldStart, true);
   assert.equal(exactLiveObserveAndVerify.requestedEffect, "read");
 
+  const exactExpandedLiveObserveAndVerify = classifyAutoGoalRequest(
+    "Read-only observe-and-verify loop: identify one eligible plan view in the open model, capture an image of that plan view, then run/inspect its visible-element export. Do not modify, save, or otherwise change the Revit model."
+  );
+  assert.equal(exactExpandedLiveObserveAndVerify.shouldStart, true);
+  assert.equal(exactExpandedLiveObserveAndVerify.requestedEffect, "read");
+
   const openButtonCommand = classifyAutoGoalRequest(
     "Click the Open button to open Snowdon Towers Sample HVAC model, then inspect its air terminals."
   );
@@ -1377,6 +1383,44 @@ test("a failed exploratory Revit call can be repaired by a later substantive suc
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, result: { family: "HeatRecoveryUnit", type: "HRU" } });
     observer.finish("turn-recovered", "Recovered with the documented argument shape and completed the read-only family plan.");
     assert.equal(getGoal(goal.id)?.status, "complete");
+  });
+});
+
+test("a canonical non-dispatched registry rejection does not poison a corrected substantive read", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-registry-retry", {
+      title: "Observe a plan", objective: "Capture and inspect one plan without changing the model.",
+      acceptance_criteria: ["The plan observation is grounded."],
+      work_budget: { mode: "auto_goal", requested_effect: "read" },
+      work_items: [{ id: "auto.revit-work", title: "Observe plan", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-registry-retry");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { method: "GET", path: "/revit/views?limit=200" },
+      result: [{ type: "inputText", text: JSON.stringify({
+        schema: "revit-operator.mcp-pre-dispatch-failure.v1",
+        ok: false,
+        code: "mcp_unknown_tool_path",
+        phase: "registry_validation",
+        retryable: true,
+        request_dispatched: false,
+        outcome_unknown: false,
+        method: "GET",
+        path: "/revit/views?limit=200"
+      }) }],
+      error: "Unknown tool path; the target request was not dispatched."
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { method: "POST", path: "/revit/views", body: { action: "list", limit: 200 } },
+      result: { views: [{ id: 9948, name: "L2", type: "FloorPlan" }] }
+    });
+    observer.finish("turn-registry-retry", "Captured and inspected L2. No model changes were performed.");
+    const completed = getGoal(goal.id);
+    assert.equal(completed?.status, "complete");
+    assert.match(JSON.stringify(completed?.validation_log[0]?.evidence || {}), /no failed calls/);
+    assert.match(completed?.action_log.find((entry) => entry.summary.includes("failed"))?.summary || "", /not dispatched/i);
   });
 });
 

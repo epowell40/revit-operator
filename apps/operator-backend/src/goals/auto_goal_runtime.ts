@@ -253,6 +253,22 @@ function isExplicitNoEffectObservation(observation: AutoGoalToolObservation): bo
   return objectContainsExplicitNoEffect(observation.result ?? observation.output);
 }
 
+function objectContainsKnownPreDispatchFailure(value: unknown, depth = 0): boolean {
+  if (depth > 8 || value === null || value === undefined) return false;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return false;
+    try { return objectContainsKnownPreDispatchFailure(JSON.parse(text), depth + 1); } catch { return false; }
+  }
+  if (Array.isArray(value)) return value.some((entry) => objectContainsKnownPreDispatchFailure(entry, depth + 1));
+  if (typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.schema === "revit-operator.mcp-pre-dispatch-failure.v1"
+      && record.request_dispatched === false
+      && record.outcome_unknown !== true) return true;
+  return Object.values(record).some((entry) => objectContainsKnownPreDispatchFailure(entry, depth + 1));
+}
+
 function observationEffect(observation: AutoGoalToolObservation): AutoGoalObservationEffect {
   if (!isLiveRevitObservation(observation)) return "discovery";
   const tool = observation.tool.trim().toLowerCase();
@@ -381,6 +397,7 @@ export function completeAutoGoalFromValidatedTurn(
 
 function isKnownNoEffectFailure(observation: AutoGoalToolObservation): boolean {
   if (observation.success !== false) return false;
+  if (objectContainsKnownPreDispatchFailure(observation.result ?? observation.output)) return true;
   const result = observationObject(observation.result ?? observation.output);
   if (result.request_dispatched === false && result.outcome_unknown !== true) return true;
   let serialized = `${observation.error || ""}`;
