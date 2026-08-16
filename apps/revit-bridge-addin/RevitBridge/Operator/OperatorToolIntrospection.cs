@@ -741,8 +741,8 @@ namespace RevitBridge.Operator
                             { "nameContainsAny", Arr(Str()) },
                             { "semanticGroups", Arr(Str(new[] { "power", "lighting", "electrical", "mechanical", "hvac", "plumbing", "fire_alarm", "architectural" })) },
                             { "includeTemplates", Bool() },
-                            { "offset", Int() },
-                            { "limit", Int() }
+                            { "offset", Int(minimum: 0, maximum: 200000) },
+                            { "limit", Int(minimum: 1, maximum: 500) }
                         },
                         required: Array.Empty<string>(),
                         additionalProps: false);
@@ -1689,7 +1689,13 @@ namespace RevitBridge.Operator
                     : new Dictionary<string, object> { { "type", "string" }, { "enum", enumVals } };
 
             private static object Bool() => new Dictionary<string, object> { { "type", "boolean" } };
-            private static object Int() => new Dictionary<string, object> { { "type", "integer" } };
+            private static object Int(long? minimum = null, long? maximum = null)
+            {
+                var schema = new Dictionary<string, object> { { "type", "integer" } };
+                if (minimum.HasValue) schema["minimum"] = minimum.Value;
+                if (maximum.HasValue) schema["maximum"] = maximum.Value;
+                return schema;
+            }
             private static object Num() => new Dictionary<string, object> { { "type", "number" } };
             private static object Null() => new Dictionary<string, object> { { "type", "null" } };
 

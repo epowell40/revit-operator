@@ -2,7 +2,7 @@
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
   "policy_hash": "sha256:07dac91baa5872213c056ddc209fdaa0fa899a4e514e6632e3cda7f73a6507e6",
-  "source_inputs_hash": "sha256:ef8f445e5b73c2bbf3d7dc8c175a67083ed4bad72b0013171132b3c37e4ec7ae",
+  "source_inputs_hash": "sha256:d0ea8570297941bf4d9ef8de4e825c6c86802be74f4ec727fbab32558d56b219",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -2444,7 +2444,7 @@
     },
     {
       "path": "apps/operator-backend/test/revit_control_plane_contract.test.ts",
-      "sha256": "sha256:5e43f3d5e53a877921a724d6611eeac2deaa212556d5dcd99565ea5c641cabc1"
+      "sha256": "sha256:340f977be0428e5acd101f028c42963385203cd315c82c16a1ba3c888b92485f"
     },
     {
       "path": "apps/operator-backend/test/revit_courier_contract.test.ts",
@@ -4545,11 +4545,11 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolIntrospection.cs",
-      "sha256": "sha256:f5f1abab7bbca0e93eae59677ac62c1a0e49ae95f7985961bdea4fe0a661f2e5"
+      "sha256": "sha256:c1fe29d7c27bbc9b22c23389235692c6cd768bb2e6b6ac44ee552aaddb01b13d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
-      "sha256": "sha256:2c09e539c915b4c997428333b702456eeb798d0c3b37be354d65db104bfc66f8"
+      "sha256": "sha256:ebafacf9aad9f625db54ca8e48999a00e4697da32e37cb9a71b8972b863c7931"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolPopupWindow.cs",
@@ -4597,15 +4597,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:20e58093023195b4fa7340a94ec23210fbbaa72049f0ce786b34d980b43986d6"
+      "sha256": "sha256:bd955c6fab282b717e80361741fc3a5879f8613b15a5b36d17a2c9abe597b4f3"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:4269b15348e24753fd66cfe1eed2deff49f920529087f1b95d3349949aeedf5c"
+      "sha256": "sha256:e6a66c9da98ead0684795fbb2a0d9621e8dcb2de564918fdc8a099f5ed179229"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:03de36a0d6cdea97ec5c1580bf217845d3c2e53de966c50e605a8e234a563799"
+      "sha256": "sha256:befd3ea6556788e59ea04d17976d04d1f67ef7ca300846d28224a0d26bd5cf6e"
     }
   },
   "runtime_dependencies": [
@@ -4652,19 +4652,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:20e58093023195b4fa7340a94ec23210fbbaa72049f0ce786b34d980b43986d6",
+      "sha256": "sha256:bd955c6fab282b717e80361741fc3a5879f8613b15a5b36d17a2c9abe597b4f3",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:03de36a0d6cdea97ec5c1580bf217845d3c2e53de966c50e605a8e234a563799",
+      "sha256": "sha256:befd3ea6556788e59ea04d17976d04d1f67ef7ca300846d28224a0d26bd5cf6e",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:4269b15348e24753fd66cfe1eed2deff49f920529087f1b95d3349949aeedf5c",
+      "sha256": "sha256:e6a66c9da98ead0684795fbb2a0d9621e8dcb2de564918fdc8a099f5ed179229",
       "host": null
     },
     {
@@ -4752,6 +4752,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:0e29473af7d1f19b29e7225d516c2e63a7e6ad629993b73e99749b81c59c72f7",
-  "built_at_utc": "2026-08-16T10:44:55.020Z"
+  "runtime_dependencies_hash": "sha256:413e5d02b9619fa3240f435df63b3c027ede9053b5df8cc47c612918f4923e48",
+  "built_at_utc": "2026-08-16T11:48:57.905Z"
 }
