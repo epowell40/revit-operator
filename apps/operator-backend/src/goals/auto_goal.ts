@@ -10,6 +10,7 @@ const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|typ
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|update|edit|replace|delete|remove|rename|set|assign|match|hide|unhide|turn (?:on|off)|apply|fix|connect|route|reload)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
+const EXECUTABLE_PREVIEW = /\b(executable|transaction(?:al)?|rollback|dry[- ]?run|preflight|simulate(?:d|ion)?)\s+(?:change\s+)?preview\b|\b(?:dry[- ]?run|preflight|show me (?:the )?change)\b/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
@@ -37,7 +38,11 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
   const shouldStart = liveModelRequest || score >= 2;
   const documentLifecycleMutation = isAffirmativeDocumentLifecycleMutation(text);
-  const requestedEffect = PREVIEW_REQUEST.test(text)
+  const informationalReadOnlyPlan = isExplicitNoWriteRequest(text)
+    && /\b(?:read[- ]only|discovery only|inspection only)\b/i.test(text)
+    && /\b(?:plan|steps?|guidance|instructions?|recommendations?)\b/i.test(text)
+    && !EXECUTABLE_PREVIEW.test(text);
+  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
     ? "preview"
     : documentLifecycleMutation || (MUTATION_OPERATION.test(text) && !isExplicitNoWriteRequest(text))
       ? "apply"

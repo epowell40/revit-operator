@@ -1061,6 +1061,20 @@
       "capability_paths": ["/revit/context", "/revit/views", "/revit/visibility"],
       "dispatch_any_of": ["/revit/context", "/revit/views", "/revit/visibility"],
       "expected_effect": "apply",
+      "allow_verified_noop": true,
+      "answer_assertions": {
+        "must_match": [
+          "(?:Chosen view|View)\\s*:\\s*`?L2`?.*?(?:ID\\s*`?9948`?|`9948`)",
+          "Bottom[^\\n]*(?:L2|associated level)[^\\n]*0",
+          "View Depth[^\\n]*(?:L2|associated level)[^\\n]*0",
+          "underlay (?:is )?(?:disabled|off|none)|base/top\\s*=\\s*None",
+          "(?:proposed_edit\\s*:\\s*none|model_altered\\s*:\\s*false|no change applied)"
+        ],
+        "must_not_match": [
+          "(?:please|you need to) (?:open|activate|select) (?:a |the )?(?:plan|view)",
+          "(?:unable|could not|can't|cannot) (?:find|inspect) (?:a |the )?(?:plan|view)"
+        ]
+      },
       "epic0441_task_refs": ["r21_graphics_override", "g26_context_rule"]
     },
     {

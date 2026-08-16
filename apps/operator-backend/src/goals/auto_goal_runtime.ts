@@ -151,7 +151,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           return;
         }
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
-        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
+        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|(?:requested (?:work|task|change)|completion|preview|execution|apply) (?:is|was|remains?) blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
           || /(?:^|\n)\s*(?:#{1,6}\s*)?blocked\b/i.test(assistantText)
           || /\bno qualifying [^.\n]{0,120} (?:exists|was found|could be found)\b/i.test(assistantText)
           || /\b(?:requested |named )?(?:target|schedule|sheet|view|family|type|element) (?:was |is )?not found\b/i.test(assistantText);
@@ -223,10 +223,15 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
   );
   const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText)
     || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
+    || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*none\b/i.test(assistantText)
+    || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(assistantText)
     || descriptiveZeroCandidatePreview;
   const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
     || /\bnone required\b/i.test(assistantText)
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
+    || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(assistantText)
+    || /\beffect\s*:\s*no[_ -]?change\b/i.test(assistantText)
+    || /\bno change (?:was )?applied\b/i.test(assistantText)
     || /\bno (?:revit |model )?(?:elements?|views?|sheets?|famil(?:y|ies)|types?|parameters?) (?:was|were|is|are)?\s*(?:modified|changed|edited|updated|renamed|created|deleted|moved|written)\b/i.test(assistantText);
   return alreadySatisfied && noMutationNeeded;
 }
