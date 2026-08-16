@@ -109,12 +109,22 @@ test("general Revit corpus covers the user basics and the retained redline opera
 test("Snowdon-safe probes use live fixture targets and recover from an unsuitable active view", () => {
   const schedule = corpus.cases.find((entry) => entry.case_id === "r13_schedule_airflow_sync");
   const namedScheduleFilter = corpus.cases.find((entry) => entry.case_id === "s06_filter_named_schedule");
+  const neighborTagType = corpus.cases.find((entry) => entry.case_id === "c19_match_neighbor_tag_type");
+  const accessoryType = corpus.cases.find((entry) => entry.case_id === "c22_accessory_type_match");
+  const connectedMove = corpus.cases.find((entry) => entry.case_id === "c23_move_damper_upstream");
   const viewRange = corpus.cases.find((entry) => entry.case_id === "c31_fix_view_range_terse");
   assert.match(schedule?.probe_prompt || "", /Supply Air Pressure Drop/i);
   assert.doesNotMatch(schedule?.probe_prompt || "", /Supply Airflow/i);
   assert.match(namedScheduleFilter?.probe_prompt || "", /discover one existing named mechanical-equipment schedule/i);
   assert.match(namedScheduleFilter?.probe_prompt || "", /prefix present in its current Mark values/i);
   assert.doesNotMatch(namedScheduleFilter?.probe_prompt || "", /TEST MECHANICAL EQUIPMENT/i);
+  assert.match(neighborTagType?.probe_prompt || "", /if they are already type-consistent/i);
+  assert.match(neighborTagType?.probe_prompt || "", /structured no-op or compatibility receipt/i);
+  assert.match(accessoryType?.probe_prompt || "", /two placed Air Terminal instances with different loaded type IDs/i);
+  assert.match(accessoryType?.probe_prompt || "", /need not be from the same family/i);
+  assert.doesNotMatch(accessoryType?.probe_prompt || "", /damper/i);
+  assert.match(connectedMove?.probe_prompt || "", /Air Terminal or other connected HVAC family instance/i);
+  assert.doesNotMatch(connectedMove?.probe_prompt || "", /damper/i);
   assert.match(viewRange?.probe_prompt || "", /active view is not a plan/i);
   assert.match(viewRange?.probe_prompt || "", /find one eligible non-template mechanical floor plan yourself/i);
   assert.equal(viewRange?.allow_verified_noop, true);

@@ -15,7 +15,7 @@ import {
   type ValidatedCertifiedRequestFamilyAdmission
 } from "./certified_request_family_admission.js";
 
-export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:3f3dee9f39eac4174954a9d9f1dfe482beb8bb8d2012a2c69c1626b15d646d07";
+export const BUNDLED_TOOL_EXPOSURE_POLICY_HASH = "sha256:2670f226e13edfbe06cf7e81dc377119c891ceb3c2951b9aba59eaa8200d59c5";
 
 const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
