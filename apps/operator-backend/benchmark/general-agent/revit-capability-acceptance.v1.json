@@ -1009,10 +1009,21 @@
       "source": "redline_corpus",
       "operation_family": "type_change",
       "prompt": "Change the odd damper to match the one on the parallel branch.",
-      "probe_prompt": "In the HVAC model, discover two placed Air Terminal instances with different loaded type IDs that are compatible peers: same Revit category, compatible hosting/role, and compatible connector count, domain, shape, and dimensions. They need not be from the same family. Treat one as the source and the other as the peer precedent, then use the native dry-run to prove a valid change of only the source to the precedent's type. Report both element/type IDs, why the pair is compatible, preserved placement and salient instance data, and the structured dry-run effect receipt. Do not apply or save.",
+      "probe_prompt": "In the HVAC model, discover two placed Air Terminal instances with different loaded type IDs that are compatible peers: same Revit category and hosting, matching MEP system or service classification and connector flow direction, and compatible connector count, domain, shape, and dimensions. They need not be from the same family. Supply-to-Return or Return-to-Supply is not a compatible match. Treat one as the source and the other as the peer precedent, then use the native dry-run to prove a valid change of only the source to the precedent's type. Report both element/type IDs, why the pair is compatible, preserved placement and salient instance data, and the structured dry-run effect receipt. Do not apply or save. If no different loaded type preserves those invariants, report that concrete blocker instead of previewing a cross-service substitution.",
       "capability_paths": ["/revit/find-elements", "/revit/get-connectors", "/revit/change-element-type"],
       "dispatch_any_of": ["/revit/find-elements", "/revit/get-connectors", "/revit/change-element-type"],
       "expected_effect": "apply",
+      "answer_assertions": {
+        "must_match": [
+          "\\\"dryRun\\\"\\s*:\\s*true",
+          "\\\"preconditionMatched\\\"\\s*:\\s*true",
+          "(?:(?:same|matching|matched|preserved)\\s+(?:MEP\\s+)?(?:system|service|airflow)(?:\\s+(?:classification|role|type))?|(?:system|service|airflow)(?:\\s+(?:classification|role|type))?\\s*[:=]\\s*(?:same|matching|matched|both))"
+        ],
+        "must_not_match": [
+          "(?:system|service|airflow)(?:\\s+(?:classification|role|type))?\\s+(?:differs?|mismatch(?:es|ed)?|is\\s+different)",
+          "(?:Supply|Return)[^\\n.]{0,80}(?:versus|vs\\.?|to)[^\\n.]{0,40}(?:Return|Supply)"
+        ]
+      },
       "epic0441_task_refs": ["r13_type_change_accessory"]
     },
     {
