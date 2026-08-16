@@ -1018,8 +1018,9 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
     "Existing comparable schedule: Heat Recovery Unit Summary, ID 1488968.",
     "It contains 37 item rows and shows Grand total: 37.",
     "Family: HeatRecoveryUnit. Type: Heat Recovery Unit (HRU).",
-    "Current state: the independent model count where Mark begins with ERU is 0.",
-    "Clone it as TEMP - HRU to ERU QA, retain Mark, Family, and Type, filter Mark begins with ERU, and sort Mark — Ascending.",
+    "Current baseline is ERU model count 0; the independent model count where Mark begins with ERU is 0.",
+    "Proposed temporary QA schedule: clone it as TEMP - HRU to ERU QA, retain Mark, Family, and Type, and filter Mark begins with ERU.",
+    "Sort/group: Sort by Mark; Ascending.",
     "Expected schedule rows after conversion: 37.",
     "Current duplicates: none; direct prefix substitution has no projected duplicates.",
     "Independent acceptance requires Model count = schedule row count, No blank Marks, and No duplicate Marks.",
@@ -1045,6 +1046,22 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   assert.equal(verified.verified, true);
   assert.equal(verified.verification_basis, "fixture_semantic_oracle");
 
+  const liveSemanticResponse = [
+    "Existing comparable schedule: **Heat Recovery Unit Summary** — ID `1488968`.",
+    "Existing schedule contains **37 item rows**, with `Grand total: 37`.",
+    "Family: `HeatRecoveryUnit`. Type: `Heat Recovery Unit (HRU)`.",
+    "Independent whole-model query found: **37** marks beginning with `HRU`; **0** instances matching `ERU` across identity, Mark, Family, or Type. All 37 current HRU marks are unique.",
+    "## Proposed temporary QA schedule",
+    "Name: `TEMP – ERU Mark QA`. Fields: Mark, Family, Type. Preferred filter: Mark begins with `ERU`.",
+    "Sort/group: Sort by `Mark`; Ascending.",
+    "Independent acceptance requires Model count = schedule row count, No blank Mark values, and No duplicate Mark values.",
+    "Current baseline is ERU model count 0 / proposed schedule rows 0. The expected post-change result is 37 ERU instances and 37 schedule rows.",
+    "No schedules or model data were created, configured, modified, or saved."
+  ].join("\n");
+  const liveVerified = evaluateGeneralRevitCapabilityAttempt(entry, { ...attempt, assistant_message: liveSemanticResponse });
+  assert.equal(liveVerified.tier, "verified");
+  assert.equal(liveVerified.verified, true);
+
   const wrongExpectedCount = evaluateGeneralRevitCapabilityAttempt(entry, {
     ...attempt,
     assistant_message: assistantMessage.replace("Expected schedule rows after conversion: 37", "Expected schedule rows after conversion: 36")
@@ -1068,4 +1085,18 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   assert.equal(incompleteChecks.tier, "failed");
   assert.equal(incompleteChecks.verified, false);
   assert.match(incompleteChecks.answer_assertion_failures.join("\n"), /Model count|blank Marks|duplicate Marks/);
+
+  const liveWrongCurrentCount = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: liveSemanticResponse.replace("**0** instances matching `ERU`", "**5** instances matching `ERU`")
+  });
+  assert.equal(liveWrongCurrentCount.tier, "failed");
+  assert.equal(liveWrongCurrentCount.verified, false);
+
+  const mutatedModel = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: liveSemanticResponse.replace("No schedules or model data were created, configured, modified, or saved.", "model changes: applied")
+  });
+  assert.equal(mutatedModel.tier, "failed");
+  assert.equal(mutatedModel.verified, false);
 });

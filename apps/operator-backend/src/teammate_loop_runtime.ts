@@ -250,6 +250,12 @@ function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): b
   return true;
 }
 
+function explicitlyRequestsExecutablePreview(text: string, kind: AgentTurnKind): boolean {
+  if (kind === "conversation") return false;
+  if (/\b(?:preflight|dry[ -]?run|simulation|simulate(?:d)?)\b/i.test(text)) return true;
+  return /\bpreview\b/i.test(text) && containsMutationVerb(text.toLowerCase());
+}
+
 function ambiguityFor(text: string, kind: AgentTurnKind): "none" | "low" | "material" {
   if (kind !== "mutation") return "none";
   if (/^(?:please\s+)?(?:fix|change|update|move|delete|remove|replace)\s+(?:it|that|this|those|them)\.?$/i.test(text)) return "material";
@@ -296,6 +302,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
   const ambiguity = ambiguityFor(text, turnKind);
   const noWrite = hasNoWriteAuthority(text);
   const authorized = writeAuthorized(text, turnKind, noWrite);
+  const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind);
   const stage: TeammateLoopStage = ambiguity === "material"
     ? "clarify"
     : identity.state === "missing" || identity.state === "invalid"
@@ -310,7 +317,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
     stage,
     no_write: noWrite,
     write_authorized: authorized,
-    preview_required: false,
+    preview_required: previewRequired,
     max_apply_attempts: 32,
     verification_required: turnKind === "mutation",
     user_text_sha256: sha256(text),
@@ -339,6 +346,10 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     ? "Answer naturally; do not call Revit for a conceptual answer."
     : contract.ambiguity === "material"
       ? "Paraphrase the likely intent and ask one focused question; take no Revit action."
+      : contract.preview_required && contract.no_write
+        ? "Use live context; resolve the exact target and execute one real bounded, noncommitting Revit preview or dry-run, then stop before apply. A prose plan, table, or proposed receipt is not an executed preview; if discovery proves no preview-capable target or primitive exists, report that exact blocker instead of claiming preview completion."
+        : contract.preview_required
+          ? "Use live context; resolve the exact target and execute a real bounded preview or dry-run before applying; bind the apply to that preview and verify by readback/capture before success. A prose plan, table, or proposed receipt is not an executed preview."
       : contract.turn_kind === "mutation"
         ? "Use live context; discover one exact contract if needed; preview when the primitive supports it or the preview is useful, but atomic Revit primitives may apply directly; verify by readback/capture before success."
         : "Use live context and the smallest read/navigation step; discover one exact contract if needed; never mutate the model.";
@@ -919,6 +930,17 @@ const INCOMPLETE_MUTATION_REPORTS = [
   /\bnot yet complete\b/i
 ];
 
+function assistantClaimsExecutedPreview(text: string): boolean {
+  return /\b(?:preview|preflight|dry[ -]?run)\b[^.!?\n]{0,80}\b(?:complete(?:d)?|successful|passed|receipt|done|ready)\b/i.test(text)
+    || /\b(?:complete(?:d)?|successful|passed|done)\b[^.!?\n]{0,80}\b(?:preview|preflight|dry[ -]?run)\b/i.test(text);
+}
+
+function assistantReportsNoPreviewCandidate(text: string): boolean {
+  return /\b(?:no|not any|zero)\b[^.!?\n]{0,100}\b(?:eligible|matching|writable|preview-capable|candidate|target)s?\b/i.test(text)
+    || /\b(?:already|currently)\b[^.!?\n]{0,100}\b(?:matches|complies|satisfies|complete|correct)\b/i.test(text)
+    || /\bno (?:change|rename|edit|update|action)s? (?:is|are|was|were) (?:needed|required|necessary)\b/i.test(text);
+}
+
 export function reconcileTeammateReceiptWithAssistant(
   value: ChatResponse["teammate_loop_receipt"] | undefined,
   assistantText: string
@@ -976,6 +998,13 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
     state.contract.stage = "blocked";
   } else if (state.apply_succeeded && !state.verified && actions.length === 0) {
     state.blocked_reason = "post_apply_verification_required";
+    state.contract.stage = "blocked";
+  } else if (actions.length === 0
+      && state.contract.preview_required
+      && state.successful_preview_signatures.size === 0
+      && assistantClaimsExecutedPreview(decision.assistant_message || "")
+      && !assistantReportsNoPreviewCandidate(decision.assistant_message || "")) {
+    state.blocked_reason = "executable_preview_not_completed";
     state.contract.stage = "blocked";
   } else if (actions.length === 0 && !state.blocked_reason) {
     state.contract.stage = state.verified || state.contract.turn_kind !== "mutation" ? "report" : state.contract.stage;
