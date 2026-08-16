@@ -376,6 +376,14 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   assert.equal(correct.answer_assertion_passed, true);
   assert.equal(correct.verification_basis, "fixture_semantic_oracle");
 
+  const equivalentWithoutHostedSuffix = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "29 diffuser-named units.\nSupply Diffuser – Square / 12x12 | 28\nSupply Diffuser with Plenum – Linear Slot / 48x4 | 1",
+    assignment_projection
+  });
+  assert.equal(equivalentWithoutHostedSuffix.tier, "verified");
+  assert.equal(equivalentWithoutHostedSuffix.answer_assertion_passed, true);
+
   const wrong = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Diffuser count: 435, including supply and return grilles.",
@@ -386,6 +394,14 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   assert.equal(wrong.verified, false);
   assert.equal(wrong.answer_assertion_passed, false);
   assert.match(wrong.summary, /fixture-grounded answer assertions failed/i);
+
+  const wrongBreakdown = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "29 diffusers.\nSupply Diffuser – Square | 27\nSupply Diffuser with Plenum – Linear Slot | 2",
+    assignment_projection
+  });
+  assert.equal(wrongBreakdown.tier, "failed");
+  assert.equal(wrongBreakdown.answer_assertion_passed, false);
 });
 
 test("durable read evidence cannot satisfy a preview contract without matching effect truth", () => {
@@ -407,6 +423,48 @@ test("durable read evidence cannot satisfy a preview contract without matching e
   assert.equal(previewed.completed, true);
   assert.equal(previewed.verified, false);
   assert.equal(previewed.verification_basis, "durable_server_validation");
+});
+
+test("fixture-grounded zero-candidate preview completes only with durable verified-noop truth", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c34_sheet_numbers_dashes_to_dots")!, false);
+  assert.equal(entry.expected_effect, "preview");
+  assert.equal(entry.allow_verified_noop, true);
+  const assistant_message = [
+    "Sheets inspected: 17 of 17",
+    "Dashed candidates: 0",
+    "Model changes: None",
+    "No renaming action is necessary."
+  ].join("\n");
+  const durableNoop = {
+    assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live tool revit_list_sheets completed." }] },
+      verification: { state: "verified", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "preview", completion_mode: "verified_noop" }
+    }]
+  };
+  const verified = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message, assignment_projection: durableNoop });
+  assert.equal(verified.tier, "verified");
+  assert.equal(verified.completed, true);
+  assert.equal(verified.answer_assertion_passed, true);
+  assert.equal(verified.verification_basis, "fixture_semantic_oracle");
+
+  const proseOnly = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }]
+  });
+  assert.equal(proseOnly.tier, "failed");
+  assert.equal(proseOnly.completed, false);
+
+  const wrongCount = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Sheets inspected: 17 of 17\nDashed candidates: 2\nModel changes: None",
+    assignment_projection: durableNoop
+  });
+  assert.equal(wrongCount.tier, "failed");
+  assert.equal(wrongCount.answer_assertion_passed, false);
 });
 
 test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {
