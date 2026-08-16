@@ -1048,7 +1048,8 @@ export function appendGoalProgress(sessionId: string, entry: unknown): GoalRecor
     "Goal progress recorded.";
   return appendGoalAction(goal.id, {
     summary,
-    details: asJsonMap(obj) ?? { value: entry }
+    details: asJsonMap(obj) ?? { value: entry },
+    artifact_paths: asStringList(obj.artifact_paths ?? obj.artifactPaths, 40, 600)
   });
 }
 

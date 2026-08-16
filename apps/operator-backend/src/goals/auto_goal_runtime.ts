@@ -45,6 +45,63 @@ function observationObject(value: unknown): Record<string, unknown> {
   }
 }
 
+const ARTIFACT_PATH_KEYS = new Set([
+  "artifactpath",
+  "artifactpaths",
+  "filepath",
+  "imagepath",
+  "outputpath",
+  "outputpaths",
+  "pathrel",
+  "pdfpath"
+]);
+
+function looksLikeArtifactFilePath(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  return text.length > 0 && text.length <= 1_000
+    && !/^[a-z][a-z0-9+.-]*:\/\//i.test(text)
+    && /\.(?:bmp|dwf|dwfx|jpe?g|pdf|png|svg|tiff?)$/i.test(text);
+}
+
+function collectArtifactPaths(value: unknown, paths: string[], depth = 0): void {
+  if (value === null || value === undefined || depth > 10 || paths.length >= 40) return;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return;
+    try { collectArtifactPaths(JSON.parse(text), paths, depth + 1); } catch {}
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectArtifactPaths(entry, paths, depth + 1);
+    return;
+  }
+  if (typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (ARTIFACT_PATH_KEYS.has(normalizedKey)) {
+      const candidates = Array.isArray(child) ? child : [child];
+      for (const candidate of candidates) {
+        if (looksLikeArtifactFilePath(candidate) && !paths.includes(candidate.trim())) paths.push(candidate.trim());
+      }
+    }
+    collectArtifactPaths(child, paths, depth + 1);
+  }
+}
+
+function artifactPathsFromObservation(observation: AutoGoalToolObservation): string[] {
+  if (observation.success !== true) return [];
+  const tool = observation.tool.trim().toLowerCase();
+  const args = observationObject(observation.arguments);
+  const route = tool === "revit_call_tool" ? `${args.path || ""}`.trim().toLowerCase() : "";
+  const artifactProducing = /(?:^|_)revit_(?:capture|export|print|render)(?:_|$)/.test(tool)
+    || /^\/revit\/(?:capture|export|print|render|pdf)(?:-|\/|$)/.test(route);
+  if (!artifactProducing) return [];
+  const paths: string[] = [];
+  collectArtifactPaths(observation.result ?? observation.output, paths);
+  return paths;
+}
+
 export function findInterruptedAutoGoalForSession(sessionId?: string | null) {
   const current = getCurrentGoalForSession(sessionId);
   return current && ["paused", "blocked"].includes(current.status) ? current : null;
@@ -256,8 +313,10 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
   const goal = activeAutoGoal(sessionId);
   if (!goal) return;
   const outcome = observation.success === false ? "failed" : observation.success === true ? "completed" : "finished";
+  const artifactPaths = artifactPathsFromObservation(observation);
   appendGoalProgress(sessionId, {
     summary: `Live tool ${observation.tool} ${outcome}${observation.error ? `: ${observation.error}` : "."}`,
+    artifact_paths: artifactPaths,
     tool: observation,
     work_item: {
       id: "auto.revit-work",

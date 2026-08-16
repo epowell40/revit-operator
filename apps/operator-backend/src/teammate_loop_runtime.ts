@@ -125,7 +125,17 @@ function containsMutationVerb(text: string): boolean {
     || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
 }
 
+const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
+  "\\b(?:do not|don't|dont|never)\\s+"
+  + "(?:(?:actually|ever)\\s+|(?:attempt|try)\\s+to\\s+)?"
+  + "(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)"
+  + "(?:\\s*,?\\s*(?:(?:or|and)\\s+)?(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)){1,6}"
+  + "\\s+(?:the\\s+)?(?:model|project|document|anything|it)\\b",
+  "i"
+);
+
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
+  if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
   if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
       || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)
       || /\b(?:preview|analysis)\s+only\b/i.test(text)) return true;
@@ -162,7 +172,7 @@ function deniesDocumentLifecycleMutation(text: string): boolean {
   const deferredInspection = /\bbefore\s+(?:opening|reopening|closing|saving)\b[^.!?;\n]{0,100}\b(?:inspect|show|preview|check|confirm)\b/i;
   const inspectionWithoutLifecycle = /\b(?:inspect|show|preview|check|confirm)\b[^.!?;\n]{0,100}\bwithout\s+(?:first\s+)?(?:opening|reopening|closing|saving)\b/i;
   const previewOnly = /\b(?:preview|inspect|show)\s+only\b[^.!?;\n]{0,100}\b(?:open|reopen|close|save)\b/i;
-  if (!directDenial.test(text) && !deferredInspection.test(text) && !inspectionWithoutLifecycle.test(text) && !previewOnly.test(text)) return false;
+  if (!directDenial.test(text) && !COORDINATED_GLOBAL_NO_WRITE.test(text) && !deferredInspection.test(text) && !inspectionWithoutLifecycle.test(text) && !previewOnly.test(text)) return false;
 
   // A lifecycle turn can authorize one application-state change while denying
   // another (for example, "open it, then close without saving"). Strip only
@@ -170,6 +180,7 @@ function deniesDocumentLifecycleMutation(text: string): boolean {
   // affirmative lifecycle command remains.
   const affirmativeText = text
     .replace(new RegExp(directDenial.source, "gi"), " ")
+    .replace(new RegExp(COORDINATED_GLOBAL_NO_WRITE.source, "gi"), " ")
     .replace(new RegExp(deferredInspection.source, "gi"), " ")
     .replace(new RegExp(inspectionWithoutLifecycle.source, "gi"), " ")
     .replace(new RegExp(previewOnly.source, "gi"), " ");
