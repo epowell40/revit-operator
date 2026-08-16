@@ -527,6 +527,34 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   assert.equal(wrongCount.answer_assertion_passed, false);
 });
 
+test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c31_fix_view_range_terse")!, false);
+  const assistant_message = [
+    "## Preview blocked — model unchanged",
+    "- Chosen eligible plan: **L2** — ID `9948`, Mechanical, non-template.",
+    "| Bottom | L2 (`9946`) | 0′ |",
+    "| View Depth | L2 (`9946`) | 0′ |",
+    "Underlay is already **None**.",
+    "No defensible adjustment was identified: Bottom and View Depth already stop at L2.",
+    '{ "status": "blocked_no_defensible_change", "proposedChange": null, "modelAltered": false }'
+  ].join("\n");
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message,
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+        verification: { state: "verified", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "preview", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verification_basis, "fixture_semantic_oracle");
+});
+
 test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {
   const entry = { ...corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, expected_effect: "apply" as const };
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {

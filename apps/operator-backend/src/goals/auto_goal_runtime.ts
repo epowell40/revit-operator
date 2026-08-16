@@ -119,6 +119,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
   let successfulPreviewTools = 0;
   let successfulApplyTools = 0;
   let failedRevitTools = 0;
+  let knownNoEffectFailures = 0;
   let lastCompletionRelevantSucceeded: boolean | null = null;
   return {
     observe(observation: AutoGoalToolObservation) {
@@ -132,6 +133,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         else if (effect === "read") successfulReadTools += 1;
       }
       if (completionRelevant && ((observation.success === false && !knownNoEffectFailure) || explicitNoEffect)) failedRevitTools += 1;
+      if (completionRelevant && observation.success === false && knownNoEffectFailure) knownNoEffectFailures += 1;
       if (completionRelevant && explicitNoEffect) lastCompletionRelevantSucceeded = false;
       else if (completionRelevant && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
@@ -151,11 +153,17 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           return;
         }
         const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
-        const blockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|(?:requested (?:work|task|change)|completion|preview|execution|apply) (?:is|was|remains?) blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
+        const requestedEffect = requestedEffectForSession(sessionId);
+        const alreadySatisfiedNoop = requestedEffect !== "read"
+          && assistantReportsAlreadySatisfiedNoop(assistantText, requestedEffect);
+        const reportedBlockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|(?:requested (?:work|task|change)|completion|preview|execution|apply) (?:is|was|remains?) blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
           || /(?:^|\n)\s*(?:#{1,6}\s*)?blocked\b/i.test(assistantText)
           || /\bno qualifying [^.\n]{0,120} (?:exists|was found|could be found)\b/i.test(assistantText)
           || /\b(?:requested |named )?(?:target|schedule|sheet|view|family|type|element) (?:was |is )?not found\b/i.test(assistantText);
-        const requestedEffect = requestedEffectForSession(sessionId);
+        // A truthful already-satisfied result may describe the proposed preview as
+        // "blocked" because there is no defensible edit. That is a verified no-op,
+        // not a capability or execution blocker.
+        const blockedOutcome = reportedBlockedOutcome && !alreadySatisfiedNoop;
         const evidenceTools = requestedEffect === "apply"
           ? successfulApplyTools
           : requestedEffect === "preview"
@@ -169,7 +177,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           && lastCompletionRelevantSucceeded === true
           && (teammateReceipt?.apply_attempts ?? 0) === 0
           && !teammateReceipt?.blocked_reason?.trim()
-          && assistantReportsAlreadySatisfiedNoop(assistantText, requestedEffect);
+          && alreadySatisfiedNoop;
         if (unexpectedApply) {
           blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
         } else if (!pendingApproval && !blockedOutcome && verifiedNoop) {
@@ -177,6 +185,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             turn_id: turnId,
             successful_tools: successfulReadTools + successfulPreviewTools,
             failed_tools: failedRevitTools,
+            known_no_effect_failures: knownNoEffectFailures,
             assistant_summary: assistantText,
             verified_noop: true
           });
@@ -185,6 +194,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             turn_id: turnId,
             successful_tools: evidenceTools,
             failed_tools: failedRevitTools,
+            known_no_effect_failures: knownNoEffectFailures,
             assistant_summary: assistantText
           });
         } else if ((failedRevitTools > 0 && (evidenceTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
@@ -225,8 +235,12 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
     || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
     || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*none\b/i.test(assistantText)
     || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(assistantText)
+    || /\bstatus\s*[:=]\s*["']?blocked_no_defensible_(?:edit|change|action)\b/i.test(assistantText)
+    || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*null\b/i.test(assistantText)
+    || /\bno defensible (?:adjustment|change|edit|action) (?:was |is )?(?:identified|found|available|needed|necessary)\b/i.test(assistantText)
     || descriptiveZeroCandidatePreview;
   const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
+    || /\bmodel unchanged\b/i.test(assistantText)
     || /\bnone required\b/i.test(assistantText)
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
     || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(assistantText)
@@ -351,7 +365,7 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
 
 export function completeAutoGoalFromValidatedTurn(
   sessionId: string,
-  input: { turn_id: string; successful_tools: number; failed_tools?: number; assistant_summary: string; verified_noop?: boolean }
+  input: { turn_id: string; successful_tools: number; failed_tools?: number; known_no_effect_failures?: number; assistant_summary: string; verified_noop?: boolean }
 ): void {
   let goal = activeAutoGoal(sessionId);
   if (!goal || input.successful_tools < 1) return;
@@ -373,10 +387,13 @@ export function completeAutoGoalFromValidatedTurn(
   });
   const evidenceRefs: string[] = [];
   const recoveredFailures = Math.max(0, input.failed_tools ?? 0);
+  const knownNoEffectFailures = Math.max(0, input.known_no_effect_failures ?? 0);
   const executionMethod = input.verified_noop
-    ? `Backend-observed General Agent turn established a verified no-op with ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? "" : "s"}${recoveredFailures > 0 ? ` after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded` : " and no failed calls"}, zero apply attempts, and an explicit already-satisfied result.`
+    ? `Backend-observed General Agent turn established a verified no-op with ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? "" : "s"}${recoveredFailures > 0 ? ` after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded` : knownNoEffectFailures > 0 ? `; no failed calls reached Revit, and ${knownNoEffectFailures} known no-effect schema or registry rejection${knownNoEffectFailures === 1 ? " was" : "s were"} recorded before dispatch` : " and no failed calls"}, zero apply attempts, and an explicit already-satisfied result.`
     : recoveredFailures > 0
     ? `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded.`
+    : knownNoEffectFailures > 0
+    ? `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls; no failed calls reached Revit, and ${knownNoEffectFailures} known no-effect schema or registry rejection${knownNoEffectFailures === 1 ? " was" : "s were"} recorded before dispatch.`
     : `Backend-observed General Agent turn completed with ${input.successful_tools} successful live Revit tool calls and no failed calls.`;
   for (const criterion of goal.acceptance_criteria) {
     const validated = appendTrustedServerGoalValidation(goal.id, {
@@ -395,8 +412,8 @@ export function completeAutoGoalFromValidatedTurn(
       evidence_refs: evidenceRefs[index] ? [evidenceRefs[index]] : []
     })),
     evidence_summary: input.verified_noop
-      ? `Verified no-op: ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? " was" : "s were"} observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""}, the requested model state was already satisfied, and no apply was attempted.`
-      : `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
+      ? `Verified no-op: ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? " was" : "s were"} observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : knownNoEffectFailures > 0 ? ` after ${knownNoEffectFailures} pre-dispatch schema or registry rejection${knownNoEffectFailures === 1 ? "" : "s"}` : ""}, the requested model state was already satisfied, and no apply was attempted.`
+      : `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : knownNoEffectFailures > 0 ? ` after ${knownNoEffectFailures} pre-dispatch schema or registry rejection${knownNoEffectFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
   });
 }
 
@@ -407,6 +424,8 @@ function isKnownNoEffectFailure(observation: AutoGoalToolObservation): boolean {
   if (result.request_dispatched === false && result.outcome_unknown !== true) return true;
   let serialized = `${observation.error || ""}`;
   try { serialized += ` ${JSON.stringify(observation.result ?? observation.output ?? "")}`; } catch {}
+  if (/\bMCP error\s+-32602\b/i.test(serialized)
+      && /\b(?:input validation error|invalid arguments for tool)\b/i.test(serialized)) return true;
   return /revit_external_event_busy/i.test(serialized)
     && /outcome_unknown[\s"':=]+false/i.test(serialized);
 }

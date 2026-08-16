@@ -1459,6 +1459,43 @@ test("a canonical non-dispatched registry rejection does not poison a corrected 
   });
 });
 
+test("a corrected MCP argument rejection can finish a grounded already-satisfied preview", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-view-range-noop", {
+      title: "Fix the view range",
+      objective: "Preview the smallest defensible view-range change without applying it.",
+      acceptance_criteria: ["The selected plan and its current view range are verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview the view range", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-view-range-noop");
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: true,
+      result: { viewId: 9948, viewName: "L2", bottom: { level: "L2", offset: 0 }, viewDepth: { level: "L2", offset: 0 } }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: false,
+      error: "MCP error -32602: Input validation error: Invalid arguments for tool revit_native_api_ops: Array must contain at most 16 element(s)"
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: true,
+      result: { underlay: "None", viewId: 9948, associatedLevelId: 9946 }
+    });
+    observer.finish("turn-view-range-noop", [
+      "## Preview blocked — model unchanged",
+      "Chosen eligible plan: **L2** — ID `9948`.",
+      "Bottom and View Depth already stop at L2 + 0 ft; Underlay is already **None**.",
+      "No defensible adjustment was identified.",
+      '{ "status": "blocked_no_defensible_change", "proposedChange": null, "modelAltered": false }'
+    ].join("\n"));
+    const completed = getGoal(goal.id);
+    assert.equal(completed?.status, "complete");
+    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
+    assert.match(JSON.stringify(completed?.validation_log[0]?.evidence || {}), /schema or registry rejection was recorded before dispatch/i);
+    assert.match(completed?.action_log.find((entry) => entry.summary.includes("failed"))?.summary || "", /MCP error -32602/i);
+  });
+});
+
 test("only the current paused or blocked assignment gates dispatch and prevents duplicates", () => {
   withWorkspace(() => {
     const historical = setAgentGoal("session-current-only", {

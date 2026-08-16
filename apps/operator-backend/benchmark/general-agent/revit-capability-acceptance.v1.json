@@ -1064,11 +1064,11 @@
       "allow_verified_noop": true,
       "answer_assertions": {
         "must_match": [
-          "(?:Chosen view|View)\\s*:\\s*`?L2`?.*?(?:ID\\s*`?9948`?|`9948`)",
+          "(?:Chosen(?: eligible)? (?:view|plan)|View)[^\\n]*L2[^\\n]*9948",
           "Bottom[^\\n]*(?:L2|associated level)[^\\n]*0",
           "View Depth[^\\n]*(?:L2|associated level)[^\\n]*0",
-          "underlay (?:is )?(?:disabled|off|none)|base/top\\s*=\\s*None",
-          "(?:proposed_edit\\s*:\\s*none|model_altered\\s*:\\s*false|no change applied)"
+          "underlay[^\\n]*(?:disabled|off|none)|base/top\\s*=\\s*None",
+          "(?:status[^\\n]*blocked_no_defensible_(?:edit|change|action)|proposed[_ -]?(?:edit|change|action)\\s*:\\s*(?:none|null)|model[_ -]?altered\\s*:\\s*false|model unchanged|no (?:defensible )?(?:change|adjustment|edit)[^\\n]*(?:identified|applied))"
         ],
         "must_not_match": [
           "(?:please|you need to) (?:open|activate|select) (?:a |the )?(?:plan|view)",
