@@ -122,6 +122,9 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   assert.match(neighborTagType?.probe_prompt || "", /structured no-op or compatibility receipt/i);
   assert.match(accessoryType?.probe_prompt || "", /two placed Air Terminal instances with different loaded type IDs/i);
   assert.match(accessoryType?.probe_prompt || "", /need not be from the same family/i);
+  assert.match(accessoryType?.probe_prompt || "", /matching MEP system or service classification and connector flow direction/i);
+  assert.match(accessoryType?.probe_prompt || "", /Supply-to-Return or Return-to-Supply is not a compatible match/i);
+  assert.ok(accessoryType?.answer_assertions);
   assert.doesNotMatch(accessoryType?.probe_prompt || "", /damper/i);
   assert.match(connectedMove?.probe_prompt || "", /Air Terminal or other connected HVAC family instance/i);
   assert.doesNotMatch(connectedMove?.probe_prompt || "", /damper/i);
@@ -158,6 +161,45 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
   }
 });
 
+test("the MEP peer oracle rejects the captured Supply-to-Return dry-run despite a successful native receipt", () => {
+  const safeCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "c22_accessory_type_match")!,
+    false
+  );
+  const successfulPreview = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [{
+      path: "/revit/change-element-type",
+      request_effect: "preview",
+      request_dispatched: true,
+      status: "success",
+      result: { ok: true, dryRun: true, preconditionMatched: true, elementId: 1394022 }
+    }]
+  };
+  const wrong = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...successfulPreview,
+    assistant_message: `The service classification differs—Supply versus Return—but Revit accepted the loaded peer type.
+\`\`\`json
+{"ok":true,"dryRun":true,"preconditionMatched":true}
+\`\`\``
+  });
+  assert.equal(wrong.tier, "failed");
+  assert.equal(wrong.completed, false);
+  assert.equal(wrong.answer_assertion_passed, false);
+  assert.ok(wrong.answer_assertion_failures.some((failure) => failure.startsWith("forbidden:")));
+
+  const compatible = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...successfulPreview,
+    assistant_message: `Matching system classification: Supply Air for both; matching connector flow direction: Out for both.
+\`\`\`json
+{"ok":true,"dryRun":true,"preconditionMatched":true}
+\`\`\``
+  });
+  assert.equal(compatible.answer_assertion_passed, true);
+  assert.equal(compatible.completed, true);
+});
+
 test("both backend agent prompts prefer sheet-aware parameter readback before generic parameter scans", () => {
   const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
@@ -165,6 +207,17 @@ test("both backend agent prompts prefer sheet-aware parameter readback before ge
     assert.match(prompt, /Sheet\/titleblock parameter reads and verification must be sheet-aware/);
     assert.match(prompt, /do not probe sheet or titleblock element IDs with generic/);
     assert.match(prompt, /Fall back only when the sheet-aware primitive returns no match/);
+  }
+});
+
+test("both backend agent prompts reject API-valid cross-service MEP peer substitutions", () => {
+  const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
+  const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
+  for (const prompt of [codexPrompt, openAiPrompt]) {
+    assert.match(prompt, /MEP peer-precedent rule/);
+    assert.match(prompt, /API-accepted type swap is not by itself semantic compatibility/);
+    assert.match(prompt, /system\/service classification, connector flow direction/);
+    assert.match(prompt, /report the concrete blocker instead of previewing or applying a cross-service substitution/);
   }
 });
 
