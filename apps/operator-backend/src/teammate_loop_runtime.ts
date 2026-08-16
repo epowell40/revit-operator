@@ -41,6 +41,7 @@ type TeammateLoopState = {
   apply_signature: string;
   completed_apply_signatures: Set<string>;
   apply_target_tokens: Set<string>;
+  apply_target_tokens_inferred: boolean;
   apply_expected_values: Set<string>;
   verification_observed_target_tokens: Set<string>;
   verification_observed_values: Set<string>;
@@ -201,7 +202,11 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
   const documentLifecycleMutation = containsDocumentLifecycleMutation(text);
-  const documentLifecycleDenied = deniesDocumentLifecycleMutation(text);
+  // A scoped persistence constraint such as "make the edit, but do not save"
+  // must not downgrade the model edit to an inspection. Lifecycle denial is
+  // turn-defining only when the turn actually asks to change document
+  // lifecycle state (for example, "do not save the Revit model").
+  const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
   const previewOnly = hasPreviewOrGlobalNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
@@ -379,9 +384,18 @@ function actionSignature(path: string, body: unknown): string {
 
 function targetTokens(value: unknown): string[] {
   const tokens = new Set<string>();
+  const scopeEnvelopeKeys = new Set([
+    "allowedexistingelementids",
+    "commitallowedexistingelementids",
+    "unexpectedexistingelementids",
+    "transientcreatedids"
+  ]);
   const visit = (node: unknown, key = "", depth = 0): void => {
     if (depth > 8 || tokens.size >= 64) return;
     const normalizedKey = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    // These IDs fence the maximum native transaction scope; they are not all
+    // principal targets that a verification read must independently observe.
+    if (scopeEnvelopeKeys.has(normalizedKey)) return;
     if (Array.isArray(node)) {
       for (const item of node) visit(item, key, depth + 1);
       return;
@@ -401,7 +415,11 @@ function targetTokens(value: unknown): string[] {
     if (!scalar || scalar.length > 260) return;
     const exportedViewMatch = scalar.match(/(?:^|[\\/])revit_(\d+)_/i);
     if (exportedViewMatch) tokens.add(`id:${exportedViewMatch[1]}`);
-    if (normalizedKey === "id" || normalizedKey === "ids") tokens.add(`id:${scalar}`);
+    // Native program step IDs (for example "set" or "after") are local
+    // handles, not Revit element identities. Bare id/ids fields bind only
+    // canonical numeric Revit element IDs; named element/view/sheet fields are
+    // handled by the more specific rule below.
+    if ((normalizedKey === "id" || normalizedKey === "ids") && /^\d+$/.test(scalar)) tokens.add(`id:${scalar}`);
     if (/(?:element|schedule|view|sheet|room|space|type|family|target|source|host|main).*ids?$/.test(normalizedKey)) {
       tokens.add(`${normalizedKey.replace(/s$/, "")}:${scalar}`);
       tokens.add(`id:${scalar}`);
@@ -594,6 +612,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     apply_signature: "",
     completed_apply_signatures: new Set(),
     apply_target_tokens: new Set(),
+    apply_target_tokens_inferred: false,
     apply_expected_values: new Set(),
     verification_observed_target_tokens: new Set(),
     verification_observed_values: new Set(),
@@ -649,6 +668,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
       state.apply_succeeded = false;
       state.apply_signature = "";
       state.apply_target_tokens.clear();
+      state.apply_target_tokens_inferred = false;
       state.apply_expected_values.clear();
       state.apply_operation = "";
       clearVerification(state);
@@ -664,6 +684,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     state.apply_succeeded = false;
     state.apply_signature = "";
     state.apply_target_tokens.clear();
+    state.apply_target_tokens_inferred = false;
     state.apply_expected_values.clear();
     state.apply_operation = "";
     state.blocked_reason = null;
@@ -683,6 +704,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
     state.apply_action_id = actionId;
     state.apply_signature = call.signature;
     state.apply_target_tokens = new Set(call.target_tokens);
+    state.apply_target_tokens_inferred = call.target_tokens.filter(token => token.startsWith("id:")).length === 0;
     state.apply_expected_values = new Set(call.expected_values);
     state.apply_operation = call.operation;
     state.contract.stage = "apply";
@@ -764,6 +786,9 @@ function accumulatedReadbackMatches(state: TeammateLoopState): boolean {
     ? applyIds
     : [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   if (applyIdentityTokens.length > 0) {
+    if (state.apply_target_tokens_inferred) {
+      return applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token));
+    }
     return state.apply_operation === "create"
       ? applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token))
       : applyIdentityTokens.every(token => state.verification_observed_target_tokens.has(token));
@@ -847,6 +872,7 @@ function clearKnownNoEffectApply(state: TeammateLoopState): void {
   state.apply_succeeded = false;
   state.apply_signature = "";
   state.apply_target_tokens.clear();
+  state.apply_target_tokens_inferred = false;
   state.apply_expected_values.clear();
   state.apply_operation = "";
   clearVerification(state);

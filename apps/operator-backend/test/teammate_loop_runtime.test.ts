@@ -107,6 +107,18 @@ function response(actions: ChatResponse["actions"], assistant_message = "Working
   return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message, actions };
 }
 
+test("an authorized model edit remains a mutation when the user says not to save", () => {
+  const prompt = "Restore the current live sheet name from Cover Sheet - OPERATOR WRITE TEST back to Cover Sheet now. Apply the real Revit write, verify the exact live readback on sheet M000 ID 1420963, do not save, and report the committed transaction.";
+  const contract = buildTeammateTurnContract(request(prompt));
+  assert.equal(contract.turn_kind, "mutation");
+  assert.equal(contract.no_write, false);
+  assert.equal(contract.write_authorized, true);
+
+  const saveOnly = buildTeammateTurnContract(request("Do not save the Revit model; just inspect the current sheet name."));
+  assert.equal(saveOnly.turn_kind, "inspection");
+  assert.equal(saveOnly.write_authorized, false);
+});
+
 test("structured contract distinguishes teammate modes and fails closed on stale canonical context", () => {
   const conceptual = buildTeammateTurnContract(request("What does a shock arrestor do?"));
   const location = buildTeammateTurnContract(request("Where are the shock arrestors? Provide a room number for each device."));
@@ -1113,6 +1125,83 @@ test("a generic successful apply payload cannot impersonate independent verifica
       content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("native mutation safety envelopes do not require every affected dependent before a principal readback verifies", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Rename sheet M000 to Cover Sheet - OPERATOR WRITE TEST, verify it, then rename it back to Cover Sheet."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/native-api-mutation-ops",
+        body: {
+          operations: [
+            { id: "p", op: "call", memberId: "method:Autodesk.Revit.DB.Element.LookupParameter(System.String)", target: "view", args: ["Sheet Name"] },
+            { id: "set", op: "call", memberId: "method:Autodesk.Revit.DB.Parameter.Set(System.String)", target: "$p", args: ["Cover Sheet - OPERATOR WRITE TEST"] },
+            { id: "after", op: "call", memberId: "method:Autodesk.Revit.DB.Parameter.AsString()", target: "$p", args: [] }
+          ],
+          returns: ["$set", "$after"],
+          transaction: {
+            mode: "commit",
+            allowedExistingElementIds: [1420963, 1420964, 1420965]
+          }
+        }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({
+        version: "operator.native_api_mutation_ops.v1",
+        ok: true,
+        transaction: {
+          mode: "commit",
+          status: "committed",
+          committed: true,
+          readback_phase: "inside_transaction_after_regenerate",
+          modified_element_ids: [1420963, 1420964, 1420965]
+        },
+        results: { set: true, after: "Cover Sheet - OPERATOR WRITE TEST" }
+      }) }]
+    });
+
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/verify-parameter-on-sheet",
+        body: { sheetViewId: 1420963, sheetNumber: "M000", parameterName: "Sheet Name", includeCapture: false }
+      }
+    });
+    assert.equal(readback.allowed, true);
+    recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        sheetViewId: 1420963,
+        sheetNumber: "M000",
+        parameterName: "Sheet Name",
+        matches: [{ source: "sheet", value: { value: "Cover Sheet - OPERATOR WRITE TEST" } }]
+      }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+
+    const restore = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/native-api-mutation-ops",
+        body: {
+          operations: [{ id: "set", op: "call", memberId: "method:Autodesk.Revit.DB.Parameter.Set(System.String)", target: "view", args: ["Cover Sheet"] }],
+          transaction: { mode: "commit", allowedExistingElementIds: [1420963, 1420964, 1420965] }
+        }
+      }
+    });
+    assert.equal(restore.allowed, true);
   } finally {
     endTeammateLoopOwner(lease);
   }
