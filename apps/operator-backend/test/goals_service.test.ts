@@ -844,6 +844,14 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(readOnlyFamilyEvolutionPlan.shouldStart, true);
   assert.equal(readOnlyFamilyEvolutionPlan.requestedEffect, "read");
 
+  const expandedReadOnlyFamilyEvolutionPlan = classifyAutoGoalRequest(
+    "Read-only discovery only; do not edit, create, save, reload, or swap anything. Find one loaded Mechanical Equipment family and return a family-evolution plan with exact future steps. This is a plan/preview only—perform no model modifications and no family reload."
+  );
+  assert.equal(expandedReadOnlyFamilyEvolutionPlan.requestedEffect, "read");
+  assert.equal(classifyAutoGoalRequest(
+    "Read-only discovery and executable PREVIEW only—find one writable schedule value and preview a rollback transaction. Do not apply."
+  ).requestedEffect, "preview");
+
   const openButtonCommand = classifyAutoGoalRequest(
     "Click the Open button to open Snowdon Towers Sample HVAC model, then inspect its air terminals."
   );
@@ -1053,6 +1061,27 @@ test("a preview assignment with zero candidates completes as a substantive verif
     unsupportedObserver.finish("turn-preview-unproved-noop", "candidate_count: 0. Model changes: none.");
     assert.equal(getGoal(unsupported.id)?.status, "active");
     assert.equal(getGoal(unsupported.id)?.completion_audit, null);
+  });
+});
+
+test("a grounded preview may complete when the requested state is already correct and no edit is defensible", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-already-correct", {
+      title: "Fix view range", objective: "Preview fixing the view range so the floor below is not visible.",
+      acceptance_criteria: ["The view-range result is grounded."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-already-correct");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { method: "POST", path: "/revit/views", body: { action: "get_view_range", viewId: 9948 } },
+      result: { viewId: 9948, name: "L2", bottomLevel: "L2", bottomOffset: 0, depthLevel: "L2", depthOffset: 0, underlay: null }
+    });
+    observer.finish("turn-preview-already-correct", "Chosen view: L2, ID 9948. Bottom and View Depth already stop at L2 and underlay is disabled. preview_status: rejected_no_defensible_edit. proposed_edit: none. model_altered: false. No change applied.");
+    const completed = getGoal(goal.id);
+    assert.equal(completed?.status, "complete");
+    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
   });
 });
 
@@ -1387,7 +1416,7 @@ test("a failed exploratory Revit call can be repaired by a later substantive suc
     const observer = createAutoGoalTurnObserver("session-auto-recovered");
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, error: "First request used the wrong argument shape." });
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, result: { family: "HeatRecoveryUnit", type: "HRU" } });
-    observer.finish("turn-recovered", "Recovered with the documented argument shape and completed the read-only family plan.");
+    observer.finish("turn-recovered", "Recovered with the documented argument shape and completed the read-only family plan. The family appears editable, but direct family-file confirmation was blocked by the inspection-only gate. No model changes were made.");
     assert.equal(getGoal(goal.id)?.status, "complete");
   });
 });

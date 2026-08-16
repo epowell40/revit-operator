@@ -113,6 +113,9 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   assert.doesNotMatch(schedule?.probe_prompt || "", /Supply Airflow/i);
   assert.match(viewRange?.probe_prompt || "", /active view is not a plan/i);
   assert.match(viewRange?.probe_prompt || "", /find one eligible non-template mechanical floor plan yourself/i);
+  assert.equal(viewRange?.allow_verified_noop, true);
+  assert.match(JSON.stringify(viewRange?.answer_assertions), /9948/);
+  assert.match(JSON.stringify(viewRange?.answer_assertions), /underlay/i);
 });
 
 test("titleblock mutation coverage is paired with the live read-only regression wording", () => {
