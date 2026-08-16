@@ -248,6 +248,8 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
     || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(assistantText)
     || /["']?(?:model[ _-]?modified|model[ _-]?altered|applied)["']?\s*:\s*false/i.test(assistantText)
+    || /\b(?:the )?(?:Revit )?model (?:was|is) not (?:modified|changed|edited|updated)\b/i.test(assistantText)
+    || /\bno (?:Revit )?transaction was (?:applied|committed)\b/i.test(assistantText)
     || /\beffect\s*:\s*no[_ -]?change\b/i.test(assistantText)
     || /\bno change (?:was )?applied\b/i.test(assistantText)
     || /\bno (?:revit |model )?(?:elements?|views?|sheets?|famil(?:y|ies)|types?|parameters?) (?:was|were|is|are)?\s*(?:modified|changed|edited|updated|renamed|created|deleted|moved|written)\b/i.test(assistantText);

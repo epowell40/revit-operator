@@ -153,6 +153,17 @@
       "capability_paths": ["/revit/plan-family-evolution", "/revit/apply-family-evolution", "/revit/read-family-evolution"],
       "dispatch_any_of": ["/revit/plan-family-evolution", "/revit/open-family-doc", "/revit/get-parameters", "/revit/native-api-search"],
       "expected_effect": "read",
+      "answer_assertions": {
+        "must_match": [
+          "(?:Instance|Element)[^\\n]*1365188",
+          "Mark[^\\n]*HRU202",
+          "Family[^\\n]*HeatRecoveryUnit",
+          "Source type[^\\n]*Heat Recovery Unit \\(HRU\\)[^\\n]*1365172",
+          "Width[^\\n]*(?:3\\.333333|40\\s*(?:in|inches?))",
+          "Length[^\\n]*(?:4\\.035433|48\\.43)",
+          "(?:No family was (?:opened|edited)|No model changes resulted|model was not modified)"
+        ]
+      },
       "epic0441_task_refs": ["r13_type_change_accessory", "r14_type_change_device"]
     },
     {

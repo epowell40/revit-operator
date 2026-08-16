@@ -1527,6 +1527,33 @@ test("a structured no-op preview with an empty change set completes as verified 
   });
 });
 
+test("a natural no-op receipt that says the model was not modified completes as verified no-op", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-natural-view-range-noop", {
+      title: "Fix the view range",
+      objective: "Preview the smallest defensible view-range change without applying it.",
+      acceptance_criteria: ["The selected plan and its current view range are verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview the view range", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-natural-view-range-noop");
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: true,
+      result: { viewId: 9948, viewName: "L2", bottom: { level: "L2", offset: 0 }, viewDepth: { level: "L2", offset: 0 }, underlay: "None" }
+    });
+    observer.finish("turn-natural-view-range-noop", [
+      "## Dry-run preview — no change",
+      "Status: no_op",
+      "View Depth already equals the Bottom plane.",
+      "Raising View Depth is neither possible nor defensible without also raising Bottom.",
+      "No transaction was applied and the model was not modified."
+    ].join("\n"));
+    const completed = getGoal(goal.id);
+    assert.equal(completed?.status, "complete");
+    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
+  });
+});
+
 test("only the current paused or blocked assignment gates dispatch and prevents duplicates", () => {
   withWorkspace(() => {
     const historical = setAgentGoal("session-current-only", {
