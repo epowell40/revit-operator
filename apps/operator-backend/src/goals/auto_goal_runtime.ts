@@ -112,7 +112,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           && lastCompletionRelevantSucceeded === true
           && (teammateReceipt?.apply_attempts ?? 0) === 0
           && !teammateReceipt?.blocked_reason?.trim()
-          && assistantReportsAlreadySatisfiedNoop(assistantText);
+          && assistantReportsAlreadySatisfiedNoop(assistantText, requestedEffect);
         if (unexpectedApply) {
           blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
         } else if (!pendingApproval && !blockedOutcome && verifiedNoop) {
@@ -159,9 +159,14 @@ function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
   return true;
 }
 
-function assistantReportsAlreadySatisfiedNoop(assistantText: string): boolean {
+function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEffect: "read" | "preview" | "apply"): boolean {
+  const descriptiveZeroCandidatePreview = requestedEffect === "preview" && (
+    /\bno\s+[^.\n]{1,120}\s+(?:contain|contains|contained|have|has|include|includes|match|matches)\s+(?:(?:the|a|an|any)\s+)?(?:requested\s+)?(?:pattern|condition|criterion|criteria|marker|delimiter|dash(?:es)?|hyphen(?:s)?|prefix|suffix|text|value|token|format)\b/i.test(assistantText)
+    || /\b(?:candidate|match|preview)(?:\s+(?:table|list|set))?\s+(?:is|was)\s+empty\b/i.test(assistantText)
+  );
   const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText)
-    || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(assistantText);
+    || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
+    || descriptiveZeroCandidatePreview;
   const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
     || /\bnone required\b/i.test(assistantText)
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)

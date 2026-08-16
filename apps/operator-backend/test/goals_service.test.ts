@@ -973,6 +973,42 @@ test("a preview assignment with zero candidates completes as a substantive verif
     assert.equal(persisted?.work_budget?.completion_mode, "verified_noop");
     assert.equal(persisted?.completion_audit?.complete, true);
 
+    const naturalLanguage = setAgentGoal("session-preview-natural-language-noop", {
+      title: "Preview sheet number cleanup",
+      objective: "Preview replacing dashes in Mechanical sheet numbers with dots; do not apply changes.",
+      acceptance_criteria: ["Every dashed Mechanical sheet number has an exact collision-free preview, or live evidence proves there are no candidates."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const naturalLanguageObserver = createAutoGoalTurnObserver("session-preview-natural-language-noop");
+    naturalLanguageObserver.observe({
+      server: "revit_operator", tool: "revit_list_sheets", success: true,
+      arguments: { discipline: "Mechanical" },
+      result: { sheets: Array.from({ length: 17 }, (_, index) => ({ id: index + 1, number: `M${String(index).padStart(3, "0")}` })) }
+    });
+    naturalLanguageObserver.finish(
+      "turn-preview-natural-language-noop",
+      "No mechanical sheet numbers contain a dash, so the preview table is empty. All 17 sheets are mechanical M-sheets. No sheets were renamed or modified.",
+      { stage: "report", verified: false, apply_attempts: 0 }
+    );
+    assert.equal(getGoal(naturalLanguage.id)?.status, "complete");
+    assert.equal(getGoal(naturalLanguage.id)?.work_budget?.completion_mode, "verified_noop");
+
+    const missingTarget = setAgentGoal("session-preview-missing-target", {
+      title: "Preview one requested sheet rename",
+      objective: "Preview renaming the specifically requested sheet; do not apply changes.",
+      acceptance_criteria: ["The requested sheet has an exact preview."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const missingTargetObserver = createAutoGoalTurnObserver("session-preview-missing-target");
+    missingTargetObserver.observe({
+      server: "revit_operator", tool: "revit_list_sheets", success: true,
+      result: { sheets: [{ id: 1, number: "M000" }] }
+    });
+    missingTargetObserver.finish("turn-preview-missing-target", "No sheet matches the requested target. No sheets were modified.");
+    assert.notEqual(getGoal(missingTarget.id)?.status, "complete");
+
     const unsupported = setAgentGoal("session-preview-unproved-noop", {
       title: "Preview sheet number cleanup",
       objective: "Preview replacing dashes in Mechanical sheet numbers with dots; do not apply changes.",

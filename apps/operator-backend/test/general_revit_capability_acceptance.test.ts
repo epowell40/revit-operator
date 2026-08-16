@@ -449,6 +449,14 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   assert.equal(verified.answer_assertion_passed, true);
   assert.equal(verified.verification_basis, "fixture_semantic_oracle");
 
+  const naturalLanguage = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "No mechanical sheet numbers contain a dash, so the preview table is empty. All **17** sheets are mechanical M-sheets. No sheets were renamed or modified.",
+    assignment_projection: durableNoop
+  });
+  assert.equal(naturalLanguage.tier, "verified");
+  assert.equal(naturalLanguage.answer_assertion_passed, true);
+
   const proseOnly = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message,
