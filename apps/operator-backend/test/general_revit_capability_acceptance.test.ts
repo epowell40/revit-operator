@@ -1005,3 +1005,67 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
   assert.equal(untypedCompletion.tier, "failed");
   assert.equal(untypedCompletion.verified, false);
 });
+
+test("the Snowdon HRU schedule dry run is verified only when its fixture facts and independent checks are complete", () => {
+  const entry = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "lh02_hru_schedule_transform_verify")!,
+    false
+  );
+  assert.ok(entry.answer_assertions);
+
+  const assistantMessage = [
+    "No model changes, schedule creation, configuration, placement, or saves were performed.",
+    "Existing comparable schedule: Heat Recovery Unit Summary, ID 1488968.",
+    "It contains 37 item rows and shows Grand total: 37.",
+    "Family: HeatRecoveryUnit. Type: Heat Recovery Unit (HRU).",
+    "Current state: the independent model count where Mark begins with ERU is 0.",
+    "Clone it as TEMP - HRU to ERU QA, retain Mark, Family, and Type, filter Mark begins with ERU, and sort Mark — Ascending.",
+    "Expected schedule rows after conversion: 37.",
+    "Current duplicates: none; direct prefix substitution has no projected duplicates.",
+    "Independent acceptance requires Model count = schedule row count, No blank Marks, and No duplicate Marks.",
+    "Dry-run receipt: model changes: none."
+  ].join("\n");
+  const attempt = {
+    ok: true,
+    assistant_message: assistantMessage,
+    effect_state: "read_only_dispatched" as const,
+    actions: [{ path: "/revit/schedules", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live substantive schedule and model queries completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  };
+
+  const verified = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(verified.tier, "verified");
+  assert.equal(verified.verified, true);
+  assert.equal(verified.verification_basis, "fixture_semantic_oracle");
+
+  const wrongExpectedCount = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace("Expected schedule rows after conversion: 37", "Expected schedule rows after conversion: 36")
+  });
+  assert.equal(wrongExpectedCount.tier, "failed");
+  assert.equal(wrongExpectedCount.verified, false);
+  assert.match(wrongExpectedCount.answer_assertion_failures.join("\n"), /Expected/);
+
+  const wrongCurrentCount = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace("Mark begins with ERU is 0", "Mark begins with ERU is 5")
+  });
+  assert.equal(wrongCurrentCount.tier, "failed");
+  assert.equal(wrongCurrentCount.verified, false);
+  assert.ok(wrongCurrentCount.answer_assertion_failures.length > 0);
+
+  const incompleteChecks = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace("Independent acceptance requires Model count = schedule row count, No blank Marks, and No duplicate Marks.", "Verify the schedule later.")
+  });
+  assert.equal(incompleteChecks.tier, "failed");
+  assert.equal(incompleteChecks.verified, false);
+  assert.match(incompleteChecks.answer_assertion_failures.join("\n"), /Model count|blank Marks|duplicate Marks/);
+});
