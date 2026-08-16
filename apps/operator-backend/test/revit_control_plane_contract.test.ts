@@ -93,6 +93,20 @@ test("create-view discovery exposes a conditional tagged union instead of requir
   assert.match(schemas, /rename_batch requires viewIds or nameContains/);
 });
 
+test("view-query discovery publishes the native paging bounds used by validation", () => {
+  const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+  const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
+  const viewSchema = schemas.slice(
+    schemas.indexOf('if (string.Equals(p, "/revit/views", StringComparison.OrdinalIgnoreCase)'),
+    schemas.indexOf("// Sheets listing (paging + prefix matching)."),
+  );
+  assert.match(viewSchema, /"offset", Int\(minimum: 0, maximum: 200000\)/);
+  assert.match(viewSchema, /"limit", Int\(minimum: 1, maximum: 500\)/);
+  assert.match(schemas, /schema\["minimum"\] = minimum\.Value/);
+  assert.match(schemas, /schema\["maximum"\] = maximum\.Value/);
+  assert.match(manifest, /offset is 0\.\.200000 and limit is 1\.\.500; page again when truncated=true/);
+});
+
 test("native API operation graph stays bounded, read-only, and request-ephemeral while supporting typed chaining", () => {
   const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
   const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
