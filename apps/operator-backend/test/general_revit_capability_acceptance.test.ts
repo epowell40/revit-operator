@@ -1062,6 +1062,42 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   assert.equal(liveVerified.tier, "verified");
   assert.equal(liveVerified.verified, true);
 
+  const freshLiveTableResponse = [
+    "Best reference: Heat Recovery Unit Summary — schedule ID 1488968.",
+    "Schedule displays 37 HRU instances and Grand total: 37.",
+    "| ERU—literal family/type/name/Mark/text | **0** | N/A |",
+    "| HRU | **37** | **37** |",
+    "| Blank HRU Marks | **0** | **0** |",
+    "| Duplicate HRU Marks | **None** | **None observed** |",
+    "All 37 HRUs are `HeatRecoveryUnit : Heat Recovery Unit (HRU)`.",
+    "## Actionable QA schedule plan",
+    "Fields: Mark, Family, Type. Filter: Mark begins with ERU. Sort: Mark ascending.",
+    "Independently rerun the query and require model ERU count = schedule row count; no blank Marks; no duplicate Marks.",
+    "No schedule or model content was created, configured, or saved.",
+    "If all 37 HRUs are intended to become ERUs, the expected post-migration target is **37**."
+  ].join("\n");
+  const freshLiveTableVerified = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: freshLiveTableResponse
+  });
+  assert.equal(freshLiveTableVerified.tier, "verified");
+  assert.equal(freshLiveTableVerified.verified, true);
+
+  for (const adversarialResponse of [
+    freshLiveTableResponse.replace("ERU—literal family/type/name/Mark/text | **0**", "ERU—literal family/type/name/Mark/text | **5**"),
+    freshLiveTableResponse.replace("Blank HRU Marks | **0**", "Blank HRU Marks | **1**"),
+    freshLiveTableResponse.replace("Duplicate HRU Marks | **None**", "Duplicate HRU Marks | present"),
+    freshLiveTableResponse.replace("expected post-migration target is **37**", "expected post-migration target is **36**"),
+    freshLiveTableResponse.replace("No schedule or model content was created, configured, or saved.", "model changes: applied")
+  ]) {
+    const adversarialEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: adversarialResponse
+    });
+    assert.equal(adversarialEvaluation.tier, "failed");
+    assert.equal(adversarialEvaluation.verified, false);
+  }
+
   const latestLiveIncompleteResponse = [
     "Relevant schedule: Heat Recovery Unit Summary — View ID 1488968.",
     "Existing fields: Mark, Family, Type. Family: HeatRecoveryUnit. Type: Heat Recovery Unit (HRU).",
@@ -1109,7 +1145,7 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(incompleteChecks.tier, "failed");
   assert.equal(incompleteChecks.verified, false);
-  assert.match(incompleteChecks.answer_assertion_failures.join("\n"), /Model count|blank Marks|duplicate Marks/);
+  assert.match(incompleteChecks.answer_assertion_failures.join("\n"), /Model|blank Mark|duplicate Mark/i);
 
   const liveWrongCurrentCount = evaluateGeneralRevitCapabilityAttempt(entry, {
     ...attempt,
