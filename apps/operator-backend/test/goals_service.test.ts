@@ -826,6 +826,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(namedOpenModelCapture.shouldStart, true);
   assert.equal(namedOpenModelCapture.requestedEffect, "read");
 
+  const exactLiveObserveAndVerify = classifyAutoGoalRequest(
+    "Read-only observe-and-verify loop: locate an eligible non-template plan view in the open Snowdon Towers Sample HVAC model, capture an image of that plan view, then export/inspect its visible elements. Do not change, save, or modify the model."
+  );
+  assert.equal(exactLiveObserveAndVerify.shouldStart, true);
+  assert.equal(exactLiveObserveAndVerify.requestedEffect, "read");
+
   const openButtonCommand = classifyAutoGoalRequest(
     "Click the Open button to open Snowdon Towers Sample HVAC model, then inspect its air terminals."
   );
@@ -1052,12 +1058,41 @@ test("read-only export evidence does not impersonate an apply during a structure
       arguments: { method: "POST", path: "/revit/export-visible-elements", body: { viewId: 1626564 } },
       result: { count: 42, artifact_path: "capture.jpg" }
     });
+    assert.deepEqual(getGoal(goal.id)?.action_log.at(-1)?.artifact_paths, ["capture.jpg"]);
     observer.observe({
       server: "revit_operator", tool: "revit_call_tool", success: true,
       arguments: { method: "POST", path: "/revit/tag-elements", body: { elementIds: [1544911], dryRun: true } },
       result: { status: "Dry Run", dryRun: true, plannedToTag: 1 }
     });
     observer.finish("turn-preview-with-export", "Preview complete; no model changes were applied.");
+    assert.equal(getGoal(goal.id)?.status, "complete");
+  });
+});
+
+test("auto goal journaling extracts nested artifact files from successful export receipts", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-export-artifact", {
+      title: "Observe a view", objective: "Capture and inspect a plan without changing the model.",
+      acceptance_criteria: ["The captured view is grounded."],
+      work_budget: { mode: "auto_goal", requested_effect: "read" },
+      work_items: [{ id: "auto.revit-work", title: "Capture and inspect", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-export-artifact");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { method: "POST", path: "/revit/export-visible-elements", body: { viewId: 9948 } },
+      result: [{ type: "inputText", text: JSON.stringify({
+        status: "ok",
+        count: 684,
+        path_rel: "C:/Users/Eli/AppData/Local/RevitOperator/Workspace/artifacts/captures/selection/Revit_9948_inventory.jpg",
+        open_path_url: "op://open-folder?path=artifacts/captures"
+      }) }]
+    });
+    const action = getGoal(goal.id)?.action_log.at(-1);
+    assert.deepEqual(action?.artifact_paths, [
+      "C:/Users/Eli/AppData/Local/RevitOperator/Workspace/artifacts/captures/selection/Revit_9948_inventory.jpg"
+    ]);
+    observer.finish("turn-export-artifact", "Captured L2 and inspected 684 visible elements. No model changes were performed.");
     assert.equal(getGoal(goal.id)?.status, "complete");
   });
 });

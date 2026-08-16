@@ -344,6 +344,33 @@ test("durable assignment evidence closes the flight-recorder loop for MCP-native
   assert.equal(result.verification_basis, "fixture_semantic_oracle");
 });
 
+test("backend-observed export artifact paths independently verify a visual read assignment", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "b12_visual_observe_verify")!;
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Captured L2 and inspected 684 visible elements. No model changes were performed.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: {
+          entries: [{
+            summary: "Live tool revit_call_tool completed.",
+            artifact_paths: ["C:/Users/Eli/AppData/Local/RevitOperator/Workspace/artifacts/captures/selection/Revit_9948_inventory.jpg"]
+          }],
+          artifact_paths: ["C:/Users/Eli/AppData/Local/RevitOperator/Workspace/artifacts/captures/selection/Revit_9948_inventory.jpg"]
+        },
+        verification: { state: "verified", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "artifact_evidence");
+});
+
 test("fixture-grounded air-terminal inventory requires the exact seven-group reconciliation", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "q01_air_device_inventory")!;
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {

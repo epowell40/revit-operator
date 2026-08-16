@@ -634,6 +634,20 @@ test("Revit document lifecycle commands authorize execution without treating no-
   assert.equal(inspectNamedOpenModel.no_write, true);
   assert.equal(inspectNamedOpenModel.write_authorized, false);
 
+  const exactLiveObserveAndVerify = buildTeammateTurnContract(request(
+    "Read-only observe-and-verify loop: locate an eligible non-template plan view in the open Snowdon Towers Sample HVAC model, capture an image of that plan view, then export/inspect its visible elements. Do not change, save, or modify the model."
+  ));
+  assert.equal(exactLiveObserveAndVerify.turn_kind, "inspection");
+  assert.equal(exactLiveObserveAndVerify.no_write, true);
+  assert.equal(exactLiveObserveAndVerify.write_authorized, false);
+
+  const affirmativeOpenThenNoEdits = buildTeammateTurnContract(request(
+    "Open the Snowdon Towers Sample HVAC model; do not change, save, or modify the model."
+  ));
+  assert.equal(affirmativeOpenThenNoEdits.turn_kind, "mutation");
+  assert.equal(affirmativeOpenThenNoEdits.no_write, false);
+  assert.equal(affirmativeOpenThenNoEdits.write_authorized, true);
+
   const explicitOpenModel = buildTeammateTurnContract(request(
     "Open this Revit model, then inspect its air terminals."
   ));
