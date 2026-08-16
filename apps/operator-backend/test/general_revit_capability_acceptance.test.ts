@@ -578,6 +578,34 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
   assert.equal(exactLatestLiveReceipt.tier, "verified");
 });
 
+test("Snowdon family evolution read-only plan requires fixture-grounded identity and dimensions", () => {
+  const entry = loadGeneralRevitCapabilityCorpus().cases.find((candidate) => candidate.case_id === "b06_edit_loaded_family");
+  assert.ok(entry);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "Instance: Element 1365188",
+      "Mark: HRU202",
+      "Family: HeatRecoveryUnit",
+      "Source type: Heat Recovery Unit (HRU), type ID 1365172",
+      "Width: 3.333333 ft = 40 in",
+      "Length: 4.035433 ft = 48.43 in",
+      "No family was opened, edited, saved, loaded, reloaded, or swapped. No model changes resulted."
+    ].join("\n"),
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verification_basis, "fixture_semantic_oracle");
+});
+
 test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {
   const entry = { ...corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, expected_effect: "apply" as const };
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
