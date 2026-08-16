@@ -237,13 +237,17 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
     || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(assistantText)
     || /\bstatus\s*[:=]\s*["']?blocked_no_defensible_(?:edit|change|action)\b/i.test(assistantText)
     || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*null\b/i.test(assistantText)
+    || /["']?status["']?\s*:\s*["']?(?:no[_ -]?op|already[_ -]?satisfied)["']?/i.test(assistantText)
+    || /["']?proposed(?:changes?|edits?|actions?)["']?\s*:\s*\[\s*\]/i.test(assistantText)
     || /\bno defensible (?:adjustment|change|edit|action) (?:was |is )?(?:identified|found|available|needed|necessary)\b/i.test(assistantText)
+    || /\bno change\b[^\n]{0,180}\b(?:not|isn't|is not|wasn't|was not|wouldn't|would not) be defensible\b/i.test(assistantText)
     || descriptiveZeroCandidatePreview;
   const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
     || /\bmodel unchanged\b/i.test(assistantText)
     || /\bnone required\b/i.test(assistantText)
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
     || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(assistantText)
+    || /["']?(?:model[ _-]?modified|model[ _-]?altered|applied)["']?\s*:\s*false/i.test(assistantText)
     || /\beffect\s*:\s*no[_ -]?change\b/i.test(assistantText)
     || /\bno change (?:was )?applied\b/i.test(assistantText)
     || /\bno (?:revit |model )?(?:elements?|views?|sheets?|famil(?:y|ies)|types?|parameters?) (?:was|were|is|are)?\s*(?:modified|changed|edited|updated|renamed|created|deleted|moved|written)\b/i.test(assistantText);

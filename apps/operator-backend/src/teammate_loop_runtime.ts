@@ -135,6 +135,11 @@ const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
 );
 
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
+  // A leading, sentence-level READ-ONLY declaration is an authoritative turn
+  // contract even when a long planning request later names the future edits it
+  // wants described. Do not require "plan" to appear within an arbitrary
+  // character window before honoring that explicit boundary.
+  if (/^\s*read[ -]?only(?:\s+only)?\s*[.!:;-]/i.test(text)) return true;
   if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
   if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
       || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)

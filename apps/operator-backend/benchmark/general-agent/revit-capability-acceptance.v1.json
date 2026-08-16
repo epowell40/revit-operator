@@ -1068,7 +1068,7 @@
           "Bottom[^\\n]*(?:L2|associated level)[^\\n]*0",
           "View Depth[^\\n]*(?:L2|associated level)[^\\n]*0",
           "underlay[^\\n]*(?:disabled|off|none)|base/top\\s*=\\s*None",
-          "(?:status[^\\n]*blocked_no_defensible_(?:edit|change|action)|proposed[_ -]?(?:edit|change|action)\\s*:\\s*(?:none|null)|model[_ -]?altered\\s*:\\s*false|model unchanged|no (?:defensible )?(?:change|adjustment|edit)[^\\n]*(?:identified|applied))"
+          "(?:status[^\\n]*(?:blocked_no_defensible_(?:edit|change|action)|no[_ -]?op)|proposed[_ -]?(?:edit|change|action)s?['\"]?\\s*:\\s*(?:none|null|\\[\\s*\\])|model[_ -]?(?:altered|modified)['\"]?\\s*:\\s*false|model unchanged|no (?:defensible )?(?:change|adjustment|edit)[^\\n]*(?:identified|applied|defensible))"
         ],
         "must_not_match": [
           "(?:please|you need to) (?:open|activate|select) (?:a |the )?(?:plan|view)",
