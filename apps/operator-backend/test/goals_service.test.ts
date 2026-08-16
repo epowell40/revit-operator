@@ -820,6 +820,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(delegatedAirCount.shouldStart, true);
   assert.equal(delegatedAirCount.requestedEffect, "read");
 
+  const namedOpenModelCapture = classifyAutoGoalRequest(
+    "Read-only observe-and-verify loop: locate an eligible existing plan view in the open Snowdon Towers Sample HVAC model. Capture an image, inspect its visible elements, and do not modify the model, views, or document."
+  );
+  assert.equal(namedOpenModelCapture.shouldStart, true);
+  assert.equal(namedOpenModelCapture.requestedEffect, "read");
+
   const explicitOpen = classifyAutoGoalRequest("Open this Revit model, then inspect its air terminals.");
   assert.equal(explicitOpen.shouldStart, true);
   assert.equal(explicitOpen.requestedEffect, "apply");
