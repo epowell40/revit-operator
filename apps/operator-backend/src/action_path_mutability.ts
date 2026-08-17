@@ -82,9 +82,29 @@ function bodyRecord(body: unknown): Record<string, unknown> {
 
 export type ConditionalActionPathEffect = "read" | "preview" | "apply";
 
+const ARTIFACT_PUBLICATION_PATHS = new Set([
+  "/revit/export-pdf",
+  "/revit/export-dwg",
+  "/revit/export-ifc",
+  "/revit/export-elements-xlsx"
+]);
+
 export function conditionalActionPathEffect(pathname: string, body?: unknown): ConditionalActionPathEffect | undefined {
   const normalized = (pathname || "").trim().toLowerCase();
   const row = bodyRecord(body);
+  // These handlers are observational during an explicit preflight, but create
+  // durable files otherwise. Keep their endpoint-specific defaults here rather
+  // than relying on generic apply/preview flags that the handlers do not read.
+  // Export PDF additionally supports the preflight/preflightOnly aliases.
+  if (ARTIFACT_PUBLICATION_PATHS.has(normalized)) {
+    const dryRun = normalized === "/revit/export-pdf"
+      ? row.dryRun ?? row.preflightOnly ?? row.preflight ?? false
+      : row.dryRun ?? false;
+    return dryRun === true ? "preview" : "apply";
+  }
+  // Physical printing defaults to a non-executing printer preflight. Supplying
+  // dryRun=false authorizes the external print side effect.
+  if (normalized === "/revit/print") return row.dryRun === false ? "apply" : "preview";
   // This endpoint evaluates a plan inside a rollback-only transaction.
   if (normalized === "/revit/transaction-plan") return "preview";
   if (normalized === "/revit/visibility") {

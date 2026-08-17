@@ -78,6 +78,81 @@ test("an assistant report of an incomplete mutation overrides an optimistic rece
   assert.equal(receipt?.blocked_reason, "assistant_reported_incomplete");
 });
 
+test("a nested PDF dry-run is recorded as an executable preview", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Preview a PDF export of the current Cover Sheet only, black and white, without creating any file or changing the model. Do not apply."));
+  try {
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/export-pdf",
+        body: JSON.stringify({
+          viewIds: [1420963],
+          combine: true,
+          baseFileName: "Cover_Sheet.pdf",
+          outputFolder: "artifacts/prints",
+          colorMode: "BlackLine",
+          dryRun: true
+        })
+      }
+    });
+    assert.equal(preview.allowed, true);
+    recordTeammateMcpResult(owner, preview, {
+      content: [{ type: "text", text: JSON.stringify({
+        status: "Dry Run",
+        dryRun: true,
+        selectedCount: 1,
+        selectedSheets: [{ id: 1420963, sheetNumber: "M000", name: "Cover Sheet" }],
+        plan: ["artifacts/prints/Cover_Sheet.pdf"]
+      }) }]
+    });
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.deepEqual(receipt?.preview_action_ids, ["mcp:1"]);
+    assert.equal(receipt?.stage, "preview");
+    assert.equal(receipt?.blocked_reason, null);
+    const final = reconcileTeammateReceiptWithAssistant(receipt, "PDF preflight completed successfully; no file was created.");
+    assert.equal(final?.stage, "preview");
+    assert.equal(final?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("the typed PDF tool preserves preview and publication effects", () => {
+  __testOnlyResetTeammateLoopState();
+  const previewOwner = {};
+  const previewLease = beginTeammateLoopOwner(previewOwner, request("Preview the Cover Sheet PDF without creating a file."));
+  try {
+    const preview = guardTeammateMcpCall(previewOwner, {
+      tool: "revit_export_pdf",
+      arguments: { viewIds: [1420963], baseFileName: "Cover_Sheet.pdf", dryRun: true }
+    });
+    assert.equal(preview.allowed, true);
+    recordTeammateMcpResult(previewOwner, preview, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Dry Run", dryRun: true, selectedCount: 1 }) }]
+    });
+    assert.deepEqual(teammateLoopReceiptForOwner(previewOwner)?.preview_action_ids, ["mcp:1"]);
+  } finally {
+    endTeammateLoopOwner(previewLease);
+  }
+
+  __testOnlyResetTeammateLoopState();
+  const noWriteOwner = {};
+  const noWriteLease = beginTeammateLoopOwner(noWriteOwner, request("Preview the Cover Sheet PDF without creating a file."));
+  try {
+    const publication = guardTeammateMcpCall(noWriteOwner, {
+      tool: "revit_export_pdf",
+      arguments: { viewIds: [1420963], baseFileName: "Cover_Sheet.pdf", dryRun: false }
+    });
+    assert.equal(publication.allowed, false);
+    assert.match(publication.message || "", /no write|blocked/i);
+  } finally {
+    endTeammateLoopOwner(noWriteLease);
+  }
+});
+
 const liveContext = {
   revit: {
     schema: "revit-operator.context.v1",
@@ -676,6 +751,12 @@ test("Revit document lifecycle commands authorize execution without treating no-
   assert.equal(inspectOpenModel.turn_kind, "inspection");
   assert.equal(inspectOpenModel.no_write, false);
   assert.equal(inspectOpenModel.write_authorized, false);
+
+  const inspectWhichModelIsOpen = buildTeammateTurnContract(request(
+    "Count all air terminals in the open project and report which model is open."
+  ));
+  assert.equal(inspectWhichModelIsOpen.turn_kind, "inspection");
+  assert.equal(inspectWhichModelIsOpen.write_authorized, false);
 
   const inspectNamedOpenModel = buildTeammateTurnContract(request(
     "Read-only observe-and-verify loop in the open Snowdon Towers Sample HVAC model. Capture a plan image and inspect its visible elements. Do not modify the model, views, or document."

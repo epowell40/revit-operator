@@ -416,7 +416,7 @@
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
-      "sha256": "sha256:997664511d33e5d050ff9f5f6d40db85994c9e1abfdf20ae3662d0b8ffb6bcc7"
+      "sha256": "sha256:5a6cae3010087319b5e04392690a0c35da9367a6145ccb9f137a2c1690e7bd7f"
     },
     {
       "path": "apps/operator-backend/src/aec_intent_evidence.ts",
@@ -1513,7 +1513,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:e456c45069c8d1162e94c1dc3e84fcd19da9c47ee51955b51247d8f67cdc1176"
+      "sha256": "sha256:fc9b45014145191a56940a7c3310754ea102c6d753ce09a16171d1ff187a095f"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -1893,7 +1893,7 @@
     },
     {
       "path": "apps/operator-backend/test/endpoint_mutability.test.ts",
-      "sha256": "sha256:3f3c16544b1c6ce9f89bf3aaba5b0380be8f4910a0724fa4ecbbb6d1b88748e4"
+      "sha256": "sha256:d412f7fd44ffb451be3ebb19ce7621decd7e18664cd65b4fc2256556dc77a511"
     },
     {
       "path": "apps/operator-backend/test/enlarged_plan_sheet.test.ts",
@@ -2289,7 +2289,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:acb428b92bf14a3da725fe2eb9974d6941a0409f764710fe4c5e7eae2934814e"
+      "sha256": "sha256:03e3f4c2f26f108a69081617883b411b28b7d23df1e7e76b9238a59c1481ed32"
     },
     {
       "path": "apps/operator-backend/test/improvement_jobs.test.ts",
@@ -2549,7 +2549,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:cec7d5261a0d225c4b08dad3e74d9f874d3b035cc2277ea078f14421d2174e72"
+      "sha256": "sha256:46a769140fc5c89f063bc1ec3b7eff3ba4ce73492144655f328c7b706ec29645"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4605,7 +4605,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:1ef1533178bef4491af9063e2b5f1313601ca66cc90beb97399ae1404fc7d62d",
+  "inputs_hash": "sha256:706b8d2a0735400ad358cc0fa76432396dd742e3639cd85fe862e895cfa68df3",
   "result": {
     "passed": true,
     "checks": [
