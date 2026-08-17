@@ -4593,6 +4593,7 @@ namespace RevitBridge.Operator
                             visibilityAction == "clear_crop_box" ||
                             visibilityAction == "set_scope_box" ||
                             visibilityAction == "clear_scope_box" ||
+                            visibilityAction == "set_view_range" ||
                             visibilityAction == "set_underlay" ||
                             visibilityAction == "clear_underlay" ||
                             visibilityAction == "set_category_override" ||
@@ -4610,7 +4611,7 @@ namespace RevitBridge.Operator
                             visibilityAction == "unhide_elements";
                 if (!valid)
                 {
-                    error = "visibility.action must be get|set_template|hide_category|show_category|set_scale|set_detail_level|set_discipline|set_phase|set_phase_filter|set_section_box|clear_section_box|set_crop_box|clear_crop_box|set_scope_box|clear_scope_box|set_underlay|clear_underlay|set_category_override|clear_category_override|apply_view_filter|create_view_filter|remove_view_filter|clear_filter_override|isolate_elements_temp|isolate_categories_temp|clear_temp_hide_isolate|reveal_hidden_on|reveal_hidden_off|hide_elements|unhide_elements.";
+                    error = "visibility.action must be get|set_template|hide_category|show_category|set_scale|set_detail_level|set_discipline|set_phase|set_phase_filter|set_section_box|clear_section_box|set_crop_box|clear_crop_box|set_scope_box|clear_scope_box|set_view_range|set_underlay|clear_underlay|set_category_override|clear_category_override|apply_view_filter|create_view_filter|remove_view_filter|clear_filter_override|isolate_elements_temp|isolate_categories_temp|clear_temp_hide_isolate|reveal_hidden_on|reveal_hidden_off|hide_elements|unhide_elements.";
                     return false;
                 }
 
@@ -4726,6 +4727,33 @@ namespace RevitBridge.Operator
                         if (!(v == "look_down" || v == "lookdown" || v == "down" || v == "look_up" || v == "lookup" || v == "up"))
                         {
                             error = "visibility.underlayOrientation must be look_down or look_up.";
+                            return false;
+                        }
+                    }
+                }
+
+                if (visibilityAction == "set_view_range")
+                {
+                    var fields = new[]
+                    {
+                        "viewRangeTopLevelId", "viewRangeTopLevelName", "viewRangeTopOffsetFeet",
+                        "viewRangeCutLevelId", "viewRangeCutLevelName", "viewRangeCutOffsetFeet",
+                        "viewRangeBottomLevelId", "viewRangeBottomLevelName", "viewRangeBottomOffsetFeet",
+                        "viewRangeDepthLevelId", "viewRangeDepthLevelName", "viewRangeDepthOffsetFeet"
+                    };
+                    var hasAny = fields.Any(name => obj.Value.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.Null &&
+                        (value.ValueKind != JsonValueKind.String || !string.IsNullOrWhiteSpace(value.GetString())));
+                    if (!hasAny)
+                    {
+                        error = "visibility.set_view_range requires at least one plane level or offset.";
+                        return false;
+                    }
+                    foreach (var name in new[] { "viewRangeTopOffsetFeet", "viewRangeCutOffsetFeet", "viewRangeBottomOffsetFeet", "viewRangeDepthOffsetFeet" })
+                    {
+                        if (!obj.Value.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) continue;
+                        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var feet) || double.IsNaN(feet) || double.IsInfinity(feet) || Math.Abs(feet) > 1000)
+                        {
+                            error = $"visibility.{name} must be a finite number within +/-1000 feet.";
                             return false;
                         }
                     }

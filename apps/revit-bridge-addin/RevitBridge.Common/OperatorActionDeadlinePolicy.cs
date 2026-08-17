@@ -60,6 +60,8 @@ namespace RevitBridge.Common
             "/revit/load-family",
             "/revit/create-family-from-template",
             "/revit/reload-family-edit-session",
+            "/revit/create-similar-from-instance",
+            "/revit/place-family-instance-on-host",
             "/revit/existing-conditions-mep-draft-workflow"
         };
 

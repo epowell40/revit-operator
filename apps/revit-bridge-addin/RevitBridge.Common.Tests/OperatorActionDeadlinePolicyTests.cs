@@ -13,6 +13,8 @@ namespace RevitBridge.Common.Tests
         [InlineData("POST", "/revit/update-parameter-by-query", "high", "model_mutation", 85000)]
         [InlineData("POST", "/revit/native-api-mutation-ops", "high", "model_mutation", 85000)]
         [InlineData("POST", "/revit/export-ifc", "low", "extended", 210000)]
+        [InlineData("POST", "/revit/create-similar-from-instance", "high", "extended", 210000)]
+        [InlineData("POST", "/revit/place-family-instance-on-host", "high", "extended", 210000)]
         public void Resolves_stable_per_class_deadlines(string method, string path, string risk, string expectedClass, int expectedMs)
         {
             var deadline = OperatorActionDeadlinePolicy.Resolve(method, path, risk);

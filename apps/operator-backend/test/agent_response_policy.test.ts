@@ -27,6 +27,9 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /schema or argument-validation error/i);
   assert.match(policy, /do not spray adjacent routes/i);
   assert.match(policy, /prose plan, table, or invented receipt is not an executed preview/i);
+  assert.match(policy, /prefix-only terminology migration[\s\S]*begins-with rule[\s\S]*not a contains rule/i);
+  assert.match(policy, /already satisfied[\s\S]*verified no-op[\s\S]*Do not invent an arbitrary epsilon/i);
+  assert.match(policy, /candidate-specific preview fails[\s\S]*bounded search for another eligible candidate/i);
   assert.match(policy, /create-schedule clone contract in dry-run mode/i);
   assert.match(policy, /configure-schedule dry-run contract/i);
   assert.match(policy, /current source and target counts[\s\S]*expected post-change target\/schedule count[\s\S]*blank values[\s\S]*duplicate\/collision risk/i);

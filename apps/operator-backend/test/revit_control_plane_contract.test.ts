@@ -107,6 +107,33 @@ test("view-query discovery publishes the native paging bounds used by validation
   assert.match(manifest, /offset is 0\.\.200000 and limit is 1\.\.500; page again when truncated=true/);
 });
 
+test("view visibility exposes a typed rollback-previewed Plan View Range setter", () => {
+  const handler = addinFile(path.join("RevitBridge", "Handlers", "ViewVisibilityHandler.cs"));
+  const logicHandler = addinFile(path.join("RevitBridge.Logic", "Handlers", "ViewVisibilityHandler.cs"));
+  const validator = addinFile(path.join("RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+  const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+  const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
+  const examples = JSON.parse(addinFile(path.join("RevitBridge", "Tooling", "tool_examples.json"))) as { tools: Array<{ path: string; examples: Array<{ name: string; request: Record<string, unknown> }> }> };
+  for (const source of [handler, logicHandler]) {
+    assert.match(source, /case "set_view_range"/);
+    assert.match(source, /PlanViewPlane\.TopClipPlane/);
+    assert.match(source, /PlanViewPlane\.ViewDepthPlane/);
+    assert.match(source, /plan\.SetViewRange\(range\)/);
+    assert.match(source, /new Transaction\(doc, "Preview View Range"\)[\s\S]{0,500}tx\.RollBack\(\)/);
+    assert.match(source, /current[\s\S]{0,250}proposed/);
+    assert.match(source, /viewRange = BuildViewRangeState/);
+  }
+  assert.match(validator, /visibilityAction == "set_view_range"/);
+  assert.match(validator, /viewRangeDepthOffsetFeet/);
+  assert.match(schemas, /"set_view_range"/);
+  assert.match(manifest, /set_view_range changes only supplied plane level\/offset fields/i);
+  const visibility = examples.tools.find((tool) => tool.path === "/revit/visibility")!;
+  const example = visibility.examples.find((candidate) => candidate.name === "Preview plan view range change")!;
+  assert.equal(example.request.action, "set_view_range");
+  assert.equal(example.request.dryRun, true);
+  assert.equal(example.request.viewRangeDepthLevelName, "Level 2");
+});
+
 test("native API operation graph stays bounded, read-only, and request-ephemeral while supporting typed chaining", () => {
   const gateway = addinFile(path.join("RevitBridge", "Operator", "OperatorNativeApiGateway.cs"));
   const approval = addinFile(path.join("RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
