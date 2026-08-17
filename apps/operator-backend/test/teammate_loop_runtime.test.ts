@@ -301,6 +301,35 @@ test("benchmark-safe read and preview prompts remain live Revit work, not concep
   assert.equal(buildTeammateTurnContract(request(prompts[1])).preview_required, true);
 });
 
+test("duplicate-Mark discovery remains an authorized read on an inspection turn", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Inspect duplicate Mechanical Equipment Marks. Do not change anything."));
+  try {
+    const read = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/find-duplicate-marks",
+        body: {
+          categoryName: "Mechanical Equipment",
+          parameterName: "Mark",
+          includeEmpty: true,
+          maxGroups: 100
+        }
+      }
+    });
+    assert.equal(read.allowed, true);
+    assert.equal(read.call?.effect, "read");
+    recordTeammateMcpResult(owner, read, {
+      content: [{ type: "text", text: JSON.stringify({ status: "Success", duplicateGroups: [], emptyElementIds: [] }) }]
+    });
+    assert.notEqual(teammateLoopReceiptForOwner(owner)?.stage, "blocked");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("schedule duplicate and heading-cleanup probe contracts require executable previews", () => {
   const manifest = JSON.parse(readFileSync(
     resolve(process.cwd(), "benchmark/general-agent/revit-capability-acceptance.v1.json"),

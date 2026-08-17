@@ -27,6 +27,7 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/resolve-mep-routing-context",
   "/revit/trace-connected-network",
   "/revit/find-elements-by-parameter",
+  "/revit/find-duplicate-marks",
   "/revit/ducts-by-spatial-scope",
   "/revit/get-connectors",
   "/revit/resolve-room-wall",

@@ -416,7 +416,7 @@
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
-      "sha256": "sha256:5a6cae3010087319b5e04392690a0c35da9367a6145ccb9f137a2c1690e7bd7f"
+      "sha256": "sha256:a2174baf73704ecae58b1c203d97107748e060fbced0a8715adde5e6dd860bb3"
     },
     {
       "path": "apps/operator-backend/src/aec_intent_evidence.ts",
@@ -1897,7 +1897,7 @@
     },
     {
       "path": "apps/operator-backend/test/endpoint_mutability.test.ts",
-      "sha256": "sha256:d412f7fd44ffb451be3ebb19ce7621decd7e18664cd65b4fc2256556dc77a511"
+      "sha256": "sha256:88eee35807026839d831ee3f415325eaf5f5ddaf809f901cfbfeef144989987b"
     },
     {
       "path": "apps/operator-backend/test/enlarged_plan_sheet.test.ts",
@@ -2285,7 +2285,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:e017ee7aef2b40825d1e7a77a6473997800f679bc0389989003bf2b17b1af605"
+      "sha256": "sha256:ee3879dc14a39391b03ab3fa3390b525ae131f410afe198471117c888d6e0ab5"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2553,7 +2553,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:fa12594da791a6e6d33c61c998bf11d1ad2a8bcaaa6603ba87d40a9f9375b23a"
+      "sha256": "sha256:79b789da022dd4dcc03f079aa36226fa4edd04b7411401c61717dc7f100996b4"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4613,7 +4613,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:29e57f72fe95a2322185e9e5234f920c25957ec48a40878dfe5c0eca8d32939b",
+  "inputs_hash": "sha256:16d5f68a187be9d88acaa5147722aadd1e0268cf308e2c616931d7e6d5eac9b5",
   "result": {
     "passed": true,
     "checks": [
