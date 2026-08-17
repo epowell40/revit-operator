@@ -393,7 +393,8 @@ namespace RevitBridge.Operator
             public FailureProcessingResult PreprocessFailures(FailuresAccessor failuresAccessor)
             {
                 Executed = true;
-                foreach (var failure in failuresAccessor.GetFailureMessages())
+                var failureMessages = failuresAccessor.GetFailureMessages().ToList();
+                foreach (var failure in failureMessages)
                 {
                     if (failure.GetFailureDefinitionId().Equals(OperatorNativeMutationFailureRegistry.ScopeCheckpointId))
                         failuresAccessor.DeleteWarning(failure);
@@ -421,7 +422,22 @@ namespace RevitBridge.Operator
                 }
 
                 if (_transactionMode == "rollback" || !ScopeDecision.Allowed)
+                {
+                    // A rollback preview must never strand Revit's modal warning
+                    // dialog after the transient geometry is discarded. Delete
+                    // every warning only on the proven rollback path; committed
+                    // transactions retain their normal Revit warning semantics.
+                    foreach (var failure in failureMessages)
+                    {
+                        try
+                        {
+                            if (failure.GetSeverity() == FailureSeverity.Warning)
+                                failuresAccessor.DeleteWarning(failure);
+                        }
+                        catch { }
+                    }
                     return FailureProcessingResult.ProceedWithRollBack;
+                }
                 return FailureProcessingResult.Continue;
             }
         }

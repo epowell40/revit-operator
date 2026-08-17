@@ -1130,6 +1130,28 @@ test("a generic successful apply payload cannot impersonate independent verifica
   }
 });
 
+test("terminal direct-object no-write clauses govern the whole inspection turn without swallowing scoped exclusions", () => {
+  const globalNoWrite = [
+    "Inspect the schedule fields and produce a complete QA schedule plan. Do not create or configure the schedule.",
+    "Find a family that lacks service clearance and plan a copied test type. Do not edit or reload the family.",
+    "Preflight a bounded black-and-white PDF set. Do not export files.",
+    "Compile and run a rollback preview. Do not apply or commit the changes."
+  ];
+  for (const prompt of globalNoWrite) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "inspection", prompt);
+    assert.equal(contract.no_write, true, prompt);
+    assert.equal(contract.write_authorized, false, prompt);
+  }
+
+  const scoped = buildTeammateTurnContract(request(
+    "Update the mechanical title blocks, but do not modify non-mechanical sheets."
+  ));
+  assert.equal(scoped.turn_kind, "mutation");
+  assert.equal(scoped.no_write, false);
+  assert.equal(scoped.write_authorized, true);
+});
+
 test("native mutation safety envelopes do not require every affected dependent before a principal readback verifies", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

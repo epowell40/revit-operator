@@ -9690,6 +9690,7 @@ namespace RevitBridge.Operator
                     return false;
                 }
                 if (!ValidateOptionalEnum(obj, "kind", new[] { "duct", "pipe" }, out error)) return false;
+                if (!ValidateOptionalEnum(obj, "operation", new[] { "auto", "offset", "size_transition" }, out error)) return false;
                 if (!ValidateRequiredPositiveLong(obj, "hostElementId", out error)) return false;
                 foreach (var name in new[] { "split1ChainageFt", "split2ChainageFt", "split1Normalized", "split2Normalized", "transitionChainageFt", "transitionNormalized", "doglegAngleDegrees", "focusPaddingFt" })
                     if (!ValidateOptionalNumber(obj, name, out error)) return false;
@@ -9705,10 +9706,14 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj, "preserveConnectedEndpoints", out error)) return false;
                 if (!ValidateOptionalLong(obj, "visualViewId", out error)) return false;
                 if (!ValidateOptionalInt(obj, "imageSize", out error)) return false;
-                var transitionRequested = obj.TryGetProperty("transitionChainageFt", out _) || obj.TryGetProperty("transitionNormalized", out _) ||
+                var requestedOperation = obj.TryGetProperty("operation", out var operationValue) && operationValue.ValueKind == JsonValueKind.String
+                    ? (operationValue.GetString() ?? "").Trim().ToLowerInvariant()
+                    : "auto";
+                var transitionFieldsPresent = obj.TryGetProperty("transitionChainageFt", out _) || obj.TryGetProperty("transitionNormalized", out _) ||
                     obj.TryGetProperty("upstreamDuctSize", out _) || obj.TryGetProperty("downstreamDuctSize", out _) ||
                     obj.TryGetProperty("upstreamPipeSize", out _) || obj.TryGetProperty("downstreamPipeSize", out _) ||
                     obj.TryGetProperty("upstreamDiameter", out _) || obj.TryGetProperty("downstreamDiameter", out _);
+                var transitionRequested = requestedOperation == "size_transition" || (requestedOperation != "offset" && transitionFieldsPresent);
                 if (transitionRequested)
                 {
                     if (!obj.TryGetProperty("transitionChainageFt", out _) && !obj.TryGetProperty("transitionNormalized", out _))

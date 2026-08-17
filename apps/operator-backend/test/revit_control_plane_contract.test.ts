@@ -154,7 +154,8 @@ test("native API mutation graph uses a separate write-gated transaction envelope
   assert.match(gateway, /SetFailuresPreprocessor\(mutationScopePreprocessor\)/);
   assert.match(gateway, /PostFailure\(checkpoint\)/);
   assert.match(gateway, /var transactionStatus = transaction\.Commit\(\)/);
-  assert.match(gateway, /transactionMode == "rollback" \|\| !ScopeDecision\.Allowed[\s\S]{0,120}ProceedWithRollBack/);
+  assert.match(gateway, /transactionMode == "rollback" \|\| !ScopeDecision\.Allowed[\s\S]{0,900}ProceedWithRollBack/);
+  assert.match(gateway, /transactionMode == "rollback" \|\| !ScopeDecision\.Allowed[\s\S]{0,700}GetSeverity\(\) == FailureSeverity\.Warning[\s\S]{0,120}DeleteWarning\(failure\)/);
   assert.doesNotMatch(gateway, /new TransactionGroup\(/);
   assert.match(gateway, /ValidateMutationOwnership/);
   assert.match(gateway, /if \(!SameDocument\(operationOwner, activeDocument\)\)/);

@@ -68,5 +68,28 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(a, b);
             Assert.NotEqual(a, drift);
         }
+
+        [Fact]
+        public void ComputePlanHash_AcceptsMultilineFamilyValuesWithoutEscapeCollisions()
+        {
+            var multiline = FamilyEvolutionPlan.ComputePlanHash(new[]
+            {
+                new KeyValuePair<string, string>("formula", "if(A,\r\nB, C)"),
+                new KeyValuePair<string, string>("description", "Line one\nLine two")
+            });
+            var reordered = FamilyEvolutionPlan.ComputePlanHash(new[]
+            {
+                new KeyValuePair<string, string>("description", "Line one\nLine two"),
+                new KeyValuePair<string, string>("formula", "if(A,\r\nB, C)")
+            });
+            var literalEscapes = FamilyEvolutionPlan.ComputePlanHash(new[]
+            {
+                new KeyValuePair<string, string>("formula", "if(A,\\r\\nB, C)"),
+                new KeyValuePair<string, string>("description", "Line one\\nLine two")
+            });
+
+            Assert.Equal(multiline, reordered);
+            Assert.NotEqual(multiline, literalEscapes);
+        }
     }
 }

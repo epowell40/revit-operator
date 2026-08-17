@@ -18,6 +18,7 @@ namespace RevitBridge.Logic.Handlers.MEP
         public sealed class Params
         {
             public string kind { get; set; } = "duct";
+            public string? operation { get; set; }
             public long hostElementId { get; set; }
             public double? split1ChainageFt { get; set; }
             public double? split2ChainageFt { get; set; }
@@ -126,10 +127,12 @@ namespace RevitBridge.Logic.Handlers.MEP
             var selected = BuildSelected(doc, host, kind, p.systemType);
             var size = BuildExistingSizeChoice(host, kind);
             var hostSnapshot = SnapshotElement(host);
-            var sizeTransitionRequested = p.transitionChainageFt.HasValue || p.transitionNormalized.HasValue ||
+            var inferredSizeTransition = p.transitionChainageFt.HasValue || p.transitionNormalized.HasValue ||
                 HasText(p.upstreamDuctSize) || HasText(p.downstreamDuctSize) ||
                 HasText(p.upstreamPipeSize) || HasText(p.downstreamPipeSize) ||
                 HasText(p.upstreamDiameter) || HasText(p.downstreamDiameter);
+            var requestedOperation = NormalizeOperation(p.operation, inferredSizeTransition);
+            var sizeTransitionRequested = requestedOperation == "size_transition";
 
             if (sizeTransitionRequested)
             {
@@ -752,6 +755,16 @@ namespace RevitBridge.Logic.Handlers.MEP
             if (value == "45" || value == "dogleg" || value == "dogleg45" || value == "forty_five" || value == "forty-five")
                 return "dogleg45";
             return "orthogonal";
+        }
+
+        private static string NormalizeOperation(string? operation, bool inferredSizeTransition)
+        {
+            var value = (operation ?? string.Empty).Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
+            if (value.Length == 0 || value == "auto") return inferredSizeTransition ? "size_transition" : "offset";
+            if (value == "reroute" || value == "offset_reroute") return "offset";
+            if (value == "transition" || value == "resize_transition") return "size_transition";
+            if (value == "offset" || value == "size_transition") return value;
+            throw new ArgumentException("operation must be auto, offset, or size_transition.", nameof(operation));
         }
 
         private static bool SizesDiffer(string kind, MepRoutingUtil.SizeChoice a, MepRoutingUtil.SizeChoice b)
