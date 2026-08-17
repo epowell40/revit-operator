@@ -1,4 +1,4 @@
-import { isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { hasExplicitMutationVerb, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -8,7 +8,6 @@ const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply
 const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|show me|list|find)\b/i;
 const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection)\b/i;
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|update|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
-const MUTATION_OPERATION = /\b(export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|update|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|apply|fix|connect|route|load|unload|reload|swap)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
 const EXECUTABLE_PREVIEW = /\b(executable|transaction(?:al)?|rollback|dry[- ]?run|preflight|simulate(?:d|ion)?)\s+(?:change\s+)?preview\b|\b(?:dry[- ]?run|preflight|show me (?:the )?change)\b/i;
 
@@ -31,7 +30,8 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   if (SPATIAL.test(text)) signals.push("spatial/model interpretation");
   if (VISUAL.test(text)) signals.push("visual/redline interpretation");
   if (OUTCOME.test(text)) signals.push("outcome-oriented request");
-  const liveModelRequest = LIVE_MODEL_OBJECT.test(text) && LIVE_MODEL_OPERATION.test(text);
+  const explicitMutation = hasExplicitMutationVerb(text);
+  const liveModelRequest = LIVE_MODEL_OBJECT.test(text) && (LIVE_MODEL_OPERATION.test(text) || explicitMutation);
   if (liveModelRequest) signals.push("live Revit model work");
 
   let score = signals.length;
@@ -44,7 +44,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     && !EXECUTABLE_PREVIEW.test(text);
   const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
     ? "preview"
-    : documentLifecycleMutation || (MUTATION_OPERATION.test(text) && !isExplicitNoWriteRequest(text))
+    : documentLifecycleMutation || (explicitMutation && !isExplicitNoWriteRequest(text))
       ? "apply"
       : "read";
   return {

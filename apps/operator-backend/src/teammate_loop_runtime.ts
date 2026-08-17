@@ -113,17 +113,22 @@ function isConceptualQuestion(text: string): boolean {
 }
 
 const MUTATION_VERB_SOURCE = [
-  "add", "adjust", "align", "annotate", "apply", "assign", "change", "connect", "convert", "copy", "create",
-  "cut", "delete", "dimension", "disable", "disconnect", "draw", "duplicate", "edit", "enable", "export", "extend", "filter", "fix",
-  "group", "hide", "import", "increase", "isolate", "join", "link", "load", "lock", "make", "match", "mirror",
-  "modify", "move", "offset", "pin", "place", "print", "purge", "reduce", "reload", "remove", "rename", "replace",
-  "resize", "rotate", "route", "run", "set", "sort", "split", "step", "sync", "tag", "trim", "unhide", "unload",
-  "unlock", "unpin", "update"
+  "add", "adjust", "align", "annotate", "apply", "assign", "attach", "change", "clear", "configure", "connect", "convert", "copy", "create", "crop",
+  "cut", "delete", "demolish", "detach", "dimension", "disable", "disconnect", "draft", "draw", "duplicate", "edit", "enable", "enter", "export", "extend", "fill", "filter", "fix",
+  "group", "hide", "import", "increase", "insert", "isolate", "join", "link", "load", "lock", "make", "match", "mirror",
+  "modify", "move", "offset", "pin", "place", "plot", "print", "purge", "reduce", "rehost", "reload", "remove", "rename", "replace", "reset", "restore", "revert",
+  "resize", "rotate", "route", "run", "scale", "set", "sort", "split", "step", "swap", "sync", "tag", "trim", "unhide", "unload",
+  "unlock", "unpin", "update", "write"
 ].join("|");
 
-function containsMutationVerb(text: string): boolean {
+export function hasExplicitMutationVerb(userText: string | null | undefined): boolean {
+  const text = `${userText || ""}`.toLowerCase();
   return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text)
     || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
+}
+
+function containsMutationVerb(text: string): boolean {
+  return hasExplicitMutationVerb(text);
 }
 
 const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
