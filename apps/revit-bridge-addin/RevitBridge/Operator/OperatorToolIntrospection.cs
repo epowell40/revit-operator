@@ -1299,17 +1299,18 @@ namespace RevitBridge.Operator
                     {
                         "get", "set_template", "hide_category", "show_category", "set_scale", "set_detail_level",
                         "set_discipline", "set_phase", "set_phase_filter", "set_section_box", "clear_section_box",
-                        "set_crop_box", "clear_crop_box", "set_scope_box", "clear_scope_box", "set_underlay", "clear_underlay",
+                        "set_crop_box", "clear_crop_box", "set_scope_box", "clear_scope_box", "set_view_range", "set_underlay", "clear_underlay",
                         "set_category_override", "clear_category_override",
                         "apply_view_filter", "create_view_filter", "remove_view_filter", "clear_filter_override",
                         "isolate_elements_temp", "isolate_categories_temp", "clear_temp_hide_isolate",
                         "reveal_hidden_on", "reveal_hidden_off", "hide_elements", "unhide_elements"
                     };
                     enumMap["ruleOperator"] = new[] { "equals", "not_equals", "contains", "not_contains", "begins_with", "ends_with", "greater", "greater_or_equal", "less", "less_or_equal" };
-                    unitNotes.Add(new { unit = "feet", fields = new[] { "annotationCropMarginFeet" } });
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "annotationCropMarginFeet", "viewRangeTopOffsetFeet", "viewRangeCutOffsetFeet", "viewRangeBottomOffsetFeet", "viewRangeDepthOffsetFeet" } });
                     notes.Add("Use get with includeLinkedModels:true before linked-model graphics or phase mapping work; it reports Revit link ids/names, loaded document titles, common linked categories, linked phases, and phase-map rows when available.");
                     notes.Add("Do not treat linkedModelName/linkName with set_category_override as a proven linked category override; Revit 2024 lacks a per-linked-category lineweight API in this handler, so those requests block with linked_model_category_override_not_supported instead of changing host categories.");
                     notes.Add("set_crop_box accepts annotationCropActive and annotationCropMarginFeet; use them for sheet views so the viewport box does not include distant stray annotations.");
+                    notes.Add("set_view_range changes only supplied top/cut/bottom/view-depth level or offset fields; dryRun:true executes the native setter inside a rolled-back transaction and returns current plus proposed plane readback.");
                     notes.Add("create_view_filter supports one-rule parameter filters and immediately applies the filter to the target view.");
                 }
 

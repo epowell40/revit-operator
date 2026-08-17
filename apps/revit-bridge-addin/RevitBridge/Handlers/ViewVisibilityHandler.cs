@@ -22,7 +22,7 @@ namespace RevitBridge.Handlers
         public sealed class Params
         {
             public long? viewId { get; set; }
-            public string? action { get; set; } // get | set_template | hide_category | show_category | set_scale | set_detail_level | set_discipline | set_phase | set_phase_filter | set_section_box | clear_section_box | set_crop_box | clear_crop_box | set_scope_box | clear_scope_box | set_underlay | clear_underlay | set_category_override | clear_category_override | apply_view_filter | create_view_filter | remove_view_filter | clear_filter_override | isolate_elements_temp | isolate_categories_temp | clear_temp_hide_isolate | reveal_hidden_on | reveal_hidden_off | hide_elements | unhide_elements
+            public string? action { get; set; } // get | set_template | hide_category | show_category | set_scale | set_detail_level | set_discipline | set_phase | set_phase_filter | set_section_box | clear_section_box | set_crop_box | clear_crop_box | set_scope_box | clear_scope_box | set_view_range | set_underlay | clear_underlay | set_category_override | clear_category_override | apply_view_filter | create_view_filter | remove_view_filter | clear_filter_override | isolate_elements_temp | isolate_categories_temp | clear_temp_hide_isolate | reveal_hidden_on | reveal_hidden_off | hide_elements | unhide_elements
             public string? categoryName { get; set; }
             public string[]? categoryNames { get; set; }
             public string? templateName { get; set; }
@@ -52,6 +52,18 @@ namespace RevitBridge.Handlers
             public long? underlayTopLevelId { get; set; }
             public string? underlayTopLevelName { get; set; }
             public string? underlayOrientation { get; set; } // look_down|look_up
+            public long? viewRangeTopLevelId { get; set; }
+            public string? viewRangeTopLevelName { get; set; }
+            public double? viewRangeTopOffsetFeet { get; set; }
+            public long? viewRangeCutLevelId { get; set; }
+            public string? viewRangeCutLevelName { get; set; }
+            public double? viewRangeCutOffsetFeet { get; set; }
+            public long? viewRangeBottomLevelId { get; set; }
+            public string? viewRangeBottomLevelName { get; set; }
+            public double? viewRangeBottomOffsetFeet { get; set; }
+            public long? viewRangeDepthLevelId { get; set; }
+            public string? viewRangeDepthLevelName { get; set; }
+            public double? viewRangeDepthOffsetFeet { get; set; }
             public long? scopeBoxId { get; set; }
             public string? scopeBoxName { get; set; }
             public Point3? boxMin { get; set; }
@@ -92,6 +104,26 @@ namespace RevitBridge.Handlers
             }
 
             var dryRun = p.dryRun ?? false;
+            if (dryRun && action == "set_view_range")
+            {
+                var current = BuildViewState(doc, view, "Ok", "get", dryRun: false, p);
+                object proposed;
+                using (var tx = new Transaction(doc, "Preview View Range"))
+                {
+                    tx.Start();
+                    ApplyAction(doc, view, action, p);
+                    proposed = BuildViewState(doc, view, "Preview", action, dryRun: true, p);
+                    tx.RollBack();
+                }
+                return Task.FromResult<object>(new
+                {
+                    status = "Dry Run",
+                    action,
+                    dryRun = true,
+                    current,
+                    proposed
+                });
+            }
             if (dryRun)
             {
                 return Task.FromResult<object>(new
@@ -130,6 +162,18 @@ namespace RevitBridge.Handlers
                         p.underlayTopLevelId,
                         p.underlayTopLevelName,
                         p.underlayOrientation,
+                        p.viewRangeTopLevelId,
+                        p.viewRangeTopLevelName,
+                        p.viewRangeTopOffsetFeet,
+                        p.viewRangeCutLevelId,
+                        p.viewRangeCutLevelName,
+                        p.viewRangeCutOffsetFeet,
+                        p.viewRangeBottomLevelId,
+                        p.viewRangeBottomLevelName,
+                        p.viewRangeBottomOffsetFeet,
+                        p.viewRangeDepthLevelId,
+                        p.viewRangeDepthLevelName,
+                        p.viewRangeDepthOffsetFeet,
                         p.scopeBoxId,
                         p.scopeBoxName,
                         p.categoryNames,
@@ -505,6 +549,21 @@ namespace RevitBridge.Handlers
                         throw new InvalidOperationException("Unable to clear underlay on this view.");
                     return;
                 }
+                case "set_view_range":
+                {
+                    if (view is not ViewPlan plan)
+                        throw new InvalidOperationException("visibility.set_view_range requires a plan view.");
+                    if (!HasViewRangeInput(p))
+                        throw new InvalidOperationException("visibility.set_view_range requires at least one plane level or offset.");
+
+                    var range = plan.GetViewRange();
+                    ApplyViewRangePlane(doc, range, PlanViewPlane.TopClipPlane, "top", p.viewRangeTopLevelId, p.viewRangeTopLevelName, p.viewRangeTopOffsetFeet);
+                    ApplyViewRangePlane(doc, range, PlanViewPlane.CutPlane, "cut", p.viewRangeCutLevelId, p.viewRangeCutLevelName, p.viewRangeCutOffsetFeet);
+                    ApplyViewRangePlane(doc, range, PlanViewPlane.BottomClipPlane, "bottom", p.viewRangeBottomLevelId, p.viewRangeBottomLevelName, p.viewRangeBottomOffsetFeet);
+                    ApplyViewRangePlane(doc, range, PlanViewPlane.ViewDepthPlane, "view depth", p.viewRangeDepthLevelId, p.viewRangeDepthLevelName, p.viewRangeDepthOffsetFeet);
+                    plan.SetViewRange(range);
+                    return;
+                }
                 case "isolate_elements_temp":
                 {
                     var ids = ResolveElementIds(doc, p.elementIds);
@@ -549,7 +608,31 @@ namespace RevitBridge.Handlers
                     return;
                 }
                 default:
-                    throw new InvalidOperationException("visibility.action must be one of: get, set_template, hide_category, show_category, set_scale, set_detail_level, set_discipline, set_phase, set_phase_filter, set_section_box, clear_section_box, set_crop_box, clear_crop_box, set_scope_box, clear_scope_box, set_underlay, clear_underlay, set_category_override, clear_category_override, apply_view_filter, create_view_filter, remove_view_filter, clear_filter_override, isolate_elements_temp, isolate_categories_temp, clear_temp_hide_isolate, reveal_hidden_on, reveal_hidden_off, hide_elements, unhide_elements.");
+                    throw new InvalidOperationException("visibility.action must be one of: get, set_template, hide_category, show_category, set_scale, set_detail_level, set_discipline, set_phase, set_phase_filter, set_section_box, clear_section_box, set_crop_box, clear_crop_box, set_scope_box, clear_scope_box, set_view_range, set_underlay, clear_underlay, set_category_override, clear_category_override, apply_view_filter, create_view_filter, remove_view_filter, clear_filter_override, isolate_elements_temp, isolate_categories_temp, clear_temp_hide_isolate, reveal_hidden_on, reveal_hidden_off, hide_elements, unhide_elements.");
+            }
+        }
+
+        private static bool HasViewRangeInput(Params p)
+        {
+            return p.viewRangeTopLevelId.HasValue || !string.IsNullOrWhiteSpace(p.viewRangeTopLevelName) || p.viewRangeTopOffsetFeet.HasValue ||
+                   p.viewRangeCutLevelId.HasValue || !string.IsNullOrWhiteSpace(p.viewRangeCutLevelName) || p.viewRangeCutOffsetFeet.HasValue ||
+                   p.viewRangeBottomLevelId.HasValue || !string.IsNullOrWhiteSpace(p.viewRangeBottomLevelName) || p.viewRangeBottomOffsetFeet.HasValue ||
+                   p.viewRangeDepthLevelId.HasValue || !string.IsNullOrWhiteSpace(p.viewRangeDepthLevelName) || p.viewRangeDepthOffsetFeet.HasValue;
+        }
+
+        private static void ApplyViewRangePlane(Document doc, PlanViewRange range, PlanViewPlane plane, string label, long? levelId, string? levelName, double? offsetFeet)
+        {
+            if (levelId.HasValue || !string.IsNullOrWhiteSpace(levelName))
+            {
+                var level = ResolveLevel(doc, levelId, levelName);
+                if (level == null) throw new InvalidOperationException($"visibility.set_view_range could not resolve the {label} level.");
+                range.SetLevelId(plane, level.Id);
+            }
+            if (offsetFeet.HasValue)
+            {
+                if (double.IsNaN(offsetFeet.Value) || double.IsInfinity(offsetFeet.Value) || Math.Abs(offsetFeet.Value) > 1000)
+                    throw new InvalidOperationException($"visibility.set_view_range {label} offset must be finite and within +/-1000 feet.");
+                range.SetOffset(plane, offsetFeet.Value);
             }
         }
 
@@ -1342,6 +1425,7 @@ namespace RevitBridge.Handlers
                 // Some views do not support crop boxes.
             }
             object? underlay = null;
+            object? viewRange = null;
             if (view is ViewPlan)
             {
                 var ulBottom = TryGetUnderlayLevel(doc, view);
@@ -1354,6 +1438,7 @@ namespace RevitBridge.Handlers
                     topLevelName = ulTop?.Name,
                     orientation = TryReadUnderlayOrientation(view)
                 };
+                viewRange = BuildViewRangeState(doc, (ViewPlan)view);
             }
             var scopeBox = TryGetScopeBox(doc, view);
             var phase = TryGetPhase(doc, view);
@@ -1405,6 +1490,7 @@ namespace RevitBridge.Handlers
                     cropBox,
                     scopeBox = scopeBox == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(scopeBox.Id), name = scopeBox.Name },
                     underlay,
+                    viewRange,
                     phase = phase == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(phase.Id), name = phase.Name },
                     phaseFilter = phaseFilter == null ? null : new { id = RevitBridge.Common.ElementIdCompat.GetValue(phaseFilter.Id), name = phaseFilter.Name },
                     linkedModels,
@@ -1414,6 +1500,37 @@ namespace RevitBridge.Handlers
                     viewTemplate = viewTemplate?.Name,
                     viewTemplateId = RevitBridge.Common.ElementIdCompat.GetValue(viewTemplate?.Id)
                 }
+            };
+        }
+
+        private static object? BuildViewRangeState(Document doc, ViewPlan view)
+        {
+            try
+            {
+                var range = view.GetViewRange();
+                return new
+                {
+                    top = BuildViewRangePlaneState(doc, range, PlanViewPlane.TopClipPlane),
+                    cut = BuildViewRangePlaneState(doc, range, PlanViewPlane.CutPlane),
+                    bottom = BuildViewRangePlaneState(doc, range, PlanViewPlane.BottomClipPlane),
+                    viewDepth = BuildViewRangePlaneState(doc, range, PlanViewPlane.ViewDepthPlane)
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static object BuildViewRangePlaneState(Document doc, PlanViewRange range, PlanViewPlane plane)
+        {
+            var levelId = range.GetLevelId(plane);
+            var level = levelId == null || levelId == ElementId.InvalidElementId ? null : doc.GetElement(levelId) as Level;
+            return new
+            {
+                levelId = RevitBridge.Common.ElementIdCompat.GetValue(levelId),
+                levelName = level?.Name,
+                offsetFeet = range.GetOffset(plane)
             };
         }
 

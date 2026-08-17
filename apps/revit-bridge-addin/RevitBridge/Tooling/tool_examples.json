@@ -5114,6 +5114,25 @@
           }
         },
         {
+          "name": "Preview plan view range change",
+          "request": {
+            "viewId": 123,
+            "action": "set_view_range",
+            "viewRangeBottomLevelName": "Level 2",
+            "viewRangeBottomOffsetFeet": 0,
+            "viewRangeDepthLevelName": "Level 2",
+            "viewRangeDepthOffsetFeet": 0,
+            "dryRun": true
+          },
+          "expected_response_shape": {
+            "status": "Dry Run",
+            "action": "set_view_range",
+            "dryRun": true,
+            "current": { "view": { "viewRange": {} } },
+            "proposed": { "view": { "viewRange": {} } }
+          }
+        },
+        {
           "name": "Set plan underlay",
           "request": {
             "viewId": 123,

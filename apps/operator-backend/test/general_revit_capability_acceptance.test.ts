@@ -140,7 +140,8 @@ test("titleblock mutation coverage is paired with the live read-only regression 
   const entry = corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech");
   assert.ok(entry);
   assert.equal(entry.expected_effect, "apply");
-  assert.equal(entry.probe_expected_effect, undefined);
+  assert.equal(entry.probe_expected_effect, "read");
+  assert.ok(entry.answer_assertions);
   assert.equal(
     entry.probe_prompt,
     "Independently read back every mechanical sheet. Return each sheet number with its Drawn By and Checked By values, and count any mismatches from EP / QA. Do not change anything."
@@ -152,11 +153,11 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
   const pdf = corpus.cases.find((candidate) => candidate.case_id === "dp02_combined_discipline_pdf");
   assert.ok(viewNames?.answer_assertions);
   assert.ok(pdf?.answer_assertions);
-  const noRenameAnswer = "L2 views 9948 and 1371629: No rename required; both already follow the level name pattern.";
+  const noRenameAnswer = "Preview complete — nothing to rename. The established pattern is the level name. L2 views 9948 and 1371629 already match.";
   for (const pattern of viewNames.answer_assertions.must_match) {
     assert.match(noRenameAnswer, new RegExp(pattern, "i"));
   }
-  const pdfAnswer = "Combined: Yes\nColor: Color\nM200 M201 M202 M203 M204 M205 M206; planned page count: 7; TEST-MECHANICAL-ISSUE.pdf; verify content hash with SHA-256. No PDF was created.";
+  const pdfAnswer = "Combined: Yes\nColor: Color\nM100 M101 M102 M103 M104 M105 M106; planned page count: 7; TEST-MECHANICAL-ISSUE.pdf; verify content hash with SHA-256. No export performed.";
   for (const pattern of pdf.answer_assertions.must_match) {
     assert.match(pdfAnswer, new RegExp(pattern, "i"));
   }
@@ -629,6 +630,14 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   assert.equal(liveWording.tier, "verified");
   assert.equal(liveWording.answer_assertion_passed, true);
 
+  const exactReplayWording = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Live model contains **17 mechanical sheets**, and **none have dashes in their sheet numbers**. Dash-containing targets: 0. No sheets were renamed.",
+    assignment_projection: durableNoop
+  });
+  assert.equal(exactReplayWording.tier, "verified");
+  assert.equal(exactReplayWording.answer_assertion_passed, true);
+
   const proseOnly = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message,
@@ -724,6 +733,63 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
   assert.equal(result.answer_assertion_passed, true);
   assert.equal(result.tier, "verified");
   assert.equal(result.verification_basis, "fixture_semantic_oracle");
+
+  const exactReplay = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "Element 1365188, Mark HRU202",
+      "Family: HeatRecoveryUnit",
+      "Source type: Heat Recovery Unit (HRU), 1365172",
+      "Width: 3.333333 ft; Length: 4.035433 ft",
+      "Nothing was edited, saved, reloaded, or swapped."
+    ].join("\n"),
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] }, execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(exactReplay.answer_assertion_passed, true);
+  assert.equal(exactReplay.tier, "verified");
+});
+
+test("Snowdon schedule-cell and titleblock readback oracles accept the captured live receipts", () => {
+  const schedule = corpus.cases.find((candidate) => candidate.case_id === "s05_schedule_value_edit")!;
+  const scheduleAnswer = [
+    "Schedule: Heat Recovery Unit Summary (ID 1488968)",
+    "Exact row: HRU202; Mechanical Equipment element 1365188",
+    "Supply Air Pressure Drop old 0.08 in-wg; proposed 0.10 in-wg",
+    "The dry-run reported 1 effective change without committing; no changes applied."
+  ].join("\n");
+  for (const pattern of schedule.answer_assertions!.must_match) assert.match(scheduleAnswer, new RegExp(pattern, "i"));
+
+  const titleblocks = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech")!, false);
+  assert.equal(titleblocks.expected_effect, "read");
+  const titleblockAnswer = [
+    "Mechanical sheet readback",
+    "M000 | Author | Checker",
+    "M206 | Author | Checker",
+    "Expected: Drawn By = EP, Checked By = QA",
+    "Mechanical sheets checked: 17",
+    "Sheets with one or more mismatches: 17",
+    "Individual field mismatches: 34",
+    "No model changes were made."
+  ].join("\n");
+  const result = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ok: true,
+    assistant_message: titleblockAnswer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live tool revit_list_sheets completed." }] },
+      verification: { state: "verified", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  });
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.tier, "verified");
 });
 
 test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {

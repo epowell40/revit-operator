@@ -161,7 +161,7 @@
           "Source type[^\\n]*Heat Recovery Unit \\(HRU\\)[^\\n]*1365172",
           "Width[^\\n]*(?:3\\.333333|40\\s*(?:in|inches?))",
           "Length[^\\n]*(?:4\\.035433|48\\.43)",
-          "(?:No family was (?:opened|edited)|No model changes resulted|model was not modified)"
+          "(?:No family was (?:opened|edited)|Nothing was edited, saved, reloaded, or swapped|No model changes resulted|model was not modified)"
         ]
       },
       "epic0441_task_refs": ["r13_type_change_accessory", "r14_type_change_device"]
@@ -281,10 +281,22 @@
       "source": "user_extended",
       "operation_family": "schedule_value_edit",
       "prompt": "In the equipment schedule, change the Comments value for the uniquely identified test row and verify the model instance agrees.",
-      "probe_prompt": "Find one itemized schedule row backed by a unique instance with a writable Comments parameter and preview changing only that cell to TEST-SCHEDULE-VALUE. Do not apply it.",
+      "probe_prompt": "In Heat Recovery Unit Summary, find the uniquely identifiable HRU202 row backed by mechanical-equipment element 1365188 and preview changing only its writable Supply Air Pressure Drop from 0.08 in-wg to 0.10 in-wg using a units-compatible input. Report the schedule, row, element, old value, proposed value, native dry-run effect, and model/schedule readback plan. Do not apply it.",
       "capability_paths": ["/revit/schedules", "/revit/update-schedule-cell"],
       "dispatch_any_of": ["/revit/schedules", "/revit/update-schedule-cell", "/revit/get-parameters"],
       "expected_effect": "preview",
+      "answer_assertions": {
+        "must_match": [
+          "Heat Recovery Unit Summary[^\\n]*1488968",
+          "HRU202",
+          "(?:element|Mechanical Equipment)[^\\n]*1365188",
+          "Supply Air Pressure Drop",
+          "0\\.08\\s*in-wg",
+          "0\\.10\\s*in-wg",
+          "(?:1 effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1)",
+          "(?:no changes applied|without committing|nothing was applied|dry.?run)"
+        ]
+      },
       "epic0441_task_refs": ["r01_schedule_value_edit"]
     },
     {
@@ -707,25 +719,25 @@
       "source": "document_production",
       "operation_family": "print_export",
       "prompt": "Resolve one bounded mechanical sub-discipline sheet set, export it as one combined color PDF named TEST-MECHANICAL-ISSUE.pdf in the benchmark output folder, then verify the file exists, is nonempty, has the same page count and ordering as the preflight sheet list, and record a content hash.",
-      "probe_prompt": "Resolve one bounded mechanical sub-discipline sheet set and preflight a combined color PDF named TEST-MECHANICAL-ISSUE.pdf, including exact sheet order, output path, page-count check, and content-hash verification. Do not export files.",
+      "probe_prompt": "Resolve the bounded HVAC plan-sheet set M100 through M106 and preflight one combined color PDF named TEST-MECHANICAL-ISSUE.pdf, including exact sheet order, output path, seven-page check, and content-hash verification. Do not export files.",
       "capability_paths": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
       "dispatch_any_of": ["/revit/sheets", "/revit/export-pdf", "/revit/print-sets"],
       "expected_effect": "apply",
       "probe_expected_effect": "read",
       "answer_assertions": {
         "must_match": [
-          "\\bM200\\b",
-          "\\bM201\\b",
-          "\\bM202\\b",
-          "\\bM203\\b",
-          "\\bM204\\b",
-          "\\bM205\\b",
-          "\\bM206\\b",
+          "\\bM100\\b",
+          "\\bM101\\b",
+          "\\bM102\\b",
+          "\\bM103\\b",
+          "\\bM104\\b",
+          "\\bM105\\b",
+          "\\bM106\\b",
           "(?:combined[\\s\\S]{0,120}color|color[\\s\\S]{0,120}combined)",
           "(?:planned )?page count[^\\n]{0,30}\\b7\\b",
           "TEST-MECHANICAL-ISSUE\\.pdf",
           "(?:SHA-?256|content hash)",
-          "(?:no PDF was created|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
+          "(?:no PDF was created|no export (?:was )?performed|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
         ]
       },
       "epic0441_task_refs": ["g25_export_publish"]
@@ -786,7 +798,7 @@
       "answer_assertions": {
         "must_match": [
           "\\bL2\\b",
-          "(?:no rename (?:was )?required|none required|already conforms?)",
+          "(?:no rename (?:was )?required|none required|nothing to rename|already (?:conforms?|matches))",
           "(?:pattern[^\\n]{0,160}level(?:\\s*/\\s*(?:block|area)){0,2} name|level(?:\\s*/\\s*(?:block|area)){0,2} name[^\\n]{0,160}pattern)"
         ],
         "must_not_match": [
@@ -1186,8 +1198,8 @@
       "allow_verified_noop": true,
       "answer_assertions": {
         "must_match": [
-          "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b)",
-          "(?:(?:Dashed candidates|candidate_count)\\s*:\\s*0|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|preview table is empty)",
+          "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets)",
+          "(?:(?:Dashed candidates|candidate_count)\\s*:\\s*0|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
           "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false|No\\s+sheets?\\s+(?:were\\s+)?(?:renamed|modified)(?:\\s+or\\s+(?:renamed|modified))?)"
         ],
         "must_not_match": [
@@ -1217,6 +1229,18 @@
       "capability_paths": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter"],
       "dispatch_any_of": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter", "/revit/plan-family-evolution"],
       "expected_effect": "apply",
+      "probe_expected_effect": "read",
+      "answer_assertions": {
+        "must_match": [
+          "Mechanical sheets checked\\s*:\\s*\\*{0,2}17\\*{0,2}",
+          "Sheets with one or more mismatches\\s*:\\s*\\*{0,2}17\\*{0,2}",
+          "Individual field mismatches\\s*:\\s*\\*{0,2}34\\*{0,2}",
+          "\\bM000\\b[\\s\\S]{0,120}Author[\\s\\S]{0,80}Checker",
+          "\\bM206\\b[\\s\\S]{0,120}Author[\\s\\S]{0,80}Checker",
+          "Expected[^\\n]*Drawn By[^\\n]*EP[^\\n]*Checked By[^\\n]*QA",
+          "(?:No model changes were made|nothing was changed|no changes were applied)"
+        ]
+      },
       "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]
     },
     {
