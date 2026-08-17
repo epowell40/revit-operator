@@ -445,7 +445,22 @@ function hasStructuredVerificationEvidence(value: unknown, depth = 0): boolean {
 function assistantReportsVerifiedNoop(attempt: GeneralRevitAttempt): boolean {
   const text = combinedMessage(attempt);
   return /\bno (?:rename|change|edit|update|modification|action|write)s? (?:was|were|is|are)?\s*(?:required|needed|necessary)\b/i.test(text)
-    || /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(text);
+    || /\bno changes? (?:was|were|is|are)?\s*(?:required|needed|necessary)\b/i.test(text)
+    || /\bverified no[ -]?op\b/i.test(text)
+    || /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|present|up[ -]to[ -]date)\b/i.test(text);
+}
+
+function assertionPatternMatches(pattern: string, answerText: string): boolean {
+  const expression = new RegExp(pattern, "i");
+  if (expression.test(answerText)) return true;
+  // Fixture oracles grade model facts, not Markdown style. Models commonly wrap
+  // identifiers, counts, and labels in emphasis or inline-code delimiters; those
+  // delimiters must not turn a correct value into a benchmark failure.
+  const presentationNeutral = answerText
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/(?:\*\*|__|~~|`)/g, "");
+  return expression.test(presentationNeutral);
 }
 
 function verificationChecksPass(value: unknown): boolean {
@@ -621,10 +636,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const answerAssertionFailures = testCase.answer_assertions
     ? [
         ...testCase.answer_assertions.must_match
-          .filter((pattern) => !new RegExp(pattern, "i").test(answerText))
+          .filter((pattern) => !assertionPatternMatches(pattern, answerText))
           .map((pattern) => `missing:${pattern}`),
         ...(testCase.answer_assertions.must_not_match || [])
-          .filter((pattern) => new RegExp(pattern, "i").test(answerText))
+          .filter((pattern) => assertionPatternMatches(pattern, answerText))
           .map((pattern) => `forbidden:${pattern}`)
       ]
     : [];
@@ -632,10 +647,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const fixtureBlockerAssertionFailures = testCase.fixture_blocker_assertions
     ? [
         ...testCase.fixture_blocker_assertions.must_match
-          .filter((pattern) => !new RegExp(pattern, "i").test(answerText))
+          .filter((pattern) => !assertionPatternMatches(pattern, answerText))
           .map((pattern) => `missing:${pattern}`),
         ...(testCase.fixture_blocker_assertions.must_not_match || [])
-          .filter((pattern) => new RegExp(pattern, "i").test(answerText))
+          .filter((pattern) => assertionPatternMatches(pattern, answerText))
           .map((pattern) => `forbidden:${pattern}`)
       ]
     : [];
