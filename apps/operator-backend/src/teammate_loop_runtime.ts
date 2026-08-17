@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
+import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -110,21 +111,6 @@ function normalizedUserText(req: Pick<ChatRequest, "user_text" | "context">): st
 function isConceptualQuestion(text: string): boolean {
   const liveCue = /\b(?:current|active|selected|this (?:model|view|sheet|schedule)|in (?:the|this) (?:model|view|sheet|schedule)|room number|element id)\b/i.test(text);
   return !liveCue && /\b(?:explain|what (?:does|is|are)|how (?:does|do|is|are|can|could|should|would)|why (?:does|do|is|are)|should (?:i|we)|tell me about)\b/i.test(text);
-}
-
-const MUTATION_VERB_SOURCE = [
-  "add", "adjust", "align", "annotate", "apply", "assign", "attach", "change", "clear", "configure", "connect", "convert", "copy", "create", "crop",
-  "cut", "delete", "demolish", "detach", "dimension", "disable", "disconnect", "draft", "draw", "duplicate", "edit", "enable", "enter", "export", "extend", "fill", "filter", "fix",
-  "group", "hide", "import", "increase", "insert", "isolate", "join", "link", "load", "lock", "make", "match", "mirror",
-  "modify", "move", "offset", "pin", "place", "plot", "print", "purge", "reduce", "rehost", "reload", "remove", "rename", "replace", "reset", "restore", "revert",
-  "resize", "rotate", "route", "run", "scale", "set", "sort", "split", "step", "swap", "sync", "tag", "trim", "unhide", "unload",
-  "unlock", "unpin", "update", "write"
-].join("|");
-
-export function hasExplicitMutationVerb(userText: string | null | undefined): boolean {
-  const text = `${userText || ""}`.toLowerCase();
-  return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text)
-    || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
 }
 
 function containsMutationVerb(text: string): boolean {

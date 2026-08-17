@@ -1,4 +1,5 @@
-import { hasExplicitMutationVerb, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
+import { isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
