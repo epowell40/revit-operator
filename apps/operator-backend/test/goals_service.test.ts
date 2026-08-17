@@ -1042,6 +1042,32 @@ test("a preview assignment with zero candidates completes as a substantive verif
     assert.equal(getGoal(naturalLanguage.id)?.status, "complete");
     assert.equal(getGoal(naturalLanguage.id)?.work_budget?.completion_mode, "verified_noop");
 
+    const liveMarkdownReceipt = setAgentGoal("session-preview-live-markdown-noop", {
+      title: "Preview sheet number cleanup",
+      objective: "Preview replacing dashes in Mechanical sheet numbers with dots; do not apply changes.",
+      acceptance_criteria: ["Every dashed Mechanical sheet number has an exact collision-free preview, or live evidence proves there are no candidates."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const liveMarkdownObserver = createAutoGoalTurnObserver("session-preview-live-markdown-noop");
+    liveMarkdownObserver.observe({
+      server: "revit_operator", tool: "revit_list_sheets", success: true,
+      arguments: { discipline: "Mechanical" },
+      result: { sheets: Array.from({ length: 17 }, (_, index) => ({ id: index + 1, number: `M${String(index).padStart(3, "0")}` })) }
+    });
+    liveMarkdownObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/renumber-sheets", body: { changes: [], dryRun: true } },
+      result: { status: "NoOp", dryRun: true, requestedCount: 0, candidateCount: 0, modelModified: false, completionEligible: false }
+    });
+    liveMarkdownObserver.finish(
+      "turn-preview-live-markdown-noop",
+      "## Preview result\n- Mechanical sheets: **17**\n- Sheet numbers containing dashes: **0**\n- Proposed mappings: none\n- No sheets were renamed.",
+      { stage: "report", verified: false, apply_attempts: 0 }
+    );
+    assert.equal(getGoal(liveMarkdownReceipt.id)?.status, "complete");
+    assert.equal(getGoal(liveMarkdownReceipt.id)?.work_budget?.completion_mode, "verified_noop");
+
     const missingTarget = setAgentGoal("session-preview-missing-target", {
       title: "Preview one requested sheet rename",
       objective: "Preview renaming the specifically requested sheet; do not apply changes.",

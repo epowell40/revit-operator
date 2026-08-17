@@ -41,11 +41,27 @@ namespace RevitBridge.Handlers
             var p = string.IsNullOrWhiteSpace(jsonData) ? new Params() : (JsonSerializer.Deserialize<Params>(jsonData) ?? new Params());
             var doc = app.ActiveUIDocument.Document;
 
+            var dryRun = p.dryRun ?? false;
+            if (p.changes == null) throw new InvalidOperationException("renumber-sheets.changes is required and must be an array.");
+            if (dryRun && p.changes.Count == 0)
+            {
+                return Task.FromResult<object>(new
+                {
+                    status = "NoOp",
+                    dryRun = true,
+                    behavior = (p.behavior ?? "bestEffort").Trim(),
+                    requestedCount = 0,
+                    candidateCount = 0,
+                    results = Array.Empty<object>(),
+                    modelModified = false,
+                    completionEligible = false,
+                    summary = "No sheet renumber candidates were supplied; the model was not modified."
+                });
+            }
             var changes = (p.changes ?? new List<Change>()).Where(x => x != null && x.sheetId > 0).ToList();
             if (changes.Count == 0) throw new InvalidOperationException("renumber-sheets.changes is required and must be a non-empty array.");
             if (changes.Count > 500) throw new InvalidOperationException("renumber-sheets.changes too large (max 500).");
 
-            var dryRun = p.dryRun ?? false;
             var behavior = (p.behavior ?? "bestEffort").Trim();
             var allOrNothing = behavior.Equals("allOrNothing", StringComparison.OrdinalIgnoreCase);
 
