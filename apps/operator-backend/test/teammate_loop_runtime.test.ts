@@ -1328,6 +1328,166 @@ test("native mutation safety envelopes do not require every affected dependent b
   }
 });
 
+test("negated preview-only wording still authorizes the requested model write", () => {
+  for (const prompt of [
+    "Rename sheet M000 and verify it. Do the work; do not stop at a preview.",
+    "Rename sheet M000 and restore it. Execute both writes; do not return only a dry run.",
+    "Proceed beyond the preview and apply the sheet rename."
+  ]) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "mutation", prompt);
+    assert.equal(contract.no_write, false, prompt);
+    assert.equal(contract.write_authorized, true, prompt);
+  }
+});
+
+test("two sequential sheet renames finish after each write receives a fresh target-bound readback", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(
+    "Rename sheet M000 to Cover Sheet - READBACK SMOKE, verify it, then rename it back to Cover Sheet and verify the sheet and title block."
+  ));
+  const result = (value: unknown) => ({
+    content: [{ type: "inputText", text: JSON.stringify(value) }]
+  });
+  try {
+    const rename = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/renumber-sheets",
+        body: {
+          behavior: "atomic",
+          dryRun: false,
+          changes: [{ sheetId: 1420963, newNumber: "M000", newName: "Cover Sheet - READBACK SMOKE" }]
+        }
+      }
+    });
+    assert.equal(rename.allowed, true);
+    recordTeammateMcpResult(owner, rename, result({
+      status: "Success",
+      dryRun: false,
+      results: [{ sheetId: 1420963, ok: true, afterName: "Cover Sheet - READBACK SMOKE" }]
+    }));
+
+    const renamedReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/verify-parameter-on-sheet",
+        body: { sheetNumber: "M000", parameterName: "Sheet Name", includeCapture: false }
+      }
+    });
+    assert.equal(renamedReadback.allowed, true);
+    recordTeammateMcpResult(owner, renamedReadback, result({
+      ok: true,
+      sheetViewId: 1420963,
+      sheetNumber: "M000",
+      matches: [
+        { source: "titleblock_instance", value: { value: "Cover Sheet - READBACK SMOKE" } },
+        { source: "sheet", value: { value: "Cover Sheet - READBACK SMOKE" } }
+      ]
+    }));
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+
+    const restore = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/renumber-sheets",
+        body: {
+          behavior: "atomic",
+          dryRun: false,
+          changes: [{ sheetId: 1420963, newNumber: "M000", newName: "Cover Sheet" }]
+        }
+      }
+    });
+    assert.equal(restore.allowed, true);
+    recordTeammateMcpResult(owner, restore, result({
+      status: "Success",
+      dryRun: false,
+      results: [{ sheetId: 1420963, ok: true, afterName: "Cover Sheet" }]
+    }));
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+
+    const staleReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/verify-parameter-on-sheet",
+        body: { sheetNumber: "M000", parameterName: "Sheet Name", includeCapture: false }
+      }
+    });
+    assert.equal(staleReadback.allowed, true);
+    recordTeammateMcpResult(owner, staleReadback, result({
+      ok: true,
+      sheetViewId: 1420963,
+      sheetNumber: "M000",
+      matches: [
+        { source: "titleblock_instance", value: { value: "Cover Sheet - READBACK SMOKE" } },
+        { source: "sheet", value: { value: "Cover Sheet - READBACK SMOKE" } }
+      ]
+    }));
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+
+    const prematureCorrection = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: {
+        dryRun: true,
+        apply: false,
+        changes: [{
+          elementId: 1420963,
+          parameterName: "Sheet Name",
+          expectedOldValue: "Cover Sheet - READBACK SMOKE",
+          value: "Cover Sheet"
+        }]
+      }
+    });
+    assert.equal(prematureCorrection.allowed, false);
+    assert.match(prematureCorrection.message || "", /preview before prior apply verification not allowed/i);
+
+    const regenerate = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/regenerate",
+        body: { refreshActiveView: true }
+      }
+    });
+    assert.equal(regenerate.allowed, true);
+    assert.equal(regenerate.call?.effect, "navigation");
+    recordTeammateMcpResult(owner, regenerate, result({ ok: true }));
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+
+    const restoredReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/verify-parameter-on-sheet",
+        body: { sheetNumber: "M000", parameterName: "Sheet Name", includeCapture: true }
+      }
+    });
+    assert.equal(restoredReadback.allowed, true);
+    recordTeammateMcpResult(owner, restoredReadback, result({
+      ok: true,
+      sheetViewId: 1420963,
+      sheetNumber: "M000",
+      matches: [
+        { source: "titleblock_instance", value: { value: "Cover Sheet" } },
+        { source: "sheet", value: { value: "Cover Sheet" } }
+      ],
+      capture: { export: { viewId: 1420963, path: "artifacts/captures/M000-titleblock.png" } }
+    }));
+
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.verified, true);
+    assert.equal(receipt?.stage, "report");
+    assert.equal(receipt?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("focused exported-view capture filename verifies a newly created view", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

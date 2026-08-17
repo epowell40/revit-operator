@@ -11,6 +11,7 @@ const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|typ
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|update|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
 const EXECUTABLE_PREVIEW = /\b(executable|transaction(?:al)?|rollback|dry[- ]?run|preflight|simulate(?:d|ion)?)\s+(?:change\s+)?preview\b|\b(?:dry[- ]?run|preflight|show me (?:the )?change)\b/i;
+const APPLY_BEYOND_PREVIEW = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just|only)\s+)?(?:stop|end|finish|halt|remain|return)\b[^.!?;\n]{0,40}\b(?:preview|preflight|dry[- ]?run)|(?:do not|don't|dont|never)\s+(?:just\s+|only\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:not|rather than)\s+(?:just\s+|only\s+)?(?:a\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:proceed|continue|go)\s+beyond\s+(?:the\s+)?(?:preview|preflight|dry[- ]?run)\b)/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
@@ -43,7 +44,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     && /\b(?:read[- ]only|discovery only|inspection only)\b/i.test(text)
     && /\b(?:plan|steps?|guidance|instructions?|recommendations?)\b/i.test(text)
     && !EXECUTABLE_PREVIEW.test(text);
-  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
+  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan && !APPLY_BEYOND_PREVIEW.test(text)
     ? "preview"
     : documentLifecycleMutation || (explicitMutation && !isExplicitNoWriteRequest(text))
       ? "apply"
