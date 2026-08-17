@@ -712,7 +712,8 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   }
   let finalHealthDurationMs = 0;
   const finalHealthStartedAt = Date.now();
-  const finalHealthPromise = requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs())
+  const finalHealthPath = applyRequested ? "/api/revit/health" : "/api/revit/health?prefer_cached=1";
+  const finalHealthPromise = requestJson(baseUrl, finalHealthPath, {}, healthTimeoutMs())
     .catch((error) => ({ ok: false, error: String(error) }))
     .finally(() => { finalHealthDurationMs = Date.now() - finalHealthStartedAt; });
   const [finalState, assignmentProjection] = await Promise.all([

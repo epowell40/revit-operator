@@ -25,7 +25,7 @@ namespace RevitBridge.Common.FamilyEvolution
 
     public static class FamilyEvolutionPlan
     {
-        private const string Schema = "revit-operator-family-evolution-v1";
+        private const string Schema = "revit-operator-family-evolution-v2";
 
         public static string ResolveConnectorSide(
             double connectorX,
@@ -124,11 +124,14 @@ namespace RevitBridge.Common.FamilyEvolution
             {
                 var key = (field.Key ?? string.Empty).Trim();
                 var value = field.Value ?? string.Empty;
-                if (key.Length == 0 || key.IndexOf('\r') >= 0 || key.IndexOf('\n') >= 0)
-                    throw new ArgumentException("Plan hash keys must be nonblank single-line strings.", nameof(fields));
-                if (value.IndexOf('\r') >= 0 || value.IndexOf('\n') >= 0)
-                    throw new ArgumentException("Plan hash values must be single-line strings.", nameof(fields));
-                return key + "=" + value;
+                if (key.Length == 0)
+                    throw new ArgumentException("Plan hash keys must be nonblank strings.", nameof(fields));
+                // Family names, formulas, descriptions, and arbitrary string
+                // parameters can legitimately contain CR/LF. Length-prefix
+                // both sides so multiline values remain collision-safe instead
+                // of rejecting an otherwise valid family inspection plan.
+                return key.Length.ToString(CultureInfo.InvariantCulture) + ":" + key
+                    + "=" + value.Length.ToString(CultureInfo.InvariantCulture) + ":" + value;
             }).OrderBy(x => x, StringComparer.Ordinal).ToList();
             if (rows.Count == 0) throw new ArgumentException("At least one plan field is required.", nameof(fields));
 

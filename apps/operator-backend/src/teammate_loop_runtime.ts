@@ -135,6 +135,15 @@ const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
   "i"
 );
 
+const TERMINAL_DIRECT_NO_WRITE = new RegExp(
+  "\\b(?:do not|don't|dont|never)\\s+"
+  + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"
+  + "(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate)"
+  + "(?:\\s*(?:,|or|and)\\s*(?:(?:actually|ever|otherwise)\\s+)?(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate)){0,6}"
+  + "\\s+(?:(?:the|any)\\s+)?(?:schedule|family|model|project|document|files?|changes?|anything|it)\\s*[.!?]*\\s*$",
+  "i"
+);
+
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   // A leading, sentence-level READ-ONLY declaration is an authoritative turn
   // contract even when a long planning request later names the future edits it
@@ -142,6 +151,7 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   // character window before honoring that explicit boundary.
   if (/^\s*read[ -]?only(?:\s+only)?\s*[.!:;-]/i.test(text)) return true;
   if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
+  if (TERMINAL_DIRECT_NO_WRITE.test(text)) return true;
   if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
       || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)
       || /\b(?:preview|analysis)\s+only\b/i.test(text)) return true;
