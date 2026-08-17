@@ -58,6 +58,20 @@ test("conditional effects follow handler semantics instead of generic preview fl
   assert.equal(conditionalActionPathEffect("/revit/list-element-types", { action: "rename_types", dryRun: true }), "preview");
 });
 
+test("artifact publication routes distinguish executable preflight from real output", () => {
+  for (const route of ["/revit/export-pdf", "/revit/export-dwg", "/revit/export-ifc", "/revit/export-elements-xlsx"]) {
+    assert.equal(conditionalActionPathEffect(route, { dryRun: true }), "preview");
+    assert.equal(conditionalActionPathEffect(route, { dryRun: false }), "apply");
+    assert.equal(pathLooksWrite(route, { dryRun: true }), true);
+    assert.equal(pathLooksWrite(route, { dryRun: false }), true);
+  }
+  assert.equal(conditionalActionPathEffect("/revit/export-pdf", { preflightOnly: true }), "preview");
+  assert.equal(conditionalActionPathEffect("/revit/export-pdf", { preflight: true }), "preview");
+  assert.equal(conditionalActionPathEffect("/revit/export-pdf", {}), "apply");
+  assert.equal(conditionalActionPathEffect("/revit/print", {}), "preview");
+  assert.equal(conditionalActionPathEffect("/revit/print", { dryRun: false }), "apply");
+});
+
 test("read methods stay read-only without weakening body-aware POST effects", () => {
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }, "GET"), false);
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }, "POST"), true);

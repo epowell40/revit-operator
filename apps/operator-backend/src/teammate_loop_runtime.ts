@@ -168,12 +168,23 @@ function hasRevitWorkSubject(text: string): boolean {
 function withoutAdjectivalOpenDocumentState(text: string): string {
   // "the open Revit model" and "the open Snowdon Towers Sample HVAC model"
   // describe the current model; neither is an imperative to open another
-  // document. Strip these article-led adjectival state phrases before applying
-  // the deliberately broad lifecycle-command grammar.
-  return text.replace(
-    /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:(?:(?!\b(?:open|reopen|close|save)\b)[^.!?;\n]){0,120}?\s+)?(?:model|project|document)\b/gi,
-    " "
-  );
+  // document. Likewise, "which model is open" and "the project is already
+  // open" describe or ask about state rather than authorizing a lifecycle
+  // mutation. Strip both forms before applying the deliberately broad
+  // lifecycle-command grammar.
+  return text
+    .replace(
+      /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:revit\s+)?(?:model|project|document)\b/gi,
+      " "
+    )
+    .replace(
+      /\b(?:the|this|that|an?|current(?:ly)?|already|presently)\s+open\s+(?:(?:(?!\b(?:open|reopen|close|save)\b)[^.!?;\n]){0,120}?\s+)?(?:model|project|document)\b/gi,
+      " "
+    )
+    .replace(
+      /\b(?:(?:which|what|the|this|that|current|active)\s+)?(?:(?:revit\s+)?(?:model|project|document))\s+(?:is|was|remains?|appears?|looks?)\s+(?:already\s+|currently\s+|presently\s+)?open\b/gi,
+      " "
+    );
 }
 
 function containsDocumentLifecycleMutation(text: string): boolean {
@@ -518,6 +529,11 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const tool = `${toolValue || ""}`.trim();
   const args = objectValue(structuredActionBody(argsValue));
   if (tool === "revit_call_tool") return classifyPathCall(args.method, args.path, args.body);
+  // The typed PDF alias exposes the same handler and dry-run semantics as the
+  // generic route. Classify it before the broad export_* observation family;
+  // a real PDF export creates a durable file while dryRun=true is executable
+  // preflight evidence.
+  if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
   const target_tokens = targetTokens(args);
   const expected_values = expectedValues(args);
   const operation = operationFor(tool, args);
