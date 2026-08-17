@@ -234,11 +234,13 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
     .replace(/[*_`~]/g, "");
   const descriptiveZeroCandidatePreview = requestedEffect === "preview" && (
     /\bno\s+[^.\n]{1,120}\s+(?:contain|contains|contained|have|has|include|includes|match|matches)\s+(?:(?:the|a|an|any)\s+)?(?:requested\s+)?(?:pattern|condition|criterion|criteria|marker|delimiter|dash(?:es)?|hyphen(?:s)?|prefix|suffix|text|value|token|format)\b/i.test(receiptText)
+    || /\b(?:0|zero|none)\s+(?:of\s+\d+\s+)?(?:elements?|views?|sheets?|sheet numbers?|famil(?:y|ies)|types?|parameters?|marks?|targets?|candidates?)\s+(?:contain|contains|contained|have|has|include|includes|match|matches)\s+(?:(?:the|a|an|any)\s+)?(?:requested\s+)?(?:pattern|condition|criterion|criteria|marker|delimiter|dash(?:es)?|hyphen(?:s)?|prefix|suffix|text|value|token|format)\b/i.test(receiptText)
     || /\b(?:candidate|match|preview)(?:\s+(?:table|list|set))?\s+(?:is|was)\s+empty\b/i.test(receiptText)
     || /\b(?:elements?|views?|sheets?|sheet numbers?|famil(?:y|ies)|types?|parameters?|marks?|targets?|candidates?)\s+(?:containing|with|matching)\s+[^:\n]{1,100}:\s*(?:none|zero|0)\b/i.test(receiptText)
   );
   const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(receiptText)
     || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(receiptText)
+    || /\b(?:0|zero|none)\s+(?:planned|proposed|previewed)?\s*(?:changes?|edits?|actions?|renames?|updates?|modifications?|writes?)\b/i.test(receiptText)
     || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*none\b/i.test(receiptText)
     || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(receiptText)
     || /\bstatus\s*[:=]\s*["']?blocked_no_defensible_(?:edit|change|action)\b/i.test(receiptText)
@@ -254,6 +256,7 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
     || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(receiptText)
     || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(receiptText)
     || /["']?(?:model[ _-]?modified|model[ _-]?altered|applied)["']?\s*:\s*false/i.test(receiptText)
+    || /\b(?:model[ _-]?modified|model[ _-]?altered|applied)\s*:\s*(?:no|none)\b/i.test(receiptText)
     || /\b(?:the )?(?:Revit )?model (?:was|is) not (?:modified|changed|edited|updated)\b/i.test(receiptText)
     || /\bno (?:Revit )?transaction was (?:applied|committed)\b/i.test(receiptText)
     || /\beffect\s*:\s*no[_ -]?change\b/i.test(receiptText)
