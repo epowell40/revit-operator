@@ -11,7 +11,13 @@ import {
   currentEpic0437SourceInputs
 } from "../capabilities/epic_0437_source_provenance.js";
 import { buildRegistryAudit, findRepoRoot } from "./audit_tool_registry.js";
-import { verifyTypedMcpAliasesAgainstRegistry } from "./generate_tool_exposure_policy.js";
+import {
+  generatePolicyBytes,
+  updateBundledPolicyHash,
+  updateCompiledPolicyHash,
+  updateMcpBundledPolicyHash,
+  verifyTypedMcpAliasesAgainstRegistry
+} from "./generate_tool_exposure_policy.js";
 
 function json(raw: string): unknown { return JSON.parse(raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n")); }
 function run(command: string, args: string[], cwd: string): Promise<{ command: string; duration_ms: number }> {
@@ -126,13 +132,37 @@ async function main(): Promise<void> {
     proofIndex,
     repoRoot
   });
+  const renderedEvidence = renderCanonicalDocument(compiledEvidence as unknown as JsonValue);
+  fs.writeFileSync(evidencePath, renderedEvidence, "utf8");
+
+  // Evidence is the policy generator's authoritative input. Keep the generated
+  // policy and all three compiled trust anchors in the same certification
+  // transaction so a successful certification command cannot leave CI one
+  // generation behind.
+  const generatedPolicy = generatePolicyBytes(renderedEvidence, candidateRaw, catalogRoot);
+  fs.writeFileSync(path.join(backendRoot, "config", "tool_exposure_policy.v1.json"), generatedPolicy, "utf8");
+  const backendAuthorityPath = path.join(backendRoot, "src", "capabilities", "trusted_tool_exposure_policy.ts");
   fs.writeFileSync(
-    evidencePath,
-    renderCanonicalDocument(compiledEvidence as unknown as JsonValue),
+    backendAuthorityPath,
+    updateBundledPolicyHash(generatedPolicy, fs.readFileSync(backendAuthorityPath, "utf8")),
     "utf8"
   );
+  const mcpAuthorityPath = path.join(mcpRoot, "src", "lib", "toolExposurePolicy.ts");
+  fs.writeFileSync(
+    mcpAuthorityPath,
+    updateMcpBundledPolicyHash(generatedPolicy, fs.readFileSync(mcpAuthorityPath, "utf8")),
+    "utf8"
+  );
+  const nativeAuthorityPath = path.join(nativeRoot, "RevitBridge.Common", "OperatorNativeToolExposureAuthority.cs");
+  fs.writeFileSync(
+    nativeAuthorityPath,
+    updateCompiledPolicyHash(generatedPolicy, fs.readFileSync(nativeAuthorityPath, "utf8")),
+    "utf8"
+  );
+  await run(gateNode, [path.join(backendRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], backendRoot);
+  await run(gateNode, [path.join(mcpRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], mcpRoot);
   await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "dist/test/tool_certification_evidence_compiler.test.js"], backendRoot);
-  console.log(`Wrote converged L0-L2 proof artifacts and certification evidence for ${proofIndex.records.length} exact candidate identities.`);
+  console.log(`Wrote converged L0-L2 proof artifacts, certification evidence, generated policy, and trust anchors for ${proofIndex.records.length} exact candidate identities.`);
 }
 
 if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {

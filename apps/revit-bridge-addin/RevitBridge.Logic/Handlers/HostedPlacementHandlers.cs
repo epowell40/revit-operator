@@ -4058,6 +4058,27 @@ namespace RevitBridge.Logic.Handlers
                 ? HostedPlacementUtil.BuildElectricalCircuitAuditPayload(sourceFamilyInstance)
                 : null;
 
+            string BuildCommitFailureText()
+            {
+                var parts = new List<string>();
+                if (failures.Count > 0)
+                {
+                    parts.Add("Failures: " + string.Join("; ", failures
+                        .Select(f => $"{f.severity}: {f.message}")
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Take(5)));
+                }
+                if (placementValidation != null)
+                {
+                    parts.Add($"PlacementValidation: valid={placementValidation.valid}, reason={placementValidation.reason}");
+                }
+                if (warnings.Count > 0)
+                {
+                    parts.Add("Warnings: " + string.Join("; ", warnings.Where(s => !string.IsNullOrWhiteSpace(s)).Take(5)));
+                }
+                return parts.Count > 0 ? " " + string.Join(" ", parts) : "";
+            }
+
             void CreateOne()
             {
                 electricalDistributionSystemPreparation = HostedPlacementUtil.EnsureElectricalDistributionSystem(doc, p.ensureDistributionSystem);
@@ -4224,19 +4245,33 @@ namespace RevitBridge.Logic.Handlers
                     tg.Start();
                     using (var tx = new Transaction(doc, "Place Hosted Family"))
                     {
-                        tx.Start();
-                        CreateOne();
-                        doc.Regenerate();
-                        placementValidation = HostedPlacementUtil.ValidateCreatedPlacements(
-                            app,
-                            new List<long> { createdId },
-                            p.roomId,
-                            p.roomNumber,
-                            p.roomSide,
-                            warnings,
-                            new List<long> { p.hostElementId }
-                        );
-                        tx.Commit();
+                        try
+                        {
+                            tx.Start();
+                            tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: true));
+                            CreateOne();
+                            doc.Regenerate();
+                            placementValidation = HostedPlacementUtil.ValidateCreatedPlacements(
+                                app,
+                                new List<long> { createdId },
+                                p.roomId,
+                                p.roomNumber,
+                                p.roomSide,
+                                warnings,
+                                new List<long> { p.hostElementId }
+                            );
+                            var st = tx.Commit();
+                            transactionStatus = st.ToString();
+                            if (st != TransactionStatus.Committed)
+                            {
+                                throw new InvalidOperationException($"Hosted-placement dry-run transaction did not commit (status={transactionStatus}).{BuildCommitFailureText()}");
+                            }
+                        }
+                        catch
+                        {
+                            if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
+                            throw;
+                        }
                     }
 
                     if (p.includePreviewImage)
@@ -4324,6 +4359,8 @@ namespace RevitBridge.Logic.Handlers
                     placementValidation,
                     electricalDistributionSystemPreparation,
                     electricalDistributionSystem,
+                    transactionStatus,
+                    failures,
                     preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                     warnings
                 });
@@ -4854,11 +4891,25 @@ namespace RevitBridge.Logic.Handlers
                     tg.Start();
                     using (var tx = new Transaction(doc, "Create Similar From Instance"))
                     {
-                        tx.Start();
-                        CreateRows();
-                        doc.Regenerate();
-                        placementValidation = ValidateRows();
-                        tx.Commit();
+                        try
+                        {
+                            tx.Start();
+                            tx.SetFailureHandlingOptions(FailureHandlingUtil.ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: true));
+                            CreateRows();
+                            doc.Regenerate();
+                            placementValidation = ValidateRows();
+                            var st = tx.Commit();
+                            transactionStatus = st.ToString();
+                            if (st != TransactionStatus.Committed)
+                            {
+                                throw new InvalidOperationException($"Create-similar dry-run transaction did not commit (status={transactionStatus}).{BuildCommitFailureText()}");
+                            }
+                        }
+                        catch
+                        {
+                            if (tx.GetStatus() == TransactionStatus.Started) tx.RollBack();
+                            throw;
+                        }
                     }
 
                     if (p.includePreviewImage && createdIds.Count > 0)
@@ -4902,6 +4953,8 @@ namespace RevitBridge.Logic.Handlers
                     level = new { id = ElementIdCompat.GetValue(level.Id), name = level.Name },
                     placements = resultRows,
                     placementValidation,
+                    transactionStatus,
+                    failures,
                     preview = previewPath != null ? new { path = previewPath, widthPx = previewWidth, heightPx = previewHeight } : null,
                     warnings
                 });

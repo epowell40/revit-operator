@@ -1241,7 +1241,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:373fd1fb994f63526a08676f2f7cb6a95118b68565ac0aeb2d70592cb4e34d50"
+      "sha256": "sha256:e31c7bfd58d9194e7d745116e9e8b5d01cf3c4267fbfc5fbc486b5850daf4ec4"
     },
     {
       "path": "apps/operator-backend/src/goals/service.ts",
@@ -1545,7 +1545,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/certify_epic_0437_source.ts",
-      "sha256": "sha256:acdb98c4f76e1f81219e06c827d786dfe01592cad54a75cec4fe1a1580627731"
+      "sha256": "sha256:b336052d65b5789bb2fe2fba73881cdeeeb25ce10415e29453047770ea681bcc"
     },
     {
       "path": "apps/operator-backend/src/tools/check_skill_library_manifest.ts",
@@ -2289,7 +2289,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:03e3f4c2f26f108a69081617883b411b28b7d23df1e7e76b9238a59c1481ed32"
+      "sha256": "sha256:1bf188ad4f30ea5299a4005636785c5d3ac5e85ce9176a0c26593819c87a63c2"
     },
     {
       "path": "apps/operator-backend/test/improvement_jobs.test.ts",
@@ -2666,6 +2666,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/HostedInstanceAdjustmentPolicyTests.cs",
       "sha256": "sha256:c65b9eeec36b71e696f2a85097954ceba155c81084cb0371460f2f63d4a5db1f"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/HostedPlacementDryRunContractTests.cs",
+      "sha256": "sha256:847a6388e527dc89a77a54c3f78ca1c1ecc3edaebd3610adaff92d10aaaa474a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/LengthTextUtilTests.cs",
@@ -3618,7 +3622,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/HostedPlacementHandlers.cs",
-      "sha256": "sha256:dd6bcbb732863303336248180bbbd750d28ad7efdab0246fb714f38b5a74a44d"
+      "sha256": "sha256:49f5287ec7216332a7d86c71acae4675e766874d4857b2e98014a404a6338afc"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/LightingHandler.cs",
@@ -4374,7 +4378,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/RenumberSheetsHandler.cs",
-      "sha256": "sha256:8d311e48fe0fb19ba00c814661155f22b5b9f62fd7244b5a33f815e0d62742ee"
+      "sha256": "sha256:3c74b31ecf218a15d6743049f2e9f0c131aadc2fb97515f372455d7e471cb8f7"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ReplaceScheduleValuesHandler.cs",
@@ -4605,7 +4609,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:c72b0e3a61a0f1f5ed6941d3be14014397df974eb399e49683a4209f47b2b494",
+  "inputs_hash": "sha256:4369b0f25c44d3f174e7079590809f56eaa0616cc38a336afa7441cb70dc2926",
   "result": {
     "passed": true,
     "checks": [

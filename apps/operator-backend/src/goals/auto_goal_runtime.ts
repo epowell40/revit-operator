@@ -127,15 +127,16 @@ export function createAutoGoalTurnObserver(sessionId: string) {
       const completionRelevant = effect !== "discovery";
       const knownNoEffectFailure = isKnownNoEffectFailure(observation);
       const explicitNoEffect = isExplicitNoEffectObservation(observation);
+      const blockingNoEffect = isBlockingNoEffectObservation(observation);
       if (!explicitNoEffect && isCompletionEvidence(observation) && observation.success === true) {
         if (effect === "apply") successfulApplyTools += 1;
         else if (effect === "preview") successfulPreviewTools += 1;
         else if (effect === "read") successfulReadTools += 1;
       }
-      if (completionRelevant && ((observation.success === false && !knownNoEffectFailure) || explicitNoEffect)) failedRevitTools += 1;
+      if (completionRelevant && ((observation.success === false && !knownNoEffectFailure) || blockingNoEffect)) failedRevitTools += 1;
       if (completionRelevant && observation.success === false && knownNoEffectFailure) knownNoEffectFailures += 1;
-      if (completionRelevant && explicitNoEffect) lastCompletionRelevantSucceeded = false;
-      else if (completionRelevant && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
+      if (completionRelevant && blockingNoEffect) lastCompletionRelevantSucceeded = false;
+      else if (completionRelevant && !explicitNoEffect && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
     finish(turnId: string, assistantText: string, teammateReceipt?: AutoGoalTeammateReceipt | null) {
@@ -227,32 +228,37 @@ function isCompletionEvidence(observation: AutoGoalToolObservation): boolean {
 }
 
 function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEffect: "read" | "preview" | "apply"): boolean {
+  const receiptText = assistantText
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[*_`~]/g, "");
   const descriptiveZeroCandidatePreview = requestedEffect === "preview" && (
-    /\bno\s+[^.\n]{1,120}\s+(?:contain|contains|contained|have|has|include|includes|match|matches)\s+(?:(?:the|a|an|any)\s+)?(?:requested\s+)?(?:pattern|condition|criterion|criteria|marker|delimiter|dash(?:es)?|hyphen(?:s)?|prefix|suffix|text|value|token|format)\b/i.test(assistantText)
-    || /\b(?:candidate|match|preview)(?:\s+(?:table|list|set))?\s+(?:is|was)\s+empty\b/i.test(assistantText)
+    /\bno\s+[^.\n]{1,120}\s+(?:contain|contains|contained|have|has|include|includes|match|matches)\s+(?:(?:the|a|an|any)\s+)?(?:requested\s+)?(?:pattern|condition|criterion|criteria|marker|delimiter|dash(?:es)?|hyphen(?:s)?|prefix|suffix|text|value|token|format)\b/i.test(receiptText)
+    || /\b(?:candidate|match|preview)(?:\s+(?:table|list|set))?\s+(?:is|was)\s+empty\b/i.test(receiptText)
+    || /\b(?:elements?|views?|sheets?|sheet numbers?|famil(?:y|ies)|types?|parameters?|marks?|targets?|candidates?)\s+(?:containing|with|matching)\s+[^:\n]{1,100}:\s*(?:none|zero|0)\b/i.test(receiptText)
   );
-  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(assistantText)
-    || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
-    || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*none\b/i.test(assistantText)
-    || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(assistantText)
-    || /\bstatus\s*[:=]\s*["']?blocked_no_defensible_(?:edit|change|action)\b/i.test(assistantText)
-    || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*null\b/i.test(assistantText)
-    || /["']?status["']?\s*:\s*["']?(?:no[_ -]?op|already[_ -]?satisfied)["']?/i.test(assistantText)
-    || /["']?proposed(?:changes?|edits?|actions?)["']?\s*:\s*\[\s*\]/i.test(assistantText)
-    || /\bno defensible (?:adjustment|change|edit|action) (?:was |is )?(?:identified|found|available|needed|necessary)\b/i.test(assistantText)
-    || /\bno change\b[^\n]{0,180}\b(?:not|isn't|is not|wasn't|was not|wouldn't|would not) be defensible\b/i.test(assistantText)
+  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(receiptText)
+    || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(receiptText)
+    || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*none\b/i.test(receiptText)
+    || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(receiptText)
+    || /\bstatus\s*[:=]\s*["']?blocked_no_defensible_(?:edit|change|action)\b/i.test(receiptText)
+    || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*null\b/i.test(receiptText)
+    || /["']?status["']?\s*:\s*["']?(?:no[_ -]?op|already[_ -]?satisfied)["']?/i.test(receiptText)
+    || /["']?proposed(?:changes?|edits?|actions?)["']?\s*:\s*\[\s*\]/i.test(receiptText)
+    || /\bno defensible (?:adjustment|change|edit|action) (?:was |is )?(?:identified|found|available|needed|necessary)\b/i.test(receiptText)
+    || /\bno change\b[^\n]{0,180}\b(?:not|isn't|is not|wasn't|was not|wouldn't|would not) be defensible\b/i.test(receiptText)
     || descriptiveZeroCandidatePreview;
-  const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(assistantText)
-    || /\bmodel unchanged\b/i.test(assistantText)
-    || /\bnone required\b/i.test(assistantText)
-    || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(assistantText)
-    || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(assistantText)
-    || /["']?(?:model[ _-]?modified|model[ _-]?altered|applied)["']?\s*:\s*false/i.test(assistantText)
-    || /\b(?:the )?(?:Revit )?model (?:was|is) not (?:modified|changed|edited|updated)\b/i.test(assistantText)
-    || /\bno (?:Revit )?transaction was (?:applied|committed)\b/i.test(assistantText)
-    || /\beffect\s*:\s*no[_ -]?change\b/i.test(assistantText)
-    || /\bno change (?:was )?applied\b/i.test(assistantText)
-    || /\bno (?:revit |model )?(?:elements?|views?|sheets?|famil(?:y|ies)|types?|parameters?) (?:was|were|is|are)?\s*(?:modified|changed|edited|updated|renamed|created|deleted|moved|written)\b/i.test(assistantText);
+  const noMutationNeeded = /\bno (?:model )?(?:rename|renames|change|changes|edit|edits|update|updates|modification|modifications|action|actions|write|writes) (?:was|were|is|are)?\s*(?:required|needed|necessary|made|performed|applied)\b/i.test(receiptText)
+    || /\bmodel unchanged\b/i.test(receiptText)
+    || /\bnone required\b/i.test(receiptText)
+    || /\b(?:renames?|changes?|edits?|updates?|modifications?|actions?|writes?)\s*:\s*(?:none|zero|0)\b/i.test(receiptText)
+    || /\b(?:model[ _-]?altered|applied)\s*:\s*false\b/i.test(receiptText)
+    || /["']?(?:model[ _-]?modified|model[ _-]?altered|applied)["']?\s*:\s*false/i.test(receiptText)
+    || /\b(?:the )?(?:Revit )?model (?:was|is) not (?:modified|changed|edited|updated)\b/i.test(receiptText)
+    || /\bno (?:Revit )?transaction was (?:applied|committed)\b/i.test(receiptText)
+    || /\beffect\s*:\s*no[_ -]?change\b/i.test(receiptText)
+    || /\bno change (?:was )?applied\b/i.test(receiptText)
+    || /\bno (?:revit |model )?(?:elements?|views?|sheets?|famil(?:y|ies)|types?|parameters?) (?:was|were|is|are)?\s*(?:modified|changed|edited|updated|renamed|created|deleted|moved|written)\b/i.test(receiptText);
   return alreadySatisfied && noMutationNeeded;
 }
 
@@ -274,8 +280,29 @@ function objectContainsExplicitNoEffect(value: unknown, depth = 0): boolean {
   return Object.values(record).some((entry) => objectContainsExplicitNoEffect(entry, depth + 1));
 }
 
+function objectContainsBlockingNoEffect(value: unknown, depth = 0): boolean {
+  if (depth > 6 || value === null || value === undefined) return false;
+  if (typeof value === "string") {
+    const parsed = observationObject(value);
+    return Object.keys(parsed).length > 0 && objectContainsBlockingNoEffect(parsed, depth + 1);
+  }
+  if (Array.isArray(value)) return value.some((entry) => objectContainsBlockingNoEffect(entry, depth + 1));
+  if (typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  if (record.requestedEffectSatisfied === false || record.requested_effect_satisfied === false) return true;
+  if (record.requiresExplicitDiscardAndReopen === true || record.requires_explicit_discard_and_reopen === true) return true;
+  if (record.requiresExplicitUnloadAndOpen === true || record.requires_explicit_unload_and_open === true) return true;
+  const status = `${record.status || ""}`.trim().toLowerCase();
+  if (["already open inactive", "already loaded as link", "requires explicit action"].includes(status)) return true;
+  return Object.values(record).some((entry) => objectContainsBlockingNoEffect(entry, depth + 1));
+}
+
 function isExplicitNoEffectObservation(observation: AutoGoalToolObservation): boolean {
   return objectContainsExplicitNoEffect(observation.result ?? observation.output);
+}
+
+function isBlockingNoEffectObservation(observation: AutoGoalToolObservation): boolean {
+  return objectContainsBlockingNoEffect(observation.result ?? observation.output);
 }
 
 function objectContainsKnownPreDispatchFailure(value: unknown, depth = 0): boolean {
