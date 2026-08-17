@@ -1068,6 +1068,39 @@ test("a preview assignment with zero candidates completes as a substantive verif
     assert.equal(getGoal(liveMarkdownReceipt.id)?.status, "complete");
     assert.equal(getGoal(liveMarkdownReceipt.id)?.work_budget?.completion_mode, "verified_noop");
 
+    const liveNumericReceipt = setAgentGoal("session-preview-live-numeric-noop", {
+      title: "Preview sheet number cleanup",
+      objective: "Preview replacing dashes in Mechanical sheet numbers with dots; do not apply changes.",
+      acceptance_criteria: ["Every dashed Mechanical sheet number has an exact collision-free preview, or live evidence proves there are no candidates."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const liveNumericObserver = createAutoGoalTurnObserver("session-preview-live-numeric-noop");
+    liveNumericObserver.observe({
+      server: "revit_operator", tool: "revit_list_sheets", success: true,
+      arguments: { action: "list", exact: true, all: true },
+      result: { totalSheets: 17, items: Array.from({ length: 17 }, (_, index) => ({ id: index + 1, sheetNumber: `M${String(index).padStart(3, "0")}` })) }
+    });
+    liveNumericObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { method: "POST", path: "/revit/renumber-sheets", body: { behavior: "replace_dash_with_dot", dryRun: true, changes: [] } },
+      result: [{
+        type: "inputText",
+        text: JSON.stringify({
+          status: "NoOp", dryRun: true, behavior: "replace_dash_with_dot",
+          requestedCount: 0, candidateCount: 0, results: [], modelModified: false,
+          completionEligible: false, summary: "No sheet renumber candidates were supplied; the model was not modified."
+        })
+      }]
+    });
+    liveNumericObserver.finish(
+      "turn-preview-live-numeric-noop",
+      "## Preview complete — no changes\n- **17 sheets checked**\n- **0** sheet numbers contain a dash\n- **0** planned changes\n- Dry-run result: **NoOp**\n- Model modified: **No**"
+    );
+    assert.equal(getGoal(liveNumericReceipt.id)?.status, "complete");
+    assert.equal(getGoal(liveNumericReceipt.id)?.work_budget?.completion_mode, "verified_noop");
+    assert.equal(getGoal(liveNumericReceipt.id)?.completion_audit?.complete, true);
+
     const missingTarget = setAgentGoal("session-preview-missing-target", {
       title: "Preview one requested sheet rename",
       objective: "Preview renaming the specifically requested sheet; do not apply changes.",
