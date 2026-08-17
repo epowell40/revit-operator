@@ -34,6 +34,26 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("completionEligible = false", source, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void SheetRenameAndImmediateListingUseOneFreshAuthoritativeState()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var renameSource = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "RenumberSheetsHandler.cs"));
+            var listSource = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "ListSheetsHandler.cs"));
+
+            var apply = Slice(renameSource, "using (var t = new Transaction(doc, \"Renumber Sheets\"))", "return Task.FromResult<object>(new");
+            Assert.Contains("doWork();", apply, StringComparison.Ordinal);
+            Assert.Contains("doc.Regenerate();", apply, StringComparison.Ordinal);
+            Assert.Contains("t.Commit();", apply, StringComparison.Ordinal);
+            Assert.True(apply.IndexOf("doc.Regenerate();", StringComparison.Ordinal) < apply.IndexOf("t.Commit();", StringComparison.Ordinal));
+            Assert.Contains("app.ActiveUIDocument?.RefreshActiveView()", renameSource, StringComparison.Ordinal);
+
+            Assert.Contains("ReadSheetName(ViewSheet sheet)", listSource, StringComparison.Ordinal);
+            Assert.Contains("BuiltInParameter.SHEET_NAME", listSource, StringComparison.Ordinal);
+            Assert.Contains("name = ReadSheetName(s)", listSource, StringComparison.Ordinal);
+            Assert.Contains("sheetName = ReadSheetName(sheet)", listSource, StringComparison.Ordinal);
+        }
+
         private static void AssertSafeDryRunTransaction(string source)
         {
             Assert.Contains("ConfigureFailureCapture(tx, failures, rollbackOnErrors: true, deleteWarnings: true)", source, StringComparison.Ordinal);

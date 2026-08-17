@@ -96,7 +96,7 @@ namespace RevitBridge.Handlers
                 filtered = filtered.Where(s =>
                 {
                     var sn = (s.SheetNumber ?? "").Trim();
-                    var name = (s.Name ?? "").Trim();
+                    var name = ReadSheetName(s).Trim();
                     if (exact)
                         return sn.Equals(q, StringComparison.OrdinalIgnoreCase) || name.Equals(q, StringComparison.OrdinalIgnoreCase);
                     return sn.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0;
@@ -105,7 +105,7 @@ namespace RevitBridge.Handlers
 
             var sorted = filtered
                 .OrderBy(s => s.SheetNumber, StringComparer.OrdinalIgnoreCase)
-                .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(ReadSheetName, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
             var totalMatches = sorted.Count;
@@ -119,7 +119,7 @@ namespace RevitBridge.Handlers
                     id = RevitBridge.Common.ElementIdCompat.GetValue(s.Id),
                     viewId = RevitBridge.Common.ElementIdCompat.GetValue(s.Id),
                     sheetNumber = s.SheetNumber,
-                    name = s.Name
+                    name = ReadSheetName(s)
                 });
             }
 
@@ -397,8 +397,8 @@ namespace RevitBridge.Handlers
                 sheetId = RevitBridge.Common.ElementIdCompat.GetValue(sheet.Id),
                 viewId = RevitBridge.Common.ElementIdCompat.GetValue(sheet.Id),
                 sheetNumber = sheet.SheetNumber,
-                sheetName = sheet.Name,
-                title = sheet.Name,
+                sheetName = ReadSheetName(sheet),
+                title = ReadSheetName(sheet),
                 isPlaceholder = sheet.IsPlaceholder,
                 viewportCount = viewportIds.Count,
                 placedViewCount = placedViews.Count,
@@ -470,7 +470,7 @@ namespace RevitBridge.Handlers
                     .Where(s =>
                     {
                         var sn = (s.SheetNumber ?? "").Trim();
-                        var name = (s.Name ?? "").Trim();
+                        var name = ReadSheetName(s).Trim();
                         if (exact)
                         {
                             return sn.Equals(query, StringComparison.OrdinalIgnoreCase) ||
@@ -480,7 +480,7 @@ namespace RevitBridge.Handlers
                                name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
                     })
                     .OrderBy(s => s.SheetNumber, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(ReadSheetName, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
                 if (candidates.Count > 0)
@@ -490,6 +490,23 @@ namespace RevitBridge.Handlers
             }
 
             return null;
+        }
+
+        private static string ReadSheetName(ViewSheet sheet)
+        {
+            // ViewSheet.Name can remain stale briefly after a committed rename while
+            // the built-in parameter already reflects the authoritative model value.
+            // Prefer the parameter so immediate write/readback loops are truthful.
+            try
+            {
+                var value = sheet.get_Parameter(BuiltInParameter.SHEET_NAME)?.AsString();
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+            catch
+            {
+                // Fall back to the standard property for compatibility.
+            }
+            return sheet.Name ?? "";
         }
     }
 }

@@ -148,6 +148,10 @@ namespace RevitBridge.Handlers
                 try
                 {
                     doWork();
+                    // Revit can defer derived ViewSheet properties until regeneration.
+                    // Regenerate before commit so the transaction receipt and immediate
+                    // follow-up reads observe the same accepted sheet number/name state.
+                    doc.Regenerate();
                     t.Commit();
                 }
                 catch (Exception ex)
@@ -164,6 +168,12 @@ namespace RevitBridge.Handlers
                     });
                 }
             }
+
+            // Keep the active UI/document projection coherent even while Revit is
+            // backgrounded. The refresh is best-effort; the committed model state is
+            // still authoritative if no active view can be refreshed.
+            try { doc.Regenerate(); } catch { }
+            try { app.ActiveUIDocument?.RefreshActiveView(); } catch { }
 
             return Task.FromResult<object>(new
             {
