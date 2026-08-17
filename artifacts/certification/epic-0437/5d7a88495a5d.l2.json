@@ -1237,11 +1237,11 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal.ts",
-      "sha256": "sha256:3b9114a20c84006924196ffd9531b7f8f7a9b82663b2164fb516f71f80ab72f3"
+      "sha256": "sha256:ba6819c987ad3dc3796117e8b3b480bfba5324dedf81a3458d4e5ba71a08a6d3"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:1c768c935929f481109fdbf48869781c8d09681aacce2dc6b3056a537a68c4ac"
+      "sha256": "sha256:1f026f2cb124f1f99e87acdb1ab9bcaea7dc796e53221d3b0046545dac33ad70"
     },
     {
       "path": "apps/operator-backend/src/goals/service.ts",
@@ -1517,7 +1517,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:407d36939336a1b7906013caae81bdf640c99639a3c0b96026e36287a586ecc2"
+      "sha256": "sha256:adf6cd160a8fbec927226c167d4a5c6685621794f3f42762419f8a12686e4ee6"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -2293,7 +2293,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:68844e0a8c2d895f10084fe66e5ac718144a522e8afa6a30f9a2bdadf16663cc"
+      "sha256": "sha256:b8f01b3e12a51de997c9934655c77204e9b6345913e1d0861beb2899fb630cb8"
     },
     {
       "path": "apps/operator-backend/test/improvement_jobs.test.ts",
@@ -2553,7 +2553,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:37659c650f76c08cb0782a203e6b5f6f00128d20a1e183f821371275e2448c43"
+      "sha256": "sha256:fa12594da791a6e6d33c61c998bf11d1ad2a8bcaaa6603ba87d40a9f9375b23a"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4613,7 +4613,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:62a3dba42c9803e73fd6b0006048aa3aada5ca499be66281473038c1b0451002",
+  "inputs_hash": "sha256:2703a169b1075138d08adc94f2aa94a4478a097dd54666189827004728154d25",
   "result": {
     "passed": true,
     "checks": [

@@ -874,6 +874,13 @@ test("auto goal classifier creates assignments for live Revit work", () => {
 
   const preview = classifyAutoGoalRequest("Preview changing all HRU Marks to ERU, but do not commit it.");
   assert.equal(preview.requestedEffect, "preview");
+  const applyPastPreview = classifyAutoGoalRequest(
+    "Rename sheet M000, verify it, then rename it back and verify it. Do the work; do not stop at a preview."
+  );
+  assert.equal(applyPastPreview.requestedEffect, "apply");
+  assert.equal(classifyAutoGoalRequest(
+    "Rename sheet M000 and return it to the original name. Execute both writes; do not return only a dry run."
+  ).requestedEffect, "apply");
 
   const fixtureTransition = classifyAutoGoalRequest(
     "Use revit_open_model to open Snowdon Towers Sample Plumbing.rvt. Do not modify model content."
@@ -1371,6 +1378,13 @@ test("discovery-only Revit calls cannot server-sign assignment completion", () =
     });
     const observer = createAutoGoalTurnObserver("session-auto-discovery");
     observer.observe({ server: "revit_operator", tool: "revit_search_tools", success: true, result: { tools: ["revit_query"] } });
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      success: true,
+      arguments: { method: "POST", path: "/revit/regenerate", body: { refreshActiveView: true } },
+      result: { ok: true }
+    });
     observer.finish("turn-discovery", "I found the requested result.");
     const persisted = getGoal(goal.id);
     assert.equal(persisted?.status, "active");

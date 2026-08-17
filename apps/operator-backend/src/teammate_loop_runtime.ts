@@ -63,7 +63,8 @@ export type TeammateMcpGate = { allowed: boolean; message?: string; call?: Pendi
 const statesByTurn = new Map<string, TeammateLoopState>();
 const statesByOwner = new WeakMap<object, { unbound: Set<TeammateLoopOwnerLease>; by_turn: Map<string, TeammateLoopOwnerLease> }>();
 const MAX_STATE_AGE_MS = 5 * 60_000;
-const NAVIGATION_PATHS = new Set(["/revit/activate-view"]);
+// Transient UI/derived-state POSTs must not replace the last persistent mutation's verification target.
+const NAVIGATION_PATHS = new Set(["/revit/activate-view", "/revit/regenerate"]);
 const DISCOVERY_PATHS = new Set(["/revit/ping", "/revit/context", "/revit/write-grant-status", "/revit/tool-registry", "/revit/tool-search", "/revit/tool-doc", "/revit/tool-examples"]);
 const DISCOVERY_TOOLS = new Set([
   "operator_discover_capabilities",
@@ -146,7 +147,12 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
       || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)
       || /\b(?:preview|analysis)\s+only\b/i.test(text)) return true;
-  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text) && /\b(?:do not|don't|dont|never|without)\b/i.test(text)) return true;
+  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text)
+      && /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+)?(?:apply|commit|write|modify|change|edit|save|execute|make)\b|\bwithout\s+(?:applying|committing|writing|modifying|changing|editing|saving|executing|making)\b/i.test(text)) return true;
+  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text)
+      && /\bwithout\s+(?:creating|writing|saving|exporting|printing)\b[^.!?;\n]{0,50}\bfiles?\b|\b(?:do not|don't|dont|never)\s+(?:export|print|write|save|create)\b[^.!?;\n]{0,35}\b(?:files?|outputs?|pdfs?)\b|\b(?:do not|don't|dont|never)\s+send\b[^.!?;\n]{0,30}\bphysical\s+prints?\b/i.test(text)) return true;
+  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text)
+      && /\b(?:do not|don't|dont|never)\s+create\s+(?:(?:the|an?|any)\s+)?(?:copy|file|output|sheet|view|schedule|element|template|family|type|model\s+change)\b/i.test(text)) return true;
   if (/\bwithout\s+(?:making|applying|committing|saving)\s+(?:any\s+)?changes?\b/i.test(text)) return true;
   if (/\bbefore\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ|creat|renam|print)/i.test(text)) return true;
   return /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:change|modify|edit|delete|remove|apply|commit|write|create|rename|print|mutate)\b[^.!?;\n]{0,40}\b(?:the\s+)?(?:model|project|document|anything|it|the\s+change)\b/i.test(text);
@@ -446,7 +452,7 @@ function targetTokens(value: unknown): string[] {
   return [...tokens].sort();
 }
 
-function expectedValues(value: unknown): string[] {
+function expectedValues(value: unknown, includeIdentityRenames = true): string[] {
   const values = new Set<string>();
   const visit = (node: unknown, key = "", parent = "", depth = 0): void => {
     if (depth > 6 || values.size >= 32) return;
@@ -462,7 +468,9 @@ function expectedValues(value: unknown): string[] {
     const normalizedKey = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
     const normalizedParent = parent.replace(/[^a-z0-9]/gi, "").toLowerCase();
     const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
-    if (normalizedParent === "parameters" || (!valueIsPredicate && ["value", "newvalue", "replaceto", "targetvalue"].includes(normalizedKey))) {
+    const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedKey);
+    const assignedValue = ["value", "newvalue", "replaceto", "targetvalue"].includes(normalizedKey);
+    if (normalizedParent === "parameters" || (!valueIsPredicate && (identityRename || assignedValue))) {
       values.add(JSON.stringify(node));
     }
   };
@@ -500,8 +508,8 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   const normalizedBody = structuredActionBody(body);
   const signature = actionSignature(path, normalizedBody);
   const target_tokens = targetTokens(normalizedBody);
-  const expected_values = expectedValues(normalizedBody);
   const operation = operationFor(path, normalizedBody);
+  const expected_values = expectedValues(normalizedBody, operation !== "create");
   const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (DISCOVERY_PATHS.has(path)) return call("discovery");
@@ -526,8 +534,8 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // preflight evidence.
   if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
   const target_tokens = targetTokens(args);
-  const expected_values = expectedValues(args);
   const operation = operationFor(tool, args);
+  const expected_values = expectedValues(args, operation !== "create");
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation });
   if (DISCOVERY_TOOLS.has(tool)) return call("discovery");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {

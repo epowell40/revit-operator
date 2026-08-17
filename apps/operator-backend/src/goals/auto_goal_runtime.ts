@@ -32,6 +32,8 @@ export type AutoGoalTeammateReceipt = {
 type AutoGoalRequestedEffect = "read" | "preview" | "apply";
 type AutoGoalObservationEffect = AutoGoalRequestedEffect | "discovery";
 
+const APPLY_BEYOND_PREVIEW_TEXT = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just|only)\s+)?(?:stop|end|finish|halt|remain|return)\b[^.!?;\n]{0,40}\b(?:preview|preflight|dry[- ]?run)|(?:do not|don't|dont|never)\s+(?:just\s+|only\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:not|rather than)\s+(?:just\s+|only\s+)?(?:a\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:proceed|continue|go)\s+beyond\s+(?:the\s+)?(?:preview|preflight|dry[- ]?run)\b)/i;
+
 function observationObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value !== "string") return {};
@@ -337,6 +339,7 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
     "revit_tool_registry",
     "revit_tool_doc",
     "revit_tool_examples",
+    "revit_regenerate",
     "revit_write_grant_status"
   ]);
   if (discoveryTools.has(tool) || /(?:^|_)(?:discovery|strategy|documentation|examples)$/.test(tool)) return "discovery";
@@ -352,6 +355,7 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
   if (tool === "revit_call_tool") {
     const route = `${args.path || ""}`.trim().toLowerCase();
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
+    if (route === "/revit/regenerate") return "discovery";
     if (route === "/revit/transaction-plan") return "discovery";
     const method = `${args.method || "POST"}`.trim().toUpperCase() || "POST";
     return pathLooksWrite(route, body, method) ? "apply" : "read";
@@ -374,7 +378,8 @@ function requestedEffectForSession(sessionId: string): AutoGoalRequestedEffect {
   const declared = `${goal?.work_budget?.requested_effect || ""}`.trim().toLowerCase();
   if (declared === "read" || declared === "preview" || declared === "apply") return declared;
   const objective = `${goal?.objective || ""}`;
-  if (/\b(preview|preflight|dry[- ]?run|rollback|do not commit|don't commit)\b/i.test(objective)) return "preview";
+  if (/\b(preview|preflight|dry[- ]?run|rollback|do not commit|don't commit)\b/i.test(objective)
+      && !APPLY_BEYOND_PREVIEW_TEXT.test(objective)) return "preview";
   if (/\b(create|duplicate|add|place|move|rotate|change|update|edit|delete|remove|rename|set|apply|connect|route|reload|export|print)\b/i.test(objective)
       && !/\b(read[- ]only|do not (?:change|modify|edit|create|apply|commit|export|print|delete|remove)|don't (?:change|modify|edit|create|apply|commit|export|print|delete|remove))\b/i.test(objective)) return "apply";
   return "read";
