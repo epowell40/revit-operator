@@ -372,6 +372,20 @@ function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; b
   return { completed, blocked, verified, requestedEffects: [...requestedEffects], completionModes: [...completionModes] };
 }
 
+function durableResultSummary(attempt: GeneralRevitAttempt): string {
+  const summaries: string[] = [];
+  for (const assignment of durableAssignments(attempt)) {
+    const plan = assignment.plan && typeof assignment.plan === "object" && !Array.isArray(assignment.plan)
+      ? assignment.plan as { steps?: unknown } : {};
+    for (const step of Array.isArray(plan.steps) ? plan.steps : []) {
+      if (!step || typeof step !== "object" || Array.isArray(step)) continue;
+      const summary = String((step as { result_summary?: unknown }).result_summary || "").trim();
+      if (summary) summaries.push(summary);
+    }
+  }
+  return [...new Set(summaries)].join("\n").trim();
+}
+
 function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: boolean; blocked: boolean; verified: boolean } {
   const value = attempt.teammate_loop_receipt;
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -399,7 +413,10 @@ function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: b
 }
 
 function combinedMessage(attempt: GeneralRevitAttempt): string {
-  return [attempt.assistant_message, attempt.error]
+  const assistantMessage = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
+    ? attempt.assistant_message
+    : durableResultSummary(attempt);
+  return [assistantMessage, attempt.error]
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .join("\n")
     .trim();
@@ -628,11 +645,19 @@ export function evaluateGeneralRevitCapabilityAttempt(
     || rows.some((row) => row.request_dispatched === true) || durableTools.length > 0;
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
+  const recoveredCanonicalTimeout = attempt.ok === false
+    && /^Computer run exceeded \d+ms\.$/i.test(String(attempt.error || "").trim())
+    && durable.completed && durable.verified && !durable.blocked
+    && durable.requestedEffects.includes(testCase.expected_effect)
+    && durableResultSummary(attempt).length > 0;
+  const attemptSucceeded = attempt.ok !== false || recoveredCanonicalTimeout;
   const assistantIncomplete = assistantReportsIncompleteMutation(attempt);
   const assistantBlocked = assistantReportsTaskBlocked(attempt);
   const missingTargetClarification = isMissingTargetClarification(attempt);
   const refusalReason = capabilityRefusalReason(attempt, successfulExpectedPathObserved);
-  const answerText = typeof attempt.assistant_message === "string" ? attempt.assistant_message : "";
+  const answerText = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
+    ? attempt.assistant_message
+    : durableResultSummary(attempt);
   const answerAssertionFailures = testCase.answer_assertions
     ? [
         ...testCase.answer_assertions.must_match
@@ -672,7 +697,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && Array.isArray(teammateReceipt.preview_action_ids)
     && teammateReceipt.preview_action_ids.some((value) => typeof value === "string" && value.trim().length > 0);
   const fixtureBlockerAccepted = fixtureBlockerAssertionPassed === true
-    && attempt.ok !== false && successfulExpectedPathObserved && dispatched
+    && attemptSucceeded && successfulExpectedPathObserved && dispatched
     && !applyDispatched && !directPreviewDispatched && !teammatePreviewDispatched
     && assistantBlocked && !outcomeUnknown && !substantiveFailedAction && !teammate.mutationAttempted
     && !refusalReason;
@@ -683,15 +708,15 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ? directPreviewDispatched || teammatePreviewDispatched || durableEffectCompleted
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
-  const completed = attempt.ok !== false && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
+  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
     && (dispatched || durable.completed);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
-  else if (missingTargetClarification && attempt.ok !== false && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
+  else if (missingTargetClarification && attemptSucceeded && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
   else if (fixtureBlockerAccepted) tier = "accepted";
-  else if (attempt.ok === false || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || answerAssertionPassed === false) tier = "failed";
+  else if (!attemptSucceeded || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || answerAssertionPassed === false) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";

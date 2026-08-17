@@ -2872,8 +2872,23 @@ server.tool("revit_create_pipe", "Create a pipe segment.",
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
 
-server.tool("revit_get_parameters", "Get all parameters of an element.", 
-  { elementId: z.number() },
+server.tool("revit_get_parameters", "Read parameters for one or many elements. Prefer elementIds + exact names for a bounded bulk audit instead of one call per element; also supports one category/categories scope or allModelInstances:true with an exact name/value filter. Native validation caps results at 500 and returns paging truth.",
+  {
+    elementId: z.number().int().optional(),
+    elementIds: z.union([z.number().int(), z.array(z.number().int()).min(1).max(500)]).optional(),
+    category: z.string().max(96).optional(),
+    categories: z.array(z.string().max(96)).min(1).max(20).optional(),
+    allModelInstances: z.boolean().optional(),
+    names: z.array(z.string().max(256)).min(1).max(50).optional(),
+    includeStringParameters: z.boolean().optional(),
+    valueContains: z.string().max(256).optional(),
+    valueEquals: z.string().max(256).optional(),
+    caseSensitive: z.boolean().optional(),
+    writableOnly: z.boolean().optional(),
+    includeEmpty: z.boolean().optional(),
+    offset: z.number().int().min(0).max(1_000_000).optional(),
+    limit: z.number().int().min(1).max(500).optional()
+  },
   async (args) => {
     try {
       const data = await callRevit("/revit/get-parameters", "POST", args);

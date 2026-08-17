@@ -113,6 +113,8 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   const accessoryType = corpus.cases.find((entry) => entry.case_id === "c22_accessory_type_match");
   const connectedMove = corpus.cases.find((entry) => entry.case_id === "c23_move_damper_upstream");
   const viewRange = corpus.cases.find((entry) => entry.case_id === "c31_fix_view_range_terse");
+  const createSimilar = corpus.cases.find((entry) => entry.case_id === "lh05_create_similar_receptacles");
+  const unit403 = corpus.cases.find((entry) => entry.case_id === "c20_add_duplex_match_circuit");
   assert.match(schedule?.probe_prompt || "", /Supply Air Pressure Drop/i);
   assert.doesNotMatch(schedule?.probe_prompt || "", /Supply Airflow/i);
   assert.match(namedScheduleFilter?.probe_prompt || "", /discover one existing named mechanical-equipment schedule/i);
@@ -134,6 +136,11 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   assert.equal(viewRange?.allow_verified_noop, true);
   assert.match(JSON.stringify(viewRange?.answer_assertions), /9948/);
   assert.match(JSON.stringify(viewRange?.answer_assertions), /underlay/i);
+  assert.match(createSimilar?.probe_prompt || "", /same linked room wall/i);
+  assert.match(createSimilar?.probe_prompt || "", /distinct safe host-local chainages/i);
+  assert.match(unit403?.probe_prompt || "", /derive one safe bounded test location/i);
+  assert.match(unit403?.probe_prompt || "", /same linked room wall/i);
+  assert.doesNotMatch(unit403?.probe_prompt || "", /marked location/i);
 });
 
 test("titleblock mutation coverage is paired with the live read-only regression wording", () => {
@@ -893,6 +900,142 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   });
   assert.equal(result.answer_assertion_passed, true);
   assert.equal(result.tier, "verified");
+});
+
+test("captured cohort wording keeps fixture facts while remaining presentation-neutral", () => {
+  const completeProjection = (requested_effect: "read" | "preview", completion_mode?: string) => ({
+    assignments: [{
+      lifecycle: { phase: "complete" },
+      plan: { steps: [] },
+      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect, completion_mode }
+    }]
+  });
+
+  const schedule = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s05_schedule_value_edit")!, false),
+    {
+      ok: true,
+      assistant_message: [
+        "Schedule: Heat Recovery Unit Summary (1488968)",
+        "Row HRU202, Mechanical Equipment element 1365188",
+        "Supply Air Pressure Drop: 0.08 in-wg to 0.10 in-wg",
+        "Native dry-run: 1 requested/effective change; nothing was applied."
+      ].join("\n"),
+      assignment_projection: completeProjection("preview")
+    }
+  );
+  assert.equal(schedule.tier, "verified");
+
+  const pdf = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "dp02_combined_discipline_pdf")!, false),
+    {
+      ok: true,
+      assistant_message: [
+        "Order: M100, M101, M102, M103, M104, M105, M106",
+        "One combined Color PDF",
+        "Seven-page check: 7 sheets selected; intended 7 pages",
+        "Output: artifacts/prints/TEST-MECHANICAL-ISSUE.pdf",
+        "Content hash cannot be computed because no files were exported."
+      ].join("\n"),
+      assignment_projection: completeProjection("read")
+    }
+  );
+  assert.equal(pdf.tier, "verified");
+
+  const noopProjection = completeProjection("preview", "verified_noop");
+  const names = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c02_clean_level2_view_names")!, false),
+    {
+      ok: true,
+      assistant_message: "The Level 2 HVAC views already match the adjacent-level pattern: view name = level name. Floor Plan L2 → no rename; Ceiling Plan L2 → no rename. Verified no-op.",
+      assignment_projection: noopProjection
+    }
+  );
+  assert.equal(names.tier, "verified");
+
+  const range = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c31_fix_view_range_terse")!, false),
+    {
+      ok: true,
+      assistant_message: "Selected L2 (view 9948). Bottom: L2 + 0. View Depth: L2 + 0. Underlay: None. The smallest defensible correction is a verified no-op; nothing was applied.",
+      assignment_projection: noopProjection
+    }
+  );
+  assert.equal(range.tier, "verified");
+
+  const sheets = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c34_sheet_numbers_dashes_to_dots")!, false),
+    {
+      ok: true,
+      assistant_message: "17 mechanical M-series sheets inventoried. 0 sheet numbers contain dashes. Dry-run: 0 candidates, applied: false. No sheets were renamed.",
+      assignment_projection: noopProjection
+    }
+  );
+  assert.equal(sheets.tier, "verified");
+
+  const wrongSchedule = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s05_schedule_value_edit")!, false),
+    {
+      ok: true,
+      assistant_message: "Heat Recovery Unit Summary 1488968; HRU202; element 1365188; Supply Air Pressure Drop 0.08 in-wg to 0.10 in-wg; 2 requested/effective changes; dry-run.",
+      assignment_projection: completeProjection("preview")
+    }
+  );
+  assert.equal(wrongSchedule.tier, "failed");
+
+  const wrongPdf = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "dp02_combined_discipline_pdf")!, false),
+    {
+      ok: true,
+      assistant_message: "M100 M101 M102 M103 M104 M105 M106; combined color; Seven-page check: 7 sheets selected; intended 8 pages; TEST-MECHANICAL-ISSUE.pdf; content hash; no files were exported.",
+      assignment_projection: completeProjection("read")
+    }
+  );
+  assert.equal(wrongPdf.tier, "failed");
+});
+
+test("a session-bound completed assignment recovers an outer benchmark timeout without hiding other failures", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech")!, false);
+  const resultSummary = [
+    "| Sheet | Drawn By | Checked By |",
+    "| M000 | Author | Checker |",
+    "| M206 | Author | Checker |",
+    "Against expected EP / QA:",
+    "Mechanical sheets audited: 17",
+    "Sheets with one or more mismatches: 17",
+    "Total field mismatches: 34",
+    "No changes were made."
+  ].join("\n");
+  const assignment_projection = {
+    assignments: [{
+      lifecycle: { phase: "complete" },
+      plan: { steps: [{ result_summary: resultSummary }] },
+      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }]
+  };
+  const recovered = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: false,
+    error: "Computer run exceeded 300000ms.",
+    assistant_message: "",
+    effect_state: "not_dispatched",
+    assignment_projection
+  });
+  assert.equal(recovered.tier, "verified");
+  assert.equal(recovered.answer_assertion_passed, true);
+  assert.equal(recovered.verification_basis, "fixture_semantic_oracle");
+
+  const unrelatedFailure = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: false,
+    error: "The Revit call timed out.",
+    assistant_message: "",
+    effect_state: "not_dispatched",
+    assignment_projection
+  });
+  assert.equal(unrelatedFailure.tier, "failed");
 });
 
 test("durable validation and successful-action wrappers do not impersonate model-state verification", () => {
