@@ -161,6 +161,46 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
   for (const pattern of pdf.answer_assertions.must_match) {
     assert.match(pdfAnswer, new RegExp(pattern, "i"));
   }
+
+  const capturedPdf = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(pdf, false), {
+    ok: true,
+    assistant_message: [
+      "Order: **M100, M101, M102, M103, M104, M105, M106**",
+      "Mode: **Combined, Color**",
+      "Expected pages: **7 sheets → 7-page PDF**",
+      "Output: `TEST-MECHANICAL-ISSUE.pdf`",
+      "A content hash cannot be verified without generated file bytes.",
+      "Dry-run/preflight only; no file created."
+    ].join("\n"),
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/export-pdf", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live tool revit_export_pdf completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  });
+  assert.equal(capturedPdf.answer_assertion_passed, true);
+  assert.equal(capturedPdf.tier, "verified");
+
+  const capturedViewNoop = evaluateGeneralRevitCapabilityAttempt(viewNames, {
+    ok: true,
+    assistant_message: [
+      "Preview complete — no changes needed",
+      "The Level 2 HVAC views already match the pattern used on Levels 3–5:",
+      "Ceiling Plan **L2** — ID `1371629`; Floor Plan **L2** — ID `9948`.",
+      "The dry-run reported 0 renames, 2 unchanged, 0 errors. Nothing was applied."
+    ].join("\n"),
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+      verification: { state: "verified", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "apply", completion_mode: "verified_noop" }
+    }] }
+  });
+  assert.equal(capturedViewNoop.answer_assertion_passed, true);
+  assert.equal(capturedViewNoop.tier, "verified");
 });
 
 test("the MEP peer oracle rejects the captured Supply-to-Return dry-run despite a successful native receipt", () => {
@@ -638,6 +678,19 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   assert.equal(exactReplayWording.tier, "verified");
   assert.equal(exactReplayWording.answer_assertion_passed, true);
 
+  const capturedLiveWording = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "Mechanical sheets: **17**",
+      "Sheet numbers containing dashes: **0**",
+      "Proposed mappings: none. Ordering and uniqueness remain unchanged.",
+      "No sheets were renamed."
+    ].join("\n"),
+    assignment_projection: durableNoop
+  });
+  assert.equal(capturedLiveWording.tier, "verified");
+  assert.equal(capturedLiveWording.answer_assertion_passed, true);
+
   const proseOnly = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message,
@@ -705,6 +758,25 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
   });
   assert.equal(exactLatestLiveReceipt.answer_assertion_passed, true);
   assert.equal(exactLatestLiveReceipt.tier, "verified");
+
+  const capturedLiveReceipt = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "Previewed mechanical plan **L2** (view **9948**); nothing was applied.",
+      "Bottom: **L2 + 0′**; View Depth: **L2 + 0′**; Underlay: **None**.",
+      "The rolled-back preview confirmed the smallest defensible setting is already present, so this is a verified no-op."
+    ].join("\n"),
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+        verification: { state: "verified", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "preview", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(capturedLiveReceipt.answer_assertion_passed, true);
+  assert.equal(capturedLiveReceipt.tier, "verified");
 });
 
 test("Snowdon family evolution read-only plan requires fixture-grounded identity and dimensions", () => {
@@ -752,6 +824,37 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
   });
   assert.equal(exactReplay.answer_assertion_passed, true);
   assert.equal(exactReplay.tier, "verified");
+
+  const capturedMetricReceipt = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: [
+      "Instance: **HRU202** — ID `1365188`",
+      "Family: **HeatRecoveryUnit** — ID `1537998`",
+      "Source type: **Heat Recovery Unit (HRU)** — ID `1365172`",
+      "Width: 40 in; Length: 1230 mm",
+      "Nothing was edited, saved, reloaded, or swapped."
+    ].join("\n"),
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] }, execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(capturedMetricReceipt.answer_assertion_passed, true);
+  assert.equal(capturedMetricReceipt.tier, "verified");
+
+  const wrongMetricReceipt = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Instance HRU202 ID 1365188; Family HeatRecoveryUnit; Source type Heat Recovery Unit (HRU) ID 1365172; Width 40 in; Length 1200 mm; nothing was edited, saved, reloaded, or swapped.",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] }, execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(wrongMetricReceipt.answer_assertion_passed, false);
 });
 
 test("Snowdon schedule-cell and titleblock readback oracles accept the captured live receipts", () => {
@@ -1253,6 +1356,32 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(freshLiveTableVerified.tier, "verified");
   assert.equal(freshLiveTableVerified.verified, true);
+
+  const capturedLiveResponse = [
+    "Existing source: **Heat Recovery Unit Summary** — schedule ID **1488968**",
+    "Schedule total: **37 HRUs**; independent model query: **37 matching Mechanical Equipment instances**",
+    "Current marks: **37 HRU**, **0 ERU**, **0 blank**, **0 duplicates**",
+    "Model count and schedule total reconcile exactly: **37 = 37**",
+    "## Temporary QA schedule plan",
+    "Fields: Mark, Family, Type. Filter: Mark begins with `ERU`. Sort: Mark ascending.",
+    "Acceptance: schedule row count = independent ERU model count; no blank Marks; no duplicate Marks.",
+    "Family and Type values currently remain **HeatRecoveryUnit / Heat Recovery Unit (HRU)**.",
+    "The expected state is **0 HRU and 37 ERU**, with the QA schedule showing **37 rows**.",
+    "No schedule was created or configured."
+  ].join("\n");
+  const capturedLiveVerified = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: capturedLiveResponse
+  });
+  assert.equal(capturedLiveVerified.tier, "verified");
+  assert.equal(capturedLiveVerified.answer_assertion_passed, true);
+
+  const capturedWrongExpectedCount = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: capturedLiveResponse.replace("QA schedule showing **37 rows**", "QA schedule showing **36 rows**")
+  });
+  assert.equal(capturedWrongExpectedCount.tier, "failed");
+  assert.equal(capturedWrongExpectedCount.answer_assertion_passed, false);
 
   for (const adversarialResponse of [
     freshLiveTableResponse.replace("ERU—literal family/type/name/Mark/text | **0**", "ERU—literal family/type/name/Mark/text | **5**"),
