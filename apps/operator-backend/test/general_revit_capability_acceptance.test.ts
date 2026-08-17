@@ -286,13 +286,15 @@ No native type-change dry-run was executed, and nothing was applied or saved.`
   assert.equal(vague.fixture_blocker_accepted, false);
 });
 
-test("both backend agent prompts prefer sheet-aware parameter readback before generic parameter scans", () => {
+test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {
   const codexPrompt = source("operator-backend/src/brains/codex_brain.ts");
   const openAiPrompt = source("operator-backend/src/brains/openai_brain.ts");
   for (const prompt of [codexPrompt, openAiPrompt]) {
-    assert.match(prompt, /Sheet\/titleblock parameter reads and verification must be sheet-aware/);
-    assert.match(prompt, /do not probe sheet or titleblock element IDs with generic/);
-    assert.match(prompt, /Fall back only when the sheet-aware primitive returns no match/);
+    assert.match(prompt, /Sheet\/titleblock parameter reads and verification must preserve sheet identity/);
+    assert.match(prompt, /For two or more sheets/);
+    assert.match(prompt, /one bounded [`/]?revit[_/-]get-parameters|one bounded [`/]?revit_get_parameters/);
+    assert.match(prompt, /do not fan out one call per sheet or parameter/);
+    assert.match(prompt, /only for bulk rows that are missing or ambiguous/);
   }
 });
 
@@ -1518,6 +1520,36 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(capturedLiveVerified.tier, "verified");
   assert.equal(capturedLiveVerified.answer_assertion_passed, true);
+
+  const naturalLiveResponse = [
+    "Source: Heat Recovery Unit Summary (schedule ID 1488968).",
+    "Existing fields include Mark, Family, Type. Schedule reports 37 HRU records.",
+    "Independent model query confirms 37 HRU and 0 ERU mechanical-equipment instances.",
+    "All 37 Marks are populated and unique; no current HRU-to-ERU Mark collisions detected.",
+    "Complete QA schedule plan: retain only Mark, Family, Type; filter Mark begins with ERU; Sort Mark ascending.",
+    "After migration require ERU Mark count: 37 and Temporary schedule rows: 37, then reconcile returned element IDs against the schedule rows.",
+    "No schedule was created or configured."
+  ].join("\n");
+  const naturalLiveVerified = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: naturalLiveResponse
+  });
+  assert.equal(naturalLiveVerified.tier, "verified");
+  assert.equal(naturalLiveVerified.answer_assertion_passed, true);
+
+  for (const adversarialNaturalResponse of [
+    naturalLiveResponse.replace("Schedule reports 37 HRU records", "Schedule reports 36 HRU records"),
+    naturalLiveResponse.replace("37 HRU and 0 ERU", "37 HRU and 5 ERU"),
+    naturalLiveResponse.replace("All 37 Marks are populated and unique", "One Mark is blank and duplicates remain"),
+    naturalLiveResponse.replace("ERU Mark count: 37 and Temporary schedule rows: 37", "ERU Mark count: 36 and Temporary schedule rows: 36")
+  ]) {
+    const adversarialNaturalEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: adversarialNaturalResponse
+    });
+    assert.equal(adversarialNaturalEvaluation.tier, "failed");
+    assert.equal(adversarialNaturalEvaluation.verified, false);
+  }
 
   const capturedWrongExpectedCount = evaluateGeneralRevitCapabilityAttempt(entry, {
     ...attempt,
