@@ -200,12 +200,13 @@ test("Codex instructions diagnose cross-floor visibility beyond view depth", () 
   assert.match(instructions, /Never attribute below-floor visibility to View Depth alone/);
 });
 
-test("Codex instructions route sheet parameter readback directly through sheet-aware evidence", () => {
+test("Codex instructions use bounded bulk sheet parameter readback and target-aware exception verification", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /Sheet\/titleblock parameter reads and verification must be sheet-aware/);
-  assert.match(instructions, /call `revit_verify_parameter_on_sheet` directly/);
-  assert.match(instructions, /do not probe sheet or titleblock element IDs with generic `revit_get_parameters` first/);
-  assert.match(instructions, /Fall back only when the sheet-aware primitive returns no match/);
+  assert.match(instructions, /Sheet\/titleblock parameter reads and verification must preserve sheet identity/);
+  assert.match(instructions, /For one sheet, call `revit_verify_parameter_on_sheet` directly/);
+  assert.match(instructions, /For two or more sheets[\s\S]*one bounded `revit_get_parameters` call/);
+  assert.match(instructions, /do not fan out one call per sheet or parameter/);
+  assert.match(instructions, /only for bulk rows that are missing or ambiguous/);
 });
 
 test("core Revit lifecycle recovery is available before deferred capability discovery", () => {
