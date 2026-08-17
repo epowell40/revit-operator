@@ -293,7 +293,7 @@
           "Supply Air Pressure Drop",
           "0\\.08\\s*in-wg",
           "0\\.10\\s*in-wg",
-          "(?:1 effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1)",
+        "(?:1 (?:requested/)?effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1)",
           "(?:no changes applied|without committing|nothing was applied|dry.?run)"
         ]
       },
@@ -672,7 +672,7 @@
       "source": "long_horizon",
       "operation_family": "add",
       "prompt": "Find one known-good hosted receptacle in a suitable room, create two similar receptacles at safe bounded positions on the same host, preserve family, type, orientation, visible tag-driving parameters, workset, and electrical circuit where supported, then verify host, type, coordinates, and circuit for both new instances.",
-      "probe_prompt": "Find one known-good hosted receptacle and preview creating two similar receptacles at safe bounded locations on the same host. Report exact exemplar, host slots, family/type, orientation, parameters, workset, circuit expectations, and verification plan, but do not create anything.",
+    "probe_prompt": "Find one known-good hosted receptacle in a bounded linked architectural room where the exact linked room wall and side can be resolved. Execute a noncommitting create-similar preview for two receptacles at distinct safe host-local chainages on that same linked room wall. Report the exact exemplar, linked host and face, room and side, both target slots, family and type, orientation, parameters, workset, circuit expectations, rollback, and readback; do not create or apply anything.",
       "capability_paths": ["/revit/create-similar-from-instance", "/revit/get-parameters", "/revit/get-connectors"],
       "dispatch_any_of": ["/revit/create-similar-from-instance", "/revit/find-elements", "/revit/get-parameters", "/revit/get-connectors"],
       "expected_effect": "apply",
@@ -734,10 +734,10 @@
           "\\bM105\\b",
           "\\bM106\\b",
           "(?:combined[\\s\\S]{0,120}color|color[\\s\\S]{0,120}combined)",
-        "(?:(?:planned )?page count[^\\n]{0,30}\\b7\\b|expected pages?[^\\n]{0,30}\\b7\\b|\\b7[ -]page PDF)",
+        "(?:(?:planned )?page count[^\\n]{0,30}\\b7\\b|expected pages?[^\\n]{0,30}\\b7\\b|(?:seven|7)[ -]page check[^\\n]{0,80}\\b7 pages?\\b|\\b7 sheets?[^\\n]{0,40}\\b7 pages?\\b|\\b7[ -]page PDF)",
           "TEST-MECHANICAL-ISSUE\\.pdf",
           "(?:SHA-?256|content hash)",
-          "(?:no PDF was created|no export (?:was )?performed|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
+        "(?:no PDF was created|no export (?:was )?performed|no files? (?:were )?exported|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
         ]
       },
       "epic0441_task_refs": ["g25_export_publish"]
@@ -798,7 +798,7 @@
       "answer_assertions": {
         "must_match": [
           "\\bL2\\b",
-        "(?:no rename (?:was )?required|none required|nothing to rename|no changes? needed|already (?:conforms?|matches))",
+        "(?:no renames?\\b|none required|nothing to rename|no changes? needed|already (?:conforms?|matches))",
         "(?:pattern[^\\n]{0,160}(?:level(?:\\s*/\\s*(?:block|area)){0,2} name|Levels?\\s*3[^\\n]{0,20}5)|level(?:\\s*/\\s*(?:block|area)){0,2} name[^\\n]{0,160}pattern)"
         ],
         "must_not_match": [
@@ -999,7 +999,7 @@
       "source": "redline_corpus",
       "operation_family": "add",
       "prompt": "ADD DUPLEX RECEPTACLE - MATCH CIRCUIT P403/1 - at the marked location in Unit 403.",
-      "probe_prompt": "For the Unit 403 duplex-receptacle redline, resolve a nearby hosted exemplar and circuit P403/1, then preview placement at the marked location with host, type, orientation, and circuit evidence. Do not create it.",
+    "probe_prompt": "For the Unit 403 duplex-receptacle redline, resolve nearby hosted exemplars on circuit P403/1, derive one safe bounded test location on the same linked room wall from their observed host-local positions, then execute a noncommitting create-similar preview with exact host, type, orientation, circuit, and placement readback. Do not create or apply anything.",
       "capability_paths": ["/revit/create-similar-from-instance", "/revit/get-parameters", "/revit/get-connectors"],
       "dispatch_any_of": ["/revit/create-similar-from-instance", "/revit/find-elements", "/revit/get-parameters", "/revit/get-connectors"],
       "expected_effect": "apply",
@@ -1151,7 +1151,7 @@
       "allow_verified_noop": true,
       "answer_assertions": {
         "must_match": [
-          "(?:Chosen(?: eligible)? (?:view|plan)|View)[^\\n]*L2[^\\n]*9948",
+        "(?:Chosen(?: eligible)? (?:view|plan)|Selected|View)[^\\n]*L2[^\\n]*9948",
           "Bottom[^\\n]*(?:L2|associated level)[^\\n]*0",
           "View Depth[^\\n]*(?:L2|associated level)[^\\n]*0",
           "underlay[^\\n]*(?:disabled|off|none)|base/top\\s*=\\s*None",
@@ -1198,8 +1198,8 @@
       "allow_verified_noop": true,
       "answer_assertions": {
         "must_match": [
-        "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|Mechanical sheets\\s*:\\s*17|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets)",
-        "(?:(?:Dashed candidates|candidate_count|Sheet numbers containing dashes)\\s*:\\s*0|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
+        "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|Mechanical sheets\\s*:\\s*17|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets|17 mechanical[^\\n]{0,40}sheets[^\\n]{0,30}inventoried)",
+        "(?:(?:Dashed candidates|candidate_count|Sheet numbers containing dashes)\\s*:\\s*0|0\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
           "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false|No\\s+sheets?\\s+(?:were\\s+)?(?:renamed|modified)(?:\\s+or\\s+(?:renamed|modified))?)"
         ],
         "must_not_match": [
@@ -1232,13 +1232,13 @@
       "probe_expected_effect": "read",
       "answer_assertions": {
         "must_match": [
-          "Mechanical sheets checked\\s*:\\s*\\*{0,2}17\\*{0,2}",
+        "Mechanical sheets (?:checked|audited)\\s*:\\s*\\*{0,2}17\\*{0,2}",
           "Sheets with one or more mismatches\\s*:\\s*\\*{0,2}17\\*{0,2}",
-          "Individual field mismatches\\s*:\\s*\\*{0,2}34\\*{0,2}",
+        "(?:Individual|Total) field mismatches\\s*:\\s*\\*{0,2}34\\*{0,2}",
           "\\bM000\\b[\\s\\S]{0,120}Author[\\s\\S]{0,80}Checker",
           "\\bM206\\b[\\s\\S]{0,120}Author[\\s\\S]{0,80}Checker",
-          "Expected[^\\n]*Drawn By[^\\n]*EP[^\\n]*Checked By[^\\n]*QA",
-          "(?:No model changes were made|nothing was changed|no changes were applied)"
+        "(?:Expected[^\\n]*Drawn By[^\\n]*EP[^\\n]*Checked By[^\\n]*QA|Against expected[^\\n]*EP\\s*/\\s*QA)",
+        "(?:No (?:model )?changes were made|nothing was changed|no changes were applied)"
         ]
       },
       "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]

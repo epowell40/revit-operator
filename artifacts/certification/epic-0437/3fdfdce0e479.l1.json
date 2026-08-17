@@ -171,7 +171,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:3fd212f8b2f4a50d79a22e8e7213c622f60bb64bf53b823371434dede5f5f1b5"
+      "sha256": "sha256:99992d3cfbdee29f81b61d6e9893fd5dbc511549853d211f48f33549fee99c4a"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
@@ -316,7 +316,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:b494d79ceeccfdd6d735bb155b5b7dc4f7e96cb1307dcfd45ef0323c4b83745b"
+      "sha256": "sha256:7fd47103c9dff9a98369afcc089c0d9a18d5f040bacf70e23c525fdc3f81bda1"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -448,7 +448,7 @@
     },
     {
       "path": "apps/operator-backend/src/agent_response_policy.ts",
-      "sha256": "sha256:8b76880a5242fca80aa996d7957a5145711d28e81c87af0ffc14b4620be1bc1f"
+      "sha256": "sha256:087b231cda0df6242b03a797f29075d7742cf01fb35b2adada1d92d3fcc4e15d"
     },
     {
       "path": "apps/operator-backend/src/allowlist.ts",
@@ -544,7 +544,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:53e4c48c7862b928832d44e985d63251d97e425bba8afb441dd22bdb4923da49"
+      "sha256": "sha256:9ffacb19144aec79e814e8ea2a403399b2ee280d829335ecbc6c9d8f47500fd4"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_sample_fixtures.ts",
@@ -1781,7 +1781,7 @@
     },
     {
       "path": "apps/operator-backend/test/agent_response_policy.test.ts",
-      "sha256": "sha256:0e561523e2280f772f61e299461b49e81e0f4e3b4c6c38371d313e2c3fcdb7bf"
+      "sha256": "sha256:a6aacd3374c2fa7fc538fb0255511b698724cdc7413ce367b59d76c949e8da1e"
     },
     {
       "path": "apps/operator-backend/test/allowlist.test.ts",
@@ -2285,7 +2285,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:2c47b3f3fbd2a302056978f9671cf15df48e943600c5bf5a281bd1c8b49e48a7"
+      "sha256": "sha256:9b46b3380a2f3af7660c701aa9696af456f5c9b54d4f9563c8ebbe5b952e6cf0"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -4613,7 +4613,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:2703a169b1075138d08adc94f2aa94a4478a097dd54666189827004728154d25",
+  "inputs_hash": "sha256:0c0e84af9c79b51babb992e0a8bb0ae01114973f33206cb61126871274b6b665",
   "result": {
     "passed": true,
     "checks": [

@@ -432,6 +432,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "revit_repair_mep_connectors",
     "revit_dry_run_repair_mep_connectors",
     "revit_list_schedules",
+    "revit_get_parameters",
     "revit_count_sheets_certified",
     "revit_update_schedule_cell",
     "revit_replace_schedule_values",
@@ -443,9 +444,13 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const dryConnectorRepairTool = tools.tools.find(tool => tool.name === "revit_dry_run_repair_mep_connectors");
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
+  const getParametersTool = tools.tools.find(tool => tool.name === "revit_get_parameters");
   assert.deepEqual((sheetTool?.inputSchema as any)?.properties?.action?.enum, ["list", "count"]);
   assert.deepEqual((safeReadTool?.inputSchema as any)?.properties, {});
   assert.equal((safeReadTool?.inputSchema as any)?.additionalProperties, false);
+  assert.equal((getParametersTool?.inputSchema as any)?.properties?.elementIds?.anyOf?.length, 2);
+  assert.equal((getParametersTool?.inputSchema as any)?.properties?.names?.items?.type, "string");
+  assert.equal((getParametersTool?.inputSchema as any)?.properties?.limit?.maximum, 500);
   for (const tool of [connectorRepairTool, dryConnectorRepairTool]) {
     const connectorRepairSchema = JSON.stringify(tool?.inputSchema ?? {});
     assert.doesNotMatch(connectorRepairSchema, /"\$ref"/);

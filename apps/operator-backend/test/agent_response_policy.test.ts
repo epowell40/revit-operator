@@ -32,6 +32,9 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /candidate-specific preview fails[\s\S]*bounded search for another eligible candidate/i);
   assert.match(policy, /create-schedule clone contract in dry-run mode/i);
   assert.match(policy, /configure-schedule dry-run contract/i);
+  assert.match(policy, /inventory the bounded schedule list[\s\S]*narrow name guess is not evidence/i);
+  assert.match(policy, /create-similar preview[\s\S]*dryRun:true, apply:false[\s\S]*linked-face exemplars/i);
+  assert.match(policy, /multi-element parameter audit[\s\S]*revit_get_parameters[\s\S]*elementIds plus exact names/i);
   assert.match(policy, /current source and target counts[\s\S]*expected post-change target\/schedule count[\s\S]*blank values[\s\S]*duplicate\/collision risk/i);
   assert.match(policy, /find an eligible view, sheet, schedule, element, or family yourself/i);
   assert.match(policy, /state the most likely interpretation/i);
