@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
+import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -112,18 +113,8 @@ function isConceptualQuestion(text: string): boolean {
   return !liveCue && /\b(?:explain|what (?:does|is|are)|how (?:does|do|is|are|can|could|should|would)|why (?:does|do|is|are)|should (?:i|we)|tell me about)\b/i.test(text);
 }
 
-const MUTATION_VERB_SOURCE = [
-  "add", "adjust", "align", "annotate", "apply", "assign", "change", "connect", "convert", "copy", "create",
-  "cut", "delete", "dimension", "disable", "disconnect", "draw", "duplicate", "edit", "enable", "export", "extend", "filter", "fix",
-  "group", "hide", "import", "increase", "isolate", "join", "link", "load", "lock", "make", "match", "mirror",
-  "modify", "move", "offset", "pin", "place", "print", "purge", "reduce", "reload", "remove", "rename", "replace",
-  "resize", "rotate", "route", "run", "set", "sort", "split", "step", "sync", "tag", "trim", "unhide", "unload",
-  "unlock", "unpin", "update"
-].join("|");
-
 function containsMutationVerb(text: string): boolean {
-  return new RegExp("\\b(?:" + MUTATION_VERB_SOURCE + ")\\b").test(text)
-    || /\b(?:clean\s+up|correct|fill\s+(?:in|out)|mark|populate|put|relocate|renumber|reroute|rework|revise|turn\s+(?:off|on))\b/.test(text);
+  return hasExplicitMutationVerb(text);
 }
 
 const COORDINATED_GLOBAL_NO_WRITE = new RegExp(

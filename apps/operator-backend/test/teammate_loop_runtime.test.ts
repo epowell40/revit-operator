@@ -194,6 +194,24 @@ test("an authorized model edit remains a mutation when the user says not to save
   assert.equal(saveOnly.write_authorized, false);
 });
 
+test("concise restoration and common Revit work verbs authorize writes without magic phrasing", () => {
+  const prompts = [
+    "Restore sheet M000 name to Cover Sheet and verify the restored name in the live Revit model.",
+    "Revert the Level 2 plan to its previous view template.",
+    "Reset the enlarged plan scale to 1/8 inch.",
+    "Configure the equipment schedule and clear its obsolete filter.",
+    "Rehost the selected receptacle, crop the view, and swap the title block.",
+    "Plot the mechanical sheets to PDF."
+  ];
+  for (const prompt of prompts) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "mutation", prompt);
+    assert.equal(contract.no_write, false, prompt);
+    assert.equal(contract.write_authorized, true, prompt);
+    assert.equal(contract.verification_required, true, prompt);
+  }
+});
+
 test("structured contract distinguishes teammate modes and fails closed on stale canonical context", () => {
   const conceptual = buildTeammateTurnContract(request("What does a shock arrestor do?"));
   const location = buildTeammateTurnContract(request("Where are the shock arrestors? Provide a room number for each device."));
