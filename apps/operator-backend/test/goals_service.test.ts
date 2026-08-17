@@ -894,7 +894,11 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   for (const prompt of [
     "Fill the Comments parameter on every mechanical equipment instance.",
     "Match the odd equipment tag to the adjacent tags.",
-    "Turn off Rooms in the Level 4 HVAC view."
+    "Turn off Rooms in the Level 4 HVAC view.",
+    "Restore sheet M000 name to Cover Sheet and verify the restored name in the live Revit model.",
+    "Revert the Level 2 plan to its previous view template.",
+    "Reset the enlarged plan scale to 1/8 inch.",
+    "Clear the obsolete sheet comments and adjust the view range."
   ]) {
     assert.equal(classifyAutoGoalRequest(prompt).requestedEffect, "apply", prompt);
   }
