@@ -306,6 +306,54 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("RolledBack", rollback.Status);
         }
 
+        [Theory]
+        [InlineData("{\"kind\":\"createDependentView\",\"sourceViewId\":1363403,\"resultRef\":\"enlarged\"}")]
+        [InlineData("{\"kind\":\"setViewCrop\",\"viewId\":\"$enlarged\",\"cropBox\":{\"min\":{\"x\":0,\"y\":0},\"max\":{\"x\":10,\"y\":8}}}")]
+        [InlineData("{\"kind\":\"setViewScale\",\"viewRef\":\"enlarged\",\"scale\":48}")]
+        [InlineData("{\"kind\":\"createSheet\",\"number\":\"M1.10\",\"resultRef\":\"sheet\"}")]
+        [InlineData("{\"kind\":\"placeView\",\"sheetId\":\"$sheet\",\"viewId\":\"$enlarged\",\"x\":1.5,\"y\":1.0,\"resultRef\":\"viewport\"}")]
+        public void ViewAndSheetCompositionShapesAreAdmitted(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            var warnings = new List<string>();
+
+            var outcome = TransactionActionRunner.ValidateAction(document.RootElement, warnings, 2);
+
+            Assert.Empty(outcome.Errors);
+            Assert.Empty(warnings);
+        }
+
+        [Theory]
+        [InlineData("{\"kind\":\"createDependentView\",\"sourceViewId\":0}")]
+        [InlineData("{\"kind\":\"setViewCrop\",\"viewId\":\"$missing\"}")]
+        [InlineData("{\"kind\":\"setViewScale\",\"viewId\":\"$view\",\"scale\":0}")]
+        [InlineData("{\"kind\":\"placeView\",\"sheetId\":\"$sheet\"}")]
+        [InlineData("{\"kind\":\"createSheet\",\"resultRef\":\"bad\\nref\"}")]
+        public void InvalidViewAndSheetCompositionShapesFailClosed(string json)
+        {
+            using var document = JsonDocument.Parse(json);
+            var warnings = new List<string>();
+
+            var outcome = TransactionActionRunner.ValidateAction(document.RootElement, warnings, 4);
+
+            Assert.NotEmpty(outcome.Errors);
+            Assert.NotEmpty(warnings);
+        }
+
+        [Fact]
+        public void ActionReferencesAreBackwardOnlyAndCannotBeRebound()
+        {
+            var context = new TransactionActionRunner.ActionExecutionContext();
+
+            Assert.False(context.TryResolve("$enlarged", out _));
+            Assert.True(context.TryRegister("enlarged", 1363403, out var firstError));
+            Assert.Equal(string.Empty, firstError);
+            Assert.True(context.TryResolve("$enlarged", out var resolved));
+            Assert.Equal(1363403, resolved);
+            Assert.False(context.TryRegister("$enlarged", 1363404, out var duplicateError));
+            Assert.Contains("already bound", duplicateError);
+        }
+
         private static TransactionActionRunner.TransactionOperationReceipt SuccessfulReceipt(string status)
         {
             var receipt = new TransactionActionRunner.TransactionOperationReceipt { Attempted = true };

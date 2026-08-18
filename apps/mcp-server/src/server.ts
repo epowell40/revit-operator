@@ -2751,6 +2751,8 @@ server.tool("revit_align_room_tops_to_ceilings", "Align room top elevation to th
   }
 );
 
+const transactionElementReferenceSchema = z.union([z.number().int().positive(), z.string().min(1)]);
+const transactionPointSchema = z.object({ x: z.number(), y: z.number(), z: z.number().optional() });
 const transactionActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("delete"), ids: z.array(z.number()) }),
   z.object({
@@ -2769,9 +2771,42 @@ const transactionActionSchema = z.discriminatedUnion("kind", [
       parameters: z.record(z.string()).optional(),
     })),
   }),
+  z.object({
+    kind: z.literal("createDependentView"),
+    sourceViewId: transactionElementReferenceSchema,
+    newName: z.string().optional(),
+    resultRef: z.string().min(1).optional(),
+  }),
+  z.object({
+    kind: z.literal("setViewCrop"),
+    viewId: transactionElementReferenceSchema,
+    cropBox: z.object({ min: transactionPointSchema, max: transactionPointSchema }),
+    disableScopeBox: z.boolean().optional(),
+    cropBoxVisible: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("setViewScale"),
+    viewId: transactionElementReferenceSchema,
+    scale: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal("createSheet"),
+    name: z.string().optional(),
+    number: z.string().optional(),
+    titleBlockId: z.number().int().optional(),
+    resultRef: z.string().min(1).optional(),
+  }),
+  z.object({
+    kind: z.literal("placeView"),
+    sheetId: transactionElementReferenceSchema,
+    viewId: transactionElementReferenceSchema,
+    x: z.number().optional(),
+    y: z.number().optional(),
+    resultRef: z.string().min(1).optional(),
+  }),
 ]);
 
-server.tool("revit_transaction_plan", "Plan actions in a rolled-back transaction; returns impact + warnings.",
+server.tool("revit_transaction_plan", "Plan composable model actions in one rolled-back transaction. Created views/sheets may declare resultRef and later actions may use '$resultRef' as an id. Supports delete, setParameters, placeFamilies, createDependentView, setViewCrop, setViewScale, createSheet, and placeView.",
   { actions: z.array(transactionActionSchema) },
   async ({ actions }) => {
     try {
@@ -2781,7 +2816,7 @@ server.tool("revit_transaction_plan", "Plan actions in a rolled-back transaction
   }
 );
 
-server.tool("revit_transaction_apply", "Apply actions in a committed transaction group; returns success + transactionId.",
+server.tool("revit_transaction_apply", "Apply the same composable action graph in one committed transaction group; returns success, per-action result refs, transactionId, and diff evidence.",
   { actions: z.array(transactionActionSchema) },
   async ({ actions }) => {
     try {

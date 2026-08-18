@@ -108,6 +108,7 @@ namespace RevitBridge.Logic.Handlers
                             throw new InvalidOperationException(noActionsError);
                         }
 
+                        var actionContext = new TransactionActionRunner.ActionExecutionContext();
                         for (int i = 0; i < actions.Count; i++)
                         {
                             var action = actions[i];
@@ -128,7 +129,7 @@ namespace RevitBridge.Logic.Handlers
                                     try
                                     {
                                         RecordStart(t, actionReceipt.Start, $"action[{i}] transaction");
-                                        actionReceipt.Outcome = TransactionActionRunner.ExecuteAction(doc, action, impact, warnings, i);
+                                        actionReceipt.Outcome = TransactionActionRunner.ExecuteAction(doc, action, impact, warnings, i, actionContext);
                                         if (!actionReceipt.Outcome.Success)
                                         {
                                             throw new InvalidOperationException(

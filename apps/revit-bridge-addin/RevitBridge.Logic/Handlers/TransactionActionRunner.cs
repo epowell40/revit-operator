@@ -16,6 +16,8 @@ namespace RevitBridge.Logic.Handlers
         internal sealed class ActionOutcome
         {
             private readonly List<string> _errors = new List<string>();
+            private readonly Dictionary<string, long> _resultRefs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            private readonly HashSet<long> _producedElementIds = new HashSet<long>();
 
             internal ActionOutcome(int index, string kind)
             {
@@ -28,10 +30,18 @@ namespace RevitBridge.Logic.Handlers
             internal int AttemptedOperations { get; private set; }
             internal int SucceededOperations { get; private set; }
             internal IReadOnlyList<string> Errors => _errors;
+            internal IReadOnlyDictionary<string, long> ResultRefs => _resultRefs;
+            internal IReadOnlyCollection<long> ProducedElementIds => _producedElementIds;
             internal bool Success => _errors.Count == 0 && AttemptedOperations > 0 && SucceededOperations == AttemptedOperations;
 
             internal void Attempt() => AttemptedOperations++;
             internal void Succeed() => SucceededOperations++;
+
+            internal void RecordResult(string reference, long elementId)
+            {
+                if (!string.IsNullOrWhiteSpace(reference)) _resultRefs[reference] = elementId;
+                if (elementId > 0) _producedElementIds.Add(elementId);
+            }
 
             internal void Fail(List<string> warnings, string message)
             {
@@ -47,8 +57,49 @@ namespace RevitBridge.Logic.Handlers
                 attemptedOperations = AttemptedOperations,
                 succeededOperations = SucceededOperations,
                 failedOperations = Math.Max(0, AttemptedOperations - SucceededOperations),
-                errors = _errors.ToArray()
+                errors = _errors.ToArray(),
+                resultRefs = _resultRefs,
+                producedElementIds = _producedElementIds.OrderBy(value => value).ToArray()
             };
+        }
+
+        internal sealed class ActionExecutionContext
+        {
+            private readonly Dictionary<string, long> _references = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+            internal bool TryRegister(string reference, long elementId, out string error)
+            {
+                error = string.Empty;
+                var key = NormalizeReference(reference);
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    error = "resultRef must be a non-empty single-line token.";
+                    return false;
+                }
+                if (elementId <= 0)
+                {
+                    error = $"resultRef '{key}' cannot bind a non-positive element id.";
+                    return false;
+                }
+                if (_references.ContainsKey(key))
+                {
+                    error = $"resultRef '{key}' is already bound by an earlier action.";
+                    return false;
+                }
+                _references[key] = elementId;
+                return true;
+            }
+
+            internal bool TryResolve(string reference, out long elementId)
+            {
+                return _references.TryGetValue(NormalizeReference(reference), out elementId);
+            }
+
+            internal static string NormalizeReference(string reference)
+            {
+                var value = (reference ?? string.Empty).Trim();
+                return value.StartsWith("$", StringComparison.Ordinal) ? value.Substring(1) : value;
+            }
         }
 
         internal sealed class TransactionOperationReceipt
@@ -101,25 +152,29 @@ namespace RevitBridge.Logic.Handlers
             };
         }
 
-        internal static void ExecuteActions(Document doc, IReadOnlyList<JsonElement> actions, Impact impact, List<string> warnings)
+        internal static IReadOnlyList<ActionOutcome> ExecuteActions(Document doc, IReadOnlyList<JsonElement> actions, Impact impact, List<string> warnings)
         {
+            var outcomes = new List<ActionOutcome>();
             if (actions == null || actions.Count == 0)
             {
                 warnings.Add("No actions provided.");
-                return;
+                return outcomes;
             }
 
+            var context = new ActionExecutionContext();
             for (int i = 0; i < actions.Count; i++)
             {
-                ExecuteAction(doc, actions[i], impact, warnings, i);
+                outcomes.Add(ExecuteAction(doc, actions[i], impact, warnings, i, context));
             }
+            return outcomes;
         }
 
-        internal static ActionOutcome ExecuteAction(Document doc, JsonElement action, Impact impact, List<string> warnings, int index)
+        internal static ActionOutcome ExecuteAction(Document doc, JsonElement action, Impact impact, List<string> warnings, int index, ActionExecutionContext? context = null)
         {
             var outcome = ValidateAction(action, warnings, index);
             if (outcome.Errors.Count > 0) return outcome;
             var kind = GetActionKind(action);
+            var executionContext = context ?? new ActionExecutionContext();
 
             switch (kind)
             {
@@ -131,6 +186,21 @@ namespace RevitBridge.Logic.Handlers
                     break;
                 case "placeFamilies":
                     ExecutePlaceFamilies(doc, action, impact, warnings, outcome, index);
+                    break;
+                case "createDependentView":
+                    ExecuteCreateDependentView(doc, action, impact, warnings, outcome, index, executionContext);
+                    break;
+                case "setViewCrop":
+                    ExecuteSetViewCrop(doc, action, impact, warnings, outcome, index, executionContext);
+                    break;
+                case "setViewScale":
+                    ExecuteSetViewScale(doc, action, impact, warnings, outcome, index, executionContext);
+                    break;
+                case "createSheet":
+                    ExecuteCreateSheet(doc, action, impact, warnings, outcome, index, executionContext);
+                    break;
+                case "placeView":
+                    ExecutePlaceView(doc, action, impact, warnings, outcome, index, executionContext);
                     break;
                 default:
                     outcome.Fail(warnings, $"Action[{index}] unknown kind '{kind}'.");
@@ -176,6 +246,26 @@ namespace RevitBridge.Logic.Handlers
                     ValidateRequiredString(action, "symbolName", actionKind, warnings, outcome, index);
                     ValidateRequiredNonEmptyArray(action, "instances", actionKind, warnings, outcome, index);
                     break;
+                case "createDependentView":
+                    ValidateRequiredIdOrRef(action, "sourceViewId", actionKind, warnings, outcome, index);
+                    ValidateOptionalResultRef(action, actionKind, warnings, outcome, index);
+                    break;
+                case "setViewCrop":
+                    ValidateRequiredIdOrRef(action, "viewId", actionKind, warnings, outcome, index);
+                    ValidateRequiredObject(action, "cropBox", actionKind, warnings, outcome, index);
+                    break;
+                case "setViewScale":
+                    ValidateRequiredIdOrRef(action, "viewId", actionKind, warnings, outcome, index);
+                    ValidateRequiredPositiveInteger(action, "scale", actionKind, warnings, outcome, index);
+                    break;
+                case "createSheet":
+                    ValidateOptionalResultRef(action, actionKind, warnings, outcome, index);
+                    break;
+                case "placeView":
+                    ValidateRequiredIdOrRef(action, "sheetId", actionKind, warnings, outcome, index);
+                    ValidateRequiredIdOrRef(action, "viewId", actionKind, warnings, outcome, index);
+                    ValidateOptionalResultRef(action, actionKind, warnings, outcome, index);
+                    break;
                 default:
                     outcome.Fail(warnings, $"Action[{index}] unknown kind '{actionKind}'.");
                     break;
@@ -216,6 +306,80 @@ namespace RevitBridge.Logic.Handlers
             {
                 outcome.Fail(warnings, $"Action[{index}] {actionKind} missing '{propertyName}'.");
             }
+        }
+
+        private static void ValidateRequiredIdOrRef(
+            JsonElement action,
+            string propertyName,
+            string actionKind,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (action.TryGetProperty(propertyName, out var property))
+            {
+                if (property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out var directId) && directId > 0) return;
+                if (property.ValueKind == JsonValueKind.String && IsValidReference(property.GetString())) return;
+            }
+
+            var referenceName = propertyName.EndsWith("Id", StringComparison.Ordinal)
+                ? propertyName.Substring(0, propertyName.Length - 2) + "Ref"
+                : propertyName + "Ref";
+            if (action.TryGetProperty(referenceName, out var reference) &&
+                reference.ValueKind == JsonValueKind.String &&
+                IsValidReference(reference.GetString()))
+            {
+                return;
+            }
+
+            outcome.Fail(warnings, $"Action[{index}] {actionKind} requires positive '{propertyName}' or a prior-action reference.");
+        }
+
+        private static void ValidateRequiredObject(
+            JsonElement action,
+            string propertyName,
+            string actionKind,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (!action.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Object)
+                outcome.Fail(warnings, $"Action[{index}] {actionKind} missing '{propertyName}' object.");
+        }
+
+        private static void ValidateRequiredPositiveInteger(
+            JsonElement action,
+            string propertyName,
+            string actionKind,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (!action.TryGetProperty(propertyName, out var property) ||
+                property.ValueKind != JsonValueKind.Number ||
+                !property.TryGetInt32(out var value) || value <= 0)
+            {
+                outcome.Fail(warnings, $"Action[{index}] {actionKind} requires positive integer '{propertyName}'.");
+            }
+        }
+
+        private static void ValidateOptionalResultRef(
+            JsonElement action,
+            string actionKind,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (!action.TryGetProperty("resultRef", out var reference)) return;
+            if (reference.ValueKind != JsonValueKind.String || !IsValidReference(reference.GetString()))
+                outcome.Fail(warnings, $"Action[{index}] {actionKind} resultRef must be a non-empty single-line token.");
+        }
+
+        private static bool IsValidReference(string? value)
+        {
+            var normalized = ActionExecutionContext.NormalizeReference(value ?? string.Empty);
+            if (string.IsNullOrWhiteSpace(normalized) || normalized.Length > 64) return false;
+            return normalized.IndexOf('\r') < 0 && normalized.IndexOf('\n') < 0;
         }
 
         internal static string GetActionKind(JsonElement action)
@@ -309,6 +473,349 @@ namespace RevitBridge.Logic.Handlers
             var s = node.GetString();
             return long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ||
                    long.TryParse(s, NumberStyles.Integer, CultureInfo.CurrentCulture, out value);
+        }
+
+        private static void ExecuteCreateDependentView(
+            Document doc,
+            JsonElement action,
+            Impact impact,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index,
+            ActionExecutionContext context)
+        {
+            outcome.Attempt();
+            if (!TryResolveElementId(action, "sourceViewId", context, out var sourceViewId, out var resolveError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] createDependentView: {resolveError}");
+                return;
+            }
+
+            var source = doc.GetElement(ElementIdCompat.Create(sourceViewId)) as View;
+            if (source == null)
+            {
+                outcome.Fail(warnings, $"Action[{index}] createDependentView: source view {sourceViewId} not found.");
+                return;
+            }
+            if (!source.CanViewBeDuplicated(ViewDuplicateOption.AsDependent))
+            {
+                outcome.Fail(warnings, $"Action[{index}] createDependentView: view {sourceViewId} cannot be duplicated as dependent.");
+                return;
+            }
+
+            try
+            {
+                var createdId = source.Duplicate(ViewDuplicateOption.AsDependent);
+                var created = doc.GetElement(createdId) as View;
+                if (created == null) throw new InvalidOperationException("Revit did not return the created dependent view.");
+                if (TryReadString(action, "newName", out var newName) || TryReadString(action, "name", out newName))
+                    created.Name = newName;
+
+                var createdValue = ElementIdCompat.GetValue(createdId);
+                impact.Added.Add(createdValue);
+                if (!RegisterActionResult(action, context, outcome, index, createdValue, warnings)) return;
+                outcome.Succeed();
+            }
+            catch (Exception ex)
+            {
+                outcome.Fail(warnings, $"Action[{index}] createDependentView failed: {ex.Message}");
+            }
+        }
+
+        private static void ExecuteSetViewCrop(
+            Document doc,
+            JsonElement action,
+            Impact impact,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index,
+            ActionExecutionContext context)
+        {
+            outcome.Attempt();
+            if (!TryResolveElementId(action, "viewId", context, out var viewId, out var resolveError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewCrop: {resolveError}");
+                return;
+            }
+            var view = doc.GetElement(ElementIdCompat.Create(viewId)) as View;
+            if (view == null)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewCrop: view {viewId} not found.");
+                return;
+            }
+            if (!action.TryGetProperty("cropBox", out var cropBox) || cropBox.ValueKind != JsonValueKind.Object)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewCrop missing cropBox object.");
+                return;
+            }
+
+            try
+            {
+                var current = view.CropBox;
+                if (current == null) throw new InvalidOperationException($"view {viewId} does not expose a crop box.");
+                if (!TryReadPoint(cropBox, "min", current.Min, out var min) || !TryReadPoint(cropBox, "max", current.Max, out var max))
+                    throw new InvalidOperationException("cropBox.min and cropBox.max require finite x/y coordinates; z is optional.");
+                if (max.X <= min.X || max.Y <= min.Y || max.Z < min.Z)
+                    throw new InvalidOperationException("cropBox maximum must be greater than minimum in X/Y and not below it in Z.");
+
+                if (TryReadBoolean(action, "disableScopeBox", out var disableScopeBox) && disableScopeBox)
+                {
+                    var scope = view.get_Parameter(BuiltInParameter.VIEWER_VOLUME_OF_INTEREST_CROP);
+                    if (scope != null && !scope.IsReadOnly && scope.StorageType == StorageType.ElementId)
+                        scope.Set(ElementId.InvalidElementId);
+                }
+
+                view.CropBox = new BoundingBoxXYZ { Transform = current.Transform, Min = min, Max = max };
+                view.CropBoxActive = true;
+                if (TryReadBoolean(action, "cropBoxVisible", out var cropVisible)) view.CropBoxVisible = cropVisible;
+                impact.Modified.Add(viewId);
+                outcome.Succeed();
+            }
+            catch (Exception ex)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewCrop failed: {ex.Message}");
+            }
+        }
+
+        private static void ExecuteSetViewScale(
+            Document doc,
+            JsonElement action,
+            Impact impact,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index,
+            ActionExecutionContext context)
+        {
+            outcome.Attempt();
+            if (!TryResolveElementId(action, "viewId", context, out var viewId, out var resolveError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewScale: {resolveError}");
+                return;
+            }
+            var view = doc.GetElement(ElementIdCompat.Create(viewId)) as View;
+            if (view == null)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewScale: view {viewId} not found.");
+                return;
+            }
+            if (!action.TryGetProperty("scale", out var scaleNode) || !scaleNode.TryGetInt32(out var scale) || scale <= 0)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewScale requires positive integer scale.");
+                return;
+            }
+
+            try
+            {
+                view.Scale = scale;
+                impact.Modified.Add(viewId);
+                outcome.Succeed();
+            }
+            catch (Exception ex)
+            {
+                outcome.Fail(warnings, $"Action[{index}] setViewScale failed: {ex.Message}");
+            }
+        }
+
+        private static void ExecuteCreateSheet(
+            Document doc,
+            JsonElement action,
+            Impact impact,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index,
+            ActionExecutionContext context)
+        {
+            outcome.Attempt();
+            try
+            {
+                var titleBlockId = -1L;
+                if (action.TryGetProperty("titleBlockId", out var titleBlockNode) && titleBlockNode.ValueKind == JsonValueKind.Number)
+                    titleBlockNode.TryGetInt64(out titleBlockId);
+                ElementId titleBlockElementId;
+                if (titleBlockId > 0)
+                {
+                    titleBlockElementId = ElementIdCompat.Create(titleBlockId);
+                    if (doc.GetElement(titleBlockElementId) == null)
+                        throw new InvalidOperationException($"title block type {titleBlockId} not found.");
+                }
+                else
+                {
+                    titleBlockElementId = new FilteredElementCollector(doc)
+                        .OfCategory(BuiltInCategory.OST_TitleBlocks)
+                        .WhereElementIsElementType()
+                        .FirstElementId();
+                }
+                if (titleBlockElementId == null || titleBlockElementId == ElementId.InvalidElementId)
+                    throw new InvalidOperationException("no title block type is loaded.");
+
+                var sheet = ViewSheet.Create(doc, titleBlockElementId);
+                if (TryReadString(action, "name", out var name)) sheet.Name = RevitTextCasePolicy.NormalizeSheetName(name);
+                if (TryReadString(action, "number", out var number)) sheet.SheetNumber = number;
+
+                var sheetId = ElementIdCompat.GetValue(sheet.Id);
+                impact.Added.Add(sheetId);
+                if (!RegisterActionResult(action, context, outcome, index, sheetId, warnings)) return;
+                outcome.Succeed();
+            }
+            catch (Exception ex)
+            {
+                outcome.Fail(warnings, $"Action[{index}] createSheet failed: {ex.Message}");
+            }
+        }
+
+        private static void ExecutePlaceView(
+            Document doc,
+            JsonElement action,
+            Impact impact,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index,
+            ActionExecutionContext context)
+        {
+            outcome.Attempt();
+            if (!TryResolveElementId(action, "sheetId", context, out var sheetId, out var sheetError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] placeView: {sheetError}");
+                return;
+            }
+            if (!TryResolveElementId(action, "viewId", context, out var viewId, out var viewError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] placeView: {viewError}");
+                return;
+            }
+            var sheetElementId = ElementIdCompat.Create(sheetId);
+            var viewElementId = ElementIdCompat.Create(viewId);
+            if (!(doc.GetElement(sheetElementId) is ViewSheet))
+            {
+                outcome.Fail(warnings, $"Action[{index}] placeView: sheet {sheetId} not found.");
+                return;
+            }
+            if (!(doc.GetElement(viewElementId) is View))
+            {
+                outcome.Fail(warnings, $"Action[{index}] placeView: view {viewId} not found.");
+                return;
+            }
+
+            var x = TryReadFiniteDouble(action, "x", out var parsedX) ? parsedX : 0.0;
+            var y = TryReadFiniteDouble(action, "y", out var parsedY) ? parsedY : 0.0;
+            try
+            {
+                if (!Viewport.CanAddViewToSheet(doc, sheetElementId, viewElementId))
+                    throw new InvalidOperationException($"view {viewId} cannot be placed on sheet {sheetId}.");
+                var viewport = Viewport.Create(doc, sheetElementId, viewElementId, new XYZ(x, y, 0));
+                var viewportId = ElementIdCompat.GetValue(viewport.Id);
+                impact.Added.Add(viewportId);
+                if (!RegisterActionResult(action, context, outcome, index, viewportId, warnings)) return;
+                outcome.Succeed();
+            }
+            catch (Exception ex)
+            {
+                outcome.Fail(warnings, $"Action[{index}] placeView failed: {ex.Message}");
+            }
+        }
+
+        private static bool RegisterActionResult(
+            JsonElement action,
+            ActionExecutionContext context,
+            ActionOutcome outcome,
+            int index,
+            long elementId,
+            List<string> warnings)
+        {
+            var automaticReference = $"action:{index}";
+            if (!context.TryRegister(automaticReference, elementId, out var automaticError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] {automaticError}");
+                return false;
+            }
+            outcome.RecordResult(automaticReference, elementId);
+
+            if (!TryReadString(action, "resultRef", out var resultReference)) return true;
+            var normalized = ActionExecutionContext.NormalizeReference(resultReference);
+            if (string.Equals(normalized, automaticReference, StringComparison.OrdinalIgnoreCase)) return true;
+            if (!context.TryRegister(normalized, elementId, out var resultError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] {resultError}");
+                return false;
+            }
+            outcome.RecordResult(normalized, elementId);
+            return true;
+        }
+
+        private static bool TryResolveElementId(
+            JsonElement action,
+            string propertyName,
+            ActionExecutionContext context,
+            out long elementId,
+            out string error)
+        {
+            elementId = 0;
+            error = string.Empty;
+            if (action.TryGetProperty(propertyName, out var node))
+            {
+                if (node.ValueKind == JsonValueKind.Number && node.TryGetInt64(out elementId) && elementId > 0) return true;
+                if (node.ValueKind == JsonValueKind.String)
+                {
+                    var value = node.GetString() ?? string.Empty;
+                    if (long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out elementId) && elementId > 0) return true;
+                    if (context.TryResolve(value, out elementId)) return true;
+                    error = $"reference '{ActionExecutionContext.NormalizeReference(value)}' is not bound by an earlier action.";
+                    return false;
+                }
+            }
+
+            var referenceName = propertyName.EndsWith("Id", StringComparison.Ordinal)
+                ? propertyName.Substring(0, propertyName.Length - 2) + "Ref"
+                : propertyName + "Ref";
+            if (action.TryGetProperty(referenceName, out var referenceNode) && referenceNode.ValueKind == JsonValueKind.String)
+            {
+                var reference = referenceNode.GetString() ?? string.Empty;
+                if (context.TryResolve(reference, out elementId)) return true;
+                error = $"reference '{ActionExecutionContext.NormalizeReference(reference)}' is not bound by an earlier action.";
+                return false;
+            }
+
+            error = $"positive '{propertyName}' or prior-action reference is required.";
+            return false;
+        }
+
+        private static bool TryReadString(JsonElement node, string propertyName, out string value)
+        {
+            value = string.Empty;
+            if (!node.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String) return false;
+            value = (property.GetString() ?? string.Empty).Trim();
+            return !string.IsNullOrWhiteSpace(value);
+        }
+
+        private static bool TryReadBoolean(JsonElement node, string propertyName, out bool value)
+        {
+            value = false;
+            if (!node.TryGetProperty(propertyName, out var property) ||
+                (property.ValueKind != JsonValueKind.True && property.ValueKind != JsonValueKind.False))
+            {
+                return false;
+            }
+            value = property.GetBoolean();
+            return true;
+        }
+
+        private static bool TryReadFiniteDouble(JsonElement node, string propertyName, out double value)
+        {
+            value = 0;
+            return node.TryGetProperty(propertyName, out var property) &&
+                   property.ValueKind == JsonValueKind.Number &&
+                   property.TryGetDouble(out value) &&
+                   !double.IsNaN(value) && !double.IsInfinity(value);
+        }
+
+        private static bool TryReadPoint(JsonElement node, string propertyName, XYZ fallback, out XYZ point)
+        {
+            point = fallback;
+            if (!node.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.Object) return false;
+            if (!TryReadFiniteDouble(property, "x", out var x) || !TryReadFiniteDouble(property, "y", out var y)) return false;
+            var z = TryReadFiniteDouble(property, "z", out var parsedZ) ? parsedZ : fallback.Z;
+            point = new XYZ(x, y, z);
+            return true;
         }
 
         private static void ExecuteDelete(Document doc, JsonElement action, Impact impact, List<string> warnings, ActionOutcome outcome, int index)
