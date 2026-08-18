@@ -93,6 +93,18 @@ test("create-view discovery exposes a conditional tagged union instead of requir
   assert.match(schemas, /rename_batch requires viewIds or nameContains/);
 });
 
+test("parameter-query discovery does not require mutually exclusive aliases or optional filters together", () => {
+  const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+  const parameterQuery = schemas.slice(
+    schemas.indexOf('if (string.Equals(p, "/revit/find-elements-by-parameter", StringComparison.OrdinalIgnoreCase))'),
+    schemas.indexOf("// Default: schema from request type when known"),
+  );
+  assert.match(schemas, /alternative request shapes/);
+  assert.match(parameterQuery, /WithRequiredFields\(SchemaFromType\(RequestTypesByPath\[p\], depth: 0\)\)/);
+  assert.doesNotMatch(parameterQuery, /WithRequiredFields\([^\n]+"parameterName"/);
+  assert.doesNotMatch(parameterQuery, /WithRequiredFields\([^\n]+"systemName"/);
+});
+
 test("view-query discovery publishes the native paging bounds used by validation", () => {
   const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
   const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));

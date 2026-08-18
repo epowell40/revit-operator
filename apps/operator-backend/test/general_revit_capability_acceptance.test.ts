@@ -1088,6 +1088,31 @@ test("a session-bound completed assignment recovers an outer benchmark timeout w
   assert.equal(recovered.answer_assertion_passed, true);
   assert.equal(recovered.verification_basis, "fixture_semantic_oracle");
 
+  const currentLiveAttempt = {
+    ok: true,
+    assistant_message: [
+      "## Mechanical sheet audit",
+      "| Sheet | Drawn By | Checked By |",
+      "| M000 | Author | Checker |",
+      "| M001 | APF | ADSK |",
+      "| M206 | Author | Checker |",
+      "Result: 17 of 17 sheets mismatch the expected EP / QA values—34 individual field mismatches. No changes made."
+    ].join("\n"),
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection
+  } as const;
+  const currentLiveWording = evaluateGeneralRevitCapabilityAttempt(entry, currentLiveAttempt);
+  assert.equal(currentLiveWording.tier, "verified");
+  assert.equal(currentLiveWording.answer_assertion_passed, true);
+
+  const incorrectCurrentLiveWording = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...currentLiveAttempt,
+    assistant_message: currentLiveAttempt.assistant_message.replace("34 individual", "32 individual")
+  });
+  assert.equal(incorrectCurrentLiveWording.tier, "failed");
+  assert.equal(incorrectCurrentLiveWording.answer_assertion_passed, false);
+
   const unrelatedFailure = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: false,
     error: "The Revit call timed out.",
@@ -1655,6 +1680,45 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(latestRecoveredLive.tier, "verified");
   assert.equal(latestRecoveredLive.answer_assertion_passed, true);
+
+  const currentLiveResponse = [
+    "## Live findings",
+    "Existing source schedule: Heat Recovery Unit Summary (ID 1488968).",
+    "It contains Mark, Family, Type plus Space Number, Space Name, and Level.",
+    "Schedule total: 37 HRUs.",
+    "Independent model query: 37 mechanical-equipment Marks beginning HRU.",
+    "Current ERU count: 0.",
+    "Mark audit: 0 blanks, 0 duplicate groups across all 37 mechanical-equipment instances.",
+    "All listed units use family HeatRecoveryUnit and type Heat Recovery Unit (HRU).",
+    "## Complete noncommitting plan",
+    "Visible fields: Mark, Family, Type.",
+    "Replace filters with: Mark begins_with ERU.",
+    "Replace sorting/grouping with: Mark, ascending.",
+    "Expected post-migration ERU count: 37.",
+    "Post-migration QA: schedule must contain exactly 37 ERU rows; independent model query must also return 37.",
+    "No schedule was created, duplicated, or configured."
+  ].join("\n");
+  const currentLive = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: currentLiveResponse
+  });
+  assert.equal(currentLive.tier, "verified");
+  assert.equal(currentLive.answer_assertion_passed, true);
+
+  for (const incorrectCurrentResponse of [
+    currentLiveResponse.replace("Current ERU count: 0", "Current ERU count: 4"),
+    currentLiveResponse.replace("Schedule total: 37 HRUs", "Schedule total: 36 HRUs"),
+    currentLiveResponse.replace("Expected post-migration ERU count: 37", "Expected post-migration ERU count: 36"),
+    currentLiveResponse.replace("0 blanks", "2 blanks"),
+    currentLiveResponse.replace("0 duplicate groups", "1 duplicate groups")
+  ]) {
+    const incorrectCurrent = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: incorrectCurrentResponse
+    });
+    assert.equal(incorrectCurrent.tier, "failed");
+    assert.equal(incorrectCurrent.answer_assertion_passed, false);
+  }
 
   for (const adversarialRecoveredResponse of [
     latestRecoveredLiveResponse.replace("37 HRU mechanical-equipment instances and 0 ERU", "37 HRU mechanical-equipment instances and 5 ERU"),

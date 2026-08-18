@@ -1031,6 +1031,18 @@ namespace RevitBridge.Operator
                     return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0), "points");
                 }
 
+                // This route accepts two alternative request shapes: either one of
+                // parameterName/parameter/paramName plus value, or a predicates array.
+                // The net48 reflection fallback cannot represent that conditional union
+                // and otherwise advertises every nullable string alias (including the
+                // optional systemName filter) as simultaneously required. Publish no
+                // unconditional root requirements; native schema validation enforces the
+                // selected shape before handler execution.
+                if (string.Equals(p, "/revit/find-elements-by-parameter", StringComparison.OrdinalIgnoreCase))
+                {
+                    return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0));
+                }
+
                 // Default: schema from request type when known, else generic object.
                 if (RequestTypesByPath.TryGetValue(p, out var t))
                 {
