@@ -934,6 +934,39 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   assert.equal(latestTitleblockResult.answer_assertion_passed, true);
   assert.equal(latestTitleblockResult.tier, "verified");
 
+  const structuredTitleblockRows = [
+    ["M000", "Author", "Checker"], ["M001", "APF", "ADSK"], ["M002", "Author", "Checker"],
+    ["M100", "Author", "Checker"], ["M101", "Author", "Checker"], ["M102", "Author", "Checker"],
+    ["M103", "Author", "Checker"], ["M104", "Author", "Checker"], ["M105", "Author", "Checker"],
+    ["M106", "Author", "Checker"], ["M200", "Author", "Checker"], ["M201", "Author", "Checker"],
+    ["M202", "Author", "Checker"], ["M203", "Author", "Checker"], ["M204", "Author", "Checker"],
+    ["M205", "Author", "Checker"], ["M206", "Author", "Checker"]
+  ];
+  const structuredTitleblockAnswer = [
+    "## Mechanical sheet audit",
+    "| Sheet | Drawn By | Checked By |",
+    "|---|---|---|",
+    ...structuredTitleblockRows.map((row) => `| ${row.join(" | ")} |`),
+    "Results: 17 mechanical sheets audited. All **17** mismatch the expected **Drawn By = EP / Checked By = QA**. No changes made."
+  ].join("\n");
+  const structuredTitleblockResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ...titleblockAttempt,
+    assistant_message: structuredTitleblockAnswer
+  });
+  assert.equal(structuredTitleblockResult.answer_assertion_passed, true);
+  assert.equal(structuredTitleblockResult.tier, "verified");
+
+  const partiallyCorrectStructuredTitleblock = structuredTitleblockAnswer.replace(
+    "| M206 | Author | Checker |",
+    "| M206 | Author | QA |"
+  );
+  const partiallyCorrectStructuredResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ...titleblockAttempt,
+    assistant_message: partiallyCorrectStructuredTitleblock
+  });
+  assert.equal(partiallyCorrectStructuredResult.answer_assertion_passed, false);
+  assert.equal(partiallyCorrectStructuredResult.tier, "failed");
+
   for (const adversarialAnswer of [
     naturalTitleblockAnswer.replace("17 of 17 sheets mismatch", "16 of 17 sheets mismatch"),
     naturalTitleblockAnswer.replace("34 field mismatches", "33 field mismatches"),
@@ -1704,6 +1737,46 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(currentLive.tier, "verified");
   assert.equal(currentLive.answer_assertion_passed, true);
+
+  const structuredFreshReplay = [
+    "## Live findings",
+    "Best source: **Heat Recovery Unit Summary** — schedule ID **1488968**.",
+    "Existing fields include **Mark, Family, Type**.",
+    "Schedule reports **37 HRUs**.",
+    "Independent model query confirms:",
+    "- **HRU-prefixed mechanical equipment:** 37",
+    "- **ERU-prefixed mechanical equipment:** 0",
+    "Mark audit: **0 blanks, 0 duplicate groups** across all 37 units.",
+    "Existing rows use family **HeatRecoveryUnit** and type **Heat Recovery Unit (HRU)**.",
+    "## Complete QA schedule plan",
+    "Retain only Mark, Family, Type.",
+    "Replace inherited filters and apply: **Mark begins with `ERU`**.",
+    "Replace inherited sorting/grouping: **Mark ascending**.",
+    "After the HRU→ERU migration, verify: ERU schedule rows = **37**; independent model ERU count = **37**; HRU-prefix count = **0**; blank Marks = **0**; duplicate ERU Marks = **0**.",
+    "Presently safe—37 unique HRU Marks and no existing ERU Marks imply **37 expected targets and no known collisions**.",
+    "**No schedule was created or configured.**"
+  ].join("\n");
+  const structuredFreshEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: structuredFreshReplay
+  });
+  assert.equal(structuredFreshEvaluation.tier, "verified");
+  assert.equal(structuredFreshEvaluation.answer_assertion_passed, true);
+
+  for (const incorrectStructuredReplay of [
+    structuredFreshReplay.replace("37 HRUs", "36 HRUs"),
+    structuredFreshReplay.replace("ERU-prefixed mechanical equipment:** 0", "ERU-prefixed mechanical equipment:** 5"),
+    structuredFreshReplay.replace("ERU schedule rows = **37**", "ERU schedule rows = **36**"),
+    structuredFreshReplay.replace("0 blanks", "2 blanks"),
+    structuredFreshReplay.replace("0 duplicate groups", "1 duplicate groups")
+  ]) {
+    const incorrectStructuredEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: incorrectStructuredReplay
+    });
+    assert.equal(incorrectStructuredEvaluation.tier, "failed");
+    assert.equal(incorrectStructuredEvaluation.answer_assertion_passed, false);
+  }
 
   for (const incorrectCurrentResponse of [
     currentLiveResponse.replace("Current ERU count: 0", "Current ERU count: 4"),
