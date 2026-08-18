@@ -23,13 +23,14 @@ namespace RevitBridge.Logic.Handlers
 
             var warnings = new List<string>();
             var impact = new TransactionActionRunner.Impact();
+            IReadOnlyList<TransactionActionRunner.ActionOutcome> actionOutcomes = Array.Empty<TransactionActionRunner.ActionOutcome>();
 
             using (var trans = new Transaction(doc, "Transaction Plan (Dry Run)"))
             {
                 trans.Start();
                 try
                 {
-                    TransactionActionRunner.ExecuteActions(doc, p?.actions, impact, warnings);
+                    actionOutcomes = TransactionActionRunner.ExecuteActions(doc, p?.actions, impact, warnings);
                 }
                 catch (Exception ex)
                 {
@@ -44,6 +45,7 @@ namespace RevitBridge.Logic.Handlers
             return Task.FromResult<object>(new
             {
                 impact = impact.ToWireObject(),
+                actions = new List<TransactionActionRunner.ActionOutcome>(actionOutcomes).ConvertAll(outcome => outcome.ToWireObject()),
                 warnings = warnings
             });
         }
