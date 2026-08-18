@@ -802,7 +802,7 @@
         "must_match": [
           "\\bL2\\b",
         "(?:no renames?\\b|none required|nothing to rename|no changes? needed|already (?:conforms?|matches))",
-        "(?:pattern[^\\n]{0,160}(?:level(?:\\s*/\\s*(?:block|area)){0,2} name|Levels?\\s*3[^\\n]{0,20}5)|level(?:\\s*/\\s*(?:block|area)){0,2} name[^\\n]{0,160}pattern)"
+        "(?:pattern[^\\n]{0,160}(?:level(?:\\s*/\\s*(?:block|area)){0,2} name|Levels?\\s*3[^\\n]{0,20}5)|level(?:\\s*/\\s*(?:block|area)){0,2} name[^\\n]{0,160}pattern|(?:other|adjacent|remaining)[^\\n]{0,80}(?:HVAC|mechanical)?[^\\n]{0,40}levels?[^\\n]{0,80}(?:use|follow|match)[^\\n]{0,80}(?:level name(?: alone)?|associated level(?:\\s*/\\s*area)? name))"
         ],
         "must_not_match": [
           "(?:blocked|unable to inspect|could not inspect)"

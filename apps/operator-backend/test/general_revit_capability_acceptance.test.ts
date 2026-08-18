@@ -1573,6 +1573,44 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
   assert.equal(blockQualifiedLiveTraceResult.apply_dispatched, false);
   assert.equal(blockQualifiedLiveTraceResult.verification_basis, "fixture_semantic_oracle");
 
+  const naturalConventionWording = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Preview complete — no changes needed. The other HVAC levels use the level name alone for both views. Level 2 already matches: Ceiling Plan L2 -> L2 and Floor Plan L2 -> L2. Dry-run result: 0 renames, 2 unchanged, 0 errors.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [
+          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Verified that the requested Revit state was already satisfied using substantive live evidence; no write was necessary." }
+        ] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "apply", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(naturalConventionWording.tier, "verified");
+  assert.equal(naturalConventionWording.verification_basis, "fixture_semantic_oracle");
+
+  const wrongConvention = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The other HVAC levels use an HVAC suffix. L2 already matches and no renames are required.",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [
+          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Verified that the requested Revit state was already satisfied using substantive live evidence; no write was necessary." }
+        ] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "apply", completion_mode: "verified_noop" }
+      }]
+    }
+  });
+  assert.equal(wrongConvention.tier, "failed");
+  assert.equal(wrongConvention.verified, false);
+
   const ungrounded = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",
