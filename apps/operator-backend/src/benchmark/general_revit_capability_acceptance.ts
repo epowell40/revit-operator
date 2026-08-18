@@ -467,17 +467,62 @@ function assistantReportsVerifiedNoop(attempt: GeneralRevitAttempt): boolean {
     || /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|present|up[ -]to[ -]date)\b/i.test(text);
 }
 
+function markdownTableMismatchFacts(answerText: string): string[] {
+  const expected = /expected\b[^\n]*\bDrawn By\s*=\s*([A-Za-z0-9_-]+)\s*\/\s*Checked By\s*=\s*([A-Za-z0-9_-]+)/i.exec(answerText);
+  if (!expected) return [];
+
+  const rows = answerText.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("|") && line.endsWith("|"));
+  const cells = rows.map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
+  const headerIndex = cells.findIndex((row) => row.some((cell) => /^sheet(?: number)?$/i.test(cell))
+    && row.some((cell) => /^drawn by$/i.test(cell))
+    && row.some((cell) => /^checked by$/i.test(cell)));
+  if (headerIndex < 0) return [];
+
+  const header = cells[headerIndex];
+  const sheetIndex = header.findIndex((cell) => /^sheet(?: number)?$/i.test(cell));
+  const drawnByIndex = header.findIndex((cell) => /^drawn by$/i.test(cell));
+  const checkedByIndex = header.findIndex((cell) => /^checked by$/i.test(cell));
+  const separator = (cell: string) => /^:?-{3,}:?$/.test(cell);
+  const data = cells.slice(headerIndex + 1)
+    .filter((row) => row.length > Math.max(sheetIndex, drawnByIndex, checkedByIndex))
+    .filter((row) => !row.every(separator))
+    .filter((row) => row[sheetIndex] && row[drawnByIndex] && row[checkedByIndex]);
+  if (data.length === 0) return [];
+
+  const expectedDrawnBy = expected[1].toLowerCase();
+  const expectedCheckedBy = expected[2].toLowerCase();
+  let sheetMismatches = 0;
+  let fieldMismatches = 0;
+  for (const row of data) {
+    const drawnByMismatch = row[drawnByIndex].toLowerCase() !== expectedDrawnBy;
+    const checkedByMismatch = row[checkedByIndex].toLowerCase() !== expectedCheckedBy;
+    if (drawnByMismatch || checkedByMismatch) sheetMismatches += 1;
+    if (drawnByMismatch) fieldMismatches += 1;
+    if (checkedByMismatch) fieldMismatches += 1;
+  }
+  return [
+    `Derived table rows audited: ${data.length}`,
+    `Derived sheets with one or more mismatches: ${sheetMismatches}`,
+    `Derived individual field mismatches: ${fieldMismatches}`
+  ];
+}
+
+function semanticAssertionText(answerText: string): string {
+  const presentationNeutral = answerText
+    .normalize("NFKC")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/(?:\*\*|__|~~|`)/g, "");
+  const derivedFacts = markdownTableMismatchFacts(presentationNeutral);
+  return derivedFacts.length > 0 ? `${presentationNeutral}\n${derivedFacts.join("\n")}` : presentationNeutral;
+}
+
 function assertionPatternMatches(pattern: string, answerText: string): boolean {
   const expression = new RegExp(pattern, "i");
   if (expression.test(answerText)) return true;
   // Fixture oracles grade model facts, not Markdown style. Models commonly wrap
   // identifiers, counts, and labels in emphasis or inline-code delimiters; those
   // delimiters must not turn a correct value into a benchmark failure.
-  const presentationNeutral = answerText
-    .normalize("NFKC")
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/(?:\*\*|__|~~|`)/g, "");
-  return expression.test(presentationNeutral);
+  return expression.test(semanticAssertionText(answerText));
 }
 
 function verificationChecksPass(value: unknown): boolean {
