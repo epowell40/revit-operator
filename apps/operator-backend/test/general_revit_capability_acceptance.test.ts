@@ -633,6 +633,14 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   assert.equal(equivalentWithoutHostedSuffix.tier, "verified");
   assert.equal(equivalentWithoutHostedSuffix.answer_assertion_passed, true);
 
+  const equivalentNaturalTypeOrder = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "509 air terminals total. If counting only types literally named Diffuser, the subtotal is 29.\n| Supply Diffuser – Square – 12x12 | 28 |\n| Linear Slot Supply Diffuser – 48x4, 2-slot | 1 |",
+    assignment_projection
+  });
+  assert.equal(equivalentNaturalTypeOrder.tier, "verified");
+  assert.equal(equivalentNaturalTypeOrder.answer_assertion_passed, true);
+
   const wrong = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Diffuser count: 435, including supply and return grilles.",
@@ -1164,6 +1172,16 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
     }
   );
   assert.equal(sheets.tier, "verified");
+
+  const naturalInventoryOrder = evaluateGeneralRevitCapabilityAttempt(
+    generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c34_sheet_numbers_dashes_to_dots")!, false),
+    {
+      ok: true,
+      assistant_message: "Mechanical sheets inventoried: **17**\nSheet numbers containing dashes: **0**\nDry-run result: NoOp, modelModified: false\nNo sheets were renamed.",
+      assignment_projection: noopProjection
+    }
+  );
+  assert.equal(naturalInventoryOrder.tier, "verified");
 
   const wrongSchedule = evaluateGeneralRevitCapabilityAttempt(
     generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s05_schedule_value_edit")!, false),
