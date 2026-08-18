@@ -431,6 +431,29 @@ function hasCertifiedTeammatePreviewReceipt(attempt: GeneralRevitAttempt): boole
     && receipt.preview_action_ids.every((actionId) => typeof actionId === "string" && actionId.trim().length > 0);
 }
 
+function certifiedTeammatePreviewPaths(attempt: GeneralRevitAttempt): string[] {
+  if (!hasCertifiedTeammatePreviewReceipt(attempt)) return [];
+  const receipt = attempt.teammate_loop_receipt as {
+    preview_action_ids?: unknown;
+    preview_receipts?: unknown;
+  };
+  const actionIds = new Set(Array.isArray(receipt.preview_action_ids) ? receipt.preview_action_ids.map(String) : []);
+  if (!Array.isArray(receipt.preview_receipts)) return [];
+  const paths: string[] = [];
+  for (const value of receipt.preview_receipts) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value as { action_id?: unknown; path?: unknown; status?: unknown; evidence_sha256?: unknown };
+    const actionId = String(row.action_id || "").trim();
+    const path = String(row.path || "").trim();
+    const evidenceHash = String(row.evidence_sha256 || "").trim();
+    if (!actionIds.has(actionId) || row.status !== "success"
+        || !/^(?:\/revit\/[a-z0-9/-]+|revit_[a-z0-9_]+)$/.test(path)
+        || !/^sha256:[a-f0-9]{64}$/.test(evidenceHash)) continue;
+    paths.push(path);
+  }
+  return [...new Set(paths)];
+}
+
 function combinedMessage(attempt: GeneralRevitAttempt): string {
   const assistantMessage = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
     ? attempt.assistant_message
@@ -686,9 +709,11 @@ export function evaluateGeneralRevitCapabilityAttempt(
   }
   const rows = actionRows(attempt);
   const durableTools = durableRevitToolNames(attempt);
+  const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt);
   const observedPaths = [...new Set([
     ...rows.map((row) => String(row.path || "").trim()).filter(Boolean),
-    ...durableTools.map((tool) => `mcp:${tool}`)
+    ...durableTools.map((tool) => `mcp:${tool}`),
+    ...teammatePreviewPaths
   ])];
   const expectedPathObserved = observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
     || durableTools.length > 0
@@ -699,7 +724,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     return !rows.slice(index + 1).some((later) => String(later.path || "") === failedPath
       && later.status === "success" && later.request_dispatched !== false);
   });
-  const successfulExpectedPathObserved = durableTools.length > 0 || rows.some((row) => {
+  const successfulExpectedPathObserved = durableTools.length > 0
+    || teammatePreviewPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
+    || rows.some((row) => {
     const candidate = String(row.path || "").trim();
     if (!testCase.dispatch_any_of.includes(candidate) || row.status === "failed" || row.request_dispatched === false) return false;
     return row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched";

@@ -26,6 +26,7 @@ export type TeammateTurnContract = {
 type Effect = "read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
 type PendingCall = { effect: Effect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
+type SuccessfulPreviewReceipt = { action_id: string; path: string; status: "success"; evidence_sha256: string };
 
 type TeammateLoopState = {
   key: string;
@@ -34,6 +35,7 @@ type TeammateLoopState = {
   successful_preview_signatures: Set<string>;
   pending: Map<string, PendingCall>;
   preview_action_ids: string[];
+  preview_receipts: SuccessfulPreviewReceipt[];
   apply_action_id: string | null;
   verification_action_ids: string[];
   apply_attempts: number;
@@ -629,6 +631,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     successful_preview_signatures: new Set(),
     pending: new Map(),
     preview_action_ids: [],
+    preview_receipts: [],
     apply_action_id: null,
     verification_action_ids: [],
     apply_attempts: 0,
@@ -909,7 +912,15 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   const pending = state.pending.get(actionId);
   if (!pending) return;
   state.pending.delete(actionId);
-  if (pending.effect === "preview" && succeeded) state.successful_preview_signatures.add(pending.signature);
+  if (pending.effect === "preview" && succeeded) {
+    state.successful_preview_signatures.add(pending.signature);
+    state.preview_receipts.push({
+      action_id: actionId,
+      path: pending.path,
+      status: "success",
+      evidence_sha256: `sha256:${sha256(JSON.stringify(stableValue(evidence)))}`
+    });
+  }
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
     if (!succeeded) {
@@ -962,6 +973,7 @@ function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_l
     context_state: state.contract.context_state,
     stage: state.contract.stage,
     preview_action_ids: state.preview_action_ids.slice(-8),
+    preview_receipts: state.preview_receipts.slice(-8),
     apply_action_id: state.apply_action_id,
     verification_action_ids: state.verification_action_ids.slice(-8),
     apply_attempts: state.apply_attempts,

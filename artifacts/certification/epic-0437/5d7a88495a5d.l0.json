@@ -544,7 +544,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:fec6bd82f27efdf9da821ea5561a8eb983e01285262a469b237688cb3cc502d3"
+      "sha256": "sha256:8ed791282ab737f5a671042cfd74b1b07da63ae90a705653f36fcf2e4d795e5a"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_sample_fixtures.ts",
@@ -629,6 +629,10 @@
     {
       "path": "apps/operator-backend/src/benchmark/revit_discovery.ts",
       "sha256": "sha256:ed3b58e49bfab07d3a8519611766e7e73885a3e999d1e6aff0e35426ef44d118"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/revit_fixture_readiness.ts",
+      "sha256": "sha256:3017f252d47ee5d91d1a7056d5bb93eda597479d393077ef29dbd317dae89803"
     },
     {
       "path": "apps/operator-backend/src/benchmark/revit_host_evidence.ts",
@@ -801,7 +805,7 @@
     },
     {
       "path": "apps/operator-backend/src/contracts.ts",
-      "sha256": "sha256:31cde7862dc92f595981cc782a3d373af2bca133241fb23ed5c7411814fc69ac"
+      "sha256": "sha256:a8c1a7342fe9428375685c99c1f1ad0f6add3f69dd21b2fb7e36f66b8cf46dcd"
     },
     {
       "path": "apps/operator-backend/src/courier/laboratory_evidence.ts",
@@ -1517,7 +1521,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:adf6cd160a8fbec927226c167d4a5c6685621794f3f42762419f8a12686e4ee6"
+      "sha256": "sha256:b18e1419908635ee0e0207817cf43f55cb0a2bdfba4265efc257ce33631a9eda"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -1593,7 +1597,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:a36d38680d62f79bdb54126a4eb2c84347d6331c318cd07c110be549ddc513a6"
+      "sha256": "sha256:4296778fb871d90d34032f87eddc0083d41e56eaffe42e4b2833f6732d55fc0e"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2285,7 +2289,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:9fbf568bb97b1cc62f02cb17901946c015ad787ea174f8bb3bb1440726baf1f9"
+      "sha256": "sha256:8fc5ab6abe5c760857b118ebb15a4c4420f69a81e284cdd720943aaae1aa15d2"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2468,6 +2472,10 @@
       "sha256": "sha256:de4714197a7b5626d3ca7f26d5af2f42f6c6402611b87dd2fa5e20655f3f2ea9"
     },
     {
+      "path": "apps/operator-backend/test/revit_fixture_readiness.test.ts",
+      "sha256": "sha256:7b53cc4df7420bb1a418ce72addc8d21f6d54377f15f6bb7c28bc36b03184484"
+    },
+    {
       "path": "apps/operator-backend/test/revit_live_guard.test.ts",
       "sha256": "sha256:7da1d83b97af0e5f3319960da4671855dff21c531d973c19cfe5ea1389be65c6"
     },
@@ -2553,7 +2561,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:79b789da022dd4dcc03f079aa36226fa4edd04b7411401c61717dc7f100996b4"
+      "sha256": "sha256:3b72c0ed5e5b4b57124515c3eb9eeb607be9bbca54a488005e6dac3a9c774a0d"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4613,7 +4621,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:06cbca84df51b1c75d03a6afefad2a426b6644c705dc3dcdeb704215045d9168",
+  "inputs_hash": "sha256:ab467e7b0ec3ca01b5e76695663095b644cd9d6e1456362b62a03dd41c574ee6",
   "result": {
     "passed": true,
     "checks": [

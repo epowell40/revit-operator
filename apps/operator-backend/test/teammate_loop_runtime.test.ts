@@ -110,6 +110,11 @@ test("a nested PDF dry-run is recorded as an executable preview", () => {
     });
     const receipt = teammateLoopReceiptForOwner(owner);
     assert.deepEqual(receipt?.preview_action_ids, ["mcp:1"]);
+    assert.equal(receipt?.preview_receipts?.length, 1);
+    assert.equal(receipt?.preview_receipts?.[0]?.action_id, "mcp:1");
+    assert.equal(receipt?.preview_receipts?.[0]?.path, "/revit/export-pdf");
+    assert.equal(receipt?.preview_receipts?.[0]?.status, "success");
+    assert.match(receipt?.preview_receipts?.[0]?.evidence_sha256 || "", /^sha256:[a-f0-9]{64}$/);
     assert.equal(receipt?.stage, "preview");
     assert.equal(receipt?.blocked_reason, null);
     const final = reconcileTeammateReceiptWithAssistant(receipt, "PDF preflight completed successfully; no file was created.");
