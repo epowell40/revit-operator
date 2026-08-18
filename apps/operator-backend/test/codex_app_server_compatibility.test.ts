@@ -241,6 +241,16 @@ test("Codex instructions keep negative searches scoped and require physical MEP 
   assert.match(instructions, /Do not request a write grant until connectivity/);
 });
 
+test("Codex instructions investigate duplicates with spatial and network evidence", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /Duplicate-element investigation rule/);
+  assert.match(instructions, /do not rule duplicates out when those checks return zero/);
+  assert.match(instructions, /same-category, same-family\/type physical instances/);
+  assert.match(instructions, /overlapping footprints or center separation relative to their element size/);
+  assert.match(instructions, /compare host, level, orientation, parameters, and connector\/network relationships/);
+  assert.match(instructions, /rollback\/dry-run delete/);
+});
+
 test("fresh Revit evidence contracts reject stale or unrelated sheet-count claims", () => {
   const requirement = getFreshRevitEvidenceRequirement("How many sheets are in the model?");
   assert.equal(requirement.kind, "sheet_count");
