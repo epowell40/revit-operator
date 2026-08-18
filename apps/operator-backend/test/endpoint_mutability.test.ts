@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { conditionalActionPathEffect, pathLooksWrite } from "../src/action_path_mutability.js";
+import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
 
 test("scoped duct resize is classified as a write", () => {
   assert.equal(pathLooksWrite("/revit/resize-ductwork-by-scope"), true);
@@ -13,13 +16,61 @@ test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/find-text-notes"), false);
   assert.equal(pathLooksWrite("/revit/locate-elements"), false);
   assert.equal(pathLooksWrite("/revit/find-duplicate-marks"), false);
+  assert.equal(pathLooksWrite("/revit/get-placement-context"), false);
+  assert.equal(pathLooksWrite("/revit/model-health"), false);
   assert.equal(pathLooksWrite("/revit/plan-family-evolution"), false);
   assert.equal(pathLooksWrite("/revit/read-family-evolution"), false);
   assert.equal(pathLooksWrite("/revit/spatial-context"), false);
   assert.equal(pathLooksWrite("/revit/pick-at-pixel"), false);
   assert.equal(pathLooksWrite("/revit/resolve-room-plan-view"), false);
   assert.equal(pathLooksWrite("/revit/get-titleblock-info"), false);
+  for (const route of [
+    "/revit/regenerate",
+    "/revit/plan-dwelling-receptacles",
+    "/revit/plan-room-receptacles-from-analog",
+    "/revit/room_mep_intersect",
+    "/revit/audit-hosted-instance-placement",
+    "/revit/audit-electrical-circuit-loading",
+    "/revit/audit-plumbing-fixture-services",
+    "/revit/resolve-redline-target",
+    "/revit/propose-fix",
+    "/revit/capture-screenshare",
+    "/revit/set-selection",
+    "/revit/get-family-file-path",
+    "/revit/find-family-text-notes",
+    "/revit/warnings",
+    "/revit/qa-checks",
+    "/revit/print-sets",
+    "/revit/revisions"
+  ]) assert.equal(pathLooksWrite(route), false, `${route} should remain observational`);
   assert.equal(pathLooksWrite("/revit/apply-family-evolution"), true);
+});
+
+test("backend read classification covers every low-risk Revit POST in the add-in manifest", () => {
+  const root = findRepoRoot(process.cwd());
+  const publicCandidate = path.join(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs");
+  const privateCandidate = path.join(root, "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs");
+  const manifest = fs.readFileSync(fs.existsSync(publicCandidate) ? publicCandidate : privateCandidate, "utf8");
+  const lowRiskPosts = [...manifest.matchAll(/new OperatorToolInfo\([^\r\n]*?"POST"\s*,\s*"([^"]+)"[^\r\n]*?OperatorActionRisk\.Low/g)]
+    .map((match) => match[1]!)
+    .filter((route) => route.startsWith("/revit/"));
+  // These low-risk commands intentionally change durable job state or create
+  // external files, so the teammate loop keeps treating them as effects.
+  const externalOrControlEffects = new Set([
+    "/revit/batch-control",
+    "/revit/export-dwg",
+    "/revit/export-elements-xlsx",
+    "/revit/export-ifc",
+    "/revit/export-pdf",
+    "/revit/export-schedule-csv",
+    "/revit/export-warnings-report",
+    "/revit/print",
+    "/revit/transaction-plan"
+  ]);
+  for (const route of lowRiskPosts) {
+    if (externalOrControlEffects.has(route)) continue;
+    assert.equal(pathLooksWrite(route), false, `${route} drifted from the add-in's low-risk read contract`);
+  }
 });
 
 test("native API policy is read-only over GET but mutating over POST", () => {

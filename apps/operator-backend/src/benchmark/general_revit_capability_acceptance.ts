@@ -729,8 +729,16 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const substantiveFailedAction = rows.some((row, index) => {
     const failedPath = String(row.path || "");
     if (row.status !== "failed" || !/^\/revit\/(?!health$|context$|ping$)/.test(failedPath)) return false;
-    return !rows.slice(index + 1).some((later) => String(later.path || "") === failedPath
-      && later.status === "success" && later.request_dispatched !== false);
+    const failedEffect = String(row.request_effect || "").trim();
+    return !rows.slice(index + 1).some((later) => {
+      if (later.status !== "success" || later.request_dispatched === false) return false;
+      const laterPath = String(later.path || "");
+      if (laterPath === failedPath) return true;
+      // Discovery is intentionally exploratory: an invalid read query is
+      // recovered when a later live read supplies the evidence used for the
+      // conclusion. A read must never recover a failed preview or mutation.
+      return failedEffect === "read" && String(later.request_effect || "").trim() === "read";
+    });
   });
   const successfulExpectedPathObserved = durableTools.length > 0
     || composablePreviewLaneObserved

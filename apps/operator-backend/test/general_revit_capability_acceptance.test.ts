@@ -287,6 +287,61 @@ No native type-change dry-run was executed, and nothing was applied or saved.`
   });
   assert.equal(vague.tier, "failed");
   assert.equal(vague.fixture_blocker_accepted, false);
+
+  const recoveredExploration = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    actions: [
+      { path: "/revit/list-element-types", request_effect: "read", request_dispatched: true, status: "failed" },
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: `## Blocked — no compatible different-type peer exists
+
+Live inspection found exactly 7 loaded Air Terminal types.
+Supply types and Return types differ in service, direction, shape, or dimensions, so no two different types preserve the required invariants.
+Therefore, I did not run a cross-service type-change preview. No structured dry-run effect receipt was produced, and nothing was applied or saved.`
+  });
+  assert.equal(recoveredExploration.tier, "accepted");
+  assert.equal(recoveredExploration.fixture_blocker_accepted, true);
+
+  const failedMutationIsNotRecovered = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    actions: [
+      { path: "/revit/change-element-type", request_effect: "preview", request_dispatched: true, status: "failed" },
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: `## Blocked — no compatible different-type peer exists
+
+Live inspection found exactly 7 loaded Air Terminal types.
+Supply types and Return types differ in service, direction, shape, or dimensions, so no two different types preserve the required invariants.
+Therefore, I did not run a cross-service type-change preview. No structured dry-run effect receipt was produced, and nothing was applied or saved.`
+  });
+  assert.equal(failedMutationIsNotRecovered.fixture_blocker_assertion_passed, true);
+  assert.equal(failedMutationIsNotRecovered.tier, "failed");
+  assert.equal(failedMutationIsNotRecovered.fixture_blocker_accepted, false);
+});
+
+test("the accessory-add oracle accepts a live Snowdon zero-inventory blocker without inventing a precedent", () => {
+  const safeCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "r17_add_connected_accessory")!,
+    false
+  );
+  const result = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: `## Blocked — no compatible nearby accessory precedent
+
+Live project-wide inventory found Duct Accessories: 0 instances and Pipe Accessories: 0 instances.
+No accessory was created, and no model changes were made.`
+  });
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.fixture_blocker_assertion_passed, true);
+  assert.equal(result.fixture_blocker_accepted, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
 });
 
 test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {

@@ -416,7 +416,7 @@
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
-      "sha256": "sha256:a2174baf73704ecae58b1c203d97107748e060fbced0a8715adde5e6dd860bb3"
+      "sha256": "sha256:04771cb42c87daf29e6f30551eac59a997fd24ed241989ade3fdfea842bf383c"
     },
     {
       "path": "apps/operator-backend/src/aec_intent_evidence.ts",
@@ -544,7 +544,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:0c00db8eacbf95f50510ac4a73952b42b19f4df37b45b6124e640a843e00d034"
+      "sha256": "sha256:7b89776ee6be1337a2359587c3a690f1ff540010e3f3a165002dd586c02eec2b"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_sample_fixtures.ts",
@@ -1913,7 +1913,7 @@
     },
     {
       "path": "apps/operator-backend/test/endpoint_mutability.test.ts",
-      "sha256": "sha256:88eee35807026839d831ee3f415325eaf5f5ddaf809f901cfbfeef144989987b"
+      "sha256": "sha256:5d15ef22c34015b23c34b4178611508822dbe47b2be1e25727704c72b7ebd878"
     },
     {
       "path": "apps/operator-backend/test/enlarged_plan_sheet.test.ts",
@@ -2301,7 +2301,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:9b185ad73f1e7d4a432321cd11e1cc1f6dc00f34e9e9a02639835dcd01bb4253"
+      "sha256": "sha256:2698c561aa0f0deced57ff9946c73e1d01076e7719d97a50e19908d3a60b4976"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2573,7 +2573,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:913a3c893ac02948d1df879e01d0d2ba7de29951dd95875dafc0320735dfb125"
+      "sha256": "sha256:af56211de6129d9ab91d7f6fcca456d05180028f0d7812b1896e8dc3ab4e6634"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4633,7 +4633,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:ac3c556fb65e2a59d3cd8667e246c6469002d0e4ee1a33cf2633962bdfb1fd24",
+  "inputs_hash": "sha256:ed4ad4e681d54e8ba6f6a1461a9e412a2ae6085082a1942c006a97c2b58cc689",
   "result": {
     "passed": true,
     "checks": [
