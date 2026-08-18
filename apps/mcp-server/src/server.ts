@@ -434,12 +434,14 @@ function normalizeRawJsonBody(body: unknown): unknown {
   }
 }
 
-function normalizeParameterMatchOp(value: unknown): "equals" | "contains" {
+function normalizeParameterMatchOp(value: unknown): "equals" | "contains" | "begins_with" | "ends_with" {
   const raw = String(value ?? "").trim().toLowerCase();
   if (!raw) return "equals";
   if (["equals", "equal", "eq", "==", "=", "is", "exact"].includes(raw)) return "equals";
   if (["contains", "contain", "has", "includes", "include", "like"].includes(raw)) return "contains";
-  return raw === "contains" ? "contains" : "equals";
+  if (["begins_with", "beginswith", "starts_with", "startswith", "prefix"].includes(raw)) return "begins_with";
+  if (["ends_with", "endswith", "suffix"].includes(raw)) return "ends_with";
+  return "equals";
 }
 
 function normalizeRegistryTool(entry: unknown): RegistryToolEntry | null {
@@ -2174,12 +2176,12 @@ server.tool("revit_trace_connected_network", "Trace connected MEP elements via c
   }
 );
 
-server.tool("revit_find_elements_by_parameter", "Find elements by parameter value, with optional category/system/view filters.",
+server.tool("revit_find_elements_by_parameter", "Find elements by parameter value using equals, contains, begins_with, or ends_with, with optional category/system/view filters.",
   {
     category: z.string().optional(),
     categories: z.array(z.string()).optional(),
     parameterName: z.string().describe("Parameter name to match (e.g. Diameter)."),
-      op: z.string().optional().transform((value) => normalizeParameterMatchOp(value)),
+    op: z.string().optional().transform((value) => normalizeParameterMatchOp(value)),
     value: z.string().describe("Expected value (supports units for numeric params, e.g. 4\")."),
     systemName: z.string().optional().describe("Optional system name filter (exact match)."),
     viewId: z.number().optional().describe("Optional viewId to scope the collector."),

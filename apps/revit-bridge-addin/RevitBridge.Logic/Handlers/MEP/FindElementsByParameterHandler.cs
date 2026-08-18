@@ -28,7 +28,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             // Compatibility aliases.
             public string? parameter { get; set; }
             public string? paramName { get; set; }
-            public string op { get; set; } = "equals"; // equals | contains
+            public string op { get; set; } = "equals"; // equals | contains | begins_with | ends_with
             public string? value { get; set; }
             public List<ParameterPredicate>? predicates { get; set; }
             public string matchMode { get; set; } = "any"; // any | all
@@ -138,6 +138,16 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var s = (param.AsString() ?? param.AsValueString() ?? "").Trim();
                 return s.IndexOf(expRaw, StringComparison.OrdinalIgnoreCase) >= 0;
             }
+            if (op.Equals("begins_with", StringComparison.OrdinalIgnoreCase))
+            {
+                var s = (param.AsString() ?? param.AsValueString() ?? "").Trim();
+                return s.StartsWith(expRaw, StringComparison.OrdinalIgnoreCase);
+            }
+            if (op.Equals("ends_with", StringComparison.OrdinalIgnoreCase))
+            {
+                var s = (param.AsString() ?? param.AsValueString() ?? "").Trim();
+                return s.EndsWith(expRaw, StringComparison.OrdinalIgnoreCase);
+            }
 
             // equals
             try
@@ -232,7 +242,9 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 "equals" or "equal" or "eq" or "==" or "=" or "is" or "exact" => "equals",
                 "contains" or "contain" or "has" or "include" or "includes" or "like" => "contains",
-                _ => throw new ArgumentException("op must be 'equals' or 'contains' (aliases like 'eq' and 'has' are accepted).")
+                "begins_with" or "beginswith" or "starts_with" or "startswith" or "prefix" => "begins_with",
+                "ends_with" or "endswith" or "suffix" => "ends_with",
+                _ => throw new ArgumentException("op must be 'equals', 'contains', 'begins_with', or 'ends_with' (common aliases are accepted).")
             };
         }
 
