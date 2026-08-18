@@ -6,7 +6,9 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function compactXyz(value: unknown): Record<string, number> | null {
+type Xyz = { x: number; y: number; z: number };
+
+function compactXyz(value: unknown): Xyz | null {
   const point = asObject(value);
   if (!point) return null;
   const x = finiteNumber(point.x);
@@ -39,6 +41,162 @@ function compactGeometry(value: unknown): Record<string, unknown> | null {
     facingOrientation: compactXyz(geometry.facingOrientation),
     handOrientation: compactXyz(geometry.handOrientation),
     rotationRadians: finiteNumber(geometry.rotationRadians)
+  };
+}
+
+type SpatialItem = {
+  elementId: number;
+  typeKey: string;
+  typeId: number | null;
+  levelId: number | null;
+  hostId: number | null;
+  min: Xyz;
+  max: Xyz;
+  center: Xyz;
+  size: Xyz;
+  facing: Xyz | null;
+};
+
+function safeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) > 0 ? value as number : null;
+}
+
+function spatialItem(value: unknown): SpatialItem | null {
+  const item = asObject(value);
+  const geometry = asObject(item?.geometry);
+  const box = asObject(geometry?.boundingBox);
+  const elementId = safeInteger(item?.elementId ?? item?.id);
+  const min = compactXyz(box?.min);
+  const max = compactXyz(box?.max);
+  const center = compactXyz(box?.center);
+  const size = compactXyz(box?.size);
+  if (elementId === null || !min || !max || !center || !size) return null;
+  if (max.x < min.x || max.y < min.y || max.z < min.z) return null;
+  const typeId = safeInteger(item?.typeId);
+  const familyName = typeof item?.familyName === "string" ? item.familyName.trim().toLowerCase() : "";
+  const typeName = typeof item?.typeName === "string" ? item.typeName.trim().toLowerCase() : "";
+  const typeKey = typeId !== null ? `id:${typeId}` : familyName || typeName ? `name:${familyName}\u0000${typeName}` : "";
+  if (!typeKey) return null;
+  return {
+    elementId,
+    typeKey,
+    typeId,
+    levelId: safeInteger(item?.levelId),
+    hostId: safeInteger(item?.hostId),
+    min,
+    max,
+    center,
+    size,
+    facing: compactXyz(geometry?.facingOrientation)
+  };
+}
+
+function rounded(value: number, digits = 6): number {
+  return Number(value.toFixed(digits));
+}
+
+function orientationDot(a: SpatialItem["facing"], b: SpatialItem["facing"]): number | null {
+  if (!a || !b) return null;
+  const ma = Math.hypot(a.x, a.y, a.z);
+  const mb = Math.hypot(b.x, b.y, b.z);
+  if (ma <= 1e-9 || mb <= 1e-9) return null;
+  return Math.max(-1, Math.min(1, (a.x * b.x + a.y * b.y + a.z * b.z) / (ma * mb)));
+}
+
+type SpatialCandidate = Record<string, unknown> & { _score: number; _distance: number; elementIds: number[] };
+
+function compareSpatialCandidates(a: SpatialCandidate, b: SpatialCandidate): number {
+  return b._score - a._score || a._distance - b._distance
+    || a.elementIds[0]! - b.elementIds[0]!
+    || a.elementIds[1]! - b.elementIds[1]!;
+}
+
+function retainRankedSpatialCandidate(candidates: SpatialCandidate[], candidate: SpatialCandidate, limit: number): void {
+  if (candidates.length === limit && compareSpatialCandidates(candidate, candidates[limit - 1]!) >= 0) return;
+  let index = 0;
+  while (index < candidates.length && compareSpatialCandidates(candidates[index]!, candidate) <= 0) index += 1;
+  candidates.splice(index, 0, candidate);
+  if (candidates.length > limit) candidates.pop();
+}
+
+function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<string, unknown> {
+  const source = values.map(spatialItem).filter((item): item is SpatialItem => item !== null).slice(0, 1000);
+  const candidates: SpatialCandidate[] = [];
+  const returnedLimit = 24;
+  let pairCount = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    const a = source[i]!;
+    for (let j = i + 1; j < source.length; j += 1) {
+      const b = source[j]!;
+      if (a.typeKey !== b.typeKey) continue;
+      if (a.levelId !== null && b.levelId !== null && a.levelId !== b.levelId) continue;
+      const overlap = {
+        x: Math.max(0, Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x)),
+        y: Math.max(0, Math.min(a.max.y, b.max.y) - Math.max(a.min.y, b.min.y)),
+        z: Math.max(0, Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z))
+      };
+      const overlapVolume = overlap.x * overlap.y * overlap.z;
+      const distance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y, a.center.z - b.center.z);
+      const smallerDiagonal = Math.max(0.01, Math.min(
+        Math.hypot(a.size.x, a.size.y, a.size.z),
+        Math.hypot(b.size.x, b.size.y, b.size.z)
+      ));
+      const intersects = overlap.x > 1e-6 && overlap.y > 1e-6 && overlap.z > 1e-6;
+      const closeRelativeToSize = distance <= Math.max(1, smallerDiagonal * 0.75);
+      if (!intersects && !closeRelativeToSize) continue;
+
+      const volumeA = Math.max(1e-12, a.size.x * a.size.y * a.size.z);
+      const volumeB = Math.max(1e-12, b.size.x * b.size.y * b.size.z);
+      const overlapFractionOfSmaller = Math.min(1, overlapVolume / Math.min(volumeA, volumeB));
+      const facingDot = orientationDot(a.facing, b.facing);
+      const sameLevel = a.levelId !== null && a.levelId === b.levelId;
+      const sameHost = a.hostId !== null && a.hostId === b.hostId;
+      const orientationRelation = facingDot === null ? "unavailable" : facingDot >= 0.95 ? "same" : facingDot <= -0.95 ? "opposite" : "different";
+      const score = (intersects ? 1000 : 0) + overlapFractionOfSmaller * 300
+        + (sameLevel ? 100 : 0) + (sameHost ? 100 : 0)
+        + (orientationRelation === "same" ? 80 : orientationRelation === "opposite" ? -250 : 0)
+        + 100 / (1 + distance);
+      pairCount += 1;
+      retainRankedSpatialCandidate(candidates, {
+        _score: rounded(score),
+        _distance: rounded(distance),
+        elementIds: [a.elementId, b.elementId],
+        typeId: a.typeId,
+        centerDistanceFt: rounded(distance),
+        centerDistanceIn: rounded(distance * 12, 3),
+        boundingBoxesIntersect: intersects,
+        overlapFt: { x: rounded(overlap.x), y: rounded(overlap.y), z: rounded(overlap.z) },
+        overlapFractionOfSmaller: rounded(overlapFractionOfSmaller),
+        sameLevel,
+        levelIds: [a.levelId, b.levelId],
+        sameHost,
+        hostIds: [a.hostId, b.hostId],
+        orientationDot: facingDot === null ? null : rounded(facingDot),
+        orientationRelation,
+        reasons: [
+          "same_type",
+          ...(intersects ? ["bounding_boxes_intersect"] : ["centers_close_relative_to_size"]),
+          ...(sameLevel ? ["same_level"] : []),
+          ...(sameHost ? ["same_host"] : []),
+          ...(orientationRelation === "same" ? ["same_facing_orientation"] : []),
+          ...(orientationRelation === "opposite" ? ["opposite_facing_orientation_requires_connector_review"] : [])
+        ]
+      }, returnedLimit);
+    }
+  }
+  const returned = candidates.map(({ _score, _distance, ...candidate }) => ({
+    ...candidate,
+    rankingScore: rounded(_score)
+  }));
+  return {
+    schema: "revit-operator.spatial-duplicate-candidate-summary/v1",
+    derivedFromReturnedItems: source.length,
+    candidatePairsFound: pairCount,
+    candidatePairsReturned: returned.length,
+    candidatePairsOmitted: Math.max(0, pairCount - returned.length),
+    complete: complete && source.length === values.length,
+    interpretation: "Candidates are same-type instances whose 3D bounding boxes intersect or whose centers are unusually close relative to element size. Unique Marks do not rule out duplicated instances. Opposite-facing pairs can be intentional and require connector/network review.",
+    candidates: returned
   };
 }
 
@@ -97,6 +255,12 @@ export function compactFindElementsResultForPrompt(
   const inheritedIdsOmitted = Number.isFinite(Number(root.elementIdsOmitted)) ? Math.max(0, Math.floor(Number(root.elementIdsOmitted))) : 0;
   const itemsOmitted = inheritedItemsOmitted + Math.max(0, rawItems.length - items.length);
   const elementIdsOmitted = inheritedIdsOmitted + Math.max(0, root.elementIds.length - elementIds.length);
+  const itemsComplete = root.itemsComplete !== false && root.truncated !== true && root.scanCapReached !== true && itemsOmitted === 0 && elementIdsOmitted === 0;
+  const inheritedWarnings = Array.isArray(root.warnings) ? root.warnings.slice(0, 20) : [];
+  const geometryWarning = "Unique instance Marks do not rule out duplicated elements; inspect spatialDuplicateCandidates and then verify host, level, orientation, parameters, and connector/network relationships.";
+  const warnings = geometryIncluded
+    ? [...new Set([...inheritedWarnings, geometryWarning])].slice(0, 20)
+    : inheritedWarnings;
   return {
     _compacted: true,
     compaction: geometryIncluded ? "find-elements-identity-geometry" : "find-elements-identity",
@@ -119,11 +283,12 @@ export function compactFindElementsResultForPrompt(
     identityExpansionCount: root.identityExpansionCount ?? 0,
     identityExpansionScanCapReached: root.identityExpansionScanCapReached === true,
     geometryIncluded,
+    spatialDuplicateCandidates: geometryIncluded ? spatialDuplicateSummary(items, itemsComplete) : null,
     items,
     itemsOmitted,
     truncated: root.truncated === true,
     scanCapReached: root.scanCapReached === true,
-    itemsComplete: root.itemsComplete !== false && root.truncated !== true && root.scanCapReached !== true && itemsOmitted === 0 && elementIdsOmitted === 0,
-    warnings: Array.isArray(root.warnings) ? root.warnings.slice(0, 20) : []
+    itemsComplete,
+    warnings
   };
 }

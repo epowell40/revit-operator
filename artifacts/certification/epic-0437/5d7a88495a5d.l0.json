@@ -676,7 +676,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:4326121c08c903280e59e2457f425f8543fa5877a67412869e4f046bde34d40e"
+      "sha256": "sha256:8072d93997edc99bfa62edbf3152a21d4a1b2aff06d7ba051c41d19627490b96"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1241,7 +1241,7 @@
     },
     {
       "path": "apps/operator-backend/src/find_elements_compaction.ts",
-      "sha256": "sha256:cc827bae51edfbfc092b38d424c81b18109e5a3156ece752e59e249a09549767"
+      "sha256": "sha256:addff25dd070970063def0bf6f2ef31409b6791307e9d6059f7a4e6c42ae39f9"
     },
     {
       "path": "apps/operator-backend/src/goals/authority.ts",
@@ -1869,7 +1869,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:c7e12970c8911be384e2a6df9f4548e1ee78371a86ce6d1ebfd8e622685e6440"
+      "sha256": "sha256:8fa93a60a4a302edeb73b1c766479dc52200b6ed5a764d6feb1a557f7e58716e"
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
@@ -2597,7 +2597,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_result_compaction.test.ts",
-      "sha256": "sha256:e01508e010e6fecf0b78d94813b98d86828240f0807985be65111cea27b0244a"
+      "sha256": "sha256:19335eeb59a5caa54eebb6a9d27b9d8e72ac5f496004dc6747b3ef40217b2d68"
     },
     {
       "path": "apps/operator-backend/test/tool_result_normalization.test.ts",
@@ -4637,7 +4637,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:ae3906b8047c3be31a1f1ebd7ed0d018289db8321968798bb216de4c8bcefd74",
+  "inputs_hash": "sha256:c014dc3bdd2870682dc737b2dfb42fb8263cd86bcfaa146758b34204568321f7",
   "result": {
     "passed": true,
     "checks": [

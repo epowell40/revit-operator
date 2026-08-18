@@ -248,6 +248,8 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /project-scope `\/revit\/find-elements` inventory/);
   assert.match(instructions, /`includeGeometry:true`/);
   assert.match(instructions, /do not export every view before trying this complete inventory/);
+  assert.match(instructions, /`spatialDuplicateCandidates`/);
+  assert.match(instructions, /unique Marks are not duplicate-instance proof/);
   assert.match(instructions, /same-category and same-family\/type instances/);
   assert.match(instructions, /overlapping bounding-box footprints or center separation relative to element size/);
   assert.match(instructions, /Compare host, level, facing\/hand orientation, parameters, and connector\/network relationships/);

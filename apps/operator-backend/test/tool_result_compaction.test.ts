@@ -116,7 +116,60 @@ test("compact find-elements preserves bounded world geometry for a complete proj
   assert.equal(compacted.items[508].geometry.units, "feet");
   assert.equal(compacted.items[508].geometry.boundingBox.size.x, 4 / 3);
   assert.equal(compacted.items[508].geometry.arbitraryPayload, undefined);
+  assert.equal(compacted.spatialDuplicateCandidates.schema, "revit-operator.spatial-duplicate-candidate-summary/v1");
+  assert.equal(compacted.spatialDuplicateCandidates.complete, true);
+  assert.ok(compacted.spatialDuplicateCandidates.candidatePairsFound > 24);
+  assert.equal(compacted.spatialDuplicateCandidates.candidatePairsReturned, 24);
+  assert.deepEqual(compacted.spatialDuplicateCandidates.candidates[0].elementIds, [1460000, 1460001]);
+  assert.equal(compacted.spatialDuplicateCandidates.candidates[0].centerDistanceIn, 1);
+  assert.equal(compacted.spatialDuplicateCandidates.candidates[0].orientationRelation, "same");
+  assert.match(compacted.spatialDuplicateCandidates.interpretation, /Unique Marks do not rule out duplicated instances/);
+  assert.match(compacted.warnings.join("\n"), /Unique instance Marks do not rule out duplicated elements/);
   assert.deepEqual(compactFindElementsResultForPrompt(compacted), compacted);
+});
+
+test("spatial duplicate candidates rank same-host same-facing overlap above intentional opposite-facing peers", () => {
+  const geometry = (x: number, facingX: number) => ({
+    units: "feet",
+    coordinateSystem: "revit_internal_world",
+    boundingBox: {
+      min: { x: x - 2 / 3, y: 1.8, z: 8.9 },
+      max: { x: x + 2 / 3, y: 2.2, z: 9.1 },
+      center: { x, y: 2, z: 9 },
+      size: { x: 4 / 3, y: 0.4, z: 0.2 }
+    },
+    facingOrientation: { x: facingX, y: 0, z: 0 }
+  });
+  const compacted = compactFindElementsResultForPrompt({
+    status: "Ok",
+    count: 7,
+    elementIds: [1460066, 1460067, 1441077, 1441092, 1500001, 1500002, 1500003],
+    geometryIncluded: true,
+    itemsComplete: true,
+    items: [
+      { elementId: 1460066, typeId: 222, levelId: 333, hostId: 444, mark: "SD-1", geometry: geometry(0, 1) },
+      { elementId: 1460067, typeId: 222, levelId: 333, hostId: 444, mark: "SD-2", geometry: geometry(8 / 12, 1) },
+      { elementId: 1441077, typeId: 222, levelId: 333, hostId: 551, mark: "SD-3", geometry: geometry(20, 1) },
+      { elementId: 1441092, typeId: 222, levelId: 333, hostId: 552, mark: "SD-4", geometry: geometry(20.1, -1) },
+      { elementId: 1500001, typeId: 999, levelId: 333, hostId: 444, geometry: geometry(0.1, 1) },
+      { elementId: 1500002, typeId: 222, levelId: 777, hostId: 444, geometry: geometry(0.2, 1) },
+      { elementId: 1500003, typeId: 222, levelId: 333, hostId: 444, geometry: geometry(50, 1) }
+    ]
+  }) as any;
+
+  const summary = compacted.spatialDuplicateCandidates;
+  assert.deepEqual(summary.candidates[0].elementIds, [1460066, 1460067]);
+  assert.equal(summary.candidates[0].centerDistanceIn, 8);
+  assert.equal(summary.candidates[0].boundingBoxesIntersect, true);
+  assert.equal(summary.candidates[0].sameHost, true);
+  assert.equal(summary.candidates[0].orientationRelation, "same");
+  assert.ok(summary.candidates.some((candidate: any) =>
+    candidate.elementIds[0] === 1441077
+    && candidate.elementIds[1] === 1441092
+    && candidate.orientationRelation === "opposite"
+    && candidate.reasons.includes("opposite_facing_orientation_requires_connector_review")));
+  assert.ok(!summary.candidates.some((candidate: any) => candidate.elementIds.includes(1500001)));
+  assert.ok(!summary.candidates.some((candidate: any) => candidate.elementIds.includes(1500002)));
 });
 
 test("compact locate-elements preserves every physical and nested spatial result plus unresolved provenance", () => {
