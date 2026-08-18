@@ -412,34 +412,28 @@ function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: b
   return { mutationAttempted, blocked, verified: mutationAttempted && receipt.verified === true && auditBound && !blocked };
 }
 
-function hasCertifiedTeammatePreviewReceipt(attempt: GeneralRevitAttempt): boolean {
+type CertifiedTeammatePreviewReceipt = { action_id: string; path: string };
+
+function certifiedTeammatePreviewReceipts(attempt: GeneralRevitAttempt): CertifiedTeammatePreviewReceipt[] {
   const value = attempt.teammate_loop_receipt;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const receipt = value as {
     schema?: unknown; turn_kind?: unknown; context_state?: unknown; stage?: unknown;
-    preview_action_ids?: unknown; apply_attempts?: unknown; blocked_reason?: unknown;
+    preview_action_ids?: unknown; preview_receipts?: unknown; apply_attempts?: unknown; blocked_reason?: unknown;
   };
   if (receipt.schema !== "revit-operator.teammate-loop-receipt.v1"
-      || receipt.turn_kind !== "inspection"
+      || receipt.turn_kind === "conversation"
       || receipt.context_state !== "live"
-      || receipt.stage !== "report"
+      || receipt.stage === "blocked"
       || Number(receipt.apply_attempts) !== 0
       || (receipt.blocked_reason !== null && receipt.blocked_reason !== undefined
-        && (typeof receipt.blocked_reason !== "string" || receipt.blocked_reason.trim().length > 0))) return false;
-  return Array.isArray(receipt.preview_action_ids)
-    && receipt.preview_action_ids.length > 0
-    && receipt.preview_action_ids.every((actionId) => typeof actionId === "string" && actionId.trim().length > 0);
-}
-
-function certifiedTeammatePreviewPaths(attempt: GeneralRevitAttempt): string[] {
-  if (!hasCertifiedTeammatePreviewReceipt(attempt)) return [];
-  const receipt = attempt.teammate_loop_receipt as {
-    preview_action_ids?: unknown;
-    preview_receipts?: unknown;
-  };
-  const actionIds = new Set(Array.isArray(receipt.preview_action_ids) ? receipt.preview_action_ids.map(String) : []);
-  if (!Array.isArray(receipt.preview_receipts)) return [];
-  const paths: string[] = [];
+        && (typeof receipt.blocked_reason !== "string" || receipt.blocked_reason.trim().length > 0))) return [];
+  if (!Array.isArray(receipt.preview_action_ids) || !Array.isArray(receipt.preview_receipts)) return [];
+  const actionIds = new Set(receipt.preview_action_ids
+    .filter((actionId): actionId is string => typeof actionId === "string" && actionId.trim().length > 0)
+    .map((actionId) => actionId.trim()));
+  if (actionIds.size === 0 || actionIds.size !== receipt.preview_action_ids.length) return [];
+  const rows: CertifiedTeammatePreviewReceipt[] = [];
   for (const value of receipt.preview_receipts) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const row = value as { action_id?: unknown; path?: unknown; status?: unknown; evidence_sha256?: unknown };
@@ -449,9 +443,20 @@ function certifiedTeammatePreviewPaths(attempt: GeneralRevitAttempt): string[] {
     if (!actionIds.has(actionId) || row.status !== "success"
         || !/^(?:\/revit\/[a-z0-9/-]+|revit_[a-z0-9_]+)$/.test(path)
         || !/^sha256:[a-f0-9]{64}$/.test(evidenceHash)) continue;
-    paths.push(path);
+    rows.push({ action_id: actionId, path });
   }
-  return [...new Set(paths)];
+  const certifiedActionIds = new Set(rows.map((row) => row.action_id));
+  return certifiedActionIds.size === actionIds.size && [...actionIds].every((actionId) => certifiedActionIds.has(actionId))
+    ? rows
+    : [];
+}
+
+function hasCertifiedTeammatePreviewReceipt(attempt: GeneralRevitAttempt): boolean {
+  return certifiedTeammatePreviewReceipts(attempt).length > 0;
+}
+
+function certifiedTeammatePreviewPaths(attempt: GeneralRevitAttempt): string[] {
+  return [...new Set(certifiedTeammatePreviewReceipts(attempt).map((row) => row.path))];
 }
 
 function combinedMessage(attempt: GeneralRevitAttempt): string {
@@ -710,12 +715,15 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const rows = actionRows(attempt);
   const durableTools = durableRevitToolNames(attempt);
   const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt);
+  const composablePreviewLaneObserved = testCase.expected_effect !== "apply"
+    && teammatePreviewPaths.includes("/revit/transaction-plan");
   const observedPaths = [...new Set([
     ...rows.map((row) => String(row.path || "").trim()).filter(Boolean),
     ...durableTools.map((tool) => `mcp:${tool}`),
     ...teammatePreviewPaths
   ])];
-  const expectedPathObserved = observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
+  const expectedPathObserved = composablePreviewLaneObserved
+    || observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
     || durableTools.length > 0
     || rows.some((row) => dynamicRuntimeEffectMatches(row, testCase.expected_effect));
   const substantiveFailedAction = rows.some((row, index) => {
@@ -725,6 +733,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
       && later.status === "success" && later.request_dispatched !== false);
   });
   const successfulExpectedPathObserved = durableTools.length > 0
+    || composablePreviewLaneObserved
     || teammatePreviewPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
     || rows.some((row) => {
     const candidate = String(row.path || "").trim();

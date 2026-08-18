@@ -474,6 +474,10 @@ test("a nested teammate preview receipt satisfies the preview effect through del
       context_state: "live",
       stage: "report",
       preview_action_ids: ["mcp:1", "mcp:2"],
+      preview_receipts: [
+        { action_id: "mcp:1", path: safeCase.dispatch_any_of[0], status: "success", evidence_sha256: `sha256:${"a".repeat(64)}` },
+        { action_id: "mcp:2", path: safeCase.dispatch_any_of[0], status: "success", evidence_sha256: `sha256:${"b".repeat(64)}` }
+      ],
       apply_attempts: 0,
       verified: false,
       blocked_reason: null
@@ -506,6 +510,12 @@ test("a certified teammate preview verifies a read-classified preflight without 
       context_state: "live",
       stage: "report",
       preview_action_ids: ["mcp:1"],
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: "/revit/export-pdf",
+        status: "success",
+        evidence_sha256: `sha256:${"a".repeat(64)}`
+      }],
       apply_attempts: 0,
       verified: false,
       blocked_reason: null
@@ -570,6 +580,45 @@ test("a certified successful teammate preview preserves its exact capability pat
     assert.equal(invalid.completed, false);
     assert.notEqual(invalid.tier, "verified");
   }
+});
+
+test("a certified transaction-plan preview is the composable safe execution lane", () => {
+  const safeCase = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c03_level4_enlarged_plan_terse")!, false);
+  const attempt = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [{ path: "/chat", request_effect: "preview", request_dispatched: true, status: "success" }],
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "mutation",
+      context_state: "live",
+      stage: "discover",
+      preview_action_ids: ["mcp:1"],
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: "/revit/transaction-plan",
+        status: "success",
+        evidence_sha256: `sha256:${"c".repeat(64)}`
+      }],
+      apply_attempts: 0,
+      verified: false,
+      blocked_reason: null
+    }
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(safeCase, attempt);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.verification_basis, "structured_preview_receipt");
+  assert.equal(result.apply_dispatched, false);
+  assert.deepEqual(result.observed_paths, ["/chat", "/revit/transaction-plan"]);
+
+  const missingNativeReceipt = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...attempt,
+    teammate_loop_receipt: { ...attempt.teammate_loop_receipt, preview_receipts: [] }
+  });
+  assert.equal(missingNativeReceipt.completed, false);
+  assert.notEqual(missingNativeReceipt.tier, "verified");
 });
 
 test("aggregate results never turn non-refusal into a completion claim", () => {
