@@ -19,6 +19,11 @@ import {
   loadGeneralRevitSampleFixtures
 } from "../benchmark/general_revit_sample_fixtures.js";
 import { settleTimedOutComputerRun } from "../benchmark/computer_run_settlement.js";
+import {
+  revitHealthDocumentTitle,
+  waitForExactRevitFixtureHealth,
+  type ExactRevitFixtureHealthResult
+} from "../benchmark/revit_fixture_readiness.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -51,7 +56,7 @@ function asRecord(value: unknown): JsonRecord {
 }
 
 function healthDocumentTitle(health: JsonRecord): string {
-  return String(asRecord(asRecord(health.context).document).title || "").trim();
+  return revitHealthDocumentTitle(health);
 }
 
 function fixtureApplicability(preferredFixture: string, preferredDocumentTitle: string, health: JsonRecord): JsonRecord {
@@ -80,6 +85,24 @@ function healthTimeoutMs(): number {
 function fixtureTimeoutMs(): number {
   const parsed = Number.parseInt(flag("--fixture-timeout-ms", "300000"), 10);
   return Number.isFinite(parsed) ? Math.max(60_000, Math.min(15 * 60_000, parsed)) : 300_000;
+}
+
+function fixtureReadinessTimeoutMs(): number {
+  const parsed = Number.parseInt(flag("--fixture-readiness-timeout-ms", "45000"), 10);
+  return Number.isFinite(parsed) ? Math.max(5_000, Math.min(2 * 60_000, parsed)) : 45_000;
+}
+
+async function readExactFixtureHealth(baseUrl: string, expectedDocumentTitle: string): Promise<ExactRevitFixtureHealthResult> {
+  return waitForExactRevitFixtureHealth({
+    expectedDocumentTitle,
+    timeoutMs: fixtureReadinessTimeoutMs(),
+    readHealth: (remainingMs) => requestJson(
+      baseUrl,
+      "/api/revit/health",
+      {},
+      Math.max(1_000, Math.min(healthTimeoutMs(), remainingMs))
+    )
+  });
 }
 
 function executionSurface(): "operator_computer_general_agent" | "legacy_chat_diagnostic" {
@@ -682,7 +705,10 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   // execute, and settle the certified context job. Treat that as benchmark
   // transport latency, not a model failure, while keeping the wait bounded.
   const initialHealthStartedAt = Date.now();
-  const initialState = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  const initialReadiness = suiteContext.fixture_health_is_authoritative === true
+    ? await readExactFixtureHealth(baseUrl, preferredDocumentTitle)
+    : { health: await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs()), attempts: 1 };
+  const initialState = initialReadiness.health;
   const initialHealthDurationMs = Date.now() - initialHealthStartedAt;
   const useComputer = executionSurface() === "operator_computer_general_agent";
   let sessionId = "";
@@ -791,6 +817,7 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       round_count: Array.isArray(attempt.rounds) ? attempt.rounds.length : 0,
       harness_health_ms: {
         initial: initialHealthDurationMs,
+        initial_attempts: initialReadiness.attempts,
         final: finalHealthDurationMs,
         total: initialHealthDurationMs + finalHealthDurationMs
       },
@@ -804,7 +831,7 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-timeout-ms N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
@@ -876,13 +903,12 @@ async function main(): Promise<void> {
   const speedDefaults = asRecord(config.speedDefaults);
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
   let fixturePreflight: JsonRecord = {};
+  let fixturePreflightAttempts = 0;
   if (requestedFixture && !rescoreOnly) {
-    fixturePreflight = await requestJson(sidecar, "/api/revit/health", {}, healthTimeoutMs());
-    const activeTitle = String(asRecord(asRecord(fixturePreflight.context).document).title || "").trim();
     const expectedTitle = fixtureConfig.fixtures[requestedFixture].document_title;
-    if (activeTitle !== expectedTitle) {
-      throw new Error(`Fixture ${requestedFixture} requires active document '${expectedTitle}', but Revit reports '${activeTitle || "none"}'.`);
-    }
+    const readiness = await readExactFixtureHealth(sidecar, expectedTitle);
+    fixturePreflight = readiness.health;
+    fixturePreflightAttempts = readiness.attempts;
   }
   const suiteContext = {
     sidecar,
@@ -902,12 +928,14 @@ async function main(): Promise<void> {
     fixture_schema: fixtureConfig.schema,
     fixture_config_sha256: sha256(fixtureConfig),
     fixture_selection: requestedFixture || (orchestrateFixtures ? "orchestrated" : "single_fixture_unpinned"),
+    fixture_health_is_authoritative: Boolean(requestedFixture || orchestrateFixtures),
     fixture_root: orchestrateFixtures ? path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples")) : null,
     fixture_transitions: [] as JsonRecord[],
     fixture_preflight: requestedFixture ? {
       document_title: asRecord(asRecord(fixturePreflight.context).document).title ?? null,
       document_path: asRecord(asRecord(fixturePreflight.context).document).path ?? null,
-      preferred_fixture: requestedFixture
+      preferred_fixture: requestedFixture,
+      readiness_attempts: fixturePreflightAttempts
     } : null,
     apply_requested: applyRequested,
     mutation_policy: applyRequested

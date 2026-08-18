@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
+import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -34,6 +35,7 @@ type TeammateLoopState = {
   successful_preview_signatures: Set<string>;
   pending: Map<string, PendingCall>;
   preview_action_ids: string[];
+  preview_receipts: SuccessfulPreviewReceipt[];
   apply_action_id: string | null;
   verification_action_ids: string[];
   apply_attempts: number;
@@ -629,6 +631,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     successful_preview_signatures: new Set(),
     pending: new Map(),
     preview_action_ids: [],
+    preview_receipts: [],
     apply_action_id: null,
     verification_action_ids: [],
     apply_attempts: 0,
@@ -909,7 +912,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   const pending = state.pending.get(actionId);
   if (!pending) return;
   state.pending.delete(actionId);
-  if (pending.effect === "preview" && succeeded) state.successful_preview_signatures.add(pending.signature);
+  if (pending.effect === "preview" && succeeded) {
+    state.successful_preview_signatures.add(pending.signature);
+    state.preview_receipts.push(successfulPreviewReceipt(actionId, pending.path, sha256(JSON.stringify(stableValue(evidence)))));
+  }
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
     if (!succeeded) {
@@ -956,21 +962,7 @@ function ingestToolResults(state: TeammateLoopState, results: ToolResult[] | und
 }
 
 function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_loop_receipt"]> {
-  return {
-    schema: "revit-operator.teammate-loop-receipt.v1",
-    turn_kind: state.contract.turn_kind,
-    context_state: state.contract.context_state,
-    stage: state.contract.stage,
-    preview_action_ids: state.preview_action_ids.slice(-8),
-    apply_action_id: state.apply_action_id,
-    verification_action_ids: state.verification_action_ids.slice(-8),
-    apply_attempts: state.apply_attempts,
-    verified: state.verified,
-    verification_mode: state.verification_mode,
-    verification_action_id: state.verification_action_id,
-    verification_evidence_sha256: state.verification_evidence_sha256,
-    blocked_reason: state.blocked_reason
-  };
+  return buildTeammateLoopReceipt(state);
 }
 
 const INCOMPLETE_MUTATION_REPORTS = [

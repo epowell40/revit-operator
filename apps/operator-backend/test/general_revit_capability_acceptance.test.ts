@@ -30,7 +30,9 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /flag\("--sidecar", "http:\/\/127\.0\.0\.1:3907"\)/);
   assert.match(runner, /harness_health_ms:/);
   assert.match(runner, /computer_performance: computerPerformanceSummary\(attempt\)/);
-  assert.match(runner, /fixturePreflight = await requestJson\(sidecar, "\/api\/revit\/health", \{\}, healthTimeoutMs\(\)\)/);
+  assert.match(runner, /const readiness = await readExactFixtureHealth\(sidecar, expectedTitle\)/);
+  assert.match(runner, /fixture_health_is_authoritative: Boolean\(requestedFixture \|\| orchestrateFixtures\)/);
+  assert.match(runner, /initial_attempts: initialReadiness\.attempts/);
   assert.match(runner, /selected_answer_assertion_case_count:/);
   assert.match(runner, /summary_by_verification_basis:/);
   assert.match(runner, /verification_basis/);
@@ -525,6 +527,49 @@ test("a certified teammate preview verifies a read-classified preflight without 
   });
   assert.equal(uncertifiedResult.completed, true);
   assert.equal(uncertifiedResult.verified, false);
+});
+
+test("a certified successful teammate preview preserves its exact capability path", () => {
+  const safeCase = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c33_match_view_graphics_across_level")!, false);
+  const attempt = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [{ path: "/chat", request_effect: "preview", request_dispatched: true, status: "success" }],
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "inspection",
+      context_state: "live",
+      stage: "report",
+      preview_action_ids: ["mcp:1"],
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: "/revit/views",
+        status: "success",
+        evidence_sha256: `sha256:${"a".repeat(64)}`
+      }],
+      apply_attempts: 0,
+      verified: false,
+      blocked_reason: null
+    }
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(safeCase, attempt);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.completed, true);
+  assert.deepEqual(result.observed_paths, ["/chat", "/revit/views"]);
+
+  for (const invalidPreviewReceipt of [
+    { ...attempt.teammate_loop_receipt.preview_receipts[0], action_id: "mcp:forged" },
+    { ...attempt.teammate_loop_receipt.preview_receipts[0], status: "failed" },
+    { ...attempt.teammate_loop_receipt.preview_receipts[0], evidence_sha256: "sha256:not-a-digest" },
+    { ...attempt.teammate_loop_receipt.preview_receipts[0], path: "/revit/sheets" }
+  ]) {
+    const invalid = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+      ...attempt,
+      teammate_loop_receipt: { ...attempt.teammate_loop_receipt, preview_receipts: [invalidPreviewReceipt] }
+    });
+    assert.equal(invalid.completed, false);
+    assert.notEqual(invalid.tier, "verified");
+  }
 });
 
 test("aggregate results never turn non-refusal into a completion claim", () => {

@@ -141,6 +141,12 @@ export type ChatResponse = {
     context_state: "not_required" | "live" | "missing" | "invalid";
     stage: "answer" | "clarify" | "ground" | "discover" | "preview" | "apply" | "verify" | "report" | "blocked";
     preview_action_ids: string[];
+    preview_receipts?: Array<{
+      action_id: string;
+      path: string;
+      status: "success";
+      evidence_sha256: string;
+    }>;
     apply_action_id: string | null;
     verification_action_ids: string[];
     apply_attempts: number;
