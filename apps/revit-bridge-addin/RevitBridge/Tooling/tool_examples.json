@@ -4846,6 +4846,45 @@
             },
             "warnings": []
           }
+        },
+        {
+          "name": "Preview duplicating a detailed view and placing it on a new sheet",
+          "request": {
+            "actions": [
+              {
+                "kind": "duplicateView",
+                "sourceViewId": 222,
+                "duplicateOption": "withDetailing",
+                "newName": "LEVEL 1 - AREA A",
+                "resultRef": "areaView"
+              },
+              {
+                "kind": "createSheet",
+                "number": "TMP-AREA-A",
+                "name": "AREA A",
+                "resultRef": "areaSheet"
+              },
+              {
+                "kind": "placeView",
+                "sheetId": "$areaSheet",
+                "viewId": "$areaView",
+                "x": 1.5,
+                "y": 1.0
+              }
+            ]
+          },
+          "expected_response_shape": {
+            "impact": {
+              "added": [
+                333,
+                444,
+                555
+              ],
+              "modified": [],
+              "deleted": []
+            },
+            "warnings": []
+          }
         }
       ]
     },

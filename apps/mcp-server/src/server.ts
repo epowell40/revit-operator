@@ -2778,6 +2778,13 @@ const transactionActionSchema = z.discriminatedUnion("kind", [
     resultRef: z.string().min(1).optional(),
   }),
   z.object({
+    kind: z.literal("duplicateView"),
+    sourceViewId: transactionElementReferenceSchema,
+    duplicateOption: z.enum(["duplicate", "withDetailing"]).optional().default("withDetailing"),
+    newName: z.string().optional(),
+    resultRef: z.string().min(1).optional(),
+  }),
+  z.object({
     kind: z.literal("setViewCrop"),
     viewId: transactionElementReferenceSchema,
     cropBox: z.object({ min: transactionPointSchema, max: transactionPointSchema }),
@@ -2806,7 +2813,7 @@ const transactionActionSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-server.tool("revit_transaction_plan", "Plan composable model actions in one rolled-back transaction. Created views/sheets may declare resultRef and later actions may use '$resultRef' as an id. Supports delete, setParameters, placeFamilies, createDependentView, setViewCrop, setViewScale, createSheet, and placeView.",
+server.tool("revit_transaction_plan", "Plan composable model actions in one rolled-back transaction. Created views/sheets may declare resultRef and later actions may use '$resultRef' as an id. Supports delete, setParameters, placeFamilies, duplicateView (plain or with detailing), createDependentView, setViewCrop, setViewScale, createSheet, and placeView.",
   { actions: z.array(transactionActionSchema) },
   async ({ actions }) => {
     try {

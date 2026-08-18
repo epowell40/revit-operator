@@ -332,7 +332,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
     ? "clarify"
     : identity.state === "missing" || identity.state === "invalid"
       ? "ground"
-      : turnKind === "conversation" ? "answer" : turnKind === "mutation" ? "preview" : "discover";
+      : turnKind === "conversation" ? "answer" : previewRequired || turnKind === "mutation" ? "preview" : "discover";
   return {
     schema: "revit-operator.teammate-loop.v1",
     turn_kind: turnKind,
@@ -372,7 +372,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     : contract.ambiguity === "material"
       ? "Paraphrase the likely intent and ask one focused question; take no Revit action."
       : contract.preview_required && contract.no_write
-        ? "Use live context; resolve the exact target and execute one real bounded, noncommitting Revit preview or dry-run, then stop before apply. A prose plan, table, or proposed receipt is not an executed preview; if discovery proves no preview-capable target or primitive exists, report that exact blocker instead of claiming preview completion."
+        ? "Use live context; resolve the exact target and execute one real bounded, noncommitting Revit preview or dry-run, then stop before apply. A prose plan, table, proposed receipt, capture, cropped image, render, or temporary visual is not an executed mutation preview without a successful noncommitting Revit primitive receipt. If discovery proves no preview-capable target or primitive exists, report that exact blocker instead of claiming preview completion."
         : contract.preview_required
           ? "Use live context; resolve the exact target and execute a real bounded preview or dry-run before applying; bind the apply to that preview and verify by readback/capture before success. A prose plan, table, or proposed receipt is not an executed preview."
       : contract.turn_kind === "mutation"
@@ -974,8 +974,8 @@ const INCOMPLETE_MUTATION_REPORTS = [
 ];
 
 function assistantClaimsExecutedPreview(text: string): boolean {
-  return /\b(?:preview|preflight|dry[ -]?run)\b[^.!?\n]{0,80}\b(?:complete(?:d)?|successful|passed|receipt|done|ready)\b/i.test(text)
-    || /\b(?:complete(?:d)?|successful|passed|done)\b[^.!?\n]{0,80}\b(?:preview|preflight|dry[ -]?run)\b/i.test(text);
+  return /\b(?:preview|preflight|dry[ -]?run)\b[^.!?\n]{0,80}\b(?:complete(?:d)?|successful|passed|receipt|done|ready|generated|created|produced)\b/i.test(text)
+    || /\b(?:complete(?:d)?|successful|passed|done|generated|created|produced)\b[^.!?\n]{0,80}\b(?:preview|preflight|dry[ -]?run)\b/i.test(text);
 }
 
 function assistantReportsNoPreviewCandidate(text: string): boolean {

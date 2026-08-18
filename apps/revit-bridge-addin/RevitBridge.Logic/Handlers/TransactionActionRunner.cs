@@ -190,6 +190,9 @@ namespace RevitBridge.Logic.Handlers
                 case "createDependentView":
                     ExecuteCreateDependentView(doc, action, impact, warnings, outcome, index, executionContext);
                     break;
+                case "duplicateView":
+                    ExecuteDuplicateView(doc, action, impact, warnings, outcome, index, executionContext);
+                    break;
                 case "setViewCrop":
                     ExecuteSetViewCrop(doc, action, impact, warnings, outcome, index, executionContext);
                     break;
@@ -248,6 +251,11 @@ namespace RevitBridge.Logic.Handlers
                     break;
                 case "createDependentView":
                     ValidateRequiredIdOrRef(action, "sourceViewId", actionKind, warnings, outcome, index);
+                    ValidateOptionalResultRef(action, actionKind, warnings, outcome, index);
+                    break;
+                case "duplicateView":
+                    ValidateRequiredIdOrRef(action, "sourceViewId", actionKind, warnings, outcome, index);
+                    ValidateOptionalDuplicateViewOption(action, warnings, outcome, index);
                     ValidateOptionalResultRef(action, actionKind, warnings, outcome, index);
                     break;
                 case "setViewCrop":
@@ -373,6 +381,17 @@ namespace RevitBridge.Logic.Handlers
             if (!action.TryGetProperty("resultRef", out var reference)) return;
             if (reference.ValueKind != JsonValueKind.String || !IsValidReference(reference.GetString()))
                 outcome.Fail(warnings, $"Action[{index}] {actionKind} resultRef must be a non-empty single-line token.");
+        }
+
+        private static void ValidateOptionalDuplicateViewOption(
+            JsonElement action,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index)
+        {
+            if (!action.TryGetProperty("duplicateOption", out var option)) return;
+            if (option.ValueKind == JsonValueKind.String && IsValidDuplicateViewOption(option.GetString())) return;
+            outcome.Fail(warnings, $"Action[{index}] duplicateView duplicateOption must be 'duplicate' or 'withDetailing'.");
         }
 
         private static bool IsValidReference(string? value)
@@ -520,6 +539,92 @@ namespace RevitBridge.Logic.Handlers
             {
                 outcome.Fail(warnings, $"Action[{index}] createDependentView failed: {ex.Message}");
             }
+        }
+
+        private static void ExecuteDuplicateView(
+            Document doc,
+            JsonElement action,
+            Impact impact,
+            List<string> warnings,
+            ActionOutcome outcome,
+            int index,
+            ActionExecutionContext context)
+        {
+            outcome.Attempt();
+            if (!TryResolveElementId(action, "sourceViewId", context, out var sourceViewId, out var resolveError))
+            {
+                outcome.Fail(warnings, $"Action[{index}] duplicateView: {resolveError}");
+                return;
+            }
+
+            var source = doc.GetElement(ElementIdCompat.Create(sourceViewId)) as View;
+            if (source == null)
+            {
+                outcome.Fail(warnings, $"Action[{index}] duplicateView: source view {sourceViewId} not found.");
+                return;
+            }
+
+            var duplicateOption = ViewDuplicateOption.WithDetailing;
+            if (TryReadString(action, "duplicateOption", out var requestedOption) &&
+                !TryParseDuplicateViewOption(requestedOption, out duplicateOption))
+            {
+                outcome.Fail(warnings, $"Action[{index}] duplicateView duplicateOption must be 'duplicate' or 'withDetailing'.");
+                return;
+            }
+            if (!source.CanViewBeDuplicated(duplicateOption))
+            {
+                outcome.Fail(warnings, $"Action[{index}] duplicateView: view {sourceViewId} cannot be duplicated using {duplicateOption}.");
+                return;
+            }
+
+            try
+            {
+                var createdId = source.Duplicate(duplicateOption);
+                var created = doc.GetElement(createdId) as View;
+                if (created == null) throw new InvalidOperationException("Revit did not return the duplicated view.");
+                if (TryReadString(action, "newName", out var newName) || TryReadString(action, "name", out newName))
+                    created.Name = newName;
+
+                var createdValue = ElementIdCompat.GetValue(createdId);
+                impact.Added.Add(createdValue);
+                if (!RegisterActionResult(action, context, outcome, index, createdValue, warnings)) return;
+                outcome.Succeed();
+            }
+            catch (Exception ex)
+            {
+                outcome.Fail(warnings, $"Action[{index}] duplicateView failed: {ex.Message}");
+            }
+        }
+
+        private static bool TryParseDuplicateViewOption(string? value, out ViewDuplicateOption option)
+        {
+            var normalized = NormalizeDuplicateViewOption(value);
+            if (normalized == "duplicate")
+            {
+                option = ViewDuplicateOption.Duplicate;
+                return true;
+            }
+            if (normalized == "withdetailing")
+            {
+                option = ViewDuplicateOption.WithDetailing;
+                return true;
+            }
+            option = ViewDuplicateOption.WithDetailing;
+            return false;
+        }
+
+        private static bool IsValidDuplicateViewOption(string? value)
+        {
+            var normalized = NormalizeDuplicateViewOption(value);
+            return normalized == "duplicate" || normalized == "withdetailing";
+        }
+
+        private static string NormalizeDuplicateViewOption(string? value)
+        {
+            return new string((value ?? string.Empty)
+                .Where(character => char.IsLetterOrDigit(character))
+                .ToArray())
+                .ToLowerInvariant();
         }
 
         private static void ExecuteSetViewCrop(
