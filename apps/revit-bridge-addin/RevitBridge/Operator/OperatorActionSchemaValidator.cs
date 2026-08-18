@@ -2575,7 +2575,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/find-elements-by-parameter", StringComparison.OrdinalIgnoreCase))
             {
-                // { category?:string, categories?:string[], parameterName|parameter|paramName:string, op:"equals"|"contains" (aliases accepted), value:string, systemName?:string, viewId?:number, limit?:int }
+                // { category?:string, categories?:string[], parameterName|parameter|paramName:string, op:"equals"|"contains"|"begins_with"|"ends_with" (aliases accepted), value:string, systemName?:string, viewId?:number, limit?:int }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "find-elements-by-parameter body must be an object.";
@@ -2606,9 +2606,9 @@ namespace RevitBridge.Operator
                     foreach (var predicate in predicatesEl.EnumerateArray())
                     {
                         if (predicate.ValueKind != JsonValueKind.Object || !ValidateRequiredString(predicate, "parameterName", maxLen: 128, out error) || !ValidateRequiredString(predicate, "value", maxLen: 256, out error)) return false;
-                        if (predicate.TryGetProperty("op", out var predicateOp) && predicateOp.ValueKind != JsonValueKind.Null && (predicateOp.ValueKind != JsonValueKind.String || (!(predicateOp.GetString() ?? "").Equals("equals", StringComparison.OrdinalIgnoreCase) && !(predicateOp.GetString() ?? "").Equals("contains", StringComparison.OrdinalIgnoreCase))))
+                        if (predicate.TryGetProperty("op", out var predicateOp) && predicateOp.ValueKind != JsonValueKind.Null && (predicateOp.ValueKind != JsonValueKind.String || (!(predicateOp.GetString() ?? "").Equals("equals", StringComparison.OrdinalIgnoreCase) && !(predicateOp.GetString() ?? "").Equals("contains", StringComparison.OrdinalIgnoreCase) && !(predicateOp.GetString() ?? "").Equals("begins_with", StringComparison.OrdinalIgnoreCase) && !(predicateOp.GetString() ?? "").Equals("ends_with", StringComparison.OrdinalIgnoreCase))))
                         {
-                            error = "find-elements-by-parameter predicate op must be 'equals' or 'contains'.";
+                            error = "find-elements-by-parameter predicate op must be 'equals', 'contains', 'begins_with', or 'ends_with'.";
                             return false;
                         }
                     }
@@ -2651,9 +2651,19 @@ namespace RevitBridge.Operator
                         opv.Equals("include", StringComparison.OrdinalIgnoreCase) ||
                         opv.Equals("includes", StringComparison.OrdinalIgnoreCase) ||
                         opv.Equals("like", StringComparison.OrdinalIgnoreCase);
-                    if (!isEqualsAlias && !isContainsAlias)
+                    var isBeginsWithAlias =
+                        opv.Equals("begins_with", StringComparison.OrdinalIgnoreCase) ||
+                        opv.Equals("beginswith", StringComparison.OrdinalIgnoreCase) ||
+                        opv.Equals("starts_with", StringComparison.OrdinalIgnoreCase) ||
+                        opv.Equals("startswith", StringComparison.OrdinalIgnoreCase) ||
+                        opv.Equals("prefix", StringComparison.OrdinalIgnoreCase);
+                    var isEndsWithAlias =
+                        opv.Equals("ends_with", StringComparison.OrdinalIgnoreCase) ||
+                        opv.Equals("endswith", StringComparison.OrdinalIgnoreCase) ||
+                        opv.Equals("suffix", StringComparison.OrdinalIgnoreCase);
+                    if (!isEqualsAlias && !isContainsAlias && !isBeginsWithAlias && !isEndsWithAlias)
                     {
-                        error = "find-elements-by-parameter.op must be 'equals' or 'contains' (aliases like 'eq' and 'has' are accepted).";
+                        error = "find-elements-by-parameter.op must be 'equals', 'contains', 'begins_with', or 'ends_with' (common aliases are accepted).";
                         return false;
                     }
                 }

@@ -300,6 +300,30 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void FindElementsByParameterSupportsBoundedPrefixAndSuffixQueriesAcrossContracts()
+        {
+            var root = FindRepositoryRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "MEP", "FindElementsByParameterHandler.cs"));
+            Assert.Contains("StartsWith(expRaw, StringComparison.OrdinalIgnoreCase)", handler);
+            Assert.Contains("EndsWith(expRaw, StringComparison.OrdinalIgnoreCase)", handler);
+            Assert.Contains("\"begins_with\" or \"beginswith\" or \"starts_with\"", handler);
+            Assert.Contains("\"ends_with\" or \"endswith\" or \"suffix\"", handler);
+
+            var validator = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("opv.Equals(\"begins_with\"", validator);
+            Assert.Contains("opv.Equals(\"ends_with\"", validator);
+            Assert.Contains("predicate op must be 'equals', 'contains', 'begins_with', or 'ends_with'", validator);
+
+            var manifest = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs"));
+            Assert.Contains("Operators are equals, contains, begins_with, and ends_with", manifest);
+
+            var mcp = File.ReadAllText(Path.Combine(root, "apps", "mcp-server", "src", "server.ts"));
+            Assert.Contains("\"equals\" | \"contains\" | \"begins_with\" | \"ends_with\"", mcp);
+            Assert.Contains("return \"begins_with\"", mcp);
+            Assert.Contains("return \"ends_with\"", mcp);
+        }
+
+        [Fact]
         public void QuantifyAcceptsExactDocumentCategoryNamesAndStillFailsClosed()
         {
             var root = FindRepositoryRoot();

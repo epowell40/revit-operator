@@ -919,10 +919,39 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   assert.equal(naturalTitleblockResult.answer_assertion_passed, true);
   assert.equal(naturalTitleblockResult.tier, "verified");
 
+  const latestTitleblockAnswer = [
+    "## Mechanical sheet audit",
+    "| Sheet | Drawn By | Checked By |",
+    "| M000 | Author | Checker |",
+    "| M206 | Author | Checker |",
+    "Results: 17 mechanical sheets checked; 17 sheets mismatch EP / QA.",
+    "That is **34 individual field mismatches**. No changes were made."
+  ].join("\n");
+  const latestTitleblockResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ...titleblockAttempt,
+    assistant_message: latestTitleblockAnswer
+  });
+  assert.equal(latestTitleblockResult.answer_assertion_passed, true);
+  assert.equal(latestTitleblockResult.tier, "verified");
+
   for (const adversarialAnswer of [
     naturalTitleblockAnswer.replace("17 of 17 sheets mismatch", "16 of 17 sheets mismatch"),
     naturalTitleblockAnswer.replace("34 field mismatches", "33 field mismatches"),
     naturalTitleblockAnswer.replace("Against EP / QA", "Against XX / YY")
+  ]) {
+    const adversarialResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+      ...titleblockAttempt,
+      assistant_message: adversarialAnswer
+    });
+    assert.equal(adversarialResult.tier, "failed");
+    assert.equal(adversarialResult.answer_assertion_passed, false);
+  }
+
+  for (const adversarialAnswer of [
+    latestTitleblockAnswer.replace("17 mechanical sheets checked", "16 mechanical sheets checked"),
+    latestTitleblockAnswer.replace("17 sheets mismatch", "16 sheets mismatch"),
+    latestTitleblockAnswer.replace("34 individual field mismatches", "33 individual field mismatches"),
+    latestTitleblockAnswer.replace("mismatch EP / QA", "mismatch XX / YY")
   ]) {
     const adversarialResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
       ...titleblockAttempt,
@@ -1604,6 +1633,43 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(latestCompleteNatural.tier, "verified");
   assert.equal(latestCompleteNatural.answer_assertion_passed, true);
+
+  const latestRecoveredLiveResponse = [
+    "Source: Heat Recovery Unit Summary (schedule ID 1488968).",
+    "Existing fields: Space Number, Space Name, Mark, Family, Type, Level.",
+    "Schedule total: 37 HRUs.",
+    "Independent model query: 37 HRU mechanical-equipment instances and 0 ERU instances.",
+    "Mark audit: 0 blanks, 0 missing values, 0 duplicate groups.",
+    "Projected prefix migration: HRU 37 → ERU 37, with no expected collisions.",
+    "Noncommitting implementation plan:",
+    "Create a temporary Mechanical Equipment schedule using only Mark, Family, Type.",
+    "Filter Mark begins with ERU. Sort Mark ascending, itemized.",
+    "After migration require Temporary schedule rows: 37; Independent model ERU count: 37; Remaining HRU count: 0.",
+    "Blank Marks: 0. Duplicate ERU Marks: 0. Schedule/model count difference: 0.",
+    "Delete the temporary QA schedule only after reconciliation is accepted.",
+    "No schedule was created or configured."
+  ].join("\n");
+  const latestRecoveredLive = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: latestRecoveredLiveResponse
+  });
+  assert.equal(latestRecoveredLive.tier, "verified");
+  assert.equal(latestRecoveredLive.answer_assertion_passed, true);
+
+  for (const adversarialRecoveredResponse of [
+    latestRecoveredLiveResponse.replace("37 HRU mechanical-equipment instances and 0 ERU", "37 HRU mechanical-equipment instances and 5 ERU"),
+    latestRecoveredLiveResponse.replace("0 blanks", "1 blanks"),
+    latestRecoveredLiveResponse.replace("0 duplicate groups", "2 duplicate groups"),
+    latestRecoveredLiveResponse.replace("Temporary schedule rows: 37", "Temporary schedule rows: 36"),
+    latestRecoveredLiveResponse.replace("Schedule/model count difference: 0", "Schedule/model count difference: 1")
+  ]) {
+    const adversarialEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: adversarialRecoveredResponse
+    });
+    assert.equal(adversarialEvaluation.tier, "failed");
+    assert.equal(adversarialEvaluation.verified, false);
+  }
 
   for (const adversarialNaturalResponse of [
     latestCompleteNaturalResponse.replace("Grand total: 37", "Grand total: 36"),
