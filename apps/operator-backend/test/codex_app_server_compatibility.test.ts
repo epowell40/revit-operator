@@ -245,9 +245,13 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   const instructions = getOperatorAgentBaseInstructions();
   assert.match(instructions, /Duplicate-element investigation rule/);
   assert.match(instructions, /do not rule duplicates out when those checks return zero/);
-  assert.match(instructions, /same-category, same-family\/type physical instances/);
-  assert.match(instructions, /overlapping footprints or center separation relative to their element size/);
-  assert.match(instructions, /compare host, level, orientation, parameters, and connector\/network relationships/);
+  assert.match(instructions, /project-scope `\/revit\/find-elements` inventory/);
+  assert.match(instructions, /`includeGeometry:true`/);
+  assert.match(instructions, /do not export every view before trying this complete inventory/);
+  assert.match(instructions, /same-category and same-family\/type instances/);
+  assert.match(instructions, /overlapping bounding-box footprints or center separation relative to element size/);
+  assert.match(instructions, /Compare host, level, facing\/hand orientation, parameters, and connector\/network relationships/);
+  assert.match(instructions, /opposite-facing peers on different connector ports may be intentional/);
   assert.match(instructions, /rollback\/dry-run delete/);
 });
 

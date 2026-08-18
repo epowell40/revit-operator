@@ -1251,6 +1251,8 @@ namespace RevitBridge.Operator
                     notes.Add("Categories are BuiltInCategory tokens like OST_Doors, OST_TitleBlocks, OST_GenericModel.");
                     notes.Add("For ordinary whole-document object discovery, identityTerms searches instance name, family, type, category, and Mark while preserving matched-term/field evidence; combine physicalElementsOnly and topLevelInstancesOnly to exclude schedules, legends, annotations, and nested child components.");
                     notes.Add("expandIdentityAcronymsInParameters is seed-gated: only categories with a physical first-pass identity match are scanned for delimiter-bounded phrase acronyms in string parameters, and exact parameter-name/value evidence is returned.");
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "items[*].geometry.locationPoint", "items[*].geometry.locationCurve.start", "items[*].geometry.locationCurve.end", "items[*].geometry.locationCurve.midpoint", "items[*].geometry.locationCurve.lengthFt", "items[*].geometry.boundingBox.min", "items[*].geometry.boundingBox.max", "items[*].geometry.boundingBox.center", "items[*].geometry.boundingBox.size" } });
+                    notes.Add("includeGeometry=true returns model/world coordinates, transformed axis-aligned bounding boxes, FamilyInstance facing/hand orientation, and type/level/host ids for bounded project-wide spatial analysis without requiring a visible view export.");
                 }
 
                 if (p == "/revit/export-visible-elements")

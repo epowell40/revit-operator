@@ -786,6 +786,66 @@ test("fixture-grounded air-terminal inventory requires the exact seven-group rec
   assert.equal(result.answer_assertion_passed, false);
 });
 
+test("fixture-grounded duplicate deletion rejects generic preview evidence for the wrong pair", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c24_delete_duplicate_device")!;
+  assert.ok(entry.answer_assertions);
+  const assignment_projection = {
+    assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      verification: { state: "verified", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }]
+  };
+  const teammate_loop_receipt = {
+    schema: "revit-operator.teammate-loop-receipt.v1",
+    turn_kind: "inspection",
+    context_state: "live",
+    stage: "report",
+    preview_action_ids: ["mcp:duplicate-preview"],
+    preview_receipts: [{
+      action_id: "mcp:duplicate-preview",
+      path: "/revit/delete",
+      status: "success",
+      evidence_sha256: `sha256:${"d".repeat(64)}`
+    }],
+    apply_attempts: 0,
+    verified: false,
+    blocked_reason: null
+  };
+  const correct = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
+    ok: true,
+    assistant_message: [
+      "Duplicate candidate: Air terminals 1460066 and 1460067, identical 16×4 supply grilles in Room 306, only 8 in apart.",
+      "Both connect directly to duct 1460049 on Mechanical Supply Air 34. The network contains 54 elements.",
+      "Rollback-only deletion preview for 1460067 impacts only that terminal; no dependents. The other 53 system elements remain connected.",
+      "Nothing was changed or deleted."
+    ].join("\n"),
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/delete", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection,
+    teammate_loop_receipt
+  });
+  assert.equal(correct.tier, "verified");
+  assert.equal(correct.answer_assertion_passed, true);
+  assert.equal(correct.verification_basis, "fixture_semantic_oracle");
+
+  const wrongPair = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
+    ok: true,
+    assistant_message: [
+      "I inspected the project and chose air terminals 1441077 and 1441092 on L3.",
+      "They are an intentional back-to-back assembly, so no genuinely duplicated device was proven.",
+      "A rollback deletion preview completed and nothing was changed."
+    ].join("\n"),
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/delete", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection,
+    teammate_loop_receipt
+  });
+  assert.equal(wrongPair.tier, "failed");
+  assert.equal(wrongPair.answer_assertion_passed, false);
+});
+
 test("fixture-grounded answer assertions reject a tool-backed but semantically wrong diffuser count", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "q02_air_devices_terse")!;
   assert.ok(entry.answer_assertions);
