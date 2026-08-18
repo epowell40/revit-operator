@@ -839,7 +839,7 @@ async function main(): Promise<void> {
     })), null, 2));
     return;
   }
-  const sidecar = flag("--sidecar", "http://127.0.0.1:3908").replace(/\/$/, "");
+  const sidecar = flag("--sidecar", "http://127.0.0.1:3907").replace(/\/$/, "");
   const suite = flag("--suite", "full").toLowerCase();
   const resumePath = flag("--resume");
   const resumedCheckpoint = resumePath ? readJsonFile<JsonRecord>(path.resolve(resumePath)) : null;

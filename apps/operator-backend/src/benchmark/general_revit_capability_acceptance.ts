@@ -480,8 +480,9 @@ function markdownTableMismatchFacts(answerText: string): string[] {
   const drawnByIndex = header.findIndex((cell) => /^drawn by$/i.test(cell));
   const checkedByIndex = header.findIndex((cell) => /^checked by$/i.test(cell));
   const namedExpected = /expected\b[^\n]*\bDrawn By\s*=\s*([A-Za-z0-9_-]+)\s*\/\s*Checked By\s*=\s*([A-Za-z0-9_-]+)/i.exec(answerText);
-  const positionalExpected = /(?:expected|required)\s+([A-Za-z0-9_-]+)\s*\/\s*([A-Za-z0-9_-]+)\s+combination/i.exec(answerText);
-  const expected = namedExpected || positionalExpected;
+  const positionalExpected = /(?:expected|required)\s+([A-Za-z0-9_-]+)\s*\/\s*([A-Za-z0-9_-]+)(?:\s+combination)?/i.exec(answerText);
+  const comparisonExpected = /(?:differ(?:s|ing)?\s+from|against)\s+([A-Za-z0-9_-]+)\s*\/\s*([A-Za-z0-9_-]+)/i.exec(answerText);
+  const expected = namedExpected || positionalExpected || comparisonExpected;
   if (!expected) return [];
   const separator = (cell: string) => /^:?-{3,}:?$/.test(cell);
   const data = cells.slice(headerIndex + 1)
