@@ -316,7 +316,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:0eb7a02622b862a38a33134b071f3e8f5f8ff0011009600d9582dabdb54ed471"
+      "sha256": "sha256:3e08794ea91b56509c4ab1eb71d2f0657b64b331a889c634a72aeb4db691a5d3"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -676,7 +676,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:ed1ba4b9baaa137d025a33ab53c48398884e8236d5ae36c7c15b47598981adaa"
+      "sha256": "sha256:4326121c08c903280e59e2457f425f8543fa5877a67412869e4f046bde34d40e"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1537,7 +1537,7 @@
     },
     {
       "path": "apps/operator-backend/src/tool_result_compaction.ts",
-      "sha256": "sha256:e6be6a0ebec8d3b879121eef683fafe45529987c82598ae9eb88a74b02f2c9aa"
+      "sha256": "sha256:8b0f4b348b748659d03ff86f08e5c3b8de374bf27517eb614573d8e5b3061802"
     },
     {
       "path": "apps/operator-backend/src/tools/audit_native_api_gateway.ts",
@@ -1865,7 +1865,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:577915b4e512209c74dd1dcf4914ec7c2330e06d4dc6e75ab236a2a574e5634f"
+      "sha256": "sha256:c7e12970c8911be384e2a6df9f4548e1ee78371a86ce6d1ebfd8e622685e6440"
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
@@ -2301,7 +2301,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:a56a06c6f6d149ca95e6d43d890953453e495fac15d8957532eabdce1a3f7dd4"
+      "sha256": "sha256:b907ec5621bace576318524a9373a14abf23c9d01ff479c4661ad3d27a034940"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2593,7 +2593,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_result_compaction.test.ts",
-      "sha256": "sha256:2f201a05b8160c513a90b0e6b2202fadce9ce4ef5a455478a9158a7cfcd21b0d"
+      "sha256": "sha256:471a8f2faae7e287e17d34a5f74fcc1df125c1daa4e798419b2e386f0c644edc"
     },
     {
       "path": "apps/operator-backend/test/tool_result_normalization.test.ts",
@@ -3614,7 +3614,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/FindElementsHandler.cs",
-      "sha256": "sha256:93e28d58f95bababa6b0d21aba6dfa0e31cab7bae9bc2faffdd2b813b0327ba5"
+      "sha256": "sha256:a7a531a3ee4d410bf0fc106499f6ef69c99786f0ed4d5eece3fe7a99f1c6162a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/FireAlarmLayoutHandler.cs",
@@ -4502,7 +4502,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionSchemaValidator.cs",
-      "sha256": "sha256:930b3fa38e98098888a386eec38e6ef9fa405b633698a2a13d17cc92367b8e43"
+      "sha256": "sha256:3449806bce7efa781d2553acb1159d1b16ca8bb5b019025018a156e51d99d603"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorApprovalPolicy.cs",
@@ -4586,11 +4586,11 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolIntrospection.cs",
-      "sha256": "sha256:1e8ff280d98cbd771228ce971c827fc2f3930ca9a1c10c307a1da14f6edc6a71"
+      "sha256": "sha256:6f4c4476c0a35b00f892257b107fba713fc1b6b7d4cb450b9e949a1d92b26b9f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
-      "sha256": "sha256:6dc84912ba8774d9f5c7691ec4a70bbe9cc2883d8ef262eca05644c610ceb2eb"
+      "sha256": "sha256:71aee1414dfb2aaed4efa09842c9981ff39ab50ce706bfce408be931e33d2e08"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolPopupWindow.cs",
@@ -4633,7 +4633,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:bee6485ead47d7fb2509f305e3bb5d9ba24ac5ddb1efbe048fcb38102ed30a6c",
+  "inputs_hash": "sha256:2236ab459c91b92df424f0ea1f1a086e13c8e3a105deb5870429cecdccd27377",
   "result": {
     "passed": true,
     "checks": [

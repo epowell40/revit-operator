@@ -2391,7 +2391,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/find-elements", StringComparison.OrdinalIgnoreCase))
             {
-                // { viewId?:number, sheetNumber?:string, includeSheetElements?:bool, includeViewportElements?:bool, sheetRegions?:[{minU,minV,maxU,maxV}], regionPaddingFt?:number, category?:string, categories?:string[], typeNameContains?:string, familyNameContains?:string, nameContains?:string, markContains?:string, identityTerms?:string[], physicalElementsOnly?:bool, topLevelInstancesOnly?:bool, expandIdentityAcronymsInParameters?:bool, limit?:int }
+                // { viewId?:number, sheetNumber?:string, includeSheetElements?:bool, includeViewportElements?:bool, sheetRegions?:[{minU,minV,maxU,maxV}], regionPaddingFt?:number, category?:string, categories?:string[], typeNameContains?:string, familyNameContains?:string, nameContains?:string, markContains?:string, identityTerms?:string[], physicalElementsOnly?:bool, topLevelInstancesOnly?:bool, expandIdentityAcronymsInParameters?:bool, includeGeometry?:bool, limit?:int }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "find-elements body must be an object.";
@@ -2413,6 +2413,7 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "physicalElementsOnly", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "topLevelInstancesOnly", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "expandIdentityAcronymsInParameters", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeGeometry", out error)) return false;
 
                 if (obj.Value.TryGetProperty("sheetRegions", out var regions) && regions.ValueKind != JsonValueKind.Null)
                 {

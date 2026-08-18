@@ -42,6 +42,7 @@ namespace RevitBridge.Logic.Handlers
             public bool physicalElementsOnly { get; set; } = false;
             public bool topLevelInstancesOnly { get; set; } = false;
             public bool expandIdentityAcronymsInParameters { get; set; } = false;
+            public bool includeGeometry { get; set; } = false;
 
             public int? limit { get; set; } = 500;
         }
@@ -263,9 +264,13 @@ namespace RevitBridge.Logic.Handlers
                 if (includeResultItems)
                 {
                     var nested = e as FamilyInstance;
+                    var geometry = p?.includeGeometry == true ? BuildGeometrySummary(e) : null;
                     items.Add(new
                     {
                         elementId,
+                        typeId = TryGetElementIdValue(e.GetTypeId()),
+                        levelId = TryGetLevelId(e),
+                        hostId = TryGetElementIdValue(nested?.Host?.Id),
                         category = e.Category?.Name,
                         builtInCategory = e.Category?.BuiltInCategory.ToString(),
                         name = e.Name,
@@ -293,7 +298,8 @@ namespace RevitBridge.Logic.Handlers
                         matchedTextSource = textMatch?.Source ?? identityParameterMatch?.Source,
                         matchedParameterName = textMatch?.ParameterName ?? identityParameterMatch?.ParameterName,
                         ownerViewId = TryGetElementIdValue(e.OwnerViewId),
-                        sourceViewId = TryGetElementIdValue(candidate.SourceViewId)
+                        sourceViewId = TryGetElementIdValue(candidate.SourceViewId),
+                        geometry
                     });
                 }
 
@@ -332,6 +338,7 @@ namespace RevitBridge.Logic.Handlers
                     var parameterMatch = FindIdentityParameterAcronymMatch(e, identityAcronyms);
                     if (parameterMatch == null) continue;
                     var nested = e as FamilyInstance;
+                    var geometry = p?.includeGeometry == true ? BuildGeometrySummary(e) : null;
                     var acronym = ElementIdentitySearchUtil.Tokenize(parameterMatch.Text)
                         .FirstOrDefault(token => identityAcronyms.Contains(token, StringComparer.OrdinalIgnoreCase));
 
@@ -341,6 +348,9 @@ namespace RevitBridge.Logic.Handlers
                     items.Add(new
                     {
                         elementId,
+                        typeId = TryGetElementIdValue(e.GetTypeId()),
+                        levelId = TryGetLevelId(e),
+                        hostId = TryGetElementIdValue(nested?.Host?.Id),
                         category = e.Category?.Name,
                         builtInCategory = e.Category?.BuiltInCategory.ToString(),
                         name = e.Name,
@@ -368,7 +378,8 @@ namespace RevitBridge.Logic.Handlers
                         matchedTextSource = textMatch?.Source ?? parameterMatch.Source,
                         matchedParameterName = textMatch?.ParameterName ?? parameterMatch.ParameterName,
                         ownerViewId = TryGetElementIdValue(e.OwnerViewId),
-                        sourceViewId = TryGetElementIdValue(candidate.SourceViewId)
+                        sourceViewId = TryGetElementIdValue(candidate.SourceViewId),
+                        geometry
                     });
                     if (ids.Count >= cap) break;
                 }
@@ -407,6 +418,7 @@ namespace RevitBridge.Logic.Handlers
                 identityAcronyms,
                 identitySeedCategoryIds = seedCategoryIds.OrderBy(id => id).ToList(),
                 identityExpansionCount,
+                geometryIncluded = p?.includeGeometry == true,
                 items,
                 sheetRegionFilterApplied = useSheetRegionFilter,
                 sheetRegionCount = useSheetRegionFilter ? sheetRegions.Count : 0,
@@ -575,6 +587,102 @@ namespace RevitBridge.Logic.Handlers
             {
                 return false;
             }
+        }
+
+        private static long? TryGetLevelId(Element e)
+        {
+            try { return TryGetElementIdValue(e.LevelId); }
+            catch { return null; }
+        }
+
+        private static object? BuildGeometrySummary(Element e)
+        {
+            object? locationPoint = null;
+            object? locationCurve = null;
+            object? boundingBox = null;
+            object? facingOrientation = null;
+            object? handOrientation = null;
+            double? rotation = null;
+
+            try
+            {
+                if (e.Location is LocationPoint point)
+                {
+                    locationPoint = XyzPayload(point.Point);
+                    rotation = IsFinite(point.Rotation) ? point.Rotation : null;
+                }
+                else if (e.Location is LocationCurve curveLocation && curveLocation.Curve != null)
+                {
+                    var curve = curveLocation.Curve;
+                    locationCurve = new
+                    {
+                        start = XyzPayload(curve.GetEndPoint(0)),
+                        end = XyzPayload(curve.GetEndPoint(1)),
+                        midpoint = XyzPayload(curve.Evaluate(0.5, true)),
+                        lengthFt = IsFinite(curve.Length) ? (double?)curve.Length : null
+                    };
+                }
+            }
+            catch { }
+
+            try
+            {
+                var box = e.get_BoundingBox(null);
+                if (box != null)
+                {
+                    var transform = box.Transform ?? Transform.Identity;
+                    var corners = new[]
+                    {
+                        new XYZ(box.Min.X, box.Min.Y, box.Min.Z),
+                        new XYZ(box.Min.X, box.Min.Y, box.Max.Z),
+                        new XYZ(box.Min.X, box.Max.Y, box.Min.Z),
+                        new XYZ(box.Min.X, box.Max.Y, box.Max.Z),
+                        new XYZ(box.Max.X, box.Min.Y, box.Min.Z),
+                        new XYZ(box.Max.X, box.Min.Y, box.Max.Z),
+                        new XYZ(box.Max.X, box.Max.Y, box.Min.Z),
+                        new XYZ(box.Max.X, box.Max.Y, box.Max.Z)
+                    }.Select(transform.OfPoint).ToList();
+                    var min = new XYZ(corners.Min(p => p.X), corners.Min(p => p.Y), corners.Min(p => p.Z));
+                    var max = new XYZ(corners.Max(p => p.X), corners.Max(p => p.Y), corners.Max(p => p.Z));
+                    boundingBox = new
+                    {
+                        min = XyzPayload(min),
+                        max = XyzPayload(max),
+                        center = XyzPayload((min + max) * 0.5),
+                        size = XyzPayload(max - min)
+                    };
+                }
+            }
+            catch { }
+
+            if (e is FamilyInstance instance)
+            {
+                try { facingOrientation = XyzPayload(instance.FacingOrientation); }
+                catch { }
+                try { handOrientation = XyzPayload(instance.HandOrientation); }
+                catch { }
+            }
+
+            if (locationPoint == null && locationCurve == null && boundingBox == null && facingOrientation == null && handOrientation == null)
+                return null;
+
+            return new
+            {
+                units = "feet",
+                coordinateSystem = "revit_internal_world",
+                locationPoint,
+                locationCurve,
+                boundingBox,
+                facingOrientation,
+                handOrientation,
+                rotationRadians = rotation
+            };
+        }
+
+        private static object? XyzPayload(XYZ? point)
+        {
+            if (point == null || !IsFinite(point.X) || !IsFinite(point.Y) || !IsFinite(point.Z)) return null;
+            return new { x = point.X, y = point.Y, z = point.Z };
         }
 
         private static SearchableTextMatch? FindIdentityParameterAcronymMatch(Element e, IReadOnlyCollection<string> acronyms)

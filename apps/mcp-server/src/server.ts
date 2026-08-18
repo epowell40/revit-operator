@@ -2126,7 +2126,7 @@ server.tool("revit_room_contents", "Find element ids in a room/space by number (
   }
 );
 
-server.tool("revit_find_elements", "Selector helper: find element ids by scope (viewId or sheetNumber) and filters.",
+server.tool("revit_find_elements", "Selector helper: find element ids by scope (viewId or sheetNumber) and filters, optionally with project-wide world geometry for spatial analysis.",
   {
     viewId: z.number().optional(),
     sheetNumber: z.string().optional(),
@@ -2137,6 +2137,10 @@ server.tool("revit_find_elements", "Selector helper: find element ids by scope (
     familyNameContains: z.string().optional(),
     nameContains: z.string().optional(),
     markContains: z.string().optional(),
+    identityTerms: z.array(z.string()).optional(),
+    physicalElementsOnly: z.boolean().optional(),
+    topLevelInstancesOnly: z.boolean().optional(),
+    includeGeometry: z.boolean().optional().describe("Include type/level/host ids plus Revit-world location, bounding box, and orientation for each result."),
     limit: z.number().int().optional(),
   },
   async (req) => {

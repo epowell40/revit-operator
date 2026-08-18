@@ -1038,15 +1038,56 @@ export function compactFindElementsResultForPrompt(
 ): unknown {
   const root = asObject(value);
   if (!root || !Array.isArray(root.elementIds)) return value;
-  const maxItems = Math.max(1, Math.min(500, options.maxItems ?? 500));
-  const maxElementIds = Math.max(1, Math.min(500, options.maxElementIds ?? 500));
+  const geometryIncluded = root.geometryIncluded === true;
+  const defaultLimit = geometryIncluded ? 1000 : 500;
+  const maxItems = Math.max(1, Math.min(2000, options.maxItems ?? defaultLimit));
+  const maxElementIds = Math.max(1, Math.min(2000, options.maxElementIds ?? defaultLimit));
   const rawItems = Array.isArray(root.items) ? root.items : [];
+  const compactFiniteNumber = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const compactXyz = (value: unknown): Record<string, number> | null => {
+    const point = asObject(value);
+    if (!point) return null;
+    const x = compactFiniteNumber(point.x);
+    const y = compactFiniteNumber(point.y);
+    const z = compactFiniteNumber(point.z);
+    return x !== null && y !== null && z !== null ? { x, y, z } : null;
+  };
+  const compactGeometry = (value: unknown): Record<string, unknown> | null => {
+    const geometry = asObject(value);
+    if (!geometry) return null;
+    const curve = asObject(geometry.locationCurve);
+    const box = asObject(geometry.boundingBox);
+    return {
+      units: geometry.units === "feet" ? "feet" : null,
+      coordinateSystem: geometry.coordinateSystem === "revit_internal_world" ? "revit_internal_world" : null,
+      locationPoint: compactXyz(geometry.locationPoint),
+      locationCurve: curve ? {
+        start: compactXyz(curve.start),
+        end: compactXyz(curve.end),
+        midpoint: compactXyz(curve.midpoint),
+        lengthFt: compactFiniteNumber(curve.lengthFt)
+      } : null,
+      boundingBox: box ? {
+        min: compactXyz(box.min),
+        max: compactXyz(box.max),
+        center: compactXyz(box.center),
+        size: compactXyz(box.size)
+      } : null,
+      facingOrientation: compactXyz(geometry.facingOrientation),
+      handOrientation: compactXyz(geometry.handOrientation),
+      rotationRadians: compactFiniteNumber(geometry.rotationRadians)
+    };
+  };
   const items = rawItems.slice(0, maxItems).map(value => {
     const item = asObject(value) ?? {};
     const identityMatch = asObject(item.identityMatch);
     const identityParameterEvidence = asObject(item.identityParameterEvidence);
     return {
       elementId: item.elementId ?? item.id ?? null,
+      typeId: item.typeId ?? null,
+      levelId: item.levelId ?? null,
+      hostId: item.hostId ?? null,
       category: item.category ?? null,
       builtInCategory: item.builtInCategory ?? null,
       name: item.name ?? null,
@@ -1071,7 +1112,8 @@ export function compactFindElementsResultForPrompt(
       matchedTextSource: item.matchedTextSource ?? null,
       matchedParameterName: item.matchedParameterName ?? null,
       ownerViewId: item.ownerViewId ?? null,
-      sourceViewId: item.sourceViewId ?? null
+      sourceViewId: item.sourceViewId ?? null,
+      geometry: geometryIncluded ? compactGeometry(item.geometry) : null
     };
   });
   const elementIds = root.elementIds
@@ -1083,7 +1125,7 @@ export function compactFindElementsResultForPrompt(
   const elementIdsOmitted = inheritedIdsOmitted + Math.max(0, root.elementIds.length - elementIds.length);
   return {
     _compacted: true,
-    compaction: "find-elements-identity",
+    compaction: geometryIncluded ? "find-elements-identity-geometry" : "find-elements-identity",
     status: root.status ?? null,
     scope: root.scope ?? null,
     count: root.count ?? root.elementIds.length,
@@ -1102,6 +1144,7 @@ export function compactFindElementsResultForPrompt(
     identitySeedCategoryIds: Array.isArray(root.identitySeedCategoryIds) ? root.identitySeedCategoryIds.slice(0, 100) : [],
     identityExpansionCount: root.identityExpansionCount ?? 0,
     identityExpansionScanCapReached: root.identityExpansionScanCapReached === true,
+    geometryIncluded,
     items,
     itemsOmitted,
     truncated: root.truncated === true,

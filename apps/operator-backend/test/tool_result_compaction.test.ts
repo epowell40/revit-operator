@@ -72,6 +72,53 @@ test("compact find-elements accumulates omissions and cannot restore completenes
   assert.equal(second.itemsComplete, false);
 });
 
+test("compact find-elements preserves bounded world geometry for a complete project inventory", () => {
+  const items = Array.from({ length: 509 }, (_, index) => ({
+    elementId: 1460000 + index,
+    typeId: 222,
+    levelId: 333,
+    hostId: 444,
+    familyName: "Supply Grille - Hosted",
+    typeName: "16x4",
+    geometry: {
+      units: "feet",
+      coordinateSystem: "revit_internal_world",
+      locationPoint: { x: index / 12, y: 2, z: 9 },
+      boundingBox: {
+        min: { x: index / 12 - 2 / 3, y: 1.8, z: 8.9 },
+        max: { x: index / 12 + 2 / 3, y: 2.2, z: 9.1 },
+        center: { x: index / 12, y: 2, z: 9 },
+        size: { x: 4 / 3, y: 0.4, z: 0.2 }
+      },
+      facingOrientation: { x: 0, y: 0, z: -1 },
+      handOrientation: { x: 1, y: 0, z: 0 },
+      rotationRadians: 0,
+      arbitraryPayload: "must be dropped"
+    }
+  }));
+  const compacted = compactFindElementsResultForPrompt({
+    status: "Ok",
+    count: 509,
+    elementIds: items.map(item => item.elementId),
+    geometryIncluded: true,
+    items,
+    itemsComplete: true
+  }) as any;
+
+  assert.equal(compacted.compaction, "find-elements-identity-geometry");
+  assert.equal(compacted.geometryIncluded, true);
+  assert.equal(compacted.items.length, 509);
+  assert.equal(compacted.elementIds.length, 509);
+  assert.equal(compacted.itemsComplete, true);
+  assert.equal(compacted.items[508].typeId, 222);
+  assert.equal(compacted.items[508].levelId, 333);
+  assert.equal(compacted.items[508].hostId, 444);
+  assert.equal(compacted.items[508].geometry.units, "feet");
+  assert.equal(compacted.items[508].geometry.boundingBox.size.x, 4 / 3);
+  assert.equal(compacted.items[508].geometry.arbitraryPayload, undefined);
+  assert.deepEqual(compactFindElementsResultForPrompt(compacted), compacted);
+});
+
 test("compact locate-elements preserves every physical and nested spatial result plus unresolved provenance", () => {
   const items = Array.from({ length: 132 }, (_, index) => ({
     elementId: 1000 + index,
