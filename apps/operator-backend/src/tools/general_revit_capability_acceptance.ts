@@ -92,13 +92,17 @@ function fixtureReadinessTimeoutMs(): number {
   return Number.isFinite(parsed) ? Math.max(5_000, Math.min(2 * 60_000, parsed)) : 45_000;
 }
 
-async function readExactFixtureHealth(baseUrl: string, expectedDocumentTitle: string): Promise<ExactRevitFixtureHealthResult> {
+async function readExactFixtureHealth(
+  baseUrl: string,
+  expectedDocumentTitle: string,
+  preferCached = false
+): Promise<ExactRevitFixtureHealthResult> {
   return waitForExactRevitFixtureHealth({
     expectedDocumentTitle,
     timeoutMs: fixtureReadinessTimeoutMs(),
     readHealth: (remainingMs) => requestJson(
       baseUrl,
-      "/api/revit/health",
+      preferCached ? "/api/revit/health?prefer_cached=1" : "/api/revit/health",
       {},
       Math.max(1_000, Math.min(healthTimeoutMs(), remainingMs))
     )
@@ -706,7 +710,11 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   // transport latency, not a model failure, while keeping the wait bounded.
   const initialHealthStartedAt = Date.now();
   const initialReadiness = suiteContext.fixture_health_is_authoritative === true
-    ? await readExactFixtureHealth(baseUrl, preferredDocumentTitle)
+    // The fixture orchestrator has just established exact live document
+    // identity. Reuse that coordinated health snapshot between cases instead
+    // of serializing another slow native bridge health job. Tool execution and
+    // effect verification remain live and authoritative.
+    ? await readExactFixtureHealth(baseUrl, preferredDocumentTitle, true)
     : { health: await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs()), attempts: 1 };
   const initialState = initialReadiness.health;
   const initialHealthDurationMs = Date.now() - initialHealthStartedAt;
