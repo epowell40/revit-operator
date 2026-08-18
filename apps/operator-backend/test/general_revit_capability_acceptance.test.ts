@@ -956,6 +956,30 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   assert.equal(structuredTitleblockResult.answer_assertion_passed, true);
   assert.equal(structuredTitleblockResult.tier, "verified");
 
+  const componentCountTitleblockAnswer = structuredTitleblockAnswer.replace(
+    "All **17** mismatch the expected **Drawn By = EP / Checked By = QA**.",
+    "**17 sheets mismatch** the required **EP / QA** combination. That is 17 Drawn By mismatches and 17 Checked By mismatches."
+  );
+  const componentCountTitleblockResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ...titleblockAttempt,
+    assistant_message: componentCountTitleblockAnswer
+  });
+  assert.equal(componentCountTitleblockResult.answer_assertion_passed, true);
+  assert.equal(componentCountTitleblockResult.tier, "verified");
+
+  for (const incorrectComponentCount of [
+    componentCountTitleblockAnswer.replace("17 Drawn By mismatches", "16 Drawn By mismatches"),
+    componentCountTitleblockAnswer.replace("17 Checked By mismatches", "16 Checked By mismatches"),
+    componentCountTitleblockAnswer.replace("required **EP / QA** combination", "required **XX / YY** combination")
+  ]) {
+    const incorrectComponentCountResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+      ...titleblockAttempt,
+      assistant_message: incorrectComponentCount
+    });
+    assert.equal(incorrectComponentCountResult.answer_assertion_passed, false);
+    assert.equal(incorrectComponentCountResult.tier, "failed");
+  }
+
   const partiallyCorrectStructuredTitleblock = structuredTitleblockAnswer.replace(
     "| M206 | Author | Checker |",
     "| M206 | Author | QA |"
@@ -1762,6 +1786,45 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(structuredFreshEvaluation.tier, "verified");
   assert.equal(structuredFreshEvaluation.answer_assertion_passed, true);
+
+  const countedRelationReplay = [
+    "## Live findings",
+    "Existing source: **Heat Recovery Unit Summary** (schedule ID **1488968**).",
+    "It contains **37 HRUs** and already supports **Mark, Family, Type**.",
+    "Independent model query: **37 HRU**, **0 ERU**.",
+    "Mark audit: **0 blanks, 0 duplicate groups**.",
+    "Schedule total and independent model count both equal **37**.",
+    "## Complete no-write plan",
+    "Create a temporary Mechanical Equipment schedule with Mark, Family, Type.",
+    "Filter: Mark begins with ERU. Sort: Mark, ascending. Itemize every instance.",
+    "Schedule row count must equal an independent project-wide Mechanical Equipment query using the same ERU prefix rule.",
+    "Current HRU source count: 37. Current ERU target count: 0.",
+    "Expected ERU count after a complete prefix-only HRU→ERU migration: **37**.",
+    "Blank Mark count must be 0. Duplicate ERU Mark groups must be 0.",
+    "**No schedule was created or configured.**"
+  ].join("\n");
+  const countedRelationEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: countedRelationReplay
+  });
+  assert.equal(countedRelationEvaluation.tier, "verified");
+  assert.equal(countedRelationEvaluation.answer_assertion_passed, true);
+
+  for (const incorrectCountedRelation of [
+    countedRelationReplay.replace("contains **37 HRUs**", "contains **36 HRUs**"),
+    countedRelationReplay.replace("**37 HRU**, **0 ERU**", "**37 HRU**, **5 ERU**"),
+    countedRelationReplay.replace("both equal **37**", "both equal **36**"),
+    countedRelationReplay.replace("migration: **37**", "migration: **36**"),
+    countedRelationReplay.replace("0 blanks", "2 blanks"),
+    countedRelationReplay.replace("0 duplicate groups", "1 duplicate groups")
+  ]) {
+    const incorrectCountedRelationEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: incorrectCountedRelation
+    });
+    assert.equal(incorrectCountedRelationEvaluation.tier, "failed");
+    assert.equal(incorrectCountedRelationEvaluation.answer_assertion_passed, false);
+  }
 
   for (const incorrectStructuredReplay of [
     structuredFreshReplay.replace("37 HRUs", "36 HRUs"),

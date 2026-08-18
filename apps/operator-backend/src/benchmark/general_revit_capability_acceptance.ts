@@ -468,9 +468,6 @@ function assistantReportsVerifiedNoop(attempt: GeneralRevitAttempt): boolean {
 }
 
 function markdownTableMismatchFacts(answerText: string): string[] {
-  const expected = /expected\b[^\n]*\bDrawn By\s*=\s*([A-Za-z0-9_-]+)\s*\/\s*Checked By\s*=\s*([A-Za-z0-9_-]+)/i.exec(answerText);
-  if (!expected) return [];
-
   const rows = answerText.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith("|") && line.endsWith("|"));
   const cells = rows.map((line) => line.slice(1, -1).split("|").map((cell) => cell.trim()));
   const headerIndex = cells.findIndex((row) => row.some((cell) => /^sheet(?: number)?$/i.test(cell))
@@ -482,6 +479,10 @@ function markdownTableMismatchFacts(answerText: string): string[] {
   const sheetIndex = header.findIndex((cell) => /^sheet(?: number)?$/i.test(cell));
   const drawnByIndex = header.findIndex((cell) => /^drawn by$/i.test(cell));
   const checkedByIndex = header.findIndex((cell) => /^checked by$/i.test(cell));
+  const namedExpected = /expected\b[^\n]*\bDrawn By\s*=\s*([A-Za-z0-9_-]+)\s*\/\s*Checked By\s*=\s*([A-Za-z0-9_-]+)/i.exec(answerText);
+  const positionalExpected = /(?:expected|required)\s+([A-Za-z0-9_-]+)\s*\/\s*([A-Za-z0-9_-]+)\s+combination/i.exec(answerText);
+  const expected = namedExpected || positionalExpected;
+  if (!expected) return [];
   const separator = (cell: string) => /^:?-{3,}:?$/.test(cell);
   const data = cells.slice(headerIndex + 1)
     .filter((row) => row.length > Math.max(sheetIndex, drawnByIndex, checkedByIndex))
