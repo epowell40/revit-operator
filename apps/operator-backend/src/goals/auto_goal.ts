@@ -12,6 +12,7 @@ const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|s
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
 const EXECUTABLE_PREVIEW = /\b(executable|transaction(?:al)?|rollback|dry[- ]?run|preflight|simulate(?:d|ion)?)\s+(?:change\s+)?preview\b|\b(?:dry[- ]?run|preflight|show me (?:the )?change)\b/i;
 const APPLY_BEYOND_PREVIEW = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just|only)\s+)?(?:stop|end|finish|halt|remain|return)\b[^.!?;\n]{0,40}\b(?:preview|preflight|dry[- ]?run)|(?:do not|don't|dont|never)\s+(?:just\s+|only\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:not|rather than)\s+(?:just\s+|only\s+)?(?:a\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:proceed|continue|go)\s+beyond\s+(?:the\s+)?(?:preview|preflight|dry[- ]?run)\b)/i;
+const APPLY_AFTER_PREFLIGHT = /\b(?:then\s+|and\s+then\s+)?(?:apply|commit|execute|perform|proceed(?:\s+with)?)\b/i;
 
 export type AutoGoalDecision = {
   shouldStart: boolean;
@@ -44,9 +45,12 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     && /\b(?:read[- ]only|discovery only|inspection only)\b/i.test(text)
     && /\b(?:plan|steps?|guidance|instructions?|recommendations?)\b/i.test(text)
     && !EXECUTABLE_PREVIEW.test(text);
-  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan && !APPLY_BEYOND_PREVIEW.test(text)
+  const explicitNoWrite = isExplicitNoWriteRequest(text);
+  const appliesAfterPreflight = APPLY_AFTER_PREFLIGHT.test(text) && !explicitNoWrite;
+  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
+    && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"
-    : documentLifecycleMutation || (explicitMutation && !isExplicitNoWriteRequest(text))
+    : documentLifecycleMutation || (explicitMutation && !explicitNoWrite)
       ? "apply"
       : "read";
   return {
