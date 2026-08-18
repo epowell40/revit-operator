@@ -6,18 +6,16 @@ import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
 
 function addinFile(relativePath: string): string {
   const root = findRepoRoot(process.cwd());
-  const addin = fs.existsSync(path.join(root, "apps", "revit-bridge-addin"))
-    ? path.join(root, "apps", "revit-bridge-addin")
-    : path.join(root, "revit-bridge-addin");
-  return fs.readFileSync(path.join(addin, relativePath), "utf8");
+  const publicCandidate = path.join(root, "apps", "revit-bridge-addin", relativePath);
+  const privateCandidate = path.join(root, "revit-bridge-addin", relativePath);
+  return fs.readFileSync(fs.existsSync(publicCandidate) ? publicCandidate : privateCandidate, "utf8");
 }
 
 function repoFile(rootRelativePath: string, publicRelativePath: string): string {
   const root = findRepoRoot(process.cwd());
-  const candidate = fs.existsSync(path.join(root, "apps", "operator-backend"))
-    ? path.join(root, publicRelativePath)
-    : path.join(root, rootRelativePath);
-  return fs.readFileSync(candidate, "utf8");
+  const publicCandidate = path.join(root, publicRelativePath);
+  const privateCandidate = path.join(root, rootRelativePath);
+  return fs.readFileSync(fs.existsSync(publicCandidate) ? publicCandidate : privateCandidate, "utf8");
 }
 
 test("Revit ExternalEvent scheduler is single-flight and reports raise failures", () => {
