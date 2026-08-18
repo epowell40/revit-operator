@@ -7,6 +7,7 @@ import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js"
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
+import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
 import {
   filterQuarantinedToolSearchResult,
   findActiveToolQuarantine,
@@ -144,9 +145,7 @@ function toolNotifyThresholdMs(): number {
 }
 
 function codexTurnTimeoutMs(): number {
-  const raw = Number.parseInt(process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS ?? "420000", 10);
-  if (!Number.isFinite(raw)) return 420_000;
-  return Math.max(60_000, Math.min(30 * 60_000, raw));
+  return resolveCodexTurnTimeoutMs(process.env.OPERATOR_CODEX_TURN_TIMEOUT_MS);
 }
 
 export function getOperatorAgentBaseInstructions(): string {
