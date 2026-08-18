@@ -281,6 +281,18 @@ No native type-change dry-run was executed, and nothing was applied or saved.`
   assert.equal(truthful.fixture_blocker_accepted, true);
   assert.match(truthful.summary, /sample lacks a semantically compatible target/i);
 
+  const capturedLiveWording = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    assistant_message: `## Blocked — no compatible peer exists
+
+Live audit found 7 loaded Air Terminal types, each represented by a placed instance.
+No two different types preserve all required connector/service invariants.
+The closest matches are Supply Air and Return Air, so that substitution was rejected.
+No native type-change dry-run was admitted; nothing was applied or saved.`
+  });
+  assert.equal(capturedLiveWording.tier, "accepted");
+  assert.equal(capturedLiveWording.fixture_blocker_accepted, true);
+
   const vague = evaluateGeneralRevitCapabilityAttempt(safeCase, {
     ...inspected,
     assistant_message: "## Blocked\nI couldn't find a good type, so I stopped."
@@ -342,6 +354,26 @@ No accessory was created, and no model changes were made.`
   assert.equal(result.fixture_blocker_accepted, true);
   assert.equal(result.completed, false);
   assert.equal(result.verified, false);
+
+  const capturedLiveWording = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: `## Blocked before preview
+
+The model contains zero Duct Accessories and zero Pipe Accessories; broader searches found no damper or valve precedent.
+No preview was executed. Nothing was created.`
+  });
+  assert.equal(capturedLiveWording.tier, "accepted");
+  assert.equal(capturedLiveWording.fixture_blocker_accepted, true);
+});
+
+test("the live runner reuses orchestrator-established fixture health between cases", () => {
+  const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  assert.match(runner, /readExactFixtureHealth\(baseUrl, preferredDocumentTitle, true\)/);
+  assert.match(runner, /preferCached \? "\/api\/revit\/health\?prefer_cached=1" : "\/api\/revit\/health"/);
 });
 
 test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {

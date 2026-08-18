@@ -878,6 +878,13 @@ test("auto goal classifier creates assignments for live Revit work", () => {
     "Rename sheet M000, verify it, then rename it back and verify it. Do the work; do not stop at a preview."
   );
   assert.equal(applyPastPreview.requestedEffect, "apply");
+  const applyAfterPreflight = classifyAutoGoalRequest(
+    "Find every mechanical-equipment Mark beginning with HRU, preflight collisions and read-only targets, apply the complete bounded HRU-to-ERU set, then query all affected IDs and verify the result."
+  );
+  assert.equal(applyAfterPreflight.requestedEffect, "apply");
+  assert.equal(classifyAutoGoalRequest(
+    "Preflight changing every HRU Mark to ERU, but do not apply or save anything."
+  ).requestedEffect, "preview");
   assert.equal(classifyAutoGoalRequest(
     "Rename sheet M000 and return it to the original name. Execute both writes; do not return only a dry run."
   ).requestedEffect, "apply");
