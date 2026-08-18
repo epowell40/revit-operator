@@ -777,6 +777,58 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
+                // Project-wide element discovery is deliberately usable with an
+                // empty object and every scope/filter/expansion field is optional.
+                // net48 reflection cannot recover nullable-reference metadata and
+                // would otherwise mark every string filter as simultaneously required.
+                if (string.Equals(p, "/revit/find-elements", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "viewId", Int() },
+                            { "sheetNumber", Str() },
+                            { "includeSheetElements", Bool() },
+                            { "includeViewportElements", Bool() },
+                            { "sheetRegions", Arr(SchemaFromType(typeof(RevitBridge.Logic.Handlers.FindElementsHandler.SheetRegion), depth: 0)) },
+                            { "regionPaddingFt", Num() },
+                            { "category", Str() },
+                            { "categories", Arr(Str()) },
+                            { "typeNameContains", Str() },
+                            { "familyNameContains", Str() },
+                            { "nameContains", Str() },
+                            { "markContains", Str() },
+                            { "textContains", Str() },
+                            { "identityTerms", Arr(Str()) },
+                            { "physicalElementsOnly", Bool() },
+                            { "topLevelInstancesOnly", Bool() },
+                            { "expandIdentityAcronymsInParameters", Bool() },
+                            { "includeGeometry", Bool() },
+                            { "limit", Int(minimum: 1, maximum: 5000) }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
+                // Dialog observation is valid with an empty body. Reflection on
+                // net48 cannot recover nullable-reference metadata, so keep the
+                // optional dialog selectors optional in the published schema.
+                if (string.Equals(p, "/revit/computer-use-observe", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "includeScreenshot", Bool() },
+                            { "screenshotMaxSidePx", Int() },
+                            { "maxDialogs", Int() },
+                            { "onlyModal", Bool() },
+                            { "titleContains", Str() },
+                            { "dialogIdContains", Str() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
                 // Schedule reads have two conditional shapes. Listing needs no
                 // selector; detail requires either scheduleId or query. Do not use
                 // reflection here because nullable-reference metadata is not

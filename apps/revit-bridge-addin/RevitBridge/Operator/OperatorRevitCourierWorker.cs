@@ -22,6 +22,8 @@ namespace RevitBridge.Operator
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
         private int _hostDocumentAvailable;
         private static readonly int[] ExternalEventBusyRetryDelaysMs = { 100, 200, 400, 800, 1600, 2000, 2000, 2000 };
+        private static readonly TimeSpan ClaimAttemptTimeout = TimeSpan.FromSeconds(25);
+        private static readonly TimeSpan SettlementAttemptTimeout = TimeSpan.FromSeconds(30);
         private Timer? _timer;
 
         public OperatorRevitCourierWorker(
@@ -87,7 +89,15 @@ namespace RevitBridge.Operator
                 var contextFreeOnly = Volatile.Read(ref _hostDocumentAvailable) == 0;
                 if (!contextFreeOnly && await HoldForOpenHostCircuitAsync().ConfigureAwait(false)) return;
 
-                var claimJson = await _backendClient.ClaimNextRevitCourierJobJsonAsync(null, _executorId, contextFreeOnly, _cts.Token).ConfigureAwait(false);
+                string claimJson;
+                using (var claimTimeout = CreateAttemptTimeout(ClaimAttemptTimeout))
+                {
+                    claimJson = await _backendClient.ClaimNextRevitCourierJobJsonAsync(
+                        null,
+                        _executorId,
+                        contextFreeOnly,
+                        claimTimeout.Token).ConfigureAwait(false);
+                }
                 using var claimDocument = JsonDocument.Parse(string.IsNullOrWhiteSpace(claimJson) ? "{}" : claimJson);
                 if (!claimDocument.RootElement.TryGetProperty("job", out var job) || job.ValueKind != JsonValueKind.Object) return;
 
@@ -295,7 +305,15 @@ namespace RevitBridge.Operator
                 executionCompleted = true;
                 var transportResult = OperatorCourierResultCompactor.Prepare(result);
                 _completionOutbox.Save(sessionId!, jobId, _executorId, transportResult.Result);
-                await _backendClient.CompleteRevitCourierJobJsonAsync(sessionId!, jobId, _executorId, transportResult.Result, CancellationToken.None).ConfigureAwait(false);
+                using (var settlementTimeout = CreateAttemptTimeout(SettlementAttemptTimeout))
+                {
+                    await _backendClient.CompleteRevitCourierJobJsonAsync(
+                        sessionId!,
+                        jobId,
+                        _executorId,
+                        transportResult.Result,
+                        settlementTimeout.Token).ConfigureAwait(false);
+                }
                 _completionOutbox.Acknowledge(jobId);
                 await LogAsync("courier.action.done", new
                 {
@@ -354,14 +372,17 @@ namespace RevitBridge.Operator
                     }
                     try
                     {
-                        await _backendClient.FailRevitCourierJobJsonAsync(
-                            sessionId!,
-                            jobId!,
-                            _executorId,
-                            failure.Error,
-                            failure,
-                            failure.Retryable,
-                            CancellationToken.None).ConfigureAwait(false);
+                        using (var settlementTimeout = CreateAttemptTimeout(SettlementAttemptTimeout))
+                        {
+                            await _backendClient.FailRevitCourierJobJsonAsync(
+                                sessionId!,
+                                jobId!,
+                                _executorId,
+                                failure.Error,
+                                failure,
+                                failure.Retryable,
+                                settlementTimeout.Token).ConfigureAwait(false);
+                        }
                     }
                     catch
                     {
@@ -481,12 +502,15 @@ namespace RevitBridge.Operator
                         completion.ExecutorId,
                         transportResult.Result);
                 }
-                await _backendClient.CompleteRevitCourierJobJsonAsync(
-                    completion.SessionId,
-                    completion.JobId,
-                    completion.ExecutorId,
-                    transportResult.Result,
-                    CancellationToken.None).ConfigureAwait(false);
+                using (var settlementTimeout = CreateAttemptTimeout(SettlementAttemptTimeout))
+                {
+                    await _backendClient.CompleteRevitCourierJobJsonAsync(
+                        completion.SessionId,
+                        completion.JobId,
+                        completion.ExecutorId,
+                        transportResult.Result,
+                        settlementTimeout.Token).ConfigureAwait(false);
+                }
                 _completionOutbox.Acknowledge(completion.JobId);
                 await LogAsync("courier.completion.replayed", new
                 {
@@ -524,6 +548,13 @@ namespace RevitBridge.Operator
                 }).ConfigureAwait(false);
             }
             return true;
+        }
+
+        private CancellationTokenSource CreateAttemptTimeout(TimeSpan timeout)
+        {
+            var source = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+            source.CancelAfter(timeout);
+            return source;
         }
 
         private async Task<OperatorCourierFinalExecutionAuthorization> RequestFinalExecutionAuthorizationAsync(

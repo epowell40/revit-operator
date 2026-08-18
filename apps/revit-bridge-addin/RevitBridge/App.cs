@@ -19,6 +19,7 @@ namespace RevitBridge
         private RevitHttpServer _server;
         private RevitEventService _eventService;
         private OperatorRevitCourierWorker? _revitCourierWorker;
+        private OperatorJsonlLogger? _revitCourierLogger;
         internal OperatorDialogComputerUse? DialogComputerUse { get; private set; }
 
         public Result OnStartup(UIControlledApplication application)
@@ -61,17 +62,21 @@ namespace RevitBridge
             // the add-in; the Sidecar-only UI no longer constructs the legacy pane.
             try
             {
+                _revitCourierLogger = new OperatorJsonlLogger(
+                    "courier-" + OperatorRevitCourierWorker.ExecutorIdForCurrentProcess());
                 _revitCourierWorker = new OperatorRevitCourierWorker(
                     backend,
                     new OperatorActionRunner(_eventService),
                     getApprovalMode: GetCourierApprovalMode,
                     ensureWriteGrant: OperatorWriteGrant.ReadStatus,
-                    getLogger: () => null);
+                    getLogger: () => _revitCourierLogger);
                 _revitCourierWorker.Start();
                 WriteStartupLog("Application-lifetime Revit courier worker started; context-free bootstrap dispatch is available on Revit Home.");
             }
             catch (Exception ex)
             {
+                try { _revitCourierLogger?.Dispose(); } catch { }
+                _revitCourierLogger = null;
                 WriteStartupLog($"Application-lifetime Revit courier worker failed to start: {ex.GetType().FullName}: {ex.Message}");
             }
 
@@ -171,6 +176,8 @@ namespace RevitBridge
                 WriteStartupLog("Application-lifetime Revit courier worker dispose begin.");
                 _revitCourierWorker?.Dispose();
                 _revitCourierWorker = null;
+                _revitCourierLogger?.Dispose();
+                _revitCourierLogger = null;
                 WriteStartupLog("Application-lifetime Revit courier worker dispose complete.");
             }
             catch (Exception ex)

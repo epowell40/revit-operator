@@ -105,6 +105,7 @@ import {
   failRevitToolJob,
   readRevitToolJobTerminalOutcome
 } from "./courier/revit_tool_jobs.js";
+import { buildRevitCourierSettlementReceipt } from "./courier/revit_tool_settlement_receipt.js";
 import {
   authorizeDirectRevitExecution,
   DIRECT_REVIT_AUTHORIZATION_HTTP_MAX_BYTES,
@@ -1438,7 +1439,7 @@ const server = http.createServer(async (req, res) => {
           } catch {
             // Environment memory is advisory and must not break courier completion.
           }
-          return writeJson(res, 200, { ok: true, job });
+          return writeJson(res, 200, { ok: true, settlement: buildRevitCourierSettlementReceipt(job) });
         } catch (error) {
           const terminalJob = error && typeof error === "object" && "job" in error
             ? (error as { job?: unknown }).job
