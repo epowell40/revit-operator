@@ -1066,7 +1066,9 @@ test("Codex MCP host guard classifies conditional route bodies by their actual e
     for (const [path, body] of [
       ["/revit/fire-damper-audit", { command: "audit" }],
       ["/revit/lighting-audit", { command: "photometrics", visualize: false }],
-      ["/revit/list-element-types", { action: "list", category: "OST_Doors" }]
+      ["/revit/list-element-types", { action: "list", category: "OST_Doors" }],
+      ["/revit/get-placement-context", { elementId: 1392356, hostCategories: ["OST_Walls", "OST_Ceilings"] }],
+      ["/revit/model-health", { includeWarnings: true }]
     ] as const) {
       const gate = guardTeammateMcpCall(inspectionOwner, {
         tool: "revit_call_tool",

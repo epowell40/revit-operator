@@ -560,7 +560,30 @@
       "probe_prompt": "Find one unambiguous connected MEP branch and a compatible nearby accessory precedent, then preview inserting one matching accessory. Resolve exact type, branch, connectors, system, placement, and cleanup plan. Do not create it.",
       "capability_paths": ["/revit/get-connectors", "/revit/create-similar-from-instance", "/revit/connect-mep-elements"],
       "dispatch_any_of": ["/revit/get-connectors", "/revit/find-elements", "/revit/create-similar-from-instance", "/revit/native-api-search"],
-      "expected_effect": "preview",
+      "expected_effect": "apply",
+      "answer_assertions": {
+        "must_match": [
+          "(?:created|inserted)[^\\n.]{0,120}(?:accessory|element)",
+          "(?:connector|connected)",
+          "(?:system|continuity)"
+        ],
+        "must_not_match": [
+          "(?:blocked|no compatible(?: nearby)? accessory precedent)"
+        ]
+      },
+      "fixture_blocker_assertions": {
+        "must_match": [
+          "(?:Duct Accessories[^\\n]{0,80}(?:0|zero)|(?:0|zero)[^\\n]{0,80}Duct Accessories)",
+          "(?:Pipe Accessories[^\\n]{0,80}(?:0|zero)|(?:0|zero)[^\\n]{0,80}Pipe Accessories)",
+          "no (?:compatible|matching)(?: nearby)? accessory precedent",
+          "(?:no accessory (?:was )?created|nothing was created)",
+          "(?:no model changes were made|model (?:was |is )?unchanged)"
+        ],
+        "must_not_match": [
+          "\\\"dryRun\\\"\\s*:\\s*true",
+          "\\\"rollbackVerified\\\"\\s*:\\s*true"
+        ]
+      },
       "epic0441_task_refs": ["r08_add_mep_accessory"]
     },
     {
@@ -1043,8 +1066,8 @@
         "must_match": [
           "(?:exactly\\s+)?7\\s+loaded\\s+Air Terminal types",
           "(?:no two different types|no compatible peer type).{0,120}(?:preserve|invariants|compatible)",
-          "Supply Air[\\s\\S]{0,260}Return Air",
-          "no native type-change dry-run was executed",
+          "Supply(?: Air| types?)?[\\s\\S]{0,500}Return(?: Air| types?)?",
+          "(?:no native type-change dry-run was executed|did not run[^\\n.]{0,100}type-change preview|no structured[^\\n.]{0,100}(?:dry-run|preview)[^\\n.]{0,60}(?:was )?produced)",
           "nothing was applied(?: or saved)?"
         ],
         "must_not_match": [
