@@ -27,6 +27,7 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /const useComputer = executionSurface\(\) === "operator_computer_general_agent"/);
   assert.match(runner, /process\.argv\.includes\("--legacy-chat"\)/);
   assert.match(runner, /execution_surface: executionSurface\(\)/);
+  assert.match(runner, /flag\("--sidecar", "http:\/\/127\.0\.0\.1:3907"\)/);
   assert.match(runner, /harness_health_ms:/);
   assert.match(runner, /computer_performance: computerPerformanceSummary\(attempt\)/);
   assert.match(runner, /fixturePreflight = await requestJson\(sidecar, "\/api\/revit\/health", \{\}, healthTimeoutMs\(\)\)/);
@@ -967,6 +968,39 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   assert.equal(componentCountTitleblockResult.answer_assertion_passed, true);
   assert.equal(componentCountTitleblockResult.tier, "verified");
 
+  const differingLabelTitleblockAnswer = [
+    "## Mechanical Sheet Audit",
+    "| Sheet | Drawn By | Checked By |",
+    "|---|---|---|",
+    ...structuredTitleblockRows.map((row) => `| ${row.join(" | ")} |`),
+    "**Live audit results**",
+    "- Mechanical sheets checked: **17**",
+    "- Sheets differing from **EP / QA**: **17**",
+    "- Drawn By mismatches: **17**",
+    "- Checked By mismatches: **17**",
+    "- Total field mismatches: **34**",
+    "No model changes were made."
+  ].join("\n");
+  const differingLabelTitleblockResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ...titleblockAttempt,
+    assistant_message: differingLabelTitleblockAnswer
+  });
+  assert.equal(differingLabelTitleblockResult.answer_assertion_passed, true);
+  assert.equal(differingLabelTitleblockResult.tier, "verified");
+
+  for (const incorrectDifferingLabel of [
+    differingLabelTitleblockAnswer.replace("from **EP / QA**: **17**", "from **EP / QA**: **16**"),
+    differingLabelTitleblockAnswer.replace("from **EP / QA**", "from **XX / YY**"),
+    differingLabelTitleblockAnswer.replace("Total field mismatches: **34**", "Total field mismatches: **33**")
+  ]) {
+    const incorrectDifferingLabelResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+      ...titleblockAttempt,
+      assistant_message: incorrectDifferingLabel
+    });
+    assert.equal(incorrectDifferingLabelResult.answer_assertion_passed, false);
+    assert.equal(incorrectDifferingLabelResult.tier, "failed");
+  }
+
   for (const incorrectComponentCount of [
     componentCountTitleblockAnswer.replace("17 Drawn By mismatches", "16 Drawn By mismatches"),
     componentCountTitleblockAnswer.replace("17 Checked By mismatches", "16 Checked By mismatches"),
@@ -1825,6 +1859,43 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
     assert.equal(incorrectCountedRelationEvaluation.tier, "failed");
     assert.equal(incorrectCountedRelationEvaluation.answer_assertion_passed, false);
   }
+
+  const currentBaselineReplay = [
+    "## Live findings",
+    "Closest source: **Heat Recovery Unit Summary** (schedule ID `1488968`).",
+    "It already contains **Mark, Family, and Type**, plus Space Number, Space Name, and Level.",
+    "Schedule total: **37 HRUs**.",
+    "Independent host-model query: **37 Mechanical Equipment**, all family `HeatRecoveryUnit`, type `Heat Recovery Unit (HRU)`.",
+    "Current QA baseline:",
+    "- HRU: **37**",
+    "- ERU: **0**",
+    "- Blank Marks: **0**",
+    "- Duplicate Marks: **0**",
+    "## Temporary HRU-to-ERU QA schedule plan",
+    "Visible fields: Mark, Family, Type.",
+    "Filter: Mark begins with ERU. Sort: Mark, ascending. Itemize every instance.",
+    "After future HRU→ERU changes, confirm schedule ERU rows = model ERU count and HRU_after + ERU_after = 37.",
+    "No schedule was created, cloned, or configured."
+  ].join("\n");
+  const incompleteCurrentBaseline = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: currentBaselineReplay
+  });
+  assert.equal(incompleteCurrentBaseline.answer_assertion_passed, false);
+  assert.equal(incompleteCurrentBaseline.tier, "failed");
+  assert.equal(incompleteCurrentBaseline.answer_assertion_failures.length, 1);
+  assert.match(incompleteCurrentBaseline.answer_assertion_failures[0]!, /Expected/i);
+
+  const explicitCurrentBaseline = currentBaselineReplay.replace(
+    "After future HRU→ERU changes, confirm schedule ERU rows = model ERU count and HRU_after + ERU_after = 37.",
+    "After future HRU→ERU changes, the expected ERU count is **37** and the expected schedule row count is **37**; confirm schedule ERU rows = model ERU count and HRU_after + ERU_after = 37."
+  );
+  const explicitCurrentBaselineEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: explicitCurrentBaseline
+  });
+  assert.equal(explicitCurrentBaselineEvaluation.answer_assertion_passed, true);
+  assert.equal(explicitCurrentBaselineEvaluation.tier, "verified");
 
   for (const incorrectStructuredReplay of [
     structuredFreshReplay.replace("37 HRUs", "36 HRUs"),

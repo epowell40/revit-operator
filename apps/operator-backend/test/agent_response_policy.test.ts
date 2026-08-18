@@ -38,6 +38,7 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /including sheet\/titleblock values[\s\S]*instead of one tool round per element or parameter/i);
   assert.match(policy, /target-aware single-element verifier only for items the bulk read omitted or left ambiguous/i);
   assert.match(policy, /current source and target counts[\s\S]*expected post-change target\/schedule count[\s\S]*blank values[\s\S]*duplicate\/collision risk/i);
+  assert.match(policy, /expected target and schedule counts as explicit numeric facts[\s\S]*conservation equation alone is not a substitute/i);
   assert.match(policy, /find an eligible view, sheet, schedule, element, or family yourself/i);
   assert.match(policy, /state the most likely interpretation/i);
   assert.match(policy, /identify the likely requested schedule and where it is placed/i);
