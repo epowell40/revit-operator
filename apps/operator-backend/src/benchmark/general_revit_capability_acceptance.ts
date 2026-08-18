@@ -513,7 +513,8 @@ function semanticAssertionText(answerText: string): string {
   const presentationNeutral = answerText
     .normalize("NFKC")
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .replace(/(?:\*\*|__|~~|`)/g, "");
+    .replace(/(?:\*\*|__|~~|`)/g, "")
+    .replace(/^[ \t]*[-*][ \t]+/gm, "");
   const derivedFacts = markdownTableMismatchFacts(presentationNeutral);
   return derivedFacts.length > 0 ? `${presentationNeutral}\n${derivedFacts.join("\n")}` : presentationNeutral;
 }

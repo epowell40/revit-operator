@@ -1614,7 +1614,7 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
     "Current baseline is ERU model count 0; the independent model count where Mark begins with ERU is 0.",
     "Proposed temporary QA schedule: clone it as TEMP - HRU to ERU QA, retain Mark, Family, and Type, and filter Mark begins with ERU.",
     "Sort/group: Sort by Mark; Ascending.",
-    "Expected schedule rows after conversion: 37.",
+    "Expected schedule rows after conversion: 37. Expected ERU count after conversion: 37.",
     "Current duplicates: none; direct prefix substitution has no projected duplicates.",
     "Independent acceptance requires Model count = schedule row count, No blank Marks, and No duplicate Marks.",
     "Dry-run receipt: model changes: none."
@@ -1667,7 +1667,7 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
     "Fields: Mark, Family, Type. Filter: Mark begins with ERU. Sort: Mark ascending.",
     "Independently rerun the query and require model ERU count = schedule row count; no blank Marks; no duplicate Marks.",
     "No schedule or model content was created, configured, or saved.",
-    "If all 37 HRUs are intended to become ERUs, the expected post-migration target is **37**."
+    "If all 37 HRUs are intended to become ERUs, the expected post-migration target is **37** and the expected schedule row count is **37**."
   ].join("\n");
   const freshLiveTableVerified = evaluateGeneralRevitCapabilityAttempt(entry, {
     ...attempt,
@@ -1833,7 +1833,7 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
     "Filter: Mark begins with ERU. Sort: Mark, ascending. Itemize every instance.",
     "Schedule row count must equal an independent project-wide Mechanical Equipment query using the same ERU prefix rule.",
     "Current HRU source count: 37. Current ERU target count: 0.",
-    "Expected ERU count after a complete prefix-only HRU→ERU migration: **37**.",
+    "Expected ERU count after a complete prefix-only HRU→ERU migration: **37**. Expected schedule rows: **37**.",
     "Blank Mark count must be 0. Duplicate ERU Mark groups must be 0.",
     "**No schedule was created or configured.**"
   ].join("\n");
@@ -1844,20 +1844,20 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   assert.equal(countedRelationEvaluation.tier, "verified");
   assert.equal(countedRelationEvaluation.answer_assertion_passed, true);
 
-  for (const incorrectCountedRelation of [
+  for (const [incorrectIndex, incorrectCountedRelation] of [
     countedRelationReplay.replace("contains **37 HRUs**", "contains **36 HRUs**"),
     countedRelationReplay.replace("**37 HRU**, **0 ERU**", "**37 HRU**, **5 ERU**"),
     countedRelationReplay.replace("both equal **37**", "both equal **36**"),
     countedRelationReplay.replace("migration: **37**", "migration: **36**"),
     countedRelationReplay.replace("0 blanks", "2 blanks"),
     countedRelationReplay.replace("0 duplicate groups", "1 duplicate groups")
-  ]) {
+  ].entries()) {
     const incorrectCountedRelationEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
       ...attempt,
       assistant_message: incorrectCountedRelation
     });
-    assert.equal(incorrectCountedRelationEvaluation.tier, "failed");
-    assert.equal(incorrectCountedRelationEvaluation.answer_assertion_passed, false);
+    assert.equal(incorrectCountedRelationEvaluation.tier, "failed", `incorrect counted relation ${incorrectIndex}`);
+    assert.equal(incorrectCountedRelationEvaluation.answer_assertion_passed, false, `incorrect counted relation ${incorrectIndex}`);
   }
 
   const currentBaselineReplay = [
@@ -1883,8 +1883,8 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(incompleteCurrentBaseline.answer_assertion_passed, false);
   assert.equal(incompleteCurrentBaseline.tier, "failed");
-  assert.equal(incompleteCurrentBaseline.answer_assertion_failures.length, 1);
-  assert.match(incompleteCurrentBaseline.answer_assertion_failures[0]!, /Expected/i);
+  assert.equal(incompleteCurrentBaseline.answer_assertion_failures.length, 2);
+  assert.ok(incompleteCurrentBaseline.answer_assertion_failures.every((failure) => /Expected/i.test(failure)));
 
   const explicitCurrentBaseline = currentBaselineReplay.replace(
     "After future HRU→ERU changes, confirm schedule ERU rows = model ERU count and HRU_after + ERU_after = 37.",
@@ -1896,6 +1896,53 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(explicitCurrentBaselineEvaluation.answer_assertion_passed, true);
   assert.equal(explicitCurrentBaselineEvaluation.tier, "verified");
+
+  const markdownValidationReplay = [
+    "## Live findings",
+    "- Existing source: **Heat Recovery Unit Summary** (schedule ID **1488968**).",
+    "- It already contains **Mark, Family, Type**.",
+    "- Schedule total: **37 equipment rows**.",
+    "- Independent Mechanical Equipment query:",
+    "  - `HRU*`: **37**",
+    "  - `ERU*`: **0**",
+    "- Mark audit: **37 populated, 0 blank, 0 duplicate groups**.",
+    "- All 37 are family `HeatRecoveryUnit`, type `Heat Recovery Unit (HRU)`.",
+    "## Complete QA schedule plan",
+    "1. **Clone** schedule **1488968** in dry-run first.",
+    "2. Configure only the clone with visible fields **Mark, Family, Type** and itemize every instance.",
+    "3. Filter: **Mark begins with `ERU`**.",
+    "4. Sort:",
+    "   - **Mark ascending**",
+    "5. Validate after the HRU→ERU migration:",
+    "   - Schedule rows: **37**",
+    "   - Independent model `ERU*` count: **37**",
+    "   - Independent model `HRU*` count: **0**",
+    "   - Blank Marks: **0**",
+    "   - Duplicate Mark groups: **0**",
+    "   - Schedule/model reconciliation: **37 = 37**",
+    "No schedule was created or configured."
+  ].join("\n");
+  const markdownValidationEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: markdownValidationReplay
+  });
+  assert.equal(markdownValidationEvaluation.answer_assertion_passed, true);
+  assert.equal(markdownValidationEvaluation.tier, "verified");
+
+  for (const [incorrectMarkdownIndex, incorrectMarkdownReplay] of [
+    markdownValidationReplay.replace("Schedule total: **37 equipment rows**", "Schedule total: **36 equipment rows**"),
+    markdownValidationReplay.replace("`ERU*`: **0**", "`ERU*`: **5**"),
+    markdownValidationReplay.replace("Schedule rows: **37**", "Schedule rows: **36**"),
+    markdownValidationReplay.replace("model `ERU*` count: **37**", "model `ERU*` count: **36**"),
+    markdownValidationReplay.replace("Blank Marks: **0**", "Blank Marks: **2**")
+  ].entries()) {
+    const incorrectMarkdownEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: incorrectMarkdownReplay
+    });
+    assert.equal(incorrectMarkdownEvaluation.answer_assertion_passed, false, `incorrect Markdown replay ${incorrectMarkdownIndex}`);
+    assert.equal(incorrectMarkdownEvaluation.tier, "failed", `incorrect Markdown replay ${incorrectMarkdownIndex}`);
+  }
 
   for (const incorrectStructuredReplay of [
     structuredFreshReplay.replace("37 HRUs", "36 HRUs"),
@@ -1994,7 +2041,7 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(latestLiveIncomplete.tier, "failed");
   assert.equal(latestLiveIncomplete.answer_assertion_passed, false);
-  assert.equal(latestLiveIncomplete.answer_assertion_failures.length, 2);
+  assert.equal(latestLiveIncomplete.answer_assertion_failures.length, 3);
   assert.match(latestLiveIncomplete.answer_assertion_failures.join("\n"), /Expected|blank Mark/i);
 
   const latestLiveComplete = evaluateGeneralRevitCapabilityAttempt(entry, {
