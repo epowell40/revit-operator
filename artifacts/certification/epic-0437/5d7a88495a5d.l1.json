@@ -1240,6 +1240,10 @@
       "sha256": "sha256:910d03c228067bcd159eac981a0c37e4e73e5df2690fbbbf9424f2b5c305bfe0"
     },
     {
+      "path": "apps/operator-backend/src/find_elements_compaction.ts",
+      "sha256": "sha256:cc827bae51edfbfc092b38d424c81b18109e5a3156ece752e59e249a09549767"
+    },
+    {
       "path": "apps/operator-backend/src/goals/authority.ts",
       "sha256": "sha256:37c70e21dc5978f407d094a55fc0f87836fb02893ccbceb5cb545e8d8b9ed0ea"
     },
@@ -1537,7 +1541,7 @@
     },
     {
       "path": "apps/operator-backend/src/tool_result_compaction.ts",
-      "sha256": "sha256:8b0f4b348b748659d03ff86f08e5c3b8de374bf27517eb614573d8e5b3061802"
+      "sha256": "sha256:88b716ca80c394d6a7e43a09edf83905273de9981acd4a4ceed6d656a59ab683"
     },
     {
       "path": "apps/operator-backend/src/tools/audit_native_api_gateway.ts",
@@ -2593,7 +2597,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_result_compaction.test.ts",
-      "sha256": "sha256:471a8f2faae7e287e17d34a5f74fcc1df125c1daa4e798419b2e386f0c644edc"
+      "sha256": "sha256:e01508e010e6fecf0b78d94813b98d86828240f0807985be65111cea27b0244a"
     },
     {
       "path": "apps/operator-backend/test/tool_result_normalization.test.ts",
@@ -4633,7 +4637,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:2236ab459c91b92df424f0ea1f1a086e13c8e3a105deb5870429cecdccd27377",
+  "inputs_hash": "sha256:ae3906b8047c3be31a1f1ebd7ed0d018289db8321968798bb216de4c8bcefd74",
   "result": {
     "passed": true,
     "checks": [
