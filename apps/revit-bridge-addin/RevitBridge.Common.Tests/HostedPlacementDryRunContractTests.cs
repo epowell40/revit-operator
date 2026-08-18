@@ -80,9 +80,9 @@ namespace RevitBridge.Common.Tests
             while (current != null)
             {
                 var publicRoot = Path.Combine(current.FullName, "apps", "revit-bridge-addin");
-                if (Directory.Exists(publicRoot)) return publicRoot;
+                if (File.Exists(Path.Combine(publicRoot, "RevitBridge", "Server", "RevitHttpServer.cs"))) return publicRoot;
                 var privateRoot = Path.Combine(current.FullName, "revit-bridge-addin");
-                if (Directory.Exists(privateRoot)) return privateRoot;
+                if (File.Exists(Path.Combine(privateRoot, "RevitBridge", "Server", "RevitHttpServer.cs"))) return privateRoot;
                 current = current.Parent;
             }
             throw new DirectoryNotFoundException("Revit bridge add-in root not found.");
