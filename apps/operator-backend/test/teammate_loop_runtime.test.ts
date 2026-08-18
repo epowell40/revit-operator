@@ -388,6 +388,42 @@ test("transaction-plan is preview-only to the teammate loop", () => {
   assert.equal(preview.teammate_loop_receipt?.stage, "preview");
 });
 
+test("successful preview progress is monotonic across later discovery and finishes as report", () => {
+  __testOnlyResetTeammateLoopState();
+  const text = "Preview a detailed duplicate of view 1363403 on a temporary sheet; do not create anything.";
+  const preview = guardGenericTeammateDecision(request(text), response([{
+    action_id: "preview-1",
+    method: "POST",
+    path: "/revit/transaction-plan",
+    body: { actions: [{ kind: "duplicateView", sourceViewId: 1363403, mode: "withDetailing" }] }
+  }]));
+  assert.equal(preview.teammate_loop_receipt?.stage, "preview");
+
+  const discovery = guardGenericTeammateDecision(request(text, [{
+    action_id: "preview-1",
+    method: "POST",
+    path: "/revit/transaction-plan",
+    status: "done",
+    result_json: { ok: true, dryRun: true, rollback_truth: true }
+  }]), response([{
+    action_id: "read-1",
+    method: "GET",
+    path: "/revit/views"
+  }]));
+  assert.equal(discovery.teammate_loop_receipt?.stage, "preview");
+
+  const complete = guardGenericTeammateDecision(request(text, [{
+    action_id: "read-1",
+    method: "GET",
+    path: "/revit/views",
+    status: "done",
+    result_json: { ok: true, views: [] }
+  }]), response([], "Preview completed and rollback confirmed."));
+  assert.equal(complete.teammate_loop_receipt?.stage, "report");
+  assert.equal(complete.teammate_loop_receipt?.preview_receipts?.length, 1);
+  assert.equal(complete.teammate_loop_receipt?.blocked_reason, null);
+});
+
 test("generic provider loop binds preview to one apply and requires post-apply verification", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS and keep the model consistent.";

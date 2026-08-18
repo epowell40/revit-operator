@@ -740,7 +740,9 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
     state.verification_action_ids.push(actionId);
     state.contract.stage = "verify";
   } else if (call.effect === "preview") state.contract.stage = "preview";
-  else if (call.effect === "read" || call.effect === "navigation" || call.effect === "discovery") state.contract.stage = "discover";
+  else if ((call.effect === "read" || call.effect === "navigation" || call.effect === "discovery")
+      && state.successful_preview_signatures.size === 0
+      && state.contract.stage !== "report") state.contract.stage = "discover";
 }
 
 function resultSucceeded(result: ToolResult): boolean {
@@ -1050,7 +1052,10 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
     state.blocked_reason = "executable_preview_not_completed";
     state.contract.stage = "blocked";
   } else if (actions.length === 0 && !state.blocked_reason) {
-    state.contract.stage = state.verified || state.contract.turn_kind !== "mutation" ? "report" : state.contract.stage;
+    const completedSafePreview = state.apply_attempts === 0 && state.preview_receipts.length > 0;
+    state.contract.stage = state.verified || state.contract.turn_kind !== "mutation" || completedSafePreview
+      ? "report"
+      : state.contract.stage;
   }
   const suffix = state.blocked_reason
     ? `\n\nI stopped before an unsafe or unverified Revit step (${state.blocked_reason.replace(/_/g, " ")}). No blocked action was executed.`
