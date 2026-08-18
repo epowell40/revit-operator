@@ -191,6 +191,15 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
+test("Codex PDF instructions keep preflight output under the Operator workspace", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /PDF preflight or dry-run/);
+  assert.match(instructions, /omit `outputFolder`[\s\S]*`artifacts\/prints`/);
+  assert.match(instructions, /never invent an OS temp\/test-run directory/);
+  assert.match(instructions, /rejects `outputFolder`[\s\S]*retry once with `artifacts\/prints`/);
+  assert.match(instructions, /dry-run or file-verification receipt/);
+});
+
 test("Codex instructions diagnose cross-floor visibility beyond view depth", () => {
   const instructions = getOperatorAgentBaseInstructions();
   assert.match(instructions, /View-visibility diagnosis rule/);
