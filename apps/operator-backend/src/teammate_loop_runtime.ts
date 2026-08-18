@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
+import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -26,7 +27,6 @@ export type TeammateTurnContract = {
 type Effect = "read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
 type PendingCall = { effect: Effect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
-type SuccessfulPreviewReceipt = { action_id: string; path: string; status: "success"; evidence_sha256: string };
 
 type TeammateLoopState = {
   key: string;
@@ -914,12 +914,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   state.pending.delete(actionId);
   if (pending.effect === "preview" && succeeded) {
     state.successful_preview_signatures.add(pending.signature);
-    state.preview_receipts.push({
-      action_id: actionId,
-      path: pending.path,
-      status: "success",
-      evidence_sha256: `sha256:${sha256(JSON.stringify(stableValue(evidence)))}`
-    });
+    state.preview_receipts.push(successfulPreviewReceipt(actionId, pending.path, sha256(JSON.stringify(stableValue(evidence)))));
   }
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
@@ -967,22 +962,7 @@ function ingestToolResults(state: TeammateLoopState, results: ToolResult[] | und
 }
 
 function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_loop_receipt"]> {
-  return {
-    schema: "revit-operator.teammate-loop-receipt.v1",
-    turn_kind: state.contract.turn_kind,
-    context_state: state.contract.context_state,
-    stage: state.contract.stage,
-    preview_action_ids: state.preview_action_ids.slice(-8),
-    preview_receipts: state.preview_receipts.slice(-8),
-    apply_action_id: state.apply_action_id,
-    verification_action_ids: state.verification_action_ids.slice(-8),
-    apply_attempts: state.apply_attempts,
-    verified: state.verified,
-    verification_mode: state.verification_mode,
-    verification_action_id: state.verification_action_id,
-    verification_evidence_sha256: state.verification_evidence_sha256,
-    blocked_reason: state.blocked_reason
-  };
+  return buildTeammateLoopReceipt(state);
 }
 
 const INCOMPLETE_MUTATION_REPORTS = [
