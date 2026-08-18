@@ -412,6 +412,25 @@ function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: b
   return { mutationAttempted, blocked, verified: mutationAttempted && receipt.verified === true && auditBound && !blocked };
 }
 
+function hasCertifiedTeammatePreviewReceipt(attempt: GeneralRevitAttempt): boolean {
+  const value = attempt.teammate_loop_receipt;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const receipt = value as {
+    schema?: unknown; turn_kind?: unknown; context_state?: unknown; stage?: unknown;
+    preview_action_ids?: unknown; apply_attempts?: unknown; blocked_reason?: unknown;
+  };
+  if (receipt.schema !== "revit-operator.teammate-loop-receipt.v1"
+      || receipt.turn_kind !== "inspection"
+      || receipt.context_state !== "live"
+      || receipt.stage !== "report"
+      || Number(receipt.apply_attempts) !== 0
+      || (receipt.blocked_reason !== null && receipt.blocked_reason !== undefined
+        && (typeof receipt.blocked_reason !== "string" || receipt.blocked_reason.trim().length > 0))) return false;
+  return Array.isArray(receipt.preview_action_ids)
+    && receipt.preview_action_ids.length > 0
+    && receipt.preview_action_ids.every((actionId) => typeof actionId === "string" && actionId.trim().length > 0);
+}
+
 function combinedMessage(attempt: GeneralRevitAttempt): string {
   const assistantMessage = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
     ? attempt.assistant_message
@@ -638,10 +657,9 @@ function verificationBasis(
     || (key === "rollback_verified_element_ids" && Array.isArray(child) && child.length > 0))) {
     return "rollback_verified_preview";
   }
-  const teammateReceipt = attempt.teammate_loop_receipt && typeof attempt.teammate_loop_receipt === "object"
-    ? attempt.teammate_loop_receipt as { preview_action_ids?: unknown } : {};
-  if (testCase.expected_effect === "preview" && Array.isArray(teammateReceipt.preview_action_ids)
-      && teammateReceipt.preview_action_ids.length > 0) return "structured_preview_receipt";
+  if (testCase.expected_effect !== "apply" && hasCertifiedTeammatePreviewReceipt(attempt)) {
+    return "structured_preview_receipt";
+  }
   if (hasCommittedVerifiedDynamicApplyReceipt(attempt)) return "model_state_readback";
   if (hasModelStateReadbackEvidence(attempt)) return "model_state_readback";
   if (nestedEvidenceMatches(attempt, (key, child) =>
@@ -737,13 +755,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && durable.completionModes.includes("verified_noop");
   const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
     && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
-  const teammateReceipt = attempt.teammate_loop_receipt && typeof attempt.teammate_loop_receipt === "object"
-    && !Array.isArray(attempt.teammate_loop_receipt)
-    ? attempt.teammate_loop_receipt as { preview_action_ids?: unknown }
-    : {};
-  const teammatePreviewDispatched = testCase.expected_effect === "preview"
-    && Array.isArray(teammateReceipt.preview_action_ids)
-    && teammateReceipt.preview_action_ids.some((value) => typeof value === "string" && value.trim().length > 0);
+  // A certified preview is a stronger non-mutating observation than a plain
+  // read and may satisfy either safe effect. It must never satisfy apply.
+  const teammatePreviewDispatched = testCase.expected_effect !== "apply"
+    && hasCertifiedTeammatePreviewReceipt(attempt);
   const fixtureBlockerAccepted = fixtureBlockerAssertionPassed === true
     && attemptSucceeded && successfulExpectedPathObserved && dispatched
     && !applyDispatched && !directPreviewDispatched && !teammatePreviewDispatched

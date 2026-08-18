@@ -467,7 +467,9 @@ test("a nested teammate preview receipt satisfies the preview effect through del
     effect_state: "read_only_dispatched",
     actions: [{ path: "", request_effect: "read", request_dispatched: true, status: "success" }],
     teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
       turn_kind: "inspection",
+      context_state: "live",
       stage: "report",
       preview_action_ids: ["mcp:1", "mcp:2"],
       apply_attempts: 0,
@@ -486,6 +488,43 @@ test("a nested teammate preview receipt satisfies the preview effect through del
   assert.equal(result.verified, true);
   assert.equal(result.verification_basis, "structured_preview_receipt");
   assert.equal(result.apply_dispatched, false);
+});
+
+test("a certified teammate preview verifies a read-classified preflight without weakening apply truth", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "dp01_individual_bw_pdf_set")!;
+  const safeCase = generalRevitExecutionCase(productionCase, false);
+  assert.equal(safeCase.expected_effect, "read");
+  const attempt = {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }],
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "inspection",
+      context_state: "live",
+      stage: "report",
+      preview_action_ids: ["mcp:1"],
+      apply_attempts: 0,
+      verified: false,
+      blocked_reason: null
+    }
+  };
+  const readResult = evaluateGeneralRevitCapabilityAttempt(safeCase, attempt);
+  assert.equal(readResult.tier, "verified");
+  assert.equal(readResult.verification_basis, "structured_preview_receipt");
+  assert.equal(readResult.apply_dispatched, false);
+
+  const applyResult = evaluateGeneralRevitCapabilityAttempt(productionCase, attempt);
+  assert.notEqual(applyResult.tier, "verified");
+  assert.equal(applyResult.completed, false);
+  assert.equal(applyResult.apply_dispatched, false);
+
+  const uncertifiedResult = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...attempt,
+    teammate_loop_receipt: { ...attempt.teammate_loop_receipt, schema: "lookalike" }
+  });
+  assert.equal(uncertifiedResult.completed, true);
+  assert.equal(uncertifiedResult.verified, false);
 });
 
 test("aggregate results never turn non-refusal into a completion claim", () => {
