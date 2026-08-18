@@ -300,7 +300,7 @@ test("benchmark-safe read and preview prompts remain live Revit work, not concep
     assert.equal(contract.turn_kind, "inspection", prompt);
     assert.equal(contract.context_state, "live", prompt);
     assert.equal(contract.no_write, true, prompt);
-    assert.equal(contract.stage, "discover", prompt);
+    assert.equal(contract.stage, /preview/.test(prompt.toLowerCase()) ? "preview" : "discover", prompt);
   }
   assert.equal(buildTeammateTurnContract(request(prompts[0])).preview_required, false);
   assert.equal(buildTeammateTurnContract(request(prompts[1])).preview_required, true);
@@ -362,6 +362,13 @@ test("an explicit change preview cannot be reported complete without an executed
   assert.equal(proseOnly.teammate_loop_receipt?.stage, "blocked");
   assert.equal(proseOnly.teammate_loop_receipt?.blocked_reason, "executable_preview_not_completed");
   assert.match(proseOnly.assistant_message, /executable preview not completed/i);
+
+  __testOnlyResetTeammateLoopState();
+  const visualOnly = guardGenericTeammateDecision(request(
+    "Make an enlarged mechanical plan for Level 4, then preview it; do not create anything."
+  ), response([], "Preview generated—nothing was created. Open the cropped image to review it."));
+  assert.equal(visualOnly.teammate_loop_receipt?.stage, "blocked");
+  assert.equal(visualOnly.teammate_loop_receipt?.blocked_reason, "executable_preview_not_completed");
 
   __testOnlyResetTeammateLoopState();
   const noCandidate = guardGenericTeammateDecision(request(text), response([], "No matching preview-capable schedule target exists, so I did not claim a completed preview."));

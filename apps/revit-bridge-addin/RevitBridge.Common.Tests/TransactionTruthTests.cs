@@ -308,6 +308,8 @@ namespace RevitBridge.Common.Tests
 
         [Theory]
         [InlineData("{\"kind\":\"createDependentView\",\"sourceViewId\":1363403,\"resultRef\":\"enlarged\"}")]
+        [InlineData("{\"kind\":\"duplicateView\",\"sourceViewId\":1363403,\"duplicateOption\":\"withDetailing\",\"newName\":\"AREA A\",\"resultRef\":\"areaA\"}")]
+        [InlineData("{\"kind\":\"duplicateView\",\"sourceViewId\":1363403,\"duplicateOption\":\"duplicate\"}")]
         [InlineData("{\"kind\":\"setViewCrop\",\"viewId\":\"$enlarged\",\"cropBox\":{\"min\":{\"x\":0,\"y\":0},\"max\":{\"x\":10,\"y\":8}}}")]
         [InlineData("{\"kind\":\"setViewScale\",\"viewRef\":\"enlarged\",\"scale\":48}")]
         [InlineData("{\"kind\":\"createSheet\",\"number\":\"M1.10\",\"resultRef\":\"sheet\"}")]
@@ -325,6 +327,7 @@ namespace RevitBridge.Common.Tests
 
         [Theory]
         [InlineData("{\"kind\":\"createDependentView\",\"sourceViewId\":0}")]
+        [InlineData("{\"kind\":\"duplicateView\",\"sourceViewId\":1363403,\"duplicateOption\":\"asDependent\"}")]
         [InlineData("{\"kind\":\"setViewCrop\",\"viewId\":\"$missing\"}")]
         [InlineData("{\"kind\":\"setViewScale\",\"viewId\":\"$view\",\"scale\":0}")]
         [InlineData("{\"kind\":\"placeView\",\"sheetId\":\"$sheet\"}")]
