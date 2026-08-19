@@ -281,6 +281,8 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   const instructions = getOperatorAgentBaseInstructions();
   assert.match(instructions, /Duplicate-element investigation rule/);
   assert.match(instructions, /do not rule duplicates out when those checks return zero/);
+  assert.match(instructions, /generic noun such as `device`, `equipment`, or `object` does not ground one Revit category/);
+  assert.match(instructions, /HVAC device discovery normally considers Air Terminals, Mechanical Equipment, and Duct Accessories before Duct Fittings/);
   assert.match(instructions, /project-scope `\/revit\/find-elements` inventory/);
   assert.match(instructions, /`includeGeometry:true`/);
   assert.match(instructions, /Every document-scope `\/revit\/find-elements` request must include a real/);
@@ -288,6 +290,7 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /never send placeholder or sentinel values such as `__none__`/);
   assert.match(instructions, /omit the category field and use real `identityTerms`/);
   assert.match(instructions, /user-facing aliases such as `air terminals` are accepted/);
+  assert.match(instructions, /Honor `itemsComplete`, `hasMore`, continuation\/offset, and truncation metadata/);
   assert.match(instructions, /do not export every view before trying this complete inventory/);
   assert.match(instructions, /`spatialDuplicateCandidates`/);
   assert.match(instructions, /unique Marks are not duplicate-instance proof/);
