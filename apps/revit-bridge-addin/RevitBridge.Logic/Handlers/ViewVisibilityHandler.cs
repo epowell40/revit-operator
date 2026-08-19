@@ -206,7 +206,22 @@ namespace RevitBridge.Logic.Handlers
                 {
                     var category = ResolveCategory(doc, p.categoryName);
                     if (category == null) throw new InvalidOperationException($"Category '{p.categoryName}' not found.");
-                    view.SetCategoryHidden(category.Id, action == "hide_category");
+                    var hideRequested = action == "hide_category";
+                    var disposition = RevitBridge.Common.CategoryVisibilityMutationPolicy.Decide(
+                        hideRequested,
+                        view.CanCategoryBeHidden(category.Id));
+                    if (disposition == RevitBridge.Common.CategoryVisibilityMutationDisposition.CannotHide)
+                    {
+                        throw new InvalidOperationException($"Category '{category.Name}' cannot be hidden in view '{view.Name}'.");
+                    }
+                    if (disposition == RevitBridge.Common.CategoryVisibilityMutationDisposition.AlreadyVisible)
+                    {
+                        // Revit reports some categories as non-hideable. A request to
+                        // show one of those categories is already satisfied and must
+                        // not be converted into a failed/unknown mutation.
+                        return;
+                    }
+                    view.SetCategoryHidden(category.Id, hideRequested);
                     return;
                 }
                 case "set_scale":
