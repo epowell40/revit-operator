@@ -24,6 +24,18 @@ function safeId(value: unknown, fallback: string): string {
   return typeof value === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(value) ? value : fallback;
 }
 
+const RECEPTACLE_LAYOUT_SUBJECT = /\b(?:receptacles?|outlets?|power\s+(?:outlets?|points?)|electrical[-\s]+devices?)\b/i;
+const RECEPTACLE_LAYOUT_CONTINUATION = /\b(?:same|again|also|another|repeat|replicate|match|too)\b/i;
+
+function mayNeedReceptacleLayoutInterpretation(userText: string, conversation: unknown): boolean {
+  if (RECEPTACLE_LAYOUT_SUBJECT.test(userText)) return true;
+  if (!RECEPTACLE_LAYOUT_CONTINUATION.test(userText) || !Array.isArray(conversation)) return false;
+  return conversation
+    .slice(-6)
+    .some(message => message && typeof message === "object"
+      && RECEPTACLE_LAYOUT_SUBJECT.test(`${(message as Record<string, unknown>).text ?? ""}`));
+}
+
 export async function resolveAecTaskIntentHttp(body: unknown, interpreter?: AecTaskIntentInterpreter): Promise<AecTaskIntentHttpResult> {
   if (!body || typeof body !== "object" || Array.isArray(body)) return { status: 400, body: { ok: false, error: "Invalid JSON body" } };
   const parsed = body as Record<string, unknown>;
@@ -87,6 +99,24 @@ export async function resolveAecTaskIntentHttp(body: unknown, interpreter?: AecT
         }
       };
     }
+  }
+  // The provider-backed legacy intent interpreter can only resolve the
+  // receptacle-layout workflow registered below. Avoid a second hosted model
+  // turn for ordinary Revit reads and writes that can never select that
+  // workflow; deterministic schedule, topology, and MEP accessory parsers have
+  // already had first refusal above. Preserve short conversational follow-ups
+  // when recent context identifies a receptacle-layout task.
+  if (!mayNeedReceptacleLayoutInterpretation(userText, parsed.conversation)) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        handled: false,
+        workflow_id: null,
+        intent_token: null,
+        intent: null
+      }
+    };
   }
   const request: ChatRequest = {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
