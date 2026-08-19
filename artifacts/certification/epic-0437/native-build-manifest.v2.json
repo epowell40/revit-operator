@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:95e92f45e7c30fca86817fc5eee4726ca76f5836614b03537240380d8f8b2d44",
-  "source_inputs_hash": "sha256:475037622878dec7661aee7202eb7b2100a46c0633103c011dbb6a3b7308a722",
+  "policy_hash": "sha256:8290e479bb5ee261c23b24e76402f5685e2e874fdd09d76bc0c00ad106a2903b",
+  "source_inputs_hash": "sha256:7f505a8755fd112ee260d58d2b28a41185c9e0ee5dff3d7901262f0481ccffc7",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -1267,8 +1267,12 @@
       "sha256": "sha256:1f026f2cb124f1f99e87acdb1ab9bcaea7dc796e53221d3b0046545dac33ad70"
     },
     {
+      "path": "apps/operator-backend/src/goals/list_cache.ts",
+      "sha256": "sha256:23cf64f28126c5cb060070f236f5d9d80e8428c31bd524a3bbdfa4656f8d2930"
+    },
+    {
       "path": "apps/operator-backend/src/goals/service.ts",
-      "sha256": "sha256:5e29f71b8662954e41edd678d7af66965a747d7905e2bc75d3972c2d163d38fc"
+      "sha256": "sha256:91981741c9fc3b69dfc91340896e22dc970c098834f5a9d4d6ed2045abb75aa4"
     },
     {
       "path": "apps/operator-backend/src/http.ts",
@@ -2328,7 +2332,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:e171f7075ec836a54db94606bb2201e483848dfb2a189bba86fd75f49318b0d4"
+      "sha256": "sha256:1042425cf7a574c1954fa4bcdd6e956cf81953ad7a2c7393084e7d964b4de120"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -4673,15 +4677,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:c1af89e04eab4f159f6e37069cd5d9189bc14fb833f4cd58c2b2c76182094b37"
+      "sha256": "sha256:a5e052ff331e64e4d6d87e21e5af1f77c1531f5f7402be73ca7ea8de1eff1202"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:3b12262981b9618abc4f4fbf99c899605ba9b330a34f112fb4d8e38fd33f9545"
+      "sha256": "sha256:972cb8473ff2e587db4b0fe0d4938ffa30ccbb16bc94d3576fd1c43e97da26f4"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:37e7b8bc69154009709e5d43dfcbe3e11656c182c81c7ee55a260718fdd82b16"
+      "sha256": "sha256:97e6690210416e5dae97c600edfdf033af0d29645f7f5eda7f8c4bf6e479221d"
     }
   },
   "runtime_dependencies": [
@@ -4728,19 +4732,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:c1af89e04eab4f159f6e37069cd5d9189bc14fb833f4cd58c2b2c76182094b37",
+      "sha256": "sha256:a5e052ff331e64e4d6d87e21e5af1f77c1531f5f7402be73ca7ea8de1eff1202",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:37e7b8bc69154009709e5d43dfcbe3e11656c182c81c7ee55a260718fdd82b16",
+      "sha256": "sha256:97e6690210416e5dae97c600edfdf033af0d29645f7f5eda7f8c4bf6e479221d",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:3b12262981b9618abc4f4fbf99c899605ba9b330a34f112fb4d8e38fd33f9545",
+      "sha256": "sha256:972cb8473ff2e587db4b0fe0d4938ffa30ccbb16bc94d3576fd1c43e97da26f4",
       "host": null
     },
     {
@@ -4828,6 +4832,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:e765a2ee6a99e0d38174b9f88378aba262632d6358daa8e99cee0ecc2dad0f84",
-  "built_at_utc": "2026-08-19T13:32:48.666Z"
+  "runtime_dependencies_hash": "sha256:c37f6ef01ac26a718c73192c5fe0d921482f10c3eaa2c293d58a6d6c6f0d4eed",
+  "built_at_utc": "2026-08-19T14:12:04.136Z"
 }

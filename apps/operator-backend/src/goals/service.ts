@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import { listCachedGoals, observeListedGoal, resetGoalListCaches } from "./list_cache.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   type GoalAuthorityContext,
@@ -702,6 +703,7 @@ function saveGoal(goal: GoalRecord): GoalRecord {
     if (persisted && persistedRevision !== expectedRevision) throw new Error(`Goal ${goal.id} changed concurrently; reload and retry.`);
     const next = { ...goal, revision: persistedRevision + 1, updated_at: nowIso() };
     writeJson(goalPath(next.id), next);
+    observeListedGoal(goalsRoot(), next);
     return next;
   });
 }
@@ -749,7 +751,12 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
     blocker: null
   };
   writeJson(goalPath(goal.id), goal);
+  observeListedGoal(goalsRoot(), goal);
   return goal;
+}
+
+export function __testOnlyResetGoalListCache(): void {
+  resetGoalListCaches();
 }
 
 export function getGoal(goalId: string): GoalRecord | null {
@@ -767,19 +774,15 @@ export function getGoal(goalId: string): GoalRecord | null {
 
 function readAllGoals(): GoalRecord[] {
   const root = goalsRoot();
-  const records: GoalRecord[] = [];
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const goal = readJson<GoalRecord>(path.join(root, entry.name, "goal.json"));
-    if (goal) records.push({
+  return listCachedGoals(root, id => {
+    const goal = readJson<GoalRecord>(path.join(root, id, "goal.json"));
+    return goal ? {
       ...goal,
       revision: Number.isInteger(goal.revision) ? goal.revision : 0,
       work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
       assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
-    });
-  }
-  records.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
-  return records;
+    } : null;
+  });
 }
 
 export function listGoals(limit = 50): GoalRecord[] {
