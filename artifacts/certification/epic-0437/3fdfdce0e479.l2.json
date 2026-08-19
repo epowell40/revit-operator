@@ -1561,7 +1561,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:20757b04a8776574b53372ff9b97bead7fce604baa0fefe59e14c5624ce15bd7"
+      "sha256": "sha256:79df52426da19f825b44b3e84bb7efdbf7a6c5856de6f902c65b4edc7583ba82"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -2333,7 +2333,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:5ecc5673eb9eb8353bc1bdacb092a9fc683b1a8f9b964c8196a904e376ac1df4"
+      "sha256": "sha256:c93b9c8502b0d5534f6b7d6bf8bb878f767252d9a67c6bebf3d32f24c35c58e9"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2617,7 +2617,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:1992bd88d1e1e1f1d865e3d55285eedfff57757d903f5187633873cff17a8cb5"
+      "sha256": "sha256:21e5deb1dc5212b3723776c5cdc22f776bf8f0701937eb7252ab57565088a2ae"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4689,7 +4689,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:a9c0aaaf1941af29843d94c1ea91f655d90429d2b23e4e9d4c0075724d9827d1",
+  "inputs_hash": "sha256:ec67e8ce9abe43a3acfd05955ee54ca53e213726b8a32ab44d904a160f291d59",
   "result": {
     "passed": true,
     "checks": [

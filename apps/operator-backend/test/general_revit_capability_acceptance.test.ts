@@ -919,6 +919,30 @@ test("fixture-grounded duplicate impact accepts a fully traced plausible pair an
   assert.equal(correct.answer_assertion_passed, true);
   assert.equal(correct.verification_basis, "fixture_semantic_oracle");
 
+  const conciseLiveAnswer = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
+    ok: true,
+    assistant_message: [
+      "## Result",
+      "- **Strongest candidate:** air terminals **1460066 / 1460067**, 8 in apart, opposite-facing, consecutive IDs.",
+      "- **Repeated arrangement:** terminals **1460065–1460068** form two similar opposed pairs, all connected to duct **1460049**.",
+      "- **Context:** L3, Space **306 — Live/Work Unit 306**.",
+      "- **System:** **Mechanical Supply Air 34**; 54 elements total, all 54 connected.",
+      "Previewed deletion of **1460066**: impacted **1460066 only**; dependent deletions: **none**; no change was committed.",
+      "Post-rollback readback confirms **1460066 still exists**, remains physically connected to duct **1460049**, and the complete system remains **54/54 connected**.",
+      "The evidence does **not** prove a genuine duplicate."
+    ].join("\n"),
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/delete", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection,
+    teammate_loop_receipt
+  });
+  assert.equal(conciseLiveAnswer.answer_assertion_passed, false);
+  assert.equal(conciseLiveAnswer.answer_assertion_failures.length, 4, conciseLiveAnswer.answer_assertion_failures.join("\n"));
+  assert.match(conciseLiveAnswer.answer_assertion_failures.join("\n"), /Same type/i);
+  assert.match(conciseLiveAnswer.answer_assertion_failures.join("\n"), /separate connectors/i);
+  assert.match(conciseLiveAnswer.answer_assertion_failures.join("\n"), /Physical connection/i);
+  assert.match(conciseLiveAnswer.answer_assertion_failures.join("\n"), /remaining connected system/i);
+
   const unverified = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
     ok: true,
     assistant_message: correctAnswer,
