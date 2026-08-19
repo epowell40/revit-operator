@@ -7,7 +7,7 @@ using RevitBridge.Operator;
 namespace RevitBridge.Handlers
 {
     /// <summary>
-    /// Queues Revit's native Close command so the active document transition runs
+    /// Queues Revit's native Close Active Project command so the document transition runs
     /// after the current ExternalEvent/API callback has returned. Revit forbids
     /// switching or closing the active document from inside that callback.
     /// </summary>
@@ -46,9 +46,14 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            var commandId = RevitCommandId.LookupPostableCommandId(PostableCommand.Close);
+            // PostableCommand.Close is Revit's application-exit command (ID_APP_EXIT),
+            // not the active-project close command. Use the exact journal-backed built-in
+            // command so closing a model never tears down the long-running Revit worker.
+            var commandId = RevitCommandId.LookupCommandId("ID_REVIT_FILE_CLOSE");
+            if (commandId == null)
+                throw new InvalidOperationException("Revit's Close Active Project command is unavailable in this version.");
             if (!app.CanPostCommand(commandId))
-                throw new InvalidOperationException("Revit cannot post the native Close command in the current state.");
+                throw new InvalidOperationException("Revit cannot post Close Active Project in the current state.");
 
             object? dialogGuard = null;
             if (wasModified)

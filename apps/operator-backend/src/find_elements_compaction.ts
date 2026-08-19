@@ -50,6 +50,7 @@ type SpatialItem = {
   typeId: number | null;
   levelId: number | null;
   hostId: number | null;
+  location: Xyz | null;
   min: Xyz;
   max: Xyz;
   center: Xyz;
@@ -83,6 +84,7 @@ function spatialItem(value: unknown): SpatialItem | null {
     typeId,
     levelId: safeInteger(item?.levelId),
     hostId: safeInteger(item?.hostId),
+    location: compactXyz(geometry?.locationPoint),
     min,
     max,
     center,
@@ -103,10 +105,10 @@ function orientationDot(a: SpatialItem["facing"], b: SpatialItem["facing"]): num
   return Math.max(-1, Math.min(1, (a.x * b.x + a.y * b.y + a.z * b.z) / (ma * mb)));
 }
 
-type SpatialCandidate = Record<string, unknown> & { _score: number; _distance: number; elementIds: number[] };
+type SpatialCandidate = Record<string, unknown> & { _tier: number; _score: number; _distance: number; elementIds: number[] };
 
 function compareSpatialCandidates(a: SpatialCandidate, b: SpatialCandidate): number {
-  return b._score - a._score || a._distance - b._distance
+  return a._tier - b._tier || b._score - a._score || a._distance - b._distance
     || a.elementIds[0]! - b.elementIds[0]!
     || a.elementIds[1]! - b.elementIds[1]!;
 }
@@ -122,7 +124,7 @@ function retainRankedSpatialCandidate(candidates: SpatialCandidate[], candidate:
 function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<string, unknown> {
   const source = values.map(spatialItem).filter((item): item is SpatialItem => item !== null).slice(0, 1000);
   const candidates: SpatialCandidate[] = [];
-  const returnedLimit = 24;
+  const returnedLimit = 48;
   let pairCount = 0;
   for (let i = 0; i < source.length; i += 1) {
     const a = source[i]!;
@@ -136,13 +138,17 @@ function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<s
         z: Math.max(0, Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z))
       };
       const overlapVolume = overlap.x * overlap.y * overlap.z;
-      const distance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y, a.center.z - b.center.z);
+      const centerDistance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y, a.center.z - b.center.z);
+      const insertionDistance = a.location && b.location
+        ? Math.hypot(a.location.x - b.location.x, a.location.y - b.location.y, a.location.z - b.location.z)
+        : null;
+      const comparisonDistance = insertionDistance ?? centerDistance;
       const smallerDiagonal = Math.max(0.01, Math.min(
         Math.hypot(a.size.x, a.size.y, a.size.z),
         Math.hypot(b.size.x, b.size.y, b.size.z)
       ));
       const intersects = overlap.x > 1e-6 && overlap.y > 1e-6 && overlap.z > 1e-6;
-      const closeRelativeToSize = distance <= Math.max(1, smallerDiagonal * 0.75);
+      const closeRelativeToSize = comparisonDistance <= Math.max(1, smallerDiagonal * 0.75);
       if (!intersects && !closeRelativeToSize) continue;
 
       const volumeA = Math.max(1e-12, a.size.x * a.size.y * a.size.z);
@@ -152,18 +158,33 @@ function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<s
       const sameLevel = a.levelId !== null && a.levelId === b.levelId;
       const sameHost = a.hostId !== null && a.hostId === b.hostId;
       const orientationRelation = facingDot === null ? "unavailable" : facingDot >= 0.95 ? "same" : facingDot <= -0.95 ? "opposite" : "different";
+      const reviewGroup = orientationRelation === "same"
+        ? (intersects ? "same_facing_overlap" : "same_facing_near")
+        : orientationRelation === "unavailable"
+          ? (intersects ? "orientation_unknown_overlap" : "orientation_unknown_near")
+          : orientationRelation === "different"
+            ? (intersects ? "different_facing_overlap" : "different_facing_near")
+            : (intersects ? "opposite_facing_overlap" : "opposite_facing_near");
+      const semanticTier = orientationRelation === "same" ? 0
+        : orientationRelation === "unavailable" ? 1
+          : orientationRelation === "different" ? 2
+            : intersects ? 4 : 3;
       const score = (intersects ? 1000 : 0) + overlapFractionOfSmaller * 300
         + (sameLevel ? 100 : 0) + (sameHost ? 100 : 0)
         + (orientationRelation === "same" ? 80 : orientationRelation === "opposite" ? -250 : 0)
-        + 100 / (1 + distance);
+        + 100 / (1 + comparisonDistance);
       pairCount += 1;
       retainRankedSpatialCandidate(candidates, {
+        _tier: semanticTier,
         _score: rounded(score),
-        _distance: rounded(distance),
+        _distance: rounded(comparisonDistance),
         elementIds: [a.elementId, b.elementId],
         typeId: a.typeId,
-        centerDistanceFt: rounded(distance),
-        centerDistanceIn: rounded(distance * 12, 3),
+        reviewGroup,
+        centerDistanceFt: rounded(centerDistance),
+        centerDistanceIn: rounded(centerDistance * 12, 3),
+        insertionPointDistanceFt: insertionDistance === null ? null : rounded(insertionDistance),
+        insertionPointDistanceIn: insertionDistance === null ? null : rounded(insertionDistance * 12, 3),
         boundingBoxesIntersect: intersects,
         overlapFt: { x: rounded(overlap.x), y: rounded(overlap.y), z: rounded(overlap.z) },
         overlapFractionOfSmaller: rounded(overlapFractionOfSmaller),
@@ -175,7 +196,7 @@ function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<s
         orientationRelation,
         reasons: [
           "same_type",
-          ...(intersects ? ["bounding_boxes_intersect"] : ["centers_close_relative_to_size"]),
+          ...(intersects ? ["bounding_boxes_intersect"] : ["insertion_points_close_relative_to_size"]),
           ...(sameLevel ? ["same_level"] : []),
           ...(sameHost ? ["same_host"] : []),
           ...(orientationRelation === "same" ? ["same_facing_orientation"] : []),
@@ -184,18 +205,18 @@ function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<s
       }, returnedLimit);
     }
   }
-  const returned = candidates.map(({ _score, _distance, ...candidate }) => ({
+  const returned = candidates.map(({ _tier, _score, _distance, ...candidate }) => ({
     ...candidate,
     rankingScore: rounded(_score)
   }));
   return {
-    schema: "revit-operator.spatial-duplicate-candidate-summary/v1",
+    schema: "revit-operator.spatial-duplicate-candidate-summary/v2",
     derivedFromReturnedItems: source.length,
     candidatePairsFound: pairCount,
     candidatePairsReturned: returned.length,
     candidatePairsOmitted: Math.max(0, pairCount - returned.length),
     complete: complete && source.length === values.length,
-    interpretation: "Candidates are same-type instances whose 3D bounding boxes intersect or whose centers are unusually close relative to element size. Unique Marks do not rule out duplicated instances. Opposite-facing pairs can be intentional and require connector/network review.",
+    interpretation: "Candidates are same-type instances whose 3D bounding boxes intersect or whose insertion points are unusually close relative to element size. Unique Marks do not rule out duplicated instances. Review every bounded group with batched connector/network evidence; opposite-facing pairs can be intentional.",
     candidates: returned
   };
 }

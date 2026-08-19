@@ -45,6 +45,7 @@ import {
   mcpPreDispatchFailureResult,
   preflightKnownGenericToolBody
 } from "./lib/genericToolPreflight.js";
+import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
 import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
@@ -1065,8 +1066,13 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       const data = method === "GET"
         ? await callRevit(pathInput, method, undefined, { channel: "generic_call" })
         : await callRevit(pathInput, method, normalizedBody, { channel: "generic_call" });
+      const projected = pathInput === "/revit/find-elements"
+        ? projectFindElementsResultForAgent(data)
+        : data;
       const output =
-        data && typeof data === "object" && !Array.isArray(data) ? addWorkspaceLinks(data as Record<string, any>) : data;
+        projected && typeof projected === "object" && !Array.isArray(projected)
+          ? addWorkspaceLinks(projected as Record<string, any>)
+          : projected;
       const wrapped = known
         ? output
         : {

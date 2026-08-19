@@ -186,8 +186,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void NativeServerSourceUsesSecureEnvelopeBeforeAdmissionAndEncryptedResponse()
         {
-            var root = FindRepositoryRoot();
-            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             var secureOpen = server.IndexOf("OperatorNativeTransportHttpAdapter.OpenCertifiedRequest", StringComparison.Ordinal);
             var outerValidation = server.IndexOf("OperatorNativeTransportHttpAdapter.ValidateCertifiedOuterRequest", StringComparison.Ordinal);
             var envelopeRead = server.IndexOf("var envelopeBytes = await ReadRequestBodyBytesAsync", StringComparison.Ordinal);
@@ -207,8 +206,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void DynamicRuntimeConsumesOneUseWriteGrantOnlyAtCommittedApplyBoundary()
         {
-            var root = FindRepositoryRoot();
-            var policy = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+            var policy = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs");
             Assert.Contains("\"/revit/dynamic-runtime/bootstrap\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/register\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/snapshot\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
@@ -228,9 +226,9 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("\"/revit/dynamic-runtime/core-authorize-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", policy);
             Assert.Contains("\"/revit/dynamic-runtime/core-apply-v1\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.High", policy);
 
-            var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeV1ActivationHandlers.cs"));
+            var activation = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeV1ActivationHandlers.cs");
             Assert.Contains("DynamicRuntimeTrustBoundary.RequireInstalledOrConfigured()", activation);
-            var runtime = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeHandlers.cs"));
+            var runtime = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRuntimeHandlers.cs");
             Assert.Contains("Path.Combine(assemblyDirectory, \"dynamic-runtime\", packageDirectoryName)", runtime);
             Assert.Contains("DynamicRuntimePackageDirectoryIdentity.Compute(packageDirectory)", runtime);
             Assert.Contains("DynamicRuntimeTrustBoundary.LauncherPackageHash()", runtime);
@@ -240,7 +238,7 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes", activation);
             Assert.Contains("authorization_granted = false", activation);
 
-            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             Assert.Contains("rawPath.StartsWith(\"/revit/dynamic-runtime/\"", server);
             Assert.Contains("string.Equals(req.HttpMethod, \"POST\"", server);
             Assert.Contains("!hasQuery", server);
@@ -251,13 +249,12 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void DynamicAnnotationActivationIsInstalledRuntimeBoundAuthenticatedAndRollbackVerified()
         {
-            var root = FindRepositoryRoot();
-            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             Assert.Contains("/revit/dynamic-runtime/annotation-result-preview-v1", server);
             Assert.Contains("/revit/dynamic-runtime/annotation-result-authorize-v1", server);
             Assert.Contains("/revit/dynamic-runtime/annotation-result-apply-v1", server);
 
-            var activation = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceActivationHandlers.cs"));
+            var activation = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceActivationHandlers.cs");
             Assert.Equal(
                 3,
                 activation.Split(
@@ -270,7 +267,7 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("ledger.TryConsume(seal.AuthorizationHash)", activation);
             Assert.Contains("retry_permitted = false", activation);
 
-            var host = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceMutationHost.cs"));
+            var host = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicAnnotationResultReferenceMutationHost.cs");
             Assert.Contains("DynamicAnnotationOperationPolicyV1.ValidatePreviewAgainstGraph", host);
             Assert.Contains("DynamicResultReferencePolicyV1.Validate(graph, budget, Kinds, admissionTargets)", host);
             Assert.Contains("DocumentChanged += changed", host);
@@ -282,8 +279,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void FindTextNotesHydratesBoundedStableAnnotationSelectorFactsWithoutChangingRisk()
         {
-            var root = FindRepositoryRoot();
-            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "FindTextNotesHandler.cs"));
+            var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "FindTextNotesHandler.cs");
             Assert.Contains("MaximumResultCount = 500", handler);
             Assert.Contains("MaximumTextUtf8Bytes = 4096", handler);
             Assert.Contains("uniqueId = RequiredUniqueId(tn, \"TextNote\")", handler);
@@ -293,31 +289,30 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("boundingBox", handler);
             Assert.Contains("TimeSpan.FromMilliseconds(250)", handler);
 
-            var schema = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            var schema = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs");
             Assert.Contains("find-text-notes max must be between 1 and 500", schema);
-            var risk = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs"));
+            var risk = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs");
             Assert.Contains("\"/revit/find-text-notes\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", risk);
         }
 
         [Fact]
         public void FindElementsByParameterSupportsBoundedPrefixAndSuffixQueriesAcrossContracts()
         {
-            var root = FindRepositoryRoot();
-            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "MEP", "FindElementsByParameterHandler.cs"));
+            var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "MEP", "FindElementsByParameterHandler.cs");
             Assert.Contains("StartsWith(expRaw, StringComparison.OrdinalIgnoreCase)", handler);
             Assert.Contains("EndsWith(expRaw, StringComparison.OrdinalIgnoreCase)", handler);
             Assert.Contains("\"begins_with\" or \"beginswith\" or \"starts_with\"", handler);
             Assert.Contains("\"ends_with\" or \"endswith\" or \"suffix\"", handler);
 
-            var validator = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            var validator = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs");
             Assert.Contains("opv.Equals(\"begins_with\"", validator);
             Assert.Contains("opv.Equals(\"ends_with\"", validator);
             Assert.Contains("predicate op must be 'equals', 'contains', 'begins_with', or 'ends_with'", validator);
 
-            var manifest = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs"));
+            var manifest = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolManifest.cs");
             Assert.Contains("Operators are equals, contains, begins_with, and ends_with", manifest);
 
-            var mcp = File.ReadAllText(Path.Combine(root, "apps", "mcp-server", "src", "server.ts"));
+            var mcp = ReadSharedSource("mcp-server", "src", "server.ts");
             Assert.Contains("\"equals\" | \"contains\" | \"begins_with\" | \"ends_with\"", mcp);
             Assert.Contains("return \"begins_with\"", mcp);
             Assert.Contains("return \"ends_with\"", mcp);
@@ -326,17 +321,16 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void QuantifyAcceptsExactDocumentCategoryNamesAndStillFailsClosed()
         {
-            var root = FindRepositoryRoot();
-            var handler = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "QuantifyElementsHandler.cs"));
+            var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "QuantifyElementsHandler.cs");
             Assert.Contains("StrictCategoryResolver.Resolve(requested, catalog)", handler);
-            Assert.Contains("Category filter could not be applied exactly", File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Common", "Semantic", "StrictCategoryResolver.cs")));
+            Assert.Contains("Category filter could not be applied exactly", ReadSharedSource("revit-bridge-addin", "RevitBridge.Common", "Semantic", "StrictCategoryResolver.cs"));
             Assert.Contains("No unfiltered query was run", handler);
             Assert.Contains("var categoryIds = new HashSet<long>", handler);
             Assert.Contains("if (!categoryIds.Contains(elementCategoryId)) continue", handler);
             Assert.Contains("family = familySymbol?.Family?.Name ?? typeEl?.FamilyName", handler);
             Assert.Contains("if (key == \"family\")", handler);
 
-            var schema = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            var schema = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs");
             Assert.Contains("exact category name or BuiltInCategory token", schema);
             Assert.DoesNotContain("quantify.categories must use BuiltInCategory names", schema);
         }
@@ -344,10 +338,9 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void DynamicRollbackBaselinesApplyExplicitRevitCollectorFilters()
         {
-            var root = FindRepositoryRoot();
             foreach (var file in new[] { "DynamicCoreOperationHost.cs", "DynamicMepResultReferenceMutationHost.cs", "DynamicAnnotationResultReferenceMutationHost.cs" })
             {
-                var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", file));
+                var source = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", file);
                 Assert.Contains("foreach (var element in AllElements(document))", source);
                 Assert.Contains("new FilteredElementCollector(document).WhereElementIsNotElementType()", source);
                 Assert.Contains("new FilteredElementCollector(document).WhereElementIsElementType()", source);
@@ -358,8 +351,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void DynamicCoreEffectsBindTheExactReadbackProvenMutationOwner()
         {
-            var root = FindRepositoryRoot();
-            var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicCoreOperationHost.cs"));
+            var source = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicCoreOperationHost.cs");
             Assert.Contains("dynamic-revit-core-operation-host/v4", source);
             Assert.Contains("if (readback.BeforeStateHash == readback.AfterStateHash)", source);
             Assert.Contains("current.Modified.Add(primary);", source);
@@ -370,8 +362,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void DynamicMepOutputsRemainProvenWhileRevitCollateralIsFullyAccounted()
         {
-            var root = FindRepositoryRoot();
-            var source = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicMepResultReferenceMutationHost.cs"));
+            var source = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicMepResultReferenceMutationHost.cs");
             Assert.Contains("outputIds.IsSubsetOf(current.Added)", source);
             Assert.Contains("!baseline.ContainsKey(id) && !createdDuringGraph.Contains(id)", source);
             Assert.Contains("scannedElementCount > BaselineLimit + 256", source);
@@ -388,8 +379,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void NativeServerDiscoveryReceiptsAreOwnedAndFailClosedAcrossRevitProcesses()
         {
-            var root = FindRepositoryRoot();
-            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             var listenerStarted = server.IndexOf("listener.Start();", StringComparison.Ordinal);
             var discoveryClaim = server.IndexOf("TryPublishActiveDiscoveryReceipts(candidateUrl, _nativeTransportEpoch)", StringComparison.Ordinal);
 
@@ -404,8 +394,7 @@ namespace RevitBridge.Common.Tests
         [Fact]
         public void LaboratoryCertificationEvidenceRetainsProtectedTransportWithoutManufacturingPolicyAdmission()
         {
-            var root = FindRepositoryRoot();
-            var server = File.ReadAllText(Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs"));
+            var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
 
             Assert.Contains("protectedLaboratoryEvidence = laboratoryBypass", server);
             Assert.Contains("OPERATOR_CERTIFICATION_PROTECTED_LABORATORY", server);
@@ -566,14 +555,16 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
-        public void CloseActiveModelPostsNativeCloseAfterExplicitDiscardAuthorization()
+        public void CloseActiveModelPostsProjectCloseWithoutExitingRevitAfterExplicitDiscardAuthorization()
         {
             var root = FindRevitBridgeAddinRoot();
             var handler = File.ReadAllText(Path.Combine(root, "RevitBridge", "Handlers", "CloseActiveModelHandler.cs"));
             Assert.Contains("discardUnsavedChanges { get; set; } = false", handler, StringComparison.Ordinal);
             Assert.Contains("wasModified && !p.discardUnsavedChanges", handler, StringComparison.Ordinal);
             Assert.Contains("requiresExplicitDiscard = true", handler, StringComparison.Ordinal);
-            Assert.Contains("PostableCommand.Close", handler, StringComparison.Ordinal);
+            Assert.Contains("LookupCommandId(\"ID_REVIT_FILE_CLOSE\")", handler, StringComparison.Ordinal);
+            Assert.DoesNotContain("LookupPostableCommandId(PostableCommand.Close)", handler, StringComparison.Ordinal);
+            Assert.Contains("not the active-project close command", handler, StringComparison.Ordinal);
             Assert.Contains("app.CanPostCommand(commandId)", handler, StringComparison.Ordinal);
             Assert.Contains("app.PostCommand(commandId)", handler, StringComparison.Ordinal);
             Assert.Contains("messageContains = \"save changes\"", handler, StringComparison.Ordinal);
@@ -640,11 +631,23 @@ namespace RevitBridge.Common.Tests
             throw new DirectoryNotFoundException("Repository root not found.");
         }
 
+        private static string ReadSharedSource(params string[] segments)
+        {
+            var root = FindRepositoryRoot();
+            var publicServerSource = Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
+            var publicCandidate = Path.Combine(new[] { root, "apps" }.Concat(segments).ToArray());
+            if (File.Exists(publicServerSource) && File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
+
+            var privateCandidate = Path.Combine(new[] { root }.Concat(segments).ToArray());
+            return File.ReadAllText(privateCandidate);
+        }
+
         private static string FindRevitBridgeAddinRoot()
         {
             var root = FindRepositoryRoot();
             var publicRoot = Path.Combine(root, "apps", "revit-bridge-addin");
-            return Directory.Exists(publicRoot)
+            var expectedHandler = Path.Combine(publicRoot, "RevitBridge", "Handlers", "CloseActiveModelHandler.cs");
+            return File.Exists(expectedHandler)
                 ? publicRoot
                 : Path.Combine(root, "revit-bridge-addin");
         }
