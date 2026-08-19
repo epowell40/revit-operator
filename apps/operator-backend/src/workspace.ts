@@ -45,6 +45,12 @@ export function __testOnlyResetWorkspaceDirectoryCache(): void {
   writableDirectoryCache.clear();
 }
 
+export function ensureWorkspaceDirectory(directoryPath: string): string {
+  const resolved = ensureUnderWorkspace(directoryPath);
+  if (!ensureDirBestEffort(resolved)) throw new Error(`Workspace directory is not writable: ${resolved}`);
+  return resolved;
+}
+
 export function getWorkspaceBaseRoot(): string {
   const override = (process.env.OPERATOR_WORKSPACE_ROOT || "").trim();
   if (override) {
