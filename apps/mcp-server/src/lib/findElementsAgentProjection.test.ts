@@ -36,6 +36,11 @@ test("large geometry inventory becomes a bounded candidate-first projection", ()
   }));
   const items = [
     ...filler,
+    // This older pair is geometrically equivalent to the genuine candidate,
+    // but its creation ids are far apart. Lowest-id tie breaking used to rank
+    // it first and sent the agent down the wrong network.
+    { elementId: 1427829, typeId: 222, levelId: 333, familyName: "Supply Grille", typeName: "16x4", mark: "102", geometry: geometry(40, 39.921875, 0.197916, 1) },
+    { elementId: 1427901, typeId: 222, levelId: 333, familyName: "Supply Grille", typeName: "16x4", mark: "103", geometry: geometry(40 + 8 / 12, 40.432292, 0.197916, -1) },
     // Near but non-intersecting opposite-facing peers require connector review
     // before the common paired-face overlap pattern.
     { elementId: 1460066, typeId: 222, levelId: 333, familyName: "Supply Grille", typeName: "16x4", mark: "226", geometry: geometry(0, -0.078125, 0.197916, -1) },
@@ -65,9 +70,12 @@ test("large geometry inventory becomes a bounded candidate-first projection", ()
   assert.deepEqual(projected.spatialDuplicateCandidates.candidates[0].elementIds, [1460066, 1460067]);
   assert.equal(projected.spatialDuplicateCandidates.candidates[0].reviewGroup, "opposite_facing_near");
   assert.equal(projected.spatialDuplicateCandidates.candidates[0].insertionPointDistanceIn, 8);
-  assert.equal(projected.spatialDuplicateCandidates.candidates[1].reviewGroup, "opposite_facing_overlap");
-  assert.deepEqual(projected.candidateElementIds, [1460066, 1460067, 1466896, 1466897]);
-  assert.equal(projected.candidateItems.length, 4);
+  assert.equal(projected.spatialDuplicateCandidates.candidates[0].elementIdGap, 1);
+  assert.equal(projected.spatialDuplicateCandidates.candidates[0].reasons.includes("consecutive_creation_ids_triage_signal"), true);
+  assert.deepEqual(projected.spatialDuplicateCandidates.candidates[1].elementIds, [1427829, 1427901]);
+  assert.equal(projected.spatialDuplicateCandidates.candidates[2].reviewGroup, "opposite_facing_overlap");
+  assert.deepEqual(projected.candidateElementIds, [1460066, 1460067, 1427829, 1427901, 1466896, 1466897]);
+  assert.equal(projected.candidateItems.length, 6);
   assert.match(projected.recommendedNextStep, /get-connectors once/);
   assert.ok(JSON.stringify(projected).length < JSON.stringify(raw).length / 2);
 });

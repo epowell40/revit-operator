@@ -250,11 +250,20 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /do not export every view before trying this complete inventory/);
   assert.match(instructions, /`spatialDuplicateCandidates`/);
   assert.match(instructions, /unique Marks are not duplicate-instance proof/);
+  assert.match(instructions, /creation-adjacency triage signal, never as duplicate proof/);
   assert.match(instructions, /same-category and same-family\/type instances/);
   assert.match(instructions, /overlapping bounding-box footprints or insertion-point\/center separation relative to element size/);
   assert.match(instructions, /Compare host, level, facing\/hand orientation, parameters, and connector\/network relationships/);
   assert.match(instructions, /opposite-facing peers on different connector ports may be intentional/);
   assert.match(instructions, /rollback\/dry-run delete/);
+});
+
+test("Codex instructions require an executable create operation for a new-view preview", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /New-view preview truth/);
+  assert.match(instructions, /resolving a source view, rooms, crop bounds, or geometry is discovery only/);
+  assert.match(instructions, /`\/revit\/transaction-plan` with `duplicateView` or `createDependentView`/);
+  assert.match(instructions, /crop-computation or MEP-workflow receipt alone does not preview/);
 });
 
 test("fresh Revit evidence contracts reject stale or unrelated sheet-count claims", () => {

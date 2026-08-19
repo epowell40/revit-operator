@@ -34,6 +34,7 @@ type TeammateLoopState = {
   contract: TeammateTurnContract;
   expires_at_ms: number;
   successful_preview_signatures: Set<string>;
+  successful_preview_operations: Set<string>;
   pending: Map<string, PendingCall>;
   preview_action_ids: string[];
   preview_receipts: SuccessfulPreviewReceipt[];
@@ -380,7 +381,17 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
       : contract.turn_kind === "mutation"
         ? "Use live context; discover one exact contract if needed; preview when the primitive supports it or the preview is useful, but atomic Revit primitives may apply directly; verify by readback/capture before success."
         : "Use live context and the smallest read/navigation step; discover one exact contract if needed; never mutate the model.";
-  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
+  const semanticPreviewRule = requestedPreviewOperation(contract.intent_summary) === "create"
+    ? " A requested new, duplicated, dependent, or enlarged view is not previewed by resolving only its source, crop, rooms, or geometry. Complete one noncommitting create/duplicate-view primitive with the requested configuration (for example transaction-plan duplicateView/createDependentView plus crop, scale, template, or visibility actions) before reporting the preview."
+    : "";
+  return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
+}
+
+function requestedPreviewOperation(text: string): string | null {
+  const explicitViewCreation = /\b(?:create|add|duplicate)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text)
+    || /\b(?:new|duplicated|dependent|enlarged)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text)
+    || /\bmake\s+(?:an?\s+|the\s+)?(?:new|duplicated|dependent|enlarged)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text);
+  return explicitViewCreation ? "create" : null;
 }
 
 function stableValue(value: unknown): unknown {
@@ -631,6 +642,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     contract,
     expires_at_ms: now + MAX_STATE_AGE_MS,
     successful_preview_signatures: new Set(),
+    successful_preview_operations: new Set(),
     pending: new Map(),
     preview_action_ids: [],
     preview_receipts: [],
@@ -697,6 +709,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
       if (!state.apply_succeeded || !state.verified) return "prior_apply_verification_required";
       if (state.completed_apply_signatures.has(call.signature)) return "completed_apply_may_not_be_retried";
       state.successful_preview_signatures.clear();
+      state.successful_preview_operations.clear();
       state.apply_action_id = null;
       state.stage_apply_attempts = 0;
       state.apply_succeeded = false;
@@ -713,6 +726,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     if (!state.apply_succeeded || !state.verified) return "preview_before_prior_apply_verification_not_allowed";
     if (state.completed_apply_signatures.has(call.signature)) return "completed_apply_may_not_be_retried";
     state.successful_preview_signatures.clear();
+    state.successful_preview_operations.clear();
     state.apply_action_id = null;
     state.stage_apply_attempts = 0;
     state.apply_succeeded = false;
@@ -897,6 +911,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   state.pending.delete(actionId);
   if (pending.effect === "preview" && succeeded) {
     state.successful_preview_signatures.add(pending.signature);
+    state.successful_preview_operations.add(pending.operation);
     state.preview_receipts.push(successfulPreviewReceipt(actionId, pending.path, sha256(JSON.stringify(stableValue(evidence)))));
   }
   if (pending.effect === "apply") {
@@ -948,6 +963,14 @@ function ingestToolResults(state: TeammateLoopState, results: ToolResult[] | und
 }
 
 function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_loop_receipt"]> {
+  const requiredOperation = requestedPreviewOperation(state.contract.intent_summary);
+  if (state.contract.preview_required
+      && state.preview_receipts.length > 0
+      && requiredOperation
+      && !state.successful_preview_operations.has(requiredOperation)) {
+    state.contract.stage = "blocked";
+    state.blocked_reason = "requested_preview_operation_not_completed";
+  }
   return buildTeammateLoopReceipt(state);
 }
 
@@ -1041,10 +1064,11 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
       ? "report"
       : state.contract.stage;
   }
-  const suffix = state.blocked_reason
-    ? `\n\nI stopped before an unsafe or unverified Revit step (${state.blocked_reason.replace(/_/g, " ")}). No blocked action was executed.`
+  const teammateReceipt = receipt(state);
+  const suffix = teammateReceipt.blocked_reason
+    ? `\n\nI stopped before an unsafe or unverified Revit step (${teammateReceipt.blocked_reason.replace(/_/g, " ")}). No blocked action was executed.`
     : "";
-  return { ...decision, assistant_message: `${decision.assistant_message || ""}${suffix}`.trim(), actions, teammate_loop_receipt: receipt(state) };
+  return { ...decision, assistant_message: `${decision.assistant_message || ""}${suffix}`.trim(), actions, teammate_loop_receipt: teammateReceipt };
 }
 
 export function beginTeammateLoopOwner(owner: object, req: ChatRequest): TeammateLoopOwnerLease {

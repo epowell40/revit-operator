@@ -166,10 +166,17 @@ function buildSpatialSummary(values: unknown[], complete: boolean): JsonObject {
       const group = reviewGroup(intersects, orientationRelation);
       const sameLevel = a.levelId !== null && a.levelId === b.levelId;
       const sameHost = a.hostId !== null && a.hostId === b.hostId;
+      // Revit element ids are allocated monotonically inside a document. For two
+      // otherwise equivalent near-spatial peers, creation adjacency is useful
+      // triage evidence that they may have come from the same copy/place action.
+      // It is deliberately only a bounded ranking signal: topology, room/host,
+      // and rollback impact still decide whether either instance is disposable.
+      const elementIdGap = Math.abs(a.elementId - b.elementId);
+      const creationAdjacencyScore = 40 / Math.max(1, elementIdGap);
       const score = (intersects ? 1000 : 0) + overlapFractionOfSmaller * 300
         + (sameLevel ? 100 : 0) + (sameHost ? 100 : 0)
         + (orientationRelation === "same" ? 80 : orientationRelation === "opposite" ? -250 : 0)
-        + 100 / (1 + comparisonDistance);
+        + 100 / (1 + comparisonDistance) + creationAdjacencyScore;
 
       pairCount += 1;
       groupCounts.set(group.name, (groupCounts.get(group.name) ?? 0) + 1);
@@ -193,11 +200,14 @@ function buildSpatialSummary(values: unknown[], complete: boolean): JsonObject {
         hostIds: [a.hostId, b.hostId],
         orientationDot: facingDot === null ? null : rounded(facingDot),
         orientationRelation,
+        elementIdGap,
+        creationAdjacencyScore: rounded(creationAdjacencyScore),
         reasons: [
           "same_type",
           ...(intersects ? ["bounding_boxes_intersect"] : ["insertion_points_close_relative_to_size"]),
           ...(sameLevel ? ["same_level"] : []),
           ...(sameHost ? ["same_host"] : []),
+          ...(elementIdGap === 1 ? ["consecutive_creation_ids_triage_signal"] : []),
           ...(orientationRelation === "same" ? ["same_facing_orientation"] : []),
           ...(orientationRelation === "opposite" ? ["opposite_facing_orientation_requires_connector_review"] : [])
         ]

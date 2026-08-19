@@ -375,6 +375,49 @@ test("an explicit change preview cannot be reported complete without an executed
   assert.notEqual(noCandidate.teammate_loop_receipt?.blocked_reason, "executable_preview_not_completed");
 });
 
+test("view geometry discovery cannot satisfy a requested duplicate-view preview", () => {
+  const text = "Make an enlarged mechanical plan for Level 4 around the live/work units. Resolve a sensible source and crop region, then preview it; do not create anything.";
+
+  __testOnlyResetTeammateLoopState();
+  const geometry = guardGenericTeammateDecision(request(text), response([{
+    action_id: "crop-workflow",
+    method: "POST",
+    path: "/revit/mep-workflows",
+    body: { workflow: "resolve_crop", apply: false, dryRun: true }
+  }]));
+  assert.equal(geometry.actions.length, 1);
+  const geometryOnly = guardGenericTeammateDecision(request(text, [{
+    action_id: "crop-workflow",
+    method: "POST",
+    path: "/revit/mep-workflows",
+    status: "done",
+    result_json: { ok: true, dryRun: true, cropBox: { min: { x: 1, y: 2 }, max: { x: 8, y: 9 } } }
+  }]), response([], "Preview complete. The source and crop are resolved; nothing was created."));
+  assert.equal(geometryOnly.teammate_loop_receipt?.stage, "blocked");
+  assert.equal(geometryOnly.teammate_loop_receipt?.blocked_reason, "requested_preview_operation_not_completed");
+  assert.match(geometryOnly.assistant_message, /requested preview operation not completed/i);
+
+  __testOnlyResetTeammateLoopState();
+  guardGenericTeammateDecision(request(text), response([{
+    action_id: "view-preview",
+    method: "POST",
+    path: "/revit/transaction-plan",
+    body: { actions: [
+      { kind: "duplicateView", sourceViewId: 1363433, duplicateOption: "withDetailing", resultRef: "enlarged" },
+      { kind: "setViewCrop", viewId: "$enlarged", cropBox: { min: { x: 1, y: 2 }, max: { x: 8, y: 9 } } }
+    ] }
+  }]));
+  const executable = guardGenericTeammateDecision(request(text, [{
+    action_id: "view-preview",
+    method: "POST",
+    path: "/revit/transaction-plan",
+    status: "done",
+    result_json: { ok: true, rollback_truth: true, status: "rolled_back" }
+  }]), response([], "The duplicate-view and crop preview completed and rolled back."));
+  assert.equal(executable.teammate_loop_receipt?.stage, "report");
+  assert.equal(executable.teammate_loop_receipt?.blocked_reason, null);
+});
+
 test("transaction-plan is preview-only to the teammate loop", () => {
   __testOnlyResetTeammateLoopState();
   const preview = guardGenericTeammateDecision(request("Preview the transaction plan before applying it."), response([{
