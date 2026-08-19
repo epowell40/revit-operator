@@ -395,7 +395,7 @@ namespace RevitBridge.Common.Tests
             Assert.DoesNotContain("new RevitHttpServer(_eventService)", app);
 
             Assert.Contains("api/revit-direct/authorize-execution", client);
-            Assert.Contains("deadline.CancelAfter(TimeSpan.FromSeconds(10));", client);
+            Assert.Contains("deadline.CancelAfter(TimeSpan.FromSeconds(20));", client);
             Assert.Contains("body_json = request.BodyJson", client);
             Assert.Contains("var responseByteLimit = resp.IsSuccessStatusCode", client);
             Assert.Contains("? OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes", client);
