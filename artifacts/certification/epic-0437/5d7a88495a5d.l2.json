@@ -151,11 +151,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.test.ts",
-      "sha256": "sha256:397ca5ad45058df5f10160ba076ffce8c496548bd95e554bdeddc5aa4a0898ae"
+      "sha256": "sha256:3d666b98f86aaffdee0dfdb4ab16164b9bb9ecdc97c43977b0ebf2471ee22377"
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.ts",
-      "sha256": "sha256:05e27de91d33c9972b3144385995f4fcaa3f489e4154ed2ed071234cd3d8b0cd"
+      "sha256": "sha256:aae6a5492faffa930185054d9c552b089ca133cec6e197e5ccc3c61a8cc963bd"
     },
     {
       "path": "apps/mcp-server/src/lib/laboratoryEvidenceDispatch.test.ts",
@@ -179,7 +179,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:99992d3cfbdee29f81b61d6e9893fd5dbc511549853d211f48f33549fee99c4a"
+      "sha256": "sha256:a1d6c966955de633b377d8b49245787d82dae60e1b22cb59d9e1f273b39f3efa"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
@@ -324,7 +324,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:0f37c48a48bd2d3cf7783eeaed0ffd69e48c1f7ee7836e9d104922b74e50aa7b"
+      "sha256": "sha256:7ab4d085c6ba01e97e3f1e1c9375eb93f08c2f37ff127a5ee6ac4cd2a3bce7ee"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -4618,7 +4618,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolIntrospection.cs",
-      "sha256": "sha256:49685d1051f28892915795d948a336441b83db6e960754c00e136075c9b9713a"
+      "sha256": "sha256:807943f1652b1af53977742ea49ed8c4ca978385661f7a44ca8e58a49c305e48"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
@@ -4665,7 +4665,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:378dc52a2554e947f0867764e3bff2aae870159fa4f5a78332511dec86f0a106",
+  "inputs_hash": "sha256:a1fd13392ecb6500dc6818ffbda56628f256859c2c67f9a2693c13132a2c4273",
   "result": {
     "passed": true,
     "checks": [
