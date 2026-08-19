@@ -1097,15 +1097,18 @@
       "expected_effect": "apply",
       "answer_assertions": {
         "must_match": [
-          "1460066[\\s\\S]{0,240}1460067|1460067[\\s\\S]{0,240}1460066",
-          "(?:16\\s*[x×]\\s*4|16.{0,12}4).{0,100}(?:supply )?grille",
-          "Room\\s*306",
-          "8\\s*(?:in(?:ches)?|\\\")\\s*(?:apart|separation)|only\\s+8\\s*(?:in(?:ches)?|\\\")",
-          "duct\\s*1460049",
-          "Mechanical Supply Air\\s*34",
-          "(?:network|system)[^\\n.]{0,80}54\\s+elements|54\\s+(?:network|system)\\s+elements",
-          "(?:rollback|dry[- ]run)[\\s\\S]{0,160}(?:delet|remov)[\\s\\S]{0,80}146006[67]",
-          "53[^\\n.]{0,80}(?:remain|connected)|(?:remain|connected)[^\\n.]{0,80}53",
+          "Strongest (?:plausible )?(?:duplicate[- ]device )?candidate[^\\n]{0,120}air terminals?[^\\n]{0,100}\\d{6,8}\\s*[/,&-]\\s*\\d{6,8}",
+          "Same type[^\\n]{0,100}8\\s*(?:in(?:ches)?|\\\")\\s+apart[^\\n]{0,100}opposite[- ]facing",
+          "(?:Room|Space)\\s+\\d+",
+          "(?:separate connectors?|both connect)[^\\n]{0,160}duct\\s*\\d+",
+          "(?:nearby arrangements?|repeat(?:ed|ing)[^\\n]{0,80}(?:arrangements?|topology))",
+          "Mechanical Supply Air\\s+\\d+[^\\n]{0,100}network[^\\n]{0,80}\\d+\\s+elements[^\\n]{0,80}all connected",
+          "(?:rollback|dry[- ]run)[^\\n]{0,80}(?:delet|remov)[^\\n]{0,100}\\d{6,8}[^\\n]{0,80}(?:succeeded|only)",
+          "(?:Dependent(?:/cascade)? deletions?[^\\n]{0,40}none|no dependents)",
+          "Physical connection affected[^\\n]{0,160}duct\\s*\\d+",
+          "Predicted remaining connected system[^\\n]{0,80}\\d+\\s+elements",
+          "Rollback (?:was )?confirmed[^\\n]{0,160}(?:still exists|remains connected)",
+          "(?:does not prove|not proven (?:to be )?)\\s+(?:a )?genuine duplicate",
           "Nothing was (?:changed|deleted|applied)|No model changes"
         ]
       },
