@@ -422,6 +422,7 @@ test("view geometry discovery cannot satisfy a requested duplicate-view preview"
 test("duplicate-device impact work requires an executable rollback delete preview", () => {
   const text = "Find a genuinely duplicated device candidate, trace what it is connected to, and preview the complete deletion/disconnection impact. Do not delete anything.";
   assert.match(formatTeammateTurnContract(request(text)), /rollback\/dry-run delete of the highest-ranked defensible candidate/i);
+  assert.match(formatTeammateTurnContract(request(text)), /re-read the previewed member/i);
 
   __testOnlyResetTeammateLoopState();
   const noCandidate = guardGenericTeammateDecision(request(text), response([], [
@@ -438,7 +439,7 @@ test("duplicate-device impact work requires an executable rollback delete previe
     path: "/revit/delete",
     body: { elementIds: [1460067], dryRun: true }
   }]));
-  const executable = guardGenericTeammateDecision(request(text, [{
+  const verify = guardGenericTeammateDecision(request(text, [{
     action_id: "delete-preview",
     method: "POST",
     path: "/revit/delete",
@@ -450,10 +451,46 @@ test("duplicate-device impact work requires an executable rollback delete previe
       targetElementIds: [1460067],
       affectedElementIds: [1460067]
     }
-  }]), response([], "Rollback delete preview completed for the highest-ranked candidate; nothing was changed."));
+  }]), response([{
+    action_id: "verify-rollback",
+    method: "POST",
+    path: "/revit/get-connectors",
+    body: { elementIds: [1460067] }
+  }], "Rollback delete preview completed; verifying restoration now."));
+  assert.equal(verify.teammate_loop_receipt?.stage, "verify");
+
+  const executable = guardGenericTeammateDecision(request(text, [{
+    action_id: "verify-rollback",
+    method: "POST",
+    path: "/revit/get-connectors",
+    status: "done",
+    result_json: { ok: true, elements: [{ id: 1460067, connectors: [{ connected: true, ownerId: 1460049 }] }] }
+  }]), response([], "Rollback confirmed: 1460067 still exists and remains connected to duct 1460049; nothing was changed."));
   assert.equal(executable.teammate_loop_receipt?.stage, "report");
   assert.equal(executable.teammate_loop_receipt?.blocked_reason, null);
+  assert.equal(executable.teammate_loop_receipt?.verified, true);
   assert.equal(executable.teammate_loop_receipt?.preview_receipts?.length, 1);
+});
+
+test("rollback delete preview cannot be reported complete without target-bound restoration readback", () => {
+  __testOnlyResetTeammateLoopState();
+  const text = "Preview deleting device 1460067 and its connection impact, but do not delete anything.";
+  guardGenericTeammateDecision(request(text), response([{
+    action_id: "delete-preview",
+    method: "POST",
+    path: "/revit/delete",
+    body: { elementIds: [1460067], dryRun: true }
+  }]));
+  const incomplete = guardGenericTeammateDecision(request(text, [{
+    action_id: "delete-preview",
+    method: "POST",
+    path: "/revit/delete",
+    status: "done",
+    result_json: { ok: true, status: "rolled_back", targetElementIds: [1460067] }
+  }]), response([], "Rollback preview complete; nothing changed."));
+  assert.equal(incomplete.teammate_loop_receipt?.stage, "blocked");
+  assert.equal(incomplete.teammate_loop_receipt?.verified, false);
+  assert.equal(incomplete.teammate_loop_receipt?.blocked_reason, "post_preview_restoration_verification_required");
 });
 
 test("transaction-plan is preview-only to the teammate loop", () => {

@@ -30,6 +30,7 @@ export type GeneralRevitCapabilityCase = {
   expected_effect: GeneralRevitExpectedEffect;
   probe_expected_effect?: Exclude<GeneralRevitExpectedEffect, "apply">;
   allow_verified_noop?: boolean;
+  require_target_bound_preview_verification?: boolean;
   epic0441_task_refs: string[];
   prompt_specificity?: "terse" | "ordinary" | "detailed" | "ambiguous_actionable" | "research_required";
   corpus_task_type?: string;
@@ -264,6 +265,9 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     if (testCase.allow_verified_noop && (testCase.expected_effect !== "apply" || !testCase.answer_assertions)) {
       throw new Error(`Case ${testCase.case_id} may allow a verified no-op only for an apply case with fixture answer assertions.`);
     }
+    if (testCase.require_target_bound_preview_verification && testCase.probe_expected_effect !== "preview") {
+      throw new Error(`Case ${testCase.case_id} may require target-bound preview verification only for a preview probe.`);
+    }
     if (!/\b(?:do not|don't)\b/i.test(testCase.probe_prompt)) throw new Error(`Probe ${testCase.case_id} must explicitly remain non-mutating.`);
     if (testCase.capability_paths.length === 0 || testCase.dispatch_any_of.length === 0) throw new Error(`Case ${testCase.case_id} has no concrete execution lane.`);
     for (const candidate of [...testCase.capability_paths, ...testCase.dispatch_any_of]) {
@@ -409,7 +413,11 @@ function teammateLoopTruth(attempt: GeneralRevitAttempt): { mutationAttempted: b
     || (mode === "target_bound_readback" && actionId !== "" && actionIds.includes(actionId))
     || (mode === "trusted_dynamic_program_receipt" && actionId === "dynamic_program")
   );
-  return { mutationAttempted, blocked, verified: mutationAttempted && receipt.verified === true && auditBound && !blocked };
+  const verifiedRollbackPreview = receipt.turn_kind === "inspection"
+    && Number(receipt.apply_attempts) === 0
+    && mode === "target_bound_readback"
+    && hasCertifiedTeammatePreviewReceipt(attempt);
+  return { mutationAttempted, blocked, verified: (mutationAttempted || verifiedRollbackPreview) && receipt.verified === true && auditBound && !blocked };
 }
 
 type CertifiedTeammatePreviewReceipt = { action_id: string; path: string };
@@ -815,15 +823,16 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ? directPreviewDispatched || teammatePreviewDispatched || durableEffectCompleted
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
+  const targetBoundPreviewVerificationMissing = testCase.require_target_bound_preview_verification === true && !teammate.verified;
   const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked && !missingTargetClarification
-    && (dispatched || durable.completed);
+    && !targetBoundPreviewVerificationMissing && (dispatched || durable.completed);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
   else if (missingTargetClarification && attemptSucceeded && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
   else if (fixtureBlockerAccepted) tier = "accepted";
-  else if (!attemptSucceeded || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || answerAssertionPassed === false) tier = "failed";
+  else if (!attemptSucceeded || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || targetBoundPreviewVerificationMissing || answerAssertionPassed === false) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";
@@ -853,6 +862,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
     summary: tier === "refused" ? "Agent refused an in-scope Revit capability."
       : tier === "failed" ? answerAssertionPassed === false
         ? "Tool-backed execution completed, but the fixture-grounded answer assertions failed."
+        : targetBoundPreviewVerificationMissing
+        ? "Rollback preview lacks target-bound post-rollback model-state verification."
         : requiredEffectMissing
         ? testCase.expected_effect === "apply"
           ? "Mutation case did not dispatch a verified apply operation."
