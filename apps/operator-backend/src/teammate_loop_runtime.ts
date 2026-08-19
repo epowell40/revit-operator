@@ -143,6 +143,14 @@ const TERMINAL_DIRECT_NO_WRITE = new RegExp(
   "i"
 );
 
+const SCOPED_ANYTHING_ELSE_NO_WRITE = new RegExp(
+  "\\b(?:do not|don't|dont|never)\\s+"
+  + "(?:(?:also|otherwise)\\s+)?"
+  + "(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate|rename)"
+  + "\\s+anything\\s+else\\b",
+  "gi"
+);
+
 function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   // A leading, sentence-level READ-ONLY declaration is an authoritative turn
   // contract even when a long planning request later names the future edits it
@@ -163,6 +171,19 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (/\bwithout\s+(?:making|applying|committing|saving)\s+(?:any\s+)?changes?\b/i.test(text)) return true;
   if (/\bbefore\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ|creat|renam|print)/i.test(text)) return true;
   return /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:change|modify|edit|delete|remove|apply|commit|write|create|rename|print|mutate)\b[^.!?;\n]{0,40}\b(?:the\s+)?(?:model|project|document|anything|it|the\s+change)\b/i.test(text);
+}
+
+function scopedAnythingElseConstraintPreservesMutation(text: string): boolean {
+  const withoutScopedConstraint = text.replace(SCOPED_ANYTHING_ELSE_NO_WRITE, " ");
+  if (withoutScopedConstraint === text || !containsMutationVerb(withoutScopedConstraint)) return false;
+  // The exclusion narrows an otherwise affirmative edit. Any independent
+  // global read-only clause in the remaining request still wins.
+  return !hasPreviewOrGlobalNoWriteFraming(withoutScopedConstraint);
+}
+
+function hasEffectiveNoWriteFraming(text: string): boolean {
+  return hasPreviewOrGlobalNoWriteFraming(text)
+    && !scopedAnythingElseConstraintPreservesMutation(text);
 }
 
 function hasRevitWorkSubject(text: string): boolean {
@@ -232,7 +253,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   // turn-defining only when the turn actually asks to change document
   // lifecycle state (for example, "do not save the Revit model").
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
-  const previewOnly = hasPreviewOrGlobalNoWriteFraming(text);
+  const previewOnly = hasEffectiveNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
   // state even when the user correctly says not to edit model elements.
@@ -262,7 +283,7 @@ function hasNoWriteAuthority(text: string): boolean {
     return deniesDocumentLifecycleMutation(text)
       || /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text);
   }
-  return hasPreviewOrGlobalNoWriteFraming(text);
+  return hasEffectiveNoWriteFraming(text);
 }
 
 // Keep durable assignment effect classification and the host-enforced teammate

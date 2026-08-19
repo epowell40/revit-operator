@@ -1565,6 +1565,30 @@ test("terminal direct-object no-write clauses govern the whole inspection turn w
   assert.equal(scoped.turn_kind, "mutation");
   assert.equal(scoped.no_write, false);
   assert.equal(scoped.write_authorized, true);
+
+  const anythingElseScoped = [
+    "Rename HRU-1 to ERU-1. Do not change anything else.",
+    "Apply the Mechanical Equipment visibility update in view 1543835; do not change anything else. Then verify it.",
+    "Update the checked-by initials on sheet M000, but don't modify anything else."
+  ];
+  for (const prompt of anythingElseScoped) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "mutation", prompt);
+    assert.equal(contract.no_write, false, prompt);
+    assert.equal(contract.write_authorized, true, prompt);
+  }
+
+  const anythingElseGlobal = [
+    "Inspect view 1543835 and do not change anything else.",
+    "Report the current title-block initials. Do not modify anything else.",
+    "Do not change anything else."
+  ];
+  for (const prompt of anythingElseGlobal) {
+    const contract = buildTeammateTurnContract(request(prompt));
+    assert.equal(contract.turn_kind, "inspection", prompt);
+    assert.equal(contract.no_write, true, prompt);
+    assert.equal(contract.write_authorized, false, prompt);
+  }
 });
 
 test("native mutation safety envelopes do not require every affected dependent before a principal readback verifies", () => {
