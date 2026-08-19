@@ -1380,6 +1380,10 @@
       "sha256": "sha256:1d8dbd98fa24b0c4fa333cb73e9fa691e967c7dcd89d8c3dafe0e7773e3151e4"
     },
     {
+      "path": "apps/operator-backend/src/no_write_intent.ts",
+      "sha256": "sha256:bdb48eeab347a47ec3b445139bd61943281be62f9ab1085d90411d768b5df953"
+    },
+    {
       "path": "apps/operator-backend/src/openai_client.ts",
       "sha256": "sha256:d9f6ae66815bc00a09a7c11b3b40ffa967eae03bd969f97e3dcf4abd1a00a0ec"
     },
@@ -1561,7 +1565,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:76d6eab80135857cc442cd70d83b3a38ce9024223973eed0c903c4115dfa4408"
+      "sha256": "sha256:a3390c6029632d3b885cb96f98630ef8fa054b4c4fd48a6c4790f17c6f778032"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -4697,7 +4701,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:39c6ed9fb5d563f020fce2300de9c6f048fd57e41be6d51d8f00f63febbc55cd",
+  "inputs_hash": "sha256:57b7ecdc29689f2f78323404afdb499fbf02003a7eca73b7c98c1ddae23d4b42",
   "result": {
     "passed": true,
     "checks": [
