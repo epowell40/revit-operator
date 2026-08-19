@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
+import { COORDINATED_GLOBAL_NO_WRITE, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 
@@ -125,46 +126,6 @@ function containsMutationVerb(text: string): boolean {
   return hasExplicitMutationVerb(text);
 }
 
-const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
-  "\\b(?:do not|don't|dont|never)\\s+"
-  + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"
-  + "(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)"
-  + "(?:\\s*,?\\s*(?:(?:or|and)\\s+)?(?:(?:actually|ever|otherwise)\\s+)?(?:change|save|modify|edit|create|apply|commit|export|print|delete|remove|write|mutate)){1,6}"
-  + "\\s+(?:the\\s+)?(?:revit\\s+)?(?:model|project|document|anything|it)\\b",
-  "i"
-);
-
-const TERMINAL_DIRECT_NO_WRITE = new RegExp(
-  "\\b(?:do not|don't|dont|never)\\s+"
-  + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"
-  + "(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate)"
-  + "(?:\\s*(?:,|or|and)\\s*(?:(?:actually|ever|otherwise)\\s+)?(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate)){0,6}"
-  + "\\s+(?:(?:the|any)\\s+)?(?:schedule|family|model|project|document|files?|changes?|anything|it)\\s*[.!?]*\\s*$",
-  "i"
-);
-
-function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
-  // A leading, sentence-level READ-ONLY declaration is an authoritative turn
-  // contract even when a long planning request later names the future edits it
-  // wants described. Do not require "plan" to appear within an arbitrary
-  // character window before honoring that explicit boundary.
-  if (/^\s*read[ -]?only(?:\s+only)?\s*[.!:;-]/i.test(text)) return true;
-  if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
-  if (TERMINAL_DIRECT_NO_WRITE.test(text)) return true;
-  if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
-      || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)
-      || /\b(?:preview|analysis)\s+only\b/i.test(text)) return true;
-  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text)
-      && /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+)?(?:apply|commit|write|modify|change|edit|save|execute|make)\b|\bwithout\s+(?:applying|committing|writing|modifying|changing|editing|saving|executing|making)\b/i.test(text)) return true;
-  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text)
-      && /\bwithout\s+(?:creating|writing|saving|exporting|printing)\b[^.!?;\n]{0,50}\bfiles?\b|\b(?:do not|don't|dont|never)\s+(?:export|print|write|save|create)\b[^.!?;\n]{0,35}\b(?:files?|outputs?|pdfs?)\b|\b(?:do not|don't|dont|never)\s+send\b[^.!?;\n]{0,30}\bphysical\s+prints?\b/i.test(text)) return true;
-  if (/\b(?:preview|preflight|dry[ -]?run)\b/i.test(text)
-      && /\b(?:do not|don't|dont|never)\s+create\s+(?:(?:the|an?|any)\s+)?(?:copy|file|output|sheet|view|schedule|element|template|family|type|model\s+change)\b/i.test(text)) return true;
-  if (/\bwithout\s+(?:making|applying|committing|saving)\s+(?:any\s+)?changes?\b/i.test(text)) return true;
-  if (/\bbefore\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ|creat|renam|print)/i.test(text)) return true;
-  return /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:change|modify|edit|delete|remove|apply|commit|write|create|rename|print|mutate)\b[^.!?;\n]{0,40}\b(?:the\s+)?(?:model|project|document|anything|it|the\s+change)\b/i.test(text);
-}
-
 function hasRevitWorkSubject(text: string): boolean {
   return /\b(?:revit|model|project|element|equipment|device|fixture|terminal|duct|pipe|fitting|accessor|connector|family|type|parameter|mark|comment|note|tag|dimension|annotation|room|space|level|view|template|sheet|schedule|title\s*block|viewport|plan|section|elevation|detail|crop|scale|visibility|graphics|filter|workset|phase|system|circuit|panel|print|pdf)\w*\b/.test(text);
 }
@@ -232,7 +193,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   // turn-defining only when the turn actually asks to change document
   // lifecycle state (for example, "do not save the Revit model").
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
-  const previewOnly = hasPreviewOrGlobalNoWriteFraming(text);
+  const previewOnly = hasEffectiveNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
   // state even when the user correctly says not to edit model elements.
@@ -262,7 +223,7 @@ function hasNoWriteAuthority(text: string): boolean {
     return deniesDocumentLifecycleMutation(text)
       || /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text);
   }
-  return hasPreviewOrGlobalNoWriteFraming(text);
+  return hasEffectiveNoWriteFraming(text);
 }
 
 // Keep durable assignment effect classification and the host-enforced teammate
