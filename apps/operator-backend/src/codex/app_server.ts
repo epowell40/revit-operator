@@ -18,20 +18,40 @@ export type CodexNotificationEnvelope = {
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
-async function probeCodexVersion(command: string, cwd: string, env: NodeJS.ProcessEnv): Promise<string> {
-  return await new Promise<string>((resolve, reject) => {
-    const proc = spawn(command, ["--version"], {
+export type CodexVersionProbeOptions = {
+  timeoutMs?: number;
+  retryDelayMs?: number;
+  maxAttempts?: number;
+  cache?: boolean;
+  spawnProcess?: typeof spawn;
+};
+
+const codexVersionProbeCache = new Map<string, Promise<string>>();
+
+function probeCodexVersionOnce(
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  spawnProcess: typeof spawn
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const proc = spawnProcess(command, ["--version"], {
       cwd,
       env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"]
     });
     let settled = false;
+    let timedOut = false;
     let output = "";
+    let forceFinishTimer: NodeJS.Timeout | null = null;
+    const timeoutError = new Error(`Timed out probing the Codex CLI version after ${timeoutMs}ms.`);
     const finish = (error: Error | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forceFinishTimer) clearTimeout(forceFinishTimer);
       if (error) reject(error);
       else resolve(output.trim());
     };
@@ -40,13 +60,61 @@ async function probeCodexVersion(command: string, cwd: string, env: NodeJS.Proce
     };
     proc.stdout?.on("data", append);
     proc.stderr?.on("data", append);
-    proc.on("error", error => finish(error));
-    proc.on("exit", code => finish(code === 0 ? null : new Error(`Codex version probe exited with code ${code ?? "null"}: ${output.trim()}`)));
+    proc.on("error", error => finish(timedOut ? timeoutError : error));
+    proc.on("exit", code => finish(timedOut
+      ? timeoutError
+      : code === 0 ? null : new Error(`Codex version probe exited with code ${code ?? "null"}: ${output.trim()}`)));
     const timer = setTimeout(() => {
-      try { proc.kill(); } catch {}
-      finish(new Error("Timed out probing the Codex CLI version."));
-    }, 5_000);
+      timedOut = true;
+      try { proc.kill("SIGKILL"); } catch {}
+      // Wait briefly for process exit so a timed-out probe cannot accumulate as
+      // an orphan. The fallback still bounds startup if the host never reports it.
+      forceFinishTimer = setTimeout(() => finish(timeoutError), 1_000);
+    }, timeoutMs);
   });
+}
+
+export function __testOnlyResetCodexVersionProbeCache(): void {
+  codexVersionProbeCache.clear();
+}
+
+export async function probeCodexVersion(
+  command: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  options: CodexVersionProbeOptions = {}
+): Promise<string> {
+  const timeoutMs = Math.max(100, options.timeoutMs ?? 15_000);
+  const retryDelayMs = Math.max(0, options.retryDelayMs ?? 250);
+  const maxAttempts = Math.max(1, Math.min(3, options.maxAttempts ?? 2));
+  const spawnProcess = options.spawnProcess ?? spawn;
+  const cacheKey = JSON.stringify([command, cwd, env.PATH ?? env.Path ?? ""]);
+  const useCache = options.cache !== false;
+  if (useCache) {
+    const cached = codexVersionProbeCache.get(cacheKey);
+    if (cached) return await cached;
+  }
+
+  const pending = (async () => {
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await probeCodexVersionOnce(command, cwd, env, timeoutMs, spawnProcess);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (!/timed out probing the Codex CLI version/i.test(lastError.message) || attempt >= maxAttempts) throw lastError;
+        if (retryDelayMs > 0) await new Promise<void>(resolve => setTimeout(resolve, retryDelayMs));
+      }
+    }
+    throw lastError ?? new Error("Codex CLI version probe failed.");
+  })();
+  if (useCache) codexVersionProbeCache.set(cacheKey, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    if (useCache && codexVersionProbeCache.get(cacheKey) === pending) codexVersionProbeCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 export class CodexAppServer {

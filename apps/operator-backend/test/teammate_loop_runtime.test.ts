@@ -10,6 +10,7 @@ import {
   buildTeammateTurnContract,
   classifyAgentTurn,
   endTeammateLoopOwner,
+  formatTeammateTurnContract,
   guardGenericTeammateDecision,
   guardTeammateMcpCall,
   reconcileTeammateReceiptWithAssistant,
@@ -368,7 +369,7 @@ test("an explicit change preview cannot be reported complete without an executed
     "Make an enlarged mechanical plan for Level 4, then preview it; do not create anything."
   ), response([], "Preview generated—nothing was created. Open the cropped image to review it."));
   assert.equal(visualOnly.teammate_loop_receipt?.stage, "blocked");
-  assert.equal(visualOnly.teammate_loop_receipt?.blocked_reason, "executable_preview_not_completed");
+  assert.equal(visualOnly.teammate_loop_receipt?.blocked_reason, "requested_preview_operation_not_completed");
 
   __testOnlyResetTeammateLoopState();
   const noCandidate = guardGenericTeammateDecision(request(text), response([], "No matching preview-capable schedule target exists, so I did not claim a completed preview."));
@@ -416,6 +417,43 @@ test("view geometry discovery cannot satisfy a requested duplicate-view preview"
   }]), response([], "The duplicate-view and crop preview completed and rolled back."));
   assert.equal(executable.teammate_loop_receipt?.stage, "report");
   assert.equal(executable.teammate_loop_receipt?.blocked_reason, null);
+});
+
+test("duplicate-device impact work requires an executable rollback delete preview", () => {
+  const text = "Find a genuinely duplicated device candidate, trace what it is connected to, and preview the complete deletion/disconnection impact. Do not delete anything.";
+  assert.match(formatTeammateTurnContract(request(text)), /rollback\/dry-run delete of the highest-ranked defensible candidate/i);
+
+  __testOnlyResetTeammateLoopState();
+  const noCandidate = guardGenericTeammateDecision(request(text), response([], [
+    "The opposite-facing devices share the same duct, so I found no safe duplicate candidate.",
+    "Nothing was changed and I did not run the rollback delete."
+  ].join("\n")));
+  assert.equal(noCandidate.teammate_loop_receipt?.stage, "blocked");
+  assert.equal(noCandidate.teammate_loop_receipt?.blocked_reason, "requested_preview_operation_not_completed");
+
+  __testOnlyResetTeammateLoopState();
+  guardGenericTeammateDecision(request(text), response([{
+    action_id: "delete-preview",
+    method: "POST",
+    path: "/revit/delete",
+    body: { elementIds: [1460067], dryRun: true }
+  }]));
+  const executable = guardGenericTeammateDecision(request(text, [{
+    action_id: "delete-preview",
+    method: "POST",
+    path: "/revit/delete",
+    status: "done",
+    result_json: {
+      ok: true,
+      status: "rolled_back",
+      rollback_truth: true,
+      targetElementIds: [1460067],
+      affectedElementIds: [1460067]
+    }
+  }]), response([], "Rollback delete preview completed for the highest-ranked candidate; nothing was changed."));
+  assert.equal(executable.teammate_loop_receipt?.stage, "report");
+  assert.equal(executable.teammate_loop_receipt?.blocked_reason, null);
+  assert.equal(executable.teammate_loop_receipt?.preview_receipts?.length, 1);
 });
 
 test("transaction-plan is preview-only to the teammate loop", () => {

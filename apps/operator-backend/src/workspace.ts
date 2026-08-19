@@ -23,14 +23,26 @@ export type WorkspaceLayout = {
   evidenceWeb: string;
 };
 
+const WRITABLE_DIRECTORY_RECHECK_MS = 60_000;
+const writableDirectoryCache = new Map<string, number>();
+
 function ensureDirBestEffort(p: string): boolean {
+  const key = path.resolve(p);
+  const now = Date.now();
+  if ((writableDirectoryCache.get(key) ?? 0) > now) return true;
   try {
     fs.mkdirSync(p, { recursive: true });
     fs.accessSync(p, fs.constants.W_OK);
+    writableDirectoryCache.set(key, now + WRITABLE_DIRECTORY_RECHECK_MS);
     return true;
   } catch {
+    writableDirectoryCache.delete(key);
     return false;
   }
+}
+
+export function __testOnlyResetWorkspaceDirectoryCache(): void {
+  writableDirectoryCache.clear();
 }
 
 export function getWorkspaceBaseRoot(): string {
@@ -118,11 +130,7 @@ export function ensureWorkspaceLayout(): WorkspaceLayout {
     skillStaging,
     skillDisabled
   ]) {
-    try {
-      fs.mkdirSync(d, { recursive: true });
-    } catch {
-      // ignore
-    }
+    ensureDirBestEffort(d);
   }
 
   return {
