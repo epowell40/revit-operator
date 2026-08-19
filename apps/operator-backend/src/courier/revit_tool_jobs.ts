@@ -19,6 +19,7 @@ import {
 } from "./laboratory_evidence.js";
 import { verifyLaboratoryExecutionReceipt } from "./laboratory_execution_receipt.js";
 import { getSidecarAgentProfileState } from "../capabilities/sidecar_agent_profile.js";
+import { enumerateActiveJobs, observeIndexedJob, resetActiveJobIndexes } from "./active_job_index.js";
 
 export const REVIT_COURIER_JOB_VERSION = "revit-operator.revit-tool-job.v1";
 export const REVIT_COURIER_RESULT_VERSION = "revit-operator.revit-tool-result.v1";
@@ -138,6 +139,10 @@ type AuthorizeInput = { session_id: string; job_id: string; executor_id: string;
 function jobsRoot(): string {
   const root = path.join(ensureWorkspaceLayout().artifacts, "revit-courier", "jobs");
   return ensureWorkspaceDirectory(root);
+}
+
+export function __testOnlyResetRevitCourierJobIndexCache(): void {
+  resetActiveJobIndexes();
 }
 
 function safeId(value: unknown, field: string, max = 200): string {
@@ -587,6 +592,7 @@ function readJob(jobId: string): RevitToolJob | null {
 
 function saveJob(job: RevitToolJob): RevitToolJob {
   writeJsonAtomic(jobPath(job.id), job);
+  observeIndexedJob(jobsRoot(), job);
   return job;
 }
 
@@ -839,14 +845,9 @@ function leaseDurationMs(): number {
   return Number.isFinite(parsed) ? Math.max(30_000, Math.min(10 * 60_000, parsed)) : 4 * 60_000;
 }
 
-function enumerateJobIds(): string[] {
-  try {
-    return fs.readdirSync(jobsRoot(), { withFileTypes: true })
-      .filter(entry => entry.isDirectory() && /^[a-zA-Z0-9._:-]+$/.test(entry.name))
-      .map(entry => entry.name);
-  } catch {
-    return [];
-  }
+function enumerateCandidateJobs(): RevitToolJob[] {
+  const root = jobsRoot();
+  return enumerateActiveJobs(root, readJob);
 }
 
 export function isRevitCourierContextFreeJob(job: Pick<RevitToolJob, "method" | "path">): boolean {
@@ -866,9 +867,8 @@ export function claimNextRevitToolJob(input: ClaimInput): { job: RevitToolJob | 
     : safeContextIdentity(input.session_id, "session_id");
   const executorId = safeContextIdentity(input.executor_id, "executor_id");
   const now = Date.now();
-  const candidates = enumerateJobIds()
-    .map(id => readJob(id))
-    .filter((job): job is RevitToolJob => !!job &&
+  const candidates = enumerateCandidateJobs()
+    .filter((job): job is RevitToolJob =>
       (sessionId === null || job.session_id === sessionId) &&
       (!job.target_executor_id || job.target_executor_id === executorId) &&
       (!input.context_free_only || isRevitCourierContextFreeJob(job)) &&
