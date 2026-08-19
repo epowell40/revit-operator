@@ -160,7 +160,8 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         const alreadySatisfiedNoop = requestedEffect !== "read"
           && assistantReportsAlreadySatisfiedNoop(assistantText, requestedEffect);
         const reportedBlockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|(?:requested (?:work|task|change)|completion|preview|execution|apply) (?:is|was|remains?) blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
-          || /(?:^|\n)\s*(?:#{1,6}\s*)?blocked\b/i.test(assistantText)
+          || /\b(?:the\s+)?(?:assignment|task|request|requested (?:work|task)|objective)\s+(?:is|remains?)\s+(?:incomplete|unfinished|unmet|unsatisfied|not (?:complete|finished))\b/i.test(assistantText)
+          || /(?:^|\n)\s*(?:#{1,6}\s*)?(?:[*_`~]{0,3})?(?:blocked|blocker|incomplete)(?:[*_`~]{0,3})?\b/i.test(assistantText)
           || /\bno qualifying [^.\n]{0,120} (?:exists|was found|could be found)\b/i.test(assistantText)
           || /\b(?:requested |named )?(?:target|schedule|sheet|view|family|type|element) (?:was |is )?not found\b/i.test(assistantText);
         // A truthful already-satisfied result may describe the proposed preview as
