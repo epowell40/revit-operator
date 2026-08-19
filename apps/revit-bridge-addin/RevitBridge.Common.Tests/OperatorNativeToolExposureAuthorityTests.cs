@@ -187,7 +187,7 @@ namespace RevitBridge.Common.Tests
                 ["version"] = OperatorNativeHttpAuthorizationReceipt.Version,
                 ["phase"] = OperatorNativeHttpAuthorizationReceipt.Phase,
                 ["authorized_at"] = "2026-07-29T12:00:00.000Z",
-                ["valid_for_ms"] = 5000,
+                ["valid_for_ms"] = 30000,
                 ["request_id"] = request.RequestId,
                 ["method"] = request.Method,
                 ["path"] = request.Path,

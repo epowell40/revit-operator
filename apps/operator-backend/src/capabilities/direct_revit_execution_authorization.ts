@@ -29,7 +29,11 @@ export const DIRECT_REVIT_ADMISSION_REQUEST_V1_SCHEMA = "revit-operator.revit-di
 export const DIRECT_REVIT_ADMISSION_REQUEST_V2_SCHEMA = "revit-operator.revit-direct-admission-request.v2";
 export const DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA = "revit-operator.revit-direct-admission-request.v3";
 export const DIRECT_REVIT_ADMISSION_REQUEST_SCHEMA = DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA;
-export const DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS = 5_000;
+// The receipt is exact-request-bound and one-use. Its local dispatch window
+// must still cover Revit ExternalEvent admission while Revit is minimized or
+// backgrounded; observed healthy background turns can take 10-12 seconds to
+// reach the API thread after the hosted response has arrived.
+export const DIRECT_REVIT_AUTHORIZATION_VALID_FOR_MS = 30_000;
 export const DIRECT_REVIT_AUTHORIZATION_MAX_BODY_BYTES = 2 * 1024 * 1024;
 // body_json is itself JSON-escaped in the authorization request wrapper. The
 // native System.Text.Json encoder may represent one source byte as a six-byte

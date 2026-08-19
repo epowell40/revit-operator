@@ -483,7 +483,36 @@
       "probe_prompt": "Find an unconnected air terminal and a compatible nearby supply main, then preview a bounded route with observed system, dimensions, level, fittings, and connector verification. Do not create it.",
       "capability_paths": ["/revit/create-mep-route"],
       "dispatch_any_of": ["/revit/resolve-mep-routing-context", "/revit/create-mep-route", "/revit/get-connectors", "/revit/tool-search"],
-      "expected_effect": "preview",
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "answer_assertions": {
+        "must_match": [
+          "(?:created|connected)[^\\n.]{0,120}(?:duct|route|air terminal)",
+          "(?:connector|connected)",
+          "(?:system|supply air)"
+        ],
+        "must_not_match": [
+          "(?:blocked|no compatible route|no open terminal connector)"
+        ]
+      },
+      "fixture_blocker_assertions": {
+        "must_match": [
+          "(?:all\\s+)?509[^\\n.]{0,80}air terminals",
+          "(?:zero|0)[^\\n.]{0,80}unconnected[^\\n.]{0,80}(?:HVAC|air terminal)|(?:no|without an) open terminal connector",
+          "(?:nothing was created|nothing was modified|no model changes were made)"
+        ],
+        "must_not_match": [
+          "(?:created|inserted)[^\\n.]{0,100}(?:duct|route|fitting)",
+          "\\\"dryRun\\\"\\s*:\\s*true",
+          "\\\"rollbackVerified\\\"\\s*:\\s*true"
+        ],
+        "evidence": {
+          "required_successful_paths": ["/revit/find-elements", "/revit/get-connectors"],
+          "minimum_unique_connector_element_ids": 509,
+          "maximum_failed_connector_rows": 0,
+          "required_open_hvac_connector_count": 0
+        }
+      },
       "epic0441_task_refs": ["r16_duct_route"]
     },
     {

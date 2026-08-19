@@ -43,6 +43,12 @@ export type GeneralRevitCapabilityCase = {
   fixture_blocker_assertions?: {
     must_match: string[];
     must_not_match?: string[];
+    evidence?: {
+      required_successful_paths?: string[];
+      minimum_unique_connector_element_ids?: number;
+      maximum_failed_connector_rows?: number;
+      required_open_hvac_connector_count?: number;
+    };
   };
 };
 
@@ -583,6 +589,43 @@ function assertionPatternMatches(pattern: string, answerText: string): boolean {
   return expression.test(semanticAssertionText(answerText));
 }
 
+function fixtureBlockerEvidenceFailures(
+  testCase: GeneralRevitCapabilityCase,
+  attempt: GeneralRevitAttempt
+): string[] {
+  const requirements = testCase.fixture_blocker_assertions?.evidence;
+  if (!requirements) return [];
+  const evidence = attempt.durable_tool_evidence && typeof attempt.durable_tool_evidence === "object"
+    ? attempt.durable_tool_evidence as Record<string, unknown>
+    : {};
+  const successfulPaths = new Set(Array.isArray(evidence.successful_paths)
+    ? evidence.successful_paths.map((value) => String(value))
+    : []);
+  const connectorInventory = evidence.connector_inventory && typeof evidence.connector_inventory === "object"
+    ? evidence.connector_inventory as Record<string, unknown>
+    : {};
+  const failures: string[] = [];
+  for (const path of requirements.required_successful_paths || []) {
+    if (!successfulPaths.has(path)) failures.push(`evidence_missing_successful_path:${path}`);
+  }
+  const uniqueElementIds = Number(connectorInventory.unique_element_ids);
+  if (requirements.minimum_unique_connector_element_ids !== undefined
+    && (!Number.isFinite(uniqueElementIds) || uniqueElementIds < requirements.minimum_unique_connector_element_ids)) {
+    failures.push(`evidence_connector_unique_ids:${Number.isFinite(uniqueElementIds) ? uniqueElementIds : "missing"}<${requirements.minimum_unique_connector_element_ids}`);
+  }
+  const failedRows = Number(connectorInventory.failed_rows);
+  if (requirements.maximum_failed_connector_rows !== undefined
+    && (!Number.isFinite(failedRows) || failedRows > requirements.maximum_failed_connector_rows)) {
+    failures.push(`evidence_connector_failed_rows:${Number.isFinite(failedRows) ? failedRows : "missing"}>${requirements.maximum_failed_connector_rows}`);
+  }
+  const openHvacConnectors = Number(connectorInventory.open_hvac_connectors);
+  if (requirements.required_open_hvac_connector_count !== undefined
+    && (!Number.isFinite(openHvacConnectors) || openHvacConnectors !== requirements.required_open_hvac_connector_count)) {
+    failures.push(`evidence_open_hvac_connectors:${Number.isFinite(openHvacConnectors) ? openHvacConnectors : "missing"}!=${requirements.required_open_hvac_connector_count}`);
+  }
+  return failures;
+}
+
 function verificationChecksPass(value: unknown): boolean {
   const rows = Array.isArray(value) ? value : [value];
   if (rows.length === 0) return false;
@@ -794,7 +837,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
           .map((pattern) => `missing:${pattern}`),
         ...(testCase.fixture_blocker_assertions.must_not_match || [])
           .filter((pattern) => assertionPatternMatches(pattern, answerText))
-          .map((pattern) => `forbidden:${pattern}`)
+          .map((pattern) => `forbidden:${pattern}`),
+        ...fixtureBlockerEvidenceFailures(testCase, attempt)
       ]
     : [];
   const fixtureBlockerAssertionPassed = testCase.fixture_blocker_assertions
