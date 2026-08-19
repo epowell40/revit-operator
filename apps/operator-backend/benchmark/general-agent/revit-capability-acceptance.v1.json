@@ -1091,7 +1091,7 @@
       "source": "redline_corpus",
       "operation_family": "delete",
       "prompt": "Delete the duplicate device and clean up whatever it is connected to.",
-      "probe_prompt": "Find a genuinely duplicated device candidate, trace what it is connected to, and preview the complete deletion/disconnection impact. Do not delete anything.",
+      "probe_prompt": "Find the strongest plausible duplicate-device candidate, compare it with nearby repeated arrangements, trace its room context and complete connected system, and preview the complete rollback deletion/disconnection impact for one member. State whether the model evidence proves a genuine duplicate; do not delete anything.",
       "capability_paths": ["/revit/find-elements", "/revit/trace-connected-network", "/revit/delete"],
       "dispatch_any_of": ["/revit/find-elements", "/revit/trace-connected-network", "/revit/delete"],
       "expected_effect": "apply",
@@ -1104,7 +1104,7 @@
           "duct\\s*1460049",
           "Mechanical Supply Air\\s*34",
           "(?:network|system)[^\\n.]{0,80}54\\s+elements|54\\s+(?:network|system)\\s+elements",
-          "(?:rollback|dry[- ]run)[\\s\\S]{0,160}(?:delet|remov)[\\s\\S]{0,80}1460067",
+          "(?:rollback|dry[- ]run)[\\s\\S]{0,160}(?:delet|remov)[\\s\\S]{0,80}146006[67]",
           "53[^\\n.]{0,80}(?:remain|connected)|(?:remain|connected)[^\\n.]{0,80}53",
           "Nothing was (?:changed|deleted|applied)|No model changes"
         ]

@@ -299,6 +299,11 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /overlapping bounding-box footprints or insertion-point\/center separation relative to element size/);
   assert.match(instructions, /Compare host, level, facing\/hand orientation, parameters, and connector\/network relationships/);
   assert.match(instructions, /opposite-facing peers on different connector ports may be intentional/);
+  assert.match(instructions, /Immediate `\/revit\/get-connectors` references establish only one-hop edges/);
+  assert.match(instructions, /trace the highest-ranked pair's connected system with `\/revit\/trace-connected-network`/);
+  assert.match(instructions, /resolve room or space context with a bounded element, placement, or room read/);
+  assert.match(instructions, /label the highest-ranked defensible pair as plausible rather than certain/);
+  assert.match(instructions, /predicted post-delete network count/);
   assert.match(instructions, /rollback\/dry-run delete/);
 });
 
