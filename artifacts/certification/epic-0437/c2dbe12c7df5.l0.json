@@ -448,7 +448,7 @@
     },
     {
       "path": "apps/operator-backend/src/aec_task_intent_http.ts",
-      "sha256": "sha256:77e414cf2265aa27b45a4b59ea01ed84dfab20b8d84195a7e2a3c79b1b14ac8e"
+      "sha256": "sha256:9c9d0d30606e95312a32cbf71d2dbe8d8e05d1531956513e25a618cbfc3897d1"
     },
     {
       "path": "apps/operator-backend/src/aec_task_intent_interpreter.ts",
@@ -1813,7 +1813,7 @@
     },
     {
       "path": "apps/operator-backend/test/aec_task_intent.test.ts",
-      "sha256": "sha256:a3940f8df1988681c46582ebe09ead3f075b704afc5d7d5fb26daf73f1b04429"
+      "sha256": "sha256:0c3c7550b3268e2883009fc837e14a4d29a1f4b0b1f6342741e8b0938024cba4"
     },
     {
       "path": "apps/operator-backend/test/agent_response_policy.test.ts",
@@ -4665,7 +4665,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:1c9cd26dd1810f896155c429d3e12139edfb73437b99e377f796dcc605bd918f",
+  "inputs_hash": "sha256:ea91a0f13e891e7cbe5898b6a5fc15218287fa223f032cd88fad6b07c89a242a",
   "result": {
     "passed": true,
     "checks": [

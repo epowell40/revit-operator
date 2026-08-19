@@ -130,6 +130,44 @@ test("read-only semantic HTTP adapter returns only validated intent and registry
   assert.deepEqual(await resolveAecTaskIntentHttp({}, interpreter), { status: 400, body: { ok: false, error: "user_text is required" } });
 });
 
+test("semantic HTTP adapter skips its provider for ordinary Revit tasks that cannot select a registered semantic workflow", async () => {
+  let calls = 0;
+  const interpreter: AecTaskIntentInterpreter = { async interpret() { calls++; return rawIntent("unused"); } };
+  for (const userText of [
+    "Count the air devices in the open model and break them down by type.",
+    "Preview changing element 1460066 Mark from 226 to OPERATOR-BG-LATENCY-20260819.",
+    "Rename all HRUs to ERUs while preserving each numeric suffix.",
+    "Make a new view template and apply it to L2.",
+    "Generate a PDF of the mechanical sheets."
+  ]) {
+    assert.deepEqual(await resolveAecTaskIntentHttp({ user_text: userText }, interpreter), {
+      status: 200,
+      body: { ok: true, handled: false, workflow_id: null, intent_token: null, intent: null }
+    });
+  }
+  assert.equal(calls, 0);
+});
+
+test("semantic HTTP adapter preserves varied receptacle-layout language and contextual follow-ups", async () => {
+  let calls = 0;
+  const interpreter: AecTaskIntentInterpreter = {
+    async interpret(input) {
+      calls++;
+      return rawIntent(input.user_text);
+    }
+  };
+  for (const userText of prompts) {
+    const result = await resolveAecTaskIntentHttp({ user_text: userText }, interpreter);
+    assert.equal(result.body.workflow_id, "electrical.receptacle_layout_from_analog", userText);
+  }
+  const followUp = await resolveAecTaskIntentHttp({
+    user_text: "Do the same thing in Room 409.",
+    conversation: [{ role: "user", text: prompts[0] }]
+  }, interpreter);
+  assert.equal(followUp.body.workflow_id, "electrical.receptacle_layout_from_analog");
+  assert.equal(calls, prompts.length + 1);
+});
+
 test("semantic HTTP adapter resolves named-object topology without a provider or intent token", async () => {
   let calls = 0;
   const prompt = "What are the shock arrestors connected to? Summarize the pipe system and flag any that aren't connected. Don't change anything.";
