@@ -1484,6 +1484,8 @@ test("a blocked heading or missing qualifying target cannot be server-signed as 
   withWorkspace(() => {
     for (const [sessionId, assistantText] of [
       ["session-blocked-heading", "## Blocked — no qualifying row\nThe schedule has no writable airflow row."],
+      ["session-blocker-heading", "**Blocker:** No defensible genuine duplicate was proven after rollback preview and readback."],
+      ["session-explicit-incomplete", "No defensible candidate was proven, so the assignment remains incomplete rather than falsely identifying one."],
       ["session-missing-target", "The requested schedule was not found in the active Revit model."]
     ]) {
       const goal = setAgentGoal(sessionId, {

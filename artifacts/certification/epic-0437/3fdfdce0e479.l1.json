@@ -1273,7 +1273,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:1f026f2cb124f1f99e87acdb1ab9bcaea7dc796e53221d3b0046545dac33ad70"
+      "sha256": "sha256:5a172f7b785b8aac0ac22afc126181128ac94336639e9a4d0e6fa9f74982549b"
     },
     {
       "path": "apps/operator-backend/src/goals/list_cache.ts",
@@ -2341,7 +2341,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:1042425cf7a574c1954fa4bcdd6e956cf81953ad7a2c7393084e7d964b4de120"
+      "sha256": "sha256:3d8046e95680a26d92a468c77198520861522ac5d693581900d79e0946f43614"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -4681,7 +4681,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:7f505a8755fd112ee260d58d2b28a41185c9e0ee5dff3d7901262f0481ccffc7",
+  "inputs_hash": "sha256:e0aa52064775a1095567cf990067d15019d306610bd598bcd8c3d921212fb6da",
   "result": {
     "passed": true,
     "checks": [
