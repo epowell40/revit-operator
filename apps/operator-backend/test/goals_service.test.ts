@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  __testOnlyResetGoalListCache,
   appendGoalAction,
   appendGoalEvidence,
   appendGoalValidation,
@@ -87,6 +88,48 @@ test("goal creation persists typed core fields", () => {
     assert.equal(goal.status, "active");
     assert.equal(goal.acceptance_criteria.length, 2);
     assert.equal(getActiveGoalForSession("session-a")?.id, goal.id);
+  });
+});
+
+test("repeated goal listings reuse durable records and observe in-process creates and updates", () => {
+  withWorkspace(() => {
+    __testOnlyResetGoalListCache();
+    for (let index = 0; index < 200; index += 1) {
+      createGoal({
+        title: `Cached goal ${index}`,
+        objective: "Exercise durable goal listing.",
+        acceptance_criteria: ["The record remains visible."],
+        status: "active"
+      });
+    }
+    const originalReadFileSync = fs.readFileSync;
+    let goalReads = 0;
+    try {
+      fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+        if (`${args[0]}`.includes(`${path.sep}artifacts${path.sep}goals${path.sep}`)
+          && `${args[0]}`.endsWith(`${path.sep}goal.json`)) goalReads += 1;
+        return originalReadFileSync(...args as [fs.PathOrFileDescriptor, BufferEncoding]);
+      }) as typeof fs.readFileSync;
+      assert.equal(listGoals(200).length, 200);
+      assert.ok(goalReads >= 200);
+      goalReads = 0;
+      for (let index = 0; index < 20; index += 1) assert.equal(listGoals(200).length, 200);
+      assert.equal(goalReads, 0);
+
+      const created = createGoal({
+        title: "New cached goal",
+        objective: "Appear without a historical rescan.",
+        acceptance_criteria: ["The new goal is listed."],
+        status: "active"
+      });
+      const updated = updateGoal(created.id, { progress_summary: "Observed update." });
+      goalReads = 0;
+      assert.equal(listGoals(200).find(goal => goal.id === created.id)?.revision, updated.revision);
+      assert.equal(goalReads, 0);
+    } finally {
+      fs.readFileSync = originalReadFileSync;
+      __testOnlyResetGoalListCache();
+    }
   });
 });
 
