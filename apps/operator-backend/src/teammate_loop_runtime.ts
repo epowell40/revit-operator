@@ -76,6 +76,7 @@ const NAVIGATION_PATHS = new Set(["/revit/activate-view", "/revit/regenerate"]);
 const DISCOVERY_PATHS = new Set(["/revit/ping", "/revit/context", "/revit/write-grant-status", "/revit/tool-registry", "/revit/tool-search", "/revit/tool-doc", "/revit/tool-examples"]);
 const DISCOVERY_TOOLS = new Set([
   "operator_discover_capabilities",
+  "operator_plan_semantic_mep_route",
   "operator_record_execution_strategy",
   "revit_ping",
   "revit_get_context",

@@ -1240,12 +1240,16 @@ test("Codex MCP host guard accepts independently returned target identity during
   }
 });
 
-test("Codex MCP host guard admits host-owned discovery and strategy tools", () => {
+test("Codex MCP host guard admits host-owned discovery, semantic planning, and strategy tools", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Count the air devices in this project by type."));
   try {
-    for (const tool of ["operator_discover_capabilities", "operator_record_execution_strategy"]) {
+    for (const tool of [
+      "operator_discover_capabilities",
+      "operator_plan_semantic_mep_route",
+      "operator_record_execution_strategy"
+    ]) {
       const gate = guardTeammateMcpCall(owner, { tool, arguments: { need: "air device inventory" } });
       assert.equal(gate.allowed, true, `${tool} should be admitted as host-owned discovery`);
       assert.equal(gate.call?.effect, "discovery");

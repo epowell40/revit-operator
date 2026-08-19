@@ -132,6 +132,38 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void Oversized_element_inventory_preserves_complete_identifier_projection()
+        {
+            var elementIds = Enumerable.Range(1_400_000, 509).ToArray();
+            var prepared = OperatorCourierResultCompactor.Prepare(new
+            {
+                status = "Ok",
+                count = elementIds.Length,
+                elementIds,
+                items = elementIds.Select(elementId => new
+                {
+                    elementId,
+                    category = "Air Terminals",
+                    geometry = new string('x', 4_000)
+                }).ToArray(),
+                itemsComplete = true
+            });
+
+            Assert.True(prepared.Compacted);
+            Assert.InRange(prepared.TransportResultBytes, 1, OperatorCourierResultCompactor.MaxTransportResultBytes);
+
+            var preservedIds = prepared.Result.GetProperty("elementIds");
+            Assert.Equal(509, preservedIds.GetArrayLength());
+            Assert.Equal(1_400_000, preservedIds[0].GetInt32());
+            Assert.Equal(1_400_508, preservedIds[508].GetInt32());
+
+            var compactedItems = prepared.Result.GetProperty("items");
+            Assert.Equal(33, compactedItems.GetArrayLength());
+            Assert.Equal(477, compactedItems[32].GetProperty("_operator_omitted_items").GetInt32());
+            Assert.True(prepared.Result.GetProperty("_operator_transport").GetProperty("omitted_array_items").GetInt32() > 0);
+        }
+
+        [Fact]
         public void Signed_laboratory_result_is_never_compacted_away_from_its_native_signature()
         {
             using var document = JsonDocument.Parse(
