@@ -2704,6 +2704,10 @@
       "sha256": "sha256:13eb428ef491ef1ffef856d3de0efeb0d311d05a675cedcfe52152571dea8685"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CategoryVisibilityMutationPolicyTests.cs",
+      "sha256": "sha256:cbe872333ed542671b0d262b9e8dae5496bbaf22c85b2b46ca8db173199bca89"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CircuitMatchPolicyTests.cs",
       "sha256": "sha256:f53cb18fff0be8293b8594d7d3494c23feb019d3492c794f0fe1a0412ba99d4c"
     },
@@ -3050,6 +3054,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/CadLinkPreflightCapability.cs",
       "sha256": "sha256:ab42ba62f8e33eb5594452f199a0bce89dda15e4b7dfa8ec7619aea7769e4103"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/CategoryVisibilityMutationPolicy.cs",
+      "sha256": "sha256:ec8a6807fb4ec8a164799da3904d72a519f326d4e8aced48a524ab43371c3add"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/Electrical/CircuitMatchPolicy.cs",
@@ -4058,7 +4066,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/ViewVisibilityHandler.cs",
-      "sha256": "sha256:d3876aa990e5fa43cba978263fe87079c010858abad353cff27db234543ca9ef"
+      "sha256": "sha256:07d1a46d2a6a474800710ea209562f4b062354e3c931e4eba9303aaa3070ff53"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/LogicService.cs",
@@ -4542,7 +4550,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ViewVisibilityHandler.cs",
-      "sha256": "sha256:87e2f03633124382101d3e700c9c455e79f064650dc4c53b12d5d922fc7488a7"
+      "sha256": "sha256:35051b2271be26806f17f9b007a3d405271c385b7073c10d389e11db49601980"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/WorksetsHandler.cs",
@@ -4689,7 +4697,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:ea0af7350b04668e455fdcecdcbfc8d7b338528f19bf8385d74751c44a951202",
+  "inputs_hash": "sha256:e3567202059c538c3a3af93028ffeb8e40f9c6dfd7cdc2132766a09ae78d6937",
   "result": {
     "passed": true,
     "checks": [
