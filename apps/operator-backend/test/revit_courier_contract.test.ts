@@ -10,6 +10,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../src/courier/revit_courier_context.js";
 import {
   REVIT_COURIER_JOB_VERSION,
+  __testOnlyResetRevitCourierJobIndexCache,
   authorizeRevitToolJobExecution,
   claimNextRevitToolJob,
   completeRevitToolJob,
@@ -86,6 +87,36 @@ test("context-free courier claims skip document-bound work while Revit is on Hom
     context_free_only: true
   }).job, null);
   assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, documentBoundId);
+});
+
+test("empty courier polling scans terminal history once and discovers only new active jobs", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-courier-active-index-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetRevitCourierJobIndexCache();
+  for (let index = 0; index < 200; index += 1) writeJob(root, { status: "succeeded" });
+  const originalReadFileSync = fs.readFileSync;
+  let jobReads = 0;
+  try {
+    fs.readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+      if (`${args[0]}`.startsWith(root) && `${args[0]}`.endsWith(`${path.sep}job.json`)) jobReads += 1;
+      return originalReadFileSync(...args as [fs.PathOrFileDescriptor, BufferEncoding]);
+    }) as typeof fs.readFileSync;
+    assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+    assert.ok(jobReads >= 200);
+    jobReads = 0;
+    for (let index = 0; index < 20; index += 1) {
+      assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job, null);
+    }
+    assert.equal(jobReads, 0);
+
+    const pendingId = writeJob(root);
+    assert.equal(claimNextRevitToolJob({ session_id: "session-a", executor_id: "worker-1" }).job?.id, pendingId);
+    assert.ok(jobReads <= 3, `expected only the new active job to be read, observed ${jobReads}`);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    __testOnlyResetRevitCourierJobIndexCache();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("hosted General Agent v1 jobs require and preserve an exact route-bound admission", () => {

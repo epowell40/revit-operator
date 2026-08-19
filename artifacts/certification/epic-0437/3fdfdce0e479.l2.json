@@ -824,6 +824,10 @@
       "sha256": "sha256:a8c1a7342fe9428375685c99c1f1ad0f6add3f69dd21b2fb7e36f66b8cf46dcd"
     },
     {
+      "path": "apps/operator-backend/src/courier/active_job_index.ts",
+      "sha256": "sha256:5c2b8cd6a643bab803af4b1ca0a8928fd3e3f7a053d6df5b24dd390a74386bde"
+    },
+    {
       "path": "apps/operator-backend/src/courier/laboratory_evidence.ts",
       "sha256": "sha256:6be0919e297762b0a7b15f4b5ef23d62e4ea15aa7b7c221d992d36673aa1d4c1"
     },
@@ -845,7 +849,7 @@
     },
     {
       "path": "apps/operator-backend/src/courier/revit_tool_jobs.ts",
-      "sha256": "sha256:543ea6ad3229f5bc9ab27a46fb7f1b6b39336edd3d3a76b8c64172b2594886df"
+      "sha256": "sha256:f0539d10dbed88642272474b6cdc6790cee6bae34542d0b3546c670dc83f2b07"
     },
     {
       "path": "apps/operator-backend/src/courier/revit_tool_settlement_receipt.ts",
@@ -2509,7 +2513,7 @@
     },
     {
       "path": "apps/operator-backend/test/revit_courier_contract.test.ts",
-      "sha256": "sha256:ad0856a09a0bd84197f812c7dab947f1422fe6cc5c2cd980a57724106b73f9e0"
+      "sha256": "sha256:5fed68c2c01a18aa1ccc797d03804900c8bf1a4a99eb3a035c7a25d6832c5062"
     },
     {
       "path": "apps/operator-backend/test/revit_discovery.test.ts",
@@ -4673,7 +4677,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:7c13b403ae949bd134f765c4c19ba7604fc7780d7e1de03b1f043db835a2a5c4",
+  "inputs_hash": "sha256:475037622878dec7661aee7202eb7b2100a46c0633103c011dbb6a3b7308a722",
   "result": {
     "passed": true,
     "checks": [
