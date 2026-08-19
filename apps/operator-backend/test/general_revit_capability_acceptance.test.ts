@@ -471,9 +471,10 @@ Without an open terminal connector, no compatible route can be previewed. Nothin
 
 test("the live runner reuses orchestrator-established fixture health between cases", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  const durableEvidence = source("operator-backend/src/benchmark/durable_tool_evidence.ts");
   assert.match(runner, /readExactFixtureHealth\(baseUrl, preferredDocumentTitle, true\)/);
   assert.match(runner, /preferCached \? "\/api\/revit\/health\?prefer_cached=1" : "\/api\/revit\/health"/);
-  assert.match(runner, /revit-operator\.benchmark-durable-tool-evidence\/v1/);
+  assert.match(durableEvidence, /revit-operator\.benchmark-durable-tool-evidence\/v1/);
   assert.match(runner, /durable_tool_evidence: durableToolEvidence/);
 });
 

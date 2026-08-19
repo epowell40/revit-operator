@@ -1,0 +1,144 @@
+import crypto from "node:crypto";
+
+type JsonRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+async function requestGoal(baseUrl: string, goalId: string): Promise<JsonRecord> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new Error(`Goal evidence fetch exceeded 30000ms.`)), 30_000);
+  try {
+    const pathname = `/api/goals/${encodeURIComponent(goalId)}`;
+    const origin = new URL(baseUrl).origin;
+    const response = await fetch(new URL(pathname, `${baseUrl}/`), {
+      headers: { "content-type": "application/json", origin },
+      signal: controller.signal
+    });
+    const text = await response.text();
+    let body: unknown = {};
+    try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
+    if (!response.ok) throw new Error(`GET ${pathname} returned ${response.status}: ${text.slice(0, 1000)}`);
+    return asRecord(body);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function loadDurableToolEvidence(
+  baseUrl: string,
+  assignmentProjection: JsonRecord,
+  executedPrompt: string
+): Promise<JsonRecord> {
+  const assignments = Array.isArray(assignmentProjection.assignments)
+    ? assignmentProjection.assignments.map(asRecord)
+    : [];
+  const goalIds = [...new Set(assignments
+    .filter((assignment) => assignment.source_kind === "goal")
+    .filter((assignment) => [assignment.source_user_request, assignment.objective]
+      .some((value) => String(value || "").trim() === executedPrompt.trim()))
+    .map((assignment) => String(assignment.source_record_id || "").trim())
+    .filter(Boolean))];
+  const successfulPaths = new Set<string>();
+  const failedPaths = new Set<string>();
+  const connectorRows = new Map<string, JsonRecord>();
+  const resultReceipts: JsonRecord[] = [];
+  let maximumFindElementIds = 0;
+  let maximumFindCount = 0;
+  let observedUntruncatedFind = false;
+
+  for (const goalId of goalIds) {
+    let response: JsonRecord;
+    try {
+      response = await requestGoal(baseUrl, goalId);
+    } catch (error) {
+      resultReceipts.push({ goal_id: goalId, status: "fetch_failed", error: String(error) });
+      continue;
+    }
+    const goal = asRecord(response.goal);
+    const actions = Array.isArray(goal.action_log) ? goal.action_log.map(asRecord) : [];
+    for (const action of actions) {
+      const details = asRecord(action.details);
+      const tool = asRecord(details.tool);
+      const argumentsRecord = asRecord(tool.arguments);
+      const path = String(argumentsRecord.path || "").trim();
+      const status = String(tool.status || "").trim().toLowerCase();
+      if (path && status === "completed") successfulPaths.add(path);
+      if (path && status === "failed") failedPaths.add(path);
+      const contents = Array.isArray(tool.result) ? tool.result.map(asRecord) : [];
+      const resultText = contents.map((content) => String(content.text || "")).find(Boolean) || "";
+      if (!resultText || !path) continue;
+      let parsed: JsonRecord = {};
+      try { parsed = asRecord(JSON.parse(resultText)); } catch { /* receipt still records the bounded digest */ }
+      const elementIds = Array.isArray(parsed.elementIds) ? parsed.elementIds : [];
+      if (path === "/revit/find-elements") {
+        maximumFindElementIds = Math.max(maximumFindElementIds, elementIds.length);
+        maximumFindCount = Math.max(maximumFindCount, numberValue(parsed.count));
+        if (parsed.truncated === false) observedUntruncatedFind = true;
+      }
+      const results = Array.isArray(parsed.results) ? parsed.results.map(asRecord) : [];
+      if (path === "/revit/get-connectors") {
+        for (const row of results) {
+          const elementId = String(row.id ?? "").trim();
+          if (elementId) connectorRows.set(elementId, row);
+        }
+      }
+      resultReceipts.push({
+        goal_id: goalId,
+        action_id: String(action.id || "") || null,
+        tool: String(tool.tool || "") || null,
+        path,
+        status,
+        duration_ms: numberValue(tool.duration_ms),
+        result_text_bytes: Buffer.byteLength(resultText, "utf8"),
+        result_sha256: sha256(resultText),
+        parsed_count: numberValue(parsed.count),
+        parsed_element_id_count: elementIds.length,
+        parsed_result_count: results.length,
+        parsed_truncated: typeof parsed.truncated === "boolean" ? parsed.truncated : null
+      });
+    }
+  }
+
+  let failedConnectorRows = 0;
+  let totalHvacConnectors = 0;
+  let openHvacConnectors = 0;
+  let physicallyConnectedHvacConnectors = 0;
+  for (const row of connectorRows.values()) {
+    if (row.ok !== true) failedConnectorRows += 1;
+    for (const connector of Array.isArray(row.connectors) ? row.connectors.map(asRecord) : []) {
+      if (String(connector.domain || "") !== "DomainHvac") continue;
+      totalHvacConnectors += 1;
+      if (connector.isPhysicallyConnected === true) physicallyConnectedHvacConnectors += 1;
+      else openHvacConnectors += 1;
+    }
+  }
+  return {
+    schema: "revit-operator.benchmark-durable-tool-evidence/v1",
+    source_goal_ids: goalIds,
+    successful_paths: [...successfulPaths].sort(),
+    failed_paths: [...failedPaths].sort(),
+    element_inventory: {
+      maximum_element_id_count: maximumFindElementIds,
+      maximum_reported_count: maximumFindCount,
+      observed_untruncated_result: observedUntruncatedFind
+    },
+    connector_inventory: {
+      unique_element_ids: connectorRows.size,
+      failed_rows: failedConnectorRows,
+      total_hvac_connectors: totalHvacConnectors,
+      physically_connected_hvac_connectors: physicallyConnectedHvacConnectors,
+      open_hvac_connectors: openHvacConnectors
+    },
+    result_receipts: resultReceipts
+  };
+}
