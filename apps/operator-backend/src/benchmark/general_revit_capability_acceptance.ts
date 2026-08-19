@@ -815,7 +815,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ? directPreviewDispatched || teammatePreviewDispatched || durableEffectCompleted
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
-  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked
+  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked && !missingTargetClarification
     && (dispatched || durable.completed);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);

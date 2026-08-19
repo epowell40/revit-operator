@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
+import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
@@ -57,6 +58,7 @@ type TeammateLoopState = {
   tool_doc_calls: number;
   documented_tool_routes: Map<string, DocumentedToolRoute>;
   blocked_reason: string | null;
+  active_host_version_year: string;
 };
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
@@ -652,7 +654,8 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     verification_evidence_sha256: null,
     tool_doc_calls: 0,
     documented_tool_routes: new Map(),
-    blocked_reason: null
+    blocked_reason: null,
+    active_host_version_year: activeHostVersionYear(req.context)
   };
   statesByTurn.set(key, state);
   return state;
@@ -682,6 +685,9 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   // and model writes remain fail-closed until a document identity is live.
   if (call.effect !== "discovery" && contract.context_state !== "live" && !isContextFreeDocumentBootstrapCall(call)) {
     return "live_revit_context_required";
+  }
+  if (isContextFreeDocumentBootstrapCall(call) && openModelActiveHostMismatch(state.active_host_version_year, call.target_tokens)) {
+    return "open_model_sample_year_mismatch";
   }
   if (call.effect === "apply") {
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
@@ -871,31 +877,6 @@ function markVerified(
   state.contract.stage = "report";
 }
 
-function knownNoEffectFailure(evidence: unknown): boolean {
-  const root = objectValue(evidence);
-  if (root.request_dispatched === false && root.outcome_unknown !== true) return true;
-  const texts: string[] = [];
-  let structuredNoDispatch = false;
-  const visit = (value: unknown, depth = 0): void => {
-    if (depth > 8 || texts.length >= 128 || value === null || value === undefined) return;
-    if (Array.isArray(value)) { for (const item of value) visit(item, depth + 1); return; }
-    if (typeof value === "object") {
-      const row = value as Record<string, unknown>;
-      if (row.request_dispatched === false && row.outcome_unknown !== true) structuredNoDispatch = true;
-      for (const item of Object.values(row)) visit(item, depth + 1);
-      return;
-    }
-    if (typeof value !== "string") return;
-    texts.push(value);
-    const trimmed = value.trim();
-    if (/^[\[{]/.test(trimmed)) {
-      try { visit(JSON.parse(trimmed), depth + 1); } catch {}
-    }
-  };
-  visit(evidence);
-  return structuredNoDispatch || texts.some(value => /\bbulk_confirm_required\b|bulk (?:query-based |panel-|type )?parameter (?:edit|update) requires typed confirmation/i.test(value));
-}
-
 function clearKnownNoEffectApply(state: TeammateLoopState): void {
   state.stage_apply_attempts = Math.max(0, state.stage_apply_attempts - 1);
   state.apply_action_id = null;
@@ -921,7 +902,10 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
     if (!succeeded) {
-      if (knownNoEffectFailure(evidence)) clearKnownNoEffectApply(state);
+      if (evidenceIsKnownNoEffectFailure(evidence, {
+        firstDocumentOpen: isContextFreeDocumentBootstrapCall(pending),
+        contextIsLive: state.contract.context_state === "live"
+      })) clearKnownNoEffectApply(state);
       else {
         state.blocked_reason = "apply_failed_or_outcome_unknown_no_retry";
         state.contract.stage = "blocked";

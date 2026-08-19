@@ -24,6 +24,7 @@ import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
+import { projectContextForSpeedDiet, REVIT_MODEL_OPEN_PATH_RULE } from "../revit_host_model_inventory.js";
 import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../memory/requirements_response_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
@@ -18096,6 +18097,7 @@ function defaultSystemPrompt(): string {
     "- Revit drafting text standard: default all user-visible text authored or changed in Revit to ALL CAPS unless the user explicitly asks to preserve mixed/lower case. This includes sheet names, titleblock values, text notes, annotation labels, and schedule/header text.",
     "- Sheet-name verification/update workflow: when the user names a sheet number and asks to verify or change its Sheet Name/Name parameter, resolve the sheet with POST /revit/sheets action:\"detail\", compare the current name, update the ViewSheet element with POST /revit/set-parameter using parameterName:\"Sheet Name\" (or \"Name\" if discovered), then read the sheet again and report the observed final sheet number/name.",
     "- Revit version-pinned launch rule: if the user explicitly asks for a Revit year (for example Revit 2024), do not open an RVT by file association or generic Revit discovery first. The host must launch that exact Revit executable/session, verify it is the target, then open the model through that session; if the requested year is unavailable, report that blocker instead of falling back to another Revit version.",
+    REVIT_MODEL_OPEN_PATH_RULE,
     "- If you need to locate visible annotation text by phrase in the active project or sheet, call /revit/find-text-notes before falling back to broader element scans or asking the user for ids.",
     "- Revit dialog computer-use rule: when a tool loop is blocked by a modal warning/error dialog, or /revit/state-snapshot reports dialog_state.blocked_by_modal=true, use /revit/computer-use-observe before guessing.",
     "- Revit dialog computer-use rule: for a known blocking Revit-owned dialog, use /revit/computer-use-act with the fewest steps possible (prefer button/default selectors, not retries by brute force), then re-observe or verify the intended tool outcome. The default interactionMode=message_then_mouse tries the non-mouse button message first, then uses a physical cursor click only if the same dialog remains visible; it keeps the cursor at the clicked location so follow-up screenshots/actions preserve pointer continuity. Set interactionMode=message when mouse movement is unacceptable, and use cursorRestoreMode=restore only after the click is verified or when no follow-up mouse precision is needed.",
@@ -19279,37 +19281,6 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
   if (userText) lines.push(`USER: ${userText}`);
 
   return lines.join("\n");
-}
-
-function projectContextForSpeedDiet(context: unknown): unknown {
-  const ctx = context && typeof context === "object" ? (context as any) : {};
-  const revit = ctx.revit && typeof ctx.revit === "object" ? ctx.revit : {};
-  const document = revit.document && typeof revit.document === "object" ? revit.document : {};
-  const activeView = revit.active_view && typeof revit.active_view === "object" ? revit.active_view : {};
-  const tools = Array.isArray(ctx.capabilities?.tools) ? ctx.capabilities.tools : [];
-  return {
-    ui: ctx.ui ?? null,
-    revit: {
-      document: {
-        title: document.title ?? document.name ?? null,
-        path: document.path ?? document.file_path ?? null,
-        is_workshared: document.is_workshared ?? null
-      },
-      active_view: {
-        id: activeView.id ?? activeView.element_id ?? null,
-        name: activeView.name ?? null,
-        type: activeView.type ?? activeView.view_type ?? null,
-        scale: activeView.scale ?? null
-      }
-    },
-    capabilities: ctx.capabilities
-      ? {
-          contract_version: ctx.capabilities.contract_version ?? ctx.capabilities.version ?? null,
-          tool_count: tools.length,
-          allowlist: ctx.capabilities.allowlist ?? null
-        }
-      : null
-  };
 }
 
 function projectToolResultsForPrompt(toolResults: ToolResult[]): unknown {

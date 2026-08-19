@@ -140,7 +140,7 @@ namespace RevitBridge.Common
 
     public sealed class OperatorNativeToolExposureEmbeddedAuthority : IOperatorNativeToolExposureAuthority
     {
-        public const string CompiledPolicyHash = "sha256:140d4075103914f0a4f408f4d3648324c5fb55e3234675662539e5de6a00cb90";
+        public const string CompiledPolicyHash = "sha256:0e07fe1abb864da54727e5ed99e54656270d48a8759b4634dafd7d4f43a64934";
         public const string ResourceName = "RevitBridge.Common.tool_exposure_policy.v1.json";
 
         private static readonly Regex Sha256 = new Regex("^sha256:[0-9a-f]{64}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
