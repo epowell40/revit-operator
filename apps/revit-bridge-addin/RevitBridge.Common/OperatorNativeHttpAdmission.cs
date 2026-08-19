@@ -310,7 +310,10 @@ namespace RevitBridge.Common
         public const string Version = "revit-operator.revit-direct-final-authorization.v1";
         public const string FamilyVersion = "revit-operator.revit-direct-final-authorization.v2";
         public const string Phase = "certification_native_direct_admission";
-        public const int ValidForMilliseconds = 5000;
+        // Exact request binding plus one-use consumption prevents replay. The
+        // local window must also survive healthy background/minimized Revit
+        // ExternalEvent scheduling, which can exceed five seconds.
+        public const int ValidForMilliseconds = 30000;
         private int _consumed;
 
         internal OperatorNativeHttpAuthorizationReceipt(

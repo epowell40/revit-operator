@@ -415,10 +415,67 @@ No preview was executed. Nothing was created.`
   assert.equal(capturedLiveWording.fixture_blocker_accepted, true);
 });
 
+test("the duct-route blocker requires 509-element connector evidence instead of trusting prose alone", () => {
+  const safeCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "r10_duct_route")!,
+    false
+  );
+  const inspected = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: `### Blocked by live model state
+
+I inspected all 509 air terminals. Connector readback found zero unconnected HVAC terminals.
+Without an open terminal connector, no compatible route can be previewed. Nothing was created or modified.`
+  };
+  const truthful = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      schema: "revit-operator.benchmark-durable-tool-evidence/v1",
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 509,
+        failed_rows: 0,
+        open_hvac_connectors: 0
+      }
+    }
+  });
+  assert.equal(truthful.tier, "accepted");
+  assert.equal(truthful.fixture_blocker_assertion_passed, true);
+  assert.equal(truthful.fixture_blocker_accepted, true);
+  assert.equal(truthful.completed, false);
+
+  const proseOnly = evaluateGeneralRevitCapabilityAttempt(safeCase, inspected);
+  assert.equal(proseOnly.tier, "failed");
+  assert.equal(proseOnly.fixture_blocker_accepted, false);
+  assert.ok(proseOnly.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_")));
+
+  const contradicted = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 509,
+        failed_rows: 0,
+        open_hvac_connectors: 1
+      }
+    }
+  });
+  assert.equal(contradicted.tier, "failed");
+  assert.ok(contradicted.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_open_hvac_connectors:")));
+});
+
 test("the live runner reuses orchestrator-established fixture health between cases", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
+  const durableEvidence = source("operator-backend/src/benchmark/durable_tool_evidence.ts");
   assert.match(runner, /readExactFixtureHealth\(baseUrl, preferredDocumentTitle, true\)/);
   assert.match(runner, /preferCached \? "\/api\/revit\/health\?prefer_cached=1" : "\/api\/revit\/health"/);
+  assert.match(durableEvidence, /revit-operator\.benchmark-durable-tool-evidence\/v1/);
+  assert.match(runner, /durable_tool_evidence: durableToolEvidence/);
 });
 
 test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {

@@ -324,7 +324,7 @@ test("direct authorization derives every generic-call binding from one exact exp
   const authorization = authorizeDirectRevitExecution(directRequest({ body_json: bodyJson }), certifiedEnv(policy), new Date("2026-07-29T12:00:00.000Z"));
 
   assert.equal(authorization.phase, "certification_native_direct_admission");
-  assert.equal(authorization.valid_for_ms, 5_000);
+  assert.equal(authorization.valid_for_ms, 30_000);
   assert.equal(authorization.request_id, REQUEST_ID);
   assert.equal(authorization.method, "POST");
   assert.equal(authorization.path, "/revit/ping");
@@ -730,7 +730,7 @@ test("authenticated HTTP endpoint returns exact structured deny and allow receip
   assert.equal(receipt.authorization.channel, "generic_call");
   assert.equal(receipt.authorization.alias, "revit_call_tool");
   assert.equal(receipt.authorization.request_id, REQUEST_ID);
-  assert.equal(receipt.authorization.valid_for_ms, 5_000);
+  assert.equal(receipt.authorization.valid_for_ms, 30_000);
   assert.equal(receipt.authorization.source_body_sha256, rawSha256("{}"));
   assert.equal(receipt.authorization.canonical_body_json, "{}");
   assert.equal(receipt.authorization.body_sha256, rawSha256("{}"));

@@ -286,7 +286,7 @@ namespace RevitBridge.Common.Tests
             RejectProtocol(() => VerifyResponse(request, With(baseline, "canonical_body_json", "{\"changed\":true}")));
             RejectProtocol(() => VerifyResponse(request, With(baseline, "channel", "typed_mcp")));
             RejectProtocol(() => VerifyResponse(request, With(baseline, "exposure_profile", "laboratory")));
-            RejectProtocol(() => VerifyResponse(request, With(baseline, "valid_for_ms", 6000)));
+            RejectProtocol(() => VerifyResponse(request, With(baseline, "valid_for_ms", 31000)));
             RejectProtocol(() => VerifyResponse(request, With(baseline, "authorization_hash", "sha256:" + new string('0', 64)), rehash: false));
             RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"a\":1,\"a\":2}")));
             RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"value\":\"é\"}")));
@@ -301,7 +301,7 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("{\"value\":1.5}", Verify(fractionalRequest, "{\"value\":1.5}").CanonicalBodyJson);
 
             var slowHosted = VerifyResponse(request, baseline, roundTrip: TimeSpan.FromMilliseconds(9000));
-            Assert.True(slowHosted.ExpiresAtUtc > DateTimeOffset.UtcNow.AddSeconds(4));
+            Assert.True(slowHosted.ExpiresAtUtc > DateTimeOffset.UtcNow.AddSeconds(29));
             var expired = Assert.Throws<OperatorNativeHttpAdmissionException>(() =>
                 OperatorNativeHttpDispatchFence.RequireFreshOneUse(
                     slowHosted, request, slowHosted.ExpiresAtUtc.AddMilliseconds(1)));
@@ -463,7 +463,7 @@ namespace RevitBridge.Common.Tests
                 ["version"] = OperatorNativeHttpAuthorizationReceipt.Version,
                 ["phase"] = OperatorNativeHttpAuthorizationReceipt.Phase,
                 ["authorized_at"] = "2026-07-29T12:00:00.000Z",
-                ["valid_for_ms"] = 5000,
+                ["valid_for_ms"] = 30000,
                 ["request_id"] = request.RequestId,
                 ["method"] = request.Method,
                 ["path"] = request.Path,

@@ -19,6 +19,7 @@ import {
   loadGeneralRevitSampleFixtures
 } from "../benchmark/general_revit_sample_fixtures.js";
 import { settleTimedOutComputerRun } from "../benchmark/computer_run_settlement.js";
+import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
   revitHealthDocumentTitle,
   waitForExactRevitFixtureHealth,
@@ -820,7 +821,13 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       : Promise.resolve({ ok: false, error: "Computer run did not expose a backend session id." }))
       .catch((error) => ({ ok: false, error: String(error) }))
   ]);
-  const evaluatedAttempt = { ...attempt, assignment_projection: assignmentProjection };
+  const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
+  const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt);
+  const evaluatedAttempt = {
+    ...attempt,
+    assignment_projection: assignmentProjection,
+    durable_tool_evidence: durableToolEvidence
+  };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);
   const toolCalls = extractToolCalls(attempt);
   const finishedAt = nowIso();
@@ -856,8 +863,9 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       outcome_unknown: attempt.outcome_unknown === true,
       reconciliation_required: attempt.reconciliation_required === true,
       durable_assignment_projection: assignmentProjection,
-      raw_sidecar_response_sha256: sha256(attempt),
-      raw_sidecar_response: attempt
+      durable_tool_evidence: durableToolEvidence,
+      raw_sidecar_response_sha256: sha256(evaluatedAttempt),
+      raw_sidecar_response: evaluatedAttempt
     },
     model_state_changes: {
       apply_dispatched: evaluation.apply_dispatched,
