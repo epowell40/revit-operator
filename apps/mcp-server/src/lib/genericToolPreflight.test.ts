@@ -66,3 +66,38 @@ test("valid bodies, GET tools, and contracts without unconditional requirements 
     method: "POST", path: "/revit/custom", required_fields: []
   }, undefined), null);
 });
+
+test("known generic tools enforce published enum, range, and nested collection constraints before dispatch", () => {
+  const contract = {
+    method: "POST",
+    path: "/revit/quantify",
+    required_fields: ["intent", "categories"],
+    request_schema: {
+      type: "object",
+      properties: {
+        intent: { type: "string", enum: ["count", "list", "count_and_list"] },
+        scope: { type: "string", enum: ["host", "links", "both"] },
+        categories: { type: "array", minItems: 1, maxItems: 10, items: { type: "string" } },
+        maxRows: { type: "integer", minimum: 1, maximum: 500 }
+      }
+    }
+  };
+  const failure = preflightKnownGenericToolBody(contract, {
+    intent: "count",
+    scope: "project",
+    categories: ["OST_DuctTerminal"],
+    maxRows: 1000
+  });
+  assert.equal(failure?.code, "mcp_request_validation_failed");
+  assert.equal(failure?.request_dispatched, false);
+  assert.deepEqual(failure?.invalid_fields, ["body.scope", "body.maxRows"]);
+  assert.match(failure?.error || "", /body\.scope must be one of "host", "links", "both"/);
+  assert.match(failure?.error || "", /body\.maxRows must be at most 500/);
+
+  assert.equal(preflightKnownGenericToolBody(contract, {
+    intent: "count_and_list",
+    scope: "host",
+    categories: ["OST_DuctTerminal"],
+    maxRows: 500
+  }), null);
+});

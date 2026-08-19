@@ -520,6 +520,45 @@ namespace RevitBridge.Operator
                         required: new[] { "method", "path" });
                 }
 
+                // Quantify has a small, stable semantic contract whose bounded
+                // enum/collection truth cannot be recovered from CLR reflection.
+                // Advertise the same constraints enforced by the native validator
+                // so generic callers can fail before any Revit dispatch.
+                if (string.Equals(p, "/revit/quantify", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parameterFilter = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "param", Str() },
+                            { "value", Str() },
+                            { "op", Str() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                    var filters = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "level", Str() },
+                            { "keywords_include", Arr(Str(), maxItems: 20) },
+                            { "keywords_exclude", Arr(Str(), maxItems: 20) },
+                            { "parameters", Arr(parameterFilter, maxItems: 20) }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "intent", Str(new[] { "count", "list", "count_and_list" }) },
+                            { "scope", Str(new[] { "host", "links", "both" }) },
+                            { "categories", Arr(Str(), minItems: 1, maxItems: 10) },
+                            { "filters", filters },
+                            { "group_by", Arr(Str(), maxItems: 3) },
+                            { "room_resolution", Bool() }
+                        },
+                        required: new[] { "intent", "categories" },
+                        additionalProps: false);
+                }
+
                 if (string.Equals(p, "/revit/native-api-policy", StringComparison.OrdinalIgnoreCase))
                 {
                     return Obj(
@@ -840,16 +879,16 @@ namespace RevitBridge.Operator
                         props: new Dictionary<string, object>
                         {
                             { "action", Str(new[] { "list", "detail" }) },
-                            { "scheduleId", Int() },
+                            { "scheduleId", Int(1) },
                             { "query", Str() },
                             { "exact", Bool() },
-                            { "max", Int() },
+                            { "max", Int(1, 2000) },
                             { "includeFields", Bool() },
                             { "includeData", Bool() },
-                            { "rowOffset", Int() },
-                            { "columnOffset", Int() },
-                            { "maxRows", Int() },
-                            { "maxColumns", Int() }
+                            { "rowOffset", Int(0, 1000000) },
+                            { "columnOffset", Int(0, 1000000) },
+                            { "maxRows", Int(1, 500) },
+                            { "maxColumns", Int(1, 100) }
                         },
                         required: Array.Empty<string>(),
                         additionalProps: false);
@@ -1747,8 +1786,13 @@ namespace RevitBridge.Operator
                     { "required", required ?? Array.Empty<string>() }
                 };
 
-            private static object Arr(object items) =>
-                new Dictionary<string, object> { { "type", "array" }, { "items", items } };
+            private static object Arr(object items, long? minItems = null, long? maxItems = null)
+            {
+                var schema = new Dictionary<string, object> { { "type", "array" }, { "items", items } };
+                if (minItems.HasValue) schema["minItems"] = minItems.Value;
+                if (maxItems.HasValue) schema["maxItems"] = maxItems.Value;
+                return schema;
+            }
 
             private static object Str(string[]? enumVals = null) =>
                 enumVals == null
