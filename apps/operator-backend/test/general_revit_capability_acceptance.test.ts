@@ -538,6 +538,38 @@ test("an exact-target clarification is accepted but is not mislabeled completion
   assert.equal(result.verification_basis, "none");
 });
 
+test("a target clarification cannot inherit completion or verification from a successful preview receipt", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!;
+  const entry = { ...generalRevitExecutionCase(productionCase, false), answer_assertions: undefined };
+  const previewPath = entry.dispatch_any_of[0];
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Nothing is selected. Please select the equipment instance or give me its exact Mark so I change the right one.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: previewPath, request_effect: "preview", request_dispatched: true, status: "success" }],
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "inspection",
+      context_state: "live",
+      stage: "report",
+      preview_action_ids: ["mcp:1"],
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: previewPath,
+        status: "success",
+        evidence_sha256: `sha256:${"a".repeat(64)}`
+      }],
+      apply_attempts: 0,
+      verified: false,
+      blocked_reason: null
+    }
+  });
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+  assert.equal(result.verification_basis, "none");
+});
+
 test("a durable blocked assignment remains an accepted clarification when essential spatial grounding is missing", () => {
   const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "r03_add_family_instance")!, false);
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {

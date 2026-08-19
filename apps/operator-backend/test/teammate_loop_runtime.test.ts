@@ -742,6 +742,123 @@ test("structured request-validation failures do not consume the mutation stage",
   }
 });
 
+test("a version-incompatible first document open is reconciled as no effect and permits one corrected path", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, {
+    ...request("Open the Snowdon HVAC sample model in the currently running Revit."),
+    context: {
+      revit: {
+        source: { live: true },
+        process_id: 16276,
+        courier_executor_id: "executor-home",
+        readiness: { revit_launched: true, document_loaded: false },
+        document: null
+      }
+    }
+  });
+  try {
+    const wrongYear = guardTeammateMcpCall(owner, {
+      tool: "revit_open_model",
+      arguments: {
+        filePath: "C:\\Program Files\\Autodesk\\Revit 2026\\Samples\\Snowdon Towers Sample HVAC.rvt",
+        discardExistingOpenDocument: true
+      }
+    });
+    assert.equal(wrongYear.allowed, true);
+    recordTeammateMcpResult(owner, wrongYear, {
+      isError: true,
+      content: [{ type: "text", text: "Error: The model was saved by a later version of Revit." }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+
+    const corrected = guardTeammateMcpCall(owner, {
+      tool: "revit_open_model",
+      arguments: {
+        filePath: "C:\\Program Files\\Autodesk\\Revit 2024\\Samples\\Snowdon Towers Sample HVAC.rvt",
+        discardExistingOpenDocument: true
+      }
+    });
+    assert.equal(corrected.allowed, true);
+    assert.equal(corrected.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("an attested active Revit year rejects a different-year Autodesk sample path before dispatch", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, {
+    ...request("Open the Snowdon HVAC sample model in the currently running Revit."),
+    context: {
+      revit: {
+        source: { live: true },
+        process_id: 16276,
+        courier_executor_id: "executor-home",
+        readiness: { revit_launched: true, document_loaded: false },
+        document: null,
+        host: {
+          schema: "revit-operator.active-host-model-inventory.v1",
+          source: "attested_revit_install",
+          version_year: "2024",
+          require_active_version_match: true
+        }
+      }
+    }
+  });
+  try {
+    const wrongYear = guardTeammateMcpCall(owner, {
+      tool: "revit_open_model",
+      arguments: {
+        filePath: "C:\\Program Files\\Autodesk\\Revit 2026\\Samples\\Snowdon Towers Sample HVAC.rvt",
+        discardExistingOpenDocument: true
+      }
+    });
+    assert.equal(wrongYear.allowed, false);
+    assert.match(wrongYear.message || "", /open model sample year mismatch/i);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 0);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("an unclassified first document open failure remains fenced from retry", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, {
+    ...request("Open the Snowdon HVAC sample model in the currently running Revit."),
+    context: {
+      revit: {
+        source: { live: true },
+        process_id: 16276,
+        courier_executor_id: "executor-home",
+        readiness: { revit_launched: true, document_loaded: false },
+        document: null
+      }
+    }
+  });
+  try {
+    const first = guardTeammateMcpCall(owner, {
+      tool: "revit_open_model",
+      arguments: { filePath: "C:\\Models\\Unknown.rvt", discardExistingOpenDocument: true }
+    });
+    assert.equal(first.allowed, true);
+    recordTeammateMcpResult(owner, first, {
+      isError: true,
+      content: [{ type: "text", text: "Error: Revit stopped responding during document activation." }]
+    });
+    const retry = guardTeammateMcpCall(owner, {
+      tool: "revit_open_model",
+      arguments: { filePath: "C:\\Models\\Corrected.rvt", discardExistingOpenDocument: true }
+    });
+    assert.equal(retry.allowed, false);
+    assert.match(retry.message || "", /prior apply verification required/i);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("typed document lifecycle tools are first-class mutations", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
