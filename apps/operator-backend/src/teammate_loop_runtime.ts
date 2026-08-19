@@ -38,6 +38,8 @@ type TeammateLoopState = {
   pending: Map<string, PendingCall>;
   preview_action_ids: string[];
   preview_receipts: SuccessfulPreviewReceipt[];
+  preview_restoration_required: boolean;
+  preview_restoration_target_tokens: Set<string>;
   apply_action_id: string | null;
   verification_action_ids: string[];
   apply_attempts: number;
@@ -375,7 +377,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     : contract.ambiguity === "material"
       ? "Paraphrase the likely intent and ask one focused question; take no Revit action."
       : contract.preview_required && contract.no_write
-        ? "Use live context; resolve the exact target and execute one real bounded, noncommitting Revit preview or dry-run, then stop before apply. A prose plan, table, proposed receipt, capture, cropped image, render, or temporary visual is not an executed mutation preview without a successful noncommitting Revit primitive receipt. If discovery proves no preview-capable target or primitive exists, report that exact blocker instead of claiming preview completion."
+        ? "Use live context; resolve the exact target and execute one real bounded, noncommitting Revit preview or dry-run, then independently read back any rollback-preview target before reporting success and stop before apply. A prose plan, table, proposed receipt, capture, cropped image, render, or temporary visual is not an executed mutation preview without a successful noncommitting Revit primitive receipt. If discovery proves no preview-capable target or primitive exists, report that exact blocker instead of claiming preview completion."
         : contract.preview_required
           ? "Use live context; resolve the exact target and execute a real bounded preview or dry-run before applying; bind the apply to that preview and verify by readback/capture before success. A prose plan, table, or proposed receipt is not an executed preview."
       : contract.turn_kind === "mutation"
@@ -385,7 +387,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
   const semanticPreviewRule = requestedOperation === "create"
     ? " A requested new, duplicated, dependent, or enlarged view is not previewed by resolving only its source, crop, rooms, or geometry. Complete one noncommitting create/duplicate-view primitive with the requested configuration (for example transaction-plan duplicateView/createDependentView plus crop, scale, template, or visibility actions) before reporting the preview."
     : requestedOperation === "delete"
-      ? " A requested deletion, removal, or disconnection-impact preview is not completed by inventory, geometry, connector, or network inspection alone. Opposite orientations or shared-network membership are triage evidence, not proof that a candidate is intentional or erroneous. Execute one rollback/dry-run delete of the highest-ranked defensible candidate and report the exact affected/dependent elements before claiming the preview. If no defensible candidate can be selected, report the assignment as incomplete; do not substitute a no-candidate conclusion for the requested executable discriminator."
+      ? " A requested deletion, removal, or disconnection-impact preview is not completed by inventory, geometry, connector, or network inspection alone. Opposite orientations or shared-network membership are triage evidence, not proof that a candidate is intentional or erroneous. Execute one rollback/dry-run delete of the highest-ranked defensible candidate and report the exact affected/dependent elements before claiming the preview. After rollback, re-read the previewed member and any requested connection/system state; explicitly report whether the target still exists and whether its connections were restored. If no defensible candidate can be selected, report the assignment as incomplete; do not substitute a no-candidate conclusion for the requested executable discriminator."
       : "";
   return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
 }
@@ -652,6 +654,8 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     pending: new Map(),
     preview_action_ids: [],
     preview_receipts: [],
+    preview_restoration_required: false,
+    preview_restoration_target_tokens: new Set(),
     apply_action_id: null,
     verification_action_ids: [],
     apply_attempts: 0,
@@ -762,7 +766,8 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
     state.apply_expected_values = new Set(call.expected_values);
     state.apply_operation = call.operation;
     state.contract.stage = "apply";
-  } else if (state.stage_apply_attempts > 0 && (call.effect === "read" || call.effect === "navigation")) {
+  } else if ((state.stage_apply_attempts > 0 || state.preview_restoration_required)
+      && (call.effect === "read" || call.effect === "navigation")) {
     state.verification_action_ids.push(actionId);
     state.contract.stage = "verify";
   } else if (call.effect === "preview") state.contract.stage = "preview";
@@ -919,6 +924,12 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     state.successful_preview_signatures.add(pending.signature);
     state.successful_preview_operations.add(pending.operation);
     state.preview_receipts.push(successfulPreviewReceipt(actionId, pending.path, sha256(JSON.stringify(stableValue(evidence)))));
+    if (state.contract.no_write && pending.operation === "delete") {
+      clearVerification(state);
+      state.preview_restoration_required = true;
+      state.preview_restoration_target_tokens = new Set(pending.target_tokens.filter(token => !token.startsWith("parameter:")));
+      state.contract.stage = "verify";
+    }
   }
   if (pending.effect === "apply") {
     state.apply_succeeded = succeeded;
@@ -961,6 +972,12 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
         observed_values: [...state.verification_observed_values].sort()
       });
     }
+  }
+  if (state.preview_restoration_required && succeeded && pending.effect === "read" && substantiveReadback(evidence)) {
+    const observedTargetTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
+      .filter(token => !token.startsWith("parameter:"));
+    const restorationTargetBound = observedTargetTokens.some(token => state.preview_restoration_target_tokens.has(token));
+    if (restorationTargetBound) markVerified(state, "target_bound_readback", actionId, evidence);
   }
 }
 
@@ -1057,6 +1074,9 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
     state.contract.stage = "blocked";
   } else if (state.apply_succeeded && !state.verified && actions.length === 0) {
     state.blocked_reason = "post_apply_verification_required";
+    state.contract.stage = "blocked";
+  } else if (state.preview_restoration_required && !state.verified && actions.length === 0) {
+    state.blocked_reason = "post_preview_restoration_verification_required";
     state.contract.stage = "blocked";
   } else if (actions.length === 0
       && state.contract.preview_required

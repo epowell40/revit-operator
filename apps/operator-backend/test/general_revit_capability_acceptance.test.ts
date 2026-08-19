@@ -890,12 +890,14 @@ test("fixture-grounded duplicate impact accepts a fully traced plausible pair an
       evidence_sha256: `sha256:${"d".repeat(64)}`
     }],
     apply_attempts: 0,
-    verified: false,
+    verification_action_ids: ["mcp:rollback-readback"],
+    verified: true,
+    verification_mode: "target_bound_readback",
+    verification_action_id: "mcp:rollback-readback",
+    verification_evidence_sha256: `sha256:${"e".repeat(64)}`,
     blocked_reason: null
   };
-  const correct = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
-    ok: true,
-    assistant_message: [
+  const correctAnswer = [
       "Strongest plausible duplicate-device candidate: air terminals 1442076 / 1442083, in Space 301 – Office Unit 301, L3.",
       "Same type, 8 in apart, opposite-facing, with intersecting bounding boxes.",
       "Both intentionally connect to separate connectors on duct 1441525. Two nearby arrangements repeat the same paired, opposite-facing topology.",
@@ -904,7 +906,10 @@ test("fixture-grounded duplicate impact accepts a fully traced plausible pair an
       "Physical connection affected: 1442076 ↔ duct 1441525. Predicted remaining connected system: 49 elements.",
       "Rollback was confirmed afterward: 1442076 still exists and remains connected.",
       "The evidence does not prove a genuine duplicate. Nothing was deleted."
-    ].join("\n"),
+    ].join("\n");
+  const correct = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
+    ok: true,
+    assistant_message: correctAnswer,
     effect_state: "read_only_dispatched",
     actions: [{ path: "/revit/delete", request_effect: "read", request_dispatched: true, status: "success" }],
     assignment_projection,
@@ -913,6 +918,25 @@ test("fixture-grounded duplicate impact accepts a fully traced plausible pair an
   assert.equal(correct.tier, "verified");
   assert.equal(correct.answer_assertion_passed, true);
   assert.equal(correct.verification_basis, "fixture_semantic_oracle");
+
+  const unverified = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
+    ok: true,
+    assistant_message: correctAnswer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/delete", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection,
+    teammate_loop_receipt: {
+      ...teammate_loop_receipt,
+      verification_action_ids: [],
+      verified: false,
+      verification_mode: "none",
+      verification_action_id: null,
+      verification_evidence_sha256: null
+    }
+  });
+  assert.equal(unverified.tier, "failed");
+  assert.equal(unverified.completed, false);
+  assert.match(unverified.summary, /post-rollback model-state verification/i);
 
   const wrongPair = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
     ok: true,
