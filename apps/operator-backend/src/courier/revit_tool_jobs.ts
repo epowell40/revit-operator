@@ -12,7 +12,7 @@ import {
   type CertifiedCourierExecutionContext,
   type CertifiedCourierJobV2
 } from "./revit_tool_job_certification.js";
-import { ensureWorkspaceLayout } from "../workspace.js";
+import { ensureWorkspaceDirectory, ensureWorkspaceLayout } from "../workspace.js";
 import {
   requireCourierLaboratoryEvidenceJobBinding,
   type LaboratoryEvidenceDispatch
@@ -137,8 +137,7 @@ type AuthorizeInput = { session_id: string; job_id: string; executor_id: string;
 
 function jobsRoot(): string {
   const root = path.join(ensureWorkspaceLayout().artifacts, "revit-courier", "jobs");
-  fs.mkdirSync(root, { recursive: true });
-  return root;
+  return ensureWorkspaceDirectory(root);
 }
 
 function safeId(value: unknown, field: string, max = 200): string {

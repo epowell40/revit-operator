@@ -845,7 +845,7 @@
     },
     {
       "path": "apps/operator-backend/src/courier/revit_tool_jobs.ts",
-      "sha256": "sha256:05cd36a535073e6a0cbd37ba87d2a6e285c07abc6cd52327ffb192384ea64cf8"
+      "sha256": "sha256:543ea6ad3229f5bc9ab27a46fb7f1b6b39336edd3d3a76b8c64172b2594886df"
     },
     {
       "path": "apps/operator-backend/src/courier/revit_tool_settlement_receipt.ts",
@@ -1749,7 +1749,7 @@
     },
     {
       "path": "apps/operator-backend/src/workspace.ts",
-      "sha256": "sha256:5d32949a5a59a79ab5b0c624a0256f247617b5559dd4839cce3a9a4d2fa5df36"
+      "sha256": "sha256:10fe05fb800cca339efa4193c8bbe78c8dd1fd5dd16a0a6bbe00b8bb2616f9ff"
     },
     {
       "path": "apps/operator-backend/src/zippybim/gemini_floorplan_extract.ts",
@@ -2657,7 +2657,7 @@
     },
     {
       "path": "apps/operator-backend/test/workspace_directory_cache.test.ts",
-      "sha256": "sha256:456b2347ee0fe659b9f31c42d8a329a2557c8d3a40c1d180e8719ed07d0923dd"
+      "sha256": "sha256:4694f1c1fff6110d007c2f9a547dc970c1fa0bf9e83e302aa24108abb0d1a7ed"
     },
     {
       "path": "apps/operator-backend/test/write_probe_plan.test.ts",
@@ -4673,7 +4673,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:6f68e4f7ae7cd1a71048cbe4a1a0808c6cfb4b9e7ebd1241da5067406fafafc3",
+  "inputs_hash": "sha256:7c13b403ae949bd134f765c4c19ba7604fc7780d7e1de03b1f043db835a2a5c4",
   "result": {
     "passed": true,
     "checks": [

@@ -3,7 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { __testOnlyResetWorkspaceDirectoryCache, ensureWorkspaceLayout } from "../src/workspace.js";
+import {
+  __testOnlyResetWorkspaceDirectoryCache,
+  ensureWorkspaceDirectory,
+  ensureWorkspaceLayout
+} from "../src/workspace.js";
 
 test("workspace layout avoids repeated synchronous directory probes within the bounded cache window", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-workspace-cache-"));
@@ -23,6 +27,12 @@ test("workspace layout avoids repeated synchronous directory probes within the b
     mkdirCalls = 0;
     ensureWorkspaceLayout();
     assert.equal(mkdirCalls, 0);
+
+    const courierJobs = path.join(root, "artifacts", "revit-courier", "jobs");
+    ensureWorkspaceDirectory(courierJobs);
+    assert.equal(mkdirCalls, 1);
+    ensureWorkspaceDirectory(courierJobs);
+    assert.equal(mkdirCalls, 1);
 
     __testOnlyResetWorkspaceDirectoryCache();
     ensureWorkspaceLayout();
