@@ -56,11 +56,13 @@ namespace RevitBridge.Common.Tests
             values["exposure_profile"] = "general";
             values["policy_trust_source"] = "deployment";
 
-            Assert.NotNull(VerifyResponse(
+            var receipt = VerifyResponse(
                 request,
                 values,
                 expectedRuntimeMode: "local",
-                useProductionAuthority: true));
+                useProductionAuthority: true);
+            Assert.True(receipt.IsDeploymentGeneralAgent);
+            Assert.Equal("general", receipt.ExposureProfile);
         }
 
         [Fact]
@@ -380,6 +382,9 @@ namespace RevitBridge.Common.Tests
             Assert.True(early >= 0 && grant > early, "Certification admission must precede write-grant consumption.");
             Assert.Contains("RequireFinalNativeAuthorizationAsync(effectiveRequest", server);
             Assert.Contains("RequireFinalNativeAuthorizationAsync(\n                                            capturedEffectiveRequest", server.Replace("\r\n", "\n"));
+            Assert.Contains("earlyReceipt.IsDeploymentGeneralAgent", server);
+            Assert.Contains("capturedDeploymentGeneralAgentFinalReceipt", server);
+            Assert.Contains("preauthorizedFinalReceipt", server);
             Assert.Contains("handler.Handle(app, dispatchBody)", server);
             Assert.DoesNotContain("handler.Handle(app, body).GetAwaiter().GetResult()", server);
             Assert.Contains("handler.Handle(null!, body)", server);

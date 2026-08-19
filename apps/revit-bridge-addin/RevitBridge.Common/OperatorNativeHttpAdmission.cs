@@ -323,6 +323,7 @@ namespace RevitBridge.Common
             string sourceBodySha256,
             string canonicalBodyJson,
             string bodySha256,
+            string exposureProfile,
             DateTimeOffset authorizedAtUtc,
             DateTimeOffset localExpiresAtUtc,
             string authorizationHash)
@@ -336,6 +337,7 @@ namespace RevitBridge.Common
             SourceBodySha256 = sourceBodySha256;
             CanonicalBodyJson = canonicalBodyJson;
             BodySha256 = bodySha256;
+            ExposureProfile = exposureProfile;
             AuthorizedAtUtc = authorizedAtUtc;
             ExpiresAtUtc = localExpiresAtUtc;
             AuthorizationHash = authorizationHash;
@@ -350,6 +352,8 @@ namespace RevitBridge.Common
         public string SourceBodySha256 { get; }
         public string CanonicalBodyJson { get; }
         public string BodySha256 { get; }
+        public string ExposureProfile { get; }
+        public bool IsDeploymentGeneralAgent => string.Equals(ExposureProfile, "general", StringComparison.Ordinal);
         public DateTimeOffset AuthorizedAtUtc { get; }
         public DateTimeOffset ExpiresAtUtc { get; }
         public string AuthorizationHash { get; }
@@ -645,6 +649,7 @@ namespace RevitBridge.Common
                     sourceBodySha256,
                     canonicalBodyJson,
                     bodySha256,
+                    exposureProfile,
                     authorizedAtUtc,
                     // The backend stamps authorized_at when it creates the
                     // response, not when the native request begins. Start the

@@ -653,6 +653,7 @@ namespace RevitBridge.Server
                     && string.Equals(req.ContentType, OperatorNativeTransportProtocol.ContentType, StringComparison.Ordinal);
 
                 OperatorNativeHttpRequest? effectiveRequest = null;
+                OperatorNativeHttpAuthorizationReceipt? deploymentGeneralAgentFinalReceipt = null;
                 string path;
                 string requestBody;
                 if ((laboratoryBypass && !protectedLaboratoryEvidence) || directDynamicRuntime)
@@ -764,18 +765,34 @@ namespace RevitBridge.Server
                             sourceRequest.BodyPresent,
                             sourceRequest.BodyJson);
                         effectiveRequest = sourceRequest;
+                        requestBody = sourceRequest.BodyJson;
                     }
                     else
                     {
-                        var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None, "preflight");
-                        var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
-                            earlyReceipt,
-                            sourceRequest,
-                            DateTimeOffset.UtcNow);
-                        effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                        // A deployment-backed General Agent receipt already carries the
+                        // final exact request/body authorization. Retain that one-use
+                        // receipt until native dispatch instead of making a second hosted
+                        // authorization call from Revit's API thread. Certified request-
+                        // family work keeps the existing preflight + final protocol.
+                        var firstStage = sourceRequest.CertificationEnvelope == null ? "final" : "preflight";
+                        var earlyReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(sourceRequest, CancellationToken.None, firstStage);
+                        if (sourceRequest.CertificationEnvelope == null && earlyReceipt.IsDeploymentGeneralAgent)
+                        {
+                            deploymentGeneralAgentFinalReceipt = earlyReceipt;
+                            effectiveRequest = sourceRequest;
+                            requestBody = earlyReceipt.CanonicalBodyJson;
+                        }
+                        else
+                        {
+                            var canonicalBody = OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+                                earlyReceipt,
+                                sourceRequest,
+                                DateTimeOffset.UtcNow);
+                            effectiveRequest = OperatorNativeHttpDispatchFence.CreateFreshEffectiveRequest(sourceRequest, canonicalBody);
+                            requestBody = effectiveRequest.BodyJson;
+                        }
                     }
                     path = effectiveRequest.Path;
-                    requestBody = effectiveRequest.BodyJson;
                 }
 
                 // Bridge-layer write gate:
@@ -841,19 +858,19 @@ namespace RevitBridge.Server
                 if (path == "/revit/ping")
                 {
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
-                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
+                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                     responseText = JsonSerializer.Serialize(new { status = "ok", timestamp = DateTime.Now });
                 }
                 else if (path == "/revit/capabilities")
                 {
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
-                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
+                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                     responseText = JsonSerializer.Serialize(RevitBridge.Operator.OperatorCapabilities.Get());
                 }
                 else if (path == "/revit/write-grant-status")
                 {
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
-                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
+                        requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                     var status = OperatorWriteGrant.ReadStatus();
                     responseText = JsonSerializer.Serialize(new
                     {
@@ -887,7 +904,7 @@ namespace RevitBridge.Server
                     if (IsDirectDialogComputerUsePath(path) || IsDirectControlPlanePath(path))
                     {
                         if (effectiveRequest != null && !protectedLaboratoryEvidence)
-                            body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None);
+                            body = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                         result = handler is NativeApiPolicyHandler nativeApiPolicyHandler
                             ? await nativeApiPolicyHandler.HandleForMethod(null!, body, effectiveMethod)
                             : await handler.Handle(null!, body);
@@ -901,6 +918,7 @@ namespace RevitBridge.Server
                         {
                             var capturedEffectiveRequest = effectiveRequest;
                             var capturedRequiresCertifiedAuthorization = !protectedLaboratoryEvidence;
+                            var capturedDeploymentGeneralAgentFinalReceipt = deploymentGeneralAgentFinalReceipt;
                             var capturedBody = body;
                             result = await _eventService.Run(
                                 app =>
@@ -914,7 +932,8 @@ namespace RevitBridge.Server
                                         dispatchBody = RequireFinalNativeAuthorizationAsync(
                                             capturedEffectiveRequest,
                                             capturedBody,
-                                            localDeadline.Token).GetAwaiter().GetResult();
+                                            localDeadline.Token,
+                                            capturedDeploymentGeneralAgentFinalReceipt).GetAwaiter().GetResult();
                                         executionContext = capturedEffectiveRequest.CertificationEnvelope?.RequestFamilyAdmission == null
                                             ? null
                                             : OperatorCertifiedFamilyExecutionContext.Direct(capturedEffectiveRequest);
@@ -1138,9 +1157,11 @@ namespace RevitBridge.Server
         private async Task<string> RequireFinalNativeAuthorizationAsync(
             OperatorNativeHttpRequest effectiveRequest,
             string expectedCanonicalBody,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            OperatorNativeHttpAuthorizationReceipt? preauthorizedFinalReceipt = null)
         {
-            var finalReceipt = await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
+            var finalReceipt = preauthorizedFinalReceipt
+                ?? await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
             return OperatorNativeHttpDispatchFence.RequireFreshOneUse(
                 finalReceipt,
                 effectiveRequest,
