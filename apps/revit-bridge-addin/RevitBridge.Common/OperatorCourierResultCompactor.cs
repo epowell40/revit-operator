@@ -24,6 +24,8 @@ namespace RevitBridge.Common
         // session/executor metadata and JSON escaping cannot push the POST over it.
         public const int MaxTransportResultBytes = 600_000;
         private const int MaxArrayItems = 32;
+        private const int MaxPreservedIdentifierArrayItems = 20_000;
+        private const int MaxPreservedIdentifierArrayBytes = 128_000;
         private const int MaxObjectProperties = 192;
         private const int MaxStringCharacters = 8_192;
         private const int MaxDepth = 12;
@@ -98,7 +100,11 @@ namespace RevitBridge.Common
             return JsonSerializer.SerializeToElement(result);
         }
 
-        private static object? Compact(JsonElement element, int depth, CompactionStats stats)
+        private static object? Compact(
+            JsonElement element,
+            int depth,
+            CompactionStats stats,
+            string? propertyName = null)
         {
             if (depth >= MaxDepth && (element.ValueKind == JsonValueKind.Object || element.ValueKind == JsonValueKind.Array))
             {
@@ -112,12 +118,14 @@ namespace RevitBridge.Common
                     var result = new Dictionary<string, object?>(StringComparer.Ordinal);
                     var properties = element.EnumerateObject().ToList();
                     foreach (var property in properties.Take(MaxObjectProperties))
-                        result[property.Name] = Compact(property.Value, depth + 1, stats);
+                        result[property.Name] = Compact(property.Value, depth + 1, stats, property.Name);
                     stats.OmittedObjectProperties += Math.Max(0, properties.Count - MaxObjectProperties);
                     return result;
 
                 case JsonValueKind.Array:
                     var items = element.EnumerateArray().ToList();
+                    if (ShouldPreserveIdentifierArray(element, propertyName, items))
+                        return items.Select(item => item.Clone()).ToList();
                     var bounded = items.Take(MaxArrayItems).Select(item => Compact(item, depth + 1, stats)).ToList();
                     var omitted = Math.Max(0, items.Count - MaxArrayItems);
                     stats.OmittedArrayItems += omitted;
@@ -147,6 +155,29 @@ namespace RevitBridge.Common
                 default:
                     return element.Clone();
             }
+        }
+
+        private static bool ShouldPreserveIdentifierArray(
+            JsonElement element,
+            string? propertyName,
+            IReadOnlyCollection<JsonElement> items)
+        {
+            if (string.IsNullOrWhiteSpace(propertyName) || items.Count <= MaxArrayItems)
+                return false;
+
+            var normalizedName = propertyName.Trim();
+            if (!string.Equals(normalizedName, "ids", StringComparison.OrdinalIgnoreCase)
+                && !normalizedName.EndsWith("Ids", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (items.Count > MaxPreservedIdentifierArrayItems)
+                return false;
+            if (items.Any(item => item.ValueKind != JsonValueKind.Number && item.ValueKind != JsonValueKind.String))
+                return false;
+
+            // Complete identifier projections are the continuation handle for refining
+            // an oversized verbose result. Preserve them when they are individually
+            // bounded; the final envelope limit still provides a fail-safe ceiling.
+            return JsonSerializer.SerializeToUtf8Bytes(element).Length <= MaxPreservedIdentifierArrayBytes;
         }
 
         private static Dictionary<string, object?> WrapWithReceipt(
