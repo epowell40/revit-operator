@@ -42,6 +42,15 @@ namespace RevitBridge.Logic.Handlers
             var raw = (input ?? "").Trim();
             if (raw.Length == 0) return false;
 
+            // Keep type discovery aligned with the normal element-query category
+            // vocabulary (for example "air terminals" -> OST_DuctTerminal).
+            if (BuiltInCategoryTokenUtil.TryParseAlias(raw, out var alias))
+            {
+                category = alias;
+                canonical = alias.ToString();
+                return true;
+            }
+
             if (Enum.TryParse<BuiltInCategory>(raw, true, out var bic))
             {
                 category = bic;

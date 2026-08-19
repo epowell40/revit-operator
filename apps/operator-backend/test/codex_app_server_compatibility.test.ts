@@ -283,6 +283,9 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /do not rule duplicates out when those checks return zero/);
   assert.match(instructions, /project-scope `\/revit\/find-elements` inventory/);
   assert.match(instructions, /`includeGeometry:true`/);
+  assert.match(instructions, /Every document-scope `\/revit\/find-elements` request must include a real/);
+  assert.match(instructions, /`limit` alone is not a bounded predicate/);
+  assert.match(instructions, /user-facing aliases such as `air terminals` are accepted/);
   assert.match(instructions, /do not export every view before trying this complete inventory/);
   assert.match(instructions, /`spatialDuplicateCandidates`/);
   assert.match(instructions, /unique Marks are not duplicate-instance proof/);
