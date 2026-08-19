@@ -422,6 +422,8 @@ test("view geometry discovery cannot satisfy a requested duplicate-view preview"
 test("duplicate-device impact work requires an executable rollback delete preview", () => {
   const text = "Find a genuinely duplicated device candidate, trace what it is connected to, and preview the complete deletion/disconnection impact. Do not delete anything.";
   assert.match(formatTeammateTurnContract(request(text)), /rollback\/dry-run delete of the highest-ranked defensible candidate/i);
+  assert.match(formatTeammateTurnContract(request(text)), /material comparison facts used to rank the candidate/i);
+  assert.match(formatTeammateTurnContract(request(text)), /predicted remaining connected-system state/i);
   assert.match(formatTeammateTurnContract(request(text)), /re-read the previewed member/i);
 
   __testOnlyResetTeammateLoopState();
