@@ -634,8 +634,9 @@ namespace RevitBridge.Common.Tests
         private static string ReadSharedSource(params string[] segments)
         {
             var root = FindRepositoryRoot();
+            var publicServerSource = Path.Combine(root, "apps", "revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             var publicCandidate = Path.Combine(new[] { root, "apps" }.Concat(segments).ToArray());
-            if (File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
+            if (File.Exists(publicServerSource) && File.Exists(publicCandidate)) return File.ReadAllText(publicCandidate);
 
             var privateCandidate = Path.Combine(new[] { root }.Concat(segments).ToArray());
             return File.ReadAllText(privateCandidate);
