@@ -863,9 +863,12 @@ test("fixture-grounded air-terminal inventory requires the exact seven-group rec
   assert.equal(result.answer_assertion_passed, false);
 });
 
-test("fixture-grounded duplicate deletion rejects generic preview evidence for the wrong pair", () => {
+test("fixture-grounded duplicate impact requires the strongest plausible pair and complete system evidence", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "c24_delete_duplicate_device")!;
   assert.ok(entry.answer_assertions);
+  assert.match(entry.probe_prompt, /strongest plausible duplicate-device candidate/);
+  assert.match(entry.probe_prompt, /complete connected system/);
+  assert.match(entry.probe_prompt, /whether the model evidence proves a genuine duplicate/);
   const assignment_projection = {
     assignments: [{
       lifecycle: { phase: "complete" },
@@ -893,9 +896,9 @@ test("fixture-grounded duplicate deletion rejects generic preview evidence for t
   const correct = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
     ok: true,
     assistant_message: [
-      "Duplicate candidate: Air terminals 1460066 and 1460067, identical 16×4 supply grilles in Room 306, only 8 in apart.",
+      "Strongest plausible duplicate candidate: Air terminals 1460066 and 1460067, identical 16×4 supply grilles in Room 306, only 8 in apart. The repeated opposite-facing pattern means the model evidence does not prove a genuine duplicate.",
       "Both connect directly to duct 1460049 on Mechanical Supply Air 34. The network contains 54 elements.",
-      "Rollback-only deletion preview for 1460067 impacts only that terminal; no dependents. The other 53 system elements remain connected.",
+      "Rollback-only deletion preview for 1460066 impacts only that terminal; no dependents. The other 53 system elements would remain connected.",
       "Nothing was changed or deleted."
     ].join("\n"),
     effect_state: "read_only_dispatched",
