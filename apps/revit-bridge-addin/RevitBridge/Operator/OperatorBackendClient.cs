@@ -634,9 +634,12 @@ namespace RevitBridge.Operator
 
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             // Hosted authorization can briefly contend with agent traffic or a
-            // just-activated release. Keep this bounded, but do not turn a
-            // healthy remote authorization into a routine pre-dispatch refusal.
-            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+            // just-activated release. Live flight records have shown otherwise
+            // healthy deterministic admissions arriving between 10 and 15
+            // seconds. Keep this bounded, but leave enough room for one request
+            // to finish instead of creating a retry storm of repeated TLS and
+            // authorization work.
+            deadline.CancelAfter(TimeSpan.FromSeconds(20));
             var roundTrip = Stopwatch.StartNew();
             try
             {
