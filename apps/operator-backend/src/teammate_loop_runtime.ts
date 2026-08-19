@@ -381,9 +381,12 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
       : contract.turn_kind === "mutation"
         ? "Use live context; discover one exact contract if needed; preview when the primitive supports it or the preview is useful, but atomic Revit primitives may apply directly; verify by readback/capture before success."
         : "Use live context and the smallest read/navigation step; discover one exact contract if needed; never mutate the model.";
-  const semanticPreviewRule = requestedPreviewOperation(contract.intent_summary) === "create"
+  const requestedOperation = requestedPreviewOperation(contract.intent_summary);
+  const semanticPreviewRule = requestedOperation === "create"
     ? " A requested new, duplicated, dependent, or enlarged view is not previewed by resolving only its source, crop, rooms, or geometry. Complete one noncommitting create/duplicate-view primitive with the requested configuration (for example transaction-plan duplicateView/createDependentView plus crop, scale, template, or visibility actions) before reporting the preview."
-    : "";
+    : requestedOperation === "delete"
+      ? " A requested deletion, removal, or disconnection-impact preview is not completed by inventory, geometry, connector, or network inspection alone. Opposite orientations or shared-network membership are triage evidence, not proof that a candidate is intentional or erroneous. Execute one rollback/dry-run delete of the highest-ranked defensible candidate and report the exact affected/dependent elements before claiming the preview. If no defensible candidate can be selected, report the assignment as incomplete; do not substitute a no-candidate conclusion for the requested executable discriminator."
+      : "";
   return `CURRENT TURN CONTRACT (host-enforced):\n${JSON.stringify(compact)}\n${rules}${semanticPreviewRule}${contract.no_write ? " No-write wording is authoritative: preview/read only." : ""}`;
 }
 
@@ -391,7 +394,10 @@ function requestedPreviewOperation(text: string): string | null {
   const explicitViewCreation = /\b(?:create|add|duplicate)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text)
     || /\b(?:new|duplicated|dependent|enlarged)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text)
     || /\bmake\s+(?:an?\s+|the\s+)?(?:new|duplicated|dependent|enlarged)\b[^.!?\n]{0,80}\b(?:view|plan)\b/i.test(text);
-  return explicitViewCreation ? "create" : null;
+  if (explicitViewCreation) return "create";
+  const explicitDeletionPreview = /\b(?:preview|preflight|dry[ -]?run|rollback)\b[^.!?\n]{0,120}\b(?:delet(?:e|ion)|remov(?:e|al)|disconnect(?:ion)?)\b/i.test(text)
+    || /\b(?:delet(?:e|ion)|remov(?:e|al)|disconnect(?:ion)?)\b[^.!?\n]{0,120}\b(?:preview|preflight|dry[ -]?run|rollback|impact)\b/i.test(text);
+  return explicitDeletionPreview ? "delete" : null;
 }
 
 function stableValue(value: unknown): unknown {
@@ -1013,6 +1019,7 @@ export function reconcileTeammateReceiptWithAssistant(
 export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
   const state = stateFor(req);
   ingestToolResults(state, req.tool_results);
+  const requiredPreviewOperation = requestedPreviewOperation(state.contract.intent_summary);
   const dynamicReceipt = decision.dynamic_program_execution_receipt;
   if (dynamicReceipt) {
     if (dynamicReceipt.status === "completed") {
@@ -1050,6 +1057,12 @@ export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatRes
     state.contract.stage = "blocked";
   } else if (state.apply_succeeded && !state.verified && actions.length === 0) {
     state.blocked_reason = "post_apply_verification_required";
+    state.contract.stage = "blocked";
+  } else if (actions.length === 0
+      && state.contract.preview_required
+      && requiredPreviewOperation
+      && !state.successful_preview_operations.has(requiredPreviewOperation)) {
+    state.blocked_reason = "requested_preview_operation_not_completed";
     state.contract.stage = "blocked";
   } else if (actions.length === 0
       && state.contract.preview_required

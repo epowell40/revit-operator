@@ -1,4 +1,7 @@
 import http from "node:http";
+import zlib from "node:zlib";
+
+const JSON_COMPRESSION_THRESHOLD_BYTES = 16 * 1024;
 
 export async function readJson(req: http.IncomingMessage, maxBytes = 1_000_000): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -18,9 +21,18 @@ export async function readJson(req: http.IncomingMessage, maxBytes = 1_000_000):
 
 export function writeJson(res: http.ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body);
+  const jsonBytes = Buffer.byteLength(json);
+  const acceptEncoding = `${res.req?.headers["accept-encoding"] || ""}`;
+  const gzipAccepted = /(?:^|,)\s*gzip(?:\s*;\s*q=(?!0(?:\.0+)?(?:\s|,|$))[^,]*)?(?:\s*,|$)/i.test(acceptEncoding);
+  const compressed = gzipAccepted && jsonBytes >= JSON_COMPRESSION_THRESHOLD_BYTES
+    ? zlib.gzipSync(json, { level: 6 })
+    : null;
+  const payload = compressed && compressed.length < jsonBytes ? compressed : json;
   res.statusCode = status;
   res.setHeader("content-type", "application/json; charset=utf-8");
-  res.setHeader("content-length", Buffer.byteLength(json));
-  res.end(json);
+  res.setHeader("vary", "Accept-Encoding");
+  if (payload === compressed) res.setHeader("content-encoding", "gzip");
+  res.setHeader("content-length", typeof payload === "string" ? jsonBytes : payload.length);
+  res.end(payload);
 }
 

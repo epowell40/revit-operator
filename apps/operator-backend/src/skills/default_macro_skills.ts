@@ -1,4 +1,4 @@
-import { loadMacroSkill, saveMacroSkill, type MacroSkill } from "./macro_skills.js";
+import { getMacroSkillsDirs, loadMacroSkill, saveMacroSkill, type MacroSkill } from "./macro_skills.js";
 
 const DEFAULT_SKILLS: MacroSkill[] = [
   {
@@ -113,7 +113,17 @@ const DEFAULT_SKILLS: MacroSkill[] = [
   }
 ];
 
+const DEFAULT_SKILLS_RECHECK_MS = 60_000;
+const ensuredWorkspaceRoots = new Map<string, number>();
+
+export function __testOnlyResetDefaultMacroSkillsCache(): void {
+  ensuredWorkspaceRoots.clear();
+}
+
 export function ensureDefaultMacroSkills(): void {
+  const workspaceRoot = getMacroSkillsDirs().core;
+  const now = Date.now();
+  if ((ensuredWorkspaceRoots.get(workspaceRoot) ?? 0) > now) return;
   for (const s of DEFAULT_SKILLS) {
     try {
       const existing = loadMacroSkill(s.id);
@@ -123,4 +133,5 @@ export function ensureDefaultMacroSkills(): void {
       // best-effort
     }
   }
+  ensuredWorkspaceRoots.set(workspaceRoot, now + DEFAULT_SKILLS_RECHECK_MS);
 }

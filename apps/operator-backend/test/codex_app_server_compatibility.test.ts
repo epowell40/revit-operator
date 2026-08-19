@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
+import { __testOnlyResetCodexVersionProbeCache, probeCodexVersion } from "../src/codex/app_server.js";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
 import { EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
@@ -69,6 +72,39 @@ test("Codex app-server launch uses the configured binary, strict config, and an 
   assert.match(source, /probeCodexVersion/);
   assert.match(source, /notify\("initialized"/);
   assert.match(source, /handleServerRequest/);
+});
+
+test("Codex version probing retries a timed-out cold start and caches the successful result", async () => {
+  __testOnlyResetCodexVersionProbeCache();
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const proc = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      kill: (signal?: string) => boolean;
+    };
+    proc.stdout = new PassThrough();
+    proc.stderr = new PassThrough();
+    proc.kill = () => {
+      queueMicrotask(() => proc.emit("exit", null, "SIGKILL"));
+      return true;
+    };
+    if (spawnCount > 1) {
+      queueMicrotask(() => {
+        proc.stdout.write("codex-cli 0.144.5\n");
+        proc.emit("exit", 0, null);
+      });
+    }
+    return proc;
+  }) as unknown as typeof import("node:child_process").spawn;
+
+  const options = { timeoutMs: 100, retryDelayMs: 0, maxAttempts: 2, spawnProcess };
+  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.144.5");
+  assert.equal(spawnCount, 2);
+  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.144.5");
+  assert.equal(spawnCount, 2);
+  __testOnlyResetCodexVersionProbeCache();
 });
 
 test("MCP results adapt to app-server dynamic tool responses without losing errors or images", () => {
