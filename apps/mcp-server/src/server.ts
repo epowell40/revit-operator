@@ -1133,8 +1133,8 @@ server.tool("revit_list_schedules", "List schedules or read one schedule's bound
     includeData: z.boolean().optional(),
     rowOffset: z.number().int().min(0).optional(),
     columnOffset: z.number().int().min(0).optional(),
-    maxRows: z.number().int().min(1).optional(),
-    maxColumns: z.number().int().min(1).optional()
+    maxRows: z.number().int().min(1).max(500).optional(),
+    maxColumns: z.number().int().min(1).max(100).optional()
   },
   async (args) => {
     try {
