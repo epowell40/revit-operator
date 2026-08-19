@@ -943,6 +943,29 @@ test("fixture-grounded duplicate impact accepts a fully traced plausible pair an
   assert.match(conciseLiveAnswer.answer_assertion_failures.join("\n"), /Physical connection/i);
   assert.match(conciseLiveAnswer.answer_assertion_failures.join("\n"), /remaining connected system/i);
 
+  const completeNaturalLiveAnswer = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
+    ok: true,
+    assistant_message: [
+      "## Result",
+      "- **Strongest candidate:** air terminals **1460066 / 1460067**, Space **306 – Live/Work Unit 306**, Level L3.",
+      "- They are identical, consecutive IDs, only **8 in** apart, but face opposite directions.",
+      "- Nearby terminals **1460065–1460068** repeat the same paired arrangement and all connect independently to duct **1460049**. This strongly suggests an intentional double-sided grille arrangement—not a proven duplicate.",
+      "Previewed deletion of **1460066**:",
+      "- Impacted: **1460066 only**",
+      "- Dependents deleted: **none**",
+      "- Physical connection affected: terminal connector 1 → duct **1460049**, connector 3",
+      "- Predicted system: *Mechanical Supply Air 34* would retain **53 of 54** physical members; the remaining network should stay connected.",
+      "Nothing was committed. Post-preview readback confirms **1460066 still exists**, is reconnected to **1460049**, and the complete system is restored: **54/54 connected, 0 disconnected**."
+    ].join("\n"),
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/delete", request_effect: "read", request_dispatched: true, status: "success" }],
+    assignment_projection,
+    teammate_loop_receipt
+  });
+  assert.equal(completeNaturalLiveAnswer.tier, "verified");
+  assert.equal(completeNaturalLiveAnswer.answer_assertion_passed, true);
+  assert.equal(completeNaturalLiveAnswer.verification_basis, "fixture_semantic_oracle");
+
   const unverified = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(entry, false), {
     ok: true,
     assistant_message: correctAnswer,
