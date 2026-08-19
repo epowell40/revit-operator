@@ -24,6 +24,11 @@ import {
   waitForExactRevitFixtureHealth,
   type ExactRevitFixtureHealthResult
 } from "../benchmark/revit_fixture_readiness.js";
+import {
+  localProcessIsAlive,
+  localRevitProcessGuardTarget,
+  type LocalRevitProcessGuardTarget
+} from "../benchmark/local_revit_process_liveness.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -100,6 +105,8 @@ async function readExactFixtureHealth(
   return waitForExactRevitFixtureHealth({
     expectedDocumentTitle,
     timeoutMs: fixtureReadinessTimeoutMs(),
+    pollIntervalMs: 2_000,
+    requiredConsecutiveMatches: 3,
     readHealth: (remainingMs) => requestJson(
       baseUrl,
       preferCached ? "/api/revit/health?prefer_cached=1" : "/api/revit/health",
@@ -433,8 +440,25 @@ async function ensureFixtureActive(
 ): Promise<JsonRecord> {
   const startedAt = nowIso();
   const startedMs = Date.now();
-  const before = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  let before: JsonRecord;
+  try {
+    before = await requestJson(baseUrl, "/api/revit/health", {}, healthTimeoutMs());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/REVIT_CONTEXT_HOST_STARTING|no fully opened model|no active document/i.test(message)) throw error;
+    // Revit Home is a valid fixture-transition starting point. Preserve the
+    // cold-start observation, then let the deterministic fixture opener create
+    // the first authoritative document context instead of requiring a person
+    // to open a model before `run the benchmark` can begin.
+    before = {
+      ok: false,
+      cold_start: true,
+      code: "REVIT_CONTEXT_HOST_STARTING",
+      error: message
+    };
+  }
   if (healthDocumentTitle(before) === fixture.document_title) {
+    const stable = await readExactFixtureHealth(baseUrl, fixture.document_title);
     return {
       fixture: fixtureKey,
       expected_document_title: fixture.document_title,
@@ -443,7 +467,8 @@ async function ensureFixtureActive(
       finished_at: nowIso(),
       duration_ms: Date.now() - startedMs,
       before,
-      after: before
+      after: stable.health,
+      readiness_attempts: stable.attempts
     };
   }
   const samplePath = path.resolve(fixtureRoot, fixture.sample_filename);
@@ -462,6 +487,7 @@ async function ensureFixtureActive(
     if (healthDocumentTitle(after) !== fixture.document_title) {
       throw new Error(`Deterministic fixture transition ${fixtureKey} returned without the exact authoritative target title.`);
     }
+    const stable = await readExactFixtureHealth(baseUrl, fixture.document_title);
     return {
       fixture: fixtureKey,
       expected_document_title: fixture.document_title,
@@ -471,7 +497,8 @@ async function ensureFixtureActive(
       finished_at: nowIso(),
       duration_ms: Date.now() - startedMs,
       before,
-      after,
+      after: stable.health,
+      readiness_attempts: stable.attempts,
       deterministic_response: deterministic
     };
   } catch (error) {
@@ -547,6 +574,8 @@ async function ensureFixtureActive(
       + (stateError || transportError || "The Operator did not activate the requested model.")
     );
   }
+  const stable = await readExactFixtureHealth(baseUrl, fixture.document_title);
+  after = stable.health;
   return {
     fixture: fixtureKey,
     expected_document_title: fixture.document_title,
@@ -561,7 +590,8 @@ async function ensureFixtureActive(
     computer_state: computerState,
     transport_error: transportError || null,
     target_verified_while_agent_running: targetVerifiedWhileAgentRunning,
-    health_observation_errors: healthObservationErrors
+    health_observation_errors: healthObservationErrors,
+    readiness_attempts: stable.attempts
   };
 }
 
@@ -615,7 +645,8 @@ function computerPerformanceSummary(attempt: JsonRecord): JsonRecord {
 
 async function runComputerCase(
   baseUrl: string,
-  testCase: GeneralRevitCapabilityCase
+  testCase: GeneralRevitCapabilityCase,
+  processGuard: LocalRevitProcessGuardTarget | null
 ): Promise<{ attempt: JsonRecord; sessionId: string }> {
   const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
   await waitForComputerIdle(baseUrl, Math.min(timeoutMs, 60_000), `Case ${testCase.case_id}`);
@@ -636,8 +667,35 @@ async function runComputerCase(
   }
   const pollingDeadline = Date.now() + timeoutMs;
   let state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
+  let contextLossSettlement: JsonRecord | null = null;
   while (state.running === true && Date.now() < pollingDeadline) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
+    if (processGuard && !localProcessIsAlive(processGuard.processId)) {
+      const contextLossError = [
+        `The exact local Revit process ${processGuard.processId} exited or was replaced while case ${testCase.case_id} was running.`,
+        processGuard.documentTitle ? `Expected document '${processGuard.documentTitle}'.` : "",
+        processGuard.executorId ? `Expected executor '${processGuard.executorId}'.` : "",
+        "The benchmark stopped its own Operator turn instead of waiting for courier deadlines or grading a different Revit process."
+      ].filter(Boolean).join(" ");
+      transportError = transportError ? `${transportError} ${contextLossError}` : contextLossError;
+      contextLossSettlement = await settleTimedOutComputerRun({
+        initialState: state,
+        stopRun: async () => {
+          await requestJson(baseUrl, "/api/computer/stop", { method: "POST" }, 10_000);
+        },
+        readState: () => requestJson(baseUrl, "/api/computer/state", {}, 5_000),
+        settleTimeoutMs: 30_000,
+        pollIntervalMs: 250
+      });
+      state = asRecord(contextLossSettlement.state);
+      if (state.running === true) {
+        throw new Error(
+          `${contextLossError} The stopped Operator turn did not become idle; `
+          + "the benchmark is stopping instead of contaminating later cases."
+        );
+      }
+      break;
+    }
     state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
   }
   let timeoutSettlement: JsonRecord | null = null;
@@ -693,6 +751,7 @@ async function runComputerCase(
     })),
     ...(teammateLoopReceipt ? { teammate_loop_receipt: teammateLoopReceipt } : {}),
     harness_timeout_settlement: timeoutSettlement,
+    harness_context_loss_settlement: contextLossSettlement,
     computer_state: state
   };
   return { attempt, sessionId: String(state.backendSessionId || "").trim() };
@@ -722,7 +781,11 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   let sessionId = "";
   let attempt: JsonRecord;
   if (useComputer) {
-    const computerResult = await runComputerCase(baseUrl, testCase);
+    const computerResult = await runComputerCase(
+      baseUrl,
+      testCase,
+      localRevitProcessGuardTarget(baseUrl, initialState)
+    );
     attempt = computerResult.attempt;
     sessionId = computerResult.sessionId;
   } else {

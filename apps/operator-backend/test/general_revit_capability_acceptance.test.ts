@@ -14,6 +14,7 @@ import {
 } from "../src/benchmark/general_revit_capability_acceptance.js";
 import { loadEpic0441Campaign } from "../src/benchmark/epic0441_campaign.js";
 import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../src/benchmark/general_revit_sample_fixtures.js";
+import { localProcessIsAlive, localRevitProcessGuardTarget } from "../src/benchmark/local_revit_process_liveness.js";
 import { backendRoot, repoRoot } from "../src/benchmark/files.js";
 
 const corpus = loadGeneralRevitCapabilityCorpus();
@@ -41,8 +42,49 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /refusing to grade another runner's state/);
   assert.match(runner, /settleTimedOutComputerRun/);
   assert.match(runner, /the benchmark is stopping instead of contaminating later cases with live-context contention/);
+  assert.match(runner, /localRevitProcessGuardTarget\(baseUrl, initialState\)/);
+  assert.match(runner, /harness_context_loss_settlement:/);
+  assert.match(runner, /stopped its own Operator turn instead of waiting for courier deadlines/);
   assert.match(runner, /--legacy-chat is retained only for transport diagnostics/);
   assert.doesNotMatch(runner, /const useComputer = process\.argv\.includes\("--ui"\)/);
+});
+
+test("local benchmark process guard is loopback-only and preserves the exact Revit binding", () => {
+  const health = {
+    context: {
+      process_id: 18912,
+      courier_executor_id: "DESKTOP-revit-courier-18912",
+      document: { title: "Snowdon Towers Sample HVAC" }
+    }
+  };
+  assert.deepEqual(localRevitProcessGuardTarget("http://127.0.0.1:3907", health), {
+    processId: 18912,
+    executorId: "DESKTOP-revit-courier-18912",
+    documentTitle: "Snowdon Towers Sample HVAC"
+  });
+  assert.deepEqual(localRevitProcessGuardTarget("http://[::1]:3907", health), {
+    processId: 18912,
+    executorId: "DESKTOP-revit-courier-18912",
+    documentTitle: "Snowdon Towers Sample HVAC"
+  });
+  assert.equal(localRevitProcessGuardTarget("https://operator.example", health), null);
+  assert.equal(localRevitProcessGuardTarget("not a URL", health), null);
+  assert.equal(localRevitProcessGuardTarget("http://localhost:3907", { context: { process_id: 0 } }), null);
+});
+
+test("local benchmark process liveness treats access denied as alive and missing PIDs as dead", () => {
+  assert.equal(localProcessIsAlive(42, () => undefined), true);
+  assert.equal(localProcessIsAlive(42, () => {
+    const error = new Error("access denied") as NodeJS.ErrnoException;
+    error.code = "EPERM";
+    throw error;
+  }), true);
+  assert.equal(localProcessIsAlive(42, () => {
+    const error = new Error("no such process") as NodeJS.ErrnoException;
+    error.code = "ESRCH";
+    throw error;
+  }), false);
+  assert.equal(localProcessIsAlive(0, () => undefined), false);
 });
 
 test("benchmark wrapper orchestrates sample fixtures by default unless one is pinned", () => {
@@ -70,6 +112,9 @@ test("benchmark groups cases by fixture and fails closed on an unpinned mixed-mo
   assert.match(runner, /targetVerifiedWhileAgentRunning/);
   assert.match(runner, /healthDocumentTitle\(after\) === fixture\.document_title/);
   assert.match(runner, /stale pre-open binding until the fixture timeout expires/);
+  assert.match(runner, /REVIT_CONTEXT_HOST_STARTING\|no fully opened model\|no active document/);
+  assert.match(runner, /Revit Home is a valid fixture-transition starting point/);
+  assert.match(runner, /cold_start: true/);
   assert.match(runner, /fixture_transitions:/);
   assert.match(runner, /preferredFixture !== activeFixtureKey/);
   assert.match(runner, /Fixture transition .* failed:/);

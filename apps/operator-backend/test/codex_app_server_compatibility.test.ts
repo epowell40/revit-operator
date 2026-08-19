@@ -251,7 +251,7 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /`spatialDuplicateCandidates`/);
   assert.match(instructions, /unique Marks are not duplicate-instance proof/);
   assert.match(instructions, /same-category and same-family\/type instances/);
-  assert.match(instructions, /overlapping bounding-box footprints or center separation relative to element size/);
+  assert.match(instructions, /overlapping bounding-box footprints or insertion-point\/center separation relative to element size/);
   assert.match(instructions, /Compare host, level, facing\/hand orientation, parameters, and connector\/network relationships/);
   assert.match(instructions, /opposite-facing peers on different connector ports may be intentional/);
   assert.match(instructions, /rollback\/dry-run delete/);

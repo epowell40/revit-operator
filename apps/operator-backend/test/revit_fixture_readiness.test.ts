@@ -44,6 +44,30 @@ test("fixture readiness retries transient transport errors", async () => {
   assert.equal(result.attempts, 2);
 });
 
+test("fixture readiness requires a stable run of exact health matches when requested", async () => {
+  const time = fakeTime();
+  const observations = [
+    health("Snowdon Towers Sample HVAC"),
+    new Error("GET /api/revit/health returned 409: revit_external_event_busy"),
+    health("Snowdon Towers Sample HVAC"),
+    health("Snowdon Towers Sample HVAC"),
+    health("Snowdon Towers Sample HVAC")
+  ];
+  const result = await waitForExactRevitFixtureHealth({
+    expectedDocumentTitle: "Snowdon Towers Sample HVAC",
+    timeoutMs: 10_000,
+    pollIntervalMs: 2_000,
+    requiredConsecutiveMatches: 3,
+    readHealth: async () => {
+      const observation = observations.shift() ?? health();
+      if (observation instanceof Error) throw observation;
+      return observation;
+    },
+    ...time
+  });
+  assert.equal(result.attempts, 5);
+});
+
 test("fixture readiness fails immediately on a different active model", async () => {
   const time = fakeTime();
   let attempts = 0;

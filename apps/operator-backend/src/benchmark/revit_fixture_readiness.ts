@@ -10,6 +10,7 @@ export interface ExactRevitFixtureHealthOptions {
   timeoutMs: number;
   readHealth: (remainingMs: number) => Promise<JsonRecord>;
   pollIntervalMs?: number;
+  requiredConsecutiveMatches?: number;
   now?: () => number;
   sleep?: (durationMs: number) => Promise<void>;
 }
@@ -36,9 +37,11 @@ export async function waitForExactRevitFixtureHealth(
   const sleep = options.sleep ?? ((durationMs: number) => new Promise<void>((resolve) => setTimeout(resolve, durationMs)));
   const timeoutMs = Math.max(1, options.timeoutMs);
   const pollIntervalMs = Math.max(1, options.pollIntervalMs ?? 1_000);
+  const requiredConsecutiveMatches = Math.max(1, Math.min(10, options.requiredConsecutiveMatches ?? 1));
   const deadline = now() + timeoutMs;
   let attempts = 0;
   let lastError = "";
+  let consecutiveMatches = 0;
 
   while (true) {
     attempts += 1;
@@ -46,13 +49,19 @@ export async function waitForExactRevitFixtureHealth(
     try {
       const health = await options.readHealth(remainingMs);
       const observedTitle = revitHealthDocumentTitle(health);
-      if (observedTitle === expectedTitle) return { health, attempts };
-      if (observedTitle) {
+      if (observedTitle === expectedTitle) {
+        consecutiveMatches += 1;
+        if (consecutiveMatches >= requiredConsecutiveMatches) return { health, attempts };
+        lastError = `Exact document matched ${consecutiveMatches}/${requiredConsecutiveMatches} required stability checks.`;
+      } else if (observedTitle) {
         throw new Error(`Expected active Revit document '${expectedTitle}', but Revit reports '${observedTitle}'.`);
+      } else {
+        consecutiveMatches = 0;
+        lastError = "Revit reports no active document.";
       }
-      lastError = "Revit reports no active document.";
     } catch (error) {
       if (!transientHealthError(error)) throw error;
+      consecutiveMatches = 0;
       lastError = error instanceof Error ? error.message : String(error);
     }
 

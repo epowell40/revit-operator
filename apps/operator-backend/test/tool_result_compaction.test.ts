@@ -116,10 +116,10 @@ test("compact find-elements preserves bounded world geometry for a complete proj
   assert.equal(compacted.items[508].geometry.units, "feet");
   assert.equal(compacted.items[508].geometry.boundingBox.size.x, 4 / 3);
   assert.equal(compacted.items[508].geometry.arbitraryPayload, undefined);
-  assert.equal(compacted.spatialDuplicateCandidates.schema, "revit-operator.spatial-duplicate-candidate-summary/v1");
+  assert.equal(compacted.spatialDuplicateCandidates.schema, "revit-operator.spatial-duplicate-candidate-summary/v2");
   assert.equal(compacted.spatialDuplicateCandidates.complete, true);
-  assert.ok(compacted.spatialDuplicateCandidates.candidatePairsFound > 24);
-  assert.equal(compacted.spatialDuplicateCandidates.candidatePairsReturned, 24);
+  assert.ok(compacted.spatialDuplicateCandidates.candidatePairsFound > 48);
+  assert.equal(compacted.spatialDuplicateCandidates.candidatePairsReturned, 48);
   assert.deepEqual(compacted.spatialDuplicateCandidates.candidates[0].elementIds, [1460000, 1460001]);
   assert.equal(compacted.spatialDuplicateCandidates.candidates[0].centerDistanceIn, 1);
   assert.equal(compacted.spatialDuplicateCandidates.candidates[0].orientationRelation, "same");
@@ -170,6 +170,39 @@ test("spatial duplicate candidates rank same-host same-facing overlap above inte
     && candidate.reasons.includes("opposite_facing_orientation_requires_connector_review")));
   assert.ok(!summary.candidates.some((candidate: any) => candidate.elementIds.includes(1500001)));
   assert.ok(!summary.candidates.some((candidate: any) => candidate.elementIds.includes(1500002)));
+});
+
+test("opposite-facing near peers are reviewed before the common paired-face overlap pattern", () => {
+  const geometry = (locationX: number, centerX: number, sizeX: number, facingZ: number) => ({
+    units: "feet",
+    coordinateSystem: "revit_internal_world",
+    locationPoint: { x: locationX, y: 2, z: 9 },
+    boundingBox: {
+      min: { x: centerX - sizeX / 2, y: 1.25, z: 8.75 },
+      max: { x: centerX + sizeX / 2, y: 2.75, z: 9.25 },
+      center: { x: centerX, y: 2, z: 9 },
+      size: { x: sizeX, y: 1.5, z: 0.5 }
+    },
+    facingOrientation: { x: 0, y: 0, z: facingZ }
+  });
+  const compacted = compactFindElementsResultForPrompt({
+    status: "Ok",
+    count: 4,
+    elementIds: [1460066, 1460067, 1466896, 1466897],
+    geometryIncluded: true,
+    itemsComplete: true,
+    items: [
+      { elementId: 1460066, typeId: 222, levelId: 333, geometry: geometry(0, -0.078125, 0.197916, -1) },
+      { elementId: 1460067, typeId: 222, levelId: 333, geometry: geometry(8 / 12, 0.432292, 0.197916, 1) },
+      { elementId: 1466896, typeId: 222, levelId: 333, geometry: geometry(20, 19.9289, 0.7935, 1) },
+      { elementId: 1466897, typeId: 222, levelId: 333, geometry: geometry(20 + 8 / 12, 20.3934, 0.7935, -1) }
+    ]
+  }) as any;
+
+  assert.deepEqual(compacted.spatialDuplicateCandidates.candidates[0].elementIds, [1460066, 1460067]);
+  assert.equal(compacted.spatialDuplicateCandidates.candidates[0].reviewGroup, "opposite_facing_near");
+  assert.equal(compacted.spatialDuplicateCandidates.candidates[0].insertionPointDistanceIn, 8);
+  assert.equal(compacted.spatialDuplicateCandidates.candidates[1].reviewGroup, "opposite_facing_overlap");
 });
 
 test("compact locate-elements preserves every physical and nested spatial result plus unresolved provenance", () => {
