@@ -285,6 +285,8 @@ test("Codex instructions investigate duplicates with spatial and network evidenc
   assert.match(instructions, /`includeGeometry:true`/);
   assert.match(instructions, /Every document-scope `\/revit\/find-elements` request must include a real/);
   assert.match(instructions, /`limit` alone is not a bounded predicate/);
+  assert.match(instructions, /never send placeholder or sentinel values such as `__none__`/);
+  assert.match(instructions, /omit the category field and use real `identityTerms`/);
   assert.match(instructions, /user-facing aliases such as `air terminals` are accepted/);
   assert.match(instructions, /do not export every view before trying this complete inventory/);
   assert.match(instructions, /`spatialDuplicateCandidates`/);
