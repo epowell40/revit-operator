@@ -515,6 +515,10 @@
       "sha256": "sha256:72f9e48202276ca9c2ed7a9c6f44bc9e977a30e991bd42e161d1822bf5946525"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/durable_tool_evidence.ts",
+      "sha256": "sha256:e08025313bcc8e68ce57233cafedd83cd54ccd0e39911e67a0263486b3d45cf9"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/environment.ts",
       "sha256": "sha256:1b44b94847f95372310a043d639cab286b23923e030bdf5d0fc17fa2e007e671"
     },
@@ -1641,7 +1645,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:d6feab4e3e7de9fb92d7e4161315c20f300ef4741102ad6c1af22f3dbcfbe67d"
+      "sha256": "sha256:1fb8bac1fc1425999607024dbc700e32c3b89701a0f5fdbe5912fdd432609990"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2337,7 +2341,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:403b6249fc8fa95b8f16bfee6986732eddc8dc7111756cd7195778541c8c8ade"
+      "sha256": "sha256:14287e85015c1a89bfc22a11c577e1f029bdb9ba3b54e3ba8a4dc9a9d17f09c7"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -4701,7 +4705,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:5917d62ede0f44f8eced5cdc1106d4fbdfe1382242fcd42973abeae53f3f515e",
+  "inputs_hash": "sha256:f03ef6bb03af3034761da7be6f18504a2d9e01085f50a25fbc74f827aeb12b32",
   "result": {
     "passed": true,
     "checks": [
