@@ -126,6 +126,47 @@ test("a nested PDF dry-run is recorded as an executable preview", () => {
   }
 });
 
+test("a recovered failed preview is not advertised as certified preview evidence", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Preview renaming Area 1 to Area A without changing the model."));
+  try {
+    const failed = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/create-view",
+        body: { operation: "rename_batch", namePattern: "Area 1", replacement: "Area A", dryRun: true }
+      }
+    });
+    assert.equal(failed.allowed, true);
+    recordTeammateMcpResult(owner, failed, {
+      isError: true,
+      content: [{ type: "text", text: JSON.stringify({ error: "viewIds or nameContains is required" }) }]
+    });
+
+    const recovered = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/create-view",
+        body: { operation: "rename_batch", nameContains: "Area 1", replacement: "Area A", dryRun: true }
+      }
+    });
+    assert.equal(recovered.allowed, true);
+    recordTeammateMcpResult(owner, recovered, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, dryRun: true, targetCount: 0, targets: [] }) }]
+    });
+
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.deepEqual(receipt?.preview_action_ids, ["mcp:2"]);
+    assert.deepEqual(receipt?.preview_receipts?.map(row => row.action_id), ["mcp:2"]);
+    assert.equal(receipt?.stage, "preview");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("the typed PDF tool preserves preview and publication effects", () => {
   __testOnlyResetTeammateLoopState();
   const previewOwner = {};
