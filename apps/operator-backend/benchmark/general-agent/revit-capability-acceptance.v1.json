@@ -749,7 +749,30 @@
       "dispatch_any_of": ["/revit/sheets", "/revit/get-parameters", "/revit/set-parameter", "/revit/plan-family-evolution"],
       "expected_effect": "apply",
       "probe_expected_effect": "read",
-      "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"]
+      "epic0441_task_refs": ["g22_sheet_view_package", "n29_novel_holdout"],
+      "answer_assertions": {
+        "must_match": [
+          "(?:exactly\\s+three|three\\s+(?:suitable\\s+)?sheets)",
+          "M000[^\\n]*1420963[^\\n]*1420968",
+          "M100[^\\n]*1363532[^\\n]*1363537",
+          "M200[^\\n]*1363682[^\\n]*1363687",
+          "Drawn By[^\\n]*(?:Author|sheet)",
+          "Checked By[^\\n]*(?:Checker|sheet)",
+          "(?:sheet-owned|sheet (?:built-in )?parameters?)",
+          "(?:no corresponding titleblock-type parameters|titleblock type[^\\n]*(?:not found|none|no corresponding))",
+          "Project Information[^\\n]*Author[^\\n]*Autodesk",
+          "(?:static family text[^\\n]*(?:not|no evidence)|no evidence[^\\n]*static family text)",
+          "(?:read (?:both )?parameters? back|readback)[^\\n]*(?:sheet|each)",
+          "(?:No model changes were made|nothing (?:was )?changed|read-only)"
+        ],
+        "evidence": {
+          "required_successful_paths": [
+            "/revit/sheets",
+            "/revit/titleblock-label-map",
+            "/revit/verify-parameter-on-sheet"
+          ]
+        }
+      }
     },
     {
       "case_id": "lh05_create_similar_receptacles",

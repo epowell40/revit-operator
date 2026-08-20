@@ -39,6 +39,9 @@ export type GeneralRevitCapabilityCase = {
   answer_assertions?: {
     must_match: string[];
     must_not_match?: string[];
+    evidence?: {
+      required_successful_paths?: string[];
+    };
   };
   fixture_blocker_assertions?: {
     must_match: string[];
@@ -644,6 +647,23 @@ function fixtureBlockerEvidenceFailures(
   return failures;
 }
 
+function answerEvidenceFailures(
+  testCase: GeneralRevitCapabilityCase,
+  attempt: GeneralRevitAttempt
+): string[] {
+  const requirements = testCase.answer_assertions?.evidence;
+  if (!requirements) return [];
+  const evidence = attempt.durable_tool_evidence && typeof attempt.durable_tool_evidence === "object"
+    ? attempt.durable_tool_evidence as Record<string, unknown>
+    : {};
+  const successfulPaths = new Set(Array.isArray(evidence.successful_paths)
+    ? evidence.successful_paths.map((value) => String(value))
+    : []);
+  return (requirements.required_successful_paths || [])
+    .filter((path) => !successfulPaths.has(path))
+    .map((path) => `evidence_missing_successful_path:${path}`);
+}
+
 function verificationChecksPass(value: unknown): boolean {
   const rows = Array.isArray(value) ? value : [value];
   if (rows.length === 0) return false;
@@ -844,7 +864,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
           .map((pattern) => `missing:${pattern}`),
         ...(testCase.answer_assertions.must_not_match || [])
           .filter((pattern) => assertionPatternMatches(pattern, answerText))
-          .map((pattern) => `forbidden:${pattern}`)
+          .map((pattern) => `forbidden:${pattern}`),
+        ...answerEvidenceFailures(testCase, attempt)
       ]
     : [];
   const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
