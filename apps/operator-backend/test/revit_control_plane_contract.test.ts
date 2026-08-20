@@ -91,6 +91,32 @@ test("create-view discovery exposes a conditional tagged union instead of requir
   assert.match(schemas, /rename_batch requires viewIds or nameContains/);
 });
 
+test("create-schedule discovery keeps aliases and conditional placement fields optional", () => {
+  const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+  const manual = schemas.slice(
+    schemas.indexOf('if (string.Equals(p, "/revit/create-schedule", StringComparison.OrdinalIgnoreCase))'),
+    schemas.indexOf("// Some tools accept null bodies intentionally"),
+  );
+  assert.match(schemas, /create-schedule is also a conditional union/);
+  assert.match(manual, /required: Array\.Empty<string>\(\)/);
+  assert.match(manual, /"sourceScheduleId", Int\(\)/);
+  assert.match(manual, /"placeOnActiveSheetX", Num\(\)/);
+  assert.match(schemas, /Omit placeOnActiveSheetX\/Y unless placeOnActiveSheet=true/);
+  assert.doesNotMatch(manual, /required: new\[\]/);
+});
+
+test("Revit image export normalizes extension-bearing stems before suffix lookup", () => {
+  const selectionUtil = addinFile(path.join("RevitBridge.Logic", "Handlers", "Selection", "SelectionUtil.cs"));
+  const exportMethod = selectionUtil.slice(
+    selectionUtil.indexOf("public static string ExportViewImage"),
+    selectionUtil.indexOf("public static bool TryParseBuiltInCategories"),
+  );
+  assert.match(exportMethod, /Path\.GetExtension\(normalizedStem\)/);
+  assert.match(exportMethod, /Path\.GetFileNameWithoutExtension\(normalizedStem\)/);
+  assert.match(exportMethod, /di\.GetFiles\(normalizedStem \+ "\*"\)/);
+  assert.doesNotMatch(exportMethod, /di\.GetFiles\(fileStem \+ "\*"\)/);
+});
+
 test("parameter-query discovery does not require mutually exclusive aliases or optional filters together", () => {
   const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
   const parameterQuery = schemas.slice(

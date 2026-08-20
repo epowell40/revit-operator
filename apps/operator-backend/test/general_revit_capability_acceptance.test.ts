@@ -493,6 +493,31 @@ Without an open terminal connector, no compatible route can be previewed. Nothin
   assert.equal(truthful.fixture_blocker_accepted, true);
   assert.equal(truthful.completed, false);
 
+  const capturedExhaustiveWording = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    assistant_message: `## Blocked by live model state
+
+No unconnected air terminal exists:
+
+- **509/509 air terminals scanned**
+- **509 connectors scanned**
+- **0 open physical connectors**
+- **0 failures or truncated connector rows**
+
+Therefore, no valid terminal/main pair exists for a bounded route preview. **Nothing was created or modified.**`,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 509,
+        failed_rows: 0,
+        open_hvac_connectors: 0
+      }
+    }
+  });
+  assert.equal(capturedExhaustiveWording.tier, "accepted");
+  assert.equal(capturedExhaustiveWording.fixture_blocker_assertion_passed, true);
+  assert.equal(capturedExhaustiveWording.fixture_blocker_accepted, true);
+
   const proseOnly = evaluateGeneralRevitCapabilityAttempt(safeCase, inspected);
   assert.equal(proseOnly.tier, "failed");
   assert.equal(proseOnly.fixture_blocker_accepted, false);
@@ -1315,6 +1340,36 @@ test("an evidence-backed wrong-sheet ambiguity is accepted without inventing pre
   assert.equal(result.verification_basis, "none");
 });
 
+test("a live peer-note investigation accepts plain target-ambiguity wording without inventing an edit", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "c12_replace_outdated_note_terse")!;
+  const entry = generalRevitExecutionCase(productionCase, false);
+  const assistantMessage = `### Read-only finding
+
+No ventilation note exists on active sheet M000 or its placed drafting view. The most plausible target is TextNote 1487574 on nearby M101. Eleven peer notes use identical wording, so no newer replacement wording can be inferred. The target remains ambiguous without identifying the intended sheet/note. Nothing was edited.`;
+  const attempt = {
+    ok: true,
+    assistant_message: assistantMessage,
+    effect_state: "read_only_dispatched" as const,
+    actions: [
+      { path: "/revit/find-text-notes", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }
+    ]
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+
+  const unqualifiedFinding = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace(
+      "The target remains ambiguous without identifying the intended sheet/note.",
+      "No edit was previewed."
+    )
+  });
+  assert.equal(unqualifiedFinding.tier, "failed");
+});
+
 test("a target clarification cannot inherit completion or verification from a successful preview receipt", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!;
   const entry = { ...generalRevitExecutionCase(productionCase, false), answer_assertions: undefined };
@@ -1358,6 +1413,39 @@ test("a durable blocked assignment remains an accepted clarification when essent
   assert.equal(result.non_refusal, true);
   assert.equal(result.completed, false);
   assert.equal(result.verified, false);
+});
+
+test("an evidence-backed markup task accepts a required target selection without relabeling it completion", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c25_duct_12x10_markup")!, false);
+  const assistantMessage = `### Blocked — no eligible preview target
+
+Live Revit evidence resolved Space 405 on L4, but a complete room-and-plenum scan found 0 duct curves, fittings, or terminals associated with it.
+
+Therefore, no exact branch segment or transition point could be grounded for a rollback preview. Nothing was applied. The markup image/location or target duct selection is needed to continue.`;
+  const attempt = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    assistant_message: assistantMessage,
+    actions: [
+      { path: "/revit/resolve-room-plan-view", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/ducts-by-spatial-scope", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assignment_projection: { assignments: [{ lifecycle: { phase: "blocked" } }] }
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+
+  const unqualifiedBlocker = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace(
+      "The markup image/location or target duct selection is needed to continue.",
+      "No eligible preview target exists."
+    )
+  });
+  assert.equal(unqualifiedBlocker.tier, "failed");
+  assert.equal(unqualifiedBlocker.completed, false);
 });
 
 test("planned, previewed, completed, and verified remain distinct truth tiers", () => {
@@ -3110,6 +3198,58 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   const liveVerified = evaluateGeneralRevitCapabilityAttempt(entry, { ...attempt, assistant_message: liveSemanticResponse });
   assert.equal(liveVerified.tier, "verified");
   assert.equal(liveVerified.verified, true);
+
+  const capturedStructuredPlan = [
+    "## Live findings",
+    "Existing Heat Recovery Unit Summary schedule (ID 1488968) is the closest reference.",
+    "It already confirms Mark, Family, and Type are schedulable.",
+    "Independent model query found:",
+    "- HRU-prefixed equipment: 37",
+    "- ERU-prefixed equipment: 0",
+    "- Blank HRU Marks: 0",
+    "- Duplicate HRU Marks: 0",
+    "- Unique HRU Marks: 37",
+    "Existing schedule also reports Grand total: 37, matching the independent model count.",
+    "## Complete temporary QA schedule plan",
+    "1. Create an unplaced regular Mechanical Equipment schedule named TEMP – ERU QA.",
+    "2. Add only:",
+    "- Mark",
+    "- Family",
+    "- Type",
+    "3. Configure:",
+    "- Filter: Mark begins with ERU",
+    "- Sort: Mark, ascending",
+    "4. Before any HRU-to-ERU migration, expect 0 schedule rows.",
+    "5. Rename only Marks beginning with HRU, preserving each suffix exactly.",
+    "6. Expected post-change facts:",
+    "- HRU model count: 0",
+    "- ERU model count: 37",
+    "- QA schedule rows: 37",
+    "7. Duplicate checks: No blank Marks; 37 distinct Marks across 37 rows; No duplicate ERU Marks.",
+    "8. Independently query Mechanical Equipment and reconcile those counts against the schedule.",
+    "No schedule was created or configured."
+  ].join("\n");
+  const capturedStructuredEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: capturedStructuredPlan
+  });
+  assert.equal(capturedStructuredEvaluation.tier, "verified");
+  assert.equal(capturedStructuredEvaluation.answer_assertion_passed, true);
+
+  for (const adversarialCapturedPlan of [
+    capturedStructuredPlan.replace("ERU-prefixed equipment: 0", "ERU-prefixed equipment: 5"),
+    capturedStructuredPlan.replace("ERU model count: 37", "ERU model count: 36"),
+    capturedStructuredPlan.replace("QA schedule rows: 37", "QA schedule rows: 36"),
+    capturedStructuredPlan.replace("Duplicate HRU Marks: 0", "Duplicate HRU Marks: 2"),
+    capturedStructuredPlan.replace("No blank Marks", "2 blank Marks")
+  ]) {
+    const adversarialCapturedEvaluation = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ...attempt,
+      assistant_message: adversarialCapturedPlan
+    });
+    assert.equal(adversarialCapturedEvaluation.tier, "failed");
+    assert.equal(adversarialCapturedEvaluation.answer_assertion_passed, false);
+  }
 
   const freshLiveTableResponse = [
     "Best reference: Heat Recovery Unit Summary — schedule ID 1488968.",

@@ -240,9 +240,10 @@ const MISSING_TARGET_PATTERNS: RegExp[] = [
   /\bplease (?:identify|select|name|specify|choose|confirm)\b/i,
   /\b(?:no|nothing is) selected\b/i,
   /\bmultiple matches\b/i,
-  /\b(?:requested|intended|exact) target (?:is|remains|appears) ambiguous\b/i,
+  /\b(?:(?:requested|intended|exact|the) )?target (?:is|remains|appears) ambiguous\b/i,
   /\b(?:active|current) sheet (?:is|appears to be|may be|is likely) (?:the )?wrong\b/i,
-  /\blikely (?:the )?wrong sheet is active\b/i
+  /\blikely (?:the )?wrong sheet is active\b/i,
+  /\btarget [^.\n]{0,40}selection (?:is|are) (?:needed|required) to continue\b/i
 ];
 
 const STRUCTURED_EVIDENCE_KEYS = new Set([

@@ -1116,6 +1116,54 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
+                // create-schedule is also a conditional union: name/scheduleName and
+                // category/categoryName are aliases, clone sources apply only to kind=clone,
+                // and active-sheet coordinates apply only when placement is requested.
+                // net48 reflection cannot recover those relationships and otherwise marks
+                // every string alias as required, encouraging callers to fill irrelevant
+                // fields with empty/default values. Publish the full optional vocabulary;
+                // OperatorActionSchemaValidator remains authoritative for each mode.
+                if (string.Equals(p, "/revit/create-schedule", StringComparison.OrdinalIgnoreCase))
+                {
+                    var sheetPlacement = Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "sheetId", Int() },
+                            { "sheetNumber", Str() },
+                            { "query", Str() },
+                            { "exact", Bool() },
+                            { "x", Num() },
+                            { "y", Num() }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "name", Str() },
+                            { "scheduleName", Str() },
+                            { "category", Str() },
+                            { "categoryName", Str() },
+                            { "kind", Str(new[] { "regular", "material_takeoff", "key", "keynote_legend", "multi_category", "sheet_list", "view_list", "clone" }) },
+                            { "sourceScheduleId", Int() },
+                            { "sourceQuery", Str() },
+                            { "sourceExact", Bool() },
+                            { "fields", Arr(Str()) },
+                            { "addFields", Arr(Str()) },
+                            { "includeLinkedFiles", Bool() },
+                            { "reuseIfExists", Bool() },
+                            { "dryRun", Bool() },
+                            { "filterBySheet", Bool() },
+                            { "placeOnActiveSheet", Bool() },
+                            { "placeOnActiveSheetX", Num() },
+                            { "placeOnActiveSheetY", Num() },
+                            { "placeOnSheet", sheetPlacement }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
                 // Some tools accept null bodies intentionally (back-compat and convenience).
                 if (string.Equals(p, "/revit/export-image", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(p, "/revit/export-view-frame", StringComparison.OrdinalIgnoreCase) ||
@@ -1267,6 +1315,14 @@ namespace RevitBridge.Operator
                     enumMap["calloutType"] = new[] { "detail", "section" };
                     notes.Add("Fields are conditional on action; the native validator reports the exact missing combination.");
                     notes.Add("rename_batch requires viewIds or nameContains plus prefix, suffix, or findText; set dryRun=true to preview exact old/new names without applying them.");
+                }
+
+                if (p == "/revit/create-schedule")
+                {
+                    enumMap["kind"] = new[] { "regular", "material_takeoff", "key", "keynote_legend", "multi_category", "sheet_list", "view_list", "clone" };
+                    notes.Add("Fields are conditional on schedule kind; name/scheduleName and category/categoryName are aliases, and clone requires sourceScheduleId or sourceQuery.");
+                    notes.Add("Omit placeOnActiveSheetX/Y unless placeOnActiveSheet=true; use placeOnSheet for explicit sheet placement.");
+                    unitNotes.Add(new { unit = "feet", fields = new[] { "placeOnActiveSheetX", "placeOnActiveSheetY", "placeOnSheet.x", "placeOnSheet.y" } });
                 }
 
                 if (p == "/revit/room-contents")

@@ -302,7 +302,21 @@ namespace RevitBridge.Logic.Handlers
 
         public static string ExportViewImage(Document doc, View view, int imageSize, string folder, string fileStem)
         {
-            var filePathNoExt = Path.Combine(folder, fileStem);
+            // ImageExportOptions.FilePath is a filename stem. Callers naturally pass
+            // names such as "review.png", but Revit strips that extension before it
+            // appends " - <view type> - <view name>.jpg". Normalize known image
+            // extensions up front so both the direct and prefix lookups use the actual
+            // emitted stem instead of searching for the impossible "review.png*".
+            var normalizedStem = (fileStem ?? string.Empty).Trim();
+            var requestedExtension = Path.GetExtension(normalizedStem).ToLowerInvariant();
+            if (requestedExtension == ".png" || requestedExtension == ".jpg" || requestedExtension == ".jpeg" ||
+                requestedExtension == ".tif" || requestedExtension == ".tiff" || requestedExtension == ".bmp")
+            {
+                normalizedStem = Path.GetFileNameWithoutExtension(normalizedStem);
+            }
+            if (string.IsNullOrWhiteSpace(normalizedStem)) normalizedStem = "RevitExport";
+
+            var filePathNoExt = Path.Combine(folder, normalizedStem);
 
             var options = new ImageExportOptions
             {
@@ -328,7 +342,7 @@ namespace RevitBridge.Logic.Handlers
                 if (di.Exists)
                 {
                     FileInfo? best = null;
-                    foreach (var fi in di.GetFiles(fileStem + "*"))
+                    foreach (var fi in di.GetFiles(normalizedStem + "*"))
                     {
                         var ext = fi.Extension?.ToLowerInvariant() ?? "";
                         if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".tif" && ext != ".tiff" && ext != ".bmp")
@@ -346,7 +360,7 @@ namespace RevitBridge.Logic.Handlers
                 // Ignore and throw a clearer error below.
             }
 
-            throw new FileNotFoundException($"ExportImage did not produce an output file for stem '{fileStem}' in folder '{folder}'.");
+            throw new FileNotFoundException($"ExportImage did not produce an output file for stem '{normalizedStem}' in folder '{folder}'.");
         }
 
         public static bool TryParseBuiltInCategories(IEnumerable<string>? categories, out List<BuiltInCategory> parsed, out List<string> invalid)
