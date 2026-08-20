@@ -1108,9 +1108,9 @@
       },
       "fixture_blocker_assertions": {
         "must_match": [
-          "(?:exactly\\s+)?7\\s+loaded\\s+Air Terminal types",
-          "(?:no two different types|no compatible peer type).{0,120}(?:preserve|invariants|compatible)",
-          "Supply(?: Air| types?)?[\\s\\S]{0,500}Return(?: Air| types?)?",
+          "(?:(?:exactly\\s+)?7\\s+loaded(?:\\s+Air Terminal)?\\s+types|Air Terminals.{0,80}7\\s+loaded\\s+types)",
+          "(?:no two different (?:types|type IDs)|no compatible peer type).{0,120}(?:preserve|invariants|compatible)",
+          "Supply(?: Air| types?)?[\\s\\S]{0,500}(?:Return|Exhaust)(?: Air| types?)?",
         "(?:no native type-change dry-run was (?:executed|admitted|performed|attempted)|did not run[^\\n.]{0,100}type-change preview|no structured[^\\n.]{0,100}(?:dry-run|preview)[^\\n.]{0,60}(?:was )?produced)",
           "nothing was applied(?: or saved)?"
         ],

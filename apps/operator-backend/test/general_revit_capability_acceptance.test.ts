@@ -340,6 +340,19 @@ No native type-change dry-run was admitted; nothing was applied or saved.`
   assert.equal(capturedLiveWording.tier, "accepted");
   assert.equal(capturedLiveWording.fixture_blocker_accepted, true);
 
+  const capturedExhaustWording = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    assistant_message: `## Blocked — no compatible peer type
+
+Live inventory found 509 placed Air Terminals across 7 loaded types. No two different type IDs preserve all required invariants.
+Closest geometric match: Supply element 1513833 and Exhaust element 1377544. Both have one round 4-inch connector, but SupplyAir / Out versus ExhaustAir / Bidirectional is a prohibited cross-service substitution.
+Therefore, no native type-change dry-run was executed. Nothing was applied or saved.`
+  });
+  assert.equal(capturedExhaustWording.tier, "accepted");
+  assert.equal(capturedExhaustWording.completed, false);
+  assert.equal(capturedExhaustWording.verified, false);
+  assert.equal(capturedExhaustWording.fixture_blocker_accepted, true);
+
   const vague = evaluateGeneralRevitCapabilityAttempt(safeCase, {
     ...inspected,
     assistant_message: "## Blocked\nI couldn't find a good type, so I stopped."
