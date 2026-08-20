@@ -40,6 +40,14 @@ type AutoGoalObservationEffect = AutoGoalRequestedEffect | "discovery";
 
 const APPLY_BEYOND_PREVIEW_TEXT = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just|only)\s+)?(?:stop|end|finish|halt|remain|return)\b[^.!?;\n]{0,40}\b(?:preview|preflight|dry[- ]?run)|(?:do not|don't|dont|never)\s+(?:just\s+|only\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:not|rather than)\s+(?:just\s+|only\s+)?(?:a\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:proceed|continue|go)\s+beyond\s+(?:the\s+)?(?:preview|preflight|dry[- ]?run)\b)/i;
 
+function assistantRequestsRequiredUserContext(assistantText: string): boolean {
+  const text = assistantText.trim();
+  if (!text || !text.includes("?")) return false;
+  const reportsMissingContext = /\b(?:selection (?:is|was) empty|selected elements?\s*:\s*0|nothing (?:is|was) selected|no (?:model )?placement point|no (?:marked|selected|specified|identified|resolved|unique) (?:region|location|point|target|element|instance|device|branch|segment|view)|(?:target|source|location|selection|placement point|host|view) (?:is|was|remains) (?:missing|unavailable|unresolved|unspecified|not (?:available|provided|selected|identified|specified|resolved)))\b/i.test(text);
+  const asksForContext = /\b(?:(?:could|can|would|will)\s+you|please)\b[^?\n]{0,320}\b(?:open|select|indicate|identify|choose|confirm|specify|provide|attach|upload|mark)\b[^?\n]*\?/i.test(text);
+  return reportsMissingContext && asksForContext;
+}
+
 function observationObject(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
   if (typeof value !== "string") return {};
@@ -161,15 +169,16 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           );
           return;
         }
-        const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
         const requestedEffect = requestedEffectForSession(sessionId);
+        const pendingApproval = /\b(awaiting approval|please (?:approve|confirm)|need(?:s)? (?:your|user) (?:approval|confirmation))\b/i.test(assistantText);
         const alreadySatisfiedNoop = requestedEffect !== "read"
           && assistantReportsAlreadySatisfiedNoop(assistantText, requestedEffect);
         const reportedBlockedOutcome = /\b(?:i (?:could not|cannot|can't|was unable to) complete|cannot claim (?:the )?(?:revit )?change is complete|requested (?:work|task) (?:is|was) (?:blocked|not verified|failed)|(?:completion|preview|execution|apply) (?:is|was )?(?:blocked|rejected)|(?:requested (?:work|task|change)|completion|preview|execution|apply) (?:is|was|remains?) blocked by|concrete blocker|not fully verified|verification (?:is|was)(?: therefore)? incomplete|not yet complete)\b/i.test(assistantText)
           || /\b(?:the\s+)?(?:assignment|task|request|requested (?:work|task)|objective)\s+(?:is|remains?)\s+(?:incomplete|unfinished|unmet|unsatisfied|not (?:complete|finished))\b/i.test(assistantText)
           || /(?:^|\n)\s*(?:#{1,6}\s*)?(?:[*_`~]{0,3})?(?:blocked|blocker|incomplete)(?:[*_`~]{0,3})?\b/i.test(assistantText)
           || /\bno qualifying [^.\n]{0,120} (?:exists|was found|could be found)\b/i.test(assistantText)
-          || /\b(?:requested |named )?(?:target|schedule|sheet|view|family|type|element) (?:was |is )?not found\b/i.test(assistantText);
+          || /\b(?:requested |named )?(?:target|schedule|sheet|view|family|type|element) (?:was |is )?not found\b/i.test(assistantText)
+          || assistantRequestsRequiredUserContext(assistantText);
         // A truthful already-satisfied result may describe the proposed preview as
         // "blocked" because there is no defensible edit. That is a verified no-op,
         // not a capability or execution blocker.
