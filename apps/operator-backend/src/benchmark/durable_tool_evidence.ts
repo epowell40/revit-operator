@@ -37,15 +37,37 @@ async function requestGoal(baseUrl: string, goalId: string): Promise<JsonRecord>
 export async function loadDurableToolEvidence(
   baseUrl: string,
   assignmentProjection: JsonRecord,
-  executedPrompt: string
+  executedPrompt: string,
+  runContext: { session_id?: string; started_at?: string } = {}
 ): Promise<JsonRecord> {
   const assignments = Array.isArray(assignmentProjection.assignments)
     ? assignmentProjection.assignments.map(asRecord)
     : [];
-  const goalIds = [...new Set(assignments
+  const expectedSessionId = String(runContext.session_id || "").trim();
+  const startedAtMs = Date.parse(String(runContext.started_at || ""));
+  const goalAssignments = assignments
     .filter((assignment) => assignment.source_kind === "goal")
-    .filter((assignment) => [assignment.source_user_request, assignment.objective]
-      .some((value) => String(value || "").trim() === executedPrompt.trim()))
+    .filter((assignment) => {
+      if (!expectedSessionId) return true;
+      return String(asRecord(assignment.target).session_id || "").trim() === expectedSessionId;
+    })
+    .filter((assignment) => {
+      if (!Number.isFinite(startedAtMs)) return true;
+      const createdAtMs = Date.parse(String(assignment.created_at || ""));
+      return Number.isFinite(createdAtMs) && createdAtMs >= startedAtMs - 60_000;
+    });
+  const exactPromptAssignments = goalAssignments.filter((assignment) =>
+    [assignment.source_user_request, assignment.objective]
+      .some((value) => String(value || "").trim() === executedPrompt.trim()));
+  // The Sidecar can add authoritative no-write and fixture grounding before
+  // delegation. In that case the durable assignment text is intentionally not
+  // byte-identical to the UI prompt. The assignments endpoint is already
+  // session-scoped; retain that binding and the run window instead of losing
+  // all durable tool evidence because presentation text was expanded.
+  const selectedAssignments = exactPromptAssignments.length > 0
+    ? exactPromptAssignments
+    : goalAssignments;
+  const goalIds = [...new Set(selectedAssignments
     .map((assignment) => String(assignment.source_record_id || "").trim())
     .filter(Boolean))];
   const successfulPaths = new Set<string>();
@@ -125,6 +147,16 @@ export async function loadDurableToolEvidence(
   return {
     schema: "revit-operator.benchmark-durable-tool-evidence/v1",
     source_goal_ids: goalIds,
+    goal_selection: {
+      basis: exactPromptAssignments.length > 0
+        ? "exact_prompt_session_run_window"
+        : goalAssignments.length > 0
+          ? "session_run_window"
+          : "none",
+      expected_session_id: expectedSessionId || null,
+      benchmark_started_at: Number.isFinite(startedAtMs) ? new Date(startedAtMs).toISOString() : null,
+      candidate_assignment_count: goalAssignments.length
+    },
     successful_paths: [...successfulPaths].sort(),
     failed_paths: [...failedPaths].sort(),
     element_inventory: {

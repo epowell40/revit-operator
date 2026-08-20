@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -16,6 +17,7 @@ import { loadEpic0441Campaign } from "../src/benchmark/epic0441_campaign.js";
 import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../src/benchmark/general_revit_sample_fixtures.js";
 import { localProcessIsAlive, localRevitProcessGuardTarget } from "../src/benchmark/local_revit_process_liveness.js";
 import { backendRoot, repoRoot } from "../src/benchmark/files.js";
+import { loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
 
 const corpus = loadGeneralRevitCapabilityCorpus();
 
@@ -476,6 +478,80 @@ test("the live runner reuses orchestrator-established fixture health between cas
   assert.match(runner, /preferCached \? "\/api\/revit\/health\?prefer_cached=1" : "\/api\/revit\/health"/);
   assert.match(durableEvidence, /revit-operator\.benchmark-durable-tool-evidence\/v1/);
   assert.match(runner, /durable_tool_evidence: durableToolEvidence/);
+});
+
+test("durable evidence follows the exact benchmark session and run window when Sidecar expands the prompt", async () => {
+  const requestedGoalIds: string[] = [];
+  const server = http.createServer((request, response) => {
+    const goalId = decodeURIComponent(String(request.url || "").split("/").at(-1) || "");
+    requestedGoalIds.push(goalId);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [{
+          id: "action-current",
+          details: {
+            tool: {
+              tool: "revit_call_tool",
+              status: "completed",
+              duration_ms: 25,
+              arguments: { path: "/revit/find-elements" },
+              result: [{ type: "inputText", text: JSON.stringify({ count: 1, elementIds: [1517852], truncated: false }) }]
+            }
+          }
+        }]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [
+        {
+          source_kind: "goal",
+          source_record_id: "stale-goal",
+          source_user_request: "original prompt",
+          target: { session_id: "benchmark-session" },
+          created_at: "2026-08-20T03:30:00.000Z"
+        },
+        {
+          source_kind: "goal",
+          source_record_id: "current-goal",
+          source_user_request: "READ-ONLY investigation only; expanded and grounded prompt",
+          target: { session_id: "benchmark-session" },
+          created_at: "2026-08-20T03:37:09.000Z"
+        },
+        {
+          source_kind: "goal",
+          source_record_id: "other-session-goal",
+          source_user_request: "original prompt",
+          target: { session_id: "other-session" },
+          created_at: "2026-08-20T03:37:10.000Z"
+        }
+      ]
+    }, "original prompt", {
+      session_id: "benchmark-session",
+      started_at: "2026-08-20T03:36:49.000Z"
+    });
+    assert.deepEqual(evidence.source_goal_ids, ["current-goal"]);
+    assert.deepEqual(requestedGoalIds, ["current-goal"]);
+    assert.deepEqual(evidence.successful_paths, ["/revit/find-elements"]);
+    assert.deepEqual(evidence.element_inventory, {
+      maximum_element_id_count: 1,
+      maximum_reported_count: 1,
+      observed_untruncated_result: true
+    });
+    assert.deepEqual(evidence.goal_selection, {
+      basis: "session_run_window",
+      expected_session_id: "benchmark-session",
+      benchmark_started_at: "2026-08-20T03:36:49.000Z",
+      candidate_assignment_count: 1
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("both backend agent prompts preserve sheet identity while batching multi-sheet parameter reads", () => {
@@ -1373,6 +1449,56 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
     }
   });
   assert.equal(wrongMetricReceipt.answer_assertion_passed, false);
+});
+
+test("Snowdon clearance-family evolution oracle accepts a grounded candidate without hard-coding its element id", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "lh07_family_clearance_evolution")!, false);
+  const capturedAnswer = [
+    "Candidate",
+    "Element ID: 1517852",
+    "Unique ID: 5b26a1c5-4b92-4d46-a781-d8e2ddf05b18-0017291c",
+    "Category: Mechanical Equipment",
+    "Family / Type: HeatRecoveryUnit / Heat Recovery Unit (HRU)",
+    "Mark: HRU102",
+    "Plan used: L1 - Block 35 reflected ceiling plan, view ID 1421829",
+    "Clearance symbolic-curve count: 0; there is no visible clearance representation.",
+    "Copy to family HeatRecoveryUnit_CLEARANCE_TEST and a test type.",
+    "Associate visibility with a Yes/No parameter control.",
+    "Save/load under a unique copied name; do not overwrite an unrelated family.",
+    "Swap only the isolated test instance.",
+    "Capture focused before/after screenshots for verification.",
+    "No model changes, family operations, files, or screenshots were performed."
+  ].join("\n");
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: capturedAnswer,
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verification_basis, "fixture_semantic_oracle");
+
+  const incomplete = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Mechanical Equipment HRU102 appears to lack clearance. Consider editing its family.",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(incomplete.answer_assertion_passed, false);
+  assert.equal(incomplete.tier, "failed");
 });
 
 test("Snowdon schedule-cell and titleblock readback oracles accept the captured live receipts", () => {

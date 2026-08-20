@@ -822,7 +822,10 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       .catch((error) => ({ ok: false, error: String(error) }))
   ]);
   const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
-  const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt);
+  const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
+    session_id: sessionId,
+    started_at: startedAt
+  });
   const evaluatedAttempt = {
     ...attempt,
     assignment_projection: assignmentProjection,
