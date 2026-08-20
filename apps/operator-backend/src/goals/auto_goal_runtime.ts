@@ -42,9 +42,9 @@ const APPLY_BEYOND_PREVIEW_TEXT = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just
 
 function assistantRequestsRequiredUserContext(assistantText: string): boolean {
   const text = assistantText.trim();
-  if (!text || !text.includes("?")) return false;
-  const reportsMissingContext = /\b(?:selection (?:is|was) empty|selected elements?\s*:\s*0|nothing (?:is|was) selected|no (?:model )?placement point|no (?:marked|selected|specified|identified|resolved|unique) (?:region|location|point|target|element|instance|device|branch|segment|view)|(?:target|source|location|selection|placement point|host|view) (?:is|was|remains) (?:missing|unavailable|unresolved|unspecified|not (?:available|provided|selected|identified|specified|resolved)))\b/i.test(text);
-  const asksForContext = /\b(?:(?:could|can|would|will)\s+you|please)\b[^?\n]{0,320}\b(?:open|select|indicate|identify|choose|confirm|specify|provide|attach|upload|mark)\b[^?\n]*\?/i.test(text);
+  if (!text) return false;
+  const reportsMissingContext = /\b(?:selection (?:is|was) empty|selected elements?\s*:\s*0|nothing (?:is|was) selected|no (?:model )?placement point|no (?:region|location|point|target|element|instance|device|branch|segment|view) (?:is|was) (?:selected|specified|identified|resolved)|no (?:marked|selected|specified|identified|resolved|unique) (?:region|location|point|target|element|instance|device|branch|segment|view)|(?:target|source|location|selection|placement point|host|view) (?:is|was|remains) (?:missing|unavailable|unresolved|unspecified|not (?:available|provided|selected|identified|specified|resolved)))\b/i.test(text);
+  const asksForContext = /\b(?:(?:could|can|would|will)\s+you|please)\b[^?\n]{0,320}\b(?:open|select|indicate|identify|choose|confirm|specify|provide|attach|upload|mark)\b/i.test(text);
   return reportsMissingContext && asksForContext;
 }
 
