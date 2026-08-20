@@ -1385,6 +1385,14 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   ].join("\n");
   for (const pattern of schedule.answer_assertions!.must_match) assert.match(scheduleAnswer, new RegExp(pattern, "i"));
 
+  const capturedNaturalScheduleAnswer = [
+    "Schedule: Heat Recovery Unit Summary (1488968)",
+    "Row HRU202; Mechanical Equipment element 1365188",
+    "Supply Air Pressure Drop changed from 0.08 in-wg to 0.10 in-wg",
+    "The native dry-run predicted exactly one changed element. Nothing was applied."
+  ].join("\n");
+  for (const pattern of schedule.answer_assertions!.must_match) assert.match(capturedNaturalScheduleAnswer, new RegExp(pattern, "i"));
+
   const titleblocks = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech")!, false);
   assert.equal(titleblocks.expected_effect, "read");
   const titleblockAnswer = [

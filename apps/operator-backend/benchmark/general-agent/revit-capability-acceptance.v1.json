@@ -293,7 +293,7 @@
           "Supply Air Pressure Drop",
           "0\\.08\\s*in-wg",
           "0\\.10\\s*in-wg",
-        "(?:1 (?:requested/)?effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1)",
+          "(?:1 (?:requested/)?effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1|exactly one (?:changed|affected) element)",
           "(?:no changes applied|without committing|nothing was applied|dry.?run)"
         ]
       },
