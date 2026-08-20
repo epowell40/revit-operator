@@ -861,7 +861,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const fixtureBlockerAccepted = fixtureBlockerAssertionPassed === true
     && attemptSucceeded && successfulExpectedPathObserved && dispatched
     && !applyDispatched && !directPreviewDispatched && !teammatePreviewDispatched
-    && assistantBlocked && !outcomeUnknown && !substantiveFailedAction && !teammate.mutationAttempted
+    && (assistantBlocked || durable.blocked || teammate.blocked)
+    && !outcomeUnknown && !substantiveFailedAction && !teammate.mutationAttempted
     && !refusalReason;
   const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect);
   const requestedEffectSatisfied = testCase.expected_effect === "apply"

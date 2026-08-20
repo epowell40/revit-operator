@@ -602,8 +602,8 @@
       },
       "fixture_blocker_assertions": {
         "must_match": [
-        "(?:Duct Accessories[^\\n]{0,80}(?:0|zero)|(?:0|zero)[^\\n]{0,80}Duct Accessories)",
-        "(?:Pipe Accessories[^\\n]{0,80}(?:0|zero)|(?:0|zero)[^\\n]{0,80}Pipe Accessories)",
+        "(?:Duct Accessor(?:y|ies)[^\\n]{0,80}(?:0|zero)|(?:0|zero)[^\\n]{0,80}Duct Accessor(?:y|ies))",
+        "(?:Pipe Accessor(?:y|ies)[^\\n]{0,80}(?:0|zero)|(?:0|zero)[^\\n]{0,80}Pipe Accessor(?:y|ies))",
         "(?:no accessory (?:was )?created|nothing was created)"
         ],
         "must_not_match": [

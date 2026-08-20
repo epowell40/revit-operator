@@ -421,10 +421,12 @@ No accessory was created, and no model changes were made.`
     actions: [
       { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" }
     ],
-    assistant_message: `## Blocked before preview
+    assignment_projection: {
+      assignments: [{ lifecycle: { phase: "blocked" } }]
+    },
+    assistant_message: `## Preview blocked safely
 
-The model contains zero Duct Accessories and zero Pipe Accessories; broader searches found no damper or valve precedent.
-No preview was executed. Nothing was created.`
+Found a valid connected branch candidate: Duct 1464302, 4-inch round exhaust, system Mechanical Exhaust Air 15. However, complete document checks found 0 Duct Accessory instances, 0 Pipe Accessory instances, and 0 loaded Duct Accessory types. Therefore no compatible precedent exists. No insertion preview was executed and nothing was created.`
   });
   assert.equal(capturedLiveWording.tier, "accepted");
   assert.equal(capturedLiveWording.fixture_blocker_accepted, true);
