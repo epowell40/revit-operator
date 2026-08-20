@@ -174,10 +174,11 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         // "blocked" because there is no defensible edit. That is a verified no-op,
         // not a capability or execution blocker.
         const blockedOutcome = reportedBlockedOutcome && !alreadySatisfiedNoop;
+        const teammatePreviewReceiptCount = successfulTeammatePreviewReceiptCount(teammateReceipt);
         const evidenceTools = requestedEffect === "apply"
           ? successfulApplyTools
           : requestedEffect === "preview"
-            ? Math.max(successfulPreviewTools, successfulTeammatePreviewReceiptCount(teammateReceipt))
+            ? Math.max(successfulPreviewTools, teammatePreviewReceiptCount)
             : successfulReadTools + successfulPreviewTools + successfulApplyTools;
         const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
         const verifiedNoop = requestedEffect !== "read"
@@ -188,6 +189,24 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           && (teammateReceipt?.apply_attempts ?? 0) === 0
           && !teammateReceipt?.blocked_reason?.trim()
           && alreadySatisfiedNoop;
+        if (teammatePreviewReceiptCount > 0) {
+          console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            evt: "goal.auto_finish.evaluate",
+            session_id: sessionId,
+            turn_id: turnId,
+            requested_effect: requestedEffect,
+            successful_read_tools: successfulReadTools,
+            successful_preview_tools: successfulPreviewTools,
+            successful_apply_tools: successfulApplyTools,
+            failed_revit_tools: failedRevitTools,
+            teammate_preview_receipts: teammatePreviewReceiptCount,
+            pending_approval: pendingApproval,
+            blocked_outcome: blockedOutcome,
+            unexpected_apply: unexpectedApply,
+            last_completion_relevant_succeeded: lastCompletionRelevantSucceeded
+          }));
+        }
         if (unexpectedApply) {
           blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
         } else if (!pendingApproval && !blockedOutcome && verifiedNoop) {
@@ -216,7 +235,14 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             ? assistantText || "The General Agent reported a concrete task-level blocker."
             : "One or more live Revit tool calls failed; completion requires a clean verified turn.");
         }
-      } catch {
+      } catch (error) {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          evt: "goal.auto_finish.error",
+          session_id: sessionId,
+          turn_id: turnId,
+          error: error instanceof Error ? error.message : String(error)
+        }));
         // Assignment journaling is fail-safe and must not replace a completed user response.
       }
     }

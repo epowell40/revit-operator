@@ -1110,6 +1110,61 @@ test("a certified teammate preview receipt settles a transaction-plan-only previ
   });
 });
 
+test("the live c03 preview trace settles its assignment from the final teammate receipt", () => {
+  withWorkspace(() => {
+    const sessionId = "session-live-c03-preview-receipt";
+    const goal = setAgentGoal(sessionId, {
+      title: "Make an enlarged mechanical plan",
+      objective: "Make an enlarged mechanical plan for Level 4 around the live/work units. Resolve a sensible source and crop region, then preview it; do not create anything.",
+      acceptance_criteria: [
+        "The requested Revit work is completed or a concrete blocker is reported.",
+        "The reported result is grounded in successful live Revit tool evidence from this assignment."
+      ],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Complete and verify the requested Revit work", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver(sessionId);
+    observer.observe({ server: "revit_operator", tool: "operator_discover_capabilities", success: true, result: { status: "available" } });
+    observer.observe({ server: "revit_operator", tool: "revit_search_tools", success: true, result: { total_matches: 8 } });
+    observer.observe({ server: "revit_operator", tool: "revit_tool_registry", success: true, result: { total: 246 } });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { method: "POST", path: "/revit/views", body: { action: "list" } }, result: { status: "ok", count: 4 } });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { method: "POST", path: "/revit/rooms", body: { action: "list" } }, result: { status: "ok", spaces: [403, 405, 407, 408, 409, 410] } });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { method: "POST", path: "/revit/visibility", body: { action: "get", viewId: 1363433 } }, result: { status: "Ok", action: "get", dryRun: false } });
+    observer.observe({ server: "revit_operator", tool: "revit_tool_doc", success: true, arguments: { method: "POST", path: "/revit/transaction-plan" }, result: { title: "Plan Transaction" } });
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      success: true,
+      arguments: {
+        method: "POST",
+        path: "/revit/transaction-plan",
+        body: { actions: [{ kind: "createDependentView", sourceViewId: 1363433, resultRef: "enlargedView" }] }
+      },
+      result: { impact: { added: [1543200], modified: [1543200], deleted: [] }, actions: [{ kind: "createDependentView", success: true }] }
+    });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { method: "POST", path: "/revit/views", body: { action: "list", viewNames: ["L4 - Live Work Enlarged PREVIEW"] } }, result: { status: "ok", count: 0, views: [] } });
+    observer.finish(
+      "turn-live-c03-preview-receipt",
+      "## Preview completed — nothing created\n\n- **Source:** Mechanical floor plan **L4** (view **1363433**), scale 1:96.\n- **Scope:** Live/work spaces **403, 405, 407, 408, 409, 410**.\n- Successfully previewed a dependent view with the crop and scale in a rolled-back transaction.\n\nReadback found **zero** views named `L4 - Live Work Enlarged PREVIEW`, confirming no view was retained.",
+      {
+        stage: "report",
+        verified: false,
+        apply_attempts: 0,
+        preview_receipts: [{
+          action_id: "mcp:1",
+          path: "/revit/transaction-plan",
+          status: "success",
+          evidence_sha256: `sha256:${"1b9c52220e3fc9c4c867168e35092e4d18df2b34d31ec8800d90a0d4d06d5652"}`
+        }]
+      }
+    );
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.completion_audit?.complete, true);
+    assert.equal(persisted?.work_items[0]?.status, "complete");
+  });
+});
+
 test("an already-satisfied apply assignment completes only as a substantive, zero-apply verified no-op", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-verified-noop", {
