@@ -482,6 +482,7 @@ namespace RevitBridge.Operator
                 { "/revit/load-family-doc", typeof(RevitBridge.Logic.Handlers.LoadFamilyDocHandler.Params) },
                 { "/revit/close-doc", typeof(RevitBridge.Logic.Handlers.CloseDocHandler.Params) },
                 { "/revit/edit-family-from-instance", typeof(RevitBridge.Logic.Handlers.EditFamilyFromInstanceHandler.Params) },
+                { "/revit/inspect-family-content", typeof(RevitBridge.Logic.Handlers.InspectFamilyContentHandler.Params) },
                 { "/revit/find-family-text-notes", typeof(RevitBridge.Logic.Handlers.FindFamilyTextNotesHandler.Params) },
                 { "/revit/set-text-note-text", typeof(RevitBridge.Logic.Handlers.SetTextNoteTextHandler.Params) },
                 { "/revit/reload-family-edit-session", typeof(RevitBridge.Logic.Handlers.ReloadFamilyEditSessionHandler.Params) },
@@ -692,6 +693,21 @@ namespace RevitBridge.Operator
                             { "include_rooms", Bool() }
                         },
                         required: Array.Empty<string>());
+                }
+
+                if (string.Equals(p, "/revit/inspect-family-content", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "elementId", Int() },
+                            { "contains", Str() },
+                            { "maxElements", Int() },
+                            { "includeParameters", Bool() },
+                            { "includeOtherElements", Bool() }
+                        },
+                        required: new[] { "elementId" },
+                        additionalProps: false);
                 }
 
                 if (string.Equals(p, "/revit/resolve-room-plan-view", StringComparison.OrdinalIgnoreCase))

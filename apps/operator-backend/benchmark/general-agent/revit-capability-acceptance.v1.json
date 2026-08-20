@@ -1462,8 +1462,8 @@
       "operation_family": "family_edit",
       "prompt": "The family label still says HRU. Make it follow the equipment Mark instead.",
       "probe_prompt": "Inspect whether the selected family's visible HRU label is fixed text, a label parameter, nested annotation, or model tag, then preview the correct parameterized repair. Do not edit or reload.",
-      "capability_paths": ["/revit/context", "/revit/plan-family-evolution", "/revit/get-parameters"],
-      "dispatch_any_of": ["/revit/context", "/revit/plan-family-evolution", "/revit/open-family-doc", "/revit/get-parameters"],
+      "capability_paths": ["/revit/context", "/revit/inspect-family-content", "/revit/plan-family-evolution", "/revit/get-parameters"],
+      "dispatch_any_of": ["/revit/context", "/revit/inspect-family-content", "/revit/plan-family-evolution", "/revit/open-family-doc", "/revit/get-parameters"],
       "expected_effect": "apply",
       "epic0441_task_refs": ["n29_novel_holdout", "r03_tag_designation_edit"]
     },

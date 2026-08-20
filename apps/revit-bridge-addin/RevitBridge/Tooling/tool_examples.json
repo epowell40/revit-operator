@@ -4174,6 +4174,45 @@
     },
     {
       "method": "POST",
+      "path": "/revit/inspect-family-content",
+      "examples": [
+        {
+          "name": "Inspect a loaded equipment family without editing or reloading it",
+          "request": {
+            "elementId": 12345,
+            "contains": "HRU",
+            "maxElements": 500,
+            "includeParameters": true
+          },
+          "expected_response_shape": {
+            "ok": true,
+            "observational": true,
+            "mutated": false,
+            "source": {
+              "elementId": 12345,
+              "familyName": "HeatRecoveryUnit",
+              "typeName": "Heat Recovery Unit (HRU)"
+            },
+            "staticText": [],
+            "labels": [
+              {
+                "elementId": 23456,
+                "driverParameters": ["Mark"]
+              }
+            ],
+            "nestedInstances": [],
+            "classification": {
+              "staticTextCount": 0,
+              "parameterDrivenLabelCount": 1,
+              "nestedFamilyCount": 0
+            },
+            "closedWithoutSaving": true
+          }
+        }
+      ]
+    },
+    {
+      "method": "POST",
       "path": "/revit/find-family-text-notes",
       "examples": [
         {

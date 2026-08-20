@@ -52,6 +52,12 @@ namespace RevitBridge.Handlers
             => new RevitBridge.Logic.Handlers.EditFamilyFromInstanceHandler().Handle(app, jsonData);
     }
 
+    public sealed class InspectFamilyContentHandler : IRequestHandler
+    {
+        public Task<object> Handle(UIApplication app, string jsonData)
+            => new RevitBridge.Logic.Handlers.InspectFamilyContentHandler().Handle(app, jsonData);
+    }
+
     public sealed class FindFamilyTextNotesHandler : IRequestHandler
     {
         public Task<object> Handle(UIApplication app, string jsonData)

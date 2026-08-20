@@ -83,6 +83,7 @@ namespace RevitBridge.Logic
                 { "/revit/create-similar-from-instance", new CreateSimilarFromInstanceHandler() },
                 { "/revit/load-family", new LoadFamilyHandler() },
                 { "/revit/create-family-from-template", new CreateFamilyFromTemplateHandler() },
+                { "/revit/inspect-family-content", new InspectFamilyContentHandler() },
                 { "/revit/plan-family-evolution", new PlanFamilyEvolutionHandler() },
                 { "/revit/apply-family-evolution", new ApplyFamilyEvolutionHandler() },
                 { "/revit/read-family-evolution", new ReadFamilyEvolutionHandler() },
