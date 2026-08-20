@@ -22,13 +22,17 @@ export function successfulPreviewReceipt(actionId: string, path: string, evidenc
 }
 
 export function buildTeammateLoopReceipt(state: TeammateReceiptState): TeammateReceipt {
+  const previewReceipts = state.preview_receipts.slice(-8);
   return {
     schema: "revit-operator.teammate-loop-receipt.v1",
     turn_kind: state.contract.turn_kind,
     context_state: state.contract.context_state,
     stage: state.contract.stage,
-    preview_action_ids: state.preview_action_ids.slice(-8),
-    preview_receipts: state.preview_receipts.slice(-8),
+    // The externally certified action list is a success claim, so derive it
+    // from the same receipts that substantiate it. The runtime keeps attempted
+    // preview IDs separately for unique action IDs and recovery history.
+    preview_action_ids: previewReceipts.map(receipt => receipt.action_id),
+    preview_receipts: previewReceipts,
     apply_action_id: state.apply_action_id,
     verification_action_ids: state.verification_action_ids.slice(-8),
     apply_attempts: state.apply_attempts,
