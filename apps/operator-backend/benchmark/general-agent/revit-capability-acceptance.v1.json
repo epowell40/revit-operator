@@ -1498,7 +1498,29 @@
       "capability_paths": ["/revit/native-api-search", "/revit/context"],
       "dispatch_any_of": ["/revit/native-api-search", "/revit/context", "/revit/tool-search"],
       "expected_effect": "read",
-      "epic0441_task_refs": ["n28_novel_holdout", "g27_program_reuse"]
+      "epic0441_task_refs": ["n28_novel_holdout", "g27_program_reuse"],
+      "answer_assertions": {
+        "must_match": [
+          "ElementId\\.Value[^\\n]*(?:Int64|long)",
+          "IntegerValue[^\\n]*(?:obsolete|deprecated|no longer present)",
+          "new ElementId\\s*\\([^\\n]*(?:long|idValue|value)",
+          "Revit[^\\n]*(?:2023|≤2023)[^\\n]*IntegerValue",
+          "Revit[^\\n]*(?:2024|2025|2026)[^\\n]*(?:Value|Int64)",
+          "(?:(?:document-local|document local)[^\\n]*(?:ElementId|numeric)|(?:ElementId|numeric)[^\\n]*(?:document-local|document local))",
+          "UniqueId[^\\n]*(?:document identity|document)",
+          "help\\.autodesk\\.com/cloudhelp/2026",
+          "(?:No model changes were made|nothing (?:was )?changed|read-only)"
+        ],
+        "evidence": {
+          "required_successful_paths": [
+            "/revit/native-api-catalog",
+            "/revit/native-api-search"
+          ],
+          "required_successful_tools": [
+            "web_fetch_evidence"
+          ]
+        }
+      }
     },
     {
       "case_id": "c44_research_pdf_color_failure",

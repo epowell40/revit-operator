@@ -41,6 +41,7 @@ export type GeneralRevitCapabilityCase = {
     must_not_match?: string[];
     evidence?: {
       required_successful_paths?: string[];
+      required_successful_tools?: string[];
     };
   };
   fixture_blocker_assertions?: {
@@ -659,9 +660,17 @@ function answerEvidenceFailures(
   const successfulPaths = new Set(Array.isArray(evidence.successful_paths)
     ? evidence.successful_paths.map((value) => String(value))
     : []);
-  return (requirements.required_successful_paths || [])
+  const successfulTools = new Set(Array.isArray(evidence.successful_tools)
+    ? evidence.successful_tools.map((value) => String(value))
+    : []);
+  return [
+    ...(requirements.required_successful_paths || [])
     .filter((path) => !successfulPaths.has(path))
-    .map((path) => `evidence_missing_successful_path:${path}`);
+    .map((path) => `evidence_missing_successful_path:${path}`),
+    ...(requirements.required_successful_tools || [])
+      .filter((tool) => !successfulTools.has(tool))
+      .map((tool) => `evidence_missing_successful_tool:${tool}`)
+  ];
 }
 
 function verificationChecksPass(value: unknown): boolean {

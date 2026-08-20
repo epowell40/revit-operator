@@ -690,6 +690,7 @@ test("durable evidence follows the exact benchmark session and run window when S
     assert.deepEqual(evidence.source_goal_ids, ["current-goal"]);
     assert.deepEqual(requestedGoalIds, ["current-goal"]);
     assert.deepEqual(evidence.successful_paths, ["/revit/find-elements"]);
+    assert.deepEqual(evidence.successful_tools, ["revit_call_tool"]);
     assert.deepEqual(evidence.element_inventory, {
       maximum_element_id_count: 1,
       maximum_reported_count: 1,
@@ -945,6 +946,49 @@ test("a certified read-only surface fallback remains a capability refusal", () =
   assert.equal(result.completed, false);
 });
 
+test("durable evidence records successful web research tools independently from Revit paths", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [{
+          id: "web-source",
+          details: {
+            tool: {
+              tool: "web_fetch_evidence",
+              status: "completed",
+              duration_ms: 50,
+              arguments: { url: "https://help.autodesk.com/cloudhelp/2026/example" },
+              result: [{ type: "inputText", text: JSON.stringify({ ok: true, evidence_path: "evidence/web/source.txt" }) }]
+            }
+          }
+        }]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "web-goal",
+        source_user_request: "research Autodesk docs",
+        target: { session_id: "web-session" },
+        created_at: "2026-08-20T14:00:01.000Z"
+      }]
+    }, "research Autodesk docs", {
+      session_id: "web-session",
+      started_at: "2026-08-20T14:00:00.000Z"
+    });
+    assert.deepEqual(evidence.successful_tools, ["web_fetch_evidence"]);
+    assert.deepEqual(evidence.successful_paths, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("the three-sheet titleblock discovery requires exact fixture facts and successful native evidence", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "lh04_titleblock_initials_discovery")!;
   const entry = generalRevitExecutionCase(productionCase, false);
@@ -995,6 +1039,61 @@ test("the three-sheet titleblock discovery requires exact fixture facts and succ
   });
   assert.equal(wrongFixture.answer_assertion_passed, false);
   assert.equal(wrongFixture.tier, "failed");
+});
+
+test("authoritative Revit API research requires fetched primary-source and live native evidence", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c43_research_revit2026_api_change")!;
+  const answer = [
+    "Autodesk Revit 2026: ElementId.Value returns Int64 (long).",
+    "IntegerValue is obsolete, and compatible code reconstructs IDs with new ElementId(long value).",
+    "Revit <=2023 uses IntegerValue; Revit 2024-2026 uses Value / Int64.",
+    "Document-local ElementId numeric values are not durable global identifiers.",
+    "Persist UniqueId together with document identity for durable references.",
+    "Primary source: https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/example.htm",
+    "No model changes were made."
+  ].join("\n");
+  const attempt = {
+    ok: true,
+    assistant_message: answer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/native-api-search", request_effect: "read", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: {
+      successful_paths: ["/revit/native-api-catalog", "/revit/native-api-search"],
+      successful_tools: ["revit_call_tool", "web_fetch_evidence"]
+    },
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live native and web evidence completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  } as const;
+
+  const verified = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(verified.answer_assertion_passed, true);
+  assert.equal(verified.tier, "verified");
+
+  const memoryOnlyCitation = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/native-api-catalog", "/revit/native-api-search"],
+      successful_tools: ["revit_call_tool"]
+    }
+  });
+  assert.equal(memoryOnlyCitation.answer_assertion_passed, false);
+  assert.ok(memoryOnlyCitation.answer_assertion_failures.includes("evidence_missing_successful_tool:web_fetch_evidence"));
+  assert.equal(memoryOnlyCitation.tier, "failed");
+});
+
+test("both general-agent prompts require primary-source fetches for authoritative current research", () => {
+  for (const prompt of [
+    source("operator-backend/src/brains/codex_brain.ts"),
+    source("operator-backend/src/brains/openai_brain.ts")
+  ]) {
+    assert.match(prompt, /authoritative, current, latest, or version-specific external documentation/);
+    assert.match(prompt, /fetch the primary-source page before answering/i);
+    assert.match(prompt, /(?:Never cite|Cite only fetched sources)/i);
+  }
 });
 
 test("an exact-target clarification is accepted but is not mislabeled completion", () => {
