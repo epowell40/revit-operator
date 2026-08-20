@@ -16,7 +16,7 @@ import {
   isSuccessfulAuthoritativeWebEvidenceCall
 } from "../src/brains/authoritative_web_evidence.js";
 import { EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
-import { canonicalizeProtocolJson, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
+import { canonicalizeProtocolJson, resolveOperatorBackendRoot, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
   assert.equal(parseCodexCliVersion("codex-cli 0.144.5\n"), "0.144.5");
@@ -47,6 +47,19 @@ test("Codex protocol receipts use platform-independent ordinal path ordering", (
 test("Codex protocol receipts canonicalize JSON object order without changing array order", () => {
   assert.equal(JSON.stringify(canonicalizeProtocolJson({ z: 1, a: { d: 2, b: 3 }, list: [{ y: 2, x: 1 }] })),
     '{"a":{"b":3,"d":2},"list":[{"x":1,"y":2}],"z":1}');
+});
+
+test("Codex protocol snapshot resolves the backend root from source and compiled layouts", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-backend-root-"));
+  const backendRoot = path.join(root, "operator-backend");
+  try {
+    fs.mkdirSync(path.join(backendRoot, "src", "codex"), { recursive: true });
+    fs.writeFileSync(path.join(backendRoot, "package.json"), "{}\n", "utf8");
+    assert.equal(resolveOperatorBackendRoot(path.join(backendRoot, "src", "tools")), backendRoot);
+    assert.equal(resolveOperatorBackendRoot(path.join(backendRoot, "dist", "src", "tools")), backendRoot);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Codex executable resolution preserves explicit non-shim binaries", () => {

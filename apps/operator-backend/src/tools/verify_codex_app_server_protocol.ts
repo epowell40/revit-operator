@@ -28,6 +28,21 @@ export function canonicalizeProtocolJson(value: unknown): unknown {
   return canonical;
 }
 
+export function resolveOperatorBackendRoot(moduleDirectory: string): string {
+  const candidates = [
+    path.resolve(moduleDirectory, "..", ".."),
+    path.resolve(moduleDirectory, "..", "..", "..")
+  ];
+  const backendRoot = candidates.find(candidate =>
+    fs.existsSync(path.join(candidate, "package.json")) &&
+    fs.existsSync(path.join(candidate, "src", "codex"))
+  );
+  if (!backendRoot) {
+    throw new Error(`Unable to resolve operator-backend root from ${moduleDirectory}.`);
+  }
+  return backendRoot;
+}
+
 function hashDirectory(root: string): DirectoryReceipt {
   const files: string[] = [];
   const visit = (directory: string) => {
@@ -86,9 +101,9 @@ function runCli(): void {
     : path.join(repoRoot, "local-work", `codex-app-server-${CODEX_APP_SERVER_COMPATIBILITY.codex_cli_version}`));
   const tsRoot = path.join(generatedRoot, "ts");
   const schemaRoot = path.join(generatedRoot, "json-schema");
+  const backendRoot = resolveOperatorBackendRoot(path.dirname(fileURLToPath(import.meta.url)));
   const vendoredTypesRoot = path.join(
-    repoRoot,
-    "apps", "operator-backend", "src", "codex", "generated",
+    backendRoot, "src", "codex", "generated",
     `app_server_${CODEX_APP_SERVER_COMPATIBILITY.codex_cli_version.replace(/\./g, "_")}`
   );
   if (!fs.existsSync(tsRoot) && !fs.existsSync(schemaRoot)) {
