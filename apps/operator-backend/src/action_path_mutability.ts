@@ -81,6 +81,7 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/capture-sheet-region",
   "/revit/get-family-file-path",
   "/revit/find-family-text-notes",
+  "/revit/inspect-family-content",
   "/revit/warnings",
   "/revit/qa-checks",
   "/revit/print-sets",

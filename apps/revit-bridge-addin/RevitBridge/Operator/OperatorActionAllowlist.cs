@@ -139,6 +139,7 @@ namespace RevitBridge.Operator
                     "/revit/load-family-doc",
                     "/revit/close-doc",
                     "/revit/edit-family-from-instance",
+                    "/revit/inspect-family-content",
                     "/revit/find-family-text-notes",
                     "/revit/set-text-note-text",
                     "/revit/reload-family-edit-session",

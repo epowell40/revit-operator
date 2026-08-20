@@ -247,6 +247,7 @@ namespace RevitBridge.Server
                 { "/revit/close-doc", new CloseDocHandler() },
 
                 { "/revit/edit-family-from-instance", new EditFamilyFromInstanceHandler() },
+                { "/revit/inspect-family-content", new InspectFamilyContentHandler() },
                 { "/revit/find-family-text-notes", new FindFamilyTextNotesHandler() },
                 { "/revit/set-text-note-text", new SetTextNoteTextHandler() },
                 { "/revit/reload-family-edit-session", new ReloadFamilyEditSessionHandler() },

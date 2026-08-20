@@ -165,6 +165,7 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   const viewRange = corpus.cases.find((entry) => entry.case_id === "c31_fix_view_range_terse");
   const createSimilar = corpus.cases.find((entry) => entry.case_id === "lh05_create_similar_receptacles");
   const unit403 = corpus.cases.find((entry) => entry.case_id === "c20_add_duplex_match_circuit");
+  const familyLabel = corpus.cases.find((entry) => entry.case_id === "c40_fix_family_label");
   assert.match(schedule?.probe_prompt || "", /Supply Air Pressure Drop/i);
   assert.doesNotMatch(schedule?.probe_prompt || "", /Supply Airflow/i);
   assert.match(namedScheduleFilter?.probe_prompt || "", /discover one existing named mechanical-equipment schedule/i);
@@ -191,6 +192,8 @@ test("Snowdon-safe probes use live fixture targets and recover from an unsuitabl
   assert.match(unit403?.probe_prompt || "", /derive one safe bounded test location/i);
   assert.match(unit403?.probe_prompt || "", /same linked room wall/i);
   assert.doesNotMatch(unit403?.probe_prompt || "", /marked location/i);
+  assert.ok(familyLabel?.capability_paths.includes("/revit/inspect-family-content"));
+  assert.ok(familyLabel?.dispatch_any_of?.includes("/revit/inspect-family-content"));
 });
 
 test("titleblock mutation coverage is paired with the live read-only regression wording", () => {

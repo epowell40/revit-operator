@@ -107,6 +107,7 @@ const defaultAllowed: Allowlist = {
     "/revit/get-family-file-path",
     "/revit/find-text-notes",
     "/revit/find-family-text-notes",
+    "/revit/inspect-family-content",
     "/revit/quantify",
     "/revit/quantify-visualize",
     "/revit/sheets",

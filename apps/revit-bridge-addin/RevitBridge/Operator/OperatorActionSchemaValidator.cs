@@ -9476,6 +9476,22 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/inspect-family-content", StringComparison.OrdinalIgnoreCase))
+            {
+                // { elementId: number, contains?: string, maxElements?: number, includeParameters?: bool, includeOtherElements?: bool }
+                if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
+                {
+                    error = "inspect-family-content body must be an object.";
+                    return false;
+                }
+                if (!ValidateRequiredLong(obj.Value, "elementId", out error)) return false;
+                if (!ValidateOptionalString(obj.Value, "contains", maxLen: 200, out error)) return false;
+                if (!ValidateOptionalInt(obj.Value, "maxElements", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeParameters", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeOtherElements", out error)) return false;
+                return true;
+            }
+
             if (string.Equals(path, "/revit/find-family-text-notes", StringComparison.OrdinalIgnoreCase))
             {
                 // { familyDocumentId: string, contains?: string, max?: number }
