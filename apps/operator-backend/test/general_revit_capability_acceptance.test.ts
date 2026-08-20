@@ -1516,6 +1516,37 @@ test("Snowdon clearance-family evolution oracle accepts a grounded candidate wit
   assert.equal(naturalResult.tier, "verified");
   assert.equal(naturalResult.verification_basis, "fixture_semantic_oracle");
 
+  const candidateDesignationAnswer = [
+    "A defensible candidate is HRU202.",
+    "Element ID: 1365188",
+    "Unique ID: ee75abd3-0b00-4374-8f65-b8d52f0bb76e-0014d4c4",
+    "Category: Mechanical Equipment",
+    "Family / type: HeatRecoveryUnit / Heat Recovery Unit (HRU)",
+    "Suitable plan: L2, View ID 9948",
+    "The family readback found zero symbolic clearance curves and no service-clearance representation.",
+    "Copy the family as a separately named test family and create a dedicated test type.",
+    "Associate visibility with a Show Service Clearance Yes/No instance parameter.",
+    "Reload under the new family name only and never overwrite the production family.",
+    "Swap only HRU202 to the copied test type after confirming identical connectors and dimensions.",
+    "Capture before and after focused plan screenshots for verification.",
+    "No model changes, family operations, type swaps, files, or screenshots were created."
+  ].join("\n");
+  const candidateDesignationResult = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: candidateDesignationAnswer,
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(candidateDesignationResult.answer_assertion_passed, true);
+  assert.equal(candidateDesignationResult.tier, "verified");
+  assert.equal(candidateDesignationResult.verification_basis, "fixture_semantic_oracle");
+
   const incomplete = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Mechanical Equipment HRU102 appears to lack clearance. Consider editing its family.",
