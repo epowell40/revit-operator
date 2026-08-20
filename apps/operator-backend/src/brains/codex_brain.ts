@@ -1195,8 +1195,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     }
   }
   if (freshEvidenceRequirement.required && assistantText) cb.onDelta?.(assistantText);
-  cb.onDone?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
+  cb.onDone?.(assistantText);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.completed", {
       thread_id: threadId,

@@ -30,6 +30,7 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   // A leading, sentence-level READ-ONLY declaration is an authoritative turn
   // contract even when a long planning request later names future edits.
   if (/^\s*read[ -]?only(?:\s+only)?\s*[.!:;-]/i.test(text)) return true;
+  if (/^\s*read[ -]?only\b[^.!?\n]{0,160}\b(?:investigation|inspection|analysis|discovery|audit|review|plan|planning|report)\b[^.!?\n]{0,80}\bonly\b\s*[.!:;-]/i.test(text)) return true;
   if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
   if (TERMINAL_DIRECT_NO_WRITE.test(text)) return true;
   if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
