@@ -945,6 +945,58 @@ test("a certified read-only surface fallback remains a capability refusal", () =
   assert.equal(result.completed, false);
 });
 
+test("the three-sheet titleblock discovery requires exact fixture facts and successful native evidence", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "lh04_titleblock_initials_discovery")!;
+  const entry = generalRevitExecutionCase(productionCase, false);
+  const answer = [
+    "Findings — exactly three sheets",
+    "M000 – Cover Sheet (ID 1420963) | Cover titleblock instance 1420968",
+    "M100 – Plan HVAC L0 Parking (ID 1363532) | Horizontal titleblock instance 1363537",
+    "M200 – RCP HVAC L0 Parking (ID 1363682) | Horizontal titleblock instance 1363687",
+    "Drawn By = Author and Checked By = Checker on each sheet.",
+    "These are sheet-owned built-in parameters. There are no corresponding titleblock-type parameters.",
+    "Project Information Author = Autodesk is different, and there is no evidence that static family text drives the initials.",
+    "For each sheet, update the two sheet parameters and read both parameters back using that sheet ID.",
+    "No model changes were made."
+  ].join("\n");
+  const attempt = {
+    ok: true,
+    assistant_message: answer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: {
+      successful_paths: ["/revit/sheets", "/revit/titleblock-label-map", "/revit/verify-parameter-on-sheet"]
+    },
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live Revit inspection completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  } as const;
+
+  const verified = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(verified.answer_assertion_passed, true);
+  assert.equal(verified.verification_basis, "fixture_semantic_oracle");
+  assert.equal(verified.tier, "verified");
+
+  const missingEvidence = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    durable_tool_evidence: { successful_paths: ["/revit/sheets"] }
+  });
+  assert.equal(missingEvidence.answer_assertion_passed, false);
+  assert.ok(missingEvidence.answer_assertion_failures.includes("evidence_missing_successful_path:/revit/titleblock-label-map"));
+  assert.ok(missingEvidence.answer_assertion_failures.includes("evidence_missing_successful_path:/revit/verify-parameter-on-sheet"));
+  assert.equal(missingEvidence.tier, "failed");
+
+  const wrongFixture = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: answer.replace("M200 – RCP HVAC L0 Parking (ID 1363682) | Horizontal titleblock instance 1363687", "M201 – wrong sheet (ID 1) | titleblock instance 2")
+  });
+  assert.equal(wrongFixture.answer_assertion_passed, false);
+  assert.equal(wrongFixture.tier, "failed");
+});
+
 test("an exact-target clarification is accepted but is not mislabeled completion", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!;
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
