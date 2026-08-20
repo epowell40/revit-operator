@@ -671,6 +671,37 @@ test("an exact-target clarification is accepted but is not mislabeled completion
   assert.equal(result.verification_basis, "none");
 });
 
+test("an evidence-backed wrong-sheet ambiguity is accepted without inventing preview completion", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "c12_replace_outdated_note_terse")!;
+  const entry = generalRevitExecutionCase(productionCase, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Active sheet M000 contains no ventilation-related TextNotes. M102 contains two plausible targets, but the requested target is ambiguous—likely the wrong sheet is active.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/find-text-notes", request_effect: "read", request_dispatched: true, status: "success" }],
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "inspection",
+      context_state: "live",
+      stage: "report",
+      preview_action_ids: [],
+      apply_action_id: null,
+      verification_action_ids: [],
+      apply_attempts: 0,
+      verified: false,
+      verification_mode: "none",
+      verification_action_id: null,
+      verification_evidence_sha256: null,
+      blocked_reason: null
+    }
+  });
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.non_refusal, true);
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+  assert.equal(result.verification_basis, "none");
+});
+
 test("a target clarification cannot inherit completion or verification from a successful preview receipt", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!;
   const entry = { ...generalRevitExecutionCase(productionCase, false), answer_assertions: undefined };
