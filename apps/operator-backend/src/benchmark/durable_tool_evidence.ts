@@ -84,6 +84,7 @@ export async function loadDurableToolEvidence(
   let maximumConnectorScannedCount = 0;
   let maximumConnectorFailedCount = 0;
   let maximumReportedOpenPhysicalConnectors = 0;
+  const openPhysicalConnectorOwnerIds = new Set<string>();
 
   for (const goalId of goalIds) {
     let response: JsonRecord;
@@ -144,6 +145,8 @@ export async function loadDurableToolEvidence(
         for (const row of results) {
           const elementId = String(row.id ?? "").trim();
           if (elementId) connectorRows.set(elementId, row);
+          const rowOpenConnectorCount = numberValue(row.openPhysicalConnectorCount);
+          if (elementId && rowOpenConnectorCount > 0) openPhysicalConnectorOwnerIds.add(elementId);
         }
       }
       resultReceipts.push({
@@ -212,6 +215,8 @@ export async function loadDurableToolEvidence(
       maximum_reported_requested_count: maximumConnectorRequestedCount,
       maximum_reported_scanned_count: maximumConnectorScannedCount,
       maximum_reported_open_physical_connectors: maximumReportedOpenPhysicalConnectors,
+      open_physical_connector_owner_count: openPhysicalConnectorOwnerIds.size,
+      open_physical_connector_owner_ids: [...openPhysicalConnectorOwnerIds].sort((left, right) => Number(left) - Number(right)),
       scan_truncated: connectorScanTruncated
     },
     result_receipts: resultReceipts

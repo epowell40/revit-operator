@@ -516,7 +516,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/durable_tool_evidence.ts",
-      "sha256": "sha256:53ec964287d90c1b3459fa5bb0fbbf97c7fd94fbbc94eb88b6aa8333b6aab66c"
+      "sha256": "sha256:e82d27dce1124018345bb5c0f725640e1f10fcacced838e163e738456bbc9172"
     },
     {
       "path": "apps/operator-backend/src/benchmark/environment.ts",
@@ -556,7 +556,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:f95063606377c8e46ca0fa80b3c057379d6eedf5fa97437a1067cdc8653ddcf1"
+      "sha256": "sha256:2a35f239fcb2520c5737d0b3e14f5e482ce6d0772adde855f2d5c4f81066bd03"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_sample_fixtures.ts",
@@ -1277,7 +1277,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:ba204a73a9cf8b54d09261078a8010cee4e7ecc4f7cc8e7cf5282be8eb6ddddc"
+      "sha256": "sha256:808395b173010d501f6c30376361c34cc055388c702e9216c3ee193a4c868211"
     },
     {
       "path": "apps/operator-backend/src/goals/list_cache.ts",
@@ -2341,7 +2341,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:0332e23c6707f54bae29b647228217f5fad0cf2c0cf14bb6707dd471745e2e93"
+      "sha256": "sha256:95f3419327feb98eff09577a79da62c005cb48d3a29f3cd9c4332f6722ebc2f5"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2349,7 +2349,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:91c53c62f60f90ad7f837dff2fcb6d85a616190adba2677d771b90fad581f50f"
+      "sha256": "sha256:a61b65bc24eb4bcba09a31ff3dd89043023085602e6fbbc2753d19e0793f4672"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -4705,7 +4705,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:50008b0a6f8738a5cf5c63f61454d31f6acde220aa4a3d2ddb6b2befb8c3ab89",
+  "inputs_hash": "sha256:250f9eeb72be65ca98e5e6e49586c5d8c4f1c2945f5a3ce2848bc40e7c3167db",
   "result": {
     "passed": true,
     "checks": [

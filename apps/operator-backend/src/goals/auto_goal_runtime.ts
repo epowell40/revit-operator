@@ -202,9 +202,13 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             assistant_summary: assistantText
           });
         } else if ((failedRevitTools > 0 && (evidenceTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
-          blockAutoGoalFromTurn(sessionId, failedRevitTools > 0
-            ? "One or more live Revit tool calls failed; completion requires a clean verified turn."
-            : assistantText || "The General Agent turn ended without a successful live Revit tool result.");
+          // Preserve the final task-level blocker when the agent recovered from an
+          // exploratory read error and then grounded its conclusion in successful
+          // live evidence. A prior malformed read remains in the action log, but it
+          // must not replace a later, more specific model-state blocker.
+          blockAutoGoalFromTurn(sessionId, blockedOutcome
+            ? assistantText || "The General Agent reported a concrete task-level blocker."
+            : "One or more live Revit tool calls failed; completion requires a clean verified turn.");
         }
       } catch {
         // Assignment journaling is fail-safe and must not replace a completed user response.

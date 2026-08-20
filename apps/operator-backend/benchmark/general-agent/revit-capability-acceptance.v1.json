@@ -523,7 +523,37 @@
       "probe_prompt": "Discover one feasible pair of compatible open pipe connectors and preview a bounded connection using observed system, type, size, level, and slope. Do not create it.",
       "capability_paths": ["/revit/create-mep-route"],
       "dispatch_any_of": ["/revit/resolve-mep-routing-context", "/revit/create-mep-route", "/revit/create-pipe-between-connectors", "/revit/get-connectors"],
-      "expected_effect": "preview",
+      "expected_effect": "apply",
+      "probe_expected_effect": "preview",
+      "answer_assertions": {
+        "must_match": [
+          "(?:created|connected)[^\\n.]{0,120}(?:pipe|route|fixture)",
+          "(?:connector|connected)",
+          "(?:system|piping|pipe type|diameter|slope)"
+        ],
+        "must_not_match": ["(?:blocked|no feasible pair|no compatible pair)"]
+      },
+      "fixture_blocker_assertions": {
+        "must_match": [
+          "(?:complete|exhaustive)[^\\n.]{0,160}(?:scan|audit)|(?:5[, ]?891|5891|6[, ]?017|6017)[^\\n.]{0,100}elements[^\\n.]{0,100}(?:scanned|inspected|audited)",
+          "(?:only\\s+)?2[^\\n.]{0,100}open[^\\n.]{0,100}(?:pipe|piping)[^\\n.]{0,100}connectors?[^\\n.]{0,100}(?:same|one)[^\\n.]{0,80}(?:accessory|owner|element)",
+          "(?:no valid|no feasible|does not exist|no compatible)[^\\n.]{0,120}(?:pair|two-owner)",
+          "(?:nothing was created|nothing was modified|no model changes were made|no changes were made)"
+        ],
+        "must_not_match": [
+          "(?:created|inserted)[^\\n.]{0,100}(?:pipe|route|fitting)",
+          "\\\"dryRun\\\"\\s*:\\s*true",
+          "\\\"rollbackVerified\\\"\\s*:\\s*true"
+        ],
+        "evidence": {
+          "required_successful_paths": ["/revit/find-elements", "/revit/get-connectors"],
+          "minimum_unique_connector_element_ids": 5891,
+          "maximum_failed_connector_rows": 0,
+          "maximum_open_physical_connector_owner_count": 1,
+          "require_compact_connector_filter": true,
+          "require_untruncated_connector_scan": true
+        }
+      },
       "epic0441_task_refs": ["r15_pipe_route"]
     },
     {

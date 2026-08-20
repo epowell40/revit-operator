@@ -1539,6 +1539,36 @@ test("an explicit task-level blocker still blocks after a successful discovery o
   });
 });
 
+test("a recovered exploratory read preserves the later model-state blocker in assignment truth", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-recovered-model-blocker", {
+      title: "Preview a pipe connection",
+      objective: "Find a compatible two-owner open connector pair and preview the route.",
+      acceptance_criteria: ["The preview is grounded in a complete connector scan."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-recovered-model-blocker");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/get-connectors", body: {} }, error: "elementIds is required"
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/get-connectors", body: { elementIds: [1680136], onlyOpenPhysicalConnectors: true } },
+      result: { requestedCount: 1, scannedElementCount: 1, failedElementCount: 0, openPhysicalConnectorCount: 2 }
+    });
+    const blocker = "## Blocked — no feasible pair\nBoth open piping connectors belong to the same accessory, so no valid two-owner route exists. Nothing was modified.";
+    observer.finish("turn-recovered-model-blocker", blocker);
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.match(persisted?.blocker || "", /both open piping connectors belong to the same accessory/i);
+    assert.doesNotMatch(persisted?.blocker || "", /clean verified turn/i);
+    assert.match(persisted?.action_log.find((entry) => entry.summary.includes("failed"))?.summary || "", /elementIds is required/i);
+  });
+});
+
 test("a blocked heading or missing qualifying target cannot be server-signed as completion", () => {
   withWorkspace(() => {
     for (const [sessionId, assistantText] of [
