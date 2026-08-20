@@ -523,6 +523,77 @@ test("the terse diffuser-route blocker uses the same complete connector-evidence
   assert.ok(partialEvidence.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_connector_unique_ids:")));
 });
 
+test("the pipe-route blocker requires an exhaustive compact scan and fewer than two open owners", () => {
+  const safeCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "r11_pipe_route")!,
+    false
+  );
+  const assistantMessage = `## Blocked — no feasible pair
+
+Live exhaustive scan found 6,017 elements scanned and only 2 open piping connectors, both on the same pipe accessory.
+A valid two-owner compatible pair does not exist, so nothing was created or modified.`;
+  const inspected = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "failed" },
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: assistantMessage
+  };
+  const completeEvidence = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 6017,
+        failed_rows: 0,
+        compact_filter_used: true,
+        open_physical_connector_owner_count: 1,
+        scan_truncated: false
+      }
+    }
+  });
+  assert.equal(completeEvidence.tier, "accepted");
+  assert.equal(completeEvidence.fixture_blocker_accepted, true);
+  assert.equal(completeEvidence.completed, false);
+
+  const twoOwners = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 6017,
+        failed_rows: 0,
+        compact_filter_used: true,
+        open_physical_connector_owner_count: 2,
+        scan_truncated: false
+      }
+    }
+  });
+  assert.equal(twoOwners.tier, "failed");
+  assert.ok(twoOwners.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_open_physical_connector_owners:")));
+
+  const partialScan = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 5800,
+        failed_rows: 0,
+        compact_filter_used: false,
+        open_physical_connector_owner_count: 1,
+        scan_truncated: true
+      }
+    }
+  });
+  assert.equal(partialScan.tier, "failed");
+  assert.ok(partialScan.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_connector_unique_ids:")));
+  assert.ok(partialScan.fixture_blocker_assertion_failures.includes("evidence_compact_connector_filter:missing"));
+  assert.ok(partialScan.fixture_blocker_assertion_failures.includes("evidence_connector_scan_truncated:true"));
+});
+
 test("the live runner reuses orchestrator-established fixture health between cases", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
   const durableEvidence = source("operator-backend/src/benchmark/durable_tool_evidence.ts");
@@ -667,8 +738,77 @@ test("durable evidence counts a complete compact open-connector scan even when z
       maximum_reported_requested_count: 3,
       maximum_reported_scanned_count: 3,
       maximum_reported_open_physical_connectors: 0,
+      open_physical_connector_owner_count: 0,
+      open_physical_connector_owner_ids: [],
       scan_truncated: false
     });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable compact evidence counts distinct owners instead of treating two connectors on one accessory as a pair", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [{
+          id: "compact-one-owner",
+          details: {
+            tool: {
+              tool: "revit_call_tool",
+              status: "completed",
+              duration_ms: 25,
+              arguments: {
+                path: "/revit/get-connectors",
+                body: { elementIds: [1680136], onlyOpenPhysicalConnectors: true }
+              },
+              result: [{ type: "inputText", text: JSON.stringify({
+                status: "Ok",
+                requestedCount: 1,
+                scannedElementCount: 1,
+                failedElementCount: 0,
+                matchedElementCount: 1,
+                totalScannedConnectorCount: 2,
+                physicallyConnectedConnectorCount: 0,
+                openPhysicalConnectorCount: 2,
+                connectorScanTruncatedElementCount: 0,
+                filter: "openPhysicalConnectors",
+                results: [{
+                  id: 1680136,
+                  ok: true,
+                  openPhysicalConnectorCount: 2,
+                  connectors: [
+                    { connectorId: 1, domain: "DomainPiping", isPhysicallyConnected: false },
+                    { connectorId: 2, domain: "DomainPiping", isPhysicallyConnected: false }
+                  ]
+                }]
+              }) }]
+            }
+          }
+        }]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "compact-one-owner-goal",
+        source_user_request: "find an open pipe pair",
+        target: { session_id: "compact-one-owner-session" },
+        created_at: "2026-08-20T10:00:01.000Z"
+      }]
+    }, "find an open pipe pair", {
+      session_id: "compact-one-owner-session",
+      started_at: "2026-08-20T10:00:00.000Z"
+    });
+    assert.equal((evidence.connector_inventory as Record<string, unknown>).maximum_reported_open_physical_connectors, 2);
+    assert.equal((evidence.connector_inventory as Record<string, unknown>).open_physical_connector_owner_count, 1);
+    assert.deepEqual((evidence.connector_inventory as Record<string, unknown>).open_physical_connector_owner_ids, ["1680136"]);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

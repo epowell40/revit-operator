@@ -48,6 +48,9 @@ export type GeneralRevitCapabilityCase = {
       minimum_unique_connector_element_ids?: number;
       maximum_failed_connector_rows?: number;
       required_open_hvac_connector_count?: number;
+      maximum_open_physical_connector_owner_count?: number;
+      require_compact_connector_filter?: boolean;
+      require_untruncated_connector_scan?: boolean;
     };
   };
 };
@@ -625,6 +628,18 @@ function fixtureBlockerEvidenceFailures(
   if (requirements.required_open_hvac_connector_count !== undefined
     && (!Number.isFinite(openHvacConnectors) || openHvacConnectors !== requirements.required_open_hvac_connector_count)) {
     failures.push(`evidence_open_hvac_connectors:${Number.isFinite(openHvacConnectors) ? openHvacConnectors : "missing"}!=${requirements.required_open_hvac_connector_count}`);
+  }
+  const openPhysicalConnectorOwnerCount = Number(connectorInventory.open_physical_connector_owner_count);
+  if (requirements.maximum_open_physical_connector_owner_count !== undefined
+    && (!Number.isFinite(openPhysicalConnectorOwnerCount)
+      || openPhysicalConnectorOwnerCount > requirements.maximum_open_physical_connector_owner_count)) {
+    failures.push(`evidence_open_physical_connector_owners:${Number.isFinite(openPhysicalConnectorOwnerCount) ? openPhysicalConnectorOwnerCount : "missing"}>${requirements.maximum_open_physical_connector_owner_count}`);
+  }
+  if (requirements.require_compact_connector_filter === true && connectorInventory.compact_filter_used !== true) {
+    failures.push("evidence_compact_connector_filter:missing");
+  }
+  if (requirements.require_untruncated_connector_scan === true && connectorInventory.scan_truncated !== false) {
+    failures.push(`evidence_connector_scan_truncated:${connectorInventory.scan_truncated === true ? "true" : "missing"}`);
   }
   return failures;
 }
