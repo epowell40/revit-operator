@@ -351,7 +351,21 @@ test("fresh Revit evidence contracts reject stale or unrelated sheet-count claim
 
 test("fresh Revit evidence is required for live-model work but not conceptual help", () => {
   assert.equal(getFreshRevitEvidenceRequirement("List the equipment in the active model").kind, "revit_tool");
+  const topology = getFreshRevitEvidenceRequirement(
+    "Identify one clearly missing unit branch and the analogous neighboring branch, then preview copying its topology, system, level, size, and fittings to the target. Do not create anything."
+  );
+  assert.equal(topology.required, true);
+  assert.equal(topology.kind, "revit_tool");
   assert.equal(getFreshRevitEvidenceRequirement("What is a Revit sheet?").required, false);
+});
+
+test("Codex instructions require exhaustive live connector and topology evidence", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /Exhaustive MEP connector rule/);
+  assert.match(instructions, /accepts up to 5,000 IDs per call/);
+  assert.match(instructions, /every returned element ID, not a sample/);
+  assert.match(instructions, /Live topology truth rule/);
+  assert.match(instructions, /successful same-turn Revit reads over a bounded complete cohort/);
 });
 
 test("backend MCP adapter resolves the sibling built server", () => {
