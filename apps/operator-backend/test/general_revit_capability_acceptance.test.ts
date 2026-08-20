@@ -1485,6 +1485,37 @@ test("Snowdon clearance-family evolution oracle accepts a grounded candidate wit
   assert.equal(result.tier, "verified");
   assert.equal(result.verification_basis, "fixture_semantic_oracle");
 
+  const naturalLiveAnswer = [
+    "Element ID: 1468445",
+    "Unique ID: ad749fd7-82f7-4fb9-99c9-20ef80280522-0016681d",
+    "Mark: HRU105A",
+    "Category: Mechanical Equipment",
+    "Family / type: HeatRecoveryUnit / Heat Recovery Unit (HRU)",
+    "Relevant plan: L1 - Block 37 (1363413), Mechanical plan using template Mechanical Plan",
+    "The clearance inspection returned zero symbolic clearance curves; no corresponding symbolic service-clearance representation was found.",
+    "Copy the family as a test family and create a distinct test type.",
+    "Add a Yes/No parameter such as Show Service Clearance for visibility control.",
+    "Save under a new family name; cancel a reload conflict rather than overwrite the production family.",
+    "Change only that selected instance to the copied test type; do not alter other HRUs.",
+    "Capture focused before and after screenshots for verification.",
+    "No model changes, family operations, files, or screenshots were made."
+  ].join("\n");
+  const naturalResult = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: naturalLiveAnswer,
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "complete" },
+        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        verification: { state: "passed", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      }]
+    }
+  });
+  assert.equal(naturalResult.answer_assertion_passed, true);
+  assert.equal(naturalResult.tier, "verified");
+  assert.equal(naturalResult.verification_basis, "fixture_semantic_oracle");
+
   const incomplete = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Mechanical Equipment HRU102 appears to lack clearance. Consider editing its family.",
