@@ -1781,6 +1781,33 @@ test("a focused request for missing selection and placement context blocks a mut
   });
 });
 
+test("a focused imperative clarification without a question mark blocks the assignment", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-imperative-selection-clarification", {
+      title: "Add another selected device",
+      objective: "Preview another device like the selected exemplar.",
+      acceptance_criteria: ["The preview is grounded in the selected exemplar and target point."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-imperative-selection-clarification");
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_get_context",
+      success: true,
+      result: { activeViewName: "COVER SHEET", selection: [] }
+    });
+    const clarification = "No device is selected, and the active view is the COVER SHEET. Please open the intended model view, select the exemplar device, and indicate the placement point for “here.”";
+    observer.finish("turn-imperative-selection-clarification", clarification);
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.blocker, clarification);
+    assert.equal(persisted?.completion_audit, null);
+    assert.equal(persisted?.work_items[0]?.status, "blocked");
+  });
+});
+
 test("a rejected mutation cannot be server-signed by a later transaction preview", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-preview-after-rejection", {
