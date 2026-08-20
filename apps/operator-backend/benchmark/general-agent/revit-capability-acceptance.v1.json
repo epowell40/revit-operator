@@ -760,12 +760,12 @@
           "Mechanical Equipment",
           "Family\\s*(?:/|and)?\\s*Type|Family[^\\n]*Type",
           "Mark[^\\n]*(?:HRU|ERU)[0-9]+",
-          "(?:Plan used|plan view)[^\\n]*(?:view ID|[0-9]{5,})",
+          "(?:(?:relevant|verification|suitable)[ -]?)?plan(?: used| view)?[^\\n]*(?:view ID|[0-9]{5,})",
           "(?:clearance[^\\n]*(?:count[^\\n]*0|absent|not visible|no visible)|(?:0|no)[^\\n]*clearance)",
           "cop(?:y|ied)[^\\n]*(?:test )?(?:family|type)",
           "(?:Yes/No|visibility)[^\\n]*(?:parameter|control)",
           "(?:reload|save/load|load)[^\\n]*(?:conflict|overwrite|unique|version)",
-          "(?:swap|apply)[^\\n]*(?:only|isolated|single)",
+          "(?:(?:swap|apply|change)[^\\n]*(?:only|isolated|single)|(?:only|isolated|single)[^\\n]*(?:swap|apply|change|instance))",
           "(?:screenshot[^\\n]*(?:verify|verification|before|after|capture)|(?:capture|before|after)[^\\n]*screenshot)",
           "(?:No model changes|Nothing was (?:edited|reloaded|changed)|No changes[^\\n]*(?:performed|made))"
         ]
