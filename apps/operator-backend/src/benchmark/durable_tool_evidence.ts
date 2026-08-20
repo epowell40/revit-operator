@@ -14,6 +14,13 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalRevitToolPath(server: string, toolName: string): string {
+  if (server !== "revit_operator"
+    || toolName === "revit_call_tool"
+    || !/^revit_[a-z0-9_]+$/.test(toolName)) return "";
+  return `/revit/${toolName.slice("revit_".length).replaceAll("_", "-")}`;
+}
+
 async function requestGoal(baseUrl: string, goalId: string): Promise<JsonRecord> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error(`Goal evidence fetch exceeded 30000ms.`)), 30_000);
@@ -103,9 +110,11 @@ export async function loadDurableToolEvidence(
       const tool = asRecord(details.tool);
       const argumentsRecord = asRecord(tool.arguments);
       const requestBody = asRecord(argumentsRecord.body);
-      const path = String(argumentsRecord.path || "").trim();
-      const status = String(tool.status || "").trim().toLowerCase();
+      const toolServer = String(tool.server || "").trim();
       const toolName = String(tool.tool || "").trim();
+      const explicitPath = String(argumentsRecord.path || "").trim();
+      const path = explicitPath || canonicalRevitToolPath(toolServer, toolName);
+      const status = String(tool.status || "").trim().toLowerCase();
       if (path && status === "completed") successfulPaths.add(path);
       if (path && status === "failed") failedPaths.add(path);
       if (toolName && status === "completed") successfulTools.add(toolName);

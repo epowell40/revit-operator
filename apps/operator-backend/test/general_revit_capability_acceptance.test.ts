@@ -989,6 +989,54 @@ test("durable evidence records successful web research tools independently from 
   }
 });
 
+test("durable evidence normalizes direct Revit MCP tools to their canonical native paths", async () => {
+  const action = (serverName: string, toolName: string, status = "completed") => ({
+    details: {
+      tool: {
+        server: serverName,
+        tool: toolName,
+        status,
+        result: [{ type: "inputText", text: JSON.stringify({ ok: status === "completed" }) }]
+      }
+    }
+  });
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [
+          action("revit_operator", "revit_native_api_search"),
+          action("revit_operator", "revit_native_api_catalog"),
+          action("revit_operator", "revit_get_elements", "failed"),
+          action("untrusted_server", "revit_spoofed_path")
+        ]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "native-goal",
+        source_user_request: "inspect native surface",
+        target: { session_id: "native-session" },
+        created_at: "2026-08-20T14:00:01.000Z"
+      }]
+    }, "inspect native surface", {
+      session_id: "native-session",
+      started_at: "2026-08-20T14:00:00.000Z"
+    });
+    assert.deepEqual(evidence.successful_paths, ["/revit/native-api-catalog", "/revit/native-api-search"]);
+    assert.deepEqual(evidence.failed_paths, ["/revit/get-elements"]);
+    assert.ok(!(evidence.successful_paths as string[]).includes("/revit/spoofed-path"));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("the three-sheet titleblock discovery requires exact fixture facts and successful native evidence", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "lh04_titleblock_initials_discovery")!;
   const entry = generalRevitExecutionCase(productionCase, false);
@@ -1120,6 +1168,36 @@ test("authoritative Revit API assertions tolerate headings and bullet formatting
     }] }
   } as const);
   assert.equal(result.answer_assertion_passed, true);
+});
+
+test("authoritative Revit API assertions accept project-local and persistent cross-session identity wording", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c43_research_revit2026_api_change")!;
+  const answer = [
+    "Revit 2026 removes ElementId.IntegerValue; ElementId.Value returns Int64 / long.",
+    "Revit 2023 compatibility uses IntegerValue; later versions use new ElementId(long value).",
+    "Autodesk notes numeric IDs are project-local and can change.",
+    "For persistent cross-session identity, prefer Element.UniqueId.",
+    "Source: https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/example.htm",
+    "No model changes were made."
+  ].join("\n");
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: answer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/native-api-search", request_effect: "read", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: {
+      successful_paths: ["/revit/native-api-catalog", "/revit/native-api-search"],
+      successful_tools: ["revit_native_api_catalog", "revit_native_api_search", "web_fetch_evidence"]
+    },
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live native and web evidence completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  } as const);
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.tier, "verified");
 });
 
 test("both general-agent prompts require primary-source fetches for authoritative current research", () => {
