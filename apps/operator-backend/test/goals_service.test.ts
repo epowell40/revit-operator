@@ -1808,6 +1808,30 @@ test("a focused imperative clarification without a question mark blocks the assi
   });
 });
 
+test("a natural clarification with an adverbial missing-selection report blocks the assignment", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-currently-selection-clarification", {
+      title: "Preview create similar",
+      objective: "Add another one like the selected device, but preview only.",
+      acceptance_criteria: ["The preview is grounded in the selected exemplar and target point."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-currently-selection-clarification");
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_get_context",
+      success: true,
+      output: { document_title: "Snowdon Towers Sample Electrical", selection_count: 0 }
+    });
+    const clarification = "No device is currently selected in the live model. Please select the device you want copied and indicate the intended placement point, then I’ll preview Create Similar without applying it.";
+    observer.finish("turn-currently-selection-clarification", clarification);
+    const updated = getGoal(goal.id);
+    assert.equal(updated?.status, "blocked");
+    assert.equal(updated?.blocker, clarification);
+  });
+});
+
 test("a rejected mutation cannot be server-signed by a later transaction preview", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-preview-after-rejection", {
