@@ -293,7 +293,7 @@
           "Supply Air Pressure Drop",
           "0\\.08\\s*in-wg",
           "0\\.10\\s*in-wg",
-        "(?:1 (?:requested/)?effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1)",
+          "(?:1 (?:requested/)?effective change|effectiveChangeCount[\\\"']?\\s*[:=]\\s*1|exactly one (?:changed|affected) element)",
           "(?:no changes applied|without committing|nothing was applied|dry.?run)"
         ]
       },
@@ -818,7 +818,7 @@
       "answer_assertions": {
         "must_match": [
           "(?<!\\d)29(?!\\d)",
-          "(?=[^\\n]{0,160}Supply Diffuser\\s*[-–—]\\s*Square)(?=[^\\n]{0,160}(?<!\\d)28(?!\\d))[^\\n]{1,160}",
+          "(?=[^\\n]{0,160}(?:Supply Diffuser\\s*[-–—]\\s*Square|Square\\s+Supply Diffuser))(?=[^\\n]{0,160}(?<!\\d)28(?!\\d))[^\\n]{1,160}",
           "(?=[^\\n]{0,160}(?:Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot|Linear Slot Supply Diffuser))(?=[^\\n]{0,160}(?<!\\d)1(?!\\d))[^\\n]{1,160}"
         ],
         "must_not_match": [
@@ -1270,9 +1270,9 @@
       "allow_verified_noop": true,
       "answer_assertions": {
         "must_match": [
-        "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|Mechanical sheets\\s*:\\s*17|Mechanical sheets inventoried\\s*:\\s*\\*{0,2}17\\*{0,2}|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets|17 mechanical[^\\n]{0,40}sheets[^\\n]{0,30}inventoried)",
-        "(?:(?:Dashed candidates|candidate_count|Sheet numbers containing dashes)\\s*:\\s*0|0\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
-          "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false|No\\s+sheets?\\s+(?:were\\s+)?(?:renamed|modified)(?:\\s+or\\s+(?:renamed|modified))?)"
+        "(?:Sheets inspected\\s*:\\s*\\*{0,2}17\\*{0,2}(?:\\s*(?:of|/)\\s*17)?|Mechanical sheets\\s*:\\s*\\*{0,2}17\\*{0,2}|Mechanical sheets (?:inventoried|checked)\\s*:\\s*\\*{0,2}17\\*{0,2}|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets|17 mechanical[^\\n]{0,40}sheets[^\\n]{0,30}inventoried)",
+        "(?:(?:Dashed candidates|candidate_count|Sheet numbers containing dashes)\\s*:\\s*\\*{0,2}0\\*{0,2}|0\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
+        "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false|modelModified\\s*:\\s*false|No\\s+sheets?\\s+(?:were\\s+)?(?:renamed|modified)(?:\\s+or\\s+(?:renamed|modified))?)"
         ],
         "must_not_match": [
           "(?:Dashed candidates|candidate_count)\\s*:\\s*[1-9]\\d*",

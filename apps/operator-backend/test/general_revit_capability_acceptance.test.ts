@@ -1094,6 +1094,14 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   assert.equal(equivalentNaturalTypeOrder.tier, "verified");
   assert.equal(equivalentNaturalTypeOrder.answer_assertion_passed, true);
 
+  const equivalentFamilyLabelOrder = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Air terminals: 509 total. Strictly named Diffuser families total 29.\n| Square Supply Diffuser — 12x12 | 28 |\n| Linear Slot Supply Diffuser — 48x4, 2-slot | 1 |",
+    assignment_projection
+  });
+  assert.equal(equivalentFamilyLabelOrder.tier, "verified");
+  assert.equal(equivalentFamilyLabelOrder.answer_assertion_passed, true);
+
   const wrong = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Diffuser count: 435, including supply and return grilles.",
@@ -1377,6 +1385,14 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   ].join("\n");
   for (const pattern of schedule.answer_assertions!.must_match) assert.match(scheduleAnswer, new RegExp(pattern, "i"));
 
+  const capturedNaturalScheduleAnswer = [
+    "Schedule: Heat Recovery Unit Summary (1488968)",
+    "Row HRU202; Mechanical Equipment element 1365188",
+    "Supply Air Pressure Drop changed from 0.08 in-wg to 0.10 in-wg",
+    "The native dry-run predicted exactly one changed element. Nothing was applied."
+  ].join("\n");
+  for (const pattern of schedule.answer_assertions!.must_match) assert.match(capturedNaturalScheduleAnswer, new RegExp(pattern, "i"));
+
   const titleblocks = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c36_titleblock_initials_all_mech")!, false);
   assert.equal(titleblocks.expected_effect, "read");
   const titleblockAnswer = [
@@ -1551,6 +1567,17 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
     assert.equal(adversarialResult.tier, "failed");
     assert.equal(adversarialResult.answer_assertion_passed, false);
   }
+});
+
+test("Snowdon sheet-number no-op oracle accepts Markdown counts and native camelCase truth", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c34_sheet_numbers_dashes_to_dots")!;
+  const answer = [
+    "Mechanical sheets checked: **17** (M000–M206)",
+    "Sheet numbers containing dashes: **0**",
+    "Proposed dash-to-dot changes: none",
+    "The Revit dry-run returned NoOp, `modelModified: false`."
+  ].join("\n");
+  for (const pattern of entry.answer_assertions!.must_match) assert.match(answer, new RegExp(pattern, "i"));
 });
 
 test("captured cohort wording keeps fixture facts while remaining presentation-neutral", () => {

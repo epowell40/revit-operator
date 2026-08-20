@@ -10,7 +10,7 @@ const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|s
 const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection)\b/i;
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|inspect|check|query|report|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|update|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
-const EXECUTABLE_PREVIEW = /\b(executable|transaction(?:al)?|rollback|dry[- ]?run|preflight|simulate(?:d|ion)?)\s+(?:change\s+)?preview\b|\b(?:dry[- ]?run|preflight|show me (?:the )?change)\b/i;
+const EXECUTABLE_PREVIEW = /\b(?:execute|perform|run|simulate)\b[^.!?]{0,80}\b(?:preview|preflight|dry[- ]?run|rollback)\b|\b(?:executable|transaction(?:al)?|rollback)\s+(?:change\s+)?preview\b|\bshow me (?:the )?change\b/i;
 const APPLY_BEYOND_PREVIEW = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just|only)\s+)?(?:stop|end|finish|halt|remain|return)\b[^.!?;\n]{0,40}\b(?:preview|preflight|dry[- ]?run)|(?:do not|don't|dont|never)\s+(?:just\s+|only\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:not|rather than)\s+(?:just\s+|only\s+)?(?:a\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:proceed|continue|go)\s+beyond\s+(?:the\s+)?(?:preview|preflight|dry[- ]?run)\b)/i;
 const APPLY_AFTER_PREFLIGHT = /\b(?:then\s+|and\s+then\s+)?(?:apply|commit|execute|perform|proceed(?:\s+with)?)\b/i;
 

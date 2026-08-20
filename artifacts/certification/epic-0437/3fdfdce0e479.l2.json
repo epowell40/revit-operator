@@ -1273,7 +1273,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal.ts",
-      "sha256": "sha256:369c7b4fd9ad04be6fdcb2e2e4e2b83940dd67fe53dc8563d619d1f7df244527"
+      "sha256": "sha256:38060e7cc9c6c9835ab772ac9714fc2853708f8063ae6107a95e5c14ad89cd14"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
@@ -2341,7 +2341,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:14287e85015c1a89bfc22a11c577e1f029bdb9ba3b54e3ba8a4dc9a9d17f09c7"
+      "sha256": "sha256:aa7db5d8000677b6b340676ad48fe5c278dd0d189db3f1438d87c12b45f8b5af"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -2349,7 +2349,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:3d8046e95680a26d92a468c77198520861522ac5d693581900d79e0946f43614"
+      "sha256": "sha256:e877e95a59477a6f5a84ef965f3f85b3373c0b4ca64505086bd8946f921f2ca2"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -4705,7 +4705,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:3a02b060711a1aff0e038c200d656b5fbc03820a93ddb7b62cff75770c8777ce",
+  "inputs_hash": "sha256:0c350e000a3701d6061a5c4024484504897b70c1c61e2974f5a89369fc608a3a",
   "result": {
     "passed": true,
     "checks": [
