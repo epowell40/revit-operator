@@ -536,7 +536,8 @@
       "fixture_blocker_assertions": {
         "must_match": [
           "(?:complete|exhaustive)[^\\n.]{0,160}(?:scan|audit)|(?:5[, ]?891|5891|6[, ]?017|6017)[^\\n.]{0,100}elements[^\\n.]{0,100}(?:scanned|inspected|audited)",
-          "(?:only\\s+)?2[^\\n.]{0,100}open[^\\n.]{0,100}(?:pipe|piping)[^\\n.]{0,100}connectors?[^\\n.]{0,100}(?:same|one)[^\\n.]{0,80}(?:accessory|owner|element)",
+          "(?:only\\s+)?2[^\\n.]{0,100}open[^\\n.]{0,100}(?:pipe|piping)[^\\n.]{0,100}connectors?|(?:pipe|piping)(?:\\s+accessor(?:y|ies))?[^\\n.]{0,100}2[^\\n.]{0,60}open[^\\n.]{0,60}connectors?",
+          "(?:both|2)[^\\n.]{0,120}open[^\\n.]{0,120}connectors?[^\\n.]{0,120}(?:same|one)[^\\n.]{0,80}(?:accessory|owner|element)",
           "(?:no valid|no feasible|does not exist|no compatible)[^\\n.]{0,120}(?:pair|two-owner)",
           "(?:nothing was created|nothing was modified|no model changes were made|no changes were made)"
         ],

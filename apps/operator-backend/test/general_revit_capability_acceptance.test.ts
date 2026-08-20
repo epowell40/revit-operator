@@ -559,6 +559,35 @@ A valid two-owner compatible pair does not exist, so nothing was created or modi
   assert.equal(completeEvidence.fixture_blocker_accepted, true);
   assert.equal(completeEvidence.completed, false);
 
+  const splitLiveWording = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    assistant_message: `## Blocked — no feasible pair
+
+Live exhaustive scan found:
+- **3,056 pipes:** 0 open connectors
+- **2,656 pipe fittings:** 0 open
+- **126 pipe accessories:** 2 open connectors
+- **179 plumbing fixtures:** 0 open
+- **Mechanical equipment/sprinklers:** none
+
+Both open 1-inch connectors belong to the **same accessory, element 1680136**. Its system classification is **Undefined**, with no observed system, level, or slope suitable for a bounded pipe connection.
+
+Therefore, no two-element compatible pair exists and the noncommitting connection preview could not safely execute. **Nothing was created.**`,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: {
+        unique_element_ids: 6017,
+        failed_rows: 0,
+        compact_filter_used: true,
+        open_physical_connector_owner_count: 1,
+        scan_truncated: false
+      }
+    }
+  });
+  assert.equal(splitLiveWording.tier, "accepted");
+  assert.equal(splitLiveWording.fixture_blocker_accepted, true);
+  assert.equal(splitLiveWording.completed, false);
+
   const twoOwners = evaluateGeneralRevitCapabilityAttempt(safeCase, {
     ...inspected,
     durable_tool_evidence: {
