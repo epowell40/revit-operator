@@ -484,6 +484,43 @@ Without an open terminal connector, no compatible route can be previewed. Nothin
   assert.ok(contradicted.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_open_hvac_connectors:")));
 });
 
+test("the terse diffuser-route blocker uses the same complete connector-evidence oracle", () => {
+  const safeCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "c27_connect_diffuser_terse")!,
+    false
+  );
+  const inspected = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    actions: [
+      { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assistant_message: "Blocked by live model state: live inspection covered all 509 Air Terminals and found zero open HVAC air-terminal connectors. Without an open terminal connector, no route can be previewed. No model changes were made."
+  };
+  const completeEvidence = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: { unique_element_ids: 509, failed_rows: 0, open_hvac_connectors: 0 }
+    }
+  });
+  assert.equal(completeEvidence.tier, "accepted");
+  assert.equal(completeEvidence.fixture_blocker_accepted, true);
+  assert.equal(completeEvidence.completed, false);
+
+  const partialEvidence = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ...inspected,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/find-elements", "/revit/get-connectors"],
+      connector_inventory: { unique_element_ids: 141, failed_rows: 0, open_hvac_connectors: 0 }
+    }
+  });
+  assert.equal(partialEvidence.tier, "failed");
+  assert.equal(partialEvidence.fixture_blocker_accepted, false);
+  assert.ok(partialEvidence.fixture_blocker_assertion_failures.some((failure) => failure.startsWith("evidence_connector_unique_ids:")));
+});
+
 test("the live runner reuses orchestrator-established fixture health between cases", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
   const durableEvidence = source("operator-backend/src/benchmark/durable_tool_evidence.ts");

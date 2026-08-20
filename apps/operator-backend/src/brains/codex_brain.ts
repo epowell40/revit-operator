@@ -343,8 +343,8 @@ export function getFreshRevitEvidenceRequirement(userText: string): FreshRevitEv
     };
   }
 
-  const entity = /\b(?:revit|model|project|document|sheet|view|schedule|element|equipment|family|type|instance|room|space|wall|door|window|duct|pipe|tag|parameter|connector|selection)\b/.test(text);
-  const liveIntent = /\b(?:how\s+many|count|list|find|show|which|where|inspect|check|verify|change|update|set|create|add|delete|remove|move|rename|print|export|capture|place|route|connect|resize|edit|select|open|current|active)\b/.test(text);
+  const entity = /\b(?:revit|model|project|document|sheet|view|schedule|element|equipment|family|type|instance|room|space|wall|door|window|duct|pipe|terminal|air device|device|fixture|tag|parameter|connector|branch|fitting|system|topology|level|plan|selection)\b/.test(text);
+  const liveIntent = /\b(?:how\s+many|count|list|find|show|which|where|identify|inspect|check|verify|compare|audit|preview|change|update|set|create|add|delete|remove|move|rename|print|export|capture|place|route|connect|resize|edit|select|open|current|active)\b/.test(text);
   if (entity && liveIntent) {
     return {
       required: true,

@@ -934,6 +934,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
 
   const preview = classifyAutoGoalRequest("Preview changing all HRU Marks to ERU, but do not commit it.");
   assert.equal(preview.requestedEffect, "preview");
+  const topologyPreview = classifyAutoGoalRequest(
+    "Identify one clearly missing unit branch and the analogous neighboring branch, then preview copying its topology, system, level, size, and fittings to the target. Do not create anything."
+  );
+  assert.equal(topologyPreview.shouldStart, true);
+  assert.ok(topologyPreview.signals.includes("live Revit model work"));
+  assert.equal(topologyPreview.requestedEffect, "preview");
   const applyPastPreview = classifyAutoGoalRequest(
     "Rename sheet M000, verify it, then rename it back and verify it. Do the work; do not stop at a preview."
   );
