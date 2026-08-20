@@ -753,6 +753,23 @@
       "dispatch_any_of": ["/revit/plan-family-evolution", "/revit/apply-family-evolution", "/revit/open-family-doc", "/revit/export-view-frame"],
       "expected_effect": "apply",
       "probe_expected_effect": "read",
+      "answer_assertions": {
+        "must_match": [
+          "(?:Element ID|Element)[^\\n]*[0-9]{5,}",
+          "Unique ID[^\\n]*[0-9a-f]{8}-[0-9a-f-]{20,}",
+          "Mechanical Equipment",
+          "Family\\s*(?:/|and)?\\s*Type|Family[^\\n]*Type",
+          "Mark[^\\n]*(?:HRU|ERU)[0-9]+",
+          "(?:Plan used|plan view)[^\\n]*(?:view ID|[0-9]{5,})",
+          "(?:clearance[^\\n]*(?:count[^\\n]*0|absent|not visible|no visible)|(?:0|no)[^\\n]*clearance)",
+          "cop(?:y|ied)[^\\n]*(?:test )?(?:family|type)",
+          "(?:Yes/No|visibility)[^\\n]*(?:parameter|control)",
+          "(?:reload|save/load|load)[^\\n]*(?:conflict|overwrite|unique|version)",
+          "(?:swap|apply)[^\\n]*(?:only|isolated|single)",
+          "(?:screenshot[^\\n]*(?:verify|verification|before|after|capture)|(?:capture|before|after)[^\\n]*screenshot)",
+          "(?:No model changes|Nothing was (?:edited|reloaded|changed)|No changes[^\\n]*(?:performed|made))"
+        ]
+      },
       "epic0441_task_refs": ["n29_novel_holdout", "n30_novel_holdout"]
     },
     {
