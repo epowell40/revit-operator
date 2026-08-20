@@ -218,6 +218,18 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
   for (const pattern of pdf.answer_assertions.must_match) {
     assert.match(pdfAnswer, new RegExp(pattern, "i"));
   }
+  const naturalPdfAnswer = [
+    "## Preflight complete — no export",
+    "Order: M100, M101, M102, M103, M104, M105, M106",
+    "Combined/color: Yes / Color",
+    "Planned pages: 7",
+    "Output: `artifacts/prints/TEST-MECHANICAL-ISSUE.pdf`",
+    "Exported: No",
+    "Content hash: Not verifiable because dry-run creates no PDF bytes."
+  ].join("\n");
+  for (const pattern of pdf.answer_assertions.must_match) {
+    assert.match(naturalPdfAnswer, new RegExp(pattern, "i"));
+  }
 
   const capturedPdf = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(pdf, false), {
     ok: true,
