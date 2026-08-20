@@ -232,7 +232,10 @@ const MISSING_TARGET_PATTERNS: RegExp[] = [
   /\bneed (?:an?|the|a little more) (?:exact )?(?:target|name|selection|sheet|view|schedule|family|printer|information|detail)/i,
   /\bplease (?:identify|select|name|specify|choose|confirm)\b/i,
   /\b(?:no|nothing is) selected\b/i,
-  /\bmultiple matches\b/i
+  /\bmultiple matches\b/i,
+  /\b(?:requested|intended|exact) target (?:is|remains|appears) ambiguous\b/i,
+  /\b(?:active|current) sheet (?:is|appears to be|may be|is likely) (?:the )?wrong\b/i,
+  /\blikely (?:the )?wrong sheet is active\b/i
 ];
 
 const STRUCTURED_EVIDENCE_KEYS = new Set([
