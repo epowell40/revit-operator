@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
-import { COORDINATED_GLOBAL_NO_WRITE, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
+import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 
@@ -195,9 +195,11 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   // lifecycle state (for example, "do not save the Revit model").
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
   const previewOnly = hasEffectiveNoWriteFraming(text);
+  const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
   // state even when the user correctly says not to edit model elements.
+  if (authoritativeLeadingNoWrite) return "inspection";
   if (documentLifecycleMutation && !documentLifecycleDenied) return "mutation";
   if (previewOnly || documentLifecycleDenied) return "inspection";
   const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
@@ -220,6 +222,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
 }
 
 function hasNoWriteAuthority(text: string): boolean {
+  if (hasAuthoritativeLeadingNoWriteFraming(text)) return true;
   if (containsDocumentLifecycleMutation(text)) {
     return deniesDocumentLifecycleMutation(text)
       || /\b(?:preview|read[ -]?only|analysis)\s+only\b/i.test(text);
