@@ -421,10 +421,12 @@ No accessory was created, and no model changes were made.`
     actions: [
       { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" }
     ],
-    assistant_message: `## Blocked before preview
+    assignment_projection: {
+      assignments: [{ lifecycle: { phase: "blocked" } }]
+    },
+    assistant_message: `## Preview blocked safely
 
-The model contains zero Duct Accessories and zero Pipe Accessories; broader searches found no damper or valve precedent.
-No preview was executed. Nothing was created.`
+Found a valid connected branch candidate: Duct 1464302, 4-inch round exhaust, system Mechanical Exhaust Air 15. However, complete document checks found 0 Duct Accessory instances, 0 Pipe Accessory instances, and 0 loaded Duct Accessory types. Therefore no compatible precedent exists. No insertion preview was executed and nothing was created.`
   });
   assert.equal(capturedLiveWording.tier, "accepted");
   assert.equal(capturedLiveWording.fixture_blocker_accepted, true);
@@ -496,7 +498,7 @@ test("the terse diffuser-route blocker uses the same complete connector-evidence
       { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
       { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
     ],
-    assistant_message: "Blocked by live model state: live inspection covered all 509 Air Terminals and found zero open HVAC air-terminal connectors. Without an open terminal connector, no route can be previewed. No model changes were made."
+    assistant_message: "Blocked by live model state: I exhaustively checked all 509 Air Terminals and their physical connectors. 332 are supply terminals and 0 are unconnected terminal connectors. Therefore, no defensible target exists for a rollback-only route preview. Nothing was created or connected."
   };
   const completeEvidence = evaluateGeneralRevitCapabilityAttempt(safeCase, {
     ...inspected,
@@ -598,6 +600,74 @@ test("durable evidence follows the exact benchmark session and run window when S
       expected_session_id: "benchmark-session",
       benchmark_started_at: "2026-08-20T03:36:49.000Z",
       candidate_assignment_count: 1
+    });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable evidence counts a complete compact open-connector scan even when zero rows are returned", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [{
+          id: "compact-open-scan",
+          details: {
+            tool: {
+              tool: "revit_call_tool",
+              status: "completed",
+              duration_ms: 25,
+              arguments: {
+                path: "/revit/get-connectors",
+                body: { elementIds: [101, 102, 103], onlyOpenPhysicalConnectors: true }
+              },
+              result: [{ type: "inputText", text: JSON.stringify({
+                status: "Ok",
+                requestedCount: 3,
+                scannedElementCount: 3,
+                failedElementCount: 0,
+                matchedElementCount: 0,
+                totalScannedConnectorCount: 6,
+                physicallyConnectedConnectorCount: 6,
+                openPhysicalConnectorCount: 0,
+                connectorScanTruncatedElementCount: 0,
+                filter: "openPhysicalConnectors",
+                results: []
+              }) }]
+            }
+          }
+        }]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "compact-goal",
+        source_user_request: "find open pipe connectors",
+        target: { session_id: "compact-session" },
+        created_at: "2026-08-20T09:00:01.000Z"
+      }]
+    }, "find open pipe connectors", {
+      session_id: "compact-session",
+      started_at: "2026-08-20T09:00:00.000Z"
+    });
+    assert.deepEqual(evidence.connector_inventory, {
+      unique_element_ids: 3,
+      failed_rows: 0,
+      total_hvac_connectors: 0,
+      physically_connected_hvac_connectors: 0,
+      open_hvac_connectors: 0,
+      compact_filter_used: true,
+      maximum_reported_requested_count: 3,
+      maximum_reported_scanned_count: 3,
+      maximum_reported_open_physical_connectors: 0,
+      scan_truncated: false
     });
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

@@ -362,8 +362,11 @@ test("fresh Revit evidence is required for live-model work but not conceptual he
 test("Codex instructions require exhaustive live connector and topology evidence", () => {
   const instructions = getOperatorAgentBaseInstructions();
   assert.match(instructions, /Exhaustive MEP connector rule/);
-  assert.match(instructions, /accepts up to 5,000 IDs per call/);
-  assert.match(instructions, /every returned element ID, not a sample/);
+  assert.match(instructions, /at most 5,000 IDs per call/);
+  assert.match(instructions, /scan every returned element ID.*not a sample/);
+  assert.match(instructions, /onlyOpenPhysicalConnectors:true/);
+  assert.match(instructions, /Reconcile inventory\/requested\/scanned totals/);
+  assert.match(instructions, /zero failed or truncated rows/);
   assert.match(instructions, /Live topology truth rule/);
   assert.match(instructions, /successful same-turn Revit reads over a bounded complete cohort/);
 });

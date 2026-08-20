@@ -73,10 +73,17 @@ export async function loadDurableToolEvidence(
   const successfulPaths = new Set<string>();
   const failedPaths = new Set<string>();
   const connectorRows = new Map<string, JsonRecord>();
+  const compactlyScannedConnectorElementIds = new Set<string>();
   const resultReceipts: JsonRecord[] = [];
   let maximumFindElementIds = 0;
   let maximumFindCount = 0;
   let observedUntruncatedFind = false;
+  let compactConnectorFilterUsed = false;
+  let connectorScanTruncated = false;
+  let maximumConnectorRequestedCount = 0;
+  let maximumConnectorScannedCount = 0;
+  let maximumConnectorFailedCount = 0;
+  let maximumReportedOpenPhysicalConnectors = 0;
 
   for (const goalId of goalIds) {
     let response: JsonRecord;
@@ -92,6 +99,7 @@ export async function loadDurableToolEvidence(
       const details = asRecord(action.details);
       const tool = asRecord(details.tool);
       const argumentsRecord = asRecord(tool.arguments);
+      const requestBody = asRecord(argumentsRecord.body);
       const path = String(argumentsRecord.path || "").trim();
       const status = String(tool.status || "").trim().toLowerCase();
       if (path && status === "completed") successfulPaths.add(path);
@@ -109,6 +117,30 @@ export async function loadDurableToolEvidence(
       }
       const results = Array.isArray(parsed.results) ? parsed.results.map(asRecord) : [];
       if (path === "/revit/get-connectors") {
+        const requestedConnectorIds = Array.isArray(requestBody.elementIds)
+          ? requestBody.elementIds.map((value) => String(value ?? "").trim()).filter(Boolean)
+          : [];
+        const reportedRequestedCount = numberValue(parsed.requestedCount);
+        const reportedScannedCount = numberValue(parsed.scannedElementCount);
+        const reportedFailedCount = numberValue(parsed.failedElementCount);
+        const reportedTruncatedCount = numberValue(parsed.connectorScanTruncatedElementCount);
+        const reportedOpenCount = numberValue(parsed.openPhysicalConnectorCount);
+        maximumConnectorRequestedCount = Math.max(maximumConnectorRequestedCount, reportedRequestedCount);
+        maximumConnectorScannedCount = Math.max(maximumConnectorScannedCount, reportedScannedCount);
+        maximumConnectorFailedCount = Math.max(maximumConnectorFailedCount, reportedFailedCount);
+        maximumReportedOpenPhysicalConnectors = Math.max(maximumReportedOpenPhysicalConnectors, reportedOpenCount);
+        if (reportedTruncatedCount > 0) connectorScanTruncated = true;
+        if (String(parsed.filter || "") === "openPhysicalConnectors") {
+          compactConnectorFilterUsed = true;
+          if (status === "completed"
+            && requestedConnectorIds.length > 0
+            && reportedRequestedCount === requestedConnectorIds.length
+            && reportedScannedCount === requestedConnectorIds.length
+            && reportedFailedCount === 0
+            && reportedTruncatedCount === 0) {
+            for (const elementId of requestedConnectorIds) compactlyScannedConnectorElementIds.add(elementId);
+          }
+        }
         for (const row of results) {
           const elementId = String(row.id ?? "").trim();
           if (elementId) connectorRows.set(elementId, row);
@@ -126,7 +158,13 @@ export async function loadDurableToolEvidence(
         parsed_count: numberValue(parsed.count),
         parsed_element_id_count: elementIds.length,
         parsed_result_count: results.length,
-        parsed_truncated: typeof parsed.truncated === "boolean" ? parsed.truncated : null
+        parsed_truncated: typeof parsed.truncated === "boolean" ? parsed.truncated : null,
+        parsed_requested_count: numberValue(parsed.requestedCount),
+        parsed_scanned_element_count: numberValue(parsed.scannedElementCount),
+        parsed_failed_element_count: numberValue(parsed.failedElementCount),
+        parsed_open_physical_connector_count: numberValue(parsed.openPhysicalConnectorCount),
+        parsed_connector_scan_truncated_element_count: numberValue(parsed.connectorScanTruncatedElementCount),
+        parsed_filter: String(parsed.filter || "") || null
       });
     }
   }
@@ -165,11 +203,16 @@ export async function loadDurableToolEvidence(
       observed_untruncated_result: observedUntruncatedFind
     },
     connector_inventory: {
-      unique_element_ids: connectorRows.size,
-      failed_rows: failedConnectorRows,
+      unique_element_ids: new Set([...connectorRows.keys(), ...compactlyScannedConnectorElementIds]).size,
+      failed_rows: Math.max(failedConnectorRows, maximumConnectorFailedCount),
       total_hvac_connectors: totalHvacConnectors,
       physically_connected_hvac_connectors: physicallyConnectedHvacConnectors,
-      open_hvac_connectors: openHvacConnectors
+      open_hvac_connectors: openHvacConnectors,
+      compact_filter_used: compactConnectorFilterUsed,
+      maximum_reported_requested_count: maximumConnectorRequestedCount,
+      maximum_reported_scanned_count: maximumConnectorScannedCount,
+      maximum_reported_open_physical_connectors: maximumReportedOpenPhysicalConnectors,
+      scan_truncated: connectorScanTruncated
     },
     result_receipts: resultReceipts
   };

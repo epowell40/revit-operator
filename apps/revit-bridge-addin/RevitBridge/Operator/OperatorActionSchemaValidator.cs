@@ -3679,7 +3679,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/get-connectors", StringComparison.OrdinalIgnoreCase))
             {
-                // { elementIds:number[], includeAllRefs?:bool, includeCoordinateSystem?:bool, maxConnectorsPerElement?:int }
+                // { elementIds:number[], includeAllRefs?:bool, includeCoordinateSystem?:bool, includeFlexGeometry?:bool, onlyOpenPhysicalConnectors?:bool, maxConnectorsPerElement?:int }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "get-connectors body must be an object.";
@@ -3688,6 +3688,8 @@ namespace RevitBridge.Operator
                 if (!ValidateRequiredLongArray(obj.Value, "elementIds", maxCount: 5000, out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeAllRefs", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "includeCoordinateSystem", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "includeFlexGeometry", out error)) return false;
+                if (!ValidateOptionalBool(obj.Value, "onlyOpenPhysicalConnectors", out error)) return false;
 
                 if (obj.Value.TryGetProperty("maxConnectorsPerElement", out var mx) && mx.ValueKind != JsonValueKind.Null)
                 {

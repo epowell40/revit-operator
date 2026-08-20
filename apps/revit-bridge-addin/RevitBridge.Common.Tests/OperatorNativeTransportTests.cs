@@ -580,6 +580,25 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("{ \"/revit/close-active-model\", new CloseActiveModelHandler() }", server, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void ConnectorInventorySupportsCompactExhaustiveOpenPhysicalFiltering()
+        {
+            var root = FindRevitBridgeAddinRoot();
+            var handler = File.ReadAllText(Path.Combine(root, "RevitBridge.Logic", "Handlers", "MEP", "GetConnectorsHandler.cs"));
+            Assert.Contains("onlyOpenPhysicalConnectors", handler, StringComparison.Ordinal);
+            Assert.Contains("openPhysicalConnectorCount", handler, StringComparison.Ordinal);
+            Assert.Contains("totalScannedConnectorCount", handler, StringComparison.Ordinal);
+            Assert.Contains("failedElementCount", handler, StringComparison.Ordinal);
+            Assert.Contains("connectorScanTruncatedElementCount", handler, StringComparison.Ordinal);
+            Assert.Contains("if (p.onlyOpenPhysicalConnectors && connectorsOut.Count == 0) continue;", handler, StringComparison.Ordinal);
+
+            var validator = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs"));
+            Assert.Contains("ValidateOptionalBool(obj.Value, \"onlyOpenPhysicalConnectors\"", validator, StringComparison.Ordinal);
+            var manifest = File.ReadAllText(Path.Combine(root, "RevitBridge", "Operator", "OperatorToolManifest.cs"));
+            Assert.Contains("onlyOpenPhysicalConnectors=true", manifest, StringComparison.Ordinal);
+            Assert.Contains("compact exhaustive scan", manifest, StringComparison.Ordinal);
+        }
+
         private static OperatorNativeTransportProtectedRequest Protect(string method, string path, string body, DateTimeOffset at)
             => OperatorNativeTransportCodec.ProtectRequest(Token, Epoch, method, path, body, "grant", at);
 
