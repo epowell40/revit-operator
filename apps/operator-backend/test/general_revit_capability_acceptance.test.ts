@@ -230,6 +230,18 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
   for (const pattern of pdf.answer_assertions.must_match) {
     assert.match(naturalPdfAnswer, new RegExp(pattern, "i"));
   }
+  const passedCheckPdfAnswer = [
+    "## Preflight complete — no export performed",
+    "Combined color PDF: `artifacts/prints/TEST-MECHANICAL-ISSUE.pdf`",
+    "7-page check: Passed",
+    "Order: M100, M101, M102, M103, M104, M105, M106",
+    "Selection readback: 7 sheets, complete, unchanged",
+    "Preflight manifest SHA-256: dc260c819a055f226ad2fb0be3eae07d6614321b6824d9a0acf4e729b8470740",
+    "Because no PDF was created, this hash verifies the canonical preflight content manifest—not PDF file bytes."
+  ].join("\n");
+  for (const pattern of pdf.answer_assertions.must_match) {
+    assert.match(passedCheckPdfAnswer, new RegExp(pattern, "i"));
+  }
 
   const capturedPdf = evaluateGeneralRevitCapabilityAttempt(generalRevitExecutionCase(pdf, false), {
     ok: true,
