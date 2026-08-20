@@ -1751,6 +1751,36 @@ test("a blocked heading or missing qualifying target cannot be server-signed as 
   });
 });
 
+test("a focused request for missing selection and placement context blocks a mutation assignment", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-missing-selection-clarification", {
+      title: "Create similar",
+      objective: "Add another device like the selected instance at the indicated location.",
+      acceptance_criteria: ["The create-similar preview is grounded."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-missing-selection-clarification");
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_get_context",
+      success: true,
+      result: { activeViewName: "COVER SHEET", selection: [] }
+    });
+    const clarification = [
+      "The live selection is empty, and the active view is the COVER SHEET, so here has no model placement point.",
+      "Could you open the intended model view, select the source device, and indicate the target location? I'll then preview Create Similar without applying it."
+    ].join("\n\n");
+    observer.finish("turn-missing-selection-clarification", clarification);
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.match(persisted?.blocker || "", /selection is empty/i);
+    assert.equal(persisted?.completion_audit, null);
+    assert.equal(persisted?.work_items[0]?.status, "blocked");
+  });
+});
+
 test("a rejected mutation cannot be server-signed by a later transaction preview", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-preview-after-rejection", {
