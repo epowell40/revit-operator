@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, resolveCodexExecutable } from "../codex/app_server_compatibility.js";
 import { findRepoRoot } from "./audit_tool_registry.js";
+import { assertVendoredLifecycleTypes } from "../codex/generated_protocol_snapshot.js";
 
 type DirectoryReceipt = { file_count: number; byte_count: number; sha256: string };
 
@@ -77,13 +78,19 @@ function assertReceipt(label: string, actual: DirectoryReceipt, expected: Direct
 function runCli(): void {
   const codexBin = resolveCodexExecutable(process.env.OPERATOR_CODEX_BIN, process.platform, process.env);
   const version = evaluateCodexCliVersion(runCodex(codexBin, ["--version"]), process.env);
-  const repoRoot = findRepoRoot(process.cwd());
+  const discoveredRoot = findRepoRoot(process.cwd());
+  const repoRoot = path.basename(discoveredRoot).toLowerCase() === "apps" ? path.dirname(discoveredRoot) : discoveredRoot;
   const generatedRootArg = process.argv.indexOf("--generated-root");
   const generatedRoot = path.resolve(generatedRootArg >= 0 && process.argv[generatedRootArg + 1]
     ? process.argv[generatedRootArg + 1]!
     : path.join(repoRoot, "local-work", `codex-app-server-${CODEX_APP_SERVER_COMPATIBILITY.codex_cli_version}`));
   const tsRoot = path.join(generatedRoot, "ts");
   const schemaRoot = path.join(generatedRoot, "json-schema");
+  const vendoredTypesRoot = path.join(
+    repoRoot,
+    "apps", "operator-backend", "src", "codex", "generated",
+    `app_server_${CODEX_APP_SERVER_COMPATIBILITY.codex_cli_version.replace(/\./g, "_")}`
+  );
   if (!fs.existsSync(tsRoot) && !fs.existsSync(schemaRoot)) {
     fs.mkdirSync(generatedRoot, { recursive: true });
     runCodex(codexBin, ["app-server", "generate-ts", "--experimental", "--out", tsRoot]);
@@ -94,7 +101,8 @@ function runCli(): void {
   const jsonSchema = hashDirectory(schemaRoot);
   assertReceipt("TypeScript", typescript, CODEX_APP_SERVER_COMPATIBILITY.generated_typescript);
   assertReceipt("JSON Schema", jsonSchema, CODEX_APP_SERVER_COMPATIBILITY.generated_json_schema);
-  console.log(JSON.stringify({ ok: true, version, generated_root: generatedRoot, typescript, json_schema: jsonSchema }, null, 2));
+  const lifecycleTypeFiles = assertVendoredLifecycleTypes(tsRoot, vendoredTypesRoot);
+  console.log(JSON.stringify({ ok: true, version, generated_root: generatedRoot, typescript, json_schema: jsonSchema, lifecycle_type_files: lifecycleTypeFiles }, null, 2));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

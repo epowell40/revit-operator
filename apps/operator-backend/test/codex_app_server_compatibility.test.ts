@@ -57,6 +57,8 @@ test("Codex executable resolution preserves explicit non-shim binaries", () => {
 test("backend restart recovery recognizes a stale Codex app-server thread", () => {
   assert.equal(isMissingCodexThreadError(new Error("thread not found: thread_123")), true);
   assert.equal(isMissingCodexThreadError(new Error("transport closed")), false);
+  assert.equal(isMissingCodexThreadError(new Error("unknown thread thread_456")), true);
+  assert.equal(isMissingCodexThreadError(new Error("no rollout found for thread_789")), true);
 });
 
 test("Codex executable resolution supports npm's hoisted Windows platform package", () => {
@@ -74,7 +76,7 @@ test("Codex executable resolution supports npm's hoisted Windows platform packag
 test("Codex app-server launch uses the configured binary, strict config, and an observable receipt", () => {
   const source = fs.readFileSync(path.resolve(process.cwd(), "src", "codex", "app_server.ts"), "utf8");
   assert.match(source, /OPERATOR_CODEX_BIN/);
-  assert.match(source, /\["app-server", "--strict-config"\]/);
+  assert.match(source, /"app-server", "--strict-config"/);
   assert.match(source, /getCompatibilityReceipt/);
   assert.match(source, /probeCodexVersion/);
   assert.match(source, /notify\("initialized"/);

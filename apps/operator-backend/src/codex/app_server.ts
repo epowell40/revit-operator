@@ -1,6 +1,18 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import readline from "node:readline";
 import { evaluateCodexCliVersion, resolveCodexExecutable, type CodexVersionCompatibility } from "./app_server_compatibility.js";
+import type { InitializeParams } from "./generated/app_server_0_144_5/InitializeParams.js";
+import type { InitializeResponse } from "./generated/app_server_0_144_5/InitializeResponse.js";
+import type { ThreadResumeParams } from "./generated/app_server_0_144_5/v2/ThreadResumeParams.js";
+import type { ThreadResumeResponse } from "./generated/app_server_0_144_5/v2/ThreadResumeResponse.js";
+import type { ThreadStartParams } from "./generated/app_server_0_144_5/v2/ThreadStartParams.js";
+import type { ThreadStartResponse } from "./generated/app_server_0_144_5/v2/ThreadStartResponse.js";
+import type { TurnCompletedNotification } from "./generated/app_server_0_144_5/v2/TurnCompletedNotification.js";
+import type { TurnInterruptParams } from "./generated/app_server_0_144_5/v2/TurnInterruptParams.js";
+import type { TurnInterruptResponse } from "./generated/app_server_0_144_5/v2/TurnInterruptResponse.js";
+import type { TurnStartParams } from "./generated/app_server_0_144_5/v2/TurnStartParams.js";
+import type { TurnStartResponse } from "./generated/app_server_0_144_5/v2/TurnStartResponse.js";
+import type { TurnStatus } from "./generated/app_server_0_144_5/v2/TurnStatus.js";
 
 type JsonRpcId = number | string;
 type JsonRpcRequest = { id: number; method: string; params: unknown };
@@ -16,7 +28,23 @@ export type CodexNotificationEnvelope = {
   params?: any;
 };
 
-type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
+
+export class CodexJsonRpcError extends Error {
+  constructor(
+    message: string,
+    readonly code: number,
+    readonly data?: unknown
+  ) {
+    super(message);
+    this.name = "CodexJsonRpcError";
+  }
+}
+
+export type CodexTurnCompletion = {
+  status: TurnStatus | "cancelled";
+  interrupted: boolean;
+};
 
 export type CodexVersionProbeOptions = {
   timeoutMs?: number;
@@ -24,6 +52,7 @@ export type CodexVersionProbeOptions = {
   maxAttempts?: number;
   cache?: boolean;
   spawnProcess?: typeof spawn;
+  commandPrefixArgs?: readonly string[];
 };
 
 const codexVersionProbeCache = new Map<string, Promise<string>>();
@@ -33,10 +62,11 @@ function probeCodexVersionOnce(
   cwd: string,
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
-  spawnProcess: typeof spawn
+  spawnProcess: typeof spawn,
+  commandPrefixArgs: readonly string[]
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    const proc = spawnProcess(command, ["--version"], {
+    const proc = spawnProcess(command, [...commandPrefixArgs, "--version"], {
       cwd,
       env,
       shell: false,
@@ -88,7 +118,8 @@ export async function probeCodexVersion(
   const retryDelayMs = Math.max(0, options.retryDelayMs ?? 250);
   const maxAttempts = Math.max(1, Math.min(3, options.maxAttempts ?? 2));
   const spawnProcess = options.spawnProcess ?? spawn;
-  const cacheKey = JSON.stringify([command, cwd, env.PATH ?? env.Path ?? ""]);
+  const commandPrefixArgs = options.commandPrefixArgs ?? [];
+  const cacheKey = JSON.stringify([command, commandPrefixArgs, cwd, env.PATH ?? env.Path ?? ""]);
   const useCache = options.cache !== false;
   if (useCache) {
     const cached = codexVersionProbeCache.get(cacheKey);
@@ -99,7 +130,7 @@ export async function probeCodexVersion(
     let lastError: Error | null = null;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        return await probeCodexVersionOnce(command, cwd, env, timeoutMs, spawnProcess);
+        return await probeCodexVersionOnce(command, cwd, env, timeoutMs, spawnProcess, commandPrefixArgs);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
         if (!/timed out probing the Codex CLI version/i.test(lastError.message) || attempt >= maxAttempts) throw lastError;
@@ -128,12 +159,15 @@ export class CodexAppServer {
   private versionCompatibility: CodexVersionCompatibility | null = null;
   private initializeResponse: unknown = null;
   private stderrTail = "";
+  private loadedThreadIds = new Set<string>();
 
   constructor(
     private readonly opts: {
       cwd: string;
       codexHome: string;
       spawnEnv: NodeJS.ProcessEnv;
+      command?: string;
+      commandPrefixArgs?: readonly string[];
     }
   ) {}
 
@@ -154,6 +188,7 @@ export class CodexAppServer {
     const proc = this.proc;
     this.proc = null;
     try { this.rl?.close(); } catch {}
+    this.loadedThreadIds.clear();
     this.rl = null;
     try { proc?.kill(); } catch {}
   }
@@ -175,12 +210,13 @@ export class CodexAppServer {
       CODEX_HOME: this.opts.codexHome
     };
 
-    const codexBin = resolveCodexExecutable(env.OPERATOR_CODEX_BIN, process.platform, env);
-    const versionOutput = await probeCodexVersion(codexBin, this.opts.cwd, env);
+    const codexBin = this.opts.command ?? resolveCodexExecutable(env.OPERATOR_CODEX_BIN, process.platform, env);
+    const commandPrefixArgs = this.opts.commandPrefixArgs ?? [];
+    const versionOutput = await probeCodexVersion(codexBin, this.opts.cwd, env, { commandPrefixArgs });
     this.versionCompatibility = evaluateCodexCliVersion(versionOutput, env);
 
     // Resolve the Windows npm shim to the packaged native executable so arguments are never shell-concatenated.
-    const proc = spawn(codexBin, ["app-server", "--strict-config"], {
+    const proc = spawn(codexBin, [...commandPrefixArgs, "app-server", "--strict-config"], {
       cwd: this.opts.cwd,
       env,
       shell: false,
@@ -200,6 +236,7 @@ export class CodexAppServer {
         p.reject(err);
       }
       this.proc = null;
+      this.loadedThreadIds.clear();
       try {
         this.rl?.close();
       } catch {
@@ -240,7 +277,11 @@ export class CodexAppServer {
         this.pending.delete(id);
         const resp = msg as JsonRpcResponse;
         if ("error" in resp && resp.error) {
-          pending.reject(new Error(resp.error.message || `Codex JSON-RPC error (code=${(resp as any).code ?? "?"}).`));
+          pending.reject(new CodexJsonRpcError(
+            resp.error.message || `Codex JSON-RPC error (code=${resp.error.code}).`,
+            resp.error.code,
+            resp.error.data
+          ));
         } else {
           pending.resolve((resp as any).result);
         }
@@ -273,10 +314,11 @@ export class CodexAppServer {
     });
 
     // Initialize JSON-RPC session.
-    this.initializeResponse = await this.request("initialize", {
+    const initializeParams: InitializeParams = {
       clientInfo: { name: "revit-operator-backend", title: "Revit Operator Backend", version: "0.0.0" },
-      capabilities: { experimentalApi: true }
-    });
+      capabilities: { experimentalApi: true, requestAttestation: false }
+    };
+    this.initializeResponse = await this.requestTyped<InitializeParams, InitializeResponse>("initialize", initializeParams);
     this.notify("initialized", {});
   }
 
@@ -318,7 +360,7 @@ export class CodexAppServer {
     this.writeMessage({ method, params });
   }
 
-  request(method: string, params: unknown): Promise<any> {
+  request(method: string, params: unknown): Promise<unknown> {
     const proc = this.proc;
     if (!proc) throw new Error("Codex app-server is not running.");
 
@@ -333,6 +375,34 @@ export class CodexAppServer {
         reject(e instanceof Error ? e : new Error(String(e)));
       }
     });
+  }
+
+  private requestTyped<TParams, TResult>(method: string, params: TParams): Promise<TResult> {
+    return this.request(method, params) as Promise<TResult>;
+  }
+
+  hasLoadedThread(threadId: string): boolean {
+    return this.loadedThreadIds.has(threadId);
+  }
+
+  async startThread(params: ThreadStartParams): Promise<ThreadStartResponse> {
+    const response = await this.requestTyped<ThreadStartParams, ThreadStartResponse>("thread/start", params);
+    this.loadedThreadIds.add(response.thread.id);
+    return response;
+  }
+
+  async resumeThread(params: ThreadResumeParams): Promise<ThreadResumeResponse> {
+    const response = await this.requestTyped<ThreadResumeParams, ThreadResumeResponse>("thread/resume", params);
+    this.loadedThreadIds.add(response.thread.id);
+    return response;
+  }
+
+  startTurn(params: TurnStartParams): Promise<TurnStartResponse> {
+    return this.requestTyped<TurnStartParams, TurnStartResponse>("turn/start", params);
+  }
+
+  interruptTurn(params: TurnInterruptParams): Promise<TurnInterruptResponse> {
+    return this.requestTyped<TurnInterruptParams, TurnInterruptResponse>("turn/interrupt", params);
   }
 
   private async tryGetTurnStatus(threadId: string, turnId: string): Promise<{ status: string; errorMessage: string | null } | null> {
@@ -371,21 +441,21 @@ export class CodexAppServer {
     return null;
   }
 
-  async waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; abortSignal?: AbortSignal }): Promise<void> {
+  async waitForTurnCompleted(opts: { threadId: string; turnId: string; timeoutMs: number; abortSignal?: AbortSignal }): Promise<CodexTurnCompletion> {
     const { threadId, turnId, timeoutMs, abortSignal } = opts;
     const deadline = Date.now() + Math.max(0, timeoutMs);
 
-    return await new Promise<void>((resolve, reject) => {
+    return await new Promise<CodexTurnCompletion>((resolve, reject) => {
       let settled = false;
       let timer: NodeJS.Timeout | null = null;
       let pollTimer: NodeJS.Timeout | null = null;
-      const finishOk = () => {
+      const finishOk = (status: CodexTurnCompletion["status"]) => {
         if (settled) return;
         settled = true;
         if (timer) clearInterval(timer);
         if (pollTimer) clearInterval(pollTimer);
         try { abortSignal?.removeEventListener("abort", onAbort); } catch {}
-        resolve();
+        resolve({ status, interrupted: status === "interrupted" || status === "cancelled" });
       };
       const finishErr = (err: Error) => {
         if (settled) return;
@@ -406,19 +476,19 @@ export class CodexAppServer {
 
       const off = this.onNotification(n => {
         if (n.method !== "turn/completed") return;
-        const p = n.params;
+        const p = n.params as TurnCompletedNotification;
         if (!p || typeof p !== "object") return;
         if (p.threadId !== threadId) return;
         if (p.turn?.id !== turnId) return;
 
         off();
-        const status = (p.turn?.status ?? "").toString();
-        if (status === "failed" || status === "error") {
+        const status = p.turn.status;
+        if (status === "failed") {
           const msg = p.turn?.error?.message ? String(p.turn.error.message) : `Turn failed (status=${status}).`;
           finishErr(new Error(msg));
           return;
         }
-        finishOk();
+        finishOk(status);
       });
 
       if (abortSignal) {
@@ -435,10 +505,14 @@ export class CodexAppServer {
           try {
             const status = await this.tryGetTurnStatus(threadId, turnId);
             if (status && (status.status === "completed" || status.status === "success" || status.status === "done")) {
-              finishOk();
+              finishOk(status.status as CodexTurnCompletion["status"]);
               return;
             }
-            if (status && (status.status === "failed" || status.status === "error" || status.status === "cancelled")) {
+            if (status && (status.status === "interrupted" || status.status === "cancelled")) {
+              finishOk(status.status);
+              return;
+            }
+            if (status && (status.status === "failed" || status.status === "error")) {
               finishErr(new Error(status.errorMessage || `Turn failed (status=${status.status}).`));
               return;
             }
@@ -463,10 +537,14 @@ export class CodexAppServer {
             const status = await this.tryGetTurnStatus(threadId, turnId);
             if (!status) return;
             if (status.status === "completed" || status.status === "success" || status.status === "done") {
-              finishOk();
+              finishOk(status.status as CodexTurnCompletion["status"]);
               return;
             }
-            if (status.status === "failed" || status.status === "error" || status.status === "cancelled") {
+            if (status.status === "interrupted" || status.status === "cancelled") {
+              finishOk(status.status);
+              return;
+            }
+            if (status.status === "failed" || status.status === "error") {
               finishErr(new Error(status.errorMessage || `Turn failed (status=${status.status}).`));
               return;
             }
