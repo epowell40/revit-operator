@@ -48,13 +48,8 @@ import {
   teammateLoopReceiptForLease
 } from "../teammate_loop_runtime.js";
 import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
-import {
-  AUTHORITATIVE_WEB_EVIDENCE_FAILURE,
-  fetchCitedAuthoritativeWebEvidence,
-  formatAuthoritativeWebEvidenceAppendix,
-  getAuthoritativeWebEvidenceRequirement,
-  isSuccessfulAuthoritativeWebEvidenceCall
-} from "./authoritative_web_evidence.js";
+import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement, isSuccessfulAuthoritativeWebEvidenceCall } from "./authoritative_web_evidence.js";
+import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -62,14 +57,7 @@ export type StreamCallbacks = {
   abortSignal?: AbortSignal;
 };
 
-export type FreshRevitEvidenceRequirement = {
-  required: boolean;
-  kind: "none" | "sheet_count" | "revit_tool";
-  prompt: string;
-};
-
-const FRESH_REVIT_EVIDENCE_FAILURE =
-  "I could not verify this against live Revit because the required Revit tool did not complete successfully in this turn. No result was guessed.";
+export { getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
 
 const clientsByProfile = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
@@ -334,36 +322,6 @@ function developerInstructions(): string {
   return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }
 
-export function getFreshRevitEvidenceRequirement(userText: string): FreshRevitEvidenceRequirement {
-  const text = (userText ?? "").toString().trim().toLowerCase();
-  if (!text) return { required: false, kind: "none", prompt: "" };
-
-  const sheetCount =
-    /\b(?:how\s+many|count|number\s+of|total)\b[^?\n]{0,80}\bsheets?\b/.test(text) ||
-    /\bsheets?\b[^?\n]{0,80}\b(?:how\s+many|count|number|total)\b/.test(text);
-  if (sheetCount) {
-    return {
-      required: true,
-      kind: "sheet_count",
-      prompt:
-        "FRESH REVIT EVIDENCE REQUIRED: this turn must successfully call `revit_list_sheets` with `action:\"count\"` and `exact:true` (or call `/revit/sheets` with the same count request). Do not answer from memory, prior turns, a registry lookup, or `/revit/views`."
-    };
-  }
-
-  const entity = /\b(?:revit|model|project|document|sheet|view|schedule|element|equipment|family|type|instance|room|space|wall|door|window|duct|pipe|terminal|air device|device|fixture|tag|parameter|connector|branch|fitting|system|topology|level|plan|selection)\b/.test(text);
-  const liveIntent = /\b(?:how\s+many|count|list|find|show|which|where|identify|inspect|check|verify|compare|audit|preview|change|update|set|create|add|delete|remove|move|rename|print|export|capture|place|route|connect|resize|edit|select|open|current|active)\b/.test(text);
-  if (entity && liveIntent) {
-    return {
-      required: true,
-      kind: "revit_tool",
-      prompt:
-        "FRESH REVIT EVIDENCE REQUIRED: use at least one relevant `revit_operator` tool successfully in this turn before reporting a live-model fact or completion. Do not answer from memory or prior turns."
-    };
-  }
-
-  return { required: false, kind: "none", prompt: "" };
-}
-
 function parseToolArguments(value: unknown): any {
   if (typeof value !== "string") return value && typeof value === "object" ? value : {};
   try {
@@ -372,30 +330,6 @@ function parseToolArguments(value: unknown): any {
   } catch {
     return {};
   }
-}
-
-export function isSuccessfulFreshRevitEvidence(
-  requirement: FreshRevitEvidenceRequirement,
-  call: { server?: unknown; tool?: unknown; arguments?: unknown; success?: unknown; status?: unknown; error?: unknown }
-): boolean {
-  if (!requirement.required) return true;
-  const server = typeof call.server === "string" ? call.server.trim().toLowerCase().replace(/-/g, "_") : "";
-  if (server && server !== "revit_operator") return false;
-  const status = typeof call.status === "string" ? call.status.trim().toLowerCase() : "";
-  const succeeded = call.success === true || (call.success !== false && !call.error && ["success", "ok", "done", "completed"].includes(status));
-  if (!succeeded) return false;
-  if (requirement.kind === "revit_tool") return true;
-
-  const tool = typeof call.tool === "string" ? call.tool.trim() : "";
-  const args = parseToolArguments(call.arguments);
-  if (tool === "revit_list_sheets") {
-    return String(args.action ?? "").toLowerCase() === "count" || args.countOnly === true;
-  }
-  if (tool === "revit_call_tool") {
-    const body = parseToolArguments(args.body);
-    return String(args.path ?? "").toLowerCase() === "/revit/sheets" && String(body.action ?? "").toLowerCase() === "count";
-  }
-  return false;
 }
 
 function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
@@ -1210,90 +1144,13 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       // ignore
     }
   }
-  if (webEvidenceRequirement.required && !hasAuthoritativeWebEvidence) {
-    const attempts = mcpRuntime
-      ? await fetchCitedAuthoritativeWebEvidence(mcpRuntime, assistantText)
-      : [];
-    for (const attempt of attempts) {
-      const observed = {
-        server: "revit_operator",
-        tool: "web_fetch_evidence",
-        success: attempt.success,
-        status: attempt.success ? "completed" : "failed",
-        error: attempt.error,
-        duration_ms: null,
-        arguments: { url: attempt.url },
-        result: attempt.result
-      };
-      assignmentObserver.observe(observed);
-      try {
-        const ts = new Date().toISOString();
-        persistence.appendToolCall(req.session_id, {
-          ts,
-          kind: "mcp.tool_call",
-          session_id: req.session_id,
-          tool: observed.tool,
-          server: observed.server,
-          arguments: observed.arguments,
-          status: observed.status,
-          duration_ms: null,
-          thread_id: threadId,
-          turn_id: turnId
-        });
-        persistence.appendToolOutput(req.session_id, {
-          ts,
-          kind: "mcp.tool_result",
-          session_id: req.session_id,
-          tool: observed.tool,
-          server: observed.server,
-          status: observed.status,
-          duration_ms: null,
-          result: observed.result,
-          error: observed.error,
-          thread_id: threadId,
-          turn_id: turnId
-        });
-      } catch {
-        // Flight-recorder persistence is best-effort; the observer still owns assignment truth.
-      }
-      try {
-        appendEvent(req.session_id, "tool", "codex.authoritative_web_evidence", {
-          thread_id: threadId,
-          turn_id: turnId,
-          url: attempt.url,
-          status: observed.status,
-          error: observed.error
-        });
-        appendNotification(
-          req.session_id,
-          "web.research.saved",
-          attempt.success ? "Saved cited primary-source evidence." : "Cited primary-source fetch failed.",
-          { url: attempt.url, status: observed.status, error: observed.error }
-        );
-      } catch {
-        // Notifications are best-effort.
-      }
-    }
-    hasAuthoritativeWebEvidence = attempts.some(attempt => attempt.success);
-    if (hasAuthoritativeWebEvidence) {
-      const appendix = formatAuthoritativeWebEvidenceAppendix(attempts);
-      if (appendix) assistantText = `${assistantText}\n\n${appendix}`.trim();
-    } else {
-      assistantText = AUTHORITATIVE_WEB_EVIDENCE_FAILURE;
-    }
-  }
-  if (webEvidenceRequirement.required) {
-    try {
-      appendEvent(req.session_id, "assistant", hasAuthoritativeWebEvidence
-        ? "codex.authoritative_web_evidence.satisfied"
-        : "codex.authoritative_web_evidence.missing", {
-        thread_id: threadId,
-        turn_id: turnId
-      });
-    } catch {
-      // ignore
-    }
-  }
+  const webSettlement = await enforceAuthoritativeWebEvidence({
+    required: webEvidenceRequirement.required, alreadySatisfied: hasAuthoritativeWebEvidence,
+    runtime: mcpRuntime ?? null, assistantText, sessionId: req.session_id, threadId, turnId,
+    observe: observation => assignmentObserver.observe(observation)
+  });
+  assistantText = webSettlement.assistantText;
+  hasAuthoritativeWebEvidence = webSettlement.satisfied;
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   cb.onDone?.(assistantText);

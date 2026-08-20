@@ -15,6 +15,17 @@ type WebEvidenceRuntime = {
   callTool(tool: string, args: unknown): Promise<unknown>;
 };
 
+export type AuthoritativeWebEvidenceObservation = {
+  server: string;
+  tool: string;
+  success: boolean;
+  status: string;
+  error: string | null;
+  duration_ms: null;
+  arguments: { url: string };
+  result: unknown;
+};
+
 const AUTHORITATIVE_CUE =
   /\b(?:authoritative|official|primary[- ]source|current|latest|newest|up[- ]to[- ]date|version[- ]specific|20\d{2}|ashrae|nfpa|ibc|imc|iec|iso)\b/i;
 const EXTERNAL_RESEARCH_CUE =
@@ -126,3 +137,75 @@ export function formatAuthoritativeWebEvidenceAppendix(attempts: AuthoritativeWe
     ...successful.map(attempt => attempt.evidence_summary || `URL: ${attempt.url}`)
   ].join("\n\n");
 }
+
+export async function enforceAuthoritativeWebEvidence(args: {
+  required: boolean;
+  alreadySatisfied: boolean;
+  runtime: WebEvidenceRuntime | null;
+  assistantText: string;
+  sessionId: string;
+  threadId: string;
+  turnId: string;
+  observe: (observation: AuthoritativeWebEvidenceObservation) => void;
+}): Promise<{ assistantText: string; satisfied: boolean }> {
+  let satisfied = !args.required || args.alreadySatisfied;
+  let assistantText = args.assistantText;
+  if (!satisfied) {
+    const attempts = args.runtime ? await fetchCitedAuthoritativeWebEvidence(args.runtime, assistantText) : [];
+    for (const attempt of attempts) {
+      const observation = {
+        server: "revit_operator", tool: "web_fetch_evidence", success: attempt.success,
+        status: attempt.success ? "completed" : "failed", error: attempt.error, duration_ms: null,
+        arguments: { url: attempt.url }, result: attempt.result
+      };
+      args.observe(observation);
+      try {
+        const ts = new Date().toISOString();
+        persistence.appendToolCall(args.sessionId, {
+          ts, kind: "mcp.tool_call", session_id: args.sessionId, tool: observation.tool,
+          server: observation.server, arguments: observation.arguments, status: observation.status,
+          duration_ms: null, thread_id: args.threadId, turn_id: args.turnId
+        });
+        persistence.appendToolOutput(args.sessionId, {
+          ts, kind: "mcp.tool_result", session_id: args.sessionId, tool: observation.tool,
+          server: observation.server, status: observation.status, duration_ms: null,
+          result: observation.result, error: observation.error, thread_id: args.threadId, turn_id: args.turnId
+        });
+      } catch {
+        // The assignment observer remains the authoritative in-process truth source.
+      }
+      try {
+        appendEvent(args.sessionId, "tool", "codex.authoritative_web_evidence", {
+          thread_id: args.threadId, turn_id: args.turnId, url: attempt.url,
+          status: observation.status, error: observation.error
+        });
+        appendNotification(
+          args.sessionId, "web.research.saved",
+          attempt.success ? "Saved cited primary-source evidence." : "Cited primary-source fetch failed.",
+          { url: attempt.url, status: observation.status, error: observation.error }
+        );
+      } catch {
+        // Notifications are best-effort.
+      }
+    }
+    satisfied = attempts.some(attempt => attempt.success);
+    const appendix = formatAuthoritativeWebEvidenceAppendix(attempts);
+    assistantText = satisfied && appendix
+      ? `${assistantText}\n\n${appendix}`.trim()
+      : satisfied ? assistantText : AUTHORITATIVE_WEB_EVIDENCE_FAILURE;
+  }
+  if (args.required) {
+    try {
+      appendEvent(args.sessionId, "assistant", satisfied
+        ? "codex.authoritative_web_evidence.satisfied"
+        : "codex.authoritative_web_evidence.missing", {
+        thread_id: args.threadId, turn_id: args.turnId
+      });
+    } catch {
+      // ignore
+    }
+  }
+  return { assistantText, satisfied };
+}
+import { appendEvent, appendNotification } from "../memory/sqlite_store.js";
+import { persistence } from "../persistence/persistence_manager.js";
