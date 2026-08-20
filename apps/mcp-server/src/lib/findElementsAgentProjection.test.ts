@@ -24,6 +24,27 @@ function geometry(
   };
 }
 
+function routeGeometry(lengthFt: number, isStraight = true) {
+  return {
+    units: "feet",
+    coordinateSystem: "revit_internal_world",
+    locationCurve: {
+      start: { x: 0, y: 0, z: 10 },
+      end: { x: lengthFt, y: 0, z: 10 },
+      midpoint: { x: lengthFt / 2, y: 0, z: 10 },
+      lengthFt,
+      curveType: isStraight ? "Line" : "Arc",
+      isStraight
+    },
+    boundingBox: {
+      min: { x: 0, y: -0.5, z: 9.5 },
+      max: { x: lengthFt, y: 0.5, z: 10.5 },
+      center: { x: lengthFt / 2, y: 0, z: 10 },
+      size: { x: lengthFt, y: 1, z: 1 }
+    }
+  };
+}
+
 test("large geometry inventory becomes a bounded candidate-first projection", () => {
   const filler = Array.from({ length: 70 }, (_, index) => ({
     elementId: 2_000_000 + index,
@@ -78,6 +99,55 @@ test("large geometry inventory becomes a bounded candidate-first projection", ()
   assert.equal(projected.candidateItems.length, 6);
   assert.match(projected.recommendedNextStep, /get-connectors once/);
   assert.ok(JSON.stringify(projected).length < JSON.stringify(raw).length / 2);
+});
+
+test("large geometry projection preserves straight route candidates outside duplicate ranking", () => {
+  const filler = Array.from({ length: 70 }, (_, index) => ({
+    elementId: 2_100_000 + index,
+    typeId: 999,
+    builtInCategory: "OST_DuctTerminal",
+    geometry: geometry(100 + index * 10, 100 + index * 10, 0.2, 1)
+  }));
+  const longDuct = {
+    elementId: 1_396_164,
+    typeId: 139_186,
+    category: "Ducts",
+    builtInCategory: "OST_DuctCurves",
+    familyName: "Round Duct",
+    typeName: "Tees",
+    levelId: 9_946,
+    geometry: routeGeometry(22.04)
+  };
+  const shortDuct = {
+    ...longDuct,
+    elementId: 1_397_653,
+    typeId: 139_187,
+    geometry: routeGeometry(0.399)
+  };
+  const curvedDuct = {
+    ...longDuct,
+    elementId: 1_399_999,
+    typeId: 139_188,
+    geometry: routeGeometry(30, false)
+  };
+  const items = [...filler, longDuct, shortDuct, curvedDuct];
+  const projected = projectFindElementsResultForAgent({
+    status: "Ok",
+    count: items.length,
+    elementIds: items.map(item => item.elementId),
+    geometryIncluded: true,
+    itemsComplete: true,
+    items
+  }) as any;
+
+  assert.equal(projected.routeCurveCandidates.schema, "revit-operator.route-curve-candidate-summary/v1");
+  assert.equal(projected.routeCurveCandidates.candidatesFound, 2);
+  assert.deepEqual(projected.routeCurveCandidates.candidates.map((candidate: any) => candidate.elementId), [1_396_164, 1_397_653]);
+  assert.equal(projected.routeCurveCandidates.candidates[0].lengthFt, 22.04);
+  assert.equal(projected.routeCurveCandidates.candidates[0].isStraight, true);
+  assert.equal(projected.routeCurveCandidates.sizeTransitionMinimumHostLengthFt, 1);
+  assert.equal(projected.routeCurveCandidates.requiredConnectorTopology, "exactly_two_physical_end_connectors_no_side_taps");
+  assert.ok(!projected.candidateElementIds.includes(1_396_164));
 });
 
 test("small geometry inventory keeps all bounded items while putting the summary first", () => {

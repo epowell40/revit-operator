@@ -90,6 +90,58 @@ function roundedXyz(value: unknown): Xyz | null {
   return point ? { x: rounded(point.x), y: rounded(point.y), z: rounded(point.z) } : null;
 }
 
+function routeCurveSummary(values: unknown[], complete: boolean): JsonObject {
+  const candidates = values.flatMap(value => {
+    const item = asObject(value);
+    const geometry = asObject(item?.geometry);
+    const curve = asObject(geometry?.locationCurve);
+    const elementId = safeInteger(item?.elementId ?? item?.id);
+    const builtInCategory = typeof item?.builtInCategory === "string" ? item.builtInCategory : "";
+    const category = typeof item?.category === "string" ? item.category : "";
+    const categoryKey = `${builtInCategory} ${category}`.toLowerCase();
+    const routeKind = categoryKey.includes("ductcurve") || categoryKey === " ducts" || categoryKey.endsWith(" ducts")
+      ? "duct"
+      : categoryKey.includes("pipecurve") || categoryKey === " pipes" || categoryKey.endsWith(" pipes")
+        ? "pipe"
+        : null;
+    const lengthFt = finiteNumber(curve?.lengthFt);
+    const curveType = typeof curve?.curveType === "string" ? curve.curveType : null;
+    const isStraight = curve?.isStraight === true || curveType === "Line";
+    if (!item || elementId === null || !routeKind || !curve || lengthFt === null || lengthFt <= 0 || !isStraight) return [];
+    return [{
+      elementId,
+      routeKind,
+      category: item.category ?? null,
+      builtInCategory: item.builtInCategory ?? null,
+      typeId: item.typeId ?? null,
+      familyName: item.familyName ?? null,
+      typeName: item.typeName ?? null,
+      name: item.name ?? null,
+      levelId: item.levelId ?? null,
+      hostId: item.hostId ?? null,
+      curveType,
+      isStraight: true,
+      lengthFt: rounded(lengthFt),
+      start: roundedXyz(curve.start),
+      end: roundedXyz(curve.end),
+      midpoint: roundedXyz(curve.midpoint)
+    }];
+  }).sort((a, b) => b.lengthFt - a.lengthFt || a.elementId - b.elementId);
+  const returned = candidates.slice(0, MAX_RETURNED_CANDIDATES);
+  return {
+    schema: "revit-operator.route-curve-candidate-summary/v1",
+    derivedFromReturnedItems: values.length,
+    candidatesFound: candidates.length,
+    candidatesReturned: returned.length,
+    candidatesOmitted: Math.max(0, candidates.length - returned.length),
+    complete,
+    sizeTransitionMinimumHostLengthFt: 1,
+    requiredConnectorTopology: "exactly_two_physical_end_connectors_no_side_taps",
+    interpretation: "Length and straightness are prefilters only. Batch /revit/get-connectors for shortlisted ids, reject Curve/tap connectors, and verify branch/fitting adjacency before a reroute preview.",
+    candidates: returned
+  };
+}
+
 function distance(a: Xyz, b: Xyz): number {
   return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
 }
@@ -236,6 +288,7 @@ function compactCandidateItem(value: unknown): JsonObject | null {
   const item = asObject(value);
   if (!item) return null;
   const geometry = asObject(item.geometry);
+  const curve = asObject(geometry?.locationCurve);
   const box = asObject(geometry?.boundingBox);
   return {
     elementId: item.elementId ?? item.id ?? null,
@@ -252,6 +305,14 @@ function compactCandidateItem(value: unknown): JsonObject | null {
       units: geometry.units ?? null,
       coordinateSystem: geometry.coordinateSystem ?? null,
       locationPoint: roundedXyz(geometry.locationPoint),
+      locationCurve: curve ? {
+        start: roundedXyz(curve.start),
+        end: roundedXyz(curve.end),
+        midpoint: roundedXyz(curve.midpoint),
+        lengthFt: finiteNumber(curve.lengthFt),
+        curveType: typeof curve.curveType === "string" ? curve.curveType : null,
+        isStraight: curve.isStraight === true
+      } : null,
       boundingBox: box ? { min: roundedXyz(box.min), max: roundedXyz(box.max), center: roundedXyz(box.center), size: roundedXyz(box.size) } : null,
       facingOrientation: roundedXyz(geometry.facingOrientation),
       handOrientation: roundedXyz(geometry.handOrientation),
@@ -273,6 +334,7 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     && inheritedItemsOmitted === 0
     && inheritedIdsOmitted === 0;
   const summary = buildSpatialSummary(root.items, sourceComplete);
+  const routeSummary = routeCurveSummary(root.items, sourceComplete);
   const candidates = Array.isArray(summary.candidates) ? summary.candidates : [];
   const candidateIds = [...new Set(candidates.flatMap(candidate => {
     const ids = asObject(candidate)?.elementIds;
@@ -291,6 +353,7 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
   if (root.items.length <= MAX_INLINE_ITEMS) {
     return {
       spatialDuplicateCandidates: summary,
+      routeCurveCandidates: routeSummary,
       ...root,
       items: root.items.map(compactCandidateItem).filter((item): item is JsonObject => item !== null),
       warnings: [
@@ -304,6 +367,7 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     _agent_projection: true,
     projection: "find-elements-spatial-candidates",
     spatialDuplicateCandidates: summary,
+    routeCurveCandidates: routeSummary,
     candidateElementIds: candidateIds,
     candidateItems,
     candidateItemsOmitted: Math.max(0, candidateIds.length - candidateItems.length),

@@ -30,7 +30,9 @@ function compactGeometry(value: unknown): Record<string, unknown> | null {
       start: compactXyz(curve.start),
       end: compactXyz(curve.end),
       midpoint: compactXyz(curve.midpoint),
-      lengthFt: finiteNumber(curve.lengthFt)
+      lengthFt: finiteNumber(curve.lengthFt),
+      curveType: typeof curve.curveType === "string" ? curve.curveType : null,
+      isStraight: curve.isStraight === true
     } : null,
     boundingBox: box ? {
       min: compactXyz(box.min),
@@ -221,6 +223,58 @@ function spatialDuplicateSummary(values: unknown[], complete: boolean): Record<s
   };
 }
 
+function routeCurveSummary(values: unknown[], complete: boolean): Record<string, unknown> {
+  const candidates = values.flatMap(value => {
+    const item = asObject(value);
+    const geometry = asObject(item?.geometry);
+    const curve = asObject(geometry?.locationCurve);
+    const elementId = safeInteger(item?.elementId ?? item?.id);
+    const builtInCategory = typeof item?.builtInCategory === "string" ? item.builtInCategory : "";
+    const category = typeof item?.category === "string" ? item.category : "";
+    const categoryKey = `${builtInCategory} ${category}`.toLowerCase();
+    const routeKind = categoryKey.includes("ductcurve") || categoryKey.endsWith(" ducts")
+      ? "duct"
+      : categoryKey.includes("pipecurve") || categoryKey.endsWith(" pipes")
+        ? "pipe"
+        : null;
+    const lengthFt = finiteNumber(curve?.lengthFt);
+    const curveType = typeof curve?.curveType === "string" ? curve.curveType : null;
+    const isStraight = curve?.isStraight === true || curveType === "Line";
+    if (!item || elementId === null || !routeKind || !curve || lengthFt === null || lengthFt <= 0 || !isStraight) return [];
+    return [{
+      elementId,
+      routeKind,
+      category: item.category ?? null,
+      builtInCategory: item.builtInCategory ?? null,
+      typeId: item.typeId ?? null,
+      familyName: item.familyName ?? null,
+      typeName: item.typeName ?? null,
+      name: item.name ?? null,
+      levelId: item.levelId ?? null,
+      hostId: item.hostId ?? null,
+      curveType,
+      isStraight: true,
+      lengthFt: rounded(lengthFt),
+      start: compactXyz(curve.start),
+      end: compactXyz(curve.end),
+      midpoint: compactXyz(curve.midpoint)
+    }];
+  }).sort((a, b) => b.lengthFt - a.lengthFt || a.elementId - b.elementId);
+  const returned = candidates.slice(0, 48);
+  return {
+    schema: "revit-operator.route-curve-candidate-summary/v1",
+    derivedFromReturnedItems: values.length,
+    candidatesFound: candidates.length,
+    candidatesReturned: returned.length,
+    candidatesOmitted: Math.max(0, candidates.length - returned.length),
+    complete,
+    sizeTransitionMinimumHostLengthFt: 1,
+    requiredConnectorTopology: "exactly_two_physical_end_connectors_no_side_taps",
+    interpretation: "Length and straightness are prefilters only. Batch /revit/get-connectors for shortlisted ids, reject Curve/tap connectors, and verify branch/fitting adjacency before a reroute preview.",
+    candidates: returned
+  };
+}
+
 export function compactFindElementsResultForPrompt(
   value: unknown,
   options: { maxItems?: number; maxElementIds?: number } = {}
@@ -305,6 +359,7 @@ export function compactFindElementsResultForPrompt(
     identityExpansionScanCapReached: root.identityExpansionScanCapReached === true,
     geometryIncluded,
     spatialDuplicateCandidates: geometryIncluded ? spatialDuplicateSummary(items, itemsComplete) : null,
+    routeCurveCandidates: geometryIncluded ? routeCurveSummary(items, itemsComplete) : null,
     items,
     itemsOmitted,
     truncated: root.truncated === true,

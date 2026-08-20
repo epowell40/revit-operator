@@ -128,6 +128,47 @@ test("compact find-elements preserves bounded world geometry for a complete proj
   assert.deepEqual(compactFindElementsResultForPrompt(compacted), compacted);
 });
 
+test("compact find-elements ranks straight duct and pipe curves by exact route length", () => {
+  const curveGeometry = (lengthFt: number, isStraight = true) => ({
+    units: "feet",
+    coordinateSystem: "revit_internal_world",
+    locationCurve: {
+      start: { x: 0, y: 0, z: 12 },
+      end: { x: lengthFt, y: 0, z: 12 },
+      midpoint: { x: lengthFt / 2, y: 0, z: 12 },
+      lengthFt,
+      curveType: isStraight ? "Line" : "Arc",
+      isStraight
+    },
+    boundingBox: {
+      min: { x: 0, y: -0.5, z: 11.5 },
+      max: { x: lengthFt, y: 0.5, z: 12.5 },
+      center: { x: lengthFt / 2, y: 0, z: 12 },
+      size: { x: lengthFt, y: 1, z: 1 }
+    }
+  });
+  const compacted = compactFindElementsResultForPrompt({
+    status: "Ok",
+    count: 3,
+    elementIds: [1396164, 1397653, 1399999],
+    geometryIncluded: true,
+    itemsComplete: true,
+    items: [
+      { elementId: 1396164, category: "Ducts", builtInCategory: "OST_DuctCurves", typeId: 139186, geometry: curveGeometry(22.04) },
+      { elementId: 1397653, category: "Ducts", builtInCategory: "OST_DuctCurves", typeId: 139186, geometry: curveGeometry(0.399) },
+      { elementId: 1399999, category: "Ducts", builtInCategory: "OST_DuctCurves", typeId: 139186, geometry: curveGeometry(30, false) }
+    ]
+  }) as any;
+
+  assert.equal(compacted.items[0].geometry.locationCurve.curveType, "Line");
+  assert.equal(compacted.items[0].geometry.locationCurve.isStraight, true);
+  assert.equal(compacted.routeCurveCandidates.schema, "revit-operator.route-curve-candidate-summary/v1");
+  assert.deepEqual(compacted.routeCurveCandidates.candidates.map((candidate: any) => candidate.elementId), [1396164, 1397653]);
+  assert.equal(compacted.routeCurveCandidates.candidates[0].lengthFt, 22.04);
+  assert.equal(compacted.routeCurveCandidates.sizeTransitionMinimumHostLengthFt, 1);
+  assert.equal(compacted.routeCurveCandidates.requiredConnectorTopology, "exactly_two_physical_end_connectors_no_side_taps");
+});
+
 test("spatial duplicate candidates rank same-host same-facing overlap above intentional opposite-facing peers", () => {
   const geometry = (x: number, facingX: number) => ({
     units: "feet",
