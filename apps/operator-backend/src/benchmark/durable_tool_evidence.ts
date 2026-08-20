@@ -72,6 +72,8 @@ export async function loadDurableToolEvidence(
     .filter(Boolean))];
   const successfulPaths = new Set<string>();
   const failedPaths = new Set<string>();
+  const successfulTools = new Set<string>();
+  const failedTools = new Set<string>();
   const connectorRows = new Map<string, JsonRecord>();
   const compactlyScannedConnectorElementIds = new Set<string>();
   const resultReceipts: JsonRecord[] = [];
@@ -103,8 +105,11 @@ export async function loadDurableToolEvidence(
       const requestBody = asRecord(argumentsRecord.body);
       const path = String(argumentsRecord.path || "").trim();
       const status = String(tool.status || "").trim().toLowerCase();
+      const toolName = String(tool.tool || "").trim();
       if (path && status === "completed") successfulPaths.add(path);
       if (path && status === "failed") failedPaths.add(path);
+      if (toolName && status === "completed") successfulTools.add(toolName);
+      if (toolName && status === "failed") failedTools.add(toolName);
       const contents = Array.isArray(tool.result) ? tool.result.map(asRecord) : [];
       const resultText = contents.map((content) => String(content.text || "")).find(Boolean) || "";
       if (!resultText || !path) continue;
@@ -200,6 +205,8 @@ export async function loadDurableToolEvidence(
     },
     successful_paths: [...successfulPaths].sort(),
     failed_paths: [...failedPaths].sort(),
+    successful_tools: [...successfulTools].sort(),
+    failed_tools: [...failedTools].sort(),
     element_inventory: {
       maximum_element_id_count: maximumFindElementIds,
       maximum_reported_count: maximumFindCount,

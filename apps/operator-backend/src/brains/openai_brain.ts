@@ -18149,6 +18149,7 @@ function defaultSystemPrompt(): string {
     "",
     "Web research (host-configured; do not guess):",
     "- You may request web evidence fetches by populating web_requests with URL(s).",
+    "- When the user asks for authoritative, current, latest, or version-specific external documentation, fetch the primary-source page before answering. Never cite a remembered or merely plausible URL as research evidence.",
     "- The host will fetch and save evidence under Workspace/evidence/web/** and then re-call you with the extracted text + citations.",
     "- If web research mode is OFF or a domain is blocked, do NOT fabricate; ask the user to paste the relevant excerpt or provide a PDF.",
     "",
