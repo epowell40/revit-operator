@@ -526,6 +526,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const expected_values = expectedValues(args, operation !== "create");
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation });
   if (DISCOVERY_TOOLS.has(tool)) return call("discovery");
+  if (tool === "web_fetch_evidence") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
   }

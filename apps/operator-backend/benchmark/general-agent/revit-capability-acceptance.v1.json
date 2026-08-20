@@ -1501,11 +1501,11 @@
       "epic0441_task_refs": ["n28_novel_holdout", "g27_program_reuse"],
       "answer_assertions": {
         "must_match": [
-          "ElementId\\.Value[^\\n]*(?:Int64|long)",
-          "IntegerValue[^\\n]*(?:obsolete|deprecated|no longer present)",
-          "new ElementId\\s*\\([^\\n]*(?:long|idValue|value)",
-          "Revit[^\\n]*(?:2023|≤2023)[^\\n]*IntegerValue",
-          "Revit[^\\n]*(?:2024|2025|2026)[^\\n]*(?:Value|Int64)",
+          "ElementId\\.Value[\\s\\S]{0,160}(?:Int64|long)",
+          "(?:IntegerValue[\\s\\S]{0,160}(?:obsolete|deprecated|no longer present|remov(?:e|ed|es))|(?:obsolete|deprecated|no longer present|remov(?:e|ed|es))[\\s\\S]{0,160}IntegerValue)",
+          "new ElementId\\s*\\([\\s\\S]{0,120}(?:long|idValue|value)",
+          "(?:Revit\\s*(?:2023|≤\\s*2023|<\\s*=\\s*2023)[\\s\\S]{0,220}IntegerValue|#else[\\s\\S]{0,120}IntegerValue)",
+          "(?:Revit\\s*(?:2024|2025|2026)[\\s\\S]{0,240}(?:Value|Int64)|(?:Value|Int64)[\\s\\S]{0,240}Revit\\s*(?:2024|2025|2026))",
           "(?:(?:document-local|document local)[^\\n]*(?:ElementId|numeric)|(?:ElementId|numeric)[^\\n]*(?:document-local|document local))",
           "UniqueId[^\\n]*(?:document identity|document)",
           "help\\.autodesk\\.com/cloudhelp/2026",
