@@ -691,8 +691,12 @@
       "sha256": "sha256:4032f9497e558d1020f00337af5cfc58fe92bd5c33cea19b83e307c15d030f8d"
     },
     {
+      "path": "apps/operator-backend/src/brains/authoritative_web_evidence.ts",
+      "sha256": "sha256:5b395b45615198625db2a8c87604aeec12b53979f32153d2bbf7e0cf9a7ed97b"
+    },
+    {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:863ae2e51d6433645bbae6107681f2002efb91da51677a91f88c58963c58452f"
+      "sha256": "sha256:1b32932bf863e49fa4a66ab663d471738923885069ce93a77d7fa1aa2a747b06"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1905,7 +1909,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:0b08c4c11e178e469e5a954aab08f658011dc83907a11a5e2e5861ce9bb95c74"
+      "sha256": "sha256:cf84e3f2839725331006d73415c3e00924c0d26e0fef4b627a032ffafd9dd842"
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
@@ -4705,7 +4709,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:cb31b2bb69fabc51ceb085242a6fcf7a98f08407cfc8a830e583571738096898",
+  "inputs_hash": "sha256:dd3787be0569084108c81630399ea78bed96a8ee7779e96a2b0fd8b5b5c2a621",
   "result": {
     "passed": true,
     "checks": [

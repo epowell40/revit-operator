@@ -48,6 +48,13 @@ import {
   teammateLoopReceiptForLease
 } from "../teammate_loop_runtime.js";
 import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
+import {
+  AUTHORITATIVE_WEB_EVIDENCE_FAILURE,
+  fetchCitedAuthoritativeWebEvidence,
+  formatAuthoritativeWebEvidenceAppendix,
+  getAuthoritativeWebEvidenceRequirement,
+  isSuccessfulAuthoritativeWebEvidenceCall
+} from "./authoritative_web_evidence.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -694,6 +701,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   const text = (req.user_text ?? "").toString();
   const freshEvidenceRequirement = certifiedDirect ? { required: false, kind: "none" as const, prompt: "" } : getFreshRevitEvidenceRequirement(text);
+  const webEvidenceRequirement = certifiedDirect ? { required: false, prompt: "" } : getAuthoritativeWebEvidenceRequirement(text);
   let memBlock = "";
   let projectProfileBlock = "";
   let requirementsBlock = "";
@@ -727,7 +735,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
-    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && query
+    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && !webEvidenceRequirement.required && query
       ? retrieveMemoryContext({ queryText: query, maxEntries: 6 })
       : [];
     if (mem.length > 0) {
@@ -767,6 +775,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
               } catch {}
             }
             if (freshEvidenceRequirement.prompt) blocks.push(freshEvidenceRequirement.prompt);
+            if (webEvidenceRequirement.prompt) blocks.push(webEvidenceRequirement.prompt);
             if (memBlock) blocks.push(`MEMORY CONTEXT (read-only):\n${memBlock}`);
             if (!certifiedDirect) {
               try {
@@ -876,6 +885,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let assistantText = "";
   let assistantDeltas = "";
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
+  let hasAuthoritativeWebEvidence = !webEvidenceRequirement.required;
   const assignmentObserver = createAutoGoalTurnObserver(req.session_id);
 
   const unsubscribe = c.onNotification(n => {
@@ -886,7 +896,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         const delta = typeof n.params?.delta === "string" ? n.params.delta : "";
         if (delta) {
           assistantDeltas += delta;
-          if (!freshEvidenceRequirement.required) cb.onDelta?.(delta);
+          if (!freshEvidenceRequirement.required && !webEvidenceRequirement.required) cb.onDelta?.(delta);
         }
       }
 
@@ -901,6 +911,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         if (dynamicTool) {
           assignmentObserver.observe(dynamicTool);
           if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
+          if (isSuccessfulAuthoritativeWebEvidenceCall(dynamicTool)) hasAuthoritativeWebEvidence = true;
           try {
             recordRevitToolOutcome({
               sessionId: req.session_id,
@@ -992,6 +1003,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             status: item.status,
             error: item.error
           })) hasFreshRevitEvidence = true;
+          if (isSuccessfulAuthoritativeWebEvidenceCall({
+            tool: item.tool,
+            status: item.status,
+            error: item.error
+          })) hasAuthoritativeWebEvidence = true;
           try {
             const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
             const error = typeof item.error === "string" ? item.error : null;
@@ -1194,7 +1210,91 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       // ignore
     }
   }
-  if (freshEvidenceRequirement.required && assistantText) cb.onDelta?.(assistantText);
+  if (webEvidenceRequirement.required && !hasAuthoritativeWebEvidence) {
+    const attempts = mcpRuntime
+      ? await fetchCitedAuthoritativeWebEvidence(mcpRuntime, assistantText)
+      : [];
+    for (const attempt of attempts) {
+      const observed = {
+        server: "revit_operator",
+        tool: "web_fetch_evidence",
+        success: attempt.success,
+        status: attempt.success ? "completed" : "failed",
+        error: attempt.error,
+        duration_ms: null,
+        arguments: { url: attempt.url },
+        result: attempt.result
+      };
+      assignmentObserver.observe(observed);
+      try {
+        const ts = new Date().toISOString();
+        persistence.appendToolCall(req.session_id, {
+          ts,
+          kind: "mcp.tool_call",
+          session_id: req.session_id,
+          tool: observed.tool,
+          server: observed.server,
+          arguments: observed.arguments,
+          status: observed.status,
+          duration_ms: null,
+          thread_id: threadId,
+          turn_id: turnId
+        });
+        persistence.appendToolOutput(req.session_id, {
+          ts,
+          kind: "mcp.tool_result",
+          session_id: req.session_id,
+          tool: observed.tool,
+          server: observed.server,
+          status: observed.status,
+          duration_ms: null,
+          result: observed.result,
+          error: observed.error,
+          thread_id: threadId,
+          turn_id: turnId
+        });
+      } catch {
+        // Flight-recorder persistence is best-effort; the observer still owns assignment truth.
+      }
+      try {
+        appendEvent(req.session_id, "tool", "codex.authoritative_web_evidence", {
+          thread_id: threadId,
+          turn_id: turnId,
+          url: attempt.url,
+          status: observed.status,
+          error: observed.error
+        });
+        appendNotification(
+          req.session_id,
+          "web.research.saved",
+          attempt.success ? "Saved cited primary-source evidence." : "Cited primary-source fetch failed.",
+          { url: attempt.url, status: observed.status, error: observed.error }
+        );
+      } catch {
+        // Notifications are best-effort.
+      }
+    }
+    hasAuthoritativeWebEvidence = attempts.some(attempt => attempt.success);
+    if (hasAuthoritativeWebEvidence) {
+      const appendix = formatAuthoritativeWebEvidenceAppendix(attempts);
+      if (appendix) assistantText = `${assistantText}\n\n${appendix}`.trim();
+    } else {
+      assistantText = AUTHORITATIVE_WEB_EVIDENCE_FAILURE;
+    }
+  }
+  if (webEvidenceRequirement.required) {
+    try {
+      appendEvent(req.session_id, "assistant", hasAuthoritativeWebEvidence
+        ? "codex.authoritative_web_evidence.satisfied"
+        : "codex.authoritative_web_evidence.missing", {
+        thread_id: threadId,
+        turn_id: turnId
+      });
+    } catch {
+      // ignore
+    }
+  }
+  if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   cb.onDone?.(assistantText);
   try {

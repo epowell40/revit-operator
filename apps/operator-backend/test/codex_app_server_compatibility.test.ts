@@ -8,6 +8,13 @@ import test from "node:test";
 import { __testOnlyResetCodexVersionProbeCache, probeCodexVersion } from "../src/codex/app_server.js";
 import { CODEX_APP_SERVER_COMPATIBILITY, evaluateCodexCliVersion, parseCodexCliVersion, resolveCodexExecutable } from "../src/codex/app_server_compatibility.js";
 import { adaptDynamicToolCompletedItem, adaptMcpToolCallResultToDynamicResponse, getFreshRevitEvidenceRequirement, getOperatorAgentBaseInstructions, isMissingCodexThreadError, isSuccessfulFreshRevitEvidence } from "../src/brains/codex_brain.js";
+import {
+  extractCitedHttpUrls,
+  fetchCitedAuthoritativeWebEvidence,
+  formatAuthoritativeWebEvidenceAppendix,
+  getAuthoritativeWebEvidenceRequirement,
+  isSuccessfulAuthoritativeWebEvidenceCall
+} from "../src/brains/authoritative_web_evidence.js";
 import { EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
@@ -357,6 +364,46 @@ test("fresh Revit evidence is required for live-model work but not conceptual he
   assert.equal(topology.required, true);
   assert.equal(topology.kind, "revit_tool");
   assert.equal(getFreshRevitEvidenceRequirement("What is a Revit sheet?").required, false);
+});
+
+test("authoritative external research is host-gated on successful fetched evidence", async () => {
+  const requirement = getAuthoritativeWebEvidenceRequirement(
+    "Research the authoritative Revit 2026 API change and use the current official documentation."
+  );
+  assert.equal(requirement.required, true);
+  assert.match(requirement.prompt, /remembered citation is not evidence/i);
+  assert.equal(getAuthoritativeWebEvidenceRequirement("Count the air terminals in this model.").required, false);
+  assert.deepEqual(extractCitedHttpUrls(
+    "See [official docs](https://help.autodesk.com/cloudhelp/2026/example.htm). Duplicate https://help.autodesk.com/cloudhelp/2026/example.htm"
+  ), ["https://help.autodesk.com/cloudhelp/2026/example.htm"]);
+  assert.equal(isSuccessfulAuthoritativeWebEvidenceCall({
+    tool: "web_fetch_evidence",
+    status: "completed"
+  }), true);
+  assert.equal(isSuccessfulAuthoritativeWebEvidenceCall({
+    tool: "revit_call_tool",
+    status: "completed"
+  }), false);
+
+  const calls: Array<{ tool: string; args: unknown }> = [];
+  const attempts = await fetchCitedAuthoritativeWebEvidence({
+    async callTool(tool, args) {
+      calls.push({ tool, args });
+      return {
+        content: [{
+          type: "text",
+          text: "Source: Autodesk Revit 2026 API\nURL: https://help.autodesk.com/cloudhelp/2026/example.htm\nEvidence folder: evidence/web/2026-08-20/id\nExtracted text: evidence/web/2026-08-20/id/extracted.txt"
+        }]
+      };
+    }
+  }, "Use https://help.autodesk.com/cloudhelp/2026/example.htm for the migration.");
+  assert.deepEqual(calls, [{
+    tool: "web_fetch_evidence",
+    args: { url: "https://help.autodesk.com/cloudhelp/2026/example.htm" }
+  }]);
+  assert.equal(attempts[0]?.success, true);
+  assert.match(formatAuthoritativeWebEvidenceAppendix(attempts), /Preserved primary-source evidence/);
+  assert.match(formatAuthoritativeWebEvidenceAppendix(attempts), /extracted\.txt/);
 });
 
 test("Codex instructions require exhaustive live connector and topology evidence", () => {
