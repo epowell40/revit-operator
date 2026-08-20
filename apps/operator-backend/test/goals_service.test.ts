@@ -1020,6 +1020,96 @@ test("auto goal completion requires evidence at the requested read, preview, or 
   });
 });
 
+test("a certified teammate preview receipt settles a transaction-plan-only preview assignment", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-receipt-settlement", {
+      title: "Preview an enlarged plan",
+      objective: "Duplicate, crop, and scale an enlarged plan in a rollback preview; do not create anything.",
+      acceptance_criteria: ["The enlarged-plan preview is grounded in a successful rollback receipt."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview enlarged plan", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-receipt-settlement");
+    observer.observe({
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      success: true,
+      arguments: {
+        method: "POST",
+        path: "/revit/transaction-plan",
+        body: { actions: [{ kind: "duplicateView", sourceViewId: 1363433, resultRef: "enlargedL4" }] }
+      },
+      result: { impact: { added: [1542996] }, actions: [{ kind: "duplicateView", success: true }] }
+    });
+    observer.finish("turn-preview-receipt-settlement", "Rollback preview duplicated the view and independent readback confirmed it does not persist.", {
+      stage: "report",
+      verified: false,
+      apply_attempts: 0,
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: "/revit/transaction-plan",
+        status: "success",
+        evidence_sha256: `sha256:${"a".repeat(64)}`
+      }]
+    });
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.completion_audit?.complete, true);
+    assert.equal(persisted?.work_items[0]?.status, "complete");
+
+    const malformedGoal = setAgentGoal("session-preview-receipt-malformed", {
+      title: "Preview another enlarged plan",
+      objective: "Duplicate another enlarged plan in a rollback preview; do not create anything.",
+      acceptance_criteria: ["The preview is grounded in a successful rollback receipt."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview enlarged plan", status: "in_progress" }]
+    });
+    const malformed = createAutoGoalTurnObserver("session-preview-receipt-malformed");
+    malformed.observe({
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      success: true,
+      arguments: { method: "POST", path: "/revit/transaction-plan", body: { actions: [] } },
+      result: { warnings: ["No executable actions"] }
+    });
+    malformed.finish("turn-preview-receipt-malformed", "Preview complete.", {
+      stage: "report",
+      verified: false,
+      apply_attempts: 0,
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: "/revit/transaction-plan",
+        status: "success",
+        evidence_sha256: "sha256:not-a-digest"
+      }]
+    });
+    assert.equal(getGoal(malformedGoal.id)?.status, "active");
+    assert.equal(getGoal(malformedGoal.id)?.completion_audit, null);
+
+    const nonfinalGoal = setAgentGoal("session-preview-receipt-nonfinal", {
+      title: "Preview a third enlarged plan",
+      objective: "Duplicate a third enlarged plan in a rollback preview; do not create anything.",
+      acceptance_criteria: ["The preview reaches a final report state."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview enlarged plan", status: "in_progress" }]
+    });
+    const nonfinal = createAutoGoalTurnObserver("session-preview-receipt-nonfinal");
+    nonfinal.finish("turn-preview-receipt-nonfinal", "The preview is still in progress.", {
+      stage: "preview",
+      verified: false,
+      apply_attempts: 0,
+      preview_receipts: [{
+        action_id: "mcp:1",
+        path: "/revit/transaction-plan",
+        status: "success",
+        evidence_sha256: `sha256:${"b".repeat(64)}`
+      }]
+    });
+    assert.equal(getGoal(nonfinalGoal.id)?.status, "active");
+    assert.equal(getGoal(nonfinalGoal.id)?.completion_audit, null);
+  });
+});
+
 test("an already-satisfied apply assignment completes only as a substantive, zero-apply verified no-op", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-verified-noop", {
