@@ -1,4 +1,4 @@
-import { pathLooksWrite } from "../action_path_mutability.js";
+import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import {
   appendGoalProgress,
   appendTrustedServerGoalValidation,
@@ -481,18 +481,26 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
   const body = Object.keys(parsedBody).length > 0 ? parsedBody : args;
   const transaction = observationObject(body.transaction);
   const transactionMode = `${transaction.mode || body.mode || args.mode || ""}`.trim().toLowerCase();
-  if (body.apply === true || body.dryRun === false || body.dry_run === false
-      || ["apply", "commit", "committed"].includes(transactionMode)) return "apply";
-  if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
-      || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
   if (tool === "revit_call_tool") {
     const route = `${args.path || ""}`.trim().toLowerCase();
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
     if (route === "/revit/regenerate") return "discovery";
     if (route === "/revit/transaction-plan") return "discovery";
     const method = `${args.method || "POST"}`.trim().toUpperCase() || "POST";
-    return pathLooksWrite(route, body, method) ? "apply" : "read";
+    const conditional = conditionalActionPathEffect(route, body);
+    if (conditional !== undefined) return conditional;
+    // Route mutability is authoritative for the generic dispatcher. A false
+    // dryRun flag on an observational export/capture endpoint means "perform
+    // the evidence capture", not "mutate the Revit model".
+    if (!pathLooksWrite(route, body, method)) return "read";
+    if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
+        || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
+    return "apply";
   }
+  if (body.apply === true || body.dryRun === false || body.dry_run === false
+      || ["apply", "commit", "committed"].includes(transactionMode)) return "apply";
+  if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
+      || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
   if (tool === "run_dynamic_revit_program") {
     if (["preview", "rollback", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
     if (["apply", "commit", "committed"].includes(transactionMode)) return "apply";

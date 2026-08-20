@@ -1566,6 +1566,40 @@ test("an apply operation during a read-only assignment is blocked for reconcilia
   });
 });
 
+test("performing an observational image export remains read evidence when dryRun is false", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-effect-image-capture", {
+      title: "Capture the cover sheet", objective: "Capture M000 as an image without changing the model.",
+      acceptance_criteria: ["The capture artifact path is reported."],
+      work_budget: { mode: "auto_goal", requested_effect: "read" },
+      work_items: [{ id: "auto.revit-work", title: "Capture", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-effect-image-capture");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: {
+        method: "POST", path: "/revit/export-images",
+        body: { viewIds: [1420963], fileNameTemplate: "M000_titleblock_review", dryRun: false }
+      },
+      result: { status: "Success", outputs: [{ path: "artifacts/captures/M000_titleblock_review.jpg" }] }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: {
+        method: "POST", path: "/revit/capture-sheet-region",
+        body: { sheetNumber: "M000", fileName: "M000_titleblock_review.png", includeOcr: false }
+      },
+      result: { export: { path: "artifacts/captures/selection/M000_titleblock_review_titleblock_crop.png" } }
+    });
+    observer.finish("turn-image-capture", "Captured M000 and reported both artifact paths. No model changes were made.");
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.doesNotMatch(persisted?.blocker || "", /effect reconciliation/);
+    assert.match(persisted?.completion_audit?.evidence_summary || "", /2 successful live Revit tool calls/);
+  });
+});
+
 test("successful live tools complete a quick auto assignment with trusted evidence", () => {
   withWorkspace(() => {
     setAgentGoal("session-auto-complete", {
