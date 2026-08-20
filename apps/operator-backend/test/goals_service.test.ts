@@ -30,6 +30,7 @@ import {
 } from "../src/goals/service.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation, supersedeBlockedAutoGoalForFreshRequest } from "../src/goals/auto_goal_runtime.js";
+import { reconcileTeammateReceiptWithAssistant } from "../src/teammate_loop_runtime.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   createLocalGoalEvidenceAuthority,
@@ -1143,21 +1144,30 @@ test("the live c03 preview trace settles its assignment from the final teammate 
       result: { impact: { added: [1543200], modified: [1543200], deleted: [] }, actions: [{ kind: "createDependentView", success: true }] }
     });
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { method: "POST", path: "/revit/views", body: { action: "list", viewNames: ["L4 - Live Work Enlarged PREVIEW"] } }, result: { status: "ok", count: 0, views: [] } });
-    observer.finish(
-      "turn-live-c03-preview-receipt",
-      "## Preview completed — nothing created\n\n- **Source:** Mechanical floor plan **L4** (view **1363433**), scale 1:96.\n- **Scope:** Live/work spaces **403, 405, 407, 408, 409, 410**.\n- Successfully previewed a dependent view with the crop and scale in a rolled-back transaction.\n\nReadback found **zero** views named `L4 - Live Work Enlarged PREVIEW`, confirming no view was retained.",
-      {
-        stage: "report",
+    const assistantText = "## Preview completed — nothing created\n\n- **Source:** Mechanical floor plan **L4** (view **1363433**), scale 1:96.\n- **Scope:** Live/work spaces **403, 405, 407, 408, 409, 410**.\n- Successfully previewed a dependent view with the crop and scale in a rolled-back transaction.\n\nReadback found **zero** views named `L4 - Live Work Enlarged PREVIEW`, confirming no view was retained.";
+    const terminalReceipt = reconcileTeammateReceiptWithAssistant({
+        schema: "revit-operator.teammate-loop-receipt.v1",
+        turn_kind: "inspection",
+        context_state: "live",
+        stage: "preview",
+        preview_action_ids: ["mcp:1"],
         verified: false,
         apply_attempts: 0,
+        apply_action_id: null,
+        verification_action_ids: [],
+        verification_mode: "none",
+        verification_action_id: null,
+        verification_evidence_sha256: null,
+        blocked_reason: null,
         preview_receipts: [{
           action_id: "mcp:1",
           path: "/revit/transaction-plan",
           status: "success",
           evidence_sha256: `sha256:${"1b9c52220e3fc9c4c867168e35092e4d18df2b34d31ec8800d90a0d4d06d5652"}`
         }]
-      }
-    );
+      }, assistantText);
+    assert.equal(terminalReceipt?.stage, "report");
+    observer.finish("turn-live-c03-preview-receipt", assistantText, terminalReceipt);
     const persisted = getGoal(goal.id);
     assert.equal(persisted?.status, "complete");
     assert.equal(persisted?.completion_audit?.complete, true);
