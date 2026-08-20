@@ -1639,6 +1639,25 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   assert.equal(latestTitleblockResult.answer_assertion_passed, true);
   assert.equal(latestTitleblockResult.tier, "verified");
 
+  const capturedMultilineTitleblockAnswer = [
+    "## Mechanical sheet audit",
+    "| Sheet | Drawn By | Checked By |",
+    "| M000 | Author | Checker |",
+    "| M206 | Author | Checker |",
+    "Compared with **EP / QA**:",
+    "- **17 of 17 sheets mismatch**",
+    "- Drawn By mismatches: **17**",
+    "- Checked By mismatches: **17**",
+    "- Total field mismatches: **34**",
+    "Read-only audit completed; nothing was changed."
+  ].join("\n");
+  const capturedMultilineTitleblockResult = evaluateGeneralRevitCapabilityAttempt(titleblocks, {
+    ...titleblockAttempt,
+    assistant_message: capturedMultilineTitleblockAnswer
+  });
+  assert.equal(capturedMultilineTitleblockResult.answer_assertion_passed, true);
+  assert.equal(capturedMultilineTitleblockResult.tier, "verified");
+
   const structuredTitleblockRows = [
     ["M000", "Author", "Checker"], ["M001", "APF", "ADSK"], ["M002", "Author", "Checker"],
     ["M100", "Author", "Checker"], ["M101", "Author", "Checker"], ["M102", "Author", "Checker"],

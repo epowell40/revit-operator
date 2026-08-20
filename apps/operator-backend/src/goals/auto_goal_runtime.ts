@@ -243,6 +243,7 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
   );
   const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(receiptText)
     || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(receiptText)
+    || /\b(?:no|zero|0)\s+(?:exact\s+)?(?:rename|renumber(?:ing)?|change|edit|update|modification)\s+candidates?\b/i.test(receiptText)
     || /\b(?:0|zero|none)\s+(?:planned|proposed|previewed)?\s*(?:changes?|edits?|actions?|renames?|updates?|modifications?|writes?)\b/i.test(receiptText)
     || /\bproposed[ _-]?(?:edit|change|action)\s*:\s*none\b/i.test(receiptText)
     || /\bpreview[ _-]?status\s*:\s*(?:rejected_)?no_defensible_(?:edit|change|action)\b/i.test(receiptText)

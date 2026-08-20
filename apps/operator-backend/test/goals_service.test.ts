@@ -1179,6 +1179,42 @@ test("a preview assignment with zero candidates completes as a substantive verif
     assert.equal(getGoal(liveNumericReceipt.id)?.work_budget?.completion_mode, "verified_noop");
     assert.equal(getGoal(liveNumericReceipt.id)?.completion_audit?.complete, true);
 
+    const recoveredNamedCandidateReceipt = setAgentGoal("session-preview-recovered-named-candidate-noop", {
+      title: "Preview area-name cleanup",
+      objective: "Preview changing Area 1 and Area 2 view and sheet names to Area A and Area B; do not apply changes.",
+      acceptance_criteria: ["Every applicable view and sheet has an exact collision-free preview, or live evidence proves there are no candidates."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview", status: "in_progress" }]
+    });
+    const recoveredNamedCandidateObserver = createAutoGoalTurnObserver("session-preview-recovered-named-candidate-noop");
+    recoveredNamedCandidateObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/get-parameters", body: { elementIds: [1], categories: ["Views"] } },
+      error: "get-parameters accepts exactly one selector"
+    });
+    recoveredNamedCandidateObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/views", body: { action: "list", discipline: "Mechanical" } },
+      result: { count: 36, views: [{ id: 1363413, name: "L1 Block 37" }] }
+    });
+    recoveredNamedCandidateObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/renumber-sheets", body: { changes: [], dryRun: true } },
+      result: { status: "NoOp", requestedCount: 0, candidateCount: 0, modelModified: false, completionEligible: false }
+    });
+    recoveredNamedCandidateObserver.observe({
+      server: "revit_operator", tool: "revit_list_sheets", success: true,
+      result: { sheets: [{ id: 1, number: "M101", name: "Plan HVAC L1" }, { id: 2, number: "M201", name: "RCP HVAC L1" }] }
+    });
+    recoveredNamedCandidateObserver.finish(
+      "turn-preview-recovered-named-candidate-noop",
+      "Found 0 mechanical views and 0 sheets containing Area 1 or Area 2; therefore no exact rename candidates exist. Dry-run returned NoOp, modelModified:false. Post-preview readback confirmed both sheets unchanged. Concrete blocker: the requested source terminology does not exist in the live model."
+    );
+    const recoveredNamedCandidate = getGoal(recoveredNamedCandidateReceipt.id);
+    assert.equal(recoveredNamedCandidate?.status, "complete");
+    assert.equal(recoveredNamedCandidate?.work_budget?.completion_mode, "verified_noop");
+    assert.match(recoveredNamedCandidate?.completion_audit?.evidence_summary || "", /after 1 recovered failure/);
+
     const missingTarget = setAgentGoal("session-preview-missing-target", {
       title: "Preview one requested sheet rename",
       objective: "Preview renaming the specifically requested sheet; do not apply changes.",

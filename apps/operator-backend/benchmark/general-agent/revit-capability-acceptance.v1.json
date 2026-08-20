@@ -1326,7 +1326,7 @@
           "(?:(?:Individual|Total) field mismatches\\s*:\\s*\\*{0,2}34\\*{0,2}|34\\*{0,2}\\s+(?:individual\\s+)?field\\s+mismatches|17\\s+Drawn By mismatches[^\\n]*17\\s+Checked By mismatches)",
           "\\bM000\\b[\\s\\S]{0,120}Author[\\s\\S]{0,80}Checker",
           "\\bM206\\b[\\s\\S]{0,120}Author[\\s\\S]{0,80}Checker",
-        "(?:Expected[^\\n]*Drawn By[^\\n]*EP[^\\n]*Checked By[^\\n]*QA|Against(?: expected)?[^\\n]*EP\\s*/\\s*QA|(?:differ(?:s|ing)? from|mismatch)[^\\n]*EP\\s*/\\s*QA)",
+        "(?:Expected[^\\n]*Drawn By[^\\n]*EP[^\\n]*Checked By[^\\n]*QA|(?:Against(?: expected)?|Compared with)[\\s\\S]{0,120}EP\\s*/\\s*QA|(?:differ(?:s|ing)? from|mismatch)[^\\n]*EP\\s*/\\s*QA)",
         "(?:No (?:model )?changes (?:were )?made|nothing was changed|no changes were applied)"
         ],
         "must_not_match": [
