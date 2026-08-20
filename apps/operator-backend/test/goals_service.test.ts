@@ -897,6 +897,10 @@ test("auto goal classifier creates assignments for live Revit work", () => {
     "Read-only discovery only; do not edit, create, save, reload, or swap anything. Find one loaded Mechanical Equipment family and return a family-evolution plan with exact future steps. This is a plan/preview only—perform no model modifications and no family reload."
   );
   assert.equal(expandedReadOnlyFamilyEvolutionPlan.requestedEffect, "read");
+  const dryRunLabeledReadOnlyFamilyPlan = classifyAutoGoalRequest(
+    "Read-only, bounded family-evolution preflight. Do not edit, save, duplicate, reload, swap, or place anything. Produce an implementation-ready plan with exact future steps and explicitly state that this is a dry-run."
+  );
+  assert.equal(dryRunLabeledReadOnlyFamilyPlan.requestedEffect, "read");
   const exactLiveReadOnlyFamilyEvolutionPlan = classifyAutoGoalRequest(
     "READ-ONLY ONLY. Do not modify, save, edit, open Family Editor, create types, reload families, or swap instances. In the currently open model, find exactly one loaded Mechanical Equipment family instance that is editable. Produce a precise family-evolution plan for creating a TEST-ONLY type. Then state read-only proposed steps: 1) edit family, 2) duplicate source type, 3) parameter handling, 4) reload, 5) swap only a pilot instance, 6) verification and rollback. No model edits whatsoever."
   );
@@ -904,6 +908,9 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.equal(exactLiveReadOnlyFamilyEvolutionPlan.requestedEffect, "read");
   assert.equal(classifyAutoGoalRequest(
     "Read-only discovery and executable PREVIEW only—find one writable schedule value and preview a rollback transaction. Do not apply."
+  ).requestedEffect, "preview");
+  assert.equal(classifyAutoGoalRequest(
+    "Read-only planning first, then execute a dry-run preview of the proposed family change. Do not apply."
   ).requestedEffect, "preview");
 
   const openButtonCommand = classifyAutoGoalRequest(
