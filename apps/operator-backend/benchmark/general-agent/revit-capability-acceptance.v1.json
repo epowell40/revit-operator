@@ -858,10 +858,10 @@
           "\\bM105\\b",
           "\\bM106\\b",
           "(?:combined[\\s\\S]{0,120}color|color[\\s\\S]{0,120}combined)",
-        "(?:(?:planned )?page count[^\\n]{0,30}\\b7\\b|expected pages?[^\\n]{0,30}\\b7\\b|(?:seven|7)[ -]page check[^\\n]{0,80}\\b7 pages?\\b|\\b7 sheets?[^\\n]{0,40}\\b7 pages?\\b|\\b7[ -]page PDF)",
+        "(?:(?:(?:planned )?page count|planned pages?|expected pages?)[^\\n]{0,30}\\b7\\b|(?:seven|7)[ -]page check[^\\n]{0,80}\\b7 pages?\\b|\\b7 sheets?[^\\n]{0,40}\\b7 pages?\\b|\\b7[ -]page PDF)",
           "TEST-MECHANICAL-ISSUE\\.pdf",
           "(?:SHA-?256|content hash)",
-        "(?:no PDF was created|no export (?:was )?performed|no files? (?:were )?exported|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
+        "(?:no PDF was created|no export(?: (?:was )?performed)?\\b|exported\\s*:\\s*no\\b|no (?:PDFs?|files?) (?:were )?exported|no (?:model or )?filesystem changes|no files? (?:were )?created|do not export)"
         ]
       },
       "epic0441_task_refs": ["g25_export_publish"]
