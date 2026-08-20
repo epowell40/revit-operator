@@ -1611,6 +1611,83 @@ test("a recovered Revit tool failure remains visible in trusted completion evide
   });
 });
 
+test("a rollback preview may finish when exact temporary element readback proves absence", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-rollback-absence", {
+      title: "Preview a similar receptacle",
+      objective: "Preview creating a similar receptacle and prove the rollback removed it.",
+      acceptance_criteria: ["The preview is grounded and leaves no persistent element."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview and verify rollback", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-rollback-absence");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/audit-electrical-circuit-loading", body: { panelName: "P403", maxElements: 500 } },
+      error: "Discovered electrical fixture inventory exceeds maxElements (500)."
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/audit-electrical-circuit-loading", body: { panelName: "P403", maxElements: 5000 } },
+      result: { panel: "P403", circuits: [{ circuit: "1" }] }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/create-similar-from-instance", body: { exemplarElementId: 1556486, dryRun: true } },
+      result: [{ type: "inputText", text: JSON.stringify({
+        status: "Planned", dryRun: true,
+        placements: [{ elementId: null, temporaryElementId: 1735508 }]
+      }) }]
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/get-placement-context", body: { elementId: 1735508 } },
+      error: "RevitCourierError: revit_action_failed: Element 1735508 not found."
+    });
+    observer.finish("turn-preview-rollback-absence", "Previewed temporary element 1735508 and confirmed it did not persist. Nothing was created or applied.", {
+      stage: "report", verified: false, apply_attempts: 0, blocked_reason: null,
+      preview_receipts: [{
+        action_id: "mcp:1", path: "/revit/create-similar-from-instance", status: "success",
+        evidence_sha256: `sha256:${"a".repeat(64)}`
+      }]
+    });
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.completion_audit?.complete, true);
+    assert.match(persisted?.completion_audit?.evidence_summary || "", /after 1 recovered failure/);
+    assert.match(`${persisted?.action_log.find(entry => entry.summary.includes("Element 1735508 not found"))?.summary || ""}`, /Element 1735508 not found/);
+  });
+});
+
+test("an unbound missing element cannot impersonate rollback verification", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-preview-unbound-absence", {
+      title: "Preview a similar receptacle",
+      objective: "Preview creating a similar receptacle and verify it.",
+      acceptance_criteria: ["The preview is grounded and verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview and verify", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-preview-unbound-absence");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/create-similar-from-instance", body: { exemplarElementId: 1556486, dryRun: true } },
+      result: { status: "Planned", dryRun: true, placements: [{ temporaryElementId: 1735508 }] }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/get-placement-context", body: { elementId: 1556486 } },
+      error: "RevitCourierError: revit_action_failed: Element 1556486 not found."
+    });
+    observer.finish("turn-preview-unbound-absence", "The requested verification did not complete.");
+
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "blocked");
+    assert.equal(persisted?.completion_audit, null);
+  });
+});
+
 test("auto goal completion requires clean Revit evidence and rejects unrelated successes", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-mixed", {
