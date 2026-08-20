@@ -12,38 +12,37 @@ const statePath = process.env.CODEX_FIXTURE_STATE_PATH;
 const tracePath = process.env.CODEX_FIXTURE_TRACE_PATH;
 if (!statePath || !tracePath) throw new Error("Fixture state and trace paths are required.");
 
-type FixtureState = { threads: string[]; nextTurn: number };
-function loadState(): FixtureState {
+function loadState() {
   try {
-    const parsed = JSON.parse(fs.readFileSync(statePath!, "utf8")) as Partial<FixtureState>;
+    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
     return { threads: Array.isArray(parsed.threads) ? parsed.threads : [], nextTurn: parsed.nextTurn ?? 1 };
   } catch {
     return { threads: [], nextTurn: 1 };
   }
 }
-function saveState(state: FixtureState): void {
-  fs.writeFileSync(statePath!, JSON.stringify(state));
+function saveState(state) {
+  fs.writeFileSync(statePath, JSON.stringify(state));
 }
-function trace(direction: "in" | "out", method: string, details: Record<string, unknown> = {}): void {
-  fs.appendFileSync(tracePath!, `${JSON.stringify({ pid: process.pid, direction, method, ...details })}\n`);
+function trace(direction, method, details = {}) {
+  fs.appendFileSync(tracePath, `${JSON.stringify({ pid: process.pid, direction, method, ...details })}\n`);
 }
-function send(message: unknown): void {
+function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
-function notify(method: string, params: unknown): void {
+function notify(method, params) {
   trace("out", method);
   send({ method, params });
 }
 
 const state = loadState();
-const pendingToolTimers = new Map<string, NodeJS.Timeout>();
+const pendingToolTimers = new Map();
 let initialized = false;
 const input = readline.createInterface({ input: process.stdin });
 input.on("line", line => {
-  const message = JSON.parse(line) as { id?: number; method: string; params?: any };
+  const message = JSON.parse(line);
   trace("in", message.method);
   if (message.method === "initialized") return;
-  const respond = (result: unknown) => send({ id: message.id, result });
+  const respond = result => send({ id: message.id, result });
   if (message.method === "initialize") {
     if (initialized) {
       send({ id: message.id, error: { code: -32600, message: "initialize called more than once" } });
