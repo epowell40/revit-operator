@@ -27,6 +27,12 @@ export type AutoGoalTeammateReceipt = {
   verified?: boolean | null;
   apply_attempts?: number | null;
   blocked_reason?: string | null;
+  preview_receipts?: Array<{
+    action_id?: string | null;
+    path?: string | null;
+    status?: string | null;
+    evidence_sha256?: string | null;
+  }> | null;
 };
 
 type AutoGoalRequestedEffect = "read" | "preview" | "apply";
@@ -171,7 +177,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         const evidenceTools = requestedEffect === "apply"
           ? successfulApplyTools
           : requestedEffect === "preview"
-            ? successfulPreviewTools
+            ? Math.max(successfulPreviewTools, successfulTeammatePreviewReceiptCount(teammateReceipt))
             : successfulReadTools + successfulPreviewTools + successfulApplyTools;
         const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
         const verifiedNoop = requestedEffect !== "read"
@@ -215,6 +221,22 @@ export function createAutoGoalTurnObserver(sessionId: string) {
       }
     }
   };
+}
+
+function successfulTeammatePreviewReceiptCount(receipt?: AutoGoalTeammateReceipt | null): number {
+  if (`${receipt?.stage || ""}`.trim().toLowerCase() !== "report") return 0;
+  if (!Array.isArray(receipt?.preview_receipts)) return 0;
+  return receipt.preview_receipts.filter(row => {
+    const actionId = `${row?.action_id || ""}`.trim();
+    const path = `${row?.path || ""}`.trim().toLowerCase();
+    const status = `${row?.status || ""}`.trim().toLowerCase();
+    const digest = `${row?.evidence_sha256 || ""}`.trim().toLowerCase();
+    return actionId.length > 0
+      && actionId.length <= 300
+      && /^\/revit\/[a-z0-9][a-z0-9/_-]*$/.test(path)
+      && status === "success"
+      && /^sha256:[a-f0-9]{64}$/.test(digest);
+  }).length;
 }
 
 function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
