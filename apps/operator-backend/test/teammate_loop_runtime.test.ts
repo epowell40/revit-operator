@@ -119,11 +119,52 @@ test("a nested PDF dry-run is recorded as an executable preview", () => {
     assert.equal(receipt?.stage, "preview");
     assert.equal(receipt?.blocked_reason, null);
     const final = reconcileTeammateReceiptWithAssistant(receipt, "PDF preflight completed successfully; no file was created.");
-    assert.equal(final?.stage, "preview");
+    assert.equal(final?.stage, "report");
     assert.equal(final?.blocked_reason, null);
   } finally {
     endTeammateLoopOwner(lease);
   }
+});
+
+test("terminal preview reconciliation rejects malformed or non-live receipts", () => {
+  const base = {
+    schema: "revit-operator.teammate-loop-receipt.v1" as const,
+    turn_kind: "inspection" as const,
+    context_state: "live" as const,
+    stage: "preview" as const,
+    preview_action_ids: ["mcp:1"],
+    preview_receipts: [{
+      action_id: "mcp:1",
+      path: "/revit/transaction-plan",
+      status: "success" as const,
+      evidence_sha256: `sha256:${"a".repeat(64)}`
+    }],
+    apply_action_id: null,
+    verification_action_ids: [],
+    apply_attempts: 0,
+    verified: false,
+    verification_mode: "none" as const,
+    verification_action_id: null,
+    verification_evidence_sha256: null,
+    blocked_reason: null
+  };
+  assert.equal(reconcileTeammateReceiptWithAssistant(base, "Preview complete.")?.stage, "report");
+  assert.equal(reconcileTeammateReceiptWithAssistant({
+    ...base,
+    preview_receipts: [{ ...base.preview_receipts[0], evidence_sha256: "sha256:not-a-digest" }]
+  }, "Preview complete.")?.stage, "preview");
+  assert.equal(reconcileTeammateReceiptWithAssistant({
+    ...base,
+    preview_action_ids: ["mcp:different"]
+  }, "Preview complete.")?.stage, "preview");
+  assert.equal(reconcileTeammateReceiptWithAssistant({
+    ...base,
+    context_state: "missing"
+  }, "Preview complete.")?.stage, "preview");
+  assert.equal(reconcileTeammateReceiptWithAssistant({
+    ...base,
+    apply_attempts: 1
+  }, "Preview complete.")?.stage, "preview");
 });
 
 test("a recovered failed preview is not advertised as certified preview evidence", () => {

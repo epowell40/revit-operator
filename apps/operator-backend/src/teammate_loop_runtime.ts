@@ -985,17 +985,51 @@ export function reconcileTeammateReceiptWithAssistant(
   value: ChatResponse["teammate_loop_receipt"] | undefined,
   assistantText: string
 ): ChatResponse["teammate_loop_receipt"] | undefined {
-  if (!value || value.turn_kind !== "mutation" || value.apply_attempts < 1) return value;
-  if (!INCOMPLETE_MUTATION_REPORTS.some(pattern => pattern.test(assistantText))) return value;
-  return {
-    ...value,
-    stage: "blocked",
-    verified: false,
-    verification_mode: "none",
-    verification_action_id: null,
-    verification_evidence_sha256: null,
-    blocked_reason: value.blocked_reason || "assistant_reported_incomplete"
-  };
+  if (!value) return value;
+  if (value.turn_kind === "mutation"
+      && value.apply_attempts > 0
+      && INCOMPLETE_MUTATION_REPORTS.some(pattern => pattern.test(assistantText))) {
+    return {
+      ...value,
+      stage: "blocked",
+      verified: false,
+      verification_mode: "none",
+      verification_action_id: null,
+      verification_evidence_sha256: null,
+      blocked_reason: value.blocked_reason || "assistant_reported_incomplete"
+    };
+  }
+
+  // The Codex turn finishes before the outer generic-decision guard performs
+  // its final stage promotion. At this boundary a successful rollback receipt
+  // is already terminal evidence: no apply was attempted, no blocker remains,
+  // and every accepted row is action/path/status/digest bound. Promote that
+  // exact state before durable Assignment settlement. A bare intermediate
+  // `stage:"preview"` receipt remains non-final when passed directly to the
+  // Assignment observer.
+  const hasSuccessfulPreviewReceipt = Array.isArray(value.preview_receipts)
+    && value.preview_receipts.some(row => {
+      const actionId = `${row?.action_id || ""}`.trim();
+      const path = `${row?.path || ""}`.trim().toLowerCase();
+      const status = `${row?.status || ""}`.trim().toLowerCase();
+      const digest = `${row?.evidence_sha256 || ""}`.trim().toLowerCase();
+      return actionId.length > 0
+        && actionId.length <= 300
+        && Array.isArray(value.preview_action_ids)
+        && value.preview_action_ids.includes(actionId)
+        && /^\/revit\/[a-z0-9][a-z0-9/_-]*$/.test(path)
+        && status === "success"
+        && /^sha256:[a-f0-9]{64}$/.test(digest);
+    });
+  if (value.schema === "revit-operator.teammate-loop-receipt.v1"
+      && value.stage === "preview"
+      && value.context_state === "live"
+      && value.apply_attempts === 0
+      && !value.blocked_reason
+      && hasSuccessfulPreviewReceipt) {
+    return { ...value, stage: "report" };
+  }
+  return value;
 }
 
 export function guardGenericTeammateDecision(req: ChatRequest, decision: ChatResponse): ChatResponse {
