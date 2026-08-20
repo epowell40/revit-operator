@@ -818,7 +818,7 @@
       "answer_assertions": {
         "must_match": [
           "(?<!\\d)29(?!\\d)",
-          "(?=[^\\n]{0,160}Supply Diffuser\\s*[-–—]\\s*Square)(?=[^\\n]{0,160}(?<!\\d)28(?!\\d))[^\\n]{1,160}",
+          "(?=[^\\n]{0,160}(?:Supply Diffuser\\s*[-–—]\\s*Square|Square\\s+Supply Diffuser))(?=[^\\n]{0,160}(?<!\\d)28(?!\\d))[^\\n]{1,160}",
           "(?=[^\\n]{0,160}(?:Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot|Linear Slot Supply Diffuser))(?=[^\\n]{0,160}(?<!\\d)1(?!\\d))[^\\n]{1,160}"
         ],
         "must_not_match": [

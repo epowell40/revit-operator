@@ -1094,6 +1094,14 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   assert.equal(equivalentNaturalTypeOrder.tier, "verified");
   assert.equal(equivalentNaturalTypeOrder.answer_assertion_passed, true);
 
+  const equivalentFamilyLabelOrder = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "Air terminals: 509 total. Strictly named Diffuser families total 29.\n| Square Supply Diffuser — 12x12 | 28 |\n| Linear Slot Supply Diffuser — 48x4, 2-slot | 1 |",
+    assignment_projection
+  });
+  assert.equal(equivalentFamilyLabelOrder.tier, "verified");
+  assert.equal(equivalentFamilyLabelOrder.answer_assertion_passed, true);
+
   const wrong = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Diffuser count: 435, including supply and return grilles.",
