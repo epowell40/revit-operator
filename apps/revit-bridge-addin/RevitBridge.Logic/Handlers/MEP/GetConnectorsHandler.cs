@@ -17,6 +17,7 @@ namespace RevitBridge.Logic.Handlers.MEP
             public bool includeAllRefs { get; set; } = true;
             public bool includeCoordinateSystem { get; set; } = true;
             public bool includeFlexGeometry { get; set; } = true;
+            public bool onlyOpenPhysicalConnectors { get; set; } = false;
             public int maxConnectorsPerElement { get; set; } = 64;
         }
 
@@ -33,6 +34,13 @@ namespace RevitBridge.Logic.Handlers.MEP
 
             var warnings = new List<string>();
             var results = new List<object>();
+            var scannedElementCount = 0;
+            var failedElementCount = 0;
+            var matchedElementCount = 0;
+            var totalScannedConnectorCount = 0;
+            var physicallyConnectedConnectorCount = 0;
+            var openPhysicalConnectorCount = 0;
+            var connectorScanTruncatedElementCount = 0;
 
             var maxConn = p.maxConnectorsPerElement <= 0 ? 64 : Math.Min(p.maxConnectorsPerElement, 512);
 
@@ -41,9 +49,11 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var e = doc.GetElement(RevitBridge.Common.ElementIdCompat.Create(id));
                 if (e == null)
                 {
+                    failedElementCount++;
                     results.Add(new { id, ok = false, error = "Element not found." });
                     continue;
                 }
+                scannedElementCount++;
 
                 var catToken = SelectionUtil.GetCategoryToken(e) ?? (e.Category?.Name ?? "None");
                 var sys = MepSystemUtil.TryGetSystemName(e);
@@ -55,13 +65,22 @@ namespace RevitBridge.Logic.Handlers.MEP
                 var flexGeometry = p.includeFlexGeometry ? TryGetFlexGeometry(e) : null;
 
                 var connectorsOut = new List<object>();
+                var elementConnectorCount = 0;
+                var elementOpenPhysicalConnectorCount = 0;
+                var connectorScanTruncated = false;
                 try
                 {
                     var idx = 0;
                     foreach (var c in MepSystemUtil.GetConnectors(e))
                     {
-                        if (idx >= maxConn) break;
+                        if (idx >= maxConn)
+                        {
+                            connectorScanTruncated = true;
+                            break;
+                        }
                         if (c == null) continue;
+                        var connectorIndex = idx;
+                        idx++;
                         var hasNativeConnectorId = MepSystemUtil.TryGetNativeConnectorId(c, out var nativeConnectorId);
 
                         var origin = TryGetConnectorOrigin(c);
@@ -112,7 +131,7 @@ namespace RevitBridge.Logic.Handlers.MEP
 
                         var refsOut = new List<object>();
                         var physicalRefsOut = new List<object>();
-                        if (p.includeAllRefs)
+                        if (p.includeAllRefs || p.onlyOpenPhysicalConnectors)
                         {
                             var seen = new HashSet<long>();
                             try
@@ -155,43 +174,60 @@ namespace RevitBridge.Logic.Handlers.MEP
                             }
                         }
 
-                        connectorsOut.Add(new
+                        var isPhysicallyConnected = physicalRefsOut.Count > 0;
+                        elementConnectorCount++;
+                        totalScannedConnectorCount++;
+                        if (isPhysicallyConnected) physicallyConnectedConnectorCount++;
+                        else
                         {
-                            index = idx,
-                            connectorId = hasNativeConnectorId ? nativeConnectorId : idx,
-                            connectorIdBasis = hasNativeConnectorId ? "revit_native_connector_id" : "enumeration_index_with_origin_guard_required",
-                            origin,
-                            domain,
-                            shape,
-                            connectorType = TryGetConnectorPropertyValue(c, "ConnectorType"),
-                            direction = TryGetConnectorPropertyValue(c, "Direction"),
-                            isConnected = TryGetConnectorPropertyValue(c, "IsConnected"),
-                            systemClassification = TryGetConnectorSystemClassification(c),
-                            electrical = new
+                            elementOpenPhysicalConnectorCount++;
+                            openPhysicalConnectorCount++;
+                        }
+
+                        if (!p.onlyOpenPhysicalConnectors || !isPhysicallyConnected)
+                        {
+                            connectorsOut.Add(new
                             {
-                                systemType = TryGetConnectorPropertyValue(c, "ElectricalSystemType"),
-                                voltageInternal = TryGetConnectorPropertyValue(c, "Voltage"),
-                                poles = TryGetConnectorPropertyValue(c, "NumberOfPoles"),
-                                apparentLoadInternal = TryGetConnectorPropertyValue(c, "ApparentLoad"),
-                                trueLoadInternal = TryGetConnectorPropertyValue(c, "TrueLoad"),
-                                powerFactor = TryGetConnectorPropertyValue(c, "PowerFactor"),
-                                loadClassification = TryGetConnectorPropertyValue(c, "LoadClassification")
-                            },
-                            size,
-                            coordinateSystem = cs,
-                            connectedTo = refsOut,
-                            physicalConnectedTo = physicalRefsOut,
-                            physicalConnectionCount = physicalRefsOut.Count,
-                            isPhysicallyConnected = physicalRefsOut.Count > 0
-                        });
-                        idx++;
+                                index = connectorIndex,
+                                connectorId = hasNativeConnectorId ? nativeConnectorId : connectorIndex,
+                                connectorIdBasis = hasNativeConnectorId ? "revit_native_connector_id" : "enumeration_index_with_origin_guard_required",
+                                origin,
+                                domain,
+                                shape,
+                                connectorType = TryGetConnectorPropertyValue(c, "ConnectorType"),
+                                direction = TryGetConnectorPropertyValue(c, "Direction"),
+                                isConnected = TryGetConnectorPropertyValue(c, "IsConnected"),
+                                systemClassification = TryGetConnectorSystemClassification(c),
+                                electrical = new
+                                {
+                                    systemType = TryGetConnectorPropertyValue(c, "ElectricalSystemType"),
+                                    voltageInternal = TryGetConnectorPropertyValue(c, "Voltage"),
+                                    poles = TryGetConnectorPropertyValue(c, "NumberOfPoles"),
+                                    apparentLoadInternal = TryGetConnectorPropertyValue(c, "ApparentLoad"),
+                                    trueLoadInternal = TryGetConnectorPropertyValue(c, "TrueLoad"),
+                                    powerFactor = TryGetConnectorPropertyValue(c, "PowerFactor"),
+                                    loadClassification = TryGetConnectorPropertyValue(c, "LoadClassification")
+                                },
+                                size,
+                                coordinateSystem = cs,
+                                connectedTo = refsOut,
+                                physicalConnectedTo = physicalRefsOut,
+                                physicalConnectionCount = physicalRefsOut.Count,
+                                isPhysicallyConnected
+                            });
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
+                    failedElementCount++;
                     results.Add(new { id = RevitBridge.Common.ElementIdCompat.GetValue(e.Id), ok = false, category = catToken, name = e.Name, systemName = sys, error = ex.Message });
                     continue;
                 }
+
+                if (connectorScanTruncated) connectorScanTruncatedElementCount++;
+                if (p.onlyOpenPhysicalConnectors && connectorsOut.Count == 0) continue;
+                matchedElementCount++;
 
                 results.Add(new
                 {
@@ -203,7 +239,10 @@ namespace RevitBridge.Logic.Handlers.MEP
                     typeName,
                     createdPhaseId,
                     systemName = sys,
-                    connectorCount = connectorsOut.Count,
+                    connectorCount = elementConnectorCount,
+                    returnedConnectorCount = connectorsOut.Count,
+                    openPhysicalConnectorCount = elementOpenPhysicalConnectorCount,
+                    connectorScanTruncated,
                     connectors = connectorsOut,
                     flexGeometry
                 });
@@ -213,6 +252,14 @@ namespace RevitBridge.Logic.Handlers.MEP
             {
                 status = "Ok",
                 requestedCount = ids.Count,
+                scannedElementCount,
+                failedElementCount,
+                matchedElementCount,
+                totalScannedConnectorCount,
+                physicallyConnectedConnectorCount,
+                openPhysicalConnectorCount,
+                connectorScanTruncatedElementCount,
+                filter = p.onlyOpenPhysicalConnectors ? "openPhysicalConnectors" : "allConnectors",
                 results,
                 warnings
             });

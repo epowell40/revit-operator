@@ -2694,11 +2694,13 @@ server.registerTool(
   async req => runMepConnectorRepair(req, true, true)
 );
 
-server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment).",
+server.tool("revit_get_connectors", "Get connector origins/sizes/directions for elements (ducts, fittings, terminals, equipment). For exhaustive open-connector discovery, set onlyOpenPhysicalConnectors=true to return compact scan totals plus only elements/connectors with no physical connection.",
   {
     elementIds: z.array(z.number()).min(1).max(5000),
     includeAllRefs: z.boolean().optional().default(true),
     includeCoordinateSystem: z.boolean().optional().default(true),
+    includeFlexGeometry: z.boolean().optional().default(true),
+    onlyOpenPhysicalConnectors: z.boolean().optional().default(false),
     maxConnectorsPerElement: z.number().int().optional().default(64),
   },
   async (req) => {
