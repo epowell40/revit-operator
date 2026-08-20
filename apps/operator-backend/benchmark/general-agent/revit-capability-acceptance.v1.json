@@ -1270,9 +1270,9 @@
       "allow_verified_noop": true,
       "answer_assertions": {
         "must_match": [
-        "(?:Sheets inspected\\s*:\\s*17(?:\\s*(?:of|/)\\s*17)?|Mechanical sheets\\s*:\\s*17|Mechanical sheets inventoried\\s*:\\s*\\*{0,2}17\\*{0,2}|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets|17 mechanical[^\\n]{0,40}sheets[^\\n]{0,30}inventoried)",
-        "(?:(?:Dashed candidates|candidate_count|Sheet numbers containing dashes)\\s*:\\s*0|0\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
-          "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false|No\\s+sheets?\\s+(?:were\\s+)?(?:renamed|modified)(?:\\s+or\\s+(?:renamed|modified))?)"
+        "(?:Sheets inspected\\s*:\\s*\\*{0,2}17\\*{0,2}(?:\\s*(?:of|/)\\s*17)?|Mechanical sheets\\s*:\\s*\\*{0,2}17\\*{0,2}|Mechanical sheets (?:inventoried|checked)\\s*:\\s*\\*{0,2}17\\*{0,2}|scope\\s*:\\s*all 17 sheets|All\\s+\\*{0,2}17\\*{0,2}\\s+sheets\\b|(?:Reviewed|Checked|Inspected)\\s+all\\s+\\*{0,2}17\\*{0,2}\\s+(?:project\\s+|mechanical\\s+)?sheets\\b|Live model contains\\s+\\*{0,2}17\\*{0,2}\\s+mechanical sheets|17 mechanical[^\\n]{0,40}sheets[^\\n]{0,30}inventoried)",
+        "(?:(?:Dashed candidates|candidate_count|Sheet numbers containing dashes)\\s*:\\s*\\*{0,2}0\\*{0,2}|0\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|No\\s+(?:mechanical\\s+)?sheet numbers?\\s+(?:contain|contains|have|has|include|includes)\\s+(?:a\\s+|any\\s+)?(?:dash(?:es)?|hyphen(?:s)?)|none have (?:dashes|hyphens) in their sheet numbers|preview table is empty)",
+        "(?:Model changes\\s*:\\s*None|applied\\s*:\\s*false|modelModified\\s*:\\s*false|No\\s+sheets?\\s+(?:were\\s+)?(?:renamed|modified)(?:\\s+or\\s+(?:renamed|modified))?)"
         ],
         "must_not_match": [
           "(?:Dashed candidates|candidate_count)\\s*:\\s*[1-9]\\d*",

@@ -1569,6 +1569,17 @@ test("Snowdon schedule-cell and titleblock readback oracles accept the captured 
   }
 });
 
+test("Snowdon sheet-number no-op oracle accepts Markdown counts and native camelCase truth", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c34_sheet_numbers_dashes_to_dots")!;
+  const answer = [
+    "Mechanical sheets checked: **17** (M000–M206)",
+    "Sheet numbers containing dashes: **0**",
+    "Proposed dash-to-dot changes: none",
+    "The Revit dry-run returned NoOp, `modelModified: false`."
+  ].join("\n");
+  for (const pattern of entry.answer_assertions!.must_match) assert.match(answer, new RegExp(pattern, "i"));
+});
+
 test("captured cohort wording keeps fixture facts while remaining presentation-neutral", () => {
   const completeProjection = (requested_effect: "read" | "preview", completion_mode?: string) => ({
     assignments: [{
