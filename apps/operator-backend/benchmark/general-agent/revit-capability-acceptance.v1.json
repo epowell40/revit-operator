@@ -1506,8 +1506,8 @@
           "new ElementId\\s*\\([\\s\\S]{0,120}(?:long|idValue|value)",
           "(?:Revit\\s*(?:2023|≤\\s*2023|<\\s*=\\s*2023)[\\s\\S]{0,220}IntegerValue|#else[\\s\\S]{0,120}IntegerValue)",
           "(?:Revit\\s*(?:2024|2025|2026)[\\s\\S]{0,240}(?:Value|Int64)|(?:Value|Int64)[\\s\\S]{0,240}Revit\\s*(?:2024|2025|2026))",
-          "(?:(?:(?:document|project)[- ]local)[^\\n]*(?:ElementId|numeric)|(?:ElementId|numeric)[^\\n]*(?:(?:document|project)[- ]local))",
-          "(?:(?:persistent[ -])?cross-session identity[^\\n]*UniqueId|UniqueId[^\\n]*(?:(?:document|project)(?: identity)?|cross-session identity))",
+          "(?:(?:(?:document|project)[- ]local)[^\\n]*(?:ElementId|numeric)|(?:ElementId|numeric)[^\\n]*(?:(?:document|project)[- ]local)|(?:identity|references?)[^\\n]*(?:persist(?:ed|ence)?|durable)[^\\n]*(?:beyond|outside)[^\\n]*(?:document|session)[^\\n]*(?:numeric )?ElementId)",
+          "(?:(?:persistent[ -])?cross-session identity[^\\n]*UniqueId|(?:identity|references?)[^\\n]*(?:persist(?:ed|ence)?|durable)[^\\n]*(?:beyond|outside)[^\\n]*(?:document|session)[^\\n]*UniqueId|UniqueId[^\\n]*(?:(?:document|project)(?: identity)?|cross-session identity|persistent|durable))",
           "help\\.autodesk\\.com/cloudhelp/2026",
           "(?:No model changes were made|nothing (?:was )?changed|read-only)"
         ],
