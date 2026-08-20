@@ -691,8 +691,12 @@
       "sha256": "sha256:4032f9497e558d1020f00337af5cfc58fe92bd5c33cea19b83e307c15d030f8d"
     },
     {
+      "path": "apps/operator-backend/src/brains/authoritative_web_evidence.ts",
+      "sha256": "sha256:15ce78b98dd27fce3239ffdec93372a7df23d66ace33f1754eb2cb2ae52b0654"
+    },
+    {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:863ae2e51d6433645bbae6107681f2002efb91da51677a91f88c58963c58452f"
+      "sha256": "sha256:26d4da24d3f5aa2167798c60e836b869acbd3b3f55b675bd391443e837d4801a"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -729,6 +733,10 @@
     {
       "path": "apps/operator-backend/src/brains/redline_target_grounding_runtime.ts",
       "sha256": "sha256:ff48cb5f7da3ceab6e33478ea12fbfeb5c29105aead12c6c9bcbdbc0c0b9c83b"
+    },
+    {
+      "path": "apps/operator-backend/src/brains/revit_turn_evidence.ts",
+      "sha256": "sha256:ad1aa636c9686c8e82e961b835b757edc3f7e92cfbd8af36ee1c7411596034ee"
     },
     {
       "path": "apps/operator-backend/src/brains/rule_brain.ts",
@@ -1905,7 +1913,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:0b08c4c11e178e469e5a954aab08f658011dc83907a11a5e2e5861ce9bb95c74"
+      "sha256": "sha256:cf84e3f2839725331006d73415c3e00924c0d26e0fef4b627a032ffafd9dd842"
     },
     {
       "path": "apps/operator-backend/test/codex_brain_spatial_guidance.test.ts",
@@ -4705,7 +4713,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:cb31b2bb69fabc51ceb085242a6fcf7a98f08407cfc8a830e583571738096898",
+  "inputs_hash": "sha256:59ed086a1ad3ac656f8a66bf14c5e96d2805daa82d43c4d7b9b0b91ed3c6a7a6",
   "result": {
     "passed": true,
     "checks": [

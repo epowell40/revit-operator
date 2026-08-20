@@ -48,6 +48,8 @@ import {
   teammateLoopReceiptForLease
 } from "../teammate_loop_runtime.js";
 import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
+import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement, isSuccessfulAuthoritativeWebEvidenceCall } from "./authoritative_web_evidence.js";
+import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -55,14 +57,7 @@ export type StreamCallbacks = {
   abortSignal?: AbortSignal;
 };
 
-export type FreshRevitEvidenceRequirement = {
-  required: boolean;
-  kind: "none" | "sheet_count" | "revit_tool";
-  prompt: string;
-};
-
-const FRESH_REVIT_EVIDENCE_FAILURE =
-  "I could not verify this against live Revit because the required Revit tool did not complete successfully in this turn. No result was guessed.";
+export { getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
 
 const clientsByProfile = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
@@ -327,36 +322,6 @@ function developerInstructions(): string {
   return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }
 
-export function getFreshRevitEvidenceRequirement(userText: string): FreshRevitEvidenceRequirement {
-  const text = (userText ?? "").toString().trim().toLowerCase();
-  if (!text) return { required: false, kind: "none", prompt: "" };
-
-  const sheetCount =
-    /\b(?:how\s+many|count|number\s+of|total)\b[^?\n]{0,80}\bsheets?\b/.test(text) ||
-    /\bsheets?\b[^?\n]{0,80}\b(?:how\s+many|count|number|total)\b/.test(text);
-  if (sheetCount) {
-    return {
-      required: true,
-      kind: "sheet_count",
-      prompt:
-        "FRESH REVIT EVIDENCE REQUIRED: this turn must successfully call `revit_list_sheets` with `action:\"count\"` and `exact:true` (or call `/revit/sheets` with the same count request). Do not answer from memory, prior turns, a registry lookup, or `/revit/views`."
-    };
-  }
-
-  const entity = /\b(?:revit|model|project|document|sheet|view|schedule|element|equipment|family|type|instance|room|space|wall|door|window|duct|pipe|terminal|air device|device|fixture|tag|parameter|connector|branch|fitting|system|topology|level|plan|selection)\b/.test(text);
-  const liveIntent = /\b(?:how\s+many|count|list|find|show|which|where|identify|inspect|check|verify|compare|audit|preview|change|update|set|create|add|delete|remove|move|rename|print|export|capture|place|route|connect|resize|edit|select|open|current|active)\b/.test(text);
-  if (entity && liveIntent) {
-    return {
-      required: true,
-      kind: "revit_tool",
-      prompt:
-        "FRESH REVIT EVIDENCE REQUIRED: use at least one relevant `revit_operator` tool successfully in this turn before reporting a live-model fact or completion. Do not answer from memory or prior turns."
-    };
-  }
-
-  return { required: false, kind: "none", prompt: "" };
-}
-
 function parseToolArguments(value: unknown): any {
   if (typeof value !== "string") return value && typeof value === "object" ? value : {};
   try {
@@ -365,30 +330,6 @@ function parseToolArguments(value: unknown): any {
   } catch {
     return {};
   }
-}
-
-export function isSuccessfulFreshRevitEvidence(
-  requirement: FreshRevitEvidenceRequirement,
-  call: { server?: unknown; tool?: unknown; arguments?: unknown; success?: unknown; status?: unknown; error?: unknown }
-): boolean {
-  if (!requirement.required) return true;
-  const server = typeof call.server === "string" ? call.server.trim().toLowerCase().replace(/-/g, "_") : "";
-  if (server && server !== "revit_operator") return false;
-  const status = typeof call.status === "string" ? call.status.trim().toLowerCase() : "";
-  const succeeded = call.success === true || (call.success !== false && !call.error && ["success", "ok", "done", "completed"].includes(status));
-  if (!succeeded) return false;
-  if (requirement.kind === "revit_tool") return true;
-
-  const tool = typeof call.tool === "string" ? call.tool.trim() : "";
-  const args = parseToolArguments(call.arguments);
-  if (tool === "revit_list_sheets") {
-    return String(args.action ?? "").toLowerCase() === "count" || args.countOnly === true;
-  }
-  if (tool === "revit_call_tool") {
-    const body = parseToolArguments(args.body);
-    return String(args.path ?? "").toLowerCase() === "/revit/sheets" && String(body.action ?? "").toLowerCase() === "count";
-  }
-  return false;
 }
 
 function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
@@ -694,6 +635,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   const text = (req.user_text ?? "").toString();
   const freshEvidenceRequirement = certifiedDirect ? { required: false, kind: "none" as const, prompt: "" } : getFreshRevitEvidenceRequirement(text);
+  const webEvidenceRequirement = certifiedDirect ? { required: false, prompt: "" } : getAuthoritativeWebEvidenceRequirement(text);
   let memBlock = "";
   let projectProfileBlock = "";
   let requirementsBlock = "";
@@ -727,7 +669,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
-    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && query
+    const mem = allowUnscopedLegacyMemory && !freshEvidenceRequirement.required && !webEvidenceRequirement.required && query
       ? retrieveMemoryContext({ queryText: query, maxEntries: 6 })
       : [];
     if (mem.length > 0) {
@@ -767,6 +709,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
               } catch {}
             }
             if (freshEvidenceRequirement.prompt) blocks.push(freshEvidenceRequirement.prompt);
+            if (webEvidenceRequirement.prompt) blocks.push(webEvidenceRequirement.prompt);
             if (memBlock) blocks.push(`MEMORY CONTEXT (read-only):\n${memBlock}`);
             if (!certifiedDirect) {
               try {
@@ -876,6 +819,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let assistantText = "";
   let assistantDeltas = "";
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
+  let hasAuthoritativeWebEvidence = !webEvidenceRequirement.required;
   const assignmentObserver = createAutoGoalTurnObserver(req.session_id);
 
   const unsubscribe = c.onNotification(n => {
@@ -886,7 +830,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         const delta = typeof n.params?.delta === "string" ? n.params.delta : "";
         if (delta) {
           assistantDeltas += delta;
-          if (!freshEvidenceRequirement.required) cb.onDelta?.(delta);
+          if (!freshEvidenceRequirement.required && !webEvidenceRequirement.required) cb.onDelta?.(delta);
         }
       }
 
@@ -901,6 +845,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         if (dynamicTool) {
           assignmentObserver.observe(dynamicTool);
           if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
+          if (isSuccessfulAuthoritativeWebEvidenceCall(dynamicTool)) hasAuthoritativeWebEvidence = true;
           try {
             recordRevitToolOutcome({
               sessionId: req.session_id,
@@ -992,6 +937,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             status: item.status,
             error: item.error
           })) hasFreshRevitEvidence = true;
+          if (isSuccessfulAuthoritativeWebEvidenceCall({
+            tool: item.tool,
+            status: item.status,
+            error: item.error
+          })) hasAuthoritativeWebEvidence = true;
           try {
             const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
             const error = typeof item.error === "string" ? item.error : null;
@@ -1194,7 +1144,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       // ignore
     }
   }
-  if (freshEvidenceRequirement.required && assistantText) cb.onDelta?.(assistantText);
+  const webSettlement = await enforceAuthoritativeWebEvidence({
+    required: webEvidenceRequirement.required, alreadySatisfied: hasAuthoritativeWebEvidence,
+    runtime: mcpRuntime ?? null, assistantText, sessionId: req.session_id, threadId, turnId,
+    observe: observation => assignmentObserver.observe(observation)
+  });
+  assistantText = webSettlement.assistantText;
+  hasAuthoritativeWebEvidence = webSettlement.satisfied;
+  if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   cb.onDone?.(assistantText);
   try {
