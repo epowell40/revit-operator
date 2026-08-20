@@ -30,6 +30,7 @@ test("agent response policy requires natural acknowledgement instead of routine 
   assert.match(policy, /prefix-only terminology migration[\s\S]*begins-with rule[\s\S]*not a contains rule/i);
   assert.match(policy, /already satisfied[\s\S]*verified no-op[\s\S]*Do not invent an arbitrary epsilon/i);
   assert.match(policy, /candidate-specific preview fails[\s\S]*bounded search for another eligible candidate/i);
+  assert.match(policy, /routeCurveCandidates[\s\S]*exactly two physical End connectors[\s\S]*same branch/i);
   assert.match(policy, /create-schedule clone contract in dry-run mode/i);
   assert.match(policy, /configure-schedule dry-run contract/i);
   assert.match(policy, /inventory the bounded schedule list[\s\S]*narrow name guess is not evidence/i);

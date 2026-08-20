@@ -619,7 +619,9 @@ namespace RevitBridge.Logic.Handlers
                         start = XyzPayload(curve.GetEndPoint(0)),
                         end = XyzPayload(curve.GetEndPoint(1)),
                         midpoint = XyzPayload(curve.Evaluate(0.5, true)),
-                        lengthFt = IsFinite(curve.Length) ? (double?)curve.Length : null
+                        lengthFt = IsFinite(curve.Length) ? (double?)curve.Length : null,
+                        curveType = curve.GetType().Name,
+                        isStraight = curve is Line
                     };
                 }
             }
