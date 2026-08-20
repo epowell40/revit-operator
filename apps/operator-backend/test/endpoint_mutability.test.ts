@@ -96,6 +96,11 @@ test("conditional audit and type-maintenance routes inspect the request body", (
   assert.equal(pathLooksWrite("/revit/list-element-types", {}), false);
   assert.equal(pathLooksWrite("/revit/list-element-types", { action: "rename_types", dryRun: true }), true);
   assert.equal(pathLooksWrite("/revit/list-element-types", { action: "purge_unused_in_family" }), true);
+
+  assert.equal(conditionalActionPathEffect("/revit/create-text", { action: "list_types" }), "read");
+  assert.equal(pathLooksWrite("/revit/create-text", { action: "list_types" }), false);
+  assert.equal(conditionalActionPathEffect("/revit/create-text", { action: "create", dryRun: true }), "preview");
+  assert.equal(conditionalActionPathEffect("/revit/create-text", { action: "create" }), "apply");
 });
 
 test("conditional route bodies may be supplied as serialized JSON", () => {
