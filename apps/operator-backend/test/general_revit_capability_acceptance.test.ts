@@ -1200,6 +1200,37 @@ test("authoritative Revit API assertions accept project-local and persistent cro
   assert.equal(result.tier, "verified");
 });
 
+test("authoritative Revit API assertions accept beyond-document persistence wording", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c43_research_revit2026_api_change")!;
+  const answer = [
+    "Revit 2026 removed ElementId.IntegerValue and ElementId(Int32).",
+    "ElementId.Value returns Int64 / long; use new ElementId(long value).",
+    "#else the Revit 2023 build uses IntegerValue.",
+    "Revit 2024, 2025, and 2026 use Value / Int64.",
+    "For identity persisted beyond the current document/session, use Element.UniqueId rather than the numeric ElementId.",
+    "Source: https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/example.htm",
+    "No model changes were made."
+  ].join("\n");
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: answer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/native-api-search", request_effect: "read", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: {
+      successful_paths: ["/revit/native-api-catalog", "/revit/native-api-search"],
+      successful_tools: ["revit_native_api_catalog", "revit_native_api_search", "web_fetch_evidence"]
+    },
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live native and web evidence completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  } as const);
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.tier, "verified");
+});
+
 test("both general-agent prompts require primary-source fetches for authoritative current research", () => {
   for (const prompt of [
     source("operator-backend/src/brains/codex_brain.ts"),
