@@ -138,11 +138,16 @@ export function createAutoGoalTurnObserver(sessionId: string) {
   let failedRevitTools = 0;
   let knownNoEffectFailures = 0;
   let lastCompletionRelevantSucceeded: boolean | null = null;
+  const rollbackPreviewTemporaryElementIds = new Set<number>();
   return {
     observe(observation: AutoGoalToolObservation) {
       const effect = observationEffect(observation);
       const completionRelevant = effect !== "discovery";
-      const knownNoEffectFailure = isKnownNoEffectFailure(observation);
+      if (effect === "preview" && observation.success === true) {
+        collectTemporaryElementIds(observation.result ?? observation.output, rollbackPreviewTemporaryElementIds);
+      }
+      const knownNoEffectFailure = isKnownNoEffectFailure(observation)
+        || isExpectedRollbackAbsenceFailure(observation, rollbackPreviewTemporaryElementIds);
       const explicitNoEffect = isExplicitNoEffectObservation(observation);
       const blockingNoEffect = isBlockingNoEffectObservation(observation);
       if (!explicitNoEffect && isCompletionEvidence(observation) && observation.success === true) {
@@ -388,6 +393,70 @@ function objectContainsKnownPreDispatchFailure(value: unknown, depth = 0): boole
       && record.request_dispatched === false
       && record.outcome_unknown !== true) return true;
   return Object.values(record).some((entry) => objectContainsKnownPreDispatchFailure(entry, depth + 1));
+}
+
+function positiveElementId(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value
+    : typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value.trim())
+      : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function collectTemporaryElementIds(value: unknown, ids: Set<number>, depth = 0): void {
+  if (value === null || value === undefined || depth > 10 || ids.size >= 1_000) return;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return;
+    try { collectTemporaryElementIds(JSON.parse(text), ids, depth + 1); } catch {}
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) collectTemporaryElementIds(entry, ids, depth + 1);
+    return;
+  }
+  if (typeof value !== "object") return;
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (normalizedKey === "temporaryelementid") {
+      const id = positiveElementId(child);
+      if (id !== null) ids.add(id);
+    } else if (normalizedKey === "temporaryelementids" && Array.isArray(child)) {
+      for (const candidate of child) {
+        const id = positiveElementId(candidate);
+        if (id !== null) ids.add(id);
+      }
+    }
+    collectTemporaryElementIds(child, ids, depth + 1);
+  }
+}
+
+function requestedElementIds(observation: AutoGoalToolObservation): Set<number> {
+  const args = observationObject(observation.arguments);
+  const parsedBody = observationObject(args.body);
+  const body = Object.keys(parsedBody).length > 0 ? parsedBody : args;
+  const ids = new Set<number>();
+  const single = positiveElementId(body.elementId ?? body.element_id);
+  if (single !== null) ids.add(single);
+  const multiple = body.elementIds ?? body.element_ids;
+  if (Array.isArray(multiple)) {
+    for (const candidate of multiple) {
+      const id = positiveElementId(candidate);
+      if (id !== null) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function isExpectedRollbackAbsenceFailure(observation: AutoGoalToolObservation, temporaryIds: ReadonlySet<number>): boolean {
+  if (observation.success !== false || observationEffect(observation) !== "read" || temporaryIds.size === 0) return false;
+  const requestedIds = requestedElementIds(observation);
+  if (requestedIds.size === 0 || [...requestedIds].some((id) => !temporaryIds.has(id))) return false;
+  let serialized = `${observation.error || ""}`;
+  try { serialized += ` ${JSON.stringify(observation.result ?? observation.output ?? "")}`; } catch {}
+  const missingIds = [...serialized.matchAll(/\bElement\s+(\d+)\s+not found\b/gi)]
+    .map((match) => positiveElementId(match[1]))
+    .filter((id): id is number => id !== null);
+  return missingIds.length > 0 && missingIds.every((id) => requestedIds.has(id) && temporaryIds.has(id));
 }
 
 function observationEffect(observation: AutoGoalToolObservation): AutoGoalObservationEffect {
