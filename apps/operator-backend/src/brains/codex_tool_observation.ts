@@ -10,7 +10,7 @@ export type DynamicToolObservation = {
 };
 
 export function isMissingCodexThreadError(error: unknown): boolean {
-  return /thread not found/i.test(error instanceof Error ? error.message : String(error));
+  return /thread(?: id)? not found|unknown thread|thread .+ does not exist|no rollout found/i.test(error instanceof Error ? error.message : String(error));
 }
 
 export function adaptDynamicToolCompletedItem(item: any): DynamicToolObservation | null {

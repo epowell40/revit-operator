@@ -165,12 +165,14 @@ test("certified empty Codex continuations retain context and the denied syntheti
   assert.doesNotMatch(continuation, /Execution ladder|revit_search_tools|\(continue\)/);
 });
 
-test("Codex planner cancellation aborts the active turn so its planning lease can unwind", () => {
+test("Codex planner cancellation requests a protocol interrupt without aborting a healthy wait", async () => {
   const tracked = __testOnlyTrackCodexBrainTurnAbort("session-cancel", "message-cancel");
   try {
     assert.equal(tracked.signal.aborted, false);
     assert.equal(cancelCodexBrainTurn("session-cancel", "message-cancel"), true);
-    assert.equal(tracked.signal.aborted, true);
+    await tracked.waitForInterrupt();
+    assert.equal(tracked.interruptionRequested(), true);
+    assert.equal(tracked.signal.aborted, false);
   } finally {
     tracked.cleanup();
   }

@@ -4,6 +4,8 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { appendEvent, appendNotification, getCodexThreadId, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
+import type { DynamicToolSpec } from "../codex/generated/app_server_0_144_5/v2/DynamicToolSpec.js";
+import type { UserInput } from "../codex/generated/app_server_0_144_5/v2/UserInput.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
@@ -63,7 +65,13 @@ const clientsByProfile = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
 const revitToolParallelGuard = new RevitToolParallelGuard();
 const lastPermissionSignatureBySession = new Map<string, string>();
-const activeCodexTurnAborts = new Map<string, AbortController>();
+type ActiveCodexTurn = {
+  abortController: AbortController;
+  interruptRequested: boolean;
+  interruptPromise: Promise<void> | null;
+  interrupt: () => Promise<void>;
+};
+const activeCodexTurns = new Map<string, ActiveCodexTurn>();
 
 export { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 export { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
@@ -74,26 +82,44 @@ function codexTurnAbortKey(sessionId: string, messageId: string): string {
   return `${sessionId.trim()}:${messageId.trim()}`;
 }
 
+function requestActiveCodexTurnInterrupt(active: ActiveCodexTurn): Promise<void> {
+  if (active.interruptPromise) return active.interruptPromise;
+  active.interruptRequested = true;
+  active.interruptPromise = active.interrupt().catch(error => {
+    active.abortController.abort();
+    throw error;
+  });
+  return active.interruptPromise;
+}
+
 export function cancelCodexBrainTurn(sessionId: string, messageId: string): boolean {
   const key = codexTurnAbortKey(sessionId, messageId);
-  const controller = activeCodexTurnAborts.get(key);
-  if (!controller) return false;
-  controller.abort();
+  const active = activeCodexTurns.get(key);
+  if (!active) return false;
+  void requestActiveCodexTurnInterrupt(active).catch(() => {});
   return true;
 }
 
 export function __testOnlyTrackCodexBrainTurnAbort(
   sessionId: string,
   messageId: string
-): { signal: AbortSignal; cleanup: () => void } {
+): { signal: AbortSignal; interruptionRequested: () => boolean; waitForInterrupt: () => Promise<void>; cleanup: () => void } {
   const key = codexTurnAbortKey(sessionId, messageId);
-  const controller = new AbortController();
-  activeCodexTurnAborts.set(key, controller);
+  const abortController = new AbortController();
+  const active: ActiveCodexTurn = {
+    abortController,
+    interruptRequested: false,
+    interruptPromise: null,
+    interrupt: async () => {}
+  };
+  activeCodexTurns.set(key, active);
   return {
-    signal: controller.signal,
+    signal: abortController.signal,
+    interruptionRequested: () => active.interruptRequested,
+    waitForInterrupt: () => active.interruptPromise ?? Promise.resolve(),
     cleanup: () => {
-      if (activeCodexTurnAborts.get(key) === controller) {
-        activeCodexTurnAborts.delete(key);
+      if (activeCodexTurns.get(key) === active) {
+        activeCodexTurns.delete(key);
       }
     }
   };
@@ -535,15 +561,6 @@ async function withTransportRetry<T>(workspaceRoot: string, profile: CodexThread
     if (clientsByProfile.get(cacheKey) === client) clientsByProfile.delete(cacheKey);
     client.stop();
     client = await getClient(workspaceRoot, profile);
-    // Touch the connection to ensure it's alive.
-    try {
-      await client.request("initialize", {
-        clientInfo: { name: "revit-operator-backend", title: "Revit Operator Backend", version: "0.0.0" },
-        capabilities: { experimentalApi: true }
-      });
-    } catch {
-      // ignore; getClient already initialized once in most cases
-    }
     return await fn(client);
   }
 }
@@ -560,17 +577,50 @@ export function getCodexAppServerCompatibility(): { version: ReturnType<CodexApp
 
 async function getOrCreateThreadId(req: ChatRequest, client: CodexAppServer, workspaceRoot: string): Promise<string> {
   const profile = getCodexThreadStartProfileForTest(req);
+  const profilePaths = getCodexProfilePaths(workspaceRoot, profile);
   const existing = getCodexThreadId(profile.threadKey);
-  if (existing) return existing;
+  if (existing) {
+    if (client.hasLoadedThread(existing)) return existing;
+    try {
+      const resumed = await client.resumeThread({
+        threadId: existing,
+        cwd: profilePaths.cwd,
+        sandbox: profile.sandbox,
+        approvalPolicy: profile.approvalPolicy,
+        model: getDefaultModel(),
+        baseInstructions: profile.baseInstructions,
+        developerInstructions: profile.developerInstructions,
+        excludeTurns: true
+      });
+      const resumedThreadId = resumed.thread.id;
+      setCodexThreadId(profile.threadKey, resumedThreadId);
+      try {
+        appendEvent(req.session_id, "assistant", "codex.thread.resume", profile.certified
+          ? { thread_id: resumedThreadId, certified: true }
+          : { thread_id: resumedThreadId });
+      } catch {
+        // ignore
+      }
+      return resumedThreadId;
+    } catch (error) {
+      if (!isMissingCodexThreadError(error)) throw error;
+      setCodexThreadId(profile.threadKey, "");
+      try {
+        appendEvent(req.session_id, "assistant", "codex.thread.replace_missing", { thread_id: existing });
+      } catch {
+        // ignore
+      }
+    }
+  }
 
-  const dynamicTools: unknown[] = [];
+  const dynamicTools: DynamicToolSpec[] = [];
   if (profile.dynamicToolMode === "revit_runtime") {
     const runtime = mcpRuntimesByWorkspace.get(workspaceRoot);
     if (!runtime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
     dynamicTools.push(await runtime.getDynamicToolNamespace());
   }
-  const resp = (await client.request("thread/start", {
-    cwd: getCodexProfilePaths(workspaceRoot, profile).cwd,
+  const response = await client.startThread({
+    cwd: profilePaths.cwd,
     sandbox: profile.sandbox,
     approvalPolicy: profile.approvalPolicy,
     model: getDefaultModel(),
@@ -578,18 +628,9 @@ async function getOrCreateThreadId(req: ChatRequest, client: CodexAppServer, wor
     developerInstructions: profile.developerInstructions,
     dynamicTools,
     experimentalRawEvents: false
-  })) as any;
+  });
 
-  const threadId = typeof resp?.thread?.id === "string" ? resp.thread.id : typeof resp?.threadId === "string" ? resp.threadId : "";
-  if (!threadId) throw new Error("Codex thread/start did not return a thread id.");
-
-  try {
-    // Subscribe to this thread's notifications (required for streaming on some app-server builds).
-    await client.request("addConversationListener", { conversationId: threadId, experimentalRawEvents: false });
-  } catch {
-    // ignore; not required on all builds
-  }
-
+  const threadId = response.thread.id;
   setCodexThreadId(profile.threadKey, threadId);
   try {
     appendEvent(req.session_id, "assistant", "codex.thread.start", profile.certified ? { thread_id: threadId, certified: true } : { thread_id: threadId });
@@ -625,13 +666,6 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     return await getOrCreateThreadId(req, activeClient, workspaceRoot);
   });
 
-  // Some app-server builds require a conversation listener for streaming notifications;
-  // re-assert it each turn (best-effort) to avoid "Transport closed" / silent streams.
-  try {
-    await c.request("addConversationListener", { conversationId: threadId, experimentalRawEvents: false });
-  } catch {
-    // ignore
-  }
 
   const text = (req.user_text ?? "").toString();
   const freshEvidenceRequirement = certifiedDirect ? { required: false, kind: "none" as const, prompt: "" } : getFreshRevitEvidenceRequirement(text);
@@ -690,7 +724,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   } catch {
     activeGoalBlock = "";
   }
-  const input = text.trim()
+  const input: UserInput[] = text.trim()
     ? [
         {
           type: "text",
@@ -766,7 +800,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let teammateContext: ReturnType<typeof beginTeammateLoopOwner> | null = null;
   let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
-  let start: any;
+  let start: Awaited<ReturnType<CodexAppServer["startTurn"]>>;
   try {
     if (threadProfile.startRevitTurnRuntime) {
       teammateContext = beginTeammateLoopOwner(mcpRuntime!, req);
@@ -778,10 +812,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       });
     }
     try {
-      start = (await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+      start = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await activeClient.request("turn/start", { threadId, input });
-      })) as any;
+        return await activeClient.startTurn({ threadId, input });
+      });
     } catch (error) {
       if (!isMissingCodexThreadError(error)) throw error;
       setCodexThreadId(threadProfile.threadKey, "");
@@ -789,7 +823,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         c = activeClient;
         return await getOrCreateThreadId(req, activeClient, workspaceRoot);
       });
-      start = (await c.request("turn/start", { threadId, input })) as any;
+      start = await c.startTurn({ threadId, input });
     }
   } catch (error) {
     endTeammateLoopOwner(teammateContext);
@@ -1067,15 +1101,30 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   const activeTurnAbort = new AbortController();
   const activeTurnKey = codexTurnAbortKey(req.session_id, req.message_id);
-  const priorActiveTurn = activeCodexTurnAborts.get(activeTurnKey);
-  if (priorActiveTurn) priorActiveTurn.abort();
-  activeCodexTurnAborts.set(activeTurnKey, activeTurnAbort);
-  const forwardExternalAbort = () => activeTurnAbort.abort();
-  cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
+  const activeTurn: ActiveCodexTurn = {
+    abortController: activeTurnAbort,
+    interruptRequested: false,
+    interruptPromise: null,
+    interrupt: async () => {
+      await c.interruptTurn({ threadId, turnId });
+    }
+  };
+  const priorActiveTurn = activeCodexTurns.get(activeTurnKey);
+  if (priorActiveTurn) void requestActiveCodexTurnInterrupt(priorActiveTurn).catch(() => {});
+  activeCodexTurns.set(activeTurnKey, activeTurn);
+  const forwardExternalAbort = () => {
+    void requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
+  };
+  if (cb.abortSignal?.aborted) forwardExternalAbort();
+  else cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
   let turnCancelled = false;
   try {
-    await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+    const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
+      if (!activeClient.hasLoadedThread(threadId)) {
+        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot);
+        if (resumedThreadId !== threadId) throw new Error(`Codex active thread ${threadId} could not be resumed after reconnect.`);
+      }
       return await activeClient.waitForTurnCompleted({
         threadId,
         turnId,
@@ -1083,14 +1132,15 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         abortSignal: activeTurnAbort.signal
       });
     });
+    turnCancelled = completion.interrupted || activeTurn.interruptRequested;
   } catch (error) {
     if (!activeTurnAbort.signal.aborted) throw error;
     turnCancelled = true;
   } finally {
     unsubscribe();
     cb.abortSignal?.removeEventListener("abort", forwardExternalAbort);
-    if (activeCodexTurnAborts.get(activeTurnKey) === activeTurnAbort) {
-      activeCodexTurnAborts.delete(activeTurnKey);
+    if (activeCodexTurns.get(activeTurnKey) === activeTurn) {
+      activeCodexTurns.delete(activeTurnKey);
     }
     endRequirementsPlanningLease(requirementsLease);
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
