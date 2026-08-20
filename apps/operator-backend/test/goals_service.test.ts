@@ -897,6 +897,11 @@ test("auto goal classifier creates assignments for live Revit work", () => {
     "Read-only discovery only; do not edit, create, save, reload, or swap anything. Find one loaded Mechanical Equipment family and return a family-evolution plan with exact future steps. This is a plan/preview only—perform no model modifications and no family reload."
   );
   assert.equal(expandedReadOnlyFamilyEvolutionPlan.requestedEffect, "read");
+  const exactSidecarExpandedFamilyEvolutionPlan = classifyAutoGoalRequest(
+    "Read-only investigation and bounded family-evolution plan only. In the open Snowdon Towers Sample HVAC model, find one placed equipment family instance that is a defensible candidate for adding a 36-inch service clearance on its electrical/right side and a Yes/No visibility parameter. Inspect the source family/type, host view, footprint, and existing clearance geometry. Return exact future steps for a new family/type, reload collision handling, an isolated pilot swap, rollback, and plan plus screenshot verification. Do NOT edit, create, save, duplicate, reload, or swap any family/type/instance. Return no modifications / no-op receipt."
+  );
+  assert.equal(exactSidecarExpandedFamilyEvolutionPlan.shouldStart, true);
+  assert.equal(exactSidecarExpandedFamilyEvolutionPlan.requestedEffect, "read");
   const dryRunLabeledReadOnlyFamilyPlan = classifyAutoGoalRequest(
     "Read-only, bounded family-evolution preflight. Do not edit, save, duplicate, reload, swap, or place anything. Produce an implementation-ready plan with exact future steps and explicitly state that this is a dry-run."
   );

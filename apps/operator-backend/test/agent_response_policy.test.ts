@@ -132,6 +132,16 @@ test("Codex, OpenAI, and external provider prompts all include the per-turn team
   assert.match(externalBrain, /formatAgentTurnContract\(currentUserRequest, req\.context\)/);
 });
 
+test("Codex settles the durable Assignment before publishing turn completion", () => {
+  const codexBrain = readRepoFile("operator-backend/src/brains/codex_brain.ts");
+  const settlement = codexBrain.lastIndexOf("assignmentObserver.finish(turnId, assistantText, teammateReceipt);");
+  const completion = codexBrain.lastIndexOf("cb.onDone?.(assistantText);");
+
+  assert.notEqual(settlement, -1);
+  assert.notEqual(completion, -1);
+  assert.ok(settlement < completion, "Assignment settlement must precede the response completion signal");
+});
+
 test("pre-model redline routing uses async recovery bridge", () => {
   const openAiBrain = readRepoFile("operator-backend/src/brains/openai_brain.ts");
 
