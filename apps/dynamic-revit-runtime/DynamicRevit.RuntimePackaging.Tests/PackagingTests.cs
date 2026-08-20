@@ -15,6 +15,7 @@ public sealed class PackagingTests : IDisposable
     [InlineData("2023", "net48")]
     [InlineData("2024", "net48")]
     [InlineData("2025", "net8.0-windows")]
+    [InlineData("2026", "net8.0-windows")]
     public void Trusted_manifest_selects_exact_host_identity(string year, string framework)
     {
         var path = WriteCapabilitiesManifest();
@@ -29,7 +30,7 @@ public sealed class PackagingTests : IDisposable
     public void Trusted_manifest_fails_closed_for_unknown_year()
     {
         var manifest = RevitHostCapabilityManifest.LoadTrusted(WriteCapabilitiesManifest());
-        var error = Assert.Throws<InvalidOperationException>(() => manifest.Select("2026"));
+        var error = Assert.Throws<InvalidOperationException>(() => manifest.Select("2027"));
         Assert.Contains("not present", error.Message);
     }
 
@@ -43,7 +44,8 @@ public sealed class PackagingTests : IDisposable
         var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
 
         Assert.True(result.Ok, string.Join(Environment.NewLine, result.Errors));
-        Assert.Equal(15, result.VerifiedArtifacts.Count);
+        Assert.Equal(17, result.VerifiedArtifacts.Count);
+        Assert.Contains("manifests/dynamic-revit-execution-protocol.v1.json", result.VerifiedArtifacts);
         Assert.Contains("manifests/dynamic-revit-annotation-operations.v1.json", result.VerifiedArtifacts);
         Assert.Contains("manifests/dynamic-revit-mep-mutations.v1.json", result.VerifiedArtifacts);
         Assert.Equal(DynamicRuntimePackageDirectoryIdentity.Compute(Path.Combine(_root, package.Supervisor.RelativePath)), package.Supervisor.Sha256);
@@ -159,6 +161,22 @@ public sealed class PackagingTests : IDisposable
     }
 
     [Fact]
+    public void Package_verifier_binds_execution_protocol_identity_and_bounds()
+    {
+        var capabilitiesPath = WriteCapabilitiesManifest();
+        var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
+        var package = WritePackage(capabilitiesPath, sdkManifestHash);
+        var path = Path.Combine(_root, package.ExecutionProtocolContract.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"maximumSteps\":256", "\"maximumSteps\":255", StringComparison.Ordinal));
+        package.ExecutionProtocolContract.Sha256 = HashFile(path);
+
+        var result = RuntimePackageVerifier.Verify(_root, package, capabilitiesPath, sdkManifestHash);
+
+        Assert.False(result.Ok);
+        Assert.Contains(result.Errors, error => error.Contains("Execution protocol contract manifest content is invalid", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Package_verifier_binds_annotation_operations_to_exact_sdk_surface()
     {
         var capabilitiesPath = WriteCapabilitiesManifest(); var sdkManifestHash = "sha256:" + HashText("trusted-sdk-manifest");
@@ -200,6 +218,7 @@ public sealed class PackagingTests : IDisposable
             BuildingSystemsObservationContract = Artifact("manifests/dynamic-revit-building-systems-observations.v1.json", BuildingSystemsObservationContractManifest()),
             CoreOperationsContract = Artifact("manifests/dynamic-revit-operations-core.v1.json", CoreOperationsContractManifest()),
             ResultReferenceContract = Artifact("manifests/dynamic-revit-result-reference-graph.v1.json", ResultReferenceContractManifest()),
+            ExecutionProtocolContract = Artifact("manifests/dynamic-revit-execution-protocol.v1.json", ExecutionProtocolContractManifest()),
             AnnotationOperationsContract = Artifact("manifests/dynamic-revit-annotation-operations.v1.json", AnnotationOperationsContractManifest()),
             MepMutationContract = Artifact("manifests/dynamic-revit-mep-mutations.v1.json", File.ReadAllText(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "manifests", "dynamic-revit-mep-mutations.v1.json")))),
             SandboxProfile = "windows-lpac-v1-zero-capabilities",
@@ -209,7 +228,8 @@ public sealed class PackagingTests : IDisposable
             [
                 new() { RevitYear = "2023", TargetFramework = "net48", Artifact = Artifact("hosts/2023/DynamicRevitHost.dll", "host-2023") },
                 new() { RevitYear = "2024", TargetFramework = "net48", Artifact = Artifact("hosts/2024/DynamicRevitHost.dll", "host-2024") },
-                new() { RevitYear = "2025", TargetFramework = "net8.0-windows", Artifact = Artifact("hosts/2025/DynamicRevitHost.dll", "host-2025") }
+                new() { RevitYear = "2025", TargetFramework = "net8.0-windows", Artifact = Artifact("hosts/2025/DynamicRevitHost.dll", "host-2025") },
+                new() { RevitYear = "2026", TargetFramework = "net8.0-windows", Artifact = Artifact("hosts/2026/DynamicRevitHost.dll", "host-2026") }
             ]
         };
     }
@@ -294,6 +314,7 @@ public sealed class PackagingTests : IDisposable
         manifestVersion = "1.0.0",
         contractManifestHash = DynamicResultReferenceManifestV1.ManifestHash,
         contractSurfaceHash = DynamicResultReferenceManifestV1.ContractSurfaceHash,
+        executionProtocolIdentity = DynamicExecutionProtocolV1.ContractIdentity,
         graphSchema = DynamicResultReferenceContractV1.GraphSchema,
         outputFactSchema = DynamicResultReferenceContractV1.OutputFactSchema,
         receiptSchema = DynamicResultReferenceContractV1.ReceiptSchema,
@@ -305,6 +326,24 @@ public sealed class PackagingTests : IDisposable
         maximumAttributesPerNode = DynamicResultReferenceContractV1.MaximumAttributesPerNode,
         maximumBuildingSystemsPages = DynamicResultReferenceContractV1.MaximumBuildingSystemsPages,
         maximumTrustedExternalTargets = DynamicResultReferenceContractV1.MaximumTrustedExternalTargets,
+        productionExposed = false
+    });
+
+    private static string ExecutionProtocolContractManifest() => JsonSerializer.Serialize(new
+    {
+        schema = DynamicExecutionProtocolV1.ManifestSchema,
+        manifestVersion = "1.0.0",
+        contractIdentity = DynamicExecutionProtocolV1.ContractIdentity,
+        traceSchema = DynamicExecutionProtocolV1.TraceSchema,
+        factRequestSchema = DynamicExecutionProtocolV1.FactRequestSchema,
+        maximumSteps = DynamicExecutionProtocolV1.MaximumSteps,
+        maximumAssertions = DynamicExecutionProtocolV1.MaximumAssertions,
+        maximumFactReferencesPerStep = DynamicExecutionProtocolV1.MaximumFactReferencesPerStep,
+        maximumNodesPerStep = DynamicExecutionProtocolV1.MaximumNodesPerStep,
+        maximumFactRequestSelectors = DynamicExecutionProtocolV1.MaximumFactRequestSelectors,
+        exactObservationProvenance = true,
+        deterministicReplayRequired = true,
+        authorizationGranted = false,
         productionExposed = false
     });
 

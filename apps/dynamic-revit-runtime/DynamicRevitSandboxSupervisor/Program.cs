@@ -65,7 +65,11 @@ internal static class Program
         var source = await File.ReadAllTextAsync(config.SourceFile);
         var token = (await File.ReadAllTextAsync(config.OperatorTokenFile)).Trim();
         if (token.Length < 16) throw new InvalidOperationException("Operator token file is empty or invalid.");
-        var writeGrant = ReadWriteGrantForMode(config.OperatorTokenFile, config.Apply);
+        // Result-reference programs may legitimately stop after compilation with a bounded,
+        // non-authorizing request for more observations. Do not require mutation authority for
+        // bootstrap, snapshot, observation, compilation, or that feedback response. Load the
+        // grant only after the worker has produced a complete executable graph.
+        var writeGrant = ReadWriteGrantForMode(config.OperatorTokenFile, RequiresInitialWriteGrant(config));
         using var profile = WindowsSandboxProfile.Create(lessPrivileged: true);
         profile.GrantTaskLayout(taskRoot, workspace.RuntimeDirectory, scratch);
         var runtimeId = Guid.NewGuid().ToString("N");
@@ -180,12 +184,37 @@ internal static class Program
         var sourceHash = output.GetProperty("sourceHash").GetString()!;
         var programHash = output.GetProperty("programHash").GetString()!;
         var sdkHash = output.GetProperty("sdkHash").GetString()!;
+        if (config.ResultReference && output.TryGetProperty("executionStatus", out var executionStatus) &&
+            executionStatus.GetString() == "needs_facts")
+        {
+            if (resultReferenceInput == null) throw new InvalidOperationException("Needs-facts output is missing its authenticated observation context.");
+            var result = output.GetProperty("resultReferenceProgramResult").Deserialize<DynamicResultReferenceProgramResultV1>(Json)
+                ?? throw new InvalidOperationException("Needs-facts worker result is malformed.");
+            if (result.FactRequest == null) throw new InvalidOperationException("Needs-facts worker result omitted its exact fact request.");
+            DynamicExecutionProtocolV1.ValidateFactRequest(result.FactRequest);
+            DynamicExecutionProtocolV1.ValidateTrace(result.ExecutionTrace, null, result.FactRequest);
+            DynamicExecutionProtocolV1.ValidateTraceFactReferences(result.ExecutionTrace, resultReferenceInput.Pages);
+            if (config.RequireExecutionTrace && result.ExecutionTrace.Steps.Count == 0)
+                throw new InvalidOperationException("This execution lane requires at least one explicit semantic trace step.");
+            return new LiveEvidence
+            {
+                Schema = "dynamic-revit-needs-facts-evidence/v1", Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
+                SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory,
+                RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count,
+                RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(),
+                BuildingSystemsObservationReceipts = resultReferenceInput.ObservationReceiptBodies,
+                ResultReferenceFactsReceipt = resultReferenceInput.FactsReceiptBody, HostAuthenticationReceipts = hostAuthentications,
+                TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage,
+                Failure = "additional_facts_required"
+            };
+        }
         if (contextRuleInput != null)
             return await CompleteCoreContextTask(config, started, taskRoot, workspace, profile, selectedHost, bootstrap, runtimeId, hostSessionKey,
                 token, writeGrant, registration, snapshotRaw, output.Clone(), sourceHash, programHash, sdkHash, snapshotInputHash, contextRuleInput, hostAuthentications);
         if (config.ResultReference)
         {
             if (resultReferenceInput == null) throw new InvalidOperationException("Result-reference observation state is missing.");
+            if (config.Apply) writeGrant = ReadWriteGrantForMode(config.OperatorTokenFile, apply: true);
             return await CompleteResultReferenceTask(config, started, taskRoot, workspace, profile, selectedHost, bootstrap, runtimeId, hostSessionKey,
                 token, writeGrant, registration, snapshotRaw, output.Clone(), sourceHash, programHash, sdkHash, snapshotInputHash, resultReferenceInput, hostAuthentications);
         }
@@ -545,6 +574,11 @@ internal static class Program
         var result = resultElement.Deserialize<DynamicResultReferenceProgramResultV1>(Json) ?? throw new InvalidOperationException("Result-reference program result is malformed.");
         if (result.Schema != DynamicResultReferenceContractV1.ProgramResultSchema || result.ContractManifestHash != DynamicResultReferenceManifestV1.ManifestHash)
             throw new InvalidOperationException("Result-reference program result contract was substituted.");
+        if (result.FactRequest != null) throw new InvalidOperationException("A needs-facts result cannot enter preview or apply.");
+        DynamicExecutionProtocolV1.ValidateTrace(result.ExecutionTrace, result.Graph, null);
+        DynamicExecutionProtocolV1.ValidateTraceFactReferences(result.ExecutionTrace, observation.Pages);
+        if (config.RequireExecutionTrace && result.ExecutionTrace.Steps.Count == 0)
+            throw new InvalidOperationException("This execution lane requires explicit semantic steps covering the executable graph.");
         DynamicResultReferencePolicyV1.ValidateWorkerOutput(result.Graph, snapshotInputHash, result.Graph.DocumentFingerprint, result.Graph.DocumentSessionId, observation.DocumentRevision);
         if (result.Graph.DocumentFingerprint != observation.Pages[0].DocumentFingerprint || result.Graph.DocumentSessionId != observation.Pages[0].DocumentSessionId ||
             result.Graph.DocumentRevision != observation.DocumentRevision)
@@ -692,6 +726,8 @@ internal static class Program
         if (string.IsNullOrWhiteSpace(token)) throw new InvalidOperationException("Operator write-grant file is empty or invalid.");
         return token;
     }
+
+    internal static bool RequiresInitialWriteGrant(LiveTaskConfig config) => config.Apply && !config.ResultReference;
 
     internal static DynamicOperationGraph GraphForApply(JsonElement graph)
     {
@@ -928,7 +964,7 @@ internal sealed class LiveTaskConfig
 {
     public string WorkerDirectory { get; set; } = ""; public string EvidencePath { get; set; } = ""; public string BridgeUrl { get; set; } = "http://127.0.0.1:5000"; public string OperatorTokenFile { get; set; } = ""; public string SourceFile { get; set; } = "";
     public string TargetRevitYear { get; set; } = ""; public string? Category { get; set; } public int Limit { get; set; } = 200; public string[] Parameters { get; set; } = Array.Empty<string>(); public int OperationBudget { get; set; } = 16; public int WorkerDeadlineMs { get; set; } = 10_000; public bool Apply { get; set; } public int ApplyDeadlineMs { get; set; } = 5000;
-    public bool ResultReference { get; set; } public DynamicBuildingSystemsSelectorV1? BuildingSystemsSelector { get; set; }
+    public bool ResultReference { get; set; } public bool RequireExecutionTrace { get; set; } public DynamicBuildingSystemsSelectorV1? BuildingSystemsSelector { get; set; }
     public string[] ResultReferenceTargetUniqueIds { get; set; } = Array.Empty<string>(); public DynamicEffectBudgetV1? ResultReferenceEffectBudget { get; set; }
     public string? ContextRuleFile { get; set; } public string? ContextRuleVerificationKeyFile { get; set; }
     public string ContextCompanyId { get; set; } = ""; public string ContextUserId { get; set; } = "";

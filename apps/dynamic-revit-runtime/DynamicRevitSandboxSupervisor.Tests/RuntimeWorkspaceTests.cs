@@ -149,6 +149,169 @@ public sealed class Generated : IDynamicCoreRevitProgramV1 {
     }
 
     [Fact]
+    public void WorkerAttestsCompiledIdentityTraceAndDeterministicReplay()
+    {
+        const string source = """
+using System.Collections.Generic;
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
+  public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) {
+    var operation = c.Plan.AddOperation("create_family_instance", null, null,
+      new[] { new DynamicResultOutputSpecV1 { OutputSlot="created", ExpectedCategoryStableId="category:builtin:OST_GenericModel", ExpectedTypeUniqueId="type:generic" } },
+      new Dictionary<string,string> { ["family_type_identity"]="type:generic", ["placement"]="1,2,3" });
+    c.TraceStep("create-instance", "Create one typed instance.", new[] { operation });
+    c.Require("one-operation", "create-instance", true, "Exactly one operation was planned.", "cardinality");
+    c.Report("planned", "1");
+    return c.Complete();
+  }
+}
+""";
+        var first = WorkerExecutor.Execute(ExecutionWorkerInput(source));
+        var second = WorkerExecutor.Execute(ExecutionWorkerInput(source));
+
+        Assert.True(first.Ok, Diagnostic(first));
+        Assert.Equal("completed", first.ExecutionStatus);
+        Assert.True(first.DeterministicReplayVerified);
+        Assert.Matches("^sha256:[0-9a-f]{64}$", first.CompiledAssemblyHash);
+        Assert.Equal(first.CompiledAssemblyHash, second.CompiledAssemblyHash);
+        Assert.Equal(first.ExecutionIdentityHash, second.ExecutionIdentityHash);
+        var result = Assert.IsType<DynamicResultReferenceProgramResultV1>(first.ResultReferenceProgramResult);
+        Assert.Equal(result.Graph.GraphHash, result.ExecutionTrace.GraphHash);
+        Assert.Equal(result.Graph.Nodes.Single().NodeId, result.ExecutionTrace.Steps.Single().NodeIds.Single());
+    }
+
+    [Fact]
+    public void WorkerReturnsBoundedNonAuthorizingNeedFactsInsteadOfGuessing()
+    {
+        const string source = """
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
+  public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) {
+    c.TraceStep("inspect-connectors", "Inspect exact connector facts before planning.");
+    return c.NeedFacts("mechanical-connectors", "Need exact bounded equipment connector facts.",
+      new DynamicBuildingSystemsSelectorV1 { Kinds=new[] { "equipment" }, PageSize=32 });
+  }
+}
+""";
+        var output = WorkerExecutor.Execute(ExecutionWorkerInput(source));
+
+        Assert.True(output.Ok, Diagnostic(output));
+        Assert.Equal("needs_facts", output.ExecutionStatus);
+        Assert.True(output.DeterministicReplayVerified);
+        var result = Assert.IsType<DynamicResultReferenceProgramResultV1>(output.ResultReferenceProgramResult);
+        Assert.Empty(result.Graph.Nodes);
+        Assert.NotNull(result.FactRequest);
+        Assert.False(result.FactRequest!.AuthorizationGranted);
+        Assert.False(result.ExecutionTrace.AuthorizationGranted);
+    }
+
+    [Fact]
+    public void WorkerReportsExactAssertionRepairCoordinates()
+    {
+        const string source = """
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
+  public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) {
+    c.TraceStep("select-endpoints", "Select two compatible endpoints.");
+    c.Require("two-endpoints", "select-endpoints", false, "Expected exactly two compatible endpoints.", "cardinality");
+    return c.Complete();
+  }
+}
+""";
+        var output = WorkerExecutor.Execute(ExecutionWorkerInput(source));
+
+        Assert.False(output.Ok);
+        var diagnostic = Assert.Single(output.Diagnostics);
+        Assert.Equal("PROGRAM_ASSERTION_FAILED", diagnostic.Code);
+        Assert.Equal("select-endpoints", diagnostic.StepId);
+        Assert.Equal("two-endpoints", diagnostic.AssertionId);
+        Assert.True(diagnostic.Retryable);
+        Assert.Equal("execute", diagnostic.Phase);
+        Assert.Equal("revise_plan_or_request_facts", diagnostic.RepairAction);
+        Assert.Matches("^sha256:[0-9a-f]{64}$", output.DiagnosticBundleHash);
+    }
+
+    [Fact]
+    public void WorkerCompilerDiagnosticsExposeExactRangesStableIdentityAndRepairAction()
+    {
+        const string source = """
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicRevitProgram {
+  public DynamicProgramResult Execute(DynamicRevitContext c) {
+    var broken = ;
+    return c.Complete();
+  }
+}
+""";
+        var first = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = new DynamicTaskInput { OperationBudget = 1 } });
+        var second = WorkerExecutor.Execute(new WorkerInput { Source = source, Input = new DynamicTaskInput { OperationBudget = 1 } });
+
+        Assert.False(first.Ok);
+        var diagnostic = Assert.Single(first.Diagnostics);
+        Assert.StartsWith("CS", diagnostic.Code);
+        Assert.Equal("compile", diagnostic.Phase);
+        Assert.Equal("error", diagnostic.Severity);
+        Assert.Equal("edit_source", diagnostic.RepairAction);
+        Assert.True(diagnostic.Retryable);
+        Assert.NotNull(diagnostic.Line);
+        Assert.NotNull(diagnostic.Column);
+        Assert.NotNull(diagnostic.EndLine);
+        Assert.NotNull(diagnostic.EndColumn);
+        Assert.Matches("^sha256:[0-9a-f]{64}$", first.DiagnosticBundleHash);
+        Assert.Equal(first.DiagnosticBundleHash, second.DiagnosticBundleHash);
+    }
+
+    [Fact]
+    public void WorkerRejectsNondeterministicGeneratedOutputBeforePreview()
+    {
+        const string source = """
+using System;
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
+  public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) {
+    c.Report("nonce", Guid.NewGuid().ToString("N"));
+    return c.NeedFacts("more-facts", "Request deterministic facts while returning a nondeterministic report.",
+      new DynamicBuildingSystemsSelectorV1 { Kinds=new[] { "equipment" }, PageSize=8 });
+  }
+}
+""";
+        var output = WorkerExecutor.Execute(ExecutionWorkerInput(source));
+
+        Assert.False(output.Ok);
+        var diagnostic = Assert.Single(output.Diagnostics);
+        Assert.True(diagnostic.Code == "NONDETERMINISTIC_PROGRAM", Diagnostic(output));
+        Assert.Equal("deterministic_replay", diagnostic.Phase);
+        Assert.Equal("remove_nondeterminism", diagnostic.RepairAction);
+        Assert.Null(output.ResultReferenceProgramResult);
+    }
+
+    [Fact]
+    public void DeterministicReplayUsesIndependentInputSnapshots()
+    {
+        const string source = """
+using RevitOperator.DynamicRevitSdk;
+public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
+  public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) {
+    var observed = c.Input.Document.Title;
+    c.Input.Document.Title = "generated-code-mutation";
+    c.Report("observed_title", observed);
+    return c.NeedFacts("more", "Need one bounded follow-up scope.",
+      new DynamicBuildingSystemsSelectorV1 { Kinds=new[] { "equipment" }, PageSize=8 });
+  }
+}
+""";
+        var input = ExecutionWorkerInput(source);
+        input.Input.Document.Title = "immutable-fixture";
+
+        var output = WorkerExecutor.Execute(input);
+
+        Assert.True(output.Ok, Diagnostic(output));
+        Assert.True(output.DeterministicReplayVerified);
+        Assert.Equal("immutable-fixture", output.Report["observed_title"]);
+        Assert.Equal("immutable-fixture", input.Input.Document.Title);
+    }
+
+    [Fact]
     public void RuntimeImageHashesTheExactPackagedDependencySet()
     {
         using var temporary = new TemporaryDirectory();
@@ -243,6 +406,14 @@ public sealed class Generated : IDynamicCoreRevitProgramV1 {
     }
 
     [Fact]
+    public void ResultReferenceObservationAndNeedsFactsDoNotRequirePrematureMutationAuthority()
+    {
+        Assert.False(Program.RequiresInitialWriteGrant(new LiveTaskConfig { ResultReference = true, Apply = true }));
+        Assert.False(Program.RequiresInitialWriteGrant(new LiveTaskConfig { ResultReference = true, Apply = false }));
+        Assert.True(Program.RequiresInitialWriteGrant(new LiveTaskConfig { ResultReference = false, Apply = true }));
+    }
+
+    [Fact]
     public void ApplyGraphConvertsCamelWorkerWireToExactSnakeWire()
     {
         using var document = JsonDocument.Parse("""
@@ -304,6 +475,21 @@ public sealed class Generated : IDynamicCoreRevitProgramV1 {
         Directory.SetCreationTimeUtc(path, createdUtc);
         return path;
     }
+
+    private static WorkerInput ExecutionWorkerInput(string source) => new()
+    {
+        Source = source,
+        DeadlineMs = 10_000,
+        Input = new DynamicTaskInput
+        {
+            Document = new DynamicDocumentDto { ProjectFingerprint = DynamicWire.Sha256("execution-worker-document"), SessionId = "execution-worker-session" },
+            OperationBudget = 16
+        },
+        ResultReferenceDocumentRevision = 1
+    };
+
+    private static string Diagnostic(RevitOperator.DynamicRevitWorker.WorkerOutput output) =>
+        string.Join("; ", output.Diagnostics.Select(value => value.Code + ":" + value.Message));
 
     private static DynamicStableReferenceV1 Reference(string kind, string uniqueId, long elementId) => new()
     {

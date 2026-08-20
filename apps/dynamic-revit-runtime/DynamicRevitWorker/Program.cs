@@ -38,7 +38,14 @@ internal sealed class WorkerOutput
     public bool Ok { get; set; }
     public string SourceHash { get; set; } = "";
     public string? ProgramHash { get; set; }
+    public string? CompiledAssemblyHash { get; set; }
     public string SdkHash { get; set; } = "";
+    public string ExecutionStatus { get; set; } = "failed";
+    public string? ExecutionIdentityHash { get; set; }
+    public bool DeterministicReplayVerified { get; set; }
+    public string DiagnosticBundleHash { get; set; } = "";
+    public long CompileElapsedMs { get; set; }
+    public long ExecutionElapsedMs { get; set; }
     public DynamicOperationGraph? Graph { get; set; }
     public DynamicResultReferenceProgramResultV1? ResultReferenceProgramResult { get; set; }
     public DynamicCoreProgramResultV1? CoreProgramResult { get; set; }
@@ -47,7 +54,96 @@ internal sealed class WorkerOutput
     public WorkerDiagnostic[] Diagnostics { get; set; } = Array.Empty<WorkerDiagnostic>();
 }
 
-internal sealed class WorkerDiagnostic { public string Code { get; set; } = ""; public string Message { get; set; } = ""; public int? Line { get; set; } }
+internal sealed class WorkerDiagnostic
+{
+    public string Code { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string Phase { get; set; } = "";
+    public string Severity { get; set; } = "error";
+    public string RepairAction { get; set; } = "";
+    public int? Line { get; set; }
+    public int? Column { get; set; }
+    public int? EndLine { get; set; }
+    public int? EndColumn { get; set; }
+    public string? StepId { get; set; }
+    public string? AssertionId { get; set; }
+    public bool Retryable { get; set; }
+}
+
+internal static class WorkerDiagnosticProtocol
+{
+    public static void Prepare(WorkerOutput output)
+    {
+        if (output.Diagnostics.Length > 32) output.Diagnostics = output.Diagnostics.Take(32).ToArray();
+        foreach (var diagnostic in output.Diagnostics)
+        {
+            diagnostic.Code = Bound(diagnostic.Code, 128, "WORKER_DIAGNOSTIC_INVALID");
+            diagnostic.Message = Bound(diagnostic.Message, 2_048, "Worker diagnostic message was empty.");
+            if (string.IsNullOrWhiteSpace(diagnostic.Phase)) diagnostic.Phase = PhaseFor(diagnostic.Code);
+            if (string.IsNullOrWhiteSpace(diagnostic.RepairAction)) diagnostic.RepairAction = RepairFor(diagnostic.Code);
+            diagnostic.Phase = Bound(diagnostic.Phase, 64, "worker");
+            diagnostic.Severity = Bound(diagnostic.Severity, 16, "error");
+            diagnostic.RepairAction = Bound(diagnostic.RepairAction, 96, "inspect_diagnostic");
+            diagnostic.StepId = BoundNullable(diagnostic.StepId, 128);
+            diagnostic.AssertionId = BoundNullable(diagnostic.AssertionId, 128);
+            if (!diagnostic.Retryable) diagnostic.Retryable = Repairable(diagnostic.Code);
+        }
+        var canonical = string.Join("\n", output.Diagnostics.Select(diagnostic => string.Join("|", new[]
+        {
+            diagnostic.Code, diagnostic.Phase, diagnostic.Severity, diagnostic.RepairAction,
+            diagnostic.Line?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            diagnostic.Column?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            diagnostic.EndLine?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            diagnostic.EndColumn?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
+            diagnostic.StepId ?? "", diagnostic.AssertionId ?? "", diagnostic.Retryable ? "1" : "0",
+            DynamicWire.Sha256(diagnostic.Message)
+        })));
+        output.DiagnosticBundleHash = DynamicWire.Sha256("dynamic-revit-worker-diagnostics/v1\n" + canonical);
+    }
+
+    private static bool Repairable(string code) =>
+        code.StartsWith("CS", StringComparison.Ordinal) || code is "POLICY_SOURCE_FORBIDDEN" or "REVIT_REFERENCE_FORBIDDEN" or
+        "PROGRAM_INTERFACE_REQUIRED" or "POLICY_SYMBOL_FORBIDDEN" or "METADATA_REFERENCE_FORBIDDEN" or "PINVOKE_FORBIDDEN" or
+        "PROGRAM_ASSERTION_FAILED" or "PROGRAM_EXCEPTION" or "NONDETERMINISTIC_PROGRAM" or "WORKER_DEADLINE" or
+        "INPUT_BUDGET" or "REPORT_BUDGET";
+
+    private static string PhaseFor(string code) => code switch
+    {
+        var value when value.StartsWith("CS", StringComparison.Ordinal) => "compile",
+        "POLICY_SOURCE_FORBIDDEN" or "REVIT_REFERENCE_FORBIDDEN" or "PROGRAM_INTERFACE_REQUIRED" or "POLICY_SYMBOL_FORBIDDEN" => "source_admission",
+        "METADATA_REFERENCE_FORBIDDEN" or "PINVOKE_FORBIDDEN" => "metadata_admission",
+        "PROGRAM_ASSERTION_FAILED" or "PROGRAM_EXCEPTION" or "WORKER_DEADLINE" => "execute",
+        "NONDETERMINISTIC_PROGRAM" => "deterministic_replay",
+        "REPORT_BUDGET" => "output_validation",
+        "WORKER_SCHEMA" or "SOURCE_SIZE" or "DEADLINE" or "INPUT_BUDGET" or "WORKER_INPUT_FAILURE" => "input_validation",
+        "SANDBOX_EXECUTION_FAILURE" => "sandbox",
+        _ => "worker"
+    };
+
+    private static string RepairFor(string code) => code switch
+    {
+        var value when value.StartsWith("CS", StringComparison.Ordinal) => "edit_source",
+        "POLICY_SOURCE_FORBIDDEN" or "REVIT_REFERENCE_FORBIDDEN" or "POLICY_SYMBOL_FORBIDDEN" or "METADATA_REFERENCE_FORBIDDEN" or "PINVOKE_FORBIDDEN" => "remove_forbidden_api",
+        "PROGRAM_INTERFACE_REQUIRED" => "implement_one_supported_program_interface",
+        "PROGRAM_ASSERTION_FAILED" => "revise_plan_or_request_facts",
+        "PROGRAM_EXCEPTION" => "inspect_trace_and_repair_source",
+        "NONDETERMINISTIC_PROGRAM" => "remove_nondeterminism",
+        "WORKER_DEADLINE" => "reduce_scope_or_optimize",
+        "INPUT_BUDGET" or "REPORT_BUDGET" => "reduce_scope_or_output",
+        "WORKER_SCHEMA" or "SOURCE_SIZE" or "DEADLINE" or "WORKER_INPUT_FAILURE" => "correct_invocation",
+        "SANDBOX_EXECUTION_FAILURE" => "inspect_runtime_package_or_retry",
+        _ => "inspect_diagnostic"
+    };
+
+    private static string Bound(string? value, int maximum, string fallback)
+    {
+        var text = string.IsNullOrWhiteSpace(value) ? fallback : value;
+        return text.Length <= maximum ? text : text[..maximum];
+    }
+
+    private static string? BoundNullable(string? value, int maximum) =>
+        string.IsNullOrWhiteSpace(value) ? null : value!.Length <= maximum ? value : value[..maximum];
+}
 
 internal static class Program
 {
@@ -81,13 +177,17 @@ internal static class Program
         {
             var raw = File.ReadAllText(args[1]);
             var input = JsonSerializer.Deserialize<WorkerInput>(raw, Json) ?? throw new InvalidOperationException("Worker input is empty.");
+            RuntimeMitigations.EnableMicrosoftSignedNativeImagesOnly();
             var output = WorkerExecutor.Execute(input);
+            WorkerDiagnosticProtocol.Prepare(output);
             Console.WriteLine(JsonSerializer.Serialize(output, Json));
             return output.Ok ? 0 : 1;
         }
         catch (Exception ex)
         {
-            Console.WriteLine(JsonSerializer.Serialize(new WorkerOutput { Ok = false, Diagnostics = new[] { new WorkerDiagnostic { Code = "WORKER_INPUT_FAILURE", Message = ex.Message } } }, Json));
+            var output = new WorkerOutput { Ok = false, Diagnostics = new[] { new WorkerDiagnostic { Code = "WORKER_INPUT_FAILURE", Message = ex.Message } } };
+            WorkerDiagnosticProtocol.Prepare(output);
+            Console.WriteLine(JsonSerializer.Serialize(output, Json));
             return 1;
         }
     }
@@ -164,13 +264,21 @@ internal static class SandboxPipeExecution
             channelKey = Convert.FromBase64String(envelope.RootElement.GetProperty("channelKeyBase64").GetString() ?? "");
             if (channelKey.Length != 32) throw new InvalidOperationException("Worker channel key must be 256 bits.");
             var request = envelope.RootElement.GetProperty("request").Deserialize<WorkerInput>(Compiler.Json) ?? throw new InvalidOperationException("Worker request is missing.");
+            RuntimeMitigations.EnableMicrosoftSignedNativeImagesOnly();
             var output = WorkerExecutor.Execute(request);
+            WorkerDiagnosticProtocol.Prepare(output);
             SandboxPipe.SendNamed(outputPipeName, nonce, correlation, channelKey, output);
             return output.Ok ? 0 : 1;
         }
         catch (Exception ex)
         {
-            try { SandboxPipe.SendNamed(outputPipeName, nonce, correlation, channelKey, new WorkerOutput { Ok = false, Diagnostics = new[] { new WorkerDiagnostic { Code = "SANDBOX_EXECUTION_FAILURE", Message = ex.Message } } }); } catch { }
+            try
+            {
+                var output = new WorkerOutput { Ok = false, Diagnostics = new[] { new WorkerDiagnostic { Code = "SANDBOX_EXECUTION_FAILURE", Message = ex.Message } } };
+                WorkerDiagnosticProtocol.Prepare(output);
+                SandboxPipe.SendNamed(outputPipeName, nonce, correlation, channelKey, output);
+            }
+            catch { }
             return 1;
         }
     }
@@ -251,68 +359,180 @@ internal static class WorkerExecutor
     {
         var source = request.Source?.Replace("\r\n", "\n").Replace("\r", "\n") ?? "";
         var output = new WorkerOutput { SourceHash = DynamicWire.Sha256(source), SdkHash = DynamicRevitSdkVersion.ManifestHash };
+        try
+        {
         if (request.Schema != "dynamic-revit-worker-input/v0") return Fail(output, "WORKER_SCHEMA", "Unsupported worker input schema.");
         if (source.Length is < 1 or > 128_000) return Fail(output, "SOURCE_SIZE", "Source must be between 1 and 128000 characters.");
         if (request.DeadlineMs is < 100 or > 30_000) return Fail(output, "DEADLINE", "Deadline must be 100 through 30000 ms.");
         if (request.Input.OperationBudget is < 1 or > 256 || request.Input.Elements.Count > 5_000) return Fail(output, "INPUT_BUDGET", "Input budget or element count is outside the experimental bounds.");
 
+        var compileClock = Stopwatch.StartNew();
         var admission = StaticAdmission.Check(source);
         if (admission.Length > 0) { output.Diagnostics = admission; return output; }
         var compilation = Compiler.Compile(source);
+        output.CompileElapsedMs = compileClock.ElapsedMilliseconds;
         if (compilation.Diagnostics.Length > 0) { output.Diagnostics = compilation.Diagnostics; return output; }
         output.ProgramHash = DynamicWire.Sha256(Convert.ToBase64String(compilation.Assembly!));
+        output.CompiledAssemblyHash = DynamicWire.Sha256(compilation.Assembly!);
         var metadata = StaticAdmission.CheckMetadata(compilation.Assembly!);
         if (metadata.Length > 0) { output.Diagnostics = metadata; return output; }
 
-        RuntimeMitigations.EnableMicrosoftSignedNativeImagesOnly();
         using var timeout = new CancellationTokenSource(request.DeadlineMs);
         try
         {
-            var task = Task.Run(() => ExecuteAssembly(compilation.Assembly!, request.Input, request.ResultReferenceDocumentRevision,
-                request.ResultReferenceSnapshotHash, request.ResultReferenceScopeHash, request.BuildingSystemsPages, request.TrustedExternalTargets,
-                request.VerifiedContextRule, request.ContextObservationPages), timeout.Token);
+            var executionClock = Stopwatch.StartNew();
+            // Each replay receives its own JSON-round-tripped immutable snapshot so generated code
+            // cannot influence the verification pass by mutating shared DTO instances. The two
+            // collectible load contexts run concurrently: deterministic replay costs CPU, but does
+            // not normally double wall-clock latency.
+            var firstRequest = CloneExecutionRequest(request);
+            var secondRequest = CloneExecutionRequest(request);
+            var firstTask = Task.Run(() => ExecuteRequest(compilation.Assembly!, firstRequest), timeout.Token);
+            var secondTask = Task.Run(() => ExecuteRequest(compilation.Assembly!, secondRequest), timeout.Token);
+            var task = Task.WhenAll(firstTask, secondTask);
             if (!task.Wait(request.DeadlineMs)) return Fail(output, "WORKER_DEADLINE", "Program exceeded its worker deadline.");
-            var result = task.GetAwaiter().GetResult();
+            var pair = task.GetAwaiter().GetResult();
+            output.ExecutionElapsedMs = executionClock.ElapsedMilliseconds;
+            NormalizeAndValidate(pair[0], firstRequest);
+            NormalizeAndValidate(pair[1], secondRequest);
+            var firstIdentity = ExecutionIdentity(pair[0]);
+            var secondIdentity = ExecutionIdentity(pair[1]);
+            if (!string.Equals(firstIdentity, secondIdentity, StringComparison.Ordinal))
+                return Fail(output, "NONDETERMINISTIC_PROGRAM", "Identical immutable inputs produced different execution outputs.");
+            output.ExecutionIdentityHash = firstIdentity;
+            output.DeterministicReplayVerified = true;
+            var result = pair[0];
             var report = result.Legacy?.Report ?? result.ResultReference?.Report ?? result.Core?.Report;
             if (report == null || report.Count > 64 || report.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 128 || pair.Value == null || pair.Value.Length > 1024)) return Fail(output, "REPORT_BUDGET", "Structured report exceeds the bounded SDK contract.");
             if (result.Legacy != null)
             {
-                result.Legacy.Graph.InputHash = DynamicWire.InputHash(request.Input);
-                result.Legacy.Graph.GraphHash = DynamicWire.GraphHash(result.Legacy.Graph);
                 output.Graph = result.Legacy.Graph;
                 output.Logs = result.Legacy.Logs.Take(64).ToArray();
             }
             else if (result.ResultReference != null)
             {
                 var reference = result.ResultReference ?? throw new InvalidOperationException("Generated result-reference program returned no result.");
-                if (request.ResultReferenceDocumentRevision == null) return Fail(output, "RESULT_REFERENCE_REVISION", "Result-reference programs require an exact document revision.");
-                DynamicResultReferencePolicyV1.ValidateWorkerOutput(reference.Graph, DynamicWire.InputHash(request.Input), request.Input.Document.ProjectFingerprint,
-                    request.Input.Document.SessionId, request.ResultReferenceDocumentRevision.Value);
-                if (reference.Schema != DynamicResultReferenceContractV1.ProgramResultSchema || reference.ContractManifestHash != DynamicResultReferenceManifestV1.ManifestHash)
-                    return Fail(output, "RESULT_REFERENCE_CONTRACT", "Result-reference program result contract was substituted.");
                 output.ResultReferenceProgramResult = reference;
                 output.Logs = reference.Logs.Take(64).ToArray();
+                output.ExecutionStatus = reference.FactRequest == null ? "completed" : "needs_facts";
             }
             else
             {
                 var core = result.Core ?? throw new InvalidOperationException("Generated core program returned no result.");
-                if (request.ResultReferenceDocumentRevision == null || request.VerifiedContextRule == null) return Fail(output, "CORE_CONTEXT", "Core programs require an exact verified context rule and document revision.");
-                if (core.Schema != "dynamic-revit-core-program-result/v1") return Fail(output, "CORE_CONTRACT", "Core program result contract was substituted.");
-                DynamicContextRulePolicyV1.ValidateBinding(request.VerifiedContextRule);
-                if (core.Graph.InputHash != DynamicWire.InputHash(request.Input) || core.Graph.DocumentFingerprint != request.Input.Document.ProjectFingerprint ||
-                    core.Graph.DocumentRevision != request.ResultReferenceDocumentRevision.Value || core.Graph.ContextRuleRecordId != request.VerifiedContextRule.RecordId ||
-                    core.Graph.ContextRuleRecordHash != request.VerifiedContextRule.RecordHash || core.Graph.ContextRuleBindingHash != request.VerifiedContextRule.BindingHash ||
-                    core.Graph.GraphHash != DynamicOperationGraphV1Admission.GraphHash(core.Graph)) return Fail(output, "CORE_BINDING", "Core graph is not bound to the exact verified rule and worker input.");
                 output.CoreProgramResult = core; output.Logs = core.Logs.Take(64).ToArray();
             }
             output.Report = new Dictionary<string, string>(report, StringComparer.Ordinal);
+            if (output.ExecutionStatus == "failed") output.ExecutionStatus = "completed";
             output.Ok = true;
             return output;
         }
         catch (Exception ex)
         {
-            return Fail(output, "PROGRAM_EXCEPTION", ex.GetBaseException().Message);
+            var assertion = FindAssertion(ex);
+            if (assertion != null)
+            {
+                output.Diagnostics = new[] { new WorkerDiagnostic
+                {
+                    Code = "PROGRAM_ASSERTION_FAILED", Message = assertion.Message, StepId = assertion.StepId,
+                    AssertionId = assertion.AssertionId, Retryable = true
+                } };
+                return output;
+            }
+            var root = ex.GetBaseException();
+            return Fail(output, "PROGRAM_EXCEPTION", root.Message);
         }
+        }
+        finally
+        {
+            WorkerDiagnosticProtocol.Prepare(output);
+        }
+    }
+
+    private static DynamicProgramAssertionException? FindAssertion(Exception error)
+    {
+        if (error is DynamicProgramAssertionException assertion) return assertion;
+        if (error is AggregateException aggregate)
+            return aggregate.Flatten().InnerExceptions.Select(FindAssertion).FirstOrDefault(value => value != null);
+        return error.InnerException == null ? null : FindAssertion(error.InnerException);
+    }
+
+    private static WorkerInput CloneExecutionRequest(WorkerInput request) =>
+        JsonSerializer.Deserialize<WorkerInput>(JsonSerializer.Serialize(request, Compiler.Json), Compiler.Json)
+        ?? throw new InvalidOperationException("Worker execution snapshot could not be cloned.");
+
+    private static ExecutedProgram ExecuteRequest(byte[] assembly, WorkerInput request) => ExecuteAssembly(assembly, request.Input,
+        request.ResultReferenceDocumentRevision, request.ResultReferenceSnapshotHash, request.ResultReferenceScopeHash,
+        request.BuildingSystemsPages, request.TrustedExternalTargets, request.VerifiedContextRule, request.ContextObservationPages);
+
+    private static void NormalizeAndValidate(ExecutedProgram result, WorkerInput request)
+    {
+        ValidateStructuredOutput(result);
+        if (result.Legacy != null)
+        {
+            result.Legacy.Graph.InputHash = DynamicWire.InputHash(request.Input);
+            result.Legacy.Graph.GraphHash = DynamicWire.GraphHash(result.Legacy.Graph);
+            return;
+        }
+        if (result.ResultReference != null)
+        {
+            var reference = result.ResultReference;
+            if (request.ResultReferenceDocumentRevision == null) throw new InvalidOperationException("Result-reference programs require an exact document revision.");
+            if (reference.Schema != DynamicResultReferenceContractV1.ProgramResultSchema || reference.ContractManifestHash != DynamicResultReferenceManifestV1.ManifestHash)
+                throw new InvalidOperationException("Result-reference program result contract was substituted.");
+            if (reference.FactRequest != null)
+            {
+                if (reference.Graph.Nodes.Count != 0) throw new InvalidOperationException("A needs-facts result cannot also return executable graph nodes.");
+                DynamicExecutionProtocolV1.ValidateFactRequest(reference.FactRequest);
+                DynamicExecutionProtocolV1.ValidateTrace(reference.ExecutionTrace, null, reference.FactRequest);
+                DynamicExecutionProtocolV1.ValidateTraceFactReferences(reference.ExecutionTrace, request.BuildingSystemsPages);
+            }
+            else
+            {
+                DynamicResultReferencePolicyV1.ValidateWorkerOutput(reference.Graph, DynamicWire.InputHash(request.Input), request.Input.Document.ProjectFingerprint,
+                    request.Input.Document.SessionId, request.ResultReferenceDocumentRevision.Value);
+                DynamicExecutionProtocolV1.ValidateTrace(reference.ExecutionTrace, reference.Graph, null);
+                DynamicExecutionProtocolV1.ValidateTraceFactReferences(reference.ExecutionTrace, request.BuildingSystemsPages);
+            }
+            return;
+        }
+        var core = result.Core ?? throw new InvalidOperationException("Generated program returned no supported result.");
+        if (request.ResultReferenceDocumentRevision == null || request.VerifiedContextRule == null) throw new InvalidOperationException("Core programs require an exact verified context rule and document revision.");
+        if (core.Schema != "dynamic-revit-core-program-result/v1") throw new InvalidOperationException("Core program result contract was substituted.");
+        DynamicContextRulePolicyV1.ValidateBinding(request.VerifiedContextRule);
+        if (core.Graph.InputHash != DynamicWire.InputHash(request.Input) || core.Graph.DocumentFingerprint != request.Input.Document.ProjectFingerprint ||
+            core.Graph.DocumentRevision != request.ResultReferenceDocumentRevision.Value || core.Graph.ContextRuleRecordId != request.VerifiedContextRule.RecordId ||
+            core.Graph.ContextRuleRecordHash != request.VerifiedContextRule.RecordHash || core.Graph.ContextRuleBindingHash != request.VerifiedContextRule.BindingHash ||
+            core.Graph.GraphHash != DynamicOperationGraphV1Admission.GraphHash(core.Graph))
+            throw new InvalidOperationException("Core graph is not bound to the exact verified rule and worker input.");
+    }
+
+    private static string ExecutionIdentity(ExecutedProgram result)
+    {
+        var report = result.Legacy?.Report ?? result.ResultReference?.Report ?? result.Core?.Report ??
+            throw new InvalidOperationException("Generated program report is missing.");
+        var logs = result.Legacy?.Logs ?? result.ResultReference?.Logs ?? result.Core?.Logs ?? Array.Empty<string>();
+        var outputIdentity = result.Legacy != null ? "legacy\n" + result.Legacy.Graph.GraphHash :
+            result.ResultReference != null ? "result-reference\n" +
+                (result.ResultReference.FactRequest?.RequestHash ?? result.ResultReference.Graph.GraphHash) + "\n" +
+                result.ResultReference.ExecutionTrace.TraceHash :
+            "core\n" + result.Core!.Graph.GraphHash;
+        var logIdentity = string.Concat(logs.Select(DynamicWire.Sha256));
+        var reportIdentity = string.Concat(report.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => DynamicWire.Sha256(pair.Key) + DynamicWire.Sha256(pair.Value)));
+        return DynamicWire.Sha256(outputIdentity + "\nlogs:" + logIdentity + "\nreport:" + reportIdentity);
+    }
+
+    private static void ValidateStructuredOutput(ExecutedProgram result)
+    {
+        var report = result.Legacy?.Report ?? result.ResultReference?.Report ?? result.Core?.Report ??
+            throw new InvalidOperationException("Generated program report is missing.");
+        var logs = result.Legacy?.Logs ?? result.ResultReference?.Logs ?? result.Core?.Logs ??
+            throw new InvalidOperationException("Generated program logs are missing.");
+        if (logs.Count > 64 || logs.Any(value => value == null || value.Length > 512))
+            throw new InvalidOperationException("Generated program logs exceed the bounded SDK contract.");
+        if (report.Count > 64 || report.Any(pair => string.IsNullOrWhiteSpace(pair.Key) || pair.Key.Length > 128 ||
+            pair.Value == null || pair.Value.Length > 1024))
+            throw new InvalidOperationException("Structured report exceeds the bounded SDK contract.");
     }
 
     private sealed class ExecutedProgram
@@ -390,7 +610,23 @@ internal static class Compiler
         var emit = compilation.Emit(stream);
         if (!emit.Success)
         {
-            return new Result { Diagnostics = emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(32).Select(d => new WorkerDiagnostic { Code = d.Id, Message = d.GetMessage(), Line = d.Location.GetLineSpan().StartLinePosition.Line + 1 }).ToArray() };
+            return new Result { Diagnostics = emit.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).Take(32).Select(d =>
+            {
+                var span = d.Location.GetLineSpan();
+                return new WorkerDiagnostic
+                {
+                    Code = d.Id,
+                    Message = d.GetMessage(),
+                    Phase = "compile",
+                    Severity = "error",
+                    RepairAction = "edit_source",
+                    Retryable = true,
+                    Line = span.IsValid ? span.StartLinePosition.Line + 1 : null,
+                    Column = span.IsValid ? span.StartLinePosition.Character + 1 : null,
+                    EndLine = span.IsValid ? span.EndLinePosition.Line + 1 : null,
+                    EndColumn = span.IsValid ? span.EndLinePosition.Character + 1 : null
+                };
+            }).ToArray() };
         }
         return new Result { Assembly = stream.ToArray() };
     }

@@ -19,7 +19,7 @@ export type DynamicProgramAdmissionV1 = {
   sandbox_profile_version: string;
   sandbox_profile_hash: string;
   authenticated_worker_identity_hash: string;
-  target_revit_version: "2023" | "2024" | "2025";
+  target_revit_version: "2023" | "2024" | "2025" | "2026";
   host_adapter_manifest_hash: string;
   document_fingerprint: string;
   document_session_id: string;

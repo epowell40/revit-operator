@@ -42,7 +42,8 @@ public static class DynamicResultReferenceManifestV1
         DynamicResultReferenceContractV1.MaximumReferencesPerNode.ToString(CultureInfo.InvariantCulture),
         DynamicResultReferenceContractV1.MaximumAttributesPerNode.ToString(CultureInfo.InvariantCulture),
         DynamicResultReferenceContractV1.MaximumBuildingSystemsPages.ToString(CultureInfo.InvariantCulture),
-        DynamicResultReferenceContractV1.MaximumTrustedExternalTargets.ToString(CultureInfo.InvariantCulture), SurfaceHashValue));
+        DynamicResultReferenceContractV1.MaximumTrustedExternalTargets.ToString(CultureInfo.InvariantCulture),
+        DynamicExecutionProtocolV1.ContractIdentity, SurfaceHashValue));
 
     public static string ContractSurfaceHash => SurfaceHashValue;
     public static string ManifestHash => ManifestHashValue;
@@ -210,6 +211,8 @@ public sealed class DynamicResultReferenceProgramResultV1
     public string Schema { get; set; } = DynamicResultReferenceContractV1.ProgramResultSchema;
     public string ContractManifestHash { get; set; } = DynamicResultReferenceManifestV1.ManifestHash;
     public DynamicResultReferenceGraphV1 Graph { get; set; } = new();
+    public DynamicProgramFactRequestV1? FactRequest { get; set; }
+    public DynamicProgramExecutionTraceV1 ExecutionTrace { get; set; } = new();
     public IReadOnlyList<string> Logs { get; set; } = Array.Empty<string>();
     public IReadOnlyDictionary<string, string> Report { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
 }
@@ -240,10 +243,15 @@ public sealed partial class DynamicResultReferenceProgramContextV1
         if (_report.Count >= 64 || !DynamicCanonical.Id(key, 128) || value == null || value.Length > 1024) throw new ArgumentException("Result-reference structured report is invalid or unbounded.");
         _report[key] = value;
     }
-    public DynamicResultReferenceProgramResultV1 Complete() => new()
+    public DynamicResultReferenceProgramResultV1 Complete()
     {
-        Graph = Plan.Build(), Logs = _logs.ToArray(), Report = new Dictionary<string, string>(_report, StringComparer.Ordinal)
-    };
+        var graph = Plan.Build();
+        return new DynamicResultReferenceProgramResultV1
+        {
+            Graph = graph, ExecutionTrace = CompleteExecutionTrace(graph), Logs = _logs.ToArray(),
+            Report = new Dictionary<string, string>(_report, StringComparer.Ordinal)
+        };
+    }
 }
 
 public sealed class DynamicResultReferenceGraphBuilderV1

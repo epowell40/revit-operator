@@ -18,6 +18,7 @@
     <None Include="..\manifests\dynamic-revit-building-systems-observations.v1.json" Link="manifests\dynamic-revit-building-systems-observations.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\dynamic-revit-operations-core.v1.json" Link="manifests\dynamic-revit-operations-core.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\dynamic-revit-result-reference-graph.v1.json" Link="manifests\dynamic-revit-result-reference-graph.v1.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\manifests\dynamic-revit-execution-protocol.v1.json" Link="manifests\dynamic-revit-execution-protocol.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\dynamic-revit-annotation-operations.v1.json" Link="manifests\dynamic-revit-annotation-operations.v1.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\manifests\dynamic-revit-mep-mutations.v1.json" Link="manifests\dynamic-revit-mep-mutations.v1.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

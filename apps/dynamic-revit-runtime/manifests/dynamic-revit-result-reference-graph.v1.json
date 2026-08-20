@@ -1,8 +1,9 @@
 {
   "schema": "dynamic-revit-result-reference-manifest/v1",
   "manifestVersion": "1.0.0",
-  "contractManifestHash": "sha256:03a7a296eb10044416078851fa5f30a3048fda1e50316a9d9ae0785536f97701",
-  "contractSurfaceHash": "sha256:72f6f0015f2796f12befb2f94b3421ca61a8022e94e75ed3790dbef8af73f55d",
+  "contractManifestHash": "sha256:f2eb7499a0e70d271b0e11f2a15f7147f78d8fe80b6cfdfa90888d747fc4e364",
+  "contractSurfaceHash": "sha256:f34e0d5d6f02137c1b0329868d91443a30d3d7ce53ad4763a03eb42dbbea4272",
+  "executionProtocolIdentity": "sha256:bfa77c4c4c44fa0ab7625f01009e9a5ec3b0f1823ebf26a50c4fbe6b4244d6a6",
   "graphSchema": "dynamic-revit-result-reference-graph/v1",
   "outputFactSchema": "dynamic-revit-result-output-fact/v1",
   "receiptSchema": "dynamic-revit-result-reference-receipt/v1",

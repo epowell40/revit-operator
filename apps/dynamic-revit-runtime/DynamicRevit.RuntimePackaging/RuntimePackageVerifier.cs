@@ -20,6 +20,7 @@ public sealed class DynamicRuntimePackageManifest
     public PackageArtifactIdentity BuildingSystemsObservationContract { get; set; } = new();
     public PackageArtifactIdentity CoreOperationsContract { get; set; } = new();
     public PackageArtifactIdentity ResultReferenceContract { get; set; } = new();
+    public PackageArtifactIdentity ExecutionProtocolContract { get; set; } = new();
     public PackageArtifactIdentity AnnotationOperationsContract { get; set; } = new();
     public PackageArtifactIdentity MepMutationContract { get; set; } = new();
     public string SandboxProfile { get; set; } = "";
@@ -96,6 +97,7 @@ public static class RuntimePackageVerifier
         VerifyArtifact(root, "building-systems observation contract", package.BuildingSystemsObservationContract, result);
         VerifyArtifact(root, "core operations contract", package.CoreOperationsContract, result);
         VerifyArtifact(root, "result-reference contract", package.ResultReferenceContract, result);
+        VerifyArtifact(root, "execution protocol contract", package.ExecutionProtocolContract, result);
         VerifyArtifact(root, "annotation operations contract", package.AnnotationOperationsContract, result);
         VerifyArtifact(root, "MEP mutation contract", package.MepMutationContract, result);
         VerifySandboxPolicy(root, package, result);
@@ -103,6 +105,7 @@ public static class RuntimePackageVerifier
         VerifyBuildingSystemsObservationContract(root, package, result);
         VerifyCoreOperationsContract(root, package, result);
         VerifyResultReferenceContract(root, package, result);
+        VerifyExecutionProtocolContract(root, package, result);
         VerifyAnnotationOperationsContract(root, package, result);
         VerifyMepMutationContract(root, package, result);
         foreach (var relativeCapabilitiesPath in new[] { "manifests/revit-host-capabilities.v1.json", "supervisor/manifests/revit-host-capabilities.v1.json" })
@@ -363,12 +366,13 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var value = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "maximumBuildingSystemsPages", "maximumTrustedExternalTargets", "productionExposed" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "executionProtocolIdentity", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "maximumBuildingSystemsPages", "maximumTrustedExternalTargets", "productionExposed" };
             var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 value.GetProperty("schema").GetString() != DynamicResultReferenceContractV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
                 value.GetProperty("contractManifestHash").GetString() != DynamicResultReferenceManifestV1.ManifestHash ||
                 value.GetProperty("contractSurfaceHash").GetString() != DynamicResultReferenceManifestV1.ContractSurfaceHash ||
+                value.GetProperty("executionProtocolIdentity").GetString() != DynamicExecutionProtocolV1.ContractIdentity ||
                 value.GetProperty("graphSchema").GetString() != DynamicResultReferenceContractV1.GraphSchema ||
                 value.GetProperty("outputFactSchema").GetString() != DynamicResultReferenceContractV1.OutputFactSchema ||
                 value.GetProperty("receiptSchema").GetString() != DynamicResultReferenceContractV1.ReceiptSchema ||
@@ -386,6 +390,42 @@ public static class RuntimePackageVerifier
         catch (Exception ex)
         {
             result.Errors.Add("Result-reference contract manifest content is invalid: " + ex.Message);
+        }
+    }
+
+    private static void VerifyExecutionProtocolContract(string root, DynamicRuntimePackageManifest package, RuntimePackageVerification result)
+    {
+        if (package.ExecutionProtocolContract is null) return;
+        try
+        {
+            ValidateSafeRelativePath(package.ExecutionProtocolContract.RelativePath, "execution protocol contract");
+            var path = Path.GetFullPath(Path.Combine(root, package.ExecutionProtocolContract.RelativePath));
+            if (!File.Exists(path)) return;
+            using var document = JsonDocument.Parse(File.ReadAllBytes(path));
+            var value = document.RootElement;
+            var expectedFields = new[] { "schema", "manifestVersion", "contractIdentity", "traceSchema", "factRequestSchema", "maximumSteps", "maximumAssertions", "maximumFactReferencesPerStep", "maximumNodesPerStep", "maximumFactRequestSelectors", "exactObservationProvenance", "deterministicReplayRequired", "authorizationGranted", "productionExposed" };
+            var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
+            if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length ||
+                fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
+                value.GetProperty("schema").GetString() != DynamicExecutionProtocolV1.ManifestSchema ||
+                string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
+                value.GetProperty("contractIdentity").GetString() != DynamicExecutionProtocolV1.ContractIdentity ||
+                value.GetProperty("traceSchema").GetString() != DynamicExecutionProtocolV1.TraceSchema ||
+                value.GetProperty("factRequestSchema").GetString() != DynamicExecutionProtocolV1.FactRequestSchema ||
+                value.GetProperty("maximumSteps").GetInt32() != DynamicExecutionProtocolV1.MaximumSteps ||
+                value.GetProperty("maximumAssertions").GetInt32() != DynamicExecutionProtocolV1.MaximumAssertions ||
+                value.GetProperty("maximumFactReferencesPerStep").GetInt32() != DynamicExecutionProtocolV1.MaximumFactReferencesPerStep ||
+                value.GetProperty("maximumNodesPerStep").GetInt32() != DynamicExecutionProtocolV1.MaximumNodesPerStep ||
+                value.GetProperty("maximumFactRequestSelectors").GetInt32() != DynamicExecutionProtocolV1.MaximumFactRequestSelectors ||
+                value.GetProperty("exactObservationProvenance").ValueKind != JsonValueKind.True ||
+                value.GetProperty("deterministicReplayRequired").ValueKind != JsonValueKind.True ||
+                value.GetProperty("authorizationGranted").ValueKind != JsonValueKind.False ||
+                value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
+                throw new InvalidDataException("Execution protocol manifest identity, bounds, or field set is invalid.");
+        }
+        catch (Exception ex)
+        {
+            result.Errors.Add("Execution protocol contract manifest content is invalid: " + ex.Message);
         }
     }
 

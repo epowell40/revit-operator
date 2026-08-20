@@ -1,0 +1,16 @@
+{
+  "schema": "dynamic-revit-execution-protocol-manifest/v1",
+  "manifestVersion": "1.0.0",
+  "contractIdentity": "sha256:bfa77c4c4c44fa0ab7625f01009e9a5ec3b0f1823ebf26a50c4fbe6b4244d6a6",
+  "traceSchema": "dynamic-revit-execution-trace/v1",
+  "factRequestSchema": "dynamic-revit-fact-request/v1",
+  "maximumSteps": 256,
+  "maximumAssertions": 256,
+  "maximumFactReferencesPerStep": 128,
+  "maximumNodesPerStep": 64,
+  "maximumFactRequestSelectors": 256,
+  "exactObservationProvenance": true,
+  "deterministicReplayRequired": true,
+  "authorizationGranted": false,
+  "productionExposed": false
+}
