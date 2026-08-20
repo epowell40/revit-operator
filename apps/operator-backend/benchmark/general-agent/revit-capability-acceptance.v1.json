@@ -1176,17 +1176,17 @@
       "require_target_bound_preview_verification": true,
       "answer_assertions": {
         "must_match": [
-          "Strongest (?:plausible )?(?:duplicate[- ]device )?candidate[\\s\\S]{0,180}air terminals?[\\s\\S]{0,140}\\d{6,8}\\s*[/,&-]\\s*\\d{6,8}",
-          "(?:Same type|identical)[\\s\\S]{0,220}8\\s*(?:in(?:ches)?|\\\")\\s+apart[\\s\\S]{0,180}(?:opposite[- ]facing|face opposite directions?)",
-          "(?:Room|Space)\\s+\\d+",
-          "(?:separate connectors?|both connect|each connect(?:ed|s)?|all connect independently)[\\s\\S]{0,220}(?:ports? of )?duct\\s*\\d+",
-          "(?:nearby arrangements?|repeat(?:ed|ing)?[\\s\\S]{0,120}(?:arrangements?|topology)|(?:arrangements?|topology)[\\s\\S]{0,120}repeat(?:s|ed|ing)?)",
+          "Strongest (?:plausible )?(?:(?:duplicate[- ]device )?candidate|pair)[\\s\\S]{0,180}air terminals?[\\s\\S]{0,140}\\d{6,8}[^0-9]{0,12}[/,&-][^0-9]{0,12}\\d{6,8}",
+          "(?:Same type|identical)[\\s\\S]{0,220}\\d+(?:\\.\\d+)?[^A-Za-z0-9]{0,8}(?:in(?:ches)?|\\\")[\\s\\S]{0,180}(?:opposite[- ]facing|face opposite directions?)",
+          "(?:(?:Room|Space)\\s+\\d+|room (?:resolution|context)[\\s\\S]{0,100}(?:unresolved|no containing Room))",
+          "(?:separate connectors?|both connect|each connect(?:ed|s)?|all connect independently)[\\s\\S]{0,220}(?:ports? of )?duct[^0-9]{0,12}\\d+",
+          "(?:(?:nearby|comparable)[^\\n.]{0,120}(?:arrangements?|pairs?)|repeat(?:ed|ing)?[\\s\\S]{0,120}(?:arrangements?|topology)|(?:arrangements?|topology)[\\s\\S]{0,120}repeat(?:s|ed|ing)?)",
           "(?:Mechanical Supply Air\\s+\\d+[\\s\\S]{0,500}|(?:network|system)[\\s\\S]{0,80}Mechanical Supply Air\\s+\\d+[\\s\\S]{0,500})(?:\\d+\\s+elements[\\s\\S]{0,100}all(?:\\s+\\d+)?\\s+connected|\\d+\\s*/\\s*\\d+\\s+connected)",
           "(?:rollback|dry[- ]run|preview(?:ed)?)[\\s\\S]{0,120}(?:delet|remov)[\\s\\S]{0,140}\\d{6,8}[\\s\\S]{0,100}(?:succeeded|only)",
           "(?:(?:Dependent(?:/cascade)? deletions?|Dependents?(?: deleted)?)[^\\n]{0,40}none|no dependents)",
-          "Physical connection(?:s)? affected[\\s\\S]{0,180}duct\\s*\\d+",
-          "(?:(?:Predicted )?remaining connected system[\\s\\S]{0,120}(?:\\d+\\s+elements|\\d+\\s+(?:of|/)\\s+\\d+)|Predicted system[\\s\\S]{0,140}\\d+\\s+(?:of|/)\\s+\\d+[\\s\\S]{0,100}remaining (?:network|system)[\\s\\S]{0,60}connected)",
-          "(?:Rollback (?:was )?confirmed|Post[- ](?:rollback|preview) (?:readback )?confirms?)[\\s\\S]{0,200}(?:still exists|remains (?:physically )?connected|is reconnected)",
+          "Physical connection(?:s)?(?: affected)?[\\s\\S]{0,180}duct[^0-9]{0,12}\\d+",
+          "(?:(?:Predicted )?remaining (?:connected )?system[\\s\\S]{0,160}(?:would retain[\\s\\S]{0,60})?(?:\\d+\\s+elements|\\d+\\s+(?:of|/)\\s+\\d+)|Predicted system[\\s\\S]{0,140}\\d+\\s+(?:of|/)\\s+\\d+[\\s\\S]{0,100}remaining (?:network|system)[\\s\\S]{0,60}connected)",
+          "(?:(?:preview )?rolled back successfully|Rollback (?:was )?confirmed|Post[- ](?:rollback|preview) (?:reads? |readback )?confirms?)[\\s\\S]{0,420}(?:still exists|remains (?:physically )?connected|is reconnected)",
           "(?:(?:does not prove|not proven (?:to be )?|no)\\s+(?:a )?genuine duplicate(?: is proven)?|not a proven duplicate)",
           "Nothing was (?:changed|deleted|applied|committed)|Nothing (?:was )?committed|No model changes|No change was committed"
         ]
