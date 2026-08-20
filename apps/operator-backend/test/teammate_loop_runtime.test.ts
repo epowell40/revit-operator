@@ -58,6 +58,57 @@ test("verified mutation stages may continue while retries and unverified chainin
   }
 });
 
+test("text type discovery remains read-only before a create-text dry-run", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Preview a VERIFY ROUTING IN FIELD note on the Level 4 plan. Do not create it."));
+  try {
+    const listTypes = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/create-text",
+        body: { action: "list_types", text: "", typeName: "" }
+      }
+    });
+    assert.equal(listTypes.allowed, true);
+    assert.equal(listTypes.call?.effect, "read");
+    recordTeammateMcpResult(owner, listTypes, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, count: 1, textTypes: [{ id: 7001, name: "3/32\" Arial" }] }) }]
+    });
+
+    const preview = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/create-text",
+        body: {
+          action: "create",
+          viewId: 1363433,
+          x: -118,
+          y: 66,
+          widthFt: 0.12,
+          text: "VERIFY ROUTING IN FIELD",
+          typeName: "3/32\" Arial",
+          dryRun: true
+        }
+      }
+    });
+    assert.equal(preview.allowed, true);
+    assert.equal(preview.call?.effect, "preview");
+    recordTeammateMcpResult(owner, preview, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, status: "Success", dryRun: true, rollbackVerified: true }) }]
+    });
+
+    const receipt = teammateLoopReceiptForOwner(owner);
+    assert.equal(receipt?.apply_attempts, 0);
+    assert.deepEqual(receipt?.preview_action_ids, ["mcp:1"]);
+    assert.equal(receipt?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("an assistant report of an incomplete mutation overrides an optimistic receipt", () => {
   const receipt = reconcileTeammateReceiptWithAssistant({
     schema: "revit-operator.teammate-loop-receipt.v1",

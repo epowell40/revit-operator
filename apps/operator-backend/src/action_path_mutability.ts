@@ -146,6 +146,14 @@ export function conditionalActionPathEffect(pathname: string, body?: unknown): C
     if (action !== "rename_types" && action !== "purge_unused_in_family") return "read";
     return row.dryRun === true ? "preview" : "apply";
   }
+  // Text-note type discovery shares the create endpoint with the mutating
+  // action. Treat only the explicit inventory sub-action as observational;
+  // creation still follows the handler's dry-run/apply contract.
+  if (normalized === "/revit/create-text") {
+    const action = typeof row.action === "string" ? row.action.trim().toLowerCase() : "create";
+    if (action === "list_types") return "read";
+    return row.dryRun === true || row.dry_run === true || row.preview === true || row.apply === false ? "preview" : "apply";
+  }
   return undefined;
 }
 
