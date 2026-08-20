@@ -1385,6 +1385,39 @@ test("a durable blocked assignment remains an accepted clarification when essent
   assert.equal(result.verified, false);
 });
 
+test("an evidence-backed markup task accepts a required target selection without relabeling it completion", () => {
+  const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c25_duct_12x10_markup")!, false);
+  const assistantMessage = `### Blocked — no eligible preview target
+
+Live Revit evidence resolved Space 405 on L4, but a complete room-and-plenum scan found 0 duct curves, fittings, or terminals associated with it.
+
+Therefore, no exact branch segment or transition point could be grounded for a rollback preview. Nothing was applied. The markup image/location or target duct selection is needed to continue.`;
+  const attempt = {
+    ok: true,
+    effect_state: "read_only_dispatched" as const,
+    assistant_message: assistantMessage,
+    actions: [
+      { path: "/revit/resolve-room-plan-view", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/ducts-by-spatial-scope", request_effect: "read", request_dispatched: true, status: "success" }
+    ],
+    assignment_projection: { assignments: [{ lifecycle: { phase: "blocked" } }] }
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+
+  const unqualifiedBlocker = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace(
+      "The markup image/location or target duct selection is needed to continue.",
+      "No eligible preview target exists."
+    )
+  });
+  assert.equal(unqualifiedBlocker.tier, "failed");
+  assert.equal(unqualifiedBlocker.completed, false);
+});
+
 test("planned, previewed, completed, and verified remain distinct truth tiers", () => {
   const previewCase = corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!;
   const applyCase = { ...previewCase, expected_effect: "apply" as const };
