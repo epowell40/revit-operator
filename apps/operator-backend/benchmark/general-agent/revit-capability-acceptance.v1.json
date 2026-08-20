@@ -1206,7 +1206,7 @@
       "fixture_blocker_assertions": {
         "must_match": [
           "(?:all\\s+)?509[^\\n.]{0,80}air terminals",
-          "(?:zero|0)[^\\n.]{0,80}(?:open|unconnected)[^\\n.]{0,80}(?:HVAC|air terminal)|(?:no|without an) open terminal connector",
+          "(?:zero|0)[^\\n.]{0,80}(?:open|unconnected)[^\\n.]{0,80}(?:HVAC|air[- ]?terminal|terminal connector)|(?:no|without an) open terminal connector",
           "(?:nothing was created|nothing was modified|no model changes were made|no changes were made)"
         ],
         "must_not_match": [

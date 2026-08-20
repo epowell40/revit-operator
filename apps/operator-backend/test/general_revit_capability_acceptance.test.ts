@@ -496,7 +496,7 @@ test("the terse diffuser-route blocker uses the same complete connector-evidence
       { path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" },
       { path: "/revit/get-connectors", request_effect: "read", request_dispatched: true, status: "success" }
     ],
-    assistant_message: "Blocked by live model state: live inspection covered all 509 Air Terminals and found zero open HVAC air-terminal connectors. Without an open terminal connector, no route can be previewed. No model changes were made."
+    assistant_message: "Blocked by live model state: I exhaustively checked all 509 Air Terminals and their physical connectors. 332 are supply terminals and 0 are unconnected terminal connectors. Therefore, no defensible target exists for a rollback-only route preview. Nothing was created or connected."
   };
   const completeEvidence = evaluateGeneralRevitCapabilityAttempt(safeCase, {
     ...inspected,
