@@ -1340,6 +1340,36 @@ test("an evidence-backed wrong-sheet ambiguity is accepted without inventing pre
   assert.equal(result.verification_basis, "none");
 });
 
+test("a live peer-note investigation accepts plain target-ambiguity wording without inventing an edit", () => {
+  const productionCase = corpus.cases.find((candidate) => candidate.case_id === "c12_replace_outdated_note_terse")!;
+  const entry = generalRevitExecutionCase(productionCase, false);
+  const assistantMessage = `### Read-only finding
+
+No ventilation note exists on active sheet M000 or its placed drafting view. The most plausible target is TextNote 1487574 on nearby M101. Eleven peer notes use identical wording, so no newer replacement wording can be inferred. The target remains ambiguous without identifying the intended sheet/note. Nothing was edited.`;
+  const attempt = {
+    ok: true,
+    assistant_message: assistantMessage,
+    effect_state: "read_only_dispatched" as const,
+    actions: [
+      { path: "/revit/find-text-notes", request_effect: "read", request_dispatched: true, status: "success" },
+      { path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }
+    ]
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, attempt);
+  assert.equal(result.tier, "accepted");
+  assert.equal(result.completed, false);
+  assert.equal(result.verified, false);
+
+  const unqualifiedFinding = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: assistantMessage.replace(
+      "The target remains ambiguous without identifying the intended sheet/note.",
+      "No edit was previewed."
+    )
+  });
+  assert.equal(unqualifiedFinding.tier, "failed");
+});
+
 test("a target clarification cannot inherit completion or verification from a successful preview receipt", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!;
   const entry = { ...generalRevitExecutionCase(productionCase, false), answer_assertions: undefined };
