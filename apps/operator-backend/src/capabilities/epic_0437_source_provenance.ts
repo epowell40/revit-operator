@@ -39,7 +39,7 @@ const EPIC_0437_SOURCE_ROOT_FILES = [
 ] as const;
 
 const IGNORED_SOURCE_DIRECTORIES = new Set([".git", ".vs", "bin", "obj", "node_modules", "dist", "TestResults"]);
-const EPIC_0437_TEXT_SOURCE_EXTENSIONS = new Set([".addin", ".cs", ".csproj", ".json", ".md", ".ps1", ".sln", ".ts"]);
+const EPIC_0437_TEXT_SOURCE_EXTENSIONS = new Set([".addin", ".cs", ".csproj", ".js", ".json", ".md", ".ps1", ".sln", ".ts"]);
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
 function discoverSourceFiles(repoRoot: string, relativeRoot: string): string[] {

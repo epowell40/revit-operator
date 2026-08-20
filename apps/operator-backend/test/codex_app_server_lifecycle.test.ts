@@ -12,14 +12,24 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function fixturePath(): string {
+  const testDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.join(testDir, "fixtures", "codex_app_server_fixture.js"),
+    path.join(testDir, "..", "..", "test", "fixtures", "codex_app_server_fixture.js")
+  ];
+  const resolved = candidates.find(candidate => fs.existsSync(candidate));
+  assert.ok(resolved, `Codex app-server fixture is missing; checked: ${candidates.join(", ")}`);
+  return resolved;
+}
+
 function createClient(root: string, statePath: string, tracePath: string): CodexAppServer {
-  const fixturePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "codex_app_server_fixture.js");
   return new CodexAppServer({
     cwd: root,
     codexHome: path.join(root, ".codex"),
     spawnEnv: { ...process.env, CODEX_FIXTURE_STATE_PATH: statePath, CODEX_FIXTURE_TRACE_PATH: tracePath },
     command: process.execPath,
-    commandPrefixArgs: [fixturePath]
+    commandPrefixArgs: [fixturePath()]
   });
 }
 
