@@ -1209,6 +1209,32 @@ test("a successful tool document teaches the host the canonical typed route effe
   }
 });
 
+test("host-owned web evidence reads bypass the unknown Revit contract documentation gate", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(
+    "Research the authoritative Revit 2026 API change and inspect the live native fallback. Do not edit the model."
+  ));
+  try {
+    const evidence = guardTeammateMcpCall(owner, {
+      tool: "web_fetch_evidence",
+      arguments: { url: "https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API/" }
+    });
+    assert.equal(evidence.allowed, true);
+    assert.equal(evidence.call?.effect, "read");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+
+    const unknownRevitTool = guardTeammateMcpCall(owner, {
+      tool: "revit_custom_unknown",
+      arguments: { value: 1 }
+    });
+    assert.equal(unknownRevitTool.allowed, false);
+    assert.match(unknownRevitTool.message || "", /unknown revit contract/i);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("Revit document lifecycle commands authorize execution without treating no-element-edit wording as read-only", () => {
   const inspectOpenModel = buildTeammateTurnContract(request(
     "Inspect the open Revit model and count all HVAC air terminal diffusers."

@@ -1085,6 +1085,43 @@ test("authoritative Revit API research requires fetched primary-source and live 
   assert.equal(memoryOnlyCitation.tier, "failed");
 });
 
+test("authoritative Revit API assertions tolerate headings and bullet formatting without weakening required facts", () => {
+  const entry = corpus.cases.find((candidate) => candidate.case_id === "c43_research_revit2026_api_change")!;
+  const formattedAnswer = [
+    "## Revit 2026",
+    "- `ElementId.IntegerValue` is removed.",
+    "- `ElementId.Value` returns a `long` / `Int64`.",
+    "```csharp",
+    "#if REVIT2024_OR_GREATER",
+    "return new ElementId(longValue);",
+    "#else",
+    "return new ElementId(checked((int)value)); // IntegerValue-era API",
+    "#endif",
+    "```",
+    "A document-local ElementId numeric value is not a durable global identifier.",
+    "Persist UniqueId with document identity.",
+    "Source: https://help.autodesk.com/cloudhelp/2026/ENU/Revit-API-MainReference/files/html/example.htm",
+    "No model changes were made."
+  ].join("\n");
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: formattedAnswer,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/native-api-search", request_effect: "read", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: {
+      successful_paths: ["/revit/native-api-catalog", "/revit/native-api-search"],
+      successful_tools: ["revit_call_tool", "web_fetch_evidence"]
+    },
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [{ summary: "Live native and web evidence completed." }] },
+      verification: { state: "passed", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "read" }
+    }] }
+  } as const);
+  assert.equal(result.answer_assertion_passed, true);
+});
+
 test("both general-agent prompts require primary-source fetches for authoritative current research", () => {
   for (const prompt of [
     source("operator-backend/src/brains/codex_brain.ts"),
