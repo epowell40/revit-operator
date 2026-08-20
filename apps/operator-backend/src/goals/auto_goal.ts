@@ -1,5 +1,6 @@
 import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
 import { isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { hasAuthoritativeLeadingNoWriteFraming } from "../no_write_intent.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -41,6 +42,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
   const shouldStart = liveModelRequest || score >= 2;
   const documentLifecycleMutation = isAffirmativeDocumentLifecycleMutation(text);
+  const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
   const informationalReadOnlyPlan = isExplicitNoWriteRequest(text)
     && /\b(?:read[- ]only|discovery only|inspection only)\b/i.test(text)
     && /\b(?:plan|steps?|guidance|instructions?|recommendations?)\b/i.test(text)
@@ -50,7 +52,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
     && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"
-    : documentLifecycleMutation || (explicitMutation && !explicitNoWrite)
+    : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (explicitMutation && !explicitNoWrite)
       ? "apply"
       : "read";
   return {

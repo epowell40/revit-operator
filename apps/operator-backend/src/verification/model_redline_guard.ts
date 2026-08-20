@@ -5,6 +5,7 @@ import {
   type ChatResponse,
   type ToolResult
 } from "../contracts.js";
+import { isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
 
 const REDLINE_CONTEXT_RE = /\b(redline|mark[\s-]*up|marked|pick\s*up|pickup|attachment|attached|pdf)\b/i;
 const MODEL_OBJECT_RE =
@@ -93,25 +94,21 @@ function hasActionPath(actions: ActionCall[], paths: Set<string>): boolean {
   return actions.some(action => paths.has(normalizePath(action.path)));
 }
 
-function collectRequestText(req: ChatRequest): string {
-  const parts: string[] = [];
-  if (typeof req.user_text === "string") parts.push(req.user_text);
-  for (const attachment of Array.isArray(req.user_attachments) ? req.user_attachments : []) {
-    for (const value of [attachment.filename, attachment.relative_path, attachment.external_path, attachment.mime]) {
-      if (typeof value === "string") parts.push(value);
-    }
-  }
-  return parts.join("\n");
-}
-
 function requestHasModeledRedlineIntent(req: ChatRequest): boolean {
-  const text = collectRequestText(req);
-  if (!REDLINE_CONTEXT_RE.test(text)) return false;
-  return MODEL_OBJECT_RE.test(text) || DUCT_LABEL_RE.test(text);
+  const userText = typeof req.user_text === "string" ? req.user_text : "";
+  const attachments = Array.isArray(req.user_attachments) ? req.user_attachments : [];
+  const attachmentSignal = attachments.some(attachment => {
+    const filename = typeof attachment.filename === "string" ? attachment.filename : "";
+    const mime = typeof attachment.mime === "string" ? attachment.mime.trim().toLowerCase() : "";
+    return mime === "application/pdf" || /\b(?:redline|mark[\s-]*up|marked)\b/i.test(filename);
+  });
+  if (!REDLINE_CONTEXT_RE.test(userText) && !attachmentSignal) return false;
+  const modeledText = [userText, ...attachments.map(attachment => attachment.filename ?? "")].join("\n");
+  return MODEL_OBJECT_RE.test(modeledText) || DUCT_LABEL_RE.test(modeledText);
 }
 
 function requestExplicitlyAnnotationOnly(req: ChatRequest): boolean {
-  const text = collectRequestText(req);
+  const text = typeof req.user_text === "string" ? req.user_text : "";
   return TEXT_ANNOTATION_RE.test(text) && ANNOTATION_ONLY_RE.test(text);
 }
 
@@ -268,6 +265,7 @@ function appendAnnotationOnlyDisclosure(decision: ChatResponse): ChatResponse {
 }
 
 export function enforceModeledRedlineGuard(req: ChatRequest, decision: ChatResponse): ChatResponse {
+  if (isExplicitNoWriteRequest(req.user_text)) return decision;
   if (!requestHasModeledRedlineIntent(req)) return decision;
 
   const actions = Array.isArray(decision.actions) ? decision.actions : [];

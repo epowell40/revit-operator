@@ -646,6 +646,50 @@ test("finalizeDecision preserves read-only discovery actions for modeled PDF rec
   assert.match(res.assistant_message, /continuing with read-only/i);
 });
 
+test("finalizeDecision does not treat automatic screenshot storage as modeled redline intent", () => {
+  const req = {
+    ...mkReq("Inspect one equipment family and report its visible clearance geometry."),
+    user_attachments: [
+      {
+        id: "desktop-1",
+        relative_path: "artifacts/attachments/desktop-screenshot.png",
+        filename: "desktop-screenshot.png",
+        mime: "image/png"
+      }
+    ]
+  };
+
+  const res = __testOnlyFinalizeDecision(req, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Completed the read-only equipment-family investigation.",
+    actions: []
+  });
+
+  assert.equal(res.assistant_message, "Completed the read-only equipment-family investigation.");
+});
+
+test("finalizeDecision never promotes an explicit read-only redline inspection into a model-write requirement", () => {
+  const req = {
+    ...mkReq("Read-only inspection only: inspect the attached marked.pdf for equipment-family clearance intent and report a plan. Do not edit the model."),
+    user_attachments: [
+      {
+        id: "pdf-1",
+        relative_path: "artifacts/uploads/marked.pdf",
+        filename: "marked.pdf",
+        mime: "application/pdf"
+      }
+    ]
+  };
+
+  const res = __testOnlyFinalizeDecision(req, {
+    version: OPERATOR_BACKEND_CONTRACT_VERSION,
+    assistant_message: "Completed the requested read-only clearance investigation and plan.",
+    actions: []
+  });
+
+  assert.equal(res.assistant_message, "Completed the requested read-only clearance investigation and plan.");
+});
+
 test("finalizeDecision allows explicit annotation-only duct notes but labels them as not modeled pickup", () => {
   const req = mkReq(
     "Add a red text note for the duct redline reading 11 x 10 SOUND LINED; this is annotation only, not a model element."

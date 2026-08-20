@@ -1154,6 +1154,12 @@ test("Revit document lifecycle commands authorize execution without treating no-
   assert.equal(buildTeammateTurnContract(request("Open the Level 2 equipment schedule.")).turn_kind, "navigation");
 });
 
+test("authoritative read-only family investigation is not promoted by incidental open-family wording", () => {
+  const prompt = "Read-only investigation only; do not edit the model, open/edit/reload any family, change types, swap instances, or create files. In the currently open Snowdon Towers Revit model, find one placed equipment family instance and return a bounded family-evolution plan explicitly marked not executed. No changes whatsoever.";
+
+  assert.equal(classifyAgentTurn(prompt), "inspection");
+});
+
 test("Codex MCP host guard treats serialized HTTP bodies like object bodies", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

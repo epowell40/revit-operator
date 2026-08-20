@@ -1273,7 +1273,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal.ts",
-      "sha256": "sha256:38060e7cc9c6c9835ab772ac9714fc2853708f8063ae6107a95e5c14ad89cd14"
+      "sha256": "sha256:6460ad6ec97a7b0842ae6aaa516e74065652a0db2f825cad8d3e54310f700547"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
@@ -1385,7 +1385,7 @@
     },
     {
       "path": "apps/operator-backend/src/no_write_intent.ts",
-      "sha256": "sha256:ad94b5ed9b391555aea26d3d3c7fad281aa300e7f07d3689ee1315d7796890a9"
+      "sha256": "sha256:320326606bf1a74a6454dfdb3fb1e7386fd5ea5ab3db0cc5cd4ccd1e5067d98e"
     },
     {
       "path": "apps/operator-backend/src/openai_client.ts",
@@ -1569,7 +1569,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:50d29028016dd0fddfcf4f0eeee0a8e4996a11fa4e400973c3c3ad3acc92c94e"
+      "sha256": "sha256:2cb98455b9db4b1ba1f2e3a9054a77eb6b1ca9f8843d82e824c58d622e0ea6b2"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -1717,7 +1717,7 @@
     },
     {
       "path": "apps/operator-backend/src/verification/model_redline_guard.ts",
-      "sha256": "sha256:c0359cfa94070fde4077d67509b41d6181faa26799d7cb8cc41de3c44d102ded"
+      "sha256": "sha256:67399f7654ac020f8b0ea605a525da910190e16c7accfe42e8e7e235432b4fb5"
     },
     {
       "path": "apps/operator-backend/src/verification/redline_visual_verification_gate.ts",
@@ -1885,7 +1885,7 @@
     },
     {
       "path": "apps/operator-backend/test/brain.test.ts",
-      "sha256": "sha256:37c2729a8de74a09c40da1bda664c35f576b03eef9fcc43249a6a62eb3a02009"
+      "sha256": "sha256:f13817a7599edec13f0ff3c504c1b6466d789ded3d2576f893851ba4c79a674a"
     },
     {
       "path": "apps/operator-backend/test/certified_sidecar_capability.test.ts",
@@ -2349,7 +2349,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:040d9c5305e915f54ef5559adfc653f760323fc05f49594a30ca71aecf439ce4"
+      "sha256": "sha256:2d0f025759ac06529b49c9da0f7a41e86c11c5742f6c80b5bc3e8b620df9b630"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -2625,7 +2625,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:9773be6943d788eed3c8d3a943d9482bd00004da05c1ec74d9401885f2a2daa9"
+      "sha256": "sha256:99e112f48851226be12aa6bd78afe8836a6b72e51042743d4d81acc3a4337e0c"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -4705,7 +4705,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:94462eb83d7ceec2beb0b943fe5dde4018acd249a18b448adcf1ec36a1c0968a",
+  "inputs_hash": "sha256:96d739161771eb7abda5d467c1fb510f59e5addb4c7d60a9f0501fd9e3dcc9b9",
   "result": {
     "passed": true,
     "checks": [
