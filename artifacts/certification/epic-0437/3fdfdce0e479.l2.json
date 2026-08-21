@@ -1701,7 +1701,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:3b0930dec46a0558d8e78126d65ec35c1d79326350d57c21d731014f7a3c486b"
+      "sha256": "sha256:f3c1885d123bbc5a6e0d36a907e33c263b8ed10f456ea537578ae73fe217c33f"
     },
     {
       "path": "apps/operator-backend/src/goals/list_cache.ts",
@@ -2781,7 +2781,7 @@
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:55141850fa91045e252b9bfc76eb4d7d1a6691f268e5165048b3b199ddb284b0"
+      "sha256": "sha256:08b2b3d5d98ee9e3ca4bc14ef7fb6fd7107e29055c4bae323a3da8211dcce3f9"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -5157,7 +5157,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:be67830e2a2f39e225ca5de864ea9b35f39dbb7b17ffdd751fbb496ffbc614ef",
+  "inputs_hash": "sha256:47b0d4385b9805a4ddc6cd58005f503a3d22e0cef0ebe917522a84f4b91ca5dc",
   "result": {
     "passed": true,
     "checks": [
