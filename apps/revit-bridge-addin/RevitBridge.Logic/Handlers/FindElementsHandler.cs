@@ -264,7 +264,9 @@ namespace RevitBridge.Logic.Handlers
                 if (includeResultItems)
                 {
                     var nested = e as FamilyInstance;
-                    var geometry = p?.includeGeometry == true ? BuildGeometrySummary(e) : null;
+                    var geometry = p?.includeGeometry == true
+                        ? BuildGeometrySummary(e, ResolveGeometryView(doc, candidate))
+                        : null;
                     items.Add(new
                     {
                         elementId,
@@ -338,7 +340,9 @@ namespace RevitBridge.Logic.Handlers
                     var parameterMatch = FindIdentityParameterAcronymMatch(e, identityAcronyms);
                     if (parameterMatch == null) continue;
                     var nested = e as FamilyInstance;
-                    var geometry = p?.includeGeometry == true ? BuildGeometrySummary(e) : null;
+                    var geometry = p?.includeGeometry == true
+                        ? BuildGeometrySummary(e, ResolveGeometryView(doc, candidate))
+                        : null;
                     var acronym = ElementIdentitySearchUtil.Tokenize(parameterMatch.Text)
                         .FirstOrDefault(token => identityAcronyms.Contains(token, StringComparer.OrdinalIgnoreCase));
 
@@ -595,7 +599,21 @@ namespace RevitBridge.Logic.Handlers
             catch { return null; }
         }
 
-        private static object? BuildGeometrySummary(Element e)
+        private static View? ResolveGeometryView(Document doc, CandidateElement candidate)
+        {
+            var sourceViewId = TryGetElementIdValue(candidate.SourceViewId);
+            if (sourceViewId.HasValue)
+            {
+                var sourceView = doc.GetElement(ElementIdCompat.Create(sourceViewId.Value)) as View;
+                if (sourceView != null) return sourceView;
+            }
+
+            var ownerViewId = TryGetElementIdValue(candidate.Element.OwnerViewId);
+            if (!ownerViewId.HasValue) return null;
+            return doc.GetElement(ElementIdCompat.Create(ownerViewId.Value)) as View;
+        }
+
+        private static object? BuildGeometrySummary(Element e, View? viewContext)
         {
             object? locationPoint = null;
             object? locationCurve = null;
@@ -629,7 +647,12 @@ namespace RevitBridge.Logic.Handlers
 
             try
             {
+                // Preserve the existing model-space box for physical elements. View-owned
+                // annotations such as IndependentTag commonly return no box without their
+                // exact view, so fall back to the collector/owner view when necessary.
                 var box = e.get_BoundingBox(null);
+                if (box == null && viewContext != null)
+                    box = e.get_BoundingBox(viewContext);
                 if (box != null)
                 {
                     var transform = box.Transform ?? Transform.Identity;
