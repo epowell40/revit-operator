@@ -617,7 +617,7 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
   content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
 }));
 
-server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compile and execute one generated C# program through bounded observations, deterministic replay, structured step/fact traces, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. Runs emit a non-authorizing evidence-bound iteration receipt and structured repair diagnostics. Resume needs_facts with expanded exact observations, repair with changed source, or retry transient failures unchanged; at most five chained attempts. This tool is hidden in certified production exposure and model prose never authorizes apply.", {
+server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compile and execute generated C# through bounded observations, deterministic replay, structured step/fact traces, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. Five evidence-bound attempts form one diagnostic loop. A committed_verified apply emits a separate checkpoint; continue_from_checkpoint starts the next design step against that exact persisted document/session, allowing up to 64 verified steps while preserving explicit discard-or-compensation restoration. This tool is hidden in certified production exposure and model prose never authorizes apply.", {
   source: z.string().min(1).max(128_000).describe("Exactly one public IDynamicRevitProgram or IDynamicResultReferenceProgram implementation using RevitOperator.DynamicRevitSdk. Result-reference programs should cite c.Fact(...), record c.TraceStep(...), assert with c.Require(...), and either return c.NeedFacts(...) or c.Complete()."),
   mode: z.enum(["preview", "apply"]),
   target_revit_year: z.enum(["2023", "2024", "2025", "2026"]).optional(),
@@ -632,6 +632,11 @@ server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compil
     prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
     mode: z.enum(["facts", "repair", "retry"])
   }).strict().optional().describe("Bind this attempt to exact retained evidence from the prior run. facts preserves source and expands requested observations; repair changes retryable source; retry preserves source for a retryable transient failure."),
+  continue_from_checkpoint: z.object({
+    prior_run_id: z.string().regex(/^dynamic-[a-f0-9]{32}$/),
+    prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    prior_checkpoint_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+  }).strict().optional().describe("Start a new diagnostic loop from one exact committed_verified checkpoint. The same Revit document/session must still be active; restart reconciliation is explicit and never inferred."),
   result_reference: z.object({
     selector: z.object({
       element_unique_ids: z.array(z.string().min(1).max(256)).max(256).optional(),

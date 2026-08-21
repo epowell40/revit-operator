@@ -17,14 +17,19 @@ test("dynamic runner is local-only, bounded, and preserves receipts while redact
     fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
     const env = { ...process.env, REVIT_OPERATOR_MODE: "development", OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
       OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const graphHash = sha256("legacy-graph"); const documentFingerprint = sha256("document"); const documentSessionId = "session-1";
     const result = await runDynamicRevitProgram({ source: "public class Program {}", mode: "apply" }, env, async (_file, args) => {
       const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
-      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, taskDirectory: "secret-task", runtimeImageDirectory: "secret-runtime", applyReceipt: "receipt",
-        workerOutput: { sourceHash: sha256("public class Program {}"), executionStatus: "completed", diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, taskDirectory: "secret-task", runtimeImageDirectory: "secret-runtime",
+        applyReceipt: JSON.stringify({ schema: "dynamic-revit-apply-receipt/v1", outcome: "committed_verified", graph_hash: graphHash,
+          document_fingerprint: documentFingerprint, document_session_id: documentSessionId }),
+        admission: { documentFingerprint, documentSessionId }, workerOutput: { sourceHash: sha256("public class Program {}"), executionStatus: "completed",
+          graph: { graphHash }, diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     assert.equal(result.execution_ok, true); assert.equal((result.evidence as any).taskDirectory, "opaque:trusted-task");
-    assert.equal((result.evidence as any).applyReceipt, "receipt");
+    assert.equal(result.checkpoint?.checkpoint_index, 1);
+    assert.equal(result.checkpoint?.document_fingerprint, documentFingerprint);
     await assert.rejects(() => runDynamicRevitProgram({ source: "x", mode: "preview" }, { ...env, REVIT_OPERATOR_MODE: "production" }), /unavailable/);
     await assert.rejects(() => runDynamicRevitProgram({ source: "x".repeat(128_001), mode: "preview" }, env), /128,000/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -129,8 +134,10 @@ test("dynamic runner exposes a bounded non-authorizing needs-facts continuation"
       assert.deepEqual(config.buildingSystemsSelector.elementUniqueIds, ["uid-1", "uid-2"]);
       fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, workerOutput: {
         sourceHash: sha256("public class Program {}"), executionStatus: "completed", deterministicReplayVerified: true,
-        executionIdentityHash: digest("d"), diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle
-      } }));
+        executionIdentityHash: digest("d"), diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle,
+        resultReferenceProgramResult: { graph: { graphHash: digest("e"), documentFingerprint: digest("5"), documentSessionId: "session-facts" } }
+      }, applyReceipt: JSON.stringify({ schema: "dynamic-revit-mep-result-apply-receipt-envelope/v1", outcome: "committed_verified",
+        graph_hash: digest("e"), source_hash: sha256("public class Program {}"), apply_receipt: { documentRevisionAfter: 2 } }) }));
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     assert.equal(resumed.execution_status, "completed");
@@ -141,6 +148,85 @@ test("dynamic runner exposes a bounded non-authorizing needs-facts continuation"
     assert.equal(resumed.iteration.authorization_granted, false);
     assert.equal(resumed.iteration.progress.classification, "completed");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("dynamic runner chains verified committed checkpoints while resetting the bounded diagnostic loop", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-mcp-checkpoints-"));
+  const createdRuns: string[] = [];
+  try {
+    const supervisor = path.join(root, "supervisor.exe"); const token = path.join(root, "token"); const worker = path.join(root, "worker");
+    fs.writeFileSync(supervisor, "stub"); fs.writeFileSync(token, "0123456789abcdef"); fs.mkdirSync(worker);
+    const env = { ...process.env, REVIT_OPERATOR_MODE: "development", OPERATOR_DYNAMIC_RUNTIME_SUPERVISOR_PATH: supervisor,
+      OPERATOR_DYNAMIC_RUNTIME_WORKER_DIRECTORY: worker, OPERATOR_TOKEN_FILE: token };
+    const documentFingerprint = sha256("checkpoint-document"); const documentSessionId = "checkpoint-session";
+    const execute = async (_file: string, args: string[]) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8")); const source = fs.readFileSync(config.sourceFile, "utf8");
+      const graphHash = sha256(`graph:${source}`);
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true,
+        checkpointBinding: config.checkpointTaskSessionId ? { schema: "dynamic-revit-task-checkpoint-binding/v1",
+          taskSessionId: config.checkpointTaskSessionId, checkpointIndex: config.checkpointIndex, checkpointHash: config.checkpointHash,
+          documentFingerprint: config.checkpointDocumentFingerprint, documentSessionId: config.checkpointDocumentSessionId,
+          applyReceiptHash: config.checkpointApplyReceiptHash, authorizationGranted: false } : null,
+        admission: { documentFingerprint, documentSessionId },
+        applyReceipt: JSON.stringify({ schema: "dynamic-revit-apply-receipt/v1", outcome: "committed_verified", graph_hash: graphHash,
+          document_fingerprint: documentFingerprint, document_session_id: documentSessionId }),
+        workerOutput: { sourceHash: sha256(source), executionStatus: "completed", graph: { graphHash }, diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle }
+      }));
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+    const first = await runDynamicRevitProgram({ source: "public class DesignStepOne {}", mode: "apply" }, env, execute);
+    createdRuns.push(first.run_id);
+    assert.equal(first.checkpoint?.checkpoint_index, 1); assert.equal(first.iteration.attempt, 1);
+    const next = await runDynamicRevitProgram({ source: "public class DesignStepTwo {}", mode: "apply", continue_from_checkpoint: {
+      prior_run_id: first.run_id, prior_evidence_sha256: first.verification.evidence_sha256,
+      prior_checkpoint_sha256: first.checkpoint!.checkpoint_sha256
+    } }, env, async (file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      assert.equal(config.checkpointTaskSessionId, first.checkpoint!.task_session_id);
+      assert.equal(config.checkpointIndex, 1); assert.equal(config.checkpointHash, first.checkpoint!.checkpoint_sha256);
+      return execute(file, args);
+    });
+    createdRuns.push(next.run_id);
+    assert.equal(next.iteration.attempt, 1); assert.equal(next.iteration.resume_mode, "root");
+    assert.equal(next.iteration.checkpoint_parent?.checkpoint_sha256, first.checkpoint?.checkpoint_sha256);
+    assert.equal(next.checkpoint?.checkpoint_index, 2); assert.equal(next.checkpoint?.parent?.run_id, first.run_id);
+    assert.equal(next.checkpoint?.task_session_id, first.checkpoint?.task_session_id);
+
+    const thirdSource = "public class DesignStepThree {}";
+    const failed = await runDynamicRevitProgram({ source: thirdSource, mode: "apply", continue_from_checkpoint: {
+      prior_run_id: next.run_id, prior_evidence_sha256: next.verification.evidence_sha256,
+      prior_checkpoint_sha256: next.checkpoint!.checkpoint_sha256
+    } }, env, async (_file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+      fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: false, failure: "stale state; refresh and retry",
+        checkpointBinding: { schema: "dynamic-revit-task-checkpoint-binding/v1", taskSessionId: config.checkpointTaskSessionId,
+          checkpointIndex: config.checkpointIndex, checkpointHash: config.checkpointHash, documentFingerprint: config.checkpointDocumentFingerprint,
+          documentSessionId: config.checkpointDocumentSessionId, applyReceiptHash: config.checkpointApplyReceiptHash, authorizationGranted: false },
+        workerOutput: { sourceHash: sha256(thirdSource), executionStatus: "failed" } }));
+      return { exitCode: 1, stdout: "", stderr: "stale" };
+    });
+    createdRuns.push(failed.run_id); assert.equal(failed.iteration.attempt, 1); assert.equal(failed.iteration.retryable, true);
+    const retried = await runDynamicRevitProgram({ source: thirdSource, mode: "apply", resume: {
+      prior_run_id: failed.run_id, prior_evidence_sha256: failed.verification.evidence_sha256, mode: "retry"
+    } }, env, async (file, args) => {
+      const config = JSON.parse(fs.readFileSync(args[1]!, "utf8")); assert.equal(config.checkpointIndex, 2);
+      assert.equal(config.checkpointHash, next.checkpoint!.checkpoint_sha256); return execute(file, args);
+    });
+    createdRuns.push(retried.run_id); assert.equal(retried.iteration.attempt, 2); assert.equal(retried.checkpoint?.checkpoint_index, 3);
+    assert.equal(retried.checkpoint?.task_session_id, first.checkpoint?.task_session_id);
+
+    const checkpointPath = path.join(getWorkspaceRoot(), "artifacts", "dynamic-runtime-runs", first.run_id, "checkpoint.json");
+    const original = fs.readFileSync(checkpointPath, "utf8"); const tampered = JSON.parse(original); tampered.document_session_id = "substituted";
+    fs.writeFileSync(checkpointPath, JSON.stringify(tampered));
+    await assert.rejects(() => runDynamicRevitProgram({ source: "x", mode: "apply", continue_from_checkpoint: {
+      prior_run_id: first.run_id, prior_evidence_sha256: first.verification.evidence_sha256,
+      prior_checkpoint_sha256: first.checkpoint!.checkpoint_sha256
+    } }, env, execute), /receipt hash is invalid/);
+    fs.writeFileSync(checkpointPath, original);
+  } finally {
+    for (const runId of createdRuns) fs.rmSync(path.join(getWorkspaceRoot(), "artifacts", "dynamic-runtime-runs", runId), { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("dynamic result-reference input rejects unsafe or contradictory budgets before launch", async () => {

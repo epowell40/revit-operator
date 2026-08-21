@@ -414,6 +414,25 @@ public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
     }
 
     [Fact]
+    public void CommittedCheckpointRequiresExactCurrentDocumentSessionAndEchoesNonAuthorizingBinding()
+    {
+        var hash = "sha256:" + new string('a', 64);
+        var config = new LiveTaskConfig
+        {
+            CheckpointTaskSessionId = "task-" + new string('b', 32), CheckpointIndex = 7, CheckpointHash = hash,
+            CheckpointDocumentFingerprint = hash, CheckpointDocumentSessionId = "session-exact", CheckpointApplyReceiptHash = hash
+        };
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = hash, SessionId = "session-exact" } };
+
+        Program.ValidateCheckpointBinding(config, input);
+        var evidence = Program.CheckpointBindingForEvidence(config);
+        Assert.NotNull(evidence); Assert.Equal(7, evidence!.CheckpointIndex); Assert.False(evidence.AuthorizationGranted);
+        input.Document.SessionId = "session-substituted";
+        Assert.Throws<InvalidOperationException>(() => Program.ValidateCheckpointBinding(config, input));
+        Assert.Throws<InvalidOperationException>(() => Program.ValidateCheckpointBinding(new LiveTaskConfig { CheckpointIndex = 1 }, input));
+    }
+
+    [Fact]
     public void ApplyGraphConvertsCamelWorkerWireToExactSnakeWire()
     {
         using var document = JsonDocument.Parse("""

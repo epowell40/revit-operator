@@ -18,12 +18,19 @@ export type DynamicRevitProgramRunInput = {
   apply_deadline_ms?: number;
   result_reference?: DynamicResultReferenceRunInput;
   resume?: DynamicExecutionResumeInput;
+  continue_from_checkpoint?: DynamicCheckpointContinuationInput;
 };
 
 export type DynamicExecutionResumeInput = {
   prior_run_id: string;
   prior_evidence_sha256: string;
   mode: "facts" | "repair" | "retry";
+};
+
+export type DynamicCheckpointContinuationInput = {
+  prior_run_id: string;
+  prior_evidence_sha256: string;
+  prior_checkpoint_sha256: string;
 };
 
 export type DynamicBuildingSystemsSelectorInput = {
@@ -86,8 +93,11 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const workspaceRoot = getWorkspaceRoot();
   const runsRoot = path.join(workspaceRoot, "artifacts", "dynamic-runtime-runs");
   ensureRunsRoot(workspaceRoot, runsRoot);
+  if (input.resume !== undefined && input.continue_from_checkpoint !== undefined) throw new Error("Dynamic retry/repair and committed-checkpoint continuation are mutually exclusive.");
+  const checkpoint = input.continue_from_checkpoint === undefined ? undefined : loadCheckpoint(input.continue_from_checkpoint, runsRoot);
   const resume = input.resume === undefined ? undefined : loadResume(input.resume, runsRoot, sourceHash, input.mode,
     resultReference ? "result_reference" : "legacy", resultReference?.selector);
+  const activeCheckpoint = checkpoint ?? (resume?.receipt.checkpoint_parent ? loadCheckpointParent(resume.receipt.checkpoint_parent, runsRoot) : undefined);
   const runRoot = path.join(runsRoot, runId);
   fs.mkdirSync(runRoot, { recursive: false, mode: 0o700 });
   if (!fs.lstatSync(runRoot).isDirectory() || fs.lstatSync(runRoot).isSymbolicLink()) throw new Error("Dynamic run directory is not a private regular directory.");
@@ -105,6 +115,11 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       buildingSystemsSelector: resultReference.selector,
       resultReferenceTargetUniqueIds: resultReference.targetUniqueIds,
       resultReferenceEffectBudget: resultReference.effectBudget
+    } : {}),
+    ...(activeCheckpoint ? {
+      checkpointTaskSessionId: activeCheckpoint.receipt.task_session_id, checkpointIndex: activeCheckpoint.receipt.checkpoint_index,
+      checkpointHash: activeCheckpoint.receipt.checkpoint_sha256, checkpointDocumentFingerprint: activeCheckpoint.receipt.document_fingerprint,
+      checkpointDocumentSessionId: activeCheckpoint.receipt.document_session_id, checkpointApplyReceiptHash: activeCheckpoint.receipt.apply_receipt_sha256
     } : {})
   };
   fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
@@ -113,6 +128,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const evidenceBytes = readAnchoredRegularFile(evidenceFile, runRoot, 8 * 1024 * 1024);
   const evidenceSha256 = sha256(evidenceBytes);
   const evidence = JSON.parse(evidenceBytes.toString("utf8")) as Record<string, unknown>;
+  if (activeCheckpoint) validateCheckpointEcho(evidence, activeCheckpoint.receipt);
   const executionStatus = evidence.schema === "dynamic-revit-needs-facts-evidence/v1"
     ? "needs_facts"
     : execution.exitCode === 0 && evidence.ok === true ? "completed" : "failed";
@@ -130,8 +146,13 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     executionIdentityHash: workerString(evidence, "executionIdentityHash"),
     diagnosticBundleHash: workerString(evidence, "diagnosticBundleHash"),
     factRequestHash: continuation === undefined ? null : String(continuation.fact_request.requestHash),
-    retryable: structuredDiagnostics.some(diagnostic => diagnostic.retryable), diagnostics: structuredDiagnostics, resume });
+    retryable: structuredDiagnostics.some(diagnostic => diagnostic.retryable), diagnostics: structuredDiagnostics, resume,
+    checkpointParent: activeCheckpoint?.parent ?? null });
   fs.writeFileSync(path.join(runRoot, "iteration.json"), JSON.stringify(iteration, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  const committedCheckpoint = input.mode === "apply" && executionStatus === "completed" ? createCheckpoint({
+    runId, sourceHash, evidence, evidenceSha256, iteration, prior: activeCheckpoint?.receipt ?? null
+  }) : null;
+  if (committedCheckpoint !== null) fs.writeFileSync(path.join(runRoot, "checkpoint.json"), JSON.stringify(committedCheckpoint, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
   return {
     schema: DYNAMIC_REVIT_PROGRAM_RUN_V1, run_id: runId, requested_mode: input.mode,
     execution_status: executionStatus, execution_ok: executionStatus === "completed",
@@ -140,6 +161,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     step_plan: stepPlan,
     diagnostics: structuredDiagnostics,
     iteration,
+    checkpoint: committedCheckpoint,
     verification: {
       evidence_sha256: evidenceSha256,
       iteration_chain_verified: true,
@@ -220,6 +242,7 @@ type IterationReceipt = {
   schema: "revit-operator.dynamic-code-iteration.v1";
   run_id: string; attempt: number; lane: ExecutionLane; resume_mode: "root" | "facts" | "repair" | "retry";
   parent: null | { run_id: string; evidence_sha256: string; iteration_sha256: string; execution_status: ExecutionStatus };
+  checkpoint_parent: CheckpointParent | null;
   source_sha256: string; requested_mode: "preview" | "apply"; execution_status: ExecutionStatus;
   evidence_sha256: string; execution_identity_sha256: string | null; diagnostic_bundle_sha256: string | null;
   fact_request_sha256: string | null; retryable: boolean;
@@ -228,6 +251,178 @@ type IterationReceipt = {
   authorization_granted: false; iteration_sha256: string;
 };
 type LoadedResume = { mode: "facts" | "repair" | "retry"; receipt: IterationReceipt; diagnostics: StructuredDiagnostic[] };
+type CheckpointParent = { task_session_id: string; checkpoint_index: number; run_id: string; checkpoint_sha256: string };
+type CheckpointReceipt = {
+  schema: "revit-operator.dynamic-code-checkpoint.v1"; task_session_id: string; checkpoint_index: number; run_id: string;
+  parent: CheckpointParent | null; source_sha256: string; evidence_sha256: string; iteration_sha256: string;
+  apply_receipt_sha256: string; apply_receipt_schema: string; graph_sha256: string; document_fingerprint: string;
+  document_session_id: string; document_revision_after: number | null; outcome: "committed_verified";
+  restoration: { policy: "discard_working_copy_or_verified_compensation"; status: "pending_final_acceptance_or_compensation" };
+  authorization_granted: false; checkpoint_sha256: string;
+};
+type LoadedCheckpoint = { receipt: CheckpointReceipt; parent: CheckpointParent };
+
+function loadCheckpoint(input: DynamicCheckpointContinuationInput, runsRoot: string): LoadedCheckpoint {
+  if (!input || typeof input !== "object" || Array.isArray(input) || !/^dynamic-[a-f0-9]{32}$/.test(input.prior_run_id) ||
+    !/^sha256:[a-f0-9]{64}$/.test(input.prior_evidence_sha256) || !/^sha256:[a-f0-9]{64}$/.test(input.prior_checkpoint_sha256))
+    throw new Error("Dynamic committed-checkpoint continuation is malformed.");
+  const root = path.join(runsRoot, input.prior_run_id);
+  const receipt = JSON.parse(readAnchoredRegularFile(path.join(root, "checkpoint.json"), root, 64 * 1024).toString("utf8")) as CheckpointReceipt;
+  validateCheckpointReceipt(receipt, input.prior_run_id);
+  validateCheckpointArtifacts(receipt, root, runsRoot);
+  validateCheckpointAncestry(receipt, runsRoot);
+  if (receipt.checkpoint_sha256 !== input.prior_checkpoint_sha256) throw new Error("Dynamic checkpoint identity does not match the retained receipt.");
+  const evidence = readAnchoredRegularFile(path.join(root, "evidence.json"), root, 8 * 1024 * 1024);
+  if (sha256(evidence) !== input.prior_evidence_sha256)
+    throw new Error("Dynamic checkpoint evidence bytes do not match the committed receipt.");
+  return { receipt, parent: { task_session_id: receipt.task_session_id, checkpoint_index: receipt.checkpoint_index,
+    run_id: receipt.run_id, checkpoint_sha256: receipt.checkpoint_sha256 } };
+}
+
+function loadCheckpointParent(parent: CheckpointParent, runsRoot: string): LoadedCheckpoint {
+  validateCheckpointParent(parent);
+  const root = path.join(runsRoot, parent.run_id);
+  const receipt = JSON.parse(readAnchoredRegularFile(path.join(root, "checkpoint.json"), root, 64 * 1024).toString("utf8")) as CheckpointReceipt;
+  validateCheckpointReceipt(receipt, parent.run_id); validateCheckpointArtifacts(receipt, root, runsRoot); validateCheckpointAncestry(receipt, runsRoot);
+  if (receipt.task_session_id !== parent.task_session_id || receipt.checkpoint_index !== parent.checkpoint_index || receipt.checkpoint_sha256 !== parent.checkpoint_sha256)
+    throw new Error("Dynamic retry checkpoint parent was substituted.");
+  return { receipt, parent };
+}
+
+function createCheckpoint(input: { runId: string; sourceHash: string; evidence: Record<string, unknown>; evidenceSha256: string;
+  iteration: IterationReceipt; prior: CheckpointReceipt | null }): CheckpointReceipt {
+  const verified = verifyCommittedApplyEvidence(input.evidence, input.sourceHash);
+  const index = (input.prior?.checkpoint_index ?? 0) + 1;
+  if (index > 64) throw new Error("Dynamic task sessions are limited to 64 verified committed checkpoints.");
+  const parent = input.prior === null ? null : { task_session_id: input.prior.task_session_id, checkpoint_index: input.prior.checkpoint_index,
+    run_id: input.prior.run_id, checkpoint_sha256: input.prior.checkpoint_sha256 };
+  const unsigned = {
+    schema: "revit-operator.dynamic-code-checkpoint.v1" as const,
+    task_session_id: input.prior?.task_session_id ?? `task-${randomUUID().replaceAll("-", "")}`,
+    checkpoint_index: index, run_id: input.runId, parent, source_sha256: input.sourceHash, evidence_sha256: input.evidenceSha256,
+    iteration_sha256: input.iteration.iteration_sha256, apply_receipt_sha256: verified.applyReceiptHash,
+    apply_receipt_schema: verified.schema, graph_sha256: verified.graphHash, document_fingerprint: verified.documentFingerprint,
+    document_session_id: verified.documentSessionId, document_revision_after: verified.documentRevisionAfter,
+    outcome: "committed_verified" as const,
+    restoration: { policy: "discard_working_copy_or_verified_compensation" as const,
+      status: "pending_final_acceptance_or_compensation" as const }, authorization_granted: false as const
+  };
+  return { ...unsigned, checkpoint_sha256: sha256(Buffer.from(JSON.stringify(unsigned), "utf8")) };
+}
+
+function verifyCommittedApplyEvidence(evidence: Record<string, unknown>, expectedSourceHash: string, expected?: CheckpointReceipt) {
+  if (evidence.ok !== true || typeof evidence.applyReceipt !== "string" || Buffer.byteLength(evidence.applyReceipt, "utf8") > 1024 * 1024)
+    throw new Error("A committed checkpoint requires bounded successful supervisor apply evidence.");
+  let receipt: Record<string, unknown>;
+  try { receipt = JSON.parse(evidence.applyReceipt) as Record<string, unknown>; } catch { throw new Error("Committed apply receipt is not valid JSON."); }
+  const schemas = new Set(["dynamic-revit-apply-receipt/v1", "dynamic-revit-core-apply-receipt-envelope/v1",
+    "dynamic-revit-mep-result-apply-receipt-envelope/v1", "dynamic-revit-annotation-result-apply-receipt-envelope/v1"]);
+  const schema = typeof receipt.schema === "string" ? receipt.schema : "";
+  if (!schemas.has(schema) || receipt.outcome !== "committed_verified") throw new Error("Checkpoint apply evidence is not an allowed committed_verified receipt.");
+  if (workerString(evidence, "sourceHash") !== expectedSourceHash) throw new Error("Checkpoint worker evidence is bound to substituted source bytes.");
+  const graph = workerGraph(evidence);
+  const graphHash = recordString(graph, "graphHash") ?? recordString(receipt, "graph_hash");
+  const receiptGraph = recordString(receipt, "graph_hash") ?? recordString(receipt, "graphHash");
+  if (!graphHash || !/^sha256:[a-f0-9]{64}$/.test(graphHash) || receiptGraph !== graphHash) throw new Error("Checkpoint apply receipt is not bound to the worker graph.");
+  const admission = evidence.admission && typeof evidence.admission === "object" && !Array.isArray(evidence.admission) ? evidence.admission as Record<string, unknown> : null;
+  const documentFingerprint = recordString(graph, "documentFingerprint") ?? recordString(receipt, "document_fingerprint") ?? recordString(admission, "documentFingerprint");
+  const documentSessionId = recordString(graph, "documentSessionId") ?? recordString(receipt, "document_session_id") ?? recordString(admission, "documentSessionId");
+  if (!documentFingerprint || !/^sha256:[a-f0-9]{64}$/.test(documentFingerprint) || !documentSessionId || documentSessionId.length > 256)
+    throw new Error("Checkpoint apply receipt omitted its exact document/session binding.");
+  const receiptSource = recordString(receipt, "source_hash");
+  if (receiptSource !== null && receiptSource !== expectedSourceHash) throw new Error("Checkpoint apply receipt is bound to substituted source bytes.");
+  const inner = receipt.apply_receipt && typeof receipt.apply_receipt === "object" && !Array.isArray(receipt.apply_receipt) ? receipt.apply_receipt as Record<string, unknown> : null;
+  const revision = recordInteger(inner, "documentRevisionAfter") ?? recordInteger(receipt, "document_revision_after");
+  const value = { schema, applyReceiptHash: sha256(Buffer.from(evidence.applyReceipt, "utf8")), graphHash,
+    documentFingerprint, documentSessionId, documentRevisionAfter: revision };
+  if (expected && (expected.apply_receipt_sha256 !== value.applyReceiptHash || expected.apply_receipt_schema !== schema ||
+    expected.graph_sha256 !== graphHash || expected.document_fingerprint !== documentFingerprint || expected.document_session_id !== documentSessionId ||
+    expected.document_revision_after !== revision)) throw new Error("Retained checkpoint fields do not match the authenticated apply evidence.");
+  return value;
+}
+
+function workerGraph(evidence: Record<string, unknown>): Record<string, unknown> {
+  const worker = workerRecord(evidence);
+  for (const key of ["resultReferenceProgramResult", "coreProgramResult"] as const) {
+    const result = worker?.[key];
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      const graph = (result as Record<string, unknown>).graph;
+      if (graph && typeof graph === "object" && !Array.isArray(graph)) return graph as Record<string, unknown>;
+    }
+  }
+  const graph = worker?.graph;
+  if (graph && typeof graph === "object" && !Array.isArray(graph)) return graph as Record<string, unknown>;
+  throw new Error("Committed checkpoint evidence omitted the exact worker graph.");
+}
+
+function validateCheckpointReceipt(receipt: CheckpointReceipt, expectedRunId: string) {
+  const keys = ["schema", "task_session_id", "checkpoint_index", "run_id", "parent", "source_sha256", "evidence_sha256", "iteration_sha256",
+    "apply_receipt_sha256", "apply_receipt_schema", "graph_sha256", "document_fingerprint", "document_session_id", "document_revision_after",
+    "outcome", "restoration", "authorization_granted", "checkpoint_sha256"].sort();
+  if (!receipt || typeof receipt !== "object" || Array.isArray(receipt) || JSON.stringify(Object.keys(receipt).sort()) !== JSON.stringify(keys) ||
+    receipt.schema !== "revit-operator.dynamic-code-checkpoint.v1" || receipt.run_id !== expectedRunId || !/^task-[a-f0-9]{32}$/.test(receipt.task_session_id) ||
+    !Number.isSafeInteger(receipt.checkpoint_index) || receipt.checkpoint_index < 1 || receipt.checkpoint_index > 64 || receipt.outcome !== "committed_verified" ||
+    receipt.authorization_granted !== false || !/^sha256:[a-f0-9]{64}$/.test(receipt.source_sha256) || !/^sha256:[a-f0-9]{64}$/.test(receipt.evidence_sha256) ||
+    !/^sha256:[a-f0-9]{64}$/.test(receipt.iteration_sha256) || !/^sha256:[a-f0-9]{64}$/.test(receipt.apply_receipt_sha256) ||
+    !/^sha256:[a-f0-9]{64}$/.test(receipt.graph_sha256) || !/^sha256:[a-f0-9]{64}$/.test(receipt.document_fingerprint) ||
+    !/^sha256:[a-f0-9]{64}$/.test(receipt.checkpoint_sha256) || typeof receipt.document_session_id !== "string" || receipt.document_session_id.length < 1 || receipt.document_session_id.length > 256 ||
+    !(receipt.document_revision_after === null || Number.isSafeInteger(receipt.document_revision_after) && receipt.document_revision_after >= 0) ||
+    typeof receipt.apply_receipt_schema !== "string") throw new Error("Dynamic checkpoint receipt is malformed.");
+  validateCheckpointParent(receipt.parent);
+  if (receipt.parent === null ? receipt.checkpoint_index !== 1 : receipt.parent.checkpoint_index + 1 !== receipt.checkpoint_index || receipt.parent.task_session_id !== receipt.task_session_id)
+    throw new Error("Dynamic checkpoint sequence is not contiguous.");
+  if (!receipt.restoration || JSON.stringify(Object.keys(receipt.restoration).sort()) !== JSON.stringify(["policy", "status"]) ||
+    receipt.restoration.policy !== "discard_working_copy_or_verified_compensation" || receipt.restoration.status !== "pending_final_acceptance_or_compensation")
+    throw new Error("Dynamic checkpoint restoration contract is malformed.");
+  const { checkpoint_sha256: claimed, ...unsigned } = receipt;
+  if (sha256(Buffer.from(JSON.stringify(unsigned), "utf8")) !== claimed) throw new Error("Dynamic checkpoint receipt hash is invalid.");
+}
+
+function validateCheckpointParent(parent: CheckpointParent | null) {
+  if (parent === null) return;
+  if (!parent || typeof parent !== "object" || Array.isArray(parent) || JSON.stringify(Object.keys(parent).sort()) !== JSON.stringify(["checkpoint_index", "checkpoint_sha256", "run_id", "task_session_id"]) ||
+    !/^task-[a-f0-9]{32}$/.test(parent.task_session_id) || !Number.isSafeInteger(parent.checkpoint_index) || parent.checkpoint_index < 1 || parent.checkpoint_index > 64 ||
+    !/^dynamic-[a-f0-9]{32}$/.test(parent.run_id) || !/^sha256:[a-f0-9]{64}$/.test(parent.checkpoint_sha256)) throw new Error("Dynamic checkpoint parent is malformed.");
+}
+
+function validateCheckpointAncestry(tip: CheckpointReceipt, runsRoot: string) {
+  let child = tip; const seen = new Set([child.run_id]);
+  while (child.parent !== null) {
+    if (seen.has(child.parent.run_id)) throw new Error("Dynamic checkpoint ancestry contains a cycle.");
+    seen.add(child.parent.run_id);
+    const root = path.join(runsRoot, child.parent.run_id);
+    const parent = JSON.parse(readAnchoredRegularFile(path.join(root, "checkpoint.json"), root, 64 * 1024).toString("utf8")) as CheckpointReceipt;
+    validateCheckpointReceipt(parent, child.parent.run_id);
+    validateCheckpointArtifacts(parent, root, runsRoot);
+    if (parent.checkpoint_sha256 !== child.parent.checkpoint_sha256 || parent.checkpoint_index + 1 !== child.checkpoint_index || parent.task_session_id !== child.task_session_id)
+      throw new Error("Dynamic checkpoint ancestry is not exact and contiguous.");
+    child = parent;
+  }
+  if (child.checkpoint_index !== 1 || seen.size !== tip.checkpoint_index) throw new Error("Dynamic checkpoint ancestry does not terminate at one exact root.");
+}
+
+function validateCheckpointArtifacts(receipt: CheckpointReceipt, root: string, runsRoot: string) {
+  const iteration = JSON.parse(readAnchoredRegularFile(path.join(root, "iteration.json"), root, 64 * 1024).toString("utf8")) as IterationReceipt;
+  validateIterationReceipt(iteration, receipt.run_id); validateIterationAncestry(iteration, runsRoot);
+  if (iteration.iteration_sha256 !== receipt.iteration_sha256 || iteration.source_sha256 !== receipt.source_sha256 ||
+    iteration.evidence_sha256 !== receipt.evidence_sha256 || JSON.stringify(iteration.checkpoint_parent) !== JSON.stringify(receipt.parent))
+    throw new Error("Dynamic checkpoint is not bound to its exact iteration segment.");
+  const evidence = readAnchoredRegularFile(path.join(root, "evidence.json"), root, 8 * 1024 * 1024);
+  if (sha256(evidence) !== receipt.evidence_sha256) throw new Error("Dynamic checkpoint evidence bytes changed.");
+  verifyCommittedApplyEvidence(JSON.parse(evidence.toString("utf8")) as Record<string, unknown>, receipt.source_sha256, receipt);
+}
+
+function validateCheckpointEcho(evidence: Record<string, unknown>, receipt: CheckpointReceipt) {
+  const value = evidence.checkpointBinding;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Supervisor evidence omitted the committed checkpoint binding.");
+  const item = value as Record<string, unknown>;
+  if (item.schema !== "dynamic-revit-task-checkpoint-binding/v1" || item.taskSessionId !== receipt.task_session_id || item.checkpointIndex !== receipt.checkpoint_index ||
+    item.checkpointHash !== receipt.checkpoint_sha256 || item.documentFingerprint !== receipt.document_fingerprint || item.documentSessionId !== receipt.document_session_id ||
+    item.applyReceiptHash !== receipt.apply_receipt_sha256 || item.authorizationGranted !== false) throw new Error("Supervisor checkpoint binding was substituted.");
+}
+
+function recordString(value: Record<string, unknown> | null, key: string): string | null { const item = value?.[key]; return typeof item === "string" ? item : null; }
+function recordInteger(value: Record<string, unknown> | null, key: string): number | null { const item = value?.[key]; return Number.isSafeInteger(item) && (item as number) >= 0 ? item as number : null; }
 
 function loadResume(input: DynamicExecutionResumeInput, runsRoot: string, sourceHash: string, requestedMode: "preview" | "apply",
   lane: ExecutionLane, currentSelector: NormalizedSelector | undefined): LoadedResume {
@@ -264,7 +459,8 @@ function loadResume(input: DynamicExecutionResumeInput, runsRoot: string, source
 
 function createIterationReceipt(input: { runId: string; sourceHash: string; requestedMode: "preview" | "apply"; lane: ExecutionLane;
   executionStatus: ExecutionStatus; evidenceSha256: string; executionIdentityHash: string | null; diagnosticBundleHash: string | null;
-  factRequestHash: string | null; retryable: boolean; diagnostics: StructuredDiagnostic[]; resume: LoadedResume | undefined }): IterationReceipt {
+  factRequestHash: string | null; retryable: boolean; diagnostics: StructuredDiagnostic[]; resume: LoadedResume | undefined;
+  checkpointParent: CheckpointParent | null }): IterationReceipt {
   const progress = iterationProgress(input.resume, input.executionStatus, input.diagnostics);
   const unsigned = {
     schema: "revit-operator.dynamic-code-iteration.v1" as const,
@@ -278,6 +474,7 @@ function createIterationReceipt(input: { runId: string; sourceHash: string; requ
       iteration_sha256: input.resume.receipt.iteration_sha256,
       execution_status: input.resume.receipt.execution_status
     },
+    checkpoint_parent: input.checkpointParent,
     source_sha256: input.sourceHash,
     requested_mode: input.requestedMode,
     execution_status: input.executionStatus,
@@ -295,7 +492,7 @@ function createIterationReceipt(input: { runId: string; sourceHash: string; requ
 function validateIterationReceipt(receipt: IterationReceipt, expectedRunId: string) {
   const expectedKeys = ["schema", "run_id", "attempt", "lane", "resume_mode", "parent", "source_sha256", "requested_mode",
     "execution_status", "evidence_sha256", "execution_identity_sha256", "diagnostic_bundle_sha256", "fact_request_sha256",
-    "retryable", "progress", "authorization_granted", "iteration_sha256"].sort();
+    "retryable", "progress", "authorization_granted", "iteration_sha256", "checkpoint_parent"].sort();
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt) || JSON.stringify(Object.keys(receipt).sort()) !== JSON.stringify(expectedKeys))
     throw new Error("Dynamic parent iteration receipt has an invalid shape.");
   if (receipt.schema !== "revit-operator.dynamic-code-iteration.v1" || receipt.run_id !== expectedRunId ||
@@ -306,6 +503,7 @@ function validateIterationReceipt(receipt: IterationReceipt, expectedRunId: stri
     !new Set(["preview", "apply"]).has(receipt.requested_mode) || !new Set(["completed", "needs_facts", "failed"]).has(receipt.execution_status) ||
     typeof receipt.retryable !== "boolean" || !nullableHash(receipt.execution_identity_sha256) || !nullableHash(receipt.diagnostic_bundle_sha256) ||
     !nullableHash(receipt.fact_request_sha256)) throw new Error("Dynamic parent iteration semantic fields are malformed.");
+  validateCheckpointParent(receipt.checkpoint_parent);
   if (receipt.parent !== null) {
     const parentKeys = ["run_id", "evidence_sha256", "iteration_sha256", "execution_status"].sort();
     if (typeof receipt.parent !== "object" || Array.isArray(receipt.parent) || JSON.stringify(Object.keys(receipt.parent).sort()) !== JSON.stringify(parentKeys) ||
@@ -337,6 +535,8 @@ function validateIterationAncestry(tip: IterationReceipt, runsRoot: string) {
     if (child.attempt !== parent.attempt + 1 || child.parent.iteration_sha256 !== parent.iteration_sha256 ||
       child.parent.evidence_sha256 !== parent.evidence_sha256 || child.parent.execution_status !== parent.execution_status)
       throw new Error("Dynamic iteration ancestry is not an exact contiguous chain.");
+    if (JSON.stringify(child.checkpoint_parent) !== JSON.stringify(parent.checkpoint_parent))
+      throw new Error("Dynamic retry chain changed its committed checkpoint parent.");
     child = parent;
   }
   if (child.attempt !== 1 || child.resume_mode !== "root" || seen.size !== tip.attempt)

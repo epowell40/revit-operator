@@ -26,6 +26,7 @@ internal static class Program
         {
             var config = JsonSerializer.Deserialize<LiveTaskConfig>(await File.ReadAllTextAsync(args[1]), Json) ?? throw new ArgumentException("Live task config is invalid.");
             var live = await RunLiveTask(config, replayAdmission: args[0] == "--execute-replay-task");
+            live.CheckpointBinding = CheckpointBindingForEvidence(config);
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(config.EvidencePath))!);
             await File.WriteAllTextAsync(config.EvidencePath, JsonSerializer.Serialize(live, Json));
             Console.WriteLine(JsonSerializer.Serialize(live, Json));
@@ -98,6 +99,7 @@ internal static class Program
         var snapshotToken = snapshotRoot.GetProperty("snapshot_token").GetString() ?? throw new InvalidOperationException("Snapshot capability is missing.");
         var snapshotInputHash = snapshotRoot.GetProperty("input_hash").GetString() ?? throw new InvalidOperationException("Snapshot input binding is missing.");
         var taskInput = new DynamicTaskInput { Document = document, Elements = elements, OperationBudget = config.OperationBudget };
+        ValidateCheckpointBinding(config, taskInput);
         string workerInput;
         ResultReferenceObservationInput? resultReferenceInput = null;
         ContextRuleExecutionInput? contextRuleInput = null;
@@ -908,6 +910,29 @@ internal static class Program
     {
         return DynamicRuntimePackageDirectoryIdentity.Compute(AppContext.BaseDirectory);
     }
+    internal static void ValidateCheckpointBinding(LiveTaskConfig config, DynamicTaskInput input)
+    {
+        var requested = !string.IsNullOrWhiteSpace(config.CheckpointTaskSessionId) || config.CheckpointIndex != 0 ||
+            !string.IsNullOrWhiteSpace(config.CheckpointHash) || !string.IsNullOrWhiteSpace(config.CheckpointDocumentFingerprint) ||
+            !string.IsNullOrWhiteSpace(config.CheckpointDocumentSessionId) || !string.IsNullOrWhiteSpace(config.CheckpointApplyReceiptHash);
+        if (!requested) return;
+        var hash = new System.Text.RegularExpressions.Regex("^sha256:[a-f0-9]{64}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        if (!System.Text.RegularExpressions.Regex.IsMatch(config.CheckpointTaskSessionId, "^task-[a-f0-9]{32}$") ||
+            config.CheckpointIndex < 1 || config.CheckpointIndex > 64 || !hash.IsMatch(config.CheckpointHash) ||
+            !hash.IsMatch(config.CheckpointDocumentFingerprint) || string.IsNullOrWhiteSpace(config.CheckpointDocumentSessionId) || config.CheckpointDocumentSessionId.Length > 256 ||
+            !hash.IsMatch(config.CheckpointApplyReceiptHash))
+            throw new InvalidOperationException("Dynamic task checkpoint binding is incomplete or malformed.");
+        if (!string.Equals(input.Document.ProjectFingerprint, config.CheckpointDocumentFingerprint, StringComparison.Ordinal) ||
+            !string.Equals(input.Document.SessionId, config.CheckpointDocumentSessionId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Dynamic task checkpoint does not match the current document and session. Refresh/reconcile explicitly instead of continuing stale committed state.");
+    }
+    internal static TaskCheckpointBindingEvidence? CheckpointBindingForEvidence(LiveTaskConfig config)
+    {
+        if (string.IsNullOrWhiteSpace(config.CheckpointTaskSessionId)) return null;
+        return new TaskCheckpointBindingEvidence { TaskSessionId = config.CheckpointTaskSessionId, CheckpointIndex = config.CheckpointIndex,
+            CheckpointHash = config.CheckpointHash, DocumentFingerprint = config.CheckpointDocumentFingerprint,
+            DocumentSessionId = config.CheckpointDocumentSessionId, ApplyReceiptHash = config.CheckpointApplyReceiptHash };
+    }
     private static string PackageHash(IEnumerable<string> files)
     {
         var canonical = string.Join("\n", files.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).Select(path => Path.GetFileName(path) + ":" + DynamicWire.Sha256(File.ReadAllBytes(path))));
@@ -969,6 +994,15 @@ internal sealed class LiveTaskConfig
     public string? ContextRuleFile { get; set; } public string? ContextRuleVerificationKeyFile { get; set; }
     public string ContextCompanyId { get; set; } = ""; public string ContextUserId { get; set; } = "";
     public DynamicEffectBudgetV1? CoreEffectBudget { get; set; } public int CorePlannedExecutionMilliseconds { get; set; } = 1000;
+    public string CheckpointTaskSessionId { get; set; } = ""; public int CheckpointIndex { get; set; }
+    public string CheckpointHash { get; set; } = ""; public string CheckpointDocumentFingerprint { get; set; } = "";
+    public string CheckpointDocumentSessionId { get; set; } = ""; public string CheckpointApplyReceiptHash { get; set; } = "";
+}
+internal sealed class TaskCheckpointBindingEvidence
+{
+    public string Schema { get; set; } = "dynamic-revit-task-checkpoint-binding/v1"; public string TaskSessionId { get; set; } = "";
+    public int CheckpointIndex { get; set; } public string CheckpointHash { get; set; } = ""; public string DocumentFingerprint { get; set; } = "";
+    public string DocumentSessionId { get; set; } = ""; public string ApplyReceiptHash { get; set; } = ""; public bool AuthorizationGranted { get; set; }
 }
 internal sealed class ContextRuleExecutionInput
 {
@@ -991,6 +1025,7 @@ internal sealed class LiveEvidence
     public List<string> BuildingSystemsObservationReceipts { get; set; } = new(); public string? ResultReferenceFactsReceipt { get; set; }
     public List<string> ContextObservationReceipts { get; set; } = new(); public DynamicVerifiedContextRuleV1? ContextRule { get; set; }
     public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = "";
+    public TaskCheckpointBindingEvidence? CheckpointBinding { get; set; }
     public static LiveEvidence Failed(DateTimeOffset started, string profile, string task, RuntimeImage runtimeImage, string registration, string snapshot, JsonElement worker, string failure) => new() { Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow, SandboxProfile = profile, TaskDirectory = task, RuntimeImageDirectory = runtimeImage.Directory, RuntimeImageIdentity = runtimeImage.Identity, RuntimeDependencyCount = runtimeImage.Files.Count, RegistrationReceipt = registration, SnapshotReceipt = snapshot, WorkerOutput = worker, Failure = failure };
 }
 internal sealed class HostReplayEvidence
