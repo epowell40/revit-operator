@@ -35,7 +35,9 @@ public static class DynamicRevitSdkProductionVersion
         typeof(DynamicProgramAdmissionV1), typeof(DynamicEffectBudgetV1), typeof(DynamicFileCapabilityV1),
         typeof(DynamicFileCapabilitySetV1), typeof(DynamicOperationGraphV1), typeof(DynamicOperationNodeV1),
         typeof(DynamicExternalEffectV1), typeof(DynamicProgramRepairFeedbackV1), typeof(DynamicProgramReuseRecordV1),
-        typeof(DynamicExecutionStrategyEvidenceV1), typeof(DynamicPrimitiveDescriptorV1)
+        typeof(DynamicExecutionStrategyEvidenceV1), typeof(DynamicPrimitiveDescriptorV1),
+        typeof(DynamicProgramFactReferenceV1), typeof(DynamicProgramStepV1), typeof(DynamicProgramAssertionV1),
+        typeof(DynamicProgramFactRequestV1), typeof(DynamicProgramExecutionTraceV1)
     };
 
     public static string ContractSurfaceHash => DynamicWire.Sha256(string.Join("\n", WireTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
@@ -47,7 +49,7 @@ public static class DynamicRevitSdkProductionVersion
         ContractSurfaceHash, DynamicPrimitiveManifestV1.ManifestHash, DynamicObservationContractV1.ManifestHash,
         DynamicBuildingSystemsObservationContractV1.ManifestHash, DynamicCoreOperationManifestV1.ManifestHash,
         DynamicResultReferenceManifestV1.ManifestHash, DynamicAnnotationOperationManifestV1.ManifestHash,
-        DynamicMepMutationManifestV1.ManifestHash));
+        DynamicMepMutationManifestV1.ManifestHash, DynamicExecutionProtocolV1.ContractIdentity));
 
     private static string Surface(Type type) => type.FullName + "\n" + string.Join("\n", type.GetProperties()
         .Where(property => property.GetMethod != null && property.GetMethod.IsPublic && !property.GetMethod.IsStatic)

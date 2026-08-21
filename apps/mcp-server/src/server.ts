@@ -617,16 +617,59 @@ server.tool("operator_record_execution_strategy", "Record the model's bounded ex
   content: [{ type: "text", text: JSON.stringify(recordExecutionStrategyEvidence(args), null, 2) }]
 }));
 
-server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compile and execute one generated C# IDynamicRevitProgram through snapshot, sandbox, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. This tool is hidden in certified production exposure and model prose never authorizes apply.", {
-  source: z.string().min(1).max(200_000).describe("Exactly one public IDynamicRevitProgram implementation using RevitOperator.DynamicRevitSdk. Use c.Elements, c.Plan.MoveElement/SetParameter, and return c.Complete()."),
+server.tool("operator_run_dynamic_revit_program", "Local laboratory only: compile and execute generated C# through bounded observations, deterministic replay, structured step/fact traces, signed admission, rollback preview, and—only when mode=apply—fresh host authorization, commit, readback, and durable receipts. Five evidence-bound attempts form one diagnostic loop. A committed_verified apply emits a separate checkpoint; continue_from_checkpoint starts the next design step against that exact persisted document/session, allowing up to 64 verified steps while preserving explicit discard-or-compensation restoration. This tool is hidden in certified production exposure and model prose never authorizes apply.", {
+  source: z.string().min(1).max(128_000).describe("Exactly one public IDynamicRevitProgram or IDynamicResultReferenceProgram implementation using RevitOperator.DynamicRevitSdk. Result-reference programs should cite c.Fact(...), record c.TraceStep(...), assert with c.Require(...), and either return c.NeedFacts(...) or c.Complete()."),
   mode: z.enum(["preview", "apply"]),
-  target_revit_year: z.enum(["2023", "2024", "2025"]).optional(),
+  target_revit_year: z.enum(["2023", "2024", "2025", "2026"]).optional(),
   category: z.string().regex(/^OST_[A-Za-z0-9_]{1,120}$/).optional(),
   parameters: z.array(z.string().min(1).max(128)).max(16).optional(),
   snapshot_limit: z.number().int().min(1).max(1000).optional(),
   operation_budget: z.number().int().min(1).max(256).optional(),
-  worker_deadline_ms: z.number().int().min(1000).max(60_000).optional(),
-  apply_deadline_ms: z.number().int().min(100).max(5000).optional()
+  worker_deadline_ms: z.number().int().min(1000).max(30_000).optional(),
+  apply_deadline_ms: z.number().int().min(100).max(5000).optional(),
+  resume: z.object({
+    prior_run_id: z.string().regex(/^dynamic-[a-f0-9]{32}$/),
+    prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    mode: z.enum(["facts", "repair", "retry"])
+  }).strict().optional().describe("Bind this attempt to exact retained evidence from the prior run. facts preserves source and expands requested observations; repair changes retryable source; retry preserves source for a retryable transient failure."),
+  continue_from_checkpoint: z.object({
+    prior_run_id: z.string().regex(/^dynamic-[a-f0-9]{32}$/),
+    prior_evidence_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    prior_checkpoint_sha256: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+  }).strict().optional().describe("Start a new diagnostic loop from one exact committed_verified checkpoint. The same Revit document/session must still be active; restart reconciliation is explicit and never inferred."),
+  result_reference: z.object({
+    selector: z.object({
+      element_unique_ids: z.array(z.string().min(1).max(256)).max(256).optional(),
+      category_stable_ids: z.array(z.string().min(1).max(256)).max(32).optional(),
+      kinds: z.array(z.enum(["mep_curve", "equipment", "device", "accessory", "system", "text_note", "independent_tag"])).max(7).optional(),
+      parameter_names: z.array(z.string().min(1).max(256)).max(32).optional(),
+      include_type_parameters: z.boolean().optional(),
+      page_size: z.number().int().min(1).max(128).optional()
+    }).strict(),
+    target_unique_ids: z.array(z.string().min(1).max(256)).max(256).optional(),
+    effect_budget: z.object({
+      budget_id: z.string().min(1).max(160),
+      target_document_fingerprints: z.array(z.string().regex(/^sha256:[a-f0-9]{64}$/)).min(1).max(8),
+      allowed_categories: z.array(z.string().min(1).max(256)).max(256),
+      explicit_target_unique_ids: z.array(z.string().min(1).max(256)).max(256),
+      allowed_sdk_domains: z.array(z.string().min(1).max(128)).min(1).max(32),
+      allowed_external_effect_classes: z.array(z.string().min(1).max(128)).max(16).optional(),
+      view_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      level_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      workset_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      phase_scope_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      maximum_operation_count: z.number().int().min(1).max(256),
+      maximum_affected_elements: z.number().int().min(1).max(50_000),
+      maximum_creates: z.number().int().min(0).max(256),
+      maximum_modifications: z.number().int().min(0).max(256),
+      maximum_deletes: z.number().int().min(0).max(256),
+      maximum_execution_milliseconds: z.number().int().min(100).max(600_000),
+      maximum_regenerations: z.number().int().min(0).max(1000),
+      maximum_output_count: z.number().int().min(0).max(10_000),
+      maximum_output_bytes: z.number().int().min(0).max(20 * 1024 * 1024 * 1024),
+      file_capability_set_hash: z.string().regex(/^sha256:[a-f0-9]{64}$/)
+    }).strict()
+  }).strict().optional()
 }, async (args) => {
   try { return { content: [{ type: "text", text: JSON.stringify(await runDynamicRevitProgram(args), null, 2) }] }; }
   catch (error) { return { isError: true, content: [{ type: "text", text: String(error) }] }; }

@@ -77,11 +77,17 @@ export const DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1 = {
   id: "dynamic_revit_program",
   kind: "dynamic_program",
   title: "Generate and preview a bounded task-specific Revit program",
-  description: "For complex multi-step Revit work using loops, branching, or custom algorithms within explicit capability and effect limits.",
+  description: "For complex multi-step Revit work using loops, branching, custom algorithms, structured assertions, and bounded observe-revise-rerun feedback within explicit capability and effect limits.",
   semantics: {
     previewBeforeCommit: true,
     machineAccess: "restricted",
-    externalFileEffects: "explicit_capability_required"
+    externalFileEffects: "explicit_capability_required",
+    iterativeObservation: "bounded_needs_facts",
+    evidenceBoundIteration: "facts_repair_retry_max_5",
+    structuredDiagnostics: "phase_range_step_assertion_repair_action",
+    stepPlanning: "ordered_dependency_waves_and_counts",
+    semanticTrace: "exact_step_node_fact_binding",
+    deterministicReplay: true
   },
   admission: {
     required: true,

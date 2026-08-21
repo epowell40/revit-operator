@@ -26,6 +26,14 @@
       "executableName": "Revit.exe",
       "hostArtifactRelativePath": "hosts/2025/DynamicRevitHost.dll",
       "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
+    },
+    {
+      "revitYear": "2026",
+      "targetFramework": "net8.0-windows",
+      "installDirectoryName": "Revit 2026",
+      "executableName": "Revit.exe",
+      "hostArtifactRelativePath": "hosts/2026/DynamicRevitHost.dll",
+      "sdkDomains": [ "elements", "parameters", "operation-graph", "preview", "admission-v1", "authorized-apply", "verification" ]
     }
   ]
 }

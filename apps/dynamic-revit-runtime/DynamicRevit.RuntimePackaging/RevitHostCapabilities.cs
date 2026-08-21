@@ -6,7 +6,7 @@ namespace RevitOperator.DynamicRevit.RuntimePackaging;
 public sealed class RevitHostCapabilityManifest
 {
     public const string CurrentSchema = "dynamic-revit-host-capabilities/v1";
-    private static readonly string[] RequiredYears = ["2023", "2024", "2025"];
+    private static readonly string[] RequiredYears = ["2023", "2024", "2025", "2026"];
 
     public string Schema { get; set; } = CurrentSchema;
     public string ManifestVersion { get; set; } = "";
@@ -43,7 +43,7 @@ public sealed class RevitHostCapabilityManifest
             if (!years.Add(host.RevitYear)) throw new InvalidDataException($"Duplicate Revit {host.RevitYear} host-capability entry.");
         }
         if (!RequiredYears.SequenceEqual(years.OrderBy(value => value, StringComparer.Ordinal)))
-            throw new InvalidDataException("The trusted host-capability manifest must contain exactly Revit 2023, 2024, and 2025.");
+            throw new InvalidDataException("The trusted host-capability manifest must contain exactly Revit 2023, 2024, 2025, and 2026.");
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -71,8 +71,8 @@ public sealed class RevitHostCapability
 
     internal void Validate()
     {
-        if (RevitYear is not ("2023" or "2024" or "2025")) throw new InvalidDataException($"Unsupported Revit host year '{RevitYear}'.");
-        var expectedFramework = RevitYear == "2025" ? "net8.0-windows" : "net48";
+        if (RevitYear is not ("2023" or "2024" or "2025" or "2026")) throw new InvalidDataException($"Unsupported Revit host year '{RevitYear}'.");
+        var expectedFramework = RevitYear is "2025" or "2026" ? "net8.0-windows" : "net48";
         if (!string.Equals(TargetFramework, expectedFramework, StringComparison.Ordinal)) throw new InvalidDataException($"Revit {RevitYear} must use {expectedFramework}.");
         if (!string.Equals(InstallDirectoryName, "Revit " + RevitYear, StringComparison.Ordinal)) throw new InvalidDataException($"Revit {RevitYear} install directory identity is invalid.");
         if (!string.Equals(ExecutableName, "Revit.exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The trusted Revit host executable must be Revit.exe.");

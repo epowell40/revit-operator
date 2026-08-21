@@ -20,9 +20,9 @@ public sealed class ResultReferenceGraphTests
         Assert.Equal(first.Nodes[0].Outputs[0].ResultId, first.Nodes[1].ResultReferences[0].ResultId);
         Assert.Equal(first.Nodes[0].Outputs[0].OutputSlot, first.Nodes[1].ResultReferences[0].OutputSlot);
         Assert.Equal(new[] { first.Nodes[0].NodeId }, first.Nodes[1].DependsOn);
-        Assert.Equal("sha256:0f3c2ab74f7296c3022de84fc50d048f65ffccb8bd7aebbdd31dfa747c2924e9", first.GraphHash);
-        Assert.Equal("sha256:03a7a296eb10044416078851fa5f30a3048fda1e50316a9d9ae0785536f97701", DynamicResultReferenceManifestV1.ManifestHash);
-        Assert.Equal("sha256:72f6f0015f2796f12befb2f94b3421ca61a8022e94e75ed3790dbef8af73f55d", DynamicResultReferenceManifestV1.ContractSurfaceHash);
+        Assert.Equal("sha256:1643b768a67b3f7f9d7a7c89d4a0b180ea657ad7618420ac8445e2fb3bbd81c9", first.GraphHash);
+        Assert.Equal("sha256:f2eb7499a0e70d271b0e11f2a15f7147f78d8fe80b6cfdfa90888d747fc4e364", DynamicResultReferenceManifestV1.ManifestHash);
+        Assert.Equal("sha256:f34e0d5d6f02137c1b0329868d91443a30d3d7ce53ad4763a03eb42dbbea4272", DynamicResultReferenceManifestV1.ContractSurfaceHash);
     }
 
     [Fact]

@@ -16,6 +16,7 @@ $observationContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-obs
 $buildingSystemsObservationContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-building-systems-observations.v1.json"
 $coreOperationsContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-operations-core.v1.json"
 $resultReferenceContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-result-reference-graph.v1.json"
+$executionProtocolContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-execution-protocol.v1.json"
 $annotationOperationsContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-annotation-operations.v1.json"
 $mepMutationContractSource = Join-Path $runtimeRoot "manifests\dynamic-revit-mep-mutations.v1.json"
 $verifierProject = Join-Path $runtimeRoot "DynamicRevit.PackageVerifier\DynamicRevit.PackageVerifier.csproj"
@@ -68,6 +69,7 @@ Copy-Item -LiteralPath $observationContractSource -Destination (Join-Path $manif
 Copy-Item -LiteralPath $buildingSystemsObservationContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-building-systems-observations.v1.json")
 Copy-Item -LiteralPath $coreOperationsContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-operations-core.v1.json")
 Copy-Item -LiteralPath $resultReferenceContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-result-reference-graph.v1.json")
+Copy-Item -LiteralPath $executionProtocolContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-execution-protocol.v1.json")
 Copy-Item -LiteralPath $annotationOperationsContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-annotation-operations.v1.json")
 Copy-Item -LiteralPath $mepMutationContractSource -Destination (Join-Path $manifestOutput "dynamic-revit-mep-mutations.v1.json")
 
@@ -103,6 +105,7 @@ $packageManifest = [ordered]@{
     buildingSystemsObservationContract = New-Artifact "manifests/dynamic-revit-building-systems-observations.v1.json"
     coreOperationsContract = New-Artifact "manifests/dynamic-revit-operations-core.v1.json"
     resultReferenceContract = New-Artifact "manifests/dynamic-revit-result-reference-graph.v1.json"
+    executionProtocolContract = New-Artifact "manifests/dynamic-revit-execution-protocol.v1.json"
     annotationOperationsContract = New-Artifact "manifests/dynamic-revit-annotation-operations.v1.json"
     mepMutationContract = New-Artifact "manifests/dynamic-revit-mep-mutations.v1.json"
     sandboxProfile = "windows-lpac-v1-zero-capabilities"

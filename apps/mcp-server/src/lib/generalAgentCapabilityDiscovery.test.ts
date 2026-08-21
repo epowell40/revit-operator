@@ -18,6 +18,9 @@ test("general-agent discovery adds exactly one concise non-authorizing dynamic s
   assert.equal(result.executionSubstrates[0]?.semantics.previewBeforeCommit, true);
   assert.equal(result.executionSubstrates[0]?.semantics.machineAccess, "restricted");
   assert.equal(result.executionSubstrates[0]?.semantics.externalFileEffects, "explicit_capability_required");
+  assert.equal(result.executionSubstrates[0]?.semantics.iterativeObservation, "bounded_needs_facts");
+  assert.equal(result.executionSubstrates[0]?.semantics.semanticTrace, "exact_step_node_fact_binding");
+  assert.equal(result.executionSubstrates[0]?.semantics.deterministicReplay, true);
   assert.equal(result.executionSubstrates[0]?.admission.state, "not_admitted_by_discovery");
   assert.equal(result.executionSubstrates[0]?.admission.authorizationGranted, false);
   assert.equal(result.executionSubstrates[0]?.execution.tool, "operator_run_dynamic_revit_program");

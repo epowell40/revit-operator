@@ -19,7 +19,7 @@ export type NormalizedProviderSupervisorEvidence = {
   binding_sha256: string;
   supervisor_package_sha256: string;
   worker_runtime_package_sha256: string;
-  target_revit_year: "2023" | "2024" | "2025";
+  target_revit_year: "2023" | "2024" | "2025" | "2026";
   document_session_id: string;
   runtime_instance_id: string;
 };
@@ -121,7 +121,7 @@ function validateAuthenticatedHostReceipts(top: JsonRecord, runtimeId: string, l
 
 export function normalizeProviderSupervisorEvidence(rawBytes: Buffer, expected: {
   applyRequested: boolean;
-  targetRevitYear: "2023" | "2024" | "2025";
+  targetRevitYear: "2023" | "2024" | "2025" | "2026";
   source: string;
   supervisorPackageSha256: string;
   workerRuntimePackageSha256: string;
