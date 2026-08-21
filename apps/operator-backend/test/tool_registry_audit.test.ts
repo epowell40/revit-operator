@@ -22,7 +22,12 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.deepEqual(audit.reconciliation.control_plane_external_event_routes, []);
   assert.ok(audit.tools.filter(tool => tool.surface_kind === "ui_host").every(tool => !tool.issues.includes("generic_request_schema_only")));
   assert.ok(audit.tools.filter(tool => tool.surface_kind === "pane_backend").every(tool => !tool.mcp.generic_call_available));
-  assert.equal(audit.tools.find(tool => tool.path === "/revit/capture-screenshare")?.surface_kind, "pane_backend");
+  const screenshare = audit.tools.find(tool => tool.path === "/revit/capture-screenshare");
+  assert.equal(screenshare?.surface_kind, "revit_bridge");
+  assert.equal(screenshare?.mcp.generic_call_available, true);
+  assert.equal(screenshare?.handlers.pane_intercept, true);
+  assert.ok(!screenshare?.issues.includes("missing_operator_action_runtime"));
+  assert.ok(!screenshare?.issues.includes("missing_http_runtime"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/schedules")?.contracts.request_schema_source, "explicit");
   assert.ok(!audit.tools.find(tool => tool.path === "/revit/schedules")?.issues.includes("reflected_request_schema_unverified"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/get-parameters")?.contracts.request_schema_source, "explicit");

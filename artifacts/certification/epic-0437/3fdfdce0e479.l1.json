@@ -2001,7 +2001,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/audit_tool_registry.ts",
-      "sha256": "sha256:2ec2f09e2054482e1edcf03944086fd92582414fb4c41a8af4499296f5f05a68"
+      "sha256": "sha256:b2b39130e32f899a4479509447327d97b88532fa13829f795d20246f2ee3b096"
     },
     {
       "path": "apps/operator-backend/src/tools/benchmark.ts",
@@ -3065,7 +3065,7 @@
     },
     {
       "path": "apps/operator-backend/test/tool_registry_audit.test.ts",
-      "sha256": "sha256:4bc632fd6143ef2805ef1f1b2695288abb10bcf32a928df60397959a51911986"
+      "sha256": "sha256:99e888e66f3f588c8739b50c90079e162f1294e46c5ccb094dd5ec5fa4de476a"
     },
     {
       "path": "apps/operator-backend/test/tool_result_compaction.test.ts",
@@ -3134,6 +3134,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CadLinkPreflightCapabilityTests.cs",
       "sha256": "sha256:13eb428ef491ef1ffef856d3de0efeb0d311d05a675cedcfe52152571dea8685"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CaptureScreenshareHandlerTests.cs",
+      "sha256": "sha256:5170862d53da32d50142d9391996ee59cafe4689bb7317f82635fc55ea6bf22a"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/CategoryVisibilityMutationPolicyTests.cs",
@@ -3490,6 +3494,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/CadLinkPreflightCapability.cs",
       "sha256": "sha256:ab42ba62f8e33eb5594452f199a0bce89dda15e4b7dfa8ec7619aea7769e4103"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/CaptureScreensharePolicy.cs",
+      "sha256": "sha256:1850fa31afa6aad21a96c7591e10ec2f96bbbb7b8cb8193fb0227277abca1c84"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/CategoryVisibilityMutationPolicy.cs",
@@ -3871,6 +3879,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/AssignElectricalDistributionSystemHandler.cs",
       "sha256": "sha256:e12b687506866d21e39d16ef107acef870e9bfe01913ae32bd4aee07bdb79aea"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/CaptureScreenshareHandler.cs",
+      "sha256": "sha256:6d37e5367b0db8b8f05b498d228354bc90403b12e050dc7d5b2e3f6c2816a452"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/ChangeElementTypeHandler.cs",
@@ -5002,7 +5014,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionRunner.cs",
-      "sha256": "sha256:66428fa56d5c09cab67fa5b517d7deb569a2d3928444b07abca182c2f431567d"
+      "sha256": "sha256:79e987b83d69f2f30bbdc444eb743319ad2b5735b7f3f51504fc162e2e34158f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionSchemaValidator.cs",
@@ -5094,7 +5106,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
-      "sha256": "sha256:0dc142c1930694cf0cea87f4df5036169b1c6b99f513966c2f2fcf3fb00eac11"
+      "sha256": "sha256:18dbc1f44a03b00ce70e33666eb2acffffda526e6ccf7d6cb08a652a965a4e4e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolPopupWindow.cs",
@@ -5122,7 +5134,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Server/RevitHttpServer.cs",
-      "sha256": "sha256:adac46f07816e522fa267ada73b3e8c4143a12d6224224fe5fe1df4a0331b5bd"
+      "sha256": "sha256:fcb3ccf4e96c0476977f5f9ed2d7cdc9c479bfcab27d679099240c2df3236b35"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Services/RevitEventService.cs",
@@ -5130,14 +5142,14 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Tooling/tool_examples.json",
-      "sha256": "sha256:cad14e15741a10714fcfe3be6902062f9b58d52562554ca233f5de92c5a23854"
+      "sha256": "sha256:0db3435494377e80f2610cc77f2f4b5ec91e5f11bbec716c7510dc59dbe1b642"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/packages.lock.json",
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:15700a3bc7fc7b3ec8856376c4626b32be0dbf8761e0bae2051de168919c6b68",
+  "inputs_hash": "sha256:210db982de78956f5a138037229d40234b503f1de74deb8166e86c34ab855655",
   "result": {
     "passed": true,
     "checks": [

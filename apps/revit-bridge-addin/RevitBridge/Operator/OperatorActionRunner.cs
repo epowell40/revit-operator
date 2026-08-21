@@ -51,6 +51,7 @@ namespace RevitBridge.Operator
                 { "/revit/computer-use-observe", new ComputerUseObserveHandler() },
                 { "/revit/computer-use-act", new ComputerUseActHandler() },
                 { "/revit/computer-use-guard", new ComputerUseGuardHandler() },
+                { "/revit/capture-screenshare", new RevitBridge.Logic.Handlers.CaptureScreenshareHandler() },
                 { "/revit/open-model", new OpenModelHandler() },
                 { "/revit/close-active-model", new CloseActiveModelHandler() },
                 { "/revit/save-as", new SaveAsModelHandler() },
