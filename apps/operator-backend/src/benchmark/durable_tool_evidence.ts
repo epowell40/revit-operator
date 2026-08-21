@@ -14,11 +14,51 @@ function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+const REVIT_TOOL_PATH_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  revit_list_views: "/revit/views",
+  revit_query_views: "/revit/views",
+  revit_list_sheets: "/revit/sheets",
+  revit_list_schedules: "/revit/schedules",
+  revit_query_elements: "/revit/find-elements",
+  revit_find_elements: "/revit/find-elements",
+  revit_delete_elements: "/revit/delete"
+});
+
+export function canonicalBenchmarkRevitPath(pathValue: string): string {
+  const path = pathValue.trim().toLowerCase();
+  if (!path) return "";
+  const aliases: Readonly<Record<string, string>> = {
+    "/revit/list-views": "/revit/views",
+    "/revit/query-views": "/revit/views",
+    "/revit/list-sheets": "/revit/sheets",
+    "/revit/list-schedules": "/revit/schedules",
+    "/revit/query-elements": "/revit/find-elements",
+    "/revit/get-elements": "/revit/find-elements",
+    "/revit/delete-elements": "/revit/delete"
+  };
+  return aliases[path] || path;
+}
+
+export function benchmarkSemanticCapabilityId(pathValue: string): string {
+  const path = canonicalBenchmarkRevitPath(pathValue);
+  const known: Readonly<Record<string, string>> = {
+    "/revit/views": "revit.views.query",
+    "/revit/sheets": "revit.sheets.query",
+    "/revit/schedules": "revit.schedules.query",
+    "/revit/find-elements": "revit.elements.find",
+    "/revit/delete": "revit.elements.delete"
+  };
+  if (known[path]) return known[path];
+  if (!/^\/revit\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/.test(path)) return "";
+  return `revit.route.${path.slice("/revit/".length).replaceAll("/", ".")}`;
+}
+
 function canonicalRevitToolPath(server: string, toolName: string): string {
   if (server !== "revit_operator"
     || toolName === "revit_call_tool"
     || !/^revit_[a-z0-9_]+$/.test(toolName)) return "";
-  return `/revit/${toolName.slice("revit_".length).replaceAll("_", "-")}`;
+  return REVIT_TOOL_PATH_ALIASES[toolName]
+    || canonicalBenchmarkRevitPath(`/revit/${toolName.slice("revit_".length).replaceAll("_", "-")}`);
 }
 
 async function requestGoal(baseUrl: string, goalId: string): Promise<JsonRecord> {
@@ -81,6 +121,8 @@ export async function loadDurableToolEvidence(
   const failedPaths = new Set<string>();
   const successfulTools = new Set<string>();
   const failedTools = new Set<string>();
+  const semanticCapabilityIds = new Set<string>();
+  const semanticFacts: JsonRecord[] = [];
   const connectorRows = new Map<string, JsonRecord>();
   const compactlyScannedConnectorElementIds = new Set<string>();
   const resultReceipts: JsonRecord[] = [];
@@ -113,10 +155,12 @@ export async function loadDurableToolEvidence(
       const toolServer = String(tool.server || "").trim();
       const toolName = String(tool.tool || "").trim();
       const explicitPath = String(argumentsRecord.path || "").trim();
-      const path = explicitPath || canonicalRevitToolPath(toolServer, toolName);
+      const path = canonicalBenchmarkRevitPath(explicitPath || canonicalRevitToolPath(toolServer, toolName));
+      const semanticCapabilityId = benchmarkSemanticCapabilityId(path);
       const status = String(tool.status || "").trim().toLowerCase();
       if (path && status === "completed") successfulPaths.add(path);
       if (path && status === "failed") failedPaths.add(path);
+      if (semanticCapabilityId && status === "completed") semanticCapabilityIds.add(semanticCapabilityId);
       if (toolName && status === "completed") successfulTools.add(toolName);
       if (toolName && status === "failed") failedTools.add(toolName);
       const contents = Array.isArray(tool.result) ? tool.result.map(asRecord) : [];
@@ -124,7 +168,26 @@ export async function loadDurableToolEvidence(
       if (!resultText || !path) continue;
       let parsed: JsonRecord = {};
       try { parsed = asRecord(JSON.parse(resultText)); } catch { /* receipt still records the bounded digest */ }
+      const resultSha256 = sha256(resultText);
       const elementIds = Array.isArray(parsed.elementIds) ? parsed.elementIds : [];
+      if (status === "completed" && semanticCapabilityId) {
+        for (const key of [
+          "count", "requestedCount", "scannedElementCount", "failedElementCount",
+          "openPhysicalConnectorCount", "connectorScanTruncatedElementCount", "truncated"
+        ]) {
+          if (!Object.prototype.hasOwnProperty.call(parsed, key)) continue;
+          const value = parsed[key];
+          if (typeof value !== "number" && typeof value !== "boolean" && typeof value !== "string") continue;
+          semanticFacts.push({
+            capability_id: semanticCapabilityId,
+            key,
+            value,
+            source_goal_id: goalId,
+            source_action_id: String(action.id || "") || null,
+            source_result_sha256: resultSha256
+          });
+        }
+      }
       if (path === "/revit/find-elements") {
         maximumFindElementIds = Math.max(maximumFindElementIds, elementIds.length);
         maximumFindCount = Math.max(maximumFindCount, numberValue(parsed.count));
@@ -168,10 +231,11 @@ export async function loadDurableToolEvidence(
         action_id: String(action.id || "") || null,
         tool: String(tool.tool || "") || null,
         path,
+        semantic_capability_id: semanticCapabilityId || null,
         status,
         duration_ms: numberValue(tool.duration_ms),
         result_text_bytes: Buffer.byteLength(resultText, "utf8"),
-        result_sha256: sha256(resultText),
+        result_sha256: resultSha256,
         parsed_count: numberValue(parsed.count),
         parsed_element_id_count: elementIds.length,
         parsed_result_count: results.length,
@@ -216,6 +280,8 @@ export async function loadDurableToolEvidence(
     failed_paths: [...failedPaths].sort(),
     successful_tools: [...successfulTools].sort(),
     failed_tools: [...failedTools].sort(),
+    semantic_capability_ids: [...semanticCapabilityIds].sort(),
+    semantic_facts: semanticFacts,
     element_inventory: {
       maximum_element_id_count: maximumFindElementIds,
       maximum_reported_count: maximumFindCount,

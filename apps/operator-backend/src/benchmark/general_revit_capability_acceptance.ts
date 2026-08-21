@@ -1,5 +1,6 @@
 import path from "node:path";
 import { benchmarkDataRoot, readJsonFile } from "./files.js";
+import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath } from "./durable_tool_evidence.js";
 
 export const GENERAL_REVIT_CAPABILITY_SCHEMA = "revit-operator.general-revit-capability-acceptance/v1" as const;
 export const GENERAL_REVIT_RESULT_TIERS = [
@@ -42,6 +43,12 @@ export type GeneralRevitCapabilityCase = {
     evidence?: {
       required_successful_paths?: string[];
       required_successful_tools?: string[];
+      required_semantic_capability_ids?: string[];
+      required_semantic_facts?: Array<{
+        capability_id: string;
+        key: string;
+        equals: string | number | boolean;
+      }>;
     };
   };
   fixture_blocker_assertions?: {
@@ -49,6 +56,7 @@ export type GeneralRevitCapabilityCase = {
     must_not_match?: string[];
     evidence?: {
       required_successful_paths?: string[];
+      required_semantic_capability_ids?: string[];
       minimum_unique_connector_element_ids?: number;
       maximum_failed_connector_rows?: number;
       required_open_hvac_connector_count?: number;
@@ -303,6 +311,16 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
       }
       for (const pattern of [...assertions.must_match, ...(assertions.must_not_match || [])]) {
         try { new RegExp(pattern, "i"); } catch { throw new Error(`Case ${testCase.case_id} has an invalid ${label} assertion regex.`); }
+      }
+      for (const capabilityId of assertions.evidence?.required_semantic_capability_ids || []) {
+        if (!/^revit\.[a-z0-9]+(?:\.[a-z0-9-]+)+$/.test(capabilityId)) throw new Error(`Case ${testCase.case_id} has an invalid semantic capability id.`);
+      }
+      if (label === "answer") {
+        for (const fact of assertions.evidence?.required_semantic_facts || []) {
+          if (!/^revit\.[a-z0-9]+(?:\.[a-z0-9-]+)+$/.test(fact.capability_id) || !/^[A-Za-z][A-Za-z0-9]*$/.test(fact.key)) {
+            throw new Error(`Case ${testCase.case_id} has an invalid semantic fact requirement.`);
+          }
+        }
       }
     }
   }
@@ -600,24 +618,81 @@ function assertionPatternMatches(pattern: string, answerText: string): boolean {
   return expression.test(semanticAssertionText(answerText));
 }
 
+type TrustedSemanticFact = { capability_id: string; key: string; value: string | number | boolean };
+
+function durableEvidenceRecord(attempt: GeneralRevitAttempt): Record<string, unknown> {
+  return attempt.durable_tool_evidence && typeof attempt.durable_tool_evidence === "object" && !Array.isArray(attempt.durable_tool_evidence)
+    ? attempt.durable_tool_evidence as Record<string, unknown>
+    : {};
+}
+
+function successfulEvidencePaths(evidence: Record<string, unknown>): Set<string> {
+  return new Set(Array.isArray(evidence.successful_paths)
+    ? evidence.successful_paths.map((value) => canonicalBenchmarkRevitPath(String(value))).filter(Boolean)
+    : []);
+}
+
+function successfulSemanticCapabilityIds(evidence: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
+  for (const path of successfulEvidencePaths(evidence)) {
+    const id = benchmarkSemanticCapabilityId(path);
+    if (id) ids.add(id);
+  }
+  for (const value of Array.isArray(evidence.result_receipts) ? evidence.result_receipts : []) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const capabilityId = String(row.semantic_capability_id || "");
+    if (row.status === "completed" && capabilityId) ids.add(capabilityId);
+  }
+  return ids;
+}
+
+function trustedSemanticFacts(evidence: Record<string, unknown>): TrustedSemanticFact[] {
+  const receipts = Array.isArray(evidence.result_receipts) ? evidence.result_receipts : [];
+  const completedReceipts = new Set(receipts.flatMap((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    const row = value as Record<string, unknown>;
+    if (row.status !== "completed") return [];
+    const capabilityId = String(row.semantic_capability_id || "");
+    const goalId = String(row.goal_id || "");
+    const actionId = String(row.action_id || "");
+    const resultSha = String(row.result_sha256 || "");
+    return capabilityId && goalId && actionId && /^[a-f0-9]{64}$/.test(resultSha)
+      ? [`${capabilityId}\n${goalId}\n${actionId}\n${resultSha}`]
+      : [];
+  }));
+  const facts: TrustedSemanticFact[] = [];
+  for (const value of Array.isArray(evidence.semantic_facts) ? evidence.semantic_facts : []) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const capabilityId = String(row.capability_id || "");
+    const provenance = `${capabilityId}\n${String(row.source_goal_id || "")}\n${String(row.source_action_id || "")}\n${String(row.source_result_sha256 || "")}`;
+    const key = String(row.key || "");
+    const factValue = row.value;
+    if (!completedReceipts.has(provenance) || !/^[A-Za-z][A-Za-z0-9]*$/.test(key)
+      || (typeof factValue !== "string" && typeof factValue !== "number" && typeof factValue !== "boolean")) continue;
+    facts.push({ capability_id: capabilityId, key, value: factValue });
+  }
+  return facts;
+}
 function fixtureBlockerEvidenceFailures(
   testCase: GeneralRevitCapabilityCase,
   attempt: GeneralRevitAttempt
 ): string[] {
   const requirements = testCase.fixture_blocker_assertions?.evidence;
   if (!requirements) return [];
-  const evidence = attempt.durable_tool_evidence && typeof attempt.durable_tool_evidence === "object"
-    ? attempt.durable_tool_evidence as Record<string, unknown>
-    : {};
-  const successfulPaths = new Set(Array.isArray(evidence.successful_paths)
-    ? evidence.successful_paths.map((value) => String(value))
-    : []);
+  const evidence = durableEvidenceRecord(attempt);
+  const successfulPaths = successfulEvidencePaths(evidence);
+  const semanticCapabilityIds = successfulSemanticCapabilityIds(evidence);
   const connectorInventory = evidence.connector_inventory && typeof evidence.connector_inventory === "object"
     ? evidence.connector_inventory as Record<string, unknown>
     : {};
   const failures: string[] = [];
   for (const path of requirements.required_successful_paths || []) {
-    if (!successfulPaths.has(path)) failures.push(`evidence_missing_successful_path:${path}`);
+    if (!successfulPaths.has(canonicalBenchmarkRevitPath(path))) failures.push(`evidence_missing_successful_path:${path}`);
+  }
+  for (const capabilityId of requirements.required_semantic_capability_ids || []) {
+    if (!semanticCapabilityIds.has(capabilityId)) failures.push(`evidence_missing_semantic_capability:${capabilityId}`);
   }
   const uniqueElementIds = Number(connectorInventory.unique_element_ids);
   if (requirements.minimum_unique_connector_element_ids !== undefined
@@ -655,22 +730,27 @@ function answerEvidenceFailures(
 ): string[] {
   const requirements = testCase.answer_assertions?.evidence;
   if (!requirements) return [];
-  const evidence = attempt.durable_tool_evidence && typeof attempt.durable_tool_evidence === "object"
-    ? attempt.durable_tool_evidence as Record<string, unknown>
-    : {};
-  const successfulPaths = new Set(Array.isArray(evidence.successful_paths)
-    ? evidence.successful_paths.map((value) => String(value))
-    : []);
+  const evidence = durableEvidenceRecord(attempt);
+  const successfulPaths = successfulEvidencePaths(evidence);
+  const semanticCapabilityIds = successfulSemanticCapabilityIds(evidence);
+  const semanticFacts = trustedSemanticFacts(evidence);
   const successfulTools = new Set(Array.isArray(evidence.successful_tools)
     ? evidence.successful_tools.map((value) => String(value))
     : []);
   return [
     ...(requirements.required_successful_paths || [])
-    .filter((path) => !successfulPaths.has(path))
-    .map((path) => `evidence_missing_successful_path:${path}`),
+      .filter((path) => !successfulPaths.has(canonicalBenchmarkRevitPath(path)))
+      .map((path) => `evidence_missing_successful_path:${path}`),
     ...(requirements.required_successful_tools || [])
       .filter((tool) => !successfulTools.has(tool))
-      .map((tool) => `evidence_missing_successful_tool:${tool}`)
+      .map((tool) => `evidence_missing_successful_tool:${tool}`),
+    ...(requirements.required_semantic_capability_ids || [])
+      .filter((capabilityId) => !semanticCapabilityIds.has(capabilityId))
+      .map((capabilityId) => `evidence_missing_semantic_capability:${capabilityId}`),
+    ...(requirements.required_semantic_facts || [])
+      .filter((required) => !semanticFacts.some((fact) => fact.capability_id === required.capability_id
+        && fact.key === required.key && fact.value === required.equals))
+      .map((required) => `evidence_semantic_fact_mismatch:${required.capability_id}:${required.key}:${JSON.stringify(required.equals)}`)
   ];
 }
 
@@ -813,16 +893,19 @@ export function evaluateGeneralRevitCapabilityAttempt(
   }
   const rows = actionRows(attempt);
   const durableTools = durableRevitToolNames(attempt);
-  const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt);
+  const durablePaths = successfulEvidencePaths(durableEvidenceRecord(attempt));
+  const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt).map(canonicalBenchmarkRevitPath);
+  const expectedPaths = new Set(testCase.dispatch_any_of.map(canonicalBenchmarkRevitPath));
   const composablePreviewLaneObserved = testCase.expected_effect !== "apply"
     && teammatePreviewPaths.includes("/revit/transaction-plan");
   const observedPaths = [...new Set([
-    ...rows.map((row) => String(row.path || "").trim()).filter(Boolean),
+    ...rows.map((row) => canonicalBenchmarkRevitPath(String(row.path || ""))).filter(Boolean),
+    ...durablePaths,
     ...durableTools.map((tool) => `mcp:${tool}`),
     ...teammatePreviewPaths
   ])];
   const expectedPathObserved = composablePreviewLaneObserved
-    || observedPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
+    || observedPaths.some((candidate) => expectedPaths.has(candidate))
     || durableTools.length > 0
     || rows.some((row) => dynamicRuntimeEffectMatches(row, testCase.expected_effect));
   const substantiveFailedAction = rows.some((row, index) => {
@@ -840,18 +923,19 @@ export function evaluateGeneralRevitCapabilityAttempt(
     });
   });
   const successfulExpectedPathObserved = durableTools.length > 0
+    || [...durablePaths].some((candidate) => expectedPaths.has(candidate))
     || composablePreviewLaneObserved
-    || teammatePreviewPaths.some((candidate) => testCase.dispatch_any_of.includes(candidate))
+    || teammatePreviewPaths.some((candidate) => expectedPaths.has(candidate))
     || rows.some((row) => {
-    const candidate = String(row.path || "").trim();
-    if (!testCase.dispatch_any_of.includes(candidate) || row.status === "failed" || row.request_dispatched === false) return false;
-    return row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched";
-  }) || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect));
+      const candidate = canonicalBenchmarkRevitPath(String(row.path || ""));
+      return expectedPaths.has(candidate) && row.status !== "failed" && row.request_dispatched === true;
+    }) || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect));
   const teammate = teammateLoopTruth(attempt);
-  const applyDispatched = teammate.mutationAttempted || attempt.effect_state === "apply_dispatched"
-    || rows.some((row) => row.request_effect === "apply" && row.request_dispatched === true);
-  const dispatched = applyDispatched || attempt.effect_state === "read_only_dispatched"
-    || rows.some((row) => row.request_dispatched === true) || durableTools.length > 0;
+  const applyDispatched = teammate.mutationAttempted
+    || rows.some((row) => row.request_effect === "apply" && row.request_dispatched === true && row.status !== "failed"
+      && /^\/revit\//.test(canonicalBenchmarkRevitPath(String(row.path || ""))));
+  const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true)
+    || durablePaths.size > 0 || durableTools.length > 0;
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
   const recoveredCanonicalTimeout = attempt.ok === false
@@ -898,8 +982,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && assistantReportsVerifiedNoop(attempt) && !assistantBlocked && !assistantIncomplete
     && durable.completed && durable.verified && durable.requestedEffects.includes("apply")
     && durable.completionModes.includes("verified_noop");
-  const directPreviewDispatched = rows.some((row) => row.request_effect === "preview" && row.request_dispatched !== false && row.status !== "failed"
-    && (row.request_dispatched === true || attempt.effect_state === "read_only_dispatched" || attempt.effect_state === "apply_dispatched"));
+  const directPreviewDispatched = rows.some((row) => row.request_effect === "preview"
+    && row.request_dispatched === true && row.status !== "failed"
+    && /^\/revit\//.test(canonicalBenchmarkRevitPath(String(row.path || ""))));
   // A certified preview is a stronger non-mutating observation than a plain
   // read and may satisfy either safe effect. It must never satisfy apply.
   const teammatePreviewDispatched = testCase.expected_effect !== "apply"
