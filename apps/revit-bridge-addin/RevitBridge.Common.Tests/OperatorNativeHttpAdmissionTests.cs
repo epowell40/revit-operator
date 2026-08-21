@@ -508,7 +508,11 @@ namespace RevitBridge.Common.Tests
             var current = new DirectoryInfo(AppContext.BaseDirectory);
             while (current != null)
             {
-                if (Directory.Exists(Path.Combine(current.FullName, "apps", "revit-bridge-addin"))) return current.FullName;
+                var gitMetadata = Path.Combine(current.FullName, ".git");
+                var isRepositoryRoot = Directory.Exists(gitMetadata) || File.Exists(gitMetadata);
+                if (isRepositoryRoot &&
+                    (Directory.Exists(Path.Combine(current.FullName, "apps", "revit-bridge-addin")) ||
+                     Directory.Exists(Path.Combine(current.FullName, "revit-bridge-addin")))) return current.FullName;
                 current = current.Parent;
             }
             throw new DirectoryNotFoundException("Could not locate repository root.");
