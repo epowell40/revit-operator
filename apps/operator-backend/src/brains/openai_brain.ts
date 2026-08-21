@@ -9,6 +9,7 @@ import {
   type ActionCall,
   type ChatRequest,
   type ChatResponse,
+  type ModelCallReceipt,
   type ToolResult
 } from "../contracts.js";
 import { getHistory, getPinnedGoal, type SessionMessage } from "../session_store.js";
@@ -27,6 +28,7 @@ import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
 import { projectContextForSpeedDiet, REVIT_MODEL_OPEN_PATH_RULE } from "../revit_host_model_inventory.js";
 import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../memory/requirements_response_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
+import { createOpenAiModelCallReceipt } from "../model_call_telemetry.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
 import {
@@ -56,7 +58,15 @@ import { knowledgeBaseOwnerIdForPrincipal, listKnowledgeBaseDocuments, searchKno
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES, formatAgentTurnContract } from "../agent_response_policy.js";
-import { approxPayloadChars, resolveSpeedSettings, selectSpeedRoute, type SpeedRouteKind } from "../speed_config.js";
+import {
+  approxPayloadChars,
+  normalizeModelId,
+  normalizeReasoningEffort,
+  resolveSpeedSettings,
+  selectSpeedRoute,
+  type ReasoningEffort,
+  type SpeedRouteKind
+} from "../speed_config.js";
 import {
   appendRedlineFastPathCandidateDiagnostic,
   buildRedlineFastPathDiagnosticsText,
@@ -18687,16 +18697,7 @@ export function __testOnlyBuildCapabilityRecoveryResponse(args: {
   });
 }
 
-type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
 type TextVerbosity = "low" | "medium" | "high";
-
-function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffort = "medium"): ReasoningEffort {
-  if (typeof value !== "string") return fallback;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "none" || normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh"
-    ? normalized
-    : fallback;
-}
 
 function getRequestedReasoningEffort(req: ChatRequest, fallback: ReasoningEffort = "medium"): ReasoningEffort {
   const ui: any = (req.context as any)?.ui;
@@ -22432,6 +22433,7 @@ export function __testOnlyFinalizeOpenAiResponseForRequest(req: ChatRequest, res
 async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal): Promise<ChatResponse> {
   noteExplicitExistingConditionsCompileOnlyIntent(req);
   const requirementsGuard = captureRequirementsResponseGuard(req);
+  const modelCallReceipts: ModelCallReceipt[] = [];
   const finishResponse = (response: ChatResponse): ChatResponse => {
     response = __testOnlyFinalizeOpenAiResponseForRequest(req, response);
     response = enforceRequirementsResponseGuard(req, response, requirementsGuard);
@@ -22442,6 +22444,15 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
           action_paths: response.actions.map((action) => action.path)
         });
       }
+    }
+    if (modelCallReceipts.length > 0) {
+      response = {
+        ...response,
+        model_call_receipts: [
+          ...(Array.isArray(response.model_call_receipts) ? response.model_call_receipts : []),
+          ...modelCallReceipts
+        ]
+      };
     }
     return response;
   };
@@ -22472,7 +22483,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
   }
 
   const client = createOpenAiClient(apiKey);
-  const defaultModel = process.env.OPERATOR_OPENAI_MODEL || "gpt-5.6-sol";
+  const defaultModel = normalizeModelId(process.env.OPERATOR_OPENAI_MODEL, "gpt-5.6-sol");
   const defaultReasoningEffort = getRequestedReasoningEffort(req, normalizeReasoningEffort(process.env.OPERATOR_OPENAI_REASONING_EFFORT || "medium", "medium"));
   const textVerbosity = normalizeTextVerbosity(process.env.OPERATOR_OPENAI_TEXT_VERBOSITY || "low", "low");
   const serviceTier = getRequestedServiceTier();
@@ -22775,6 +22786,7 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       }
     };
     let response: any;
+    const requestStartedAtUtc = new Date().toISOString();
     const requestStartedMs = Date.now();
     try {
       if (abortSignal) {
@@ -22784,10 +22796,38 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
         response = await client.responses.create(requestBody, abortSignal ? { signal: abortSignal } : undefined);
       }
     } catch (err) {
+      const receipt = createOpenAiModelCallReceipt({
+        route: route.route,
+        requested_model: route.model,
+        reasoning_effort: route.reasoning_effort,
+        started_at_utc: requestStartedAtUtc,
+        duration_ms: Date.now() - requestStartedMs,
+        error: err
+      });
+      modelCallReceipts.push(receipt);
+      try {
+        appendEvent(r.session_id, "assistant", "model.call.receipt", receipt);
+      } catch {
+        // A telemetry persistence failure must not mask the provider error.
+      }
       const message = err instanceof Error ? err.message : "Unknown OpenAI error";
       return { error: `Operator backend error while calling the model: ${message}` };
     }
     const modelLatencyMs = Date.now() - requestStartedMs;
+    const modelCallReceipt = createOpenAiModelCallReceipt({
+      route: route.route,
+      requested_model: route.model,
+      reasoning_effort: route.reasoning_effort,
+      started_at_utc: requestStartedAtUtc,
+      duration_ms: modelLatencyMs,
+      response
+    });
+    modelCallReceipts.push(modelCallReceipt);
+    try {
+      appendEvent(r.session_id, "assistant", "model.call.receipt", modelCallReceipt);
+    } catch {
+      // Receipt propagation on ChatResponse remains authoritative for this turn.
+    }
 
     const rawOutputText = extractResponsesApiOutputText(response);
 
@@ -22840,21 +22880,26 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
     }
 
     try {
-      const usage: any = (response as any)?.usage;
-      const inputTokens = Number.isFinite(usage?.input_tokens) ? Number(usage.input_tokens) : null;
-      const outputTokens = Number.isFinite(usage?.output_tokens) ? Number(usage.output_tokens) : null;
-      const totalTokens = Number.isFinite(usage?.total_tokens) ? Number(usage.total_tokens) : null;
+      const inputTokens = modelCallReceipt.tokens.input_tokens;
+      const cachedInputTokens = modelCallReceipt.tokens.cached_input_tokens;
+      const outputTokens = modelCallReceipt.tokens.output_tokens;
+      const reasoningOutputTokens = modelCallReceipt.tokens.reasoning_output_tokens;
+      const totalTokens = modelCallReceipt.tokens.total_tokens;
       if (openAiUsageNotificationsEnabled()) {
         appendNotification(req.session_id, "openai.usage", `OpenAI usage: model=${route.model}${inputTokens !== null ? `, in=${inputTokens}` : ""}${outputTokens !== null ? `, out=${outputTokens}` : ""}${totalTokens !== null ? `, total=${totalTokens}` : ""}`, {
           model: route.model,
           input_tokens: inputTokens,
+          cached_input_tokens: cachedInputTokens,
           output_tokens: outputTokens,
+          reasoning_output_tokens: reasoningOutputTokens,
           total_tokens: totalTokens
         });
         appendEvent(req.session_id, "assistant", "openai.usage", {
           model: route.model,
           input_tokens: inputTokens,
+          cached_input_tokens: cachedInputTokens,
           output_tokens: outputTokens,
+          reasoning_output_tokens: reasoningOutputTokens,
           total_tokens: totalTokens
         });
       }
@@ -22863,11 +22908,15 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
         reason: route.reason,
         model: route.model,
         reasoning_effort: route.reasoning_effort,
+        call_id: modelCallReceipt.call_id,
+        success: modelCallReceipt.success,
         prompt_build_ms: promptBuildMs,
         model_latency_ms: modelLatencyMs,
         input_chars: inputChars,
         input_tokens: inputTokens,
+        cached_input_tokens: cachedInputTokens,
         output_tokens: outputTokens,
+        reasoning_output_tokens: reasoningOutputTokens,
         total_tokens: totalTokens
       });
     } catch {

@@ -72,10 +72,36 @@ export type ChatRequest = {
   user_attachments?: UserAttachment[];
 };
 
+export type ModelCallTokenUsage = {
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number | null;
+  reasoning_output_tokens: number | null;
+  total_tokens: number | null;
+};
+
+export type ModelCallReceipt = {
+  schema: "revit-operator.model-call-receipt.v1";
+  call_id: string;
+  provider: "openai";
+  route: "classic" | "planner" | "executor" | "desktop_computer";
+  requested_model: string;
+  model: string;
+  reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
+  started_at_utc: string;
+  duration_ms: number;
+  success: boolean;
+  response_status: string | null;
+  error_code: string | null;
+  tokens: ModelCallTokenUsage;
+};
+
 export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
+  /** Provider-call metadata only. Never contains prompts or model output. */
+  model_call_receipts?: ModelCallReceipt[];
   execution_strategy_evidence?: {
     schema: "revit-operator.execution-strategy-evidence.v1";
     selected_substrate: "typed_capability" | "typed_capability_composition" | "dynamic_revit_program";

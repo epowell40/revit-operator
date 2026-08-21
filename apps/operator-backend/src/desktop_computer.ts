@@ -1,4 +1,13 @@
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
+import type { ModelCallReceipt } from "./contracts.js";
+import { createOpenAiModelCallReceipt } from "./model_call_telemetry.js";
+import {
+  isReasoningEffort,
+  isSafeModelId,
+  normalizeModelId,
+  normalizeReasoningEffort,
+  type ReasoningEffort
+} from "./speed_config.js";
 import {
   getSidecarAgentProfileState,
   type SidecarAgentProfileState
@@ -6,7 +15,7 @@ import {
 
 export type DesktopComputerRelayRequest = {
   model?: string;
-  reasoning_effort?: string;
+  reasoning_effort?: ReasoningEffort;
   instructions?: string;
   tools?: unknown[];
   input: unknown;
@@ -18,16 +27,15 @@ type DesktopComputerRelayResponse = {
   output_text: string;
   output: unknown[];
   model?: string;
+  model_call_receipt: ModelCallReceipt;
 };
 
 function resolveDesktopComputerModel(): string {
-  return (process.env.OPERATOR_DESKTOP_COMPUTER_MODEL || "gpt-5.6-terra").trim();
+  return normalizeModelId(process.env.OPERATOR_DESKTOP_COMPUTER_MODEL, "gpt-5.6-terra");
 }
 
-function resolveDesktopComputerReasoningEffort(): string {
-  return (process.env.OPERATOR_DESKTOP_COMPUTER_REASONING_EFFORT || "medium")
-    .trim()
-    .toLowerCase();
+function resolveDesktopComputerReasoningEffort(): ReasoningEffort {
+  return normalizeReasoningEffort(process.env.OPERATOR_DESKTOP_COMPUTER_REASONING_EFFORT, "medium");
 }
 
 export function getDesktopComputerConfig(): {
@@ -53,10 +61,20 @@ function normalizeRelayRequest(value: unknown): DesktopComputerRelayRequest {
     throw new Error("input is required.");
   }
 
+  const model = typeof body.model === "string" ? body.model.trim() : "";
+  if (model && !isSafeModelId(model)) {
+    throw new Error("model must be a bounded provider model identifier.");
+  }
+  const reasoningEffort = typeof body.reasoning_effort === "string"
+    ? body.reasoning_effort.trim().toLowerCase()
+    : "";
+  if (reasoningEffort && !isReasoningEffort(reasoningEffort)) {
+    throw new Error("reasoning_effort must be none, low, medium, high, xhigh, or max.");
+  }
+
   return {
-    model: typeof body.model === "string" ? body.model.trim() || undefined : undefined,
-    reasoning_effort:
-      typeof body.reasoning_effort === "string" ? body.reasoning_effort.trim().toLowerCase() || undefined : undefined,
+    model: model || undefined,
+    reasoning_effort: reasoningEffort ? reasoningEffort as ReasoningEffort : undefined,
     instructions: typeof body.instructions === "string" ? body.instructions : undefined,
     tools: Array.isArray(body.tools) ? body.tools : undefined,
     input,
@@ -82,12 +100,13 @@ function extractOutputText(response: any): string {
   return parts.join("");
 }
 
-function simplifyRelayResponse(response: any): DesktopComputerRelayResponse {
+function simplifyRelayResponse(response: any, modelCallReceipt: ModelCallReceipt): DesktopComputerRelayResponse {
   return {
     id: typeof response?.id === "string" ? response.id : "",
     output_text: extractOutputText(response),
     output: Array.isArray(response?.output) ? response.output : [],
-    model: typeof response?.model === "string" ? response.model : undefined
+    model: typeof response?.model === "string" ? response.model : undefined,
+    model_call_receipt: modelCallReceipt
   };
 }
 
@@ -99,14 +118,25 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
 
   const body = normalizeRelayRequest(rawBody);
   const client = createOpenAiClient(apiKey);
+  const model = body.model || resolveDesktopComputerModel();
+  const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
+  const startedAtUtc = new Date().toISOString();
+  const startedMs = Date.now();
   const response = await client.responses.create({
-    model: body.model || resolveDesktopComputerModel(),
-    reasoning: { effort: body.reasoning_effort || resolveDesktopComputerReasoningEffort() },
+    model,
+    reasoning: { effort: reasoningEffort },
     instructions: body.instructions,
     tools: body.tools,
     input: body.input,
     previous_response_id: body.previous_response_id
   } as any);
 
-  return simplifyRelayResponse(response);
+  return simplifyRelayResponse(response, createOpenAiModelCallReceipt({
+    route: "desktop_computer",
+    requested_model: model,
+    reasoning_effort: reasoningEffort,
+    started_at_utc: startedAtUtc,
+    duration_ms: Date.now() - startedMs,
+    response
+  }));
 }

@@ -120,3 +120,62 @@ test("deployment routing overrides stale pane model settings", () => {
     }
   }
 });
+
+test("literal max and Luna pass through the executor route", { concurrency: false }, () => {
+  const previous = {
+    model: process.env.OPERATOR_EXECUTOR_MODEL,
+    effort: process.env.OPERATOR_EXECUTOR_REASONING_EFFORT
+  };
+  delete process.env.OPERATOR_EXECUTOR_MODEL;
+  delete process.env.OPERATOR_EXECUTOR_REASONING_EFFORT;
+  try {
+    const settings = resolveSpeedSettings({
+      ui: {
+        speed_settings: {
+          speed_mode: true,
+          executor_model: "gpt-5.6-luna",
+          executor_reasoning_effort: "max"
+        }
+      }
+    });
+    const route = selectSpeedRoute(req("select the walls on level 2"), settings, {
+      model: "gpt-5.6-sol",
+      reasoning_effort: "medium"
+    });
+
+    assert.equal(route.route, "executor");
+    assert.equal(route.model, "gpt-5.6-luna");
+    assert.equal(route.reasoning_effort, "max");
+  } finally {
+    if (previous.model === undefined) delete process.env.OPERATOR_EXECUTOR_MODEL;
+    else process.env.OPERATOR_EXECUTOR_MODEL = previous.model;
+    if (previous.effort === undefined) delete process.env.OPERATOR_EXECUTOR_REASONING_EFFORT;
+    else process.env.OPERATOR_EXECUTOR_REASONING_EFFORT = previous.effort;
+  }
+});
+
+test("unsafe or oversized model ids fail closed to bounded defaults", { concurrency: false }, () => {
+  const previous = {
+    planner: process.env.OPERATOR_PLANNER_MODEL,
+    executor: process.env.OPERATOR_EXECUTOR_MODEL
+  };
+  process.env.OPERATOR_PLANNER_MODEL = "../../unsafe model";
+  process.env.OPERATOR_EXECUTOR_MODEL = "x".repeat(129);
+  try {
+    const settings = resolveSpeedSettings({
+      ui: {
+        speed_settings: {
+          planner_model: "gpt-5.6-sol",
+          executor_model: "gpt-5.6-luna"
+        }
+      }
+    });
+    assert.equal(settings.planner_model, "gpt-5.6-sol");
+    assert.equal(settings.executor_model, "gpt-5.6-luna");
+  } finally {
+    if (previous.planner === undefined) delete process.env.OPERATOR_PLANNER_MODEL;
+    else process.env.OPERATOR_PLANNER_MODEL = previous.planner;
+    if (previous.executor === undefined) delete process.env.OPERATOR_EXECUTOR_MODEL;
+    else process.env.OPERATOR_EXECUTOR_MODEL = previous.executor;
+  }
+});
