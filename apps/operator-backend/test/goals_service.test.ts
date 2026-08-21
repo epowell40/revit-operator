@@ -1642,7 +1642,23 @@ test("authenticated Sidecar settlement records reported completion without minti
       successful_tools: 2,
       failed_tools: 0,
       verification_kind: "dynamic_revit_trusted_evidence",
-      evidence: { run_id: "dynamic-run-1", execution_ok: true, report: { total: 509 } }
+      evidence: {
+        run_id: "dynamic-run-1",
+        execution_ok: true,
+        report: { total: 509 },
+        function_tools: [
+          {
+            tool_name: "revit_action",
+            call_id: "action-1",
+            path: "/revit/update-schedule-cell",
+            status: "success",
+            request_effect: "apply",
+            request_dispatched: true
+          },
+          { tool_name: "revit_action", path: "/revit/ignored", status: "pending" },
+          { tool_name: "", status: "failed" }
+        ]
+      }
     });
 
     assert.equal(settled.status, "active");
@@ -1652,6 +1668,12 @@ test("authenticated Sidecar settlement records reported completion without minti
     assert.equal(settled.validation_log.length, 0);
     assert.match(settled.completion_audit?.recommendation || "", /retain complete-with-issues truth/);
     assert.match(JSON.stringify(getGoal(goal.id)?.evidence_log), /dynamic-run-1/);
+    const reportedAction = settled.action_log.find(entry => entry.summary.includes("\/revit\/update-schedule-cell"));
+    assert.match(reportedAction?.summary || "", /revit_action \/revit\/update-schedule-cell success/);
+    assert.equal((reportedAction?.details as any)?.source, "operator_desktop_reported");
+    assert.equal((reportedAction?.details as any)?.request_effect, "apply");
+    assert.equal((reportedAction?.details as any)?.request_dispatched, true);
+    assert.equal(settled.action_log.filter(entry => (entry.details as any)?.source === "operator_desktop_reported").length, 1);
   });
 });
 
