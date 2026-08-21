@@ -91,11 +91,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.test.ts",
-      "sha256": "sha256:126285360057cd0d458d9c08399cab98443b671a7bf9a935250324561f259118"
+      "sha256": "sha256:b102a83e8893636aadc77d13c66e44103e7bbae4daad3192d94ea9e077607022"
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.ts",
-      "sha256": "sha256:e7d8a271e5ed62ea8f9737ba252cf39b3fae4c05f0e19fdaaaed9d6d4ad823c2"
+      "sha256": "sha256:7a9297ff7cb89ee9d26d5ac90669997baf6295b3011a8503bc2ca9da86449d5a"
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.test.ts",
@@ -151,11 +151,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.test.ts",
-      "sha256": "sha256:d3e7831d30e57ac1c08200c2a707ae2b9f27cc1bd6f6c9a1d98ef9a7a080d1d0"
+      "sha256": "sha256:a1430a9881408e21d6fe1d4e944b62c9465444528a016e7517ed9e322aae0d4b"
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.ts",
-      "sha256": "sha256:c160b024bb98ac9e863ca7dd0a174cbfe2d0155a69b75751c82cea3889c6323d"
+      "sha256": "sha256:e4aea3f9abaf2fc9086cb2e5a74603fc46c9ab836f7cf13821f76dd63a4019a0"
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.test.ts",
@@ -332,7 +332,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:ce9a980eb2b695a5408add12529acc58f8472c21c9fa56d438362e9eca44df70"
+      "sha256": "sha256:9e48eee019fc63ebf3fc5850cf96fd051dabc71a02386e491e1d4a74801f4d10"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -5157,7 +5157,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:9d506b2c48529e67725a87089f431ef004bef29adc40ae79838083dbd62321e3",
+  "inputs_hash": "sha256:8e8308ed3c0869c98eae212debc21ea854d0e5b6ed5211f7b646f207bd4b81af",
   "result": {
     "passed": true,
     "checks": [

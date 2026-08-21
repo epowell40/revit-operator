@@ -10,7 +10,7 @@ import { getWorkspaceRoot } from "./workspace.js";
 const sha256 = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const emptyDiagnosticBundle = sha256("dynamic-revit-worker-diagnostics/v1\n");
 
-test("dynamic runner is local-only, bounded, and preserves receipts while redacting trusted paths", async () => {
+test("dynamic runner supports authenticated hosted execution, remains bounded, and redacts trusted paths", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dynamic-mcp-runner-"));
   try {
     const supervisor = path.join(root, "supervisor.exe"); const token = path.join(root, "token"); const worker = path.join(root, "worker");
@@ -30,7 +30,17 @@ test("dynamic runner is local-only, bounded, and preserves receipts while redact
     assert.equal(result.execution_ok, true); assert.equal((result.evidence as any).taskDirectory, "opaque:trusted-task");
     assert.equal(result.checkpoint?.checkpoint_index, 1);
     assert.equal(result.checkpoint?.document_fingerprint, documentFingerprint);
-    await assert.rejects(() => runDynamicRevitProgram({ source: "x", mode: "preview" }, { ...env, REVIT_OPERATOR_MODE: "production" }), /unavailable/);
+    const hosted = await runDynamicRevitProgram({ source: "public class HostedProgram {}", mode: "preview" },
+      { ...env, REVIT_OPERATOR_MODE: "hosted" }, async (_file, args) => {
+        const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
+        fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, workerOutput: {
+          sourceHash: sha256("public class HostedProgram {}"), executionStatus: "completed",
+          diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle
+        } }));
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+    assert.equal(hosted.execution_ok, true);
+    assert.equal(hosted.requested_mode, "preview");
     await assert.rejects(() => runDynamicRevitProgram({ source: "x".repeat(128_001), mode: "preview" }, env), /128,000/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -73,10 +73,13 @@ export type DynamicResultReferenceRunInput = {
 
 type Executor = (file: string, args: string[], timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
 
-/** Local/development only. The bridge independently enforces its exact laboratory-mode gate and write authority. */
+/**
+ * Runs on the user's trusted workstation whenever the MCP surface has admitted
+ * the authenticated General Agent or the explicit development laboratory.
+ * The supervisor, worker, bridge, transaction, target, and effect-budget
+ * boundaries remain authoritative for every runtime mode.
+ */
 export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput, env: NodeJS.ProcessEnv = process.env, execute: Executor = executeFile) {
-  const mode = (env.REVIT_OPERATOR_MODE || "development").trim().toLowerCase();
-  if (!new Set(["local", "development", "self_hosted"]).has(mode)) throw new Error("Dynamic Revit program execution is unavailable outside local/development/self-hosted mode.");
   if (!input || typeof input.source !== "string" || input.source.length < 1 || input.source.length > 128_000 || input.source.includes("\0")) throw new Error("Dynamic Revit program source is invalid or exceeds 128,000 characters.");
   if (input.mode !== "preview" && input.mode !== "apply") throw new Error("Dynamic Revit program mode must be preview or apply.");
   if (input.category !== undefined && !/^OST_[A-Za-z0-9_]{1,120}$/.test(input.category)) throw new Error("Dynamic snapshot category must be a bounded BuiltInCategory token.");
