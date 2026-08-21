@@ -28,6 +28,36 @@ export type AssignmentLifecyclePhase =
 
 export type AssignmentTruthValue = boolean | null;
 
+export type AssignmentTerminalReason =
+  | "successful_read"
+  | "successful_preview"
+  | "successful_apply"
+  | "verified_noop"
+  | "rejected_no_effect_preview"
+  | "completed_after_recovery"
+  | "missing_target_or_artifact"
+  | "execution_failure"
+  | "verification_incomplete"
+  | "effect_reconciliation_required"
+  | "task_blocked"
+  | null;
+
+export type AssignmentCompletionMode =
+  | "successful_read"
+  | "successful_preview"
+  | "successful_apply"
+  | "verified_noop"
+  | "rejected_no_effect_preview"
+  | "reported_complete"
+  | null;
+
+export type AssignmentAuthoritativeOutcome =
+  | "succeeded"
+  | "blocked"
+  | "failed"
+  | "verification_incomplete"
+  | null;
+
 export type AssignmentProjection = {
   schema: typeof ASSIGNMENT_PROJECTION_SCHEMA;
   id: string;
@@ -43,6 +73,7 @@ export type AssignmentProjection = {
     source_phase: string | null;
     current_step: string | null;
     summary: string | null;
+    terminal_reason: AssignmentTerminalReason;
   };
   target: {
     session_id: string | null;
@@ -118,7 +149,10 @@ export type AssignmentProjection = {
   execution: {
     substrate: string | null;
     requested_effect: "read" | "preview" | "apply" | null;
-    completion_mode: "verified_noop" | null;
+    completion_mode: AssignmentCompletionMode;
+    latest_authoritative_outcome: AssignmentAuthoritativeOutcome;
+    recovered_failure_count: number | null;
+    rejected_no_effect_count: number | null;
     task_ids: string[];
     batch_job_ids: string[];
   };
@@ -177,6 +211,26 @@ function truthMerge(left: AssignmentTruthValue, right: AssignmentTruthValue): As
 
 function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+const TERMINAL_REASONS = new Set<Exclude<AssignmentTerminalReason, null>>([
+  "successful_read", "successful_preview", "successful_apply", "verified_noop",
+  "rejected_no_effect_preview", "completed_after_recovery", "missing_target_or_artifact",
+  "execution_failure", "verification_incomplete", "effect_reconciliation_required", "task_blocked"
+]);
+
+const COMPLETION_MODES = new Set<Exclude<AssignmentCompletionMode, null>>([
+  "successful_read", "successful_preview", "successful_apply", "verified_noop",
+  "rejected_no_effect_preview", "reported_complete"
+]);
+
+const AUTHORITATIVE_OUTCOMES = new Set<Exclude<AssignmentAuthoritativeOutcome, null>>([
+  "succeeded", "blocked", "failed", "verification_incomplete"
+]);
+
+function normalizedEnum<T extends string>(value: unknown, allowed: ReadonlySet<T>): T | null {
+  const normalized = text(value).toLowerCase().replace(/[\s-]+/g, "_") as T;
+  return allowed.has(normalized) ? normalized : null;
 }
 
 function goalLifecycle(goal: GoalRecord): AssignmentLifecyclePhase {
@@ -352,7 +406,8 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     acceptance_criteria: [...goal.acceptance_criteria],
     lifecycle: {
       phase: goalLifecycle(goal), source_status: goal.status, source_phase: goal.current_phase ?? null,
-      current_step: goal.current_step ?? null, summary: goal.progress_summary || null
+      current_step: goal.current_step ?? null, summary: goal.progress_summary || null,
+      terminal_reason: normalizedEnum(workBudget.terminal_reason, TERMINAL_REASONS)
     },
     target: {
       session_id: goal.related_session_id ?? null, thread_id: goal.related_thread_id ?? null,
@@ -391,7 +446,10 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
       requested_effect: ["read", "preview", "apply"].includes(text(workBudget.requested_effect).toLowerCase())
         ? text(workBudget.requested_effect).toLowerCase() as "read" | "preview" | "apply"
         : null,
-      completion_mode: text(workBudget.completion_mode).toLowerCase() === "verified_noop" ? "verified_noop" : null,
+      completion_mode: normalizedEnum(workBudget.completion_mode, COMPLETION_MODES),
+      latest_authoritative_outcome: normalizedEnum(workBudget.latest_authoritative_outcome, AUTHORITATIVE_OUTCOMES),
+      recovered_failure_count: finite(workBudget.recovered_failure_count),
+      rejected_no_effect_count: finite(workBudget.rejected_no_effect_count),
       task_ids: stringList(workBudget.task_ids),
       batch_job_ids: stringList(workBudget.batch_job_ids)
     },
@@ -494,7 +552,8 @@ export function projectTaskAssignment(task: JsonMap): AssignmentProjection {
     acceptance_criteria: stringList(source.acceptance_criteria),
     lifecycle: {
       phase: taskLifecycle(status), source_status: status || "unknown", source_phase: null,
-      current_step: null, summary: text(result.summary ?? result.planner_summary) || null
+      current_step: null, summary: text(result.summary ?? result.planner_summary) || null,
+      terminal_reason: normalizedEnum(result.terminal_reason, TERMINAL_REASONS)
     },
     target: {
       session_id: text(source.session_id ?? related.session_id) || null,
@@ -526,7 +585,10 @@ export function projectTaskAssignment(task: JsonMap): AssignmentProjection {
     execution: {
       substrate: text(task.executor_kind) || null,
       requested_effect: null,
-      completion_mode: null,
+      completion_mode: normalizedEnum(result.completion_mode, COMPLETION_MODES),
+      latest_authoritative_outcome: normalizedEnum(result.latest_authoritative_outcome, AUTHORITATIVE_OUTCOMES),
+      recovered_failure_count: finite(result.recovered_failure_count),
+      rejected_no_effect_count: finite(result.rejected_no_effect_count),
       task_ids: taskId ? [taskId] : [],
       batch_job_ids: batchJobId ? [batchJobId] : []
     },
@@ -544,12 +606,54 @@ export function projectTaskAssignment(task: JsonMap): AssignmentProjection {
   };
 }
 
-function mergeTaskIntoGoal(goal: AssignmentProjection, task: AssignmentProjection): AssignmentProjection {
+type GoalCounterAuthority = {
+  recovered_failure_count: boolean;
+  rejected_no_effect_count: boolean;
+};
+
+type TaskCounterMergePolicy = {
+  goal_authority: GoalCounterAuthority;
+  include_task_counters: boolean;
+};
+
+function goalCounterAuthority(goal: GoalRecord): GoalCounterAuthority {
+  const workBudget = object(goal.work_budget);
+  return {
+    recovered_failure_count: Object.prototype.hasOwnProperty.call(workBudget, "recovered_failure_count"),
+    rejected_no_effect_count: Object.prototype.hasOwnProperty.call(workBudget, "rejected_no_effect_count")
+  };
+}
+
+function addOptionalCounter(left: number | null, right: number | null): number | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  return left + right;
+}
+
+function mergeTaskIntoGoal(
+  goal: AssignmentProjection,
+  task: AssignmentProjection,
+  policy: TaskCounterMergePolicy
+): AssignmentProjection {
   const taskHasDeterminateProgress = task.progress.determinate;
   const goalHasDeterminateProgress = goal.progress.determinate;
+  const recoveredFailureCount = policy.goal_authority.recovered_failure_count
+    ? goal.execution.recovered_failure_count
+    : policy.include_task_counters
+      ? addOptionalCounter(goal.execution.recovered_failure_count, task.execution.recovered_failure_count)
+      : goal.execution.recovered_failure_count;
+  const rejectedNoEffectCount = policy.goal_authority.rejected_no_effect_count
+    ? goal.execution.rejected_no_effect_count
+    : policy.include_task_counters
+      ? addOptionalCounter(goal.execution.rejected_no_effect_count, task.execution.rejected_no_effect_count)
+      : goal.execution.rejected_no_effect_count;
   return {
     ...goal,
     acceptance_criteria: unique([...goal.acceptance_criteria, ...task.acceptance_criteria]),
+    lifecycle: {
+      ...goal.lifecycle,
+      terminal_reason: goal.lifecycle.terminal_reason ?? task.lifecycle.terminal_reason
+    },
     target: {
       session_id: goal.target.session_id ?? task.target.session_id,
       thread_id: goal.target.thread_id ?? task.target.thread_id,
@@ -583,6 +687,9 @@ function mergeTaskIntoGoal(goal: AssignmentProjection, task: AssignmentProjectio
       substrate: goal.execution.substrate ?? task.execution.substrate,
       requested_effect: goal.execution.requested_effect ?? task.execution.requested_effect,
       completion_mode: goal.execution.completion_mode ?? task.execution.completion_mode,
+      latest_authoritative_outcome: goal.execution.latest_authoritative_outcome ?? task.execution.latest_authoritative_outcome,
+      recovered_failure_count: recoveredFailureCount,
+      rejected_no_effect_count: rejectedNoEffectCount,
       task_ids: unique([...goal.execution.task_ids, ...task.execution.task_ids]),
       batch_job_ids: unique([...goal.execution.batch_job_ids, ...task.execution.batch_job_ids])
     },
@@ -599,13 +706,24 @@ function mergeTaskIntoGoal(goal: AssignmentProjection, task: AssignmentProjectio
 
 export function buildAssignmentProjection(goals: GoalRecord[], tasks: JsonMap[]): AssignmentProjection[] {
   const projectedGoals = new Map(goals.map(goal => [goal.id, projectGoalAssignment(goal)]));
+  const counterAuthorities = new Map(goals.map(goal => [goal.id, goalCounterAuthority(goal)]));
+  const countedTaskIdsByGoal = new Map<string, Set<string>>();
   const unboundTasks: AssignmentProjection[] = [];
   for (const task of tasks) {
     const projected = projectTaskAssignment(task);
     const goalId = taskGoalId(task);
     const goal = goalId ? projectedGoals.get(goalId) : undefined;
-    if (goal) projectedGoals.set(goalId, mergeTaskIntoGoal(goal, projected));
-    else unboundTasks.push(projected);
+    if (goal && goalId) {
+      const taskId = text(task.id);
+      const countedTaskIds = countedTaskIdsByGoal.get(goalId) ?? new Set<string>();
+      const includeTaskCounters = !!taskId && !countedTaskIds.has(taskId);
+      if (includeTaskCounters) countedTaskIds.add(taskId);
+      countedTaskIdsByGoal.set(goalId, countedTaskIds);
+      projectedGoals.set(goalId, mergeTaskIntoGoal(goal, projected, {
+        goal_authority: counterAuthorities.get(goalId) ?? { recovered_failure_count: false, rejected_no_effect_count: false },
+        include_task_counters: includeTaskCounters
+      }));
+    } else unboundTasks.push(projected);
   }
   return [...projectedGoals.values(), ...unboundTasks]
     .sort((a, b) => `${b.updated_at}|${b.id}`.localeCompare(`${a.updated_at}|${a.id}`));
@@ -629,13 +747,28 @@ export function getAssignmentProjection(assignmentId: string): AssignmentProject
   const goal = explicitTaskId ? null : getGoal(explicitGoalId || requested);
   if (goal) {
     const relatedTasks = listOperatorTasks(200).filter(task => taskGoalId(task) === goal.id);
+    const authority = goalCounterAuthority(goal);
+    const countedTaskIds = new Set<string>();
     let assignment = projectGoalAssignment(goal);
-    for (const relatedTask of relatedTasks) assignment = mergeTaskIntoGoal(assignment, projectTaskAssignment(relatedTask));
+    for (const relatedTask of relatedTasks) {
+      const taskId = text(relatedTask.id);
+      const includeTaskCounters = !!taskId && !countedTaskIds.has(taskId);
+      if (includeTaskCounters) countedTaskIds.add(taskId);
+      assignment = mergeTaskIntoGoal(assignment, projectTaskAssignment(relatedTask), {
+        goal_authority: authority,
+        include_task_counters: includeTaskCounters
+      });
+    }
     return assignment;
   }
   const task = explicitGoalId ? null : getOperatorTask(explicitTaskId || requested);
   if (!task) return null;
   const relatedGoalId = taskGoalId(task);
   const relatedGoal = relatedGoalId ? getGoal(relatedGoalId) : null;
-  return relatedGoal ? mergeTaskIntoGoal(projectGoalAssignment(relatedGoal), projectTaskAssignment(task)) : projectTaskAssignment(task);
+  return relatedGoal
+    ? mergeTaskIntoGoal(projectGoalAssignment(relatedGoal), projectTaskAssignment(task), {
+        goal_authority: goalCounterAuthority(relatedGoal),
+        include_task_counters: !!text(task.id)
+      })
+    : projectTaskAssignment(task);
 }

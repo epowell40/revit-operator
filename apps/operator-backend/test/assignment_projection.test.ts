@@ -90,12 +90,21 @@ test("projection does not manufacture a percentage when no checkpoints exist", (
   });
 });
 
-test("goal projection exposes the requested effect and explicit verified no-op completion mode", () => {
-  const assignment = projectGoalAssignment(goal({ work_budget: { mode: "auto_goal", requested_effect: "preview", completion_mode: "verified_noop" } }));
+test("goal projection exposes explicit terminal outcome, completion mode, and recovery history", () => {
+  const assignment = projectGoalAssignment(goal({ work_budget: {
+    mode: "auto_goal", requested_effect: "preview", completion_mode: "successful_preview",
+    terminal_reason: "completed_after_recovery", latest_authoritative_outcome: "succeeded",
+    recovered_failure_count: 1, rejected_no_effect_count: 2
+  } }));
   assert.equal(assignment.execution.requested_effect, "preview");
-  assert.equal(assignment.execution.completion_mode, "verified_noop");
+  assert.equal(assignment.execution.completion_mode, "successful_preview");
+  assert.equal(assignment.lifecycle.terminal_reason, "completed_after_recovery");
+  assert.equal(assignment.execution.latest_authoritative_outcome, "succeeded");
+  assert.equal(assignment.execution.recovered_failure_count, 1);
+  assert.equal(assignment.execution.rejected_no_effect_count, 2);
   assert.equal(projectGoalAssignment(goal({ work_budget: { requested_effect: "invented" } })).execution.requested_effect, null);
   assert.equal(projectGoalAssignment(goal({ work_budget: { completion_mode: "invented" } })).execution.completion_mode, null);
+  assert.equal(projectGoalAssignment(goal({ work_budget: { terminal_reason: "invented" } })).lifecycle.terminal_reason, null);
 });
 
 test("Sidecar-reported completion projects as complete with issues until independently verified", () => {
@@ -213,4 +222,38 @@ test("only explicit goal relations merge Task and Goal records", () => {
   assert.deepEqual(projectedGoal?.execution.batch_job_ids, ["batch-linked"]);
   assert.equal(projectedGoal?.progress.total, 4);
   assert.ok(assignments.some(value => value.id === "task:task-unlinked"));
+});
+
+test("Goal counters are authoritative and Task fallback aggregates distinct records without erasing absence", () => {
+  const linkedTask = (id: string, result: Record<string, unknown>) => ({
+    id,
+    title: `Execute ${id}`,
+    status: "complete",
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+    source: { session_id: "session-1" },
+    related: { goal_id: "goal-1" },
+    progress: {},
+    verification: {},
+    result,
+    evidence: {},
+    artifacts: {},
+    events: []
+  });
+
+  const goalAuthoritative = buildAssignmentProjection([
+    goal({ work_budget: { recovered_failure_count: 0, rejected_no_effect_count: 2 } })
+  ], [linkedTask("task-counted-elsewhere", { recovered_failure_count: 4, rejected_no_effect_count: 5 })])[0]!;
+  assert.equal(goalAuthoritative.execution.recovered_failure_count, 0);
+  assert.equal(goalAuthoritative.execution.rejected_no_effect_count, 2);
+
+  const first = linkedTask("task-first", { recovered_failure_count: 4, rejected_no_effect_count: 0 });
+  const second = linkedTask("task-second", { recovered_failure_count: 1 });
+  const taskFallback = buildAssignmentProjection([goal()], [first, first, second])[0]!;
+  assert.equal(taskFallback.execution.recovered_failure_count, 5);
+  assert.equal(taskFallback.execution.rejected_no_effect_count, 0);
+
+  const absent = buildAssignmentProjection([goal()], [linkedTask("task-absent", {})])[0]!;
+  assert.equal(absent.execution.recovered_failure_count, null);
+  assert.equal(absent.execution.rejected_no_effect_count, null);
 });

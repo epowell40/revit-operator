@@ -1021,7 +1021,7 @@ test("auto goal completion requires evidence at the requested read, preview, or 
   });
 });
 
-test("a certified teammate preview receipt settles a transaction-plan-only preview assignment", () => {
+test("a certified teammate preview receipt remains integrity-only without trusted transaction evidence", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-preview-receipt-settlement", {
       title: "Preview an enlarged plan",
@@ -1054,9 +1054,9 @@ test("a certified teammate preview receipt settles a transaction-plan-only previ
       }]
     });
     const persisted = getGoal(goal.id);
-    assert.equal(persisted?.status, "complete");
-    assert.equal(persisted?.completion_audit?.complete, true);
-    assert.equal(persisted?.work_items[0]?.status, "complete");
+    assert.equal(persisted?.status, "active");
+    assert.equal(persisted?.completion_audit, null);
+    assert.equal(persisted?.work_items[0]?.status, "in_progress");
 
     const malformedGoal = setAgentGoal("session-preview-receipt-malformed", {
       title: "Preview another enlarged plan",
@@ -1111,7 +1111,7 @@ test("a certified teammate preview receipt settles a transaction-plan-only previ
   });
 });
 
-test("the live c03 preview trace settles its assignment from the final teammate receipt", () => {
+test("the live c03 preview trace retains final teammate receipts without treating them as preview authority", () => {
   withWorkspace(() => {
     const sessionId = "session-live-c03-preview-receipt";
     const goal = setAgentGoal(sessionId, {
@@ -1169,9 +1169,9 @@ test("the live c03 preview trace settles its assignment from the final teammate 
     assert.equal(terminalReceipt?.stage, "report");
     observer.finish("turn-live-c03-preview-receipt", assistantText, terminalReceipt);
     const persisted = getGoal(goal.id);
-    assert.equal(persisted?.status, "complete");
-    assert.equal(persisted?.completion_audit?.complete, true);
-    assert.equal(persisted?.work_items[0]?.status, "complete");
+    assert.equal(persisted?.status, "active");
+    assert.equal(persisted?.completion_audit, null);
+    assert.equal(persisted?.work_items[0]?.status, "in_progress");
   });
 });
 
@@ -1372,9 +1372,8 @@ test("a preview assignment with zero candidates completes as a substantive verif
       "Found 0 mechanical views and 0 sheets containing Area 1 or Area 2; therefore no exact rename candidates exist. Dry-run returned NoOp, modelModified:false. Post-preview readback confirmed both sheets unchanged. Concrete blocker: the requested source terminology does not exist in the live model."
     );
     const recoveredNamedCandidate = getGoal(recoveredNamedCandidateReceipt.id);
-    assert.equal(recoveredNamedCandidate?.status, "complete");
-    assert.equal(recoveredNamedCandidate?.work_budget?.completion_mode, "verified_noop");
-    assert.match(recoveredNamedCandidate?.completion_audit?.evidence_summary || "", /after 1 recovered failure/);
+    assert.equal(recoveredNamedCandidate?.status, "blocked");
+    assert.equal(recoveredNamedCandidate?.completion_audit, null);
 
     const missingTarget = setAgentGoal("session-preview-missing-target", {
       title: "Preview one requested sheet rename",
@@ -1483,7 +1482,7 @@ test("auto goal journaling extracts nested artifact files from successful export
   });
 });
 
-test("a verified no-op can recover from an exploratory Revit error only after a later substantive read succeeds", () => {
+test("a verified no-op fails closed when a later read changes the stable request target", () => {
   withWorkspace(() => {
     const recovered = setAgentGoal("session-recovered-verified-noop", {
       title: "Clean view names", objective: "Rename Level 2 HVAC floor plans only when they do not match the established level-name pattern.",
@@ -1496,10 +1495,8 @@ test("a verified no-op can recover from an exploratory Revit error only after a 
     recoveredObserver.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/views", body: { disciplines: ["Mechanical"] } }, result: { views: [{ id: 9948, name: "L2", levelName: "L2" }] } });
     recoveredObserver.finish("turn-recovered-verified-noop", "Pattern: each HVAC floor-plan view matches its associated level name. L2 already conforms. No rename was needed; no elements were changed.", { stage: "discover", verified: false, apply_attempts: 0 });
     const completed = getGoal(recovered.id);
-    assert.equal(completed?.status, "complete");
-    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
-    assert.match(completed?.completion_audit?.evidence_summary || "", /after 1 recovered failure/);
-    assert.match(JSON.stringify(completed?.validation_log[0]?.evidence || {}), /after 1 earlier failed call; the final completion-relevant call succeeded/);
+    assert.equal(completed?.status, "blocked");
+    assert.equal(completed?.completion_audit, null);
 
     const unrecovered = setAgentGoal("session-unrecovered-verified-noop", {
       title: "Clean view names", objective: "Rename Level 2 HVAC floor plans only when needed.",
@@ -1625,6 +1622,112 @@ test("successful live tools complete a quick auto assignment with trusted eviden
   });
 });
 
+test("nested non-dispatch and uncertainty envelopes cannot complete or verify an auto goal", () => {
+  withWorkspace(() => {
+    const nonDispatchedGoal = setAgentGoal("session-auto-nested-not-dispatched", {
+      title: "Confirm an existing mark", objective: "Confirm the requested mark is already present.",
+      acceptance_criteria: ["The live state is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Confirm mark", status: "in_progress" }]
+    });
+    const nonDispatched = createAutoGoalTurnObserver("session-auto-nested-not-dispatched");
+    nonDispatched.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/find-elements", body: { category: "Mechanical Equipment" } },
+      result: [{ type: "inputText", text: JSON.stringify({ result: { request_dispatched: false, count: 1 } }) }]
+    });
+    nonDispatched.finish("turn-auto-nested-not-dispatched", "The requested state is already satisfied; no change is needed.");
+    const nonDispatchedPersisted = getGoal(nonDispatchedGoal.id);
+    assert.equal(nonDispatchedPersisted?.status, "active");
+    assert.equal(nonDispatchedPersisted?.completion_audit, null);
+    assert.equal(nonDispatchedPersisted?.work_items[0]?.status, "in_progress");
+
+    const uncertainGoal = setAgentGoal("session-auto-nested-uncertain", {
+      title: "Read live equipment", objective: "Read the live equipment count.",
+      acceptance_criteria: ["The count is authoritative."],
+      work_budget: { mode: "auto_goal", requested_effect: "read" },
+      work_items: [{ id: "auto.revit-work", title: "Read count", status: "in_progress" }]
+    });
+    const uncertain = createAutoGoalTurnObserver("session-auto-nested-uncertain");
+    uncertain.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/quantify", body: { category: "Mechanical Equipment" } },
+      result: [{ type: "inputText", text: JSON.stringify({ content: [{ text: JSON.stringify({ outcome_unknown: true }) }] }) }]
+    });
+    uncertain.finish("turn-auto-nested-uncertain", "The live count is 42.");
+    assert.equal(getGoal(uncertainGoal.id)?.status, "blocked");
+    assert.equal(getGoal(uncertainGoal.id)?.completion_audit, null);
+  });
+});
+test("depth-limit encoded lifecycle and no-effect flags cannot promote auto-goal completion", () => {
+  withWorkspace(() => {
+    const encodedAtDepth = (leaf: Record<string, unknown>, wrapperCount: number) => {
+      let value: unknown = JSON.stringify(leaf);
+      for (let index = 0; index < wrapperCount; index += 1) value = { wrapper: value };
+      return [{ type: "inputText", text: JSON.stringify(value) }];
+    };
+    const lifecycleCases = [
+      ["not-dispatched", { request_dispatched: false }],
+      ["outcome-unknown", { outcome_unknown: true }],
+      ["reconciliation", { reconciliation_required: true }],
+      ["not-ok", { ok: false }]
+    ] as const;
+    for (const [suffix, leaf] of lifecycleCases) {
+      const sessionId = `session-auto-depth-${suffix}`;
+      const goal = setAgentGoal(sessionId, {
+        title: `Inspect ${suffix}`, objective: "Inspect the live model and verify the requested state.",
+        acceptance_criteria: ["The live result is authoritative."],
+        work_budget: { mode: "auto_goal", requested_effect: "apply" },
+        work_items: [{ id: "auto.revit-work", title: "Inspect state", status: "in_progress" }]
+      });
+      const observer = createAutoGoalTurnObserver(sessionId);
+      observer.observe({
+        server: "revit_operator", tool: "revit_call_tool", success: true,
+        arguments: { path: "/revit/find-elements", body: { category: "Mechanical Equipment" } },
+        result: encodedAtDepth(leaf, 6)
+      });
+      observer.finish(`turn-auto-depth-${suffix}`, "The requested state is already satisfied; no model change was needed.");
+      const persisted = getGoal(goal.id);
+      assert.notEqual(persisted?.status, "complete", suffix);
+      assert.equal(persisted?.completion_audit, null, suffix);
+    }
+
+    const noEffectGoal = setAgentGoal("session-auto-depth-completion-ineligible", {
+      title: "Confirm no-op eligibility", objective: "Confirm whether a requested model edit is necessary.",
+      acceptance_criteria: ["Any no-op is supported by authoritative evidence."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Confirm eligibility", status: "in_progress" }]
+    });
+    const noEffect = createAutoGoalTurnObserver("session-auto-depth-completion-ineligible");
+    noEffect.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/find-elements", body: { category: "Mechanical Equipment" } },
+      // The old depth-six walker returned false before parsing this encoded leaf.
+      result: encodedAtDepth({ completionEligible: false, count: 1 }, 4)
+    });
+    noEffect.finish("turn-auto-depth-completion-ineligible", "The requested state is already satisfied; no model change was needed.");
+    const noEffectPersisted = getGoal(noEffectGoal.id);
+    assert.equal(noEffectPersisted?.status, "active");
+    assert.equal(noEffectPersisted?.completion_audit, null);
+
+    const blockingGoal = setAgentGoal("session-auto-depth-blocking-no-effect", {
+      title: "Inspect blocked effect", objective: "Inspect whether the requested model effect can be satisfied.",
+      acceptance_criteria: ["The requested effect is satisfied."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect effect", status: "in_progress" }]
+    });
+    const blocking = createAutoGoalTurnObserver("session-auto-depth-blocking-no-effect");
+    blocking.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/find-elements", body: { category: "Mechanical Equipment" } },
+      result: encodedAtDepth({ requestedEffectSatisfied: false, count: 1 }, 4)
+    });
+    blocking.finish("turn-auto-depth-blocking-no-effect", "Inspection completed.");
+    assert.equal(getGoal(blockingGoal.id)?.status, "blocked");
+    assert.equal(getGoal(blockingGoal.id)?.completion_audit, null);
+  });
+});
+
 test("authenticated Sidecar settlement records reported completion without minting trusted validation", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-sidecar-complete", {
@@ -1640,7 +1743,7 @@ test("authenticated Sidecar settlement records reported completion without minti
       turn_id: "dynamic-run-1",
       assistant_summary: "Computed 509 air terminals and verified the level sum.",
       successful_tools: 2,
-      failed_tools: 0,
+      failed_tools: 3,
       verification_kind: "dynamic_revit_trusted_evidence",
       evidence: {
         run_id: "dynamic-run-1",
@@ -1653,7 +1756,19 @@ test("authenticated Sidecar settlement records reported completion without minti
             path: "/revit/update-schedule-cell",
             status: "success",
             request_effect: "apply",
-            request_dispatched: true
+            request_dispatched: true,
+            result: { ok: true, evidence: { result_json: { status: "Dry Run", candidateCount: 1 } } }
+          },
+          { tool_name: "revit_action", path: "/revit/unknown", status: "success", result: { outcome_unknown: true } },
+          { tool_name: "revit_action", path: "/revit/reconcile", status: "success", result: { reconciliation_required: true } },
+          { tool_name: "revit_action", path: "/revit/not-ok", status: "success", result: { ok: false } },
+          {
+            tool_name: "revit_action", path: "/revit/nested-unknown", status: "success",
+            result: { wrapper: [{ result: { outcome_unknown: true } }] }
+          },
+          {
+            tool_name: "revit_action", path: "/revit/content-reconcile", status: "success",
+            result: [{ type: "inputText", text: JSON.stringify({ result: { reconciliation_required: true } }) }]
           },
           { tool_name: "revit_action", path: "/revit/ignored", status: "pending" },
           { tool_name: "", status: "failed" }
@@ -1663,6 +1778,9 @@ test("authenticated Sidecar settlement records reported completion without minti
 
     assert.equal(settled.status, "active");
     assert.equal(settled.current_phase, "complete_with_issues");
+    assert.equal(settled.work_budget?.completion_mode, "reported_complete");
+    assert.equal(settled.work_budget?.terminal_reason, "verification_incomplete");
+    assert.equal(settled.work_budget?.latest_authoritative_outcome, "verification_incomplete");
     assert.equal(settled.work_items[0]?.status, "complete");
     assert.equal(settled.completion_audit?.complete, false);
     assert.equal(settled.validation_log.length, 0);
@@ -1673,7 +1791,15 @@ test("authenticated Sidecar settlement records reported completion without minti
     assert.equal((reportedAction?.details as any)?.source, "operator_desktop_reported");
     assert.equal((reportedAction?.details as any)?.request_effect, "apply");
     assert.equal((reportedAction?.details as any)?.request_dispatched, true);
-    assert.equal(settled.action_log.filter(entry => (entry.details as any)?.source === "operator_desktop_reported").length, 1);
+    assert.match(`${(reportedAction?.details as any)?.result_evidence_sha256 || ""}`, /^sha256:[a-f0-9]{64}$/);
+    assert.match(`${(reportedAction?.details as any)?.receipt_sha256 || ""}`, /^sha256:[a-f0-9]{64}$/);
+    const reportedActions = settled.action_log.filter(entry => (entry.details as any)?.source === "operator_desktop_reported");
+    assert.equal(reportedActions.length, 6);
+    assert.deepEqual(reportedActions.filter(entry => (entry.details as any)?.status === "failed").map(entry => (entry.details as any)?.path).sort(), [
+      "/revit/content-reconcile", "/revit/nested-unknown", "/revit/not-ok", "/revit/reconcile", "/revit/unknown"
+    ]);
+    assert.equal(settled.work_budget?.reported_failed_tool_count, 3);
+    assert.equal(settled.work_budget?.recovered_failure_count, 0);
   });
 });
 
@@ -1696,6 +1822,8 @@ test("Sidecar settlement blocks rather than completing when the local run fails"
     });
     assert.equal(settled.status, "blocked");
     assert.equal(settled.work_items[0]?.status, "blocked");
+    assert.equal(settled.work_budget?.terminal_reason, "execution_failure");
+    assert.equal(settled.work_budget?.latest_authoritative_outcome, "blocked");
     assert.match(settled.blocker || "", /Compilation failed/);
     assert.equal(settled.completion_audit, null);
   });
@@ -1710,17 +1838,85 @@ test("a recovered Revit tool failure remains visible in trusted completion evide
       work_items: [{ id: "auto.revit-work", title: "Count", status: "in_progress" }]
     });
     const observer = createAutoGoalTurnObserver("session-auto-recovered");
-    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, arguments: { path: "/revit/quantify" }, error: "invalid category token" });
-    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/quantify" }, result: { total: 509 } });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, arguments: { path: "/revit/quantify", body: { category: "Air Terminals" } }, error: "transient courier error" });
+    observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, arguments: { path: "/revit/quantify", body: { category: "Air Terminals" } }, result: { total: 509 } });
     observer.finish("turn-recovered", "Found 509 air terminals.");
 
     const persisted = getGoal(goal.id);
     assert.equal(persisted?.status, "complete");
     assert.match(JSON.stringify(persisted?.validation_log[0]?.evidence || {}), /after 1 earlier failed call; the final completion-relevant call succeeded/);
-    assert.match(`${persisted?.action_log.find(entry => entry.summary.includes("failed"))?.summary || ""}`, /invalid category token/);
+    assert.equal(persisted?.work_budget?.completion_mode, "successful_read");
+    assert.equal(persisted?.work_budget?.terminal_reason, "completed_after_recovery");
+    assert.equal(persisted?.work_budget?.latest_authoritative_outcome, "succeeded");
+    assert.equal(persisted?.work_budget?.recovered_failure_count, 1);
+    assert.match(`${persisted?.action_log.find(entry => entry.summary.includes("failed"))?.summary || ""}`, /transient courier error/);
   });
 });
 
+test("failed apply settlement cannot be recovered by a later read, a different target, or an uncertain receipt", () => {
+  withWorkspace(() => {
+    const blockedByRead = setAgentGoal("session-failed-apply-then-read", {
+      title: "Update one mark", objective: "Apply and verify one exact Mark change.",
+      acceptance_criteria: ["The exact target is updated and verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Update mark", status: "in_progress" }]
+    });
+    const readObserver = createAutoGoalTurnObserver("session-failed-apply-then-read");
+    readObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/set-parameter", body: { elementId: 101, parameter: "Mark", value: "ERU-1", apply: true } },
+      error: "apply failed after dispatch"
+    });
+    readObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/get-parameters", body: { elementIds: [101], parameterNames: ["Mark"] } },
+      result: { values: [{ elementId: 101, Mark: "HRU-1" }] }
+    });
+    readObserver.finish("turn-failed-apply-then-read", "Read the unchanged Mark after the apply failed.");
+    assert.equal(getGoal(blockedByRead.id)?.status, "blocked");
+
+    const blockedByTarget = setAgentGoal("session-failed-apply-other-target", {
+      title: "Update one mark", objective: "Apply and verify one exact Mark change.",
+      acceptance_criteria: ["The exact target is updated and verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "apply" },
+      work_items: [{ id: "auto.revit-work", title: "Update mark", status: "in_progress" }]
+    });
+    const targetObserver = createAutoGoalTurnObserver("session-failed-apply-other-target");
+    targetObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/set-parameter", body: { elementId: 101, parameter: "Mark", value: "ERU-1", apply: true } },
+      error: "target 101 failed after dispatch"
+    });
+    targetObserver.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/set-parameter", body: { elementId: 202, parameter: "Mark", value: "ERU-2", apply: true } },
+      result: { ok: true, changedElementIds: [202] }
+    });
+    targetObserver.finish("turn-failed-apply-other-target", "Updated target 202, but target 101 remains unresolved.");
+    assert.equal(getGoal(blockedByTarget.id)?.status, "blocked");
+
+    for (const [suffix, result] of [
+      ["unknown", { outcome_unknown: true }],
+      ["reconcile", { reconciliation_required: true }],
+      ["not-ok", { ok: false }]
+    ] as const) {
+      const goal = setAgentGoal(`session-uncertain-${suffix}`, {
+        title: "Inspect one target", objective: "Read and verify one exact target.",
+        acceptance_criteria: ["The target state is verified."],
+        work_budget: { mode: "auto_goal", requested_effect: "read" },
+        work_items: [{ id: "auto.revit-work", title: "Inspect target", status: "in_progress" }]
+      });
+      const observer = createAutoGoalTurnObserver(`session-uncertain-${suffix}`);
+      observer.observe({
+        server: "revit_operator", tool: "revit_call_tool", success: true,
+        arguments: { path: "/revit/get-parameters", body: { elementIds: [101], parameterNames: ["Mark"] } },
+        result
+      });
+      observer.finish(`turn-uncertain-${suffix}`, "The receipt did not establish a trustworthy outcome.");
+      assert.equal(getGoal(goal.id)?.status, "blocked");
+    }
+  });
+});
 test("a rollback preview may finish when exact temporary element readback proves absence", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-preview-rollback-absence", {
@@ -2058,7 +2254,7 @@ test("a blocked mutation receipt overrides successful tool observations in durab
   });
 });
 
-test("a failed exploratory Revit call can be repaired by a later substantive success", () => {
+test("a failed exploratory Revit call without stable identity cannot be repaired by an unrelated success", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-auto-recovered", {
       title: "Inspect a family", objective: "Inspect a family and produce a verified plan.",
@@ -2069,7 +2265,7 @@ test("a failed exploratory Revit call can be repaired by a later substantive suc
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: false, error: "First request used the wrong argument shape." });
     observer.observe({ server: "revit_operator", tool: "revit_call_tool", success: true, result: { family: "HeatRecoveryUnit", type: "HRU" } });
     observer.finish("turn-recovered", "Recovered with the documented argument shape and completed the read-only family plan. The family appears editable, but direct family-file confirmation was blocked by the inspection-only gate. No model changes were made.");
-    assert.equal(getGoal(goal.id)?.status, "complete");
+    assert.equal(getGoal(goal.id)?.status, "blocked");
   });
 });
 
@@ -2205,6 +2401,41 @@ test("a structured no-op preview with an empty change set completes as verified 
     const completed = getGoal(goal.id);
     assert.equal(completed?.status, "complete");
     assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
+  });
+});
+
+test("a later verified no-op remains authoritative after an earlier rejected no-effect preview", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-rejected-preview-then-verified-noop", {
+      title: "Fix the view range",
+      objective: "Preview the smallest defensible view-range change without applying it.",
+      acceptance_criteria: ["The selected plan and its current view range are verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Inspect and preview the view range", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-rejected-preview-then-verified-noop");
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: true,
+      arguments: { mode: "preview" },
+      result: { status: "NoOp", completionEligible: false, modelModified: false }
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_native_api_ops", success: true,
+      arguments: { mode: "read" },
+      result: { viewId: 9948, viewName: "L2", bottom: "L2 + 0 ft", viewDepth: "L2 + 0 ft", underlay: "None" }
+    });
+    observer.finish("turn-rejected-preview-then-verified-noop", [
+      "Chosen view L2 (9948).",
+      "Bottom and View Depth already stop at L2 + 0 ft; Underlay is already None.",
+      "No change was required and the Revit model was not modified."
+    ].join("\n"));
+
+    const completed = getGoal(goal.id);
+    assert.equal(completed?.status, "complete");
+    assert.equal(completed?.work_budget?.latest_authoritative_outcome, "succeeded");
+    assert.equal(completed?.work_budget?.completion_mode, "verified_noop");
+    assert.equal(completed?.work_budget?.terminal_reason, "verified_noop");
+    assert.equal(completed?.work_budget?.rejected_no_effect_count, 1);
   });
 });
 

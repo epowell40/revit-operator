@@ -1119,6 +1119,150 @@ test("durable evidence normalizes direct Revit MCP tools to their canonical nati
   }
 });
 
+test("durable evidence uses the latest dispatched outcome while retaining recovery and hash-bound delegated receipts", async () => {
+  const action = (path: string, status: "completed" | "failed", result: Record<string, unknown>, body: Record<string, unknown> = {}) => ({
+    details: { tool: {
+      server: "revit_operator", tool: "revit_call_tool", status, arguments: { path, body },
+      result: [{ type: "inputText", text: JSON.stringify(result) }]
+    } }
+  });
+  const digest = `sha256:${"a".repeat(64)}`;
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: [
+      action("/revit/quantify", "failed", { error: "transient failure", request_dispatched: true }, { category: "Air Terminals" }),
+      action("/revit/quantify", "completed", { count: 509 }, { category: "Air Terminals" }),
+      { details: { tool: {
+        server: "revit_operator", tool: "revit_call_tool", status: "failed", arguments: { path: "/revit/set-parameter" },
+        result: { error: "schema rejected", request_dispatched: false }
+      } } },
+      { details: {
+        source: "operator_desktop_reported",
+        schema: "revit-operator.sidecar-function-tool-receipt-projection/v1",
+        tool_name: "revit_action",
+        path: "/revit/find-elements",
+        status: "success",
+        request_dispatched: true,
+        result_evidence_sha256: digest,
+        receipt_sha256: digest,
+        result: { count: 999, elementIds: Array.from({ length: 999 }, (_, index) => index + 1) }
+      } },
+      { details: { tool: {
+        server: "revit_operator", tool: "revit_call_tool", status: "completed", arguments: { path: "/revit/set-parameter", body: { elementId: 1, parameter: "Mark", value: "A" } },
+        result: { ok: false, error: "write rejected" }
+      } } },
+      action("/revit/delete-elements", "completed", { outcome_unknown: true }, { elementIds: [1] }),
+      action("/revit/move-elements", "completed", { reconciliation_required: true }, { elementIds: [1] }),
+      action("/revit/copy-elements", "completed", {
+        content: [{ type: "text", text: JSON.stringify({ result: { outcome_unknown: true } }) }]
+      }, { elementIds: [1], offset: [1, 0, 0] }),
+      action("/revit/rotate-elements", "completed", {
+        result: { transport: JSON.stringify({ ok: true, request_dispatched: false }) }
+      }, { elementIds: [1], angle: 90 }),
+      action("/revit/update-schedule-cell", "failed", { error: "target A failed", request_dispatched: true }, { scheduleId: 10, row: 1, column: 1, value: "A" }),
+      action("/revit/update-schedule-cell", "completed", { ok: true }, { scheduleId: 20, row: 1, column: 1, value: "B" }),
+      action("/revit/get-parameters", "completed", { ok: true, values: [] }, { elementIds: [1] })
+    ] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal", source_record_id: "recovery-goal", source_user_request: "inspect",
+        target: { session_id: "recovery-session" }, created_at: "2026-08-20T15:00:01.000Z"
+      }]
+    }, "inspect", { session_id: "recovery-session", started_at: "2026-08-20T15:00:00.000Z" });
+    assert.deepEqual(evidence.successful_paths, ["/revit/get-parameters", "/revit/quantify", "/revit/update-schedule-cell"]);
+    assert.deepEqual(evidence.failed_paths, ["/revit/copy-elements", "/revit/delete", "/revit/move-elements", "/revit/set-parameter", "/revit/update-schedule-cell"]);
+    assert.deepEqual(evidence.recovered_paths, ["/revit/quantify"]);
+    assert.deepEqual(evidence.historical_failed_paths, ["/revit/copy-elements", "/revit/delete", "/revit/move-elements", "/revit/quantify", "/revit/set-parameter", "/revit/update-schedule-cell"]);
+    assert.deepEqual(evidence.rejected_no_effect_paths, ["/revit/rotate-elements", "/revit/set-parameter"]);
+    assert.deepEqual(evidence.reported_receipt_paths, ["/revit/find-elements"]);
+    assert.equal((evidence.element_inventory as any).maximum_reported_count, 0);
+    const delegated = (evidence.result_receipts as Record<string, unknown>[])
+      .find((receipt) => receipt.authority === "operator_desktop_reported");
+    assert.equal(delegated?.hash_bound, true);
+    assert.equal(delegated?.integrity_only, true);
+    assert.equal(delegated?.result_sha256, digest);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable evidence fails closed on depth-limit encoded lifecycle flags", async () => {
+  const atDepthLimit = (leaf: Record<string, unknown>) => {
+    let value: unknown = JSON.stringify(leaf);
+    for (let index = 0; index < 5; index += 1) value = { wrapper: value };
+    return value;
+  };
+  const cases = [
+    ["/revit/deep-not-dispatched", { request_dispatched: false }],
+    ["/revit/deep-outcome-unknown", { outcome_unknown: true }],
+    ["/revit/deep-reconciliation", { reconciliation_required: true }],
+    ["/revit/deep-not-ok", { ok: false }]
+  ] as const;
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: cases.map(([path, leaf]) => ({
+      details: { tool: {
+        server: "revit_operator",
+        tool: "revit_call_tool",
+        status: "completed",
+        arguments: { path, body: { elementId: 101 } },
+        result: [{ type: "inputText", text: JSON.stringify(atDepthLimit(leaf)) }]
+      } }
+    })) } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal", source_record_id: "deep-envelope-goal", source_user_request: "deep envelope",
+        target: { session_id: "deep-envelope-session" }, created_at: "2026-08-20T15:30:01.000Z"
+      }]
+    }, "deep envelope", { session_id: "deep-envelope-session", started_at: "2026-08-20T15:30:00.000Z" });
+    assert.deepEqual(evidence.successful_paths, []);
+    assert.deepEqual(evidence.failed_paths, cases.map(([path]) => path).sort());
+    assert.deepEqual(evidence.rejected_no_effect_paths, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+test("durable recovery never crosses source-assignment append order", async () => {
+  const body = { elementId: 101, parameter: "Mark", value: "ERU-1", apply: true };
+  const server = http.createServer((request, response) => {
+    const failed = request.url?.endsWith("/failure-goal") === true;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: [{ details: { tool: {
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      status: failed ? "failed" : "completed",
+      arguments: { path: "/revit/set-parameter", body },
+      result: { ok: !failed, request_dispatched: true }
+    } } }] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const assignments = ["failure-goal", "success-goal"].map((source_record_id) => ({
+      source_kind: "goal", source_record_id, source_user_request: "update one mark",
+      target: { session_id: "cross-goal-session" }, created_at: "2026-08-20T16:00:01.000Z"
+    }));
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, { assignments }, "update one mark", {
+      session_id: "cross-goal-session", started_at: "2026-08-20T16:00:00.000Z"
+    });
+    assert.deepEqual(evidence.successful_paths, ["/revit/set-parameter"]);
+    assert.deepEqual(evidence.failed_paths, ["/revit/set-parameter"]);
+    assert.deepEqual(evidence.recovered_paths, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
 test("the three-sheet titleblock discovery requires exact fixture facts and successful native evidence", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "lh04_titleblock_initials_discovery")!;
   const entry = generalRevitExecutionCase(productionCase, false);
