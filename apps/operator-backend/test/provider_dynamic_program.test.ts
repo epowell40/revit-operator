@@ -373,8 +373,9 @@ test("trusted runner writes the exact LiveTaskConfig and invokes supervisor with
     assert.deepEqual(Object.keys(captured ?? {}).sort(), [
       "workerDirectory", "evidencePath", "bridgeUrl", "operatorTokenFile", "sourceFile",
       "targetRevitYear", "category", "limit", "parameters", "operationBudget",
-      "workerDeadlineMs", "apply", "applyDeadlineMs"
+      "workerDeadlineMs", "apply", "applyDeadlineMs", "compilationCacheDirectory"
     ].sort());
+    assert.equal(path.dirname(String(captured?.compilationCacheDirectory)), runs);
     assert.equal(captured?.apply, false);
     assert.equal(captured?.targetRevitYear, "2024");
     assert.equal(captured?.operationBudget, 16);

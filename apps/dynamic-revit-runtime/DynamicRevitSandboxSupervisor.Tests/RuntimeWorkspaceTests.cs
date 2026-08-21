@@ -181,6 +181,96 @@ public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
     }
 
     [Fact]
+    public void CompilationCacheReusesExactReadmittedAssemblyAndNeverNeedsSourceIndependentTrust()
+    {
+        const string source = """
+using RevitOperator.DynamicRevitSdk;
+using System.Collections.Generic;
+public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
+  public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) {
+    var node = c.Plan.AddOperation("create_family_instance", null, null,
+      new[] { new DynamicResultOutputSpecV1 { OutputSlot="created", ExpectedCategoryStableId="category:builtin:OST_GenericModel", ExpectedTypeUniqueId="type:generic" } },
+      new Dictionary<string,string> { ["family_type_identity"]="type:generic", ["placement"]="1,2,3" });
+    c.TraceStep("create", "Return one deterministic node.", new[] { node });
+    return c.Complete();
+  }
+}
+""";
+        using var temporary = new TemporaryDirectory();
+        var sourceHash = DynamicWire.Sha256(source.Replace("\r\n", "\n"));
+        var compiler = DynamicWire.Sha256("compiler"); var sdk = DynamicWire.Sha256("sdk"); var package = DynamicWire.Sha256("package");
+        var key = CompilationCache.Key(sourceHash, compiler, sdk, package);
+        var missInput = ExecutionWorkerInput(source); missInput.CompilationCacheKey = key;
+        var miss = WorkerExecutor.Execute(missInput);
+        Assert.True(miss.Ok, Diagnostic(miss)); Assert.False(miss.CompilationCacheHit); Assert.NotNull(miss.CompiledAssemblyBase64);
+
+        var cache = new CompilationCache(temporary.CreateDirectory("compile-cache"));
+        var stored = cache.Store(key, sourceHash, compiler, sdk, package, Convert.FromBase64String(miss.CompiledAssemblyBase64!));
+        Assert.True(stored.Hit); Assert.Equal(miss.CompiledAssemblyHash, stored.ArtifactHash);
+        var hitInput = ExecutionWorkerInput(source); hitInput.CompilationCacheKey = key; hitInput.CachedAssemblyBase64 = Convert.ToBase64String(stored.Assembly!);
+        var hit = WorkerExecutor.Execute(hitInput);
+
+        Assert.True(hit.Ok, Diagnostic(hit)); Assert.True(hit.CompilationCacheHit); Assert.Null(hit.CompiledAssemblyBase64);
+        Assert.Equal(miss.CompiledAssemblyHash, hit.CompiledAssemblyHash);
+        Assert.Equal(miss.ExecutionIdentityHash, hit.ExecutionIdentityHash);
+    }
+
+    [Fact]
+    public void CompilationCacheKeyRotatesAndArtifactTamperFailsClosed()
+    {
+        using var temporary = new TemporaryDirectory(); var root = temporary.CreateDirectory("compile-cache");
+        var source = DynamicWire.Sha256("source"); var compiler = DynamicWire.Sha256("compiler");
+        var sdk = DynamicWire.Sha256("sdk"); var package = DynamicWire.Sha256("package");
+        var key = CompilationCache.Key(source, compiler, sdk, package);
+        Assert.NotEqual(key, CompilationCache.Key(DynamicWire.Sha256("changed-source"), compiler, sdk, package));
+        Assert.NotEqual(key, CompilationCache.Key(source, DynamicWire.Sha256("changed-compiler"), sdk, package));
+        Assert.NotEqual(key, CompilationCache.Key(source, compiler, DynamicWire.Sha256("changed-sdk"), package));
+        Assert.NotEqual(key, CompilationCache.Key(source, compiler, sdk, DynamicWire.Sha256("changed-package")));
+
+        var cache = new CompilationCache(root); cache.Store(key, source, compiler, sdk, package, new byte[] { 1, 2, 3, 4 });
+        var artifact = Path.Combine(root, key.Substring(7) + ".dll");
+        File.SetAttributes(artifact, File.GetAttributes(artifact) & ~FileAttributes.ReadOnly);
+        File.WriteAllBytes(artifact, new byte[] { 1, 2, 3, 5 });
+        Assert.Throws<InvalidOperationException>(() => cache.TryRead(key, source, compiler, sdk, package));
+    }
+
+    [Fact]
+    public void CompilationCacheRefusesToClaimAnUnmarkedNonEmptyDirectory()
+    {
+        using var temporary = new TemporaryDirectory(); var root = temporary.CreateDirectory("foreign-directory");
+        File.WriteAllText(Path.Combine(root, "user-data.txt"), "must-not-touch");
+        Assert.Throws<InvalidOperationException>(() => new CompilationCache(root));
+        Assert.Equal("must-not-touch", File.ReadAllText(Path.Combine(root, "user-data.txt")));
+    }
+
+    [Fact]
+    public void CompilationCacheConcurrentWritersConvergeOnOneExactImmutableEntry()
+    {
+        using var temporary = new TemporaryDirectory(); var root = temporary.CreateDirectory("concurrent-cache");
+        var source = DynamicWire.Sha256("source"); var compiler = DynamicWire.Sha256("compiler");
+        var sdk = DynamicWire.Sha256("sdk"); var package = DynamicWire.Sha256("package");
+        var key = CompilationCache.Key(source, compiler, sdk, package); var assembly = Enumerable.Range(0, 4096).Select(value => (byte)(value % 251)).ToArray();
+        var cache = new CompilationCache(root);
+
+        Parallel.For(0, 16, _ => cache.Store(key, source, compiler, sdk, package, assembly));
+
+        var lookup = cache.TryRead(key, source, compiler, sdk, package);
+        Assert.True(lookup.Hit); Assert.Equal(assembly, lookup.Assembly);
+        Assert.Single(Directory.GetFiles(root, "*.dll")); Assert.Single(Directory.GetFiles(root, "*.json"));
+        Assert.True((File.GetAttributes(Directory.GetFiles(root, "*.dll").Single()) & FileAttributes.ReadOnly) != 0);
+        Assert.True((File.GetAttributes(Directory.GetFiles(root, "*.json").Single()) & FileAttributes.ReadOnly) != 0);
+    }
+
+    [Fact]
+    public void SanitizedWorkerEvidenceCannotLeakCompiledAssemblyBytes()
+    {
+        using var document = JsonDocument.Parse("""{"ok":true,"compiledAssemblyHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","compiledAssemblyBase64":"c2VjcmV0","compilationCacheHit":false}""");
+        var sanitized = Program.SanitizeWorkerOutput(document.RootElement);
+        Assert.False(sanitized.TryGetProperty("compiledAssemblyBase64", out _));
+        Assert.Equal("sha256:" + new string('a', 64), sanitized.GetProperty("compiledAssemblyHash").GetString());
+    }
+
+    [Fact]
     public void WorkerReturnsBoundedNonAuthorizingNeedFactsInsteadOfGuessing()
     {
         const string source = """
