@@ -57,6 +57,7 @@ internal sealed class WorkerOutput
     public string[] Logs { get; set; } = Array.Empty<string>();
     public IReadOnlyDictionary<string, string> Report { get; set; } = new Dictionary<string, string>(StringComparer.Ordinal);
     public WorkerDiagnostic[] Diagnostics { get; set; } = Array.Empty<WorkerDiagnostic>();
+    [System.Text.Json.Serialization.JsonIgnore] internal byte[]? RetainedAssembly { get; set; }
 }
 
 internal sealed class WorkerDiagnostic
@@ -172,6 +173,7 @@ internal static class Program
         }
         if (args.SequenceEqual(new[] { "--self-test" }, StringComparer.Ordinal)) return SelfTest.Run();
         if (args.SequenceEqual(new[] { "--result-reference-self-test" }, StringComparer.Ordinal)) return SelfTest.ResultReferenceScenario();
+        if (args.SequenceEqual(new[] { "--retained-delta-self-test" }, StringComparer.Ordinal)) return SelfTest.RetainedDeltaScenario();
         if (args.SequenceEqual(new[] { "--repair-scenario" }, StringComparer.Ordinal)) return SelfTest.RepairScenario();
         if (args.Length != 2 || args[0] != "--input")
         {
@@ -234,6 +236,16 @@ internal static class SandboxPipe
     }
     public static void SendNamed(string pipeName, string nonce, string correlation, byte[] channelKey, object payload)
         => SendNamedClaimed(pipeName, nonce, correlation, channelKey, checked((uint)Environment.ProcessId), payload);
+    public static void WriteNamed(StreamWriter writer, string nonce, string correlation, byte[] channelKey, uint claimedPid, object payload)
+    {
+        var payloadJson = JsonSerializer.Serialize(payload, Json);
+        var payloadBytes = Encoding.UTF8.GetBytes(payloadJson);
+        var payloadHash = DynamicWire.Sha256(payloadBytes);
+        var canonical = claimedPid + "\n" + nonce + "\n" + correlation + "\n" + payloadHash;
+        using var hmac = new HMACSHA256(channelKey);
+        var mac = "hmac-sha256:" + Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        writer.WriteLine(JsonSerializer.Serialize(new { schema = "dynamic-revit-sandbox-message/v0", pid = claimedPid, nonce, correlation, payloadHash, mac, payloadBase64 = Convert.ToBase64String(payloadBytes) }, Json));
+    }
     public static void SendNamedClaimed(string pipeName, string nonce, string correlation, byte[] channelKey, uint claimedPid, object payload)
     {
         var payloadJson = JsonSerializer.Serialize(payload, Json);
@@ -256,39 +268,89 @@ internal static class SandboxPipeExecution
         var nonce = "";
         var correlation = "";
         var channelKey = Array.Empty<byte>();
+        StreamWriter? outputWriter = null;
         try
         {
             using var inputPipe = new AnonymousPipeClientStream(PipeDirection.In, inputPipeName);
             using var reader = new StreamReader(inputPipe, Encoding.UTF8, false, 64 * 1024, leaveOpen: false);
-            var raw = reader.ReadLine() ?? throw new InvalidOperationException("Worker input channel is empty.");
-            if (Encoding.UTF8.GetByteCount(raw) > 4 * 1024 * 1024) throw new InvalidOperationException("Worker input exceeds the 4 MiB limit.");
-            using var envelope = JsonDocument.Parse(raw);
-            if (envelope.RootElement.ValueKind != JsonValueKind.Object) throw new InvalidOperationException("Worker input envelope is invalid.");
-            nonce = envelope.RootElement.GetProperty("nonce").GetString() ?? throw new InvalidOperationException("Worker nonce is missing.");
-            correlation = envelope.RootElement.GetProperty("correlation").GetString() ?? throw new InvalidOperationException("Worker correlation is missing.");
-            channelKey = Convert.FromBase64String(envelope.RootElement.GetProperty("channelKeyBase64").GetString() ?? "");
-            if (channelKey.Length != 32) throw new InvalidOperationException("Worker channel key must be 256 bits.");
-            var request = envelope.RootElement.GetProperty("request").Deserialize<WorkerInput>(Compiler.Json) ?? throw new InvalidOperationException("Worker request is missing.");
-            RuntimeMitigations.EnableMicrosoftSignedNativeImagesOnly();
-            var output = WorkerExecutor.Execute(request);
-            WorkerDiagnosticProtocol.Prepare(output);
-            SandboxPipe.SendNamed(outputPipeName, nonce, correlation, channelKey, output);
-            return output.Ok ? 0 : 1;
+            using var outputPipe = new NamedPipeClientStream(".", outputPipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+            WorkerInput? request = null;
+            WorkerOutput? priorOutput = null;
+            byte[]? retainedAssembly = null;
+            for (var turnIndex = 0; turnIndex < DynamicObservationDeltaPolicyV1.MaximumTurns; turnIndex++)
+            {
+                var raw = reader.ReadLine() ?? throw new InvalidOperationException("Worker input channel closed before the retained session completed.");
+                if (Encoding.UTF8.GetByteCount(raw) > 4 * 1024 * 1024) throw new InvalidOperationException("Worker input exceeds the 4 MiB per-turn limit.");
+                using var envelope = JsonDocument.Parse(raw);
+                if (envelope.RootElement.ValueKind != JsonValueKind.Object ||
+                    envelope.RootElement.GetProperty("turnIndex").GetInt32() != turnIndex)
+                    throw new InvalidOperationException("Worker turn envelope is invalid, missing, or out of order.");
+                nonce = envelope.RootElement.GetProperty("nonce").GetString() ?? throw new InvalidOperationException("Worker nonce is missing.");
+                correlation = envelope.RootElement.GetProperty("correlation").GetString() ?? throw new InvalidOperationException("Worker correlation is missing.");
+                if (turnIndex == 0)
+                {
+                    channelKey = Convert.FromBase64String(envelope.RootElement.GetProperty("channelKeyBase64").GetString() ?? "");
+                    if (channelKey.Length != 32) throw new InvalidOperationException("Worker channel key must be 256 bits.");
+                    request = envelope.RootElement.GetProperty("request").Deserialize<WorkerInput>(Compiler.Json)
+                        ?? throw new InvalidOperationException("Worker request is missing.");
+                    RuntimeMitigations.EnableMicrosoftSignedNativeImagesOnly();
+                    outputPipe.Connect(5_000);
+                    outputWriter = new StreamWriter(outputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true };
+                }
+                else
+                {
+                    if (request == null || priorOutput?.ResultReferenceProgramResult?.FactRequest == null)
+                        throw new InvalidOperationException("Worker received an observation delta without a pending exact fact request.");
+                    var delta = envelope.RootElement.GetProperty("delta").Deserialize<DynamicObservationDeltaV1>(Compiler.Json)
+                        ?? throw new InvalidOperationException("Worker observation delta is missing.");
+                    DynamicObservationDeltaPolicyV1.Validate(delta);
+                    var factRequest = priorOutput.ResultReferenceProgramResult.FactRequest;
+                    DynamicExecutionProtocolV1.ValidateFactRequest(factRequest);
+                    var knownScopes = request.BuildingSystemsPages.Select(page => page.ScopeHash).Distinct(StringComparer.Ordinal)
+                        .OrderBy(hash => hash, StringComparer.Ordinal).ToArray();
+                    if (delta.TurnIndex != turnIndex || delta.PriorFactRequestHash != factRequest.RequestHash ||
+                        delta.SnapshotHash != request.ResultReferenceSnapshotHash ||
+                        delta.DocumentRevision != request.ResultReferenceDocumentRevision ||
+                        !knownScopes.SequenceEqual(delta.KnownScopeHashes) ||
+                        delta.NewScopeHash != DynamicBuildingSystemsObservationPolicyV1.ScopeHash(factRequest.Selector))
+                        throw new InvalidOperationException("Worker observation delta is stale, substituted, or not the exact requested scope.");
+                    request.BuildingSystemsPages = request.BuildingSystemsPages.Concat(delta.Pages)
+                        .OrderBy(page => page.ScopeHash, StringComparer.Ordinal).ThenBy(page => page.PageOffset).ToArray();
+                    request.ResultReferenceScopeHash = DynamicResultReferenceObservationSetV1.ScopeSetHash(
+                        request.BuildingSystemsPages.Select(page => page.ScopeHash).Distinct(StringComparer.Ordinal));
+                    _ = new DynamicResultReferenceProgramContextV1(request.Input, request.ResultReferenceDocumentRevision!.Value,
+                        request.ResultReferenceSnapshotHash, request.ResultReferenceScopeHash,
+                        request.BuildingSystemsPages, request.TrustedExternalTargets);
+                }
+
+                var output = WorkerExecutor.Execute(request!, retainedAssembly);
+                retainedAssembly = output.RetainedAssembly;
+                WorkerDiagnosticProtocol.Prepare(output);
+                SandboxPipe.WriteNamed(outputWriter!, nonce, correlation, channelKey, checked((uint)Environment.ProcessId), output);
+                priorOutput = output;
+                if (!output.Ok || output.ExecutionStatus != "needs_facts") return output.Ok ? 0 : 1;
+            }
+            return priorOutput?.Ok == true ? 0 : 1;
         }
         catch (Exception ex)
         {
             try
             {
-                var output = new WorkerOutput { Ok = false, Diagnostics = new[] { new WorkerDiagnostic { Code = "SANDBOX_EXECUTION_FAILURE", Message = ex.Message } } };
+                var output = new WorkerOutput { Ok = false, Diagnostics = new[] {
+                    new WorkerDiagnostic { Code = "SANDBOX_EXECUTION_FAILURE", Message = ex.Message } } };
                 WorkerDiagnosticProtocol.Prepare(output);
-                SandboxPipe.SendNamed(outputPipeName, nonce, correlation, channelKey, output);
+                if (outputWriter != null && channelKey.Length == 32)
+                    SandboxPipe.WriteNamed(outputWriter, nonce, correlation, channelKey, checked((uint)Environment.ProcessId), output);
             }
             catch { }
             return 1;
         }
+        finally
+        {
+            outputWriter?.Dispose();
+        }
     }
 }
-
 internal static class SandboxProbe
 {
     public static int Run(string inputPath, string pipeName, string nonce, string channelKeyBase64, string correlation)
@@ -360,7 +422,7 @@ internal static class RuntimeMitigations
 
 internal static class WorkerExecutor
 {
-    public static WorkerOutput Execute(WorkerInput request)
+    public static WorkerOutput Execute(WorkerInput request, byte[]? retainedAssembly = null)
     {
         var source = request.Source?.Replace("\r\n", "\n").Replace("\r", "\n") ?? "";
         var output = new WorkerOutput { SourceHash = DynamicWire.Sha256(source), SdkHash = DynamicRevitSdkVersion.ManifestHash };
@@ -377,7 +439,13 @@ internal static class WorkerExecutor
         if (!string.IsNullOrEmpty(request.CompilationCacheKey) && !IsHash(request.CompilationCacheKey))
             return Fail(output, "COMPILATION_CACHE_KEY", "Compilation cache key is malformed.");
         Compiler.Result compilation;
-        if (request.CachedAssemblyBase64 != null)
+        if (retainedAssembly != null)
+        {
+            if (retainedAssembly.Length is < 1 or > 2 * 1024 * 1024) return Fail(output, "COMPILATION_CACHE_ARTIFACT", "Retained assembly exceeds the worker bound.");
+            compilation = new Compiler.Result { Assembly = retainedAssembly };
+            output.CompilationCacheHit = true;
+        }
+        else if (request.CachedAssemblyBase64 != null)
         {
             if (string.IsNullOrEmpty(request.CompilationCacheKey)) return Fail(output, "COMPILATION_CACHE_KEY", "Cached assembly requires an exact cache key.");
             byte[] cached;
@@ -392,6 +460,7 @@ internal static class WorkerExecutor
         if (compilation.Diagnostics.Length > 0) { output.Diagnostics = compilation.Diagnostics; return output; }
         output.ProgramHash = DynamicWire.Sha256(Convert.ToBase64String(compilation.Assembly!));
         output.CompiledAssemblyHash = DynamicWire.Sha256(compilation.Assembly!);
+        output.RetainedAssembly = compilation.Assembly!.ToArray();
         output.CompilationCacheKey = request.CompilationCacheKey;
         var metadata = StaticAdmission.CheckMetadata(compilation.Assembly!);
         if (metadata.Length > 0) { output.Diagnostics = metadata; return output; }
@@ -745,16 +814,63 @@ internal static class SelfTest
         return ok ? 0 : 1;
     }
 
-    private static DynamicBuildingSystemsEnvelopeV1 BuildingSystemsPage(string fingerprint, string snapshot)
+    public static int RetainedDeltaScenario()
+    {
+        const string source = "using System.Linq; using RevitOperator.DynamicRevitSdk; " +
+            "public sealed class X : IDynamicResultReferenceRevitProgramV1 { public DynamicResultReferenceProgramResultV1 Execute(DynamicResultReferenceProgramContextV1 c) { " +
+            "if (c.BuildingSystemsFacts.Count < 2) return c.NeedFacts(\"second-equipment\", \"Need a second exact equipment fact.\", " +
+            "new DynamicBuildingSystemsSelectorV1 { ElementUniqueIds = new[] { \"equipment-2\" }, Kinds = new[] { \"equipment\" }, PageSize = 1 }); " +
+            "var target = c.ExternalTarget(\"equipment\"); c.Report(\"facts\", c.BuildingSystemsFacts.Count.ToString()); " +
+            "c.Plan.AddOperation(\"copy_element\", new[] { target }, null, new[] { new DynamicResultOutputSpecV1 { OutputSlot=\"copy\", ExpectedCategoryStableId=target.ExpectedCategoryStableId, ExpectedTypeUniqueId=target.ExpectedTypeUniqueId } }, " +
+            "new System.Collections.Generic.Dictionary<string,string> { [\"transform\"]=\"identity\" }); return c.Complete(); } }";
+        var fingerprint = DynamicWire.Sha256("retained-worker-document");
+        var snapshot = DynamicWire.Sha256("retained-worker-snapshot");
+        var first = BuildingSystemsPage(fingerprint, snapshot, "equipment", 1);
+        var second = BuildingSystemsPage(fingerprint, snapshot, "equipment-2", 2);
+        var trusted = TrustedExternal(fingerprint);
+        var input = new DynamicTaskInput { Document = new DynamicDocumentDto { ProjectFingerprint = fingerprint, SessionId = "worker-session" } };
+        var request = new WorkerInput
+        {
+            Source = source, Input = input, ResultReferenceDocumentRevision = 9,
+            ResultReferenceSnapshotHash = snapshot, ResultReferenceScopeHash = first.ScopeHash,
+            BuildingSystemsPages = new[] { first }, TrustedExternalTargets = new[] { trusted }
+        };
+        var firstOutput = WorkerExecutor.Execute(request);
+        var factRequest = firstOutput.ResultReferenceProgramResult?.FactRequest;
+        var delta = new DynamicObservationDeltaV1
+        {
+            TurnIndex = 1, PriorFactRequestHash = factRequest?.RequestHash ?? "", SnapshotHash = snapshot,
+            DocumentRevision = 9, KnownScopeHashes = new[] { first.ScopeHash },
+            NewScopeHash = second.ScopeHash, Pages = new[] { second }
+        };
+        delta.DeltaHash = DynamicObservationDeltaPolicyV1.Hash(delta);
+        DynamicObservationDeltaPolicyV1.Validate(delta);
+        request.BuildingSystemsPages = new[] { first, second }.OrderBy(page => page.ScopeHash, StringComparer.Ordinal).ToArray();
+        request.ResultReferenceScopeHash = DynamicResultReferenceObservationSetV1.ScopeSetHash(new[] { first.ScopeHash, second.ScopeHash });
+        var completed = WorkerExecutor.Execute(request, firstOutput.RetainedAssembly);
+        var ok = firstOutput.Ok && firstOutput.ExecutionStatus == "needs_facts" && factRequest != null &&
+            completed.Ok && completed.ExecutionStatus == "completed" && completed.CompilationCacheHit &&
+            completed.ProgramHash == firstOutput.ProgramHash && completed.ResultReferenceProgramResult?.Graph.Nodes.Count == 1 &&
+            completed.Report.TryGetValue("facts", out var factCount) && factCount == "2";
+        Console.WriteLine(JsonSerializer.Serialize(new
+        {
+            schema = "dynamic-revit-worker-retained-delta-self-test/v1", ok,
+            firstProgramHash = firstOutput.ProgramHash, completedProgramHash = completed.ProgramHash,
+            deltaHash = delta.DeltaHash, retainedCompilation = completed.CompilationCacheHit
+        }, Compiler.Json));
+        return ok ? 0 : 1;
+    }
+
+    private static DynamicBuildingSystemsEnvelopeV1 BuildingSystemsPage(string fingerprint, string snapshot, string uniqueId = "equipment", long elementId = 1)
     {
         var type = new DynamicStableReferenceV1 { Kind = "type", StableId = "revit-element:type", UniqueId = "type", ElementId = 2 };
         var family = new DynamicStableReferenceV1 { Kind = "family", StableId = "revit-element:family", UniqueId = "family", ElementId = 3 };
-        var element = new DynamicStableReferenceV1 { Kind = "element", StableId = "revit-element:equipment", UniqueId = "equipment", ElementId = 1 };
+        var element = new DynamicStableReferenceV1 { Kind = "element", StableId = "revit-element:" + uniqueId, UniqueId = uniqueId, ElementId = elementId };
         var origin = new DynamicPointV1 { X = 1, Y = 2, Z = 3 };
         var transform = new DynamicTransformV1 { Origin = origin, BasisX = new DynamicPointV1 { X = 1 }, BasisY = new DynamicPointV1 { Y = 1 }, BasisZ = new DynamicPointV1 { Z = 1 } };
         var fact = new DynamicBuildingSystemsFactV1 { Kind = "equipment", Element = element, Family = family, Type = type, Location = origin, Orientation = transform,
             Asset = new DynamicBuildingAssetFactV1 { AssetClass = "equipment", Location = origin, Orientation = transform, Family = family, Type = type } };
-        return DynamicBuildingSystemsObservationPolicyV1.BuildPage(new DynamicBuildingSystemsSelectorV1 { PageSize = 1 }, fingerprint, "worker-session", 9, snapshot, new[] { fact });
+        return DynamicBuildingSystemsObservationPolicyV1.BuildPage(new DynamicBuildingSystemsSelectorV1 { ElementUniqueIds = new[] { uniqueId }, Kinds = new[] { "equipment" }, PageSize = 1 }, fingerprint, "worker-session", 9, snapshot, new[] { fact });
     }
 
     private static DynamicTrustedElementFactV1 TrustedExternal(string fingerprint) => new()

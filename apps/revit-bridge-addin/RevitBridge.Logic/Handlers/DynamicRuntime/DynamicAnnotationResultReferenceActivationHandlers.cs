@@ -77,7 +77,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         private sealed class Request
         {
             public string? Schema { get; set; } public string? RuntimeInstanceId { get; set; } public string? SnapshotId { get; set; }
-            public DynamicBuildingSystemsSelectorV1? Selector { get; set; } public string[] ObservationEnvelopeHashes { get; set; } = Array.Empty<string>();
+            public DynamicBuildingSystemsSelectorV1[] Selectors { get; set; } = Array.Empty<DynamicBuildingSystemsSelectorV1>(); public string[] ObservationEnvelopeHashes { get; set; } = Array.Empty<string>();
             public string? SourceHash { get; set; } public string? ProgramHash { get; set; } public string? SdkHash { get; set; }
             public DynamicResultReferenceGraphV1? Graph { get; set; } public DynamicEffectBudgetV1? EffectBudget { get; set; }
             public string? CorrelationId { get; set; } public long AuthExpiresUnixSeconds { get; set; } public string? RequestMac { get; set; }
@@ -85,23 +85,24 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             DynamicRuntimeV1LaboratoryBoundary.Require();
-            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "snapshotId", "selector", "observationEnvelopeHashes", "sourceHash", "programHash", "sdkHash", "graph", "effectBudget", "correlationId", "authExpiresUnixSeconds", "requestMac");
-            if (request.Schema != "dynamic-revit-annotation-result-preview-request/v1" || request.Selector == null || request.Graph == null || request.EffectBudget == null ||
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "snapshotId", "selectors", "observationEnvelopeHashes", "sourceHash", "programHash", "sdkHash", "graph", "effectBudget", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-annotation-result-preview-request/v1" || request.Selectors.Length is < 1 or > DynamicResultReferenceObservationSetV1.MaximumScopes || request.Graph == null || request.EffectBudget == null ||
                 request.Graph.Nodes.Any(node => DynamicAnnotationOperationManifestV1.Find(node.Kind) == null)) throw new ArgumentException("Annotation result preview request v1 is invalid or mixed-family.");
             if (!DynamicRuntimePreviewHandler.IsHash(request.SourceHash) || !DynamicRuntimePreviewHandler.IsHash(request.ProgramHash) || !DynamicRuntimePreviewHandler.IsHash(request.SdkHash))
                 throw new ArgumentException("Annotation result preview source, program, or SDK identity is invalid.");
-            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, snapshotId = request.SnapshotId, selector = request.Selector,
+            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, snapshotId = request.SnapshotId, selectors = request.Selectors,
                 observationEnvelopeHashes = request.ObservationEnvelopeHashes, sourceHash = request.SourceHash, programHash = request.ProgramHash, sdkHash = request.SdkHash, graph = request.Graph, effectBudget = request.EffectBudget };
             DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "annotation-result-preview-v1", request.CorrelationId ?? "", request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
             DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
-            var snapshot = DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", DynamicRuntimeSnapshotHandler.Fingerprint(document), DynamicRuntimeSnapshotHandler.Session(document), request.Selector);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireCompleteEnvelopeSet(snapshot.SnapshotId, request.ObservationEnvelopeHashes);
+            var snapshot = DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireScopeSet(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", DynamicRuntimeSnapshotHandler.Fingerprint(document), DynamicRuntimeSnapshotHandler.Session(document), request.Selectors);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireCompleteEnvelopeSet(snapshot.SnapshotId, request.Selectors.Select(DynamicBuildingSystemsObservationPolicyV1.ScopeHash), request.ObservationEnvelopeHashes);
             if (request.Graph.DocumentRevision != snapshot.DocumentRevision || request.Graph.DocumentFingerprint != snapshot.DocumentFingerprint || request.Graph.DocumentSessionId != snapshot.DocumentSessionId)
                 throw new InvalidOperationException("Annotation result graph is not bound to the exact sealed observation revision.");
             var ids = request.Graph.Nodes.SelectMany(node => node.ExternalTargets).Select(value => value.TargetUniqueId).Distinct(StringComparer.Ordinal).ToArray();
-            var targets = DynamicResultReferenceFactAuthorityV1.Capture(app, ids, snapshot, request.Selector);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireAuthorizedTargets(snapshot.SnapshotId, ids);
+            var targets = DynamicResultReferenceFactAuthorityV1.Capture(app, ids, snapshot, request.Selectors);
             var activated = DynamicAnnotationResultReferenceMutationHostV1.Preview(app, request.Graph, request.EffectBudget, targets, snapshot.DocumentRevision);
             var seal = new DynamicAnnotationResultPreviewSealV1 { PreviewId = "annotationresultpreview_" + Guid.NewGuid().ToString("N"), RuntimeId = request.RuntimeInstanceId ?? "", SnapshotId = snapshot.SnapshotId,
                 SourceHash = request.SourceHash ?? "", ProgramHash = request.ProgramHash ?? "", SdkHash = request.SdkHash ?? "", Graph = Clone(request.Graph), Budget = Clone(request.EffectBudget),
@@ -130,7 +131,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "annotation-result-authorize-v1", request.CorrelationId ?? "", request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
             DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var preview = DynamicAnnotationResultLaboratoryStateV1.Require(request.RuntimeInstanceId ?? "", request.PreviewId ?? "", request.PreviewHash ?? "");
-            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document."); DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(preview.SnapshotId, document);
+            var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document."); DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(preview.SnapshotId, document);
             var authorization = DynamicAnnotationResultLaboratoryStateV1.Authorize(preview);
             var receipt = new { schema = "dynamic-revit-annotation-result-authorize-receipt/v1", preview_id = preview.PreviewId, preview_hash = preview.ActivatedPreview.Preview.PreviewHash,
                 authorization_id = authorization.AuthorizationId, authorization_hash = authorization.AuthorizationHash, expires_unix_seconds = new DateTimeOffset(authorization.ExpiresUtc).ToUnixTimeSeconds(), authorization_granted = true };
@@ -152,7 +153,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var seal = DynamicAnnotationResultLaboratoryStateV1.Take(request.RuntimeInstanceId ?? "", request.PreviewId ?? "", request.AuthorizationId ?? "");
             try
             {
-                var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document."); DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(seal.Preview.SnapshotId, document);
+                var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document."); DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(seal.Preview.SnapshotId, document);
                 var ledgerRoot = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RESULT_APPLY_REPLAY_DIRECTORY");
                 if (string.IsNullOrWhiteSpace(ledgerRoot)) ledgerRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RevitOperator", "DynamicRuntime", "result-apply-replay-v1");
                 var ledger = new DurableCoreOperationApplyAuthorizationLedgerV1(ledgerRoot, new DateTimeOffset(seal.ExpiresUtc).ToUnixTimeSeconds());

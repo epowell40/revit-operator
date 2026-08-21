@@ -57,6 +57,37 @@ public sealed partial class DynamicResultReferenceProgramContextV1
     }
 }
 
+public static class DynamicResultReferenceObservationSetV1
+{
+    public const int MaximumScopes = 5;
+
+    public static string ScopeSetHash(IEnumerable<string> scopeHashes)
+    {
+        var values = CanonicalHashes(scopeHashes, nameof(scopeHashes));
+        return values.Length == 1 ? values[0] : DynamicWire.Sha256(DynamicCanonical.Join(
+            "dynamic-revit-result-reference-scope-set/v1", DynamicCanonical.Set(values)));
+    }
+
+    public static string RevisionSetHash(IEnumerable<DynamicBuildingSystemsEnvelopeV1> pages)
+    {
+        var values = (pages ?? throw new ArgumentNullException(nameof(pages))).ToArray();
+        var groups = values.GroupBy(page => page.ScopeHash, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray();
+        if (groups.Length is < 1 or > MaximumScopes) throw new ArgumentException("Result-reference observation scope count is outside bounds.", nameof(pages));
+        var bindings = groups.Select(group => DynamicCanonical.Join(group.Key,
+            group.Select(page => page.RevisionHash).Distinct(StringComparer.Ordinal).Single())).ToArray();
+        return bindings.Length == 1 ? values[0].RevisionHash : DynamicWire.Sha256(DynamicCanonical.Join(
+            "dynamic-revit-result-reference-revision-set/v1", string.Join("\n", bindings)));
+    }
+
+    private static string[] CanonicalHashes(IEnumerable<string> hashes, string parameterName)
+    {
+        var values = (hashes ?? throw new ArgumentNullException(parameterName)).ToArray();
+        if (values.Length is < 1 or > MaximumScopes || values.Any(value => !DynamicCanonical.Hash(value)) ||
+            values.Distinct(StringComparer.Ordinal).Count() != values.Length)
+            throw new ArgumentException("Result-reference observation scope identities are invalid, duplicated, or unbounded.", parameterName);
+        return values.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+    }
+}
 internal static class DynamicResultReferenceObservationContextAuthorityV1
 {
     internal sealed class Validated
@@ -72,9 +103,9 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
         string snapshotHash, string scopeHash, IEnumerable<DynamicBuildingSystemsEnvelopeV1> pages,
         IEnumerable<DynamicTrustedElementFactV1> trustedTargets)
     {
-        var pageValues = (pages ?? throw new ArgumentNullException(nameof(pages))).Take(DynamicResultReferenceContractV1.MaximumBuildingSystemsPages + 1).ToArray();
+        var pageValues = (pages ?? throw new ArgumentNullException(nameof(pages))).Take(DynamicObservationDeltaPolicyV1.MaximumRetainedPages + 1).ToArray();
         var trustedValues = (trustedTargets ?? throw new ArgumentNullException(nameof(trustedTargets))).Take(DynamicResultReferenceContractV1.MaximumTrustedExternalTargets + 1).ToArray();
-        if (pageValues.Length > DynamicResultReferenceContractV1.MaximumBuildingSystemsPages || trustedValues.Length > DynamicResultReferenceContractV1.MaximumTrustedExternalTargets)
+        if (pageValues.Length > DynamicObservationDeltaPolicyV1.MaximumRetainedPages || trustedValues.Length > DynamicResultReferenceContractV1.MaximumTrustedExternalTargets)
             throw new ArgumentException("Result-reference observation context exceeds hard bounds.");
         if (pageValues.Length == 0)
         {
@@ -88,26 +119,38 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
         foreach (var page in pageValues) DynamicBuildingSystemsObservationPolicyV1.ValidateEnvelope(page);
         var first = pageValues[0];
         if (first.DocumentFingerprint != documentFingerprint || first.DocumentSessionId != documentSessionId || first.DocumentRevision != documentRevision ||
-            first.SnapshotHash != snapshotHash || first.ScopeHash != scopeHash || first.PageOffset != 0)
-            throw new ArgumentException("Building Systems pages do not bind the exact result-reference document, session, revision, snapshot, and scope.");
-        var expectedOffset = 0;
-        foreach (var page in pageValues)
+            first.SnapshotHash != snapshotHash)
+            throw new ArgumentException("Building Systems pages do not bind the exact result-reference document, session, revision, and snapshot.");
+        var groups = pageValues.GroupBy(page => page.ScopeHash, StringComparer.Ordinal).OrderBy(group => group.Key, StringComparer.Ordinal).ToArray();
+        if (groups.Length is < 1 or > DynamicResultReferenceObservationSetV1.MaximumScopes ||
+            DynamicResultReferenceObservationSetV1.ScopeSetHash(groups.Select(group => group.Key)) != scopeHash)
+            throw new ArgumentException("Building Systems page scopes are substituted, duplicated, or unbounded.");
+        foreach (var group in groups)
         {
-            if (page.DocumentFingerprint != first.DocumentFingerprint || page.DocumentSessionId != first.DocumentSessionId || page.DocumentRevision != first.DocumentRevision ||
-                page.SnapshotHash != first.SnapshotHash || page.ScopeHash != first.ScopeHash || page.RevisionHash != first.RevisionHash ||
-                page.TotalCount != first.TotalCount || page.PageSize != first.PageSize || page.PageOffset != expectedOffset)
-                throw new ArgumentException("Building Systems page set is mixed, duplicated, missing, or non-contiguous.");
-            expectedOffset += page.Facts.Count;
+            var ordered = group.OrderBy(page => page.PageOffset).ToArray();
+            var groupFirst = ordered[0];
+            var expectedOffset = 0;
+            foreach (var page in ordered)
+            {
+                if (page.DocumentFingerprint != first.DocumentFingerprint || page.DocumentSessionId != first.DocumentSessionId || page.DocumentRevision != first.DocumentRevision ||
+                    page.SnapshotHash != first.SnapshotHash || page.ScopeHash != groupFirst.ScopeHash || page.RevisionHash != groupFirst.RevisionHash ||
+                    page.TotalCount != groupFirst.TotalCount || page.PageSize != groupFirst.PageSize || page.PageOffset != expectedOffset)
+                    throw new ArgumentException("Building Systems page set is mixed, duplicated, missing, or non-contiguous.");
+                expectedOffset += page.Facts.Count;
+            }
+            if (expectedOffset != groupFirst.TotalCount || ordered[ordered.Length - 1].NextCursor != null)
+                throw new ArgumentException("Building Systems page set is incomplete.");
+            if (DynamicBuildingSystemsObservationPolicyV1.RevisionHash(documentFingerprint, documentSessionId, documentRevision, snapshotHash,
+                ordered.SelectMany(page => page.Facts)) != groupFirst.RevisionHash)
+                throw new ArgumentException("Building Systems page-set revision identity is invalid.");
         }
-        if (expectedOffset != first.TotalCount || pageValues[pageValues.Length - 1].NextCursor != null)
-            throw new ArgumentException("Building Systems page set is incomplete.");
-        var observed = pageValues.SelectMany(page => page.Facts).ToArray();
+        var canonicalPages = groups.SelectMany(group => group.OrderBy(page => page.PageOffset)).ToArray();
+        var observed = canonicalPages.SelectMany(page => page.Facts).ToArray();
         if (observed.Length > DynamicBuildingSystemsObservationContractV1.MaximumObservedFacts ||
             observed.Select(value => value.Element.StableId).Distinct(StringComparer.Ordinal).Count() != observed.Length ||
-            !observed.Select(value => value.Element.StableId).SequenceEqual(observed.Select(value => value.Element.StableId).OrderBy(value => value, StringComparer.Ordinal)))
-            throw new ArgumentException("Building Systems facts are duplicated, non-canonical, or unbounded across pages.");
-        if (DynamicBuildingSystemsObservationPolicyV1.RevisionHash(documentFingerprint, documentSessionId, documentRevision, snapshotHash, observed) != first.RevisionHash)
-            throw new ArgumentException("Building Systems page set revision identity is invalid.");
+            groups.Any(group => !group.SelectMany(page => page.Facts).Select(value => value.Element.StableId)
+                .SequenceEqual(group.SelectMany(page => page.Facts).Select(value => value.Element.StableId).OrderBy(value => value, StringComparer.Ordinal))))
+            throw new ArgumentException("Building Systems facts are duplicated, non-canonical, or unbounded across scopes.");
 
         var observedByUniqueId = observed.Where(value => value.Element.UniqueId != null)
             .ToDictionary(value => value.Element.UniqueId ?? throw new ArgumentException("Observed element unique identity is missing."), StringComparer.Ordinal);
@@ -123,8 +166,8 @@ internal static class DynamicResultReferenceObservationContextAuthorityV1
         }
         return new Validated
         {
-            SnapshotHash = snapshotHash, ScopeHash = scopeHash, RevisionHash = first.RevisionHash,
-            Pages = pageValues.Select(Clone).ToArray(), TrustedTargets = trustedValues.Select(Clone).ToArray()
+            SnapshotHash = snapshotHash, ScopeHash = scopeHash, RevisionHash = DynamicResultReferenceObservationSetV1.RevisionSetHash(canonicalPages),
+            Pages = canonicalPages.Select(Clone).ToArray(), TrustedTargets = trustedValues.Select(Clone).ToArray()
         };
     }
 

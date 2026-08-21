@@ -128,7 +128,13 @@ internal static class Program
         }
         var compilationCacheKey = compilationLookup?.CacheKey ?? "";
         var cachedAssemblyBase64 = compilationLookup?.Assembly == null ? null : Convert.ToBase64String(compilationLookup.Assembly);
-        using var worker = profile.Launch(executable, arguments, scratch, memoryMb: 256, cpuTimeLimit: TimeSpan.FromMilliseconds(Math.Max(config.WorkerDeadlineMs, 1_000) + 5_000), inheritedHandles: new[] { new IntPtr(long.Parse(inputPipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
+        var workerTurnCpuMilliseconds = (long)Math.Max(config.WorkerDeadlineMs, 1_000) + 1_000;
+        var workerCpuMilliseconds = config.ResultReference
+            ? checked(workerTurnCpuMilliseconds * DynamicObservationDeltaPolicyV1.MaximumTurns + 5_000)
+            : checked(workerTurnCpuMilliseconds + 4_000);
+        using var worker = profile.Launch(executable, arguments, scratch, memoryMb: 256,
+            cpuTimeLimit: TimeSpan.FromMilliseconds(workerCpuMilliseconds),
+            inheritedHandles: new[] { new IntPtr(long.Parse(inputPipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
         var startupNonceHash = DynamicWire.Sha256(nonce);
         var taskDirectoryIdentity = DynamicWire.Sha256(Path.GetFullPath(taskRoot));
         var registrationCore = JsonSerializer.Serialize(new { runtimeInstanceId = runtimeId, signingKeyBase64 = Convert.ToBase64String(signingKey), launcherExecutableHash = launcherHash, workerExecutableHash, workerRuntimePackageHash, compilerRuntimeHash, sdkArtifactHash, sandboxProfile = profile.ProfileName, workerProcessId = checked((int)worker.ProcessId), startupNonceHash, taskDirectoryIdentity, expiresUnixSeconds = runtimeExpires }, WireJson);
@@ -175,26 +181,48 @@ internal static class Program
                 compilationCacheKey, cachedAssemblyBase64 }, Json);
         }
         inputPipe.DisposeLocalCopyOfClientHandle();
-        using (var inputWriter = new StreamWriter(inputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true }) await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new { nonce, correlation, channelKeyBase64 = Convert.ToBase64String(channelKey), request = JsonDocument.Parse(workerInput).RootElement }, WireJson));
-        inputPipe.Close();
+        using var inputWriter = new StreamWriter(inputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true };
+        await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new
+        {
+            turnIndex = 0, nonce, correlation, channelKeyBase64 = Convert.ToBase64String(channelKey),
+            request = JsonDocument.Parse(workerInput).RootElement
+        }, WireJson));
         var connected = pipe.WaitForConnectionAsync();
-        if (await Task.WhenAny(connected, Task.Delay(TimeSpan.FromMilliseconds(config.WorkerDeadlineMs + 5_000))) != connected) { worker.Kill(); throw new TimeoutException("Sandboxed worker did not connect its authenticated output pipe before the supervisor deadline."); }
+        if (await Task.WhenAny(connected, Task.Delay(TimeSpan.FromMilliseconds(config.WorkerDeadlineMs + 5_000))) != connected)
+        {
+            worker.Kill();
+            throw new TimeoutException("Sandboxed worker did not connect its authenticated retained output pipe before the supervisor deadline.");
+        }
         await connected;
-        if (!Native.GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var kernelObservedWorkerPid) || kernelObservedWorkerPid != worker.ProcessId) { worker.Kill(); throw new InvalidOperationException("Sandboxed worker output pipe was connected by the wrong kernel-observed process."); }
-        var read = ReadBoundedLineAsync(pipe, 4 * 1024 * 1024);
-        if (await Task.WhenAny(read, Task.Delay(TimeSpan.FromMilliseconds(config.WorkerDeadlineMs + 5_000))) != read) { worker.Kill(); throw new TimeoutException("Sandboxed worker did not return before supervisor deadline."); }
-        var messageRaw = await read ?? throw new InvalidOperationException("Sandboxed worker closed its channel without a result.");
-        using var messageDocument = JsonDocument.Parse(messageRaw);
-        var message = messageDocument.RootElement;
-        var messagePid = message.GetProperty("pid").GetUInt32();
-        var pidMatches = messagePid == worker.ProcessId;
-        var nonceMatches = FixedEquals(nonce, message.GetProperty("nonce").GetString() ?? "");
-        var correlationMatches = FixedEquals(correlation, message.GetProperty("correlation").GetString() ?? "");
-        var hmacMatches = VerifyChannelMessage(message, channelKey, worker.ProcessId);
-        if (!pidMatches || !nonceMatches || !correlationMatches || !hmacMatches)
-            throw new InvalidOperationException("Sandboxed worker channel authentication failed: pid=" + pidMatches + ", nonce=" + nonceMatches + ", correlation=" + correlationMatches + ", payload/HMAC=" + hmacMatches + ", expectedPid=" + worker.ProcessId + ", observedPid=" + messagePid + ".");
-        if (!worker.Wait(TimeSpan.FromSeconds(5))) worker.Kill();
-        var rawOutput = DecodePayload(message);
+        if (!Native.GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var kernelObservedWorkerPid) || kernelObservedWorkerPid != worker.ProcessId)
+        {
+            worker.Kill();
+            throw new InvalidOperationException("Sandboxed worker retained output pipe was connected by the wrong kernel-observed process.");
+        }
+
+        async Task<JsonElement> ReceiveWorkerTurn(string expectedNonce, string expectedCorrelation)
+        {
+            var read = ReadBoundedLineAsync(pipe, 4 * 1024 * 1024);
+            if (await Task.WhenAny(read, Task.Delay(TimeSpan.FromMilliseconds(config.WorkerDeadlineMs + 5_000))) != read)
+            {
+                worker.Kill();
+                throw new TimeoutException("Sandboxed worker retained turn did not return before the supervisor deadline.");
+            }
+            var messageRaw = await read ?? throw new InvalidOperationException("Sandboxed worker closed its retained channel without a result.");
+            using var messageDocument = JsonDocument.Parse(messageRaw);
+            var message = messageDocument.RootElement;
+            var messagePid = message.GetProperty("pid").GetUInt32();
+            var pidMatches = messagePid == worker.ProcessId;
+            var nonceMatches = FixedEquals(expectedNonce, message.GetProperty("nonce").GetString() ?? "");
+            var correlationMatches = FixedEquals(expectedCorrelation, message.GetProperty("correlation").GetString() ?? "");
+            var hmacMatches = VerifyChannelMessage(message, channelKey, worker.ProcessId);
+            if (!pidMatches || !nonceMatches || !correlationMatches || !hmacMatches)
+                throw new InvalidOperationException("Sandboxed worker retained-channel authentication failed: pid=" + pidMatches +
+                    ", nonce=" + nonceMatches + ", correlation=" + correlationMatches + ", payload/HMAC=" + hmacMatches + ".");
+            return DecodePayload(message);
+        }
+
+        var rawOutput = await ReceiveWorkerTurn(nonce, correlation);
         if (compilationCache != null && compilationLookup != null && rawOutput.TryGetProperty("ok", out var cacheOk) && cacheOk.GetBoolean())
         {
             if (rawOutput.GetProperty("compilationCacheKey").GetString() != compilationLookup.CacheKey)
@@ -220,18 +248,84 @@ internal static class Program
         var sourceHash = output.GetProperty("sourceHash").GetString()!;
         var programHash = output.GetProperty("programHash").GetString()!;
         var sdkHash = output.GetProperty("sdkHash").GetString()!;
-        if (config.ResultReference && output.TryGetProperty("executionStatus", out var executionStatus) &&
-            executionStatus.GetString() == "needs_facts")
+        var retainedTurn = 0;
+        while (config.ResultReference && output.TryGetProperty("executionStatus", out var executionStatus) &&
+            executionStatus.GetString() == "needs_facts" && retainedTurn + 1 < DynamicObservationDeltaPolicyV1.MaximumTurns)
         {
-            if (resultReferenceInput == null) throw new InvalidOperationException("Needs-facts output is missing its authenticated observation context.");
+            if (resultReferenceInput == null)
+                throw new InvalidOperationException("Needs-facts output is missing its authenticated retained observation context.");
             var result = output.GetProperty("resultReferenceProgramResult").Deserialize<DynamicResultReferenceProgramResultV1>(Json)
                 ?? throw new InvalidOperationException("Needs-facts worker result is malformed.");
-            if (result.FactRequest == null) throw new InvalidOperationException("Needs-facts worker result omitted its exact fact request.");
-            DynamicExecutionProtocolV1.ValidateFactRequest(result.FactRequest);
-            DynamicExecutionProtocolV1.ValidateTrace(result.ExecutionTrace, null, result.FactRequest);
+            var factRequest = result.FactRequest ?? throw new InvalidOperationException("Needs-facts worker result omitted its exact fact request.");
+            DynamicExecutionProtocolV1.ValidateTrace(result.ExecutionTrace, null, factRequest);
             DynamicExecutionProtocolV1.ValidateTraceFactReferences(result.ExecutionTrace, resultReferenceInput.Pages);
             if (config.RequireExecutionTrace && result.ExecutionTrace.Steps.Count == 0)
                 throw new InvalidOperationException("This execution lane requires at least one explicit semantic trace step.");
+
+            var newScopeHash = ValidateFactRequestAgainstRetainedScopes(factRequest, resultReferenceInput);
+            var knownScopes = resultReferenceInput.Pages.Select(page => page.ScopeHash).Distinct(StringComparer.Ordinal)
+                .OrderBy(hash => hash, StringComparer.Ordinal).ToArray();
+            var collected = await CollectResultReferenceDeltaScope(config, factRequest.Selector, resultReferenceInput,
+                runtimeId, hostSessionKey, token, writeGrant, workerRuntimePackageHash, hostAuthentications);
+            var delta = new DynamicObservationDeltaV1
+            {
+                TurnIndex = retainedTurn + 1,
+                PriorFactRequestHash = factRequest.RequestHash,
+                SnapshotHash = resultReferenceInput.SnapshotHash,
+                DocumentRevision = resultReferenceInput.DocumentRevision,
+                KnownScopeHashes = knownScopes,
+                NewScopeHash = newScopeHash,
+                Pages = collected.Pages
+            };
+            delta.DeltaHash = DynamicObservationDeltaPolicyV1.Hash(delta);
+            DynamicObservationDeltaPolicyV1.Validate(delta);
+            var deltaJson = JsonSerializer.Serialize(delta, Json);
+            var transportBytes = Encoding.UTF8.GetByteCount(deltaJson);
+            if (transportBytes > 4 * 1024 * 1024)
+                throw new InvalidOperationException("Observation delta exceeds the retained worker per-turn transport bound.");
+
+            resultReferenceInput.Selectors = resultReferenceInput.Selectors.Concat(new[] { Clone(factRequest.Selector) }).ToArray();
+            resultReferenceInput.Pages = resultReferenceInput.Pages.Concat(collected.Pages)
+                .OrderBy(page => page.ScopeHash, StringComparer.Ordinal).ThenBy(page => page.PageOffset).ToArray();
+            resultReferenceInput.ScopeHash = DynamicResultReferenceObservationSetV1.ScopeSetHash(
+                resultReferenceInput.Pages.Select(page => page.ScopeHash).Distinct(StringComparer.Ordinal));
+            resultReferenceInput.ObservationReceiptBodies.AddRange(collected.Receipts);
+            resultReferenceInput.DeltaEvidence.Add(new DynamicObservationDeltaEvidenceV1
+            {
+                TurnIndex = delta.TurnIndex, FactRequestHash = factRequest.RequestHash, DeltaHash = delta.DeltaHash,
+                NewScopeHash = delta.NewScopeHash, PageCount = delta.Pages.Count,
+                FactCount = delta.Pages.Sum(page => page.Facts.Count), TransportBytes = transportBytes,
+                HostObservationReceipts = collected.Receipts
+            });
+            ValidateResultReferenceObservationContext(taskInput, resultReferenceInput);
+
+            retainedTurn++;
+            nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            correlation = Guid.NewGuid().ToString("N");
+            await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                turnIndex = retainedTurn, nonce, correlation, delta
+            }, WireJson));
+            rawOutput = await ReceiveWorkerTurn(nonce, correlation);
+            output = SanitizeWorkerOutput(rawOutput);
+            if (!output.GetProperty("ok").GetBoolean()) break;
+            if (output.GetProperty("sourceHash").GetString() != sourceHash ||
+                output.GetProperty("programHash").GetString() != programHash ||
+                output.GetProperty("sdkHash").GetString() != sdkHash)
+                throw new InvalidOperationException("Retained worker changed source, program, or SDK identity across fact turns.");
+        }
+
+        inputWriter.Dispose();
+        inputPipe.Close();
+        if (!worker.Wait(TimeSpan.FromSeconds(5))) worker.Kill();
+
+        if (!output.GetProperty("ok").GetBoolean())
+            return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, workspace.RuntimeImage, registration, snapshotRaw,
+                output.Clone(), "Worker compilation or retained execution failed.");
+        if (config.ResultReference && output.TryGetProperty("executionStatus", out var terminalStatus) &&
+            terminalStatus.GetString() == "needs_facts")
+        {
+            if (resultReferenceInput == null) throw new InvalidOperationException("Terminal needs-facts output lost its retained observation state.");
             return new LiveEvidence
             {
                 Schema = "dynamic-revit-needs-facts-evidence/v1", Ok = false, StartedUtc = started, CompletedUtc = DateTimeOffset.UtcNow,
@@ -239,9 +333,10 @@ internal static class Program
                 RuntimeImageIdentity = workerRuntimePackageHash, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count,
                 RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, WorkerOutput = output.Clone(),
                 BuildingSystemsObservationReceipts = resultReferenceInput.ObservationReceiptBodies,
-                ResultReferenceFactsReceipt = resultReferenceInput.FactsReceiptBody, HostAuthenticationReceipts = hostAuthentications,
-                TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage,
-                Failure = "additional_facts_required"
+                ResultReferenceFactsReceipt = resultReferenceInput.FactsReceiptBody,
+                ObservationDeltas = resultReferenceInput.DeltaEvidence, HostAuthenticationReceipts = hostAuthentications,
+                TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage,
+                ObservedHostExecutable = bootstrap.ObservedImage, Failure = "retained_fact_turn_limit_reached"
             };
         }
         if (contextRuleInput != null)
@@ -509,6 +604,19 @@ internal static class Program
         };
     }
 
+    internal static string ValidateFactRequestAgainstRetainedScopes(DynamicProgramFactRequestV1 factRequest,
+        ResultReferenceObservationInput observation)
+    {
+        DynamicExecutionProtocolV1.ValidateFactRequest(factRequest);
+        var knownScopes = observation.Pages.Select(page => page.ScopeHash).Distinct(StringComparer.Ordinal)
+            .OrderBy(hash => hash, StringComparer.Ordinal).ToArray();
+        if (!knownScopes.SequenceEqual(factRequest.KnownScopeHashes))
+            throw new InvalidOperationException("Generated fact request did not bind the supervisor's exact retained scope set.");
+        var newScopeHash = DynamicBuildingSystemsObservationPolicyV1.ScopeHash(factRequest.Selector);
+        if (knownScopes.Contains(newScopeHash, StringComparer.Ordinal))
+            throw new InvalidOperationException("Generated fact request repeated an already retained observation scope.");
+        return newScopeHash;
+    }
     internal static void ValidateResultReferenceObservationContext(DynamicTaskInput input, ResultReferenceObservationInput observation)
     {
         if (input == null || observation == null) throw new ArgumentNullException(input == null ? nameof(input) : nameof(observation));
@@ -525,7 +633,7 @@ internal static class Program
         var pages = new List<DynamicBuildingSystemsEnvelopeV1>();
         var receiptBodies = new List<string>();
         string? snapshotId = null; string? snapshotHash = null; string? scopeHash = null; long? revision = null;
-        for (var pageIndex = 0; pageIndex < 64; pageIndex++)
+        for (var pageIndex = 0; pageIndex < DynamicObservationDeltaPolicyV1.MaximumPagesPerScope; pageIndex++)
         {
             var core = JsonSerializer.Serialize(new { schema = "dynamic-revit-building-systems-request/v1", runtimeInstanceId = runtimeId, selector, snapshotId }, WireJson);
             var correlation = Guid.NewGuid().ToString("N"); var expires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
@@ -594,10 +702,75 @@ internal static class Program
         return new ResultReferenceObservationInput
         {
             SnapshotId = snapshotId!, SnapshotHash = snapshotHash!, ScopeHash = scopeHash!, DocumentRevision = revision!.Value,
-            Selector = selector, Pages = pages, TrustedExternalTargets = facts, ObservationReceiptBodies = receiptBodies, FactsReceiptBody = factsRaw
+            Selector = selector, Selectors = new[] { Clone(selector) }, Pages = pages,
+            TrustedExternalTargets = facts, ObservationReceiptBodies = receiptBodies, FactsReceiptBody = factsRaw
         };
     }
 
+    private static async Task<(IReadOnlyList<DynamicBuildingSystemsEnvelopeV1> Pages, List<string> Receipts)> CollectResultReferenceDeltaScope(
+        LiveTaskConfig config, DynamicBuildingSystemsSelectorV1 requestedSelector, ResultReferenceObservationInput retained,
+        string runtimeId, byte[] hostSessionKey, string token, string writeGrant, string workerRuntimePackageHash,
+        List<string> hostAuthentications)
+    {
+        var selector = Clone(requestedSelector);
+        selector.Cursor = null;
+        DynamicBuildingSystemsObservationPolicyV1.ValidateSelector(selector);
+        var expectedScopeHash = DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector);
+        var pages = new List<DynamicBuildingSystemsEnvelopeV1>();
+        var receipts = new List<string>();
+        for (var pageIndex = 0; pageIndex < DynamicObservationDeltaPolicyV1.MaximumPagesPerScope; pageIndex++)
+        {
+            var core = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-building-systems-request/v1", runtimeInstanceId = runtimeId,
+                selector, snapshotId = retained.SnapshotId
+            }, WireJson);
+            var correlation = Guid.NewGuid().ToString("N");
+            var expires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
+            var request = JsonSerializer.Serialize(new
+            {
+                schema = "dynamic-revit-building-systems-request/v1", runtimeInstanceId = runtimeId,
+                selector, snapshotId = retained.SnapshotId, correlationId = correlation,
+                authExpiresUnixSeconds = expires,
+                requestMac = DynamicWire.SignSessionMessage(hostSessionKey, "observe-building-systems-v1",
+                    runtimeId, correlation, expires, DynamicWire.Sha256(core))
+            }, WireJson);
+            var envelopeRaw = await Post(config.BridgeUrl, "/revit/dynamic-runtime/observe-building-systems-v1",
+                token, writeGrant, request, correlation);
+            var receiptRaw = UnwrapAuthenticated(envelopeRaw, hostSessionKey, runtimeId,
+                "observe-building-systems-v1-receipt", out var authentication);
+            hostAuthentications.Add(authentication);
+            receipts.Add(receiptRaw);
+            using var receiptDocument = JsonDocument.Parse(receiptRaw);
+            var receipt = receiptDocument.RootElement;
+            var page = receipt.GetProperty("envelope").Deserialize<DynamicBuildingSystemsEnvelopeV1>(Json)
+                ?? throw new InvalidOperationException("Retained observation delta envelope is missing.");
+            DynamicBuildingSystemsObservationPolicyV1.ValidateEnvelope(page);
+            if (receipt.GetProperty("schema").GetString() != "dynamic-revit-building-systems-receipt/v1" ||
+                receipt.GetProperty("authorization_granted").GetBoolean() ||
+                receipt.GetProperty("contract_manifest_hash").GetString() != DynamicBuildingSystemsObservationContractV1.ManifestHash ||
+                receipt.GetProperty("sdk_manifest_hash").GetString() != DynamicRevitSdkProductionVersion.ManifestHash ||
+                !FixedEquals(receipt.GetProperty("worker_runtime_package_hash").GetString() ?? "", workerRuntimePackageHash) ||
+                receipt.GetProperty("snapshot_id").GetString() != retained.SnapshotId ||
+                receipt.GetProperty("snapshot_hash").GetString() != retained.SnapshotHash ||
+                receipt.GetProperty("document_revision").GetInt64() != retained.DocumentRevision ||
+                receipt.GetProperty("envelope_hash").GetString() != page.EnvelopeHash ||
+                page.SnapshotHash != retained.SnapshotHash || page.DocumentRevision != retained.DocumentRevision ||
+                page.ScopeHash != expectedScopeHash || page.DocumentFingerprint != retained.Pages[0].DocumentFingerprint ||
+                page.DocumentSessionId != retained.Pages[0].DocumentSessionId)
+                throw new InvalidOperationException("Retained observation delta receipt is stale, authorizing, or substituted.");
+            if (page.PageOffset != pages.Sum(value => value.Facts.Count) ||
+                pages.Count > 0 && (page.PageSize != pages[0].PageSize || page.TotalCount != pages[0].TotalCount))
+                throw new InvalidOperationException("Retained observation delta pages are not contiguous or canonical.");
+            pages.Add(page);
+            if (page.NextCursor == null) break;
+            selector.Cursor = page.NextCursor;
+        }
+        if (pages.Count == 0 || pages[^1].NextCursor != null ||
+            pages.Sum(value => value.Facts.Count) != pages[0].TotalCount)
+            throw new InvalidOperationException("Retained observation delta did not produce one complete bounded scope.");
+        return (pages, receipts);
+    }
     private static async Task<LiveEvidence> CompleteResultReferenceTask(LiveTaskConfig config, DateTimeOffset started, string taskRoot,
         TaskWorkspace workspace, WindowsSandboxProfile profile, RevitHostCapability selectedHost, BootstrapCompletion bootstrap, string runtimeId,
         byte[] hostSessionKey, string token, string writeGrant, string registration, string snapshotRaw, JsonElement output, string sourceHash,
@@ -626,13 +799,13 @@ internal static class Program
         var previewCore = JsonSerializer.Serialize(new
         {
             schema = "dynamic-revit-" + resultPrefix + "-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
-            selector = observation.Selector, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget
+            selectors = observation.Selectors, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget
         }, WireJson);
         var previewCorrelation = Guid.NewGuid().ToString("N"); var previewExpires = DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds();
         var previewRequest = JsonSerializer.Serialize(new
         {
             schema = "dynamic-revit-" + resultPrefix + "-preview-request/v1", runtimeInstanceId = runtimeId, snapshotId = observation.SnapshotId,
-            selector = observation.Selector, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget,
+            selectors = observation.Selectors, observationEnvelopeHashes = envelopeHashes, sourceHash, programHash, sdkHash, graph = result.Graph, effectBudget = budget,
             correlationId = previewCorrelation, authExpiresUnixSeconds = previewExpires,
             requestMac = DynamicWire.SignSessionMessage(hostSessionKey, resultPrefix + "-preview-v1", runtimeId, previewCorrelation, previewExpires, DynamicWire.Sha256(previewCore))
         }, WireJson);
@@ -684,7 +857,7 @@ internal static class Program
             SandboxProfile = profile.ProfileName, TaskDirectory = taskRoot, RuntimeImageDirectory = workspace.RuntimeDirectory,
             RuntimeImageIdentity = workspace.RuntimeImage.Identity, RuntimeDependencyCount = workspace.RuntimeImage.Files.Count,
             RegistrationReceipt = registration, SnapshotReceipt = snapshotRaw, BuildingSystemsObservationReceipts = observation.ObservationReceiptBodies,
-            ResultReferenceFactsReceipt = observation.FactsReceiptBody, WorkerOutput = output, PreviewReceipt = previewRaw,
+            ResultReferenceFactsReceipt = observation.FactsReceiptBody, ObservationDeltas = observation.DeltaEvidence, WorkerOutput = output, PreviewReceipt = previewRaw,
             ApplyAuthorizationReceipt = authorizationRaw, ApplyReceipt = applyRaw, HostAuthenticationReceipts = hostAuthentications,
             TargetRevitYear = selectedHost.RevitYear, ExpectedHostExecutable = bootstrap.ExpectedImage, ObservedHostExecutable = bootstrap.ObservedImage,
             Failure = ok ? null : config.Apply ? "Authorized " + resultFamily + " result-reference apply did not produce committed verification." : resultFamily + " result-reference preview did not produce rollback truth."
@@ -1056,16 +1229,33 @@ internal sealed class ContextRuleExecutionInput
 internal sealed class ResultReferenceObservationInput
 {
     public string SnapshotId { get; set; } = ""; public string SnapshotHash { get; set; } = ""; public string ScopeHash { get; set; } = ""; public long DocumentRevision { get; set; }
-    public DynamicBuildingSystemsSelectorV1 Selector { get; set; } = new(); public IReadOnlyList<DynamicBuildingSystemsEnvelopeV1> Pages { get; set; } = Array.Empty<DynamicBuildingSystemsEnvelopeV1>();
+    public DynamicBuildingSystemsSelectorV1 Selector { get; set; } = new();
+    public IReadOnlyList<DynamicBuildingSystemsSelectorV1> Selectors { get; set; } = Array.Empty<DynamicBuildingSystemsSelectorV1>();
+    public IReadOnlyList<DynamicBuildingSystemsEnvelopeV1> Pages { get; set; } = Array.Empty<DynamicBuildingSystemsEnvelopeV1>();
     public IReadOnlyList<DynamicTrustedElementFactV1> TrustedExternalTargets { get; set; } = Array.Empty<DynamicTrustedElementFactV1>();
-    public List<string> ObservationReceiptBodies { get; set; } = new(); public string FactsReceiptBody { get; set; } = "";
+    public List<string> ObservationReceiptBodies { get; set; } = new();
+    public string FactsReceiptBody { get; set; } = "";
+    public List<DynamicObservationDeltaEvidenceV1> DeltaEvidence { get; set; } = new();
+}
+internal sealed class DynamicObservationDeltaEvidenceV1
+{
+    public string Schema { get; set; } = "dynamic-revit-supervisor-observation-delta-evidence/v1";
+    public int TurnIndex { get; set; }
+    public string FactRequestHash { get; set; } = "";
+    public string DeltaHash { get; set; } = "";
+    public string NewScopeHash { get; set; } = "";
+    public int PageCount { get; set; }
+    public int FactCount { get; set; }
+    public int TransportBytes { get; set; }
+    public List<string> HostObservationReceipts { get; set; } = new();
+    public bool AuthorizationGranted { get; set; }
 }
 internal sealed class LiveEvidence
 {
     public string Schema { get; set; } = "dynamic-revit-phase2-live-evidence/v0"; public bool Ok { get; set; } public DateTimeOffset StartedUtc { get; set; } public DateTimeOffset CompletedUtc { get; set; }
     public string SandboxProfile { get; set; } = ""; public string TaskDirectory { get; set; } = ""; public string RegistrationReceipt { get; set; } = ""; public string SnapshotReceipt { get; set; } = ""; public JsonElement WorkerOutput { get; set; } public DynamicWorkerAdmission? Admission { get; set; } public string PreviewReceipt { get; set; } = ""; public string? ApplyAuthorizationReceipt { get; set; } public DynamicProgramAdmissionV1? V1Admission { get; set; } public string? ApplyReceipt { get; set; } public List<string> HostAuthenticationReceipts { get; set; } = new(); public HostReplayEvidence? ReplayEvidence { get; set; } public string? Failure { get; set; }
     public string RuntimeImageDirectory { get; set; } = ""; public string RuntimeImageIdentity { get; set; } = ""; public int RuntimeDependencyCount { get; set; }
-    public List<string> BuildingSystemsObservationReceipts { get; set; } = new(); public string? ResultReferenceFactsReceipt { get; set; }
+    public List<string> BuildingSystemsObservationReceipts { get; set; } = new(); public string? ResultReferenceFactsReceipt { get; set; } public List<DynamicObservationDeltaEvidenceV1> ObservationDeltas { get; set; } = new();
     public List<string> ContextObservationReceipts { get; set; } = new(); public DynamicVerifiedContextRuleV1? ContextRule { get; set; }
     public string TargetRevitYear { get; set; } = ""; public string ExpectedHostExecutable { get; set; } = ""; public string ObservedHostExecutable { get; set; } = "";
     public TaskCheckpointBindingEvidence? CheckpointBinding { get; set; }

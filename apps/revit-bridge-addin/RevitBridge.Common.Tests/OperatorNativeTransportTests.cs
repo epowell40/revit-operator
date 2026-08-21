@@ -234,9 +234,16 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("DynamicRuntimeTrustBoundary.LauncherPackageHash()", runtime);
             Assert.Contains("DynamicRuntimeTrustBoundary.WorkerPackageHash()", runtime);
             Assert.Contains("DurableCoreOperationApplyAuthorizationLedgerV1", activation);
-            Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1", activation);
+            Assert.Contains("DynamicRetainedBuildingSystemsSnapshotAuthorityV1", activation);
             Assert.Contains("DynamicBuildingSystemsObservationContractV1.MaximumRequestBytes", activation);
             Assert.Contains("authorization_granted = false", activation);
+            var retainedAuthority = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "DynamicRuntime", "DynamicRetainedBuildingSystemsSnapshotAuthority.cs");
+            Assert.Contains("RequireOrRegisterScope", retainedAuthority);
+            Assert.Contains("BindAuthorizedTargets", retainedAuthority);
+            Assert.Contains("RequireAuthorizedTargets", retainedAuthority);
+            Assert.Contains("RequireCompleteEnvelopeSet", retainedAuthority);
+            Assert.Contains("DynamicResultReferenceObservationSetV1.MaximumScopes", retainedAuthority);
+            Assert.Contains("DynamicObservationDeltaPolicyV1.MaximumRetainedPages", retainedAuthority);
 
             var server = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Server", "RevitHttpServer.cs");
             Assert.Contains("rawPath.StartsWith(\"/revit/dynamic-runtime/\"", server);
@@ -262,7 +269,7 @@ namespace RevitBridge.Common.Tests
                     StringSplitOptions.None).Length - 1);
             Assert.Contains("DynamicRuntimeBootstrapRegistry.VerifyRequest", activation);
             Assert.Contains("DynamicRuntimeAdmissionRegistry.RequireV1Identity", activation);
-            Assert.Contains("DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged", activation);
+            Assert.Contains("DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged", activation);
             Assert.Contains("Authorizations.TryRemove", activation);
             Assert.Contains("ledger.TryConsume(seal.AuthorizationHash)", activation);
             Assert.Contains("retry_permitted = false", activation);

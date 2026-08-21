@@ -115,125 +115,6 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         }
     }
 
-    internal sealed class DynamicBuildingSystemsSnapshotSealV1
-    {
-        internal string SnapshotId = "";
-        internal string RuntimeId = "";
-        internal string DocumentFingerprint = "";
-        internal string DocumentSessionId = "";
-        internal string ScopeHash = "";
-        internal string SnapshotHash = "";
-        internal long DocumentRevision;
-        internal string DocumentStateHash = "";
-        internal DateTime ExpiresUtc;
-        internal readonly object EnvelopeGate = new object();
-        internal readonly Dictionary<int, string> EnvelopeHashesByOffset = new Dictionary<int, string>();
-        internal int? ObservedTotalCount;
-        internal int? ObservedPageSize;
-    }
-
-    internal static class DynamicBuildingSystemsSnapshotAuthorityV1
-    {
-        private static readonly ConcurrentDictionary<string, DynamicBuildingSystemsSnapshotSealV1> Snapshots = new ConcurrentDictionary<string, DynamicBuildingSystemsSnapshotSealV1>(StringComparer.Ordinal);
-
-        internal static DynamicBuildingSystemsSnapshotSealV1 Issue(string runtimeId, Document document, string documentFingerprint, string documentSessionId,
-            DynamicBuildingSystemsSelectorV1 selector)
-        {
-            Prune();
-            var revision = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var scopeHash = DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector);
-            var nonce = new byte[32]; using (var random = RandomNumberGenerator.Create()) random.GetBytes(nonce);
-            var seal = new DynamicBuildingSystemsSnapshotSealV1
-            {
-                SnapshotId = "buildingsnapshot_" + Guid.NewGuid().ToString("N"), RuntimeId = runtimeId,
-                DocumentFingerprint = documentFingerprint, DocumentSessionId = documentSessionId,
-                ScopeHash = scopeHash, DocumentRevision = revision,
-                DocumentStateHash = DocumentStateHash(document),
-                SnapshotHash = DynamicWire.Sha256(Convert.ToBase64String(nonce) + "\n" + documentFingerprint + "\n" + documentSessionId + "\n" + scopeHash + "\n" + revision),
-                ExpiresUtc = DateTime.UtcNow.AddMinutes(2)
-            };
-            if (!Snapshots.TryAdd(seal.SnapshotId, seal)) throw new InvalidOperationException("Building-systems snapshot identity collided.");
-            return seal;
-        }
-
-        internal static DynamicBuildingSystemsSnapshotSealV1 Require(string runtimeId, string snapshotId, string documentFingerprint,
-            string documentSessionId, DynamicBuildingSystemsSelectorV1 selector)
-        {
-            Prune();
-            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow || seal.RuntimeId != runtimeId ||
-                seal.DocumentFingerprint != documentFingerprint || seal.DocumentSessionId != documentSessionId ||
-                seal.ScopeHash != DynamicBuildingSystemsObservationPolicyV1.ScopeHash(selector))
-                throw new InvalidOperationException("Building-systems snapshot is unknown, expired, stale, or scope-substituted.");
-            return seal;
-        }
-
-        internal static void RequireUnchanged(string snapshotId, Document document)
-        {
-            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow ||
-                seal.DocumentFingerprint != DynamicRuntimeSnapshotHandler.Fingerprint(document) || seal.DocumentSessionId != DynamicRuntimeSnapshotHandler.Session(document) ||
-                seal.DocumentStateHash != DocumentStateHash(document))
-                throw new InvalidOperationException("Building-systems snapshot document state changed after observation.");
-        }
-
-        internal static void RecordEnvelope(string snapshotId, DynamicBuildingSystemsEnvelopeV1 envelope)
-        {
-            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow)
-                throw new InvalidOperationException("Building-systems snapshot expired before its observation envelope was recorded.");
-            DynamicBuildingSystemsObservationPolicyV1.ValidateEnvelope(envelope);
-            if (envelope.SnapshotHash != seal.SnapshotHash || envelope.ScopeHash != seal.ScopeHash || envelope.DocumentRevision != seal.DocumentRevision ||
-                envelope.DocumentFingerprint != seal.DocumentFingerprint || envelope.DocumentSessionId != seal.DocumentSessionId)
-                throw new InvalidOperationException("Building-systems envelope does not bind the sealed snapshot.");
-            lock (seal.EnvelopeGate)
-            {
-                if (seal.ObservedTotalCount.HasValue && (seal.ObservedTotalCount.Value != envelope.TotalCount || seal.ObservedPageSize != envelope.PageSize))
-                    throw new InvalidOperationException("Building-systems snapshot page totals or page size changed.");
-                if (seal.EnvelopeHashesByOffset.TryGetValue(envelope.PageOffset, out var prior) && prior != envelope.EnvelopeHash)
-                    throw new InvalidOperationException("Building-systems snapshot page was equivocally replaced.");
-                seal.ObservedTotalCount = envelope.TotalCount;
-                seal.ObservedPageSize = envelope.PageSize;
-                seal.EnvelopeHashesByOffset[envelope.PageOffset] = envelope.EnvelopeHash;
-            }
-        }
-
-        internal static void RequireCompleteEnvelopeSet(string snapshotId, IEnumerable<string> envelopeHashes)
-        {
-            if (!Snapshots.TryGetValue(snapshotId ?? "", out var seal) || seal.ExpiresUtc <= DateTime.UtcNow)
-                throw new InvalidOperationException("Building-systems snapshot is unavailable for result-reference admission.");
-            var supplied = (envelopeHashes ?? throw new ArgumentNullException(nameof(envelopeHashes))).ToArray();
-            if (supplied.Length < 1 || supplied.Length > 64 || supplied.Any(value => !DynamicRuntimePreviewHandler.IsHash(value)) || supplied.Distinct(StringComparer.Ordinal).Count() != supplied.Length)
-                throw new ArgumentException("Building-systems envelope identity set is invalid or unbounded.");
-            lock (seal.EnvelopeGate)
-            {
-                if (!seal.ObservedTotalCount.HasValue || !seal.ObservedPageSize.HasValue)
-                    throw new InvalidOperationException("Building-systems snapshot has no authenticated observation pages.");
-                var expectedPageCount = Math.Max(1, (seal.ObservedTotalCount.Value + seal.ObservedPageSize.Value - 1) / seal.ObservedPageSize.Value);
-                var expectedOffsets = Enumerable.Range(0, expectedPageCount).Select(index => index * seal.ObservedPageSize.Value).ToArray();
-                if (seal.EnvelopeHashesByOffset.Count != expectedPageCount || expectedOffsets.Any(offset => !seal.EnvelopeHashesByOffset.ContainsKey(offset)) ||
-                    !new HashSet<string>(supplied, StringComparer.Ordinal).SetEquals(seal.EnvelopeHashesByOffset.Values))
-                    throw new InvalidOperationException("Building-systems observation page set is incomplete, duplicated, or substituted.");
-            }
-        }
-
-        private static void Prune()
-        {
-            foreach (var key in Snapshots.Where(pair => pair.Value.ExpiresUtc <= DateTime.UtcNow).Select(pair => pair.Key).ToArray()) Snapshots.TryRemove(key, out _);
-        }
-
-        private static string DocumentStateHash(Document document)
-        {
-            const int maximum = 50000;
-            var values = new List<string>();
-            foreach (var element in new FilteredElementCollector(document).WhereElementIsNotElementType())
-            {
-                if (values.Count >= maximum) throw new InvalidOperationException("Building-systems snapshot document exceeds the 50000-element exact revision bound.");
-                values.Add(ElementIdCompat.GetValue(element.Id).ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n" +
-                    (element.UniqueId ?? "") + "\n" + DynamicAnnotationRevitStateV1.StateHash(element));
-            }
-            values.Sort(StringComparer.Ordinal);
-            return DynamicWire.Sha256("dynamic-revit-building-systems-document-state/v1\n" + string.Join("\n", values));
-        }
-    }
-
     public sealed class DynamicBuildingSystemsObservationV1Handler : IRequestHandler
     {
         private sealed class Request
@@ -264,11 +145,10 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var fingerprint = DynamicRuntimeSnapshotHandler.Fingerprint(document);
             var session = DynamicRuntimeSnapshotHandler.Session(document);
             var snapshot = string.IsNullOrWhiteSpace(request.SnapshotId)
-                ? DynamicBuildingSystemsSnapshotAuthorityV1.Issue(request.RuntimeInstanceId ?? "", document, fingerprint, session, request.Selector)
-                : DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", fingerprint, session, request.Selector);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
+                ? DynamicRetainedBuildingSystemsSnapshotAuthorityV1.Issue(request.RuntimeInstanceId ?? "", document, fingerprint, session, request.Selector)
+                : DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireOrRegisterScope(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "", fingerprint, session, document, request.Selector);
             var envelope = DynamicBuildingSystemsObservationAdapterV1.Observe(document, request.Selector, snapshot.DocumentRevision, snapshot.SnapshotHash);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RecordEnvelope(snapshot.SnapshotId, envelope);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RecordEnvelope(snapshot.SnapshotId, envelope);
             var receipt = new
             {
                 schema = "dynamic-revit-building-systems-receipt/v1",
