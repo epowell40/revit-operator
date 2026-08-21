@@ -166,16 +166,12 @@ test("large geometry projection preserves straight route candidates outside dupl
 test("large annotation inventory preserves and ranks overlapping tag identities in the view plane", () => {
   const filler = Array.from({ length: 70 }, (_, index) => ({
     elementId: 3_000_000 + index,
-    category: "Duct Tags",
-    builtInCategory: "OST_DuctTags",
     ownerViewId: 1_363_423,
     geometry: annotationGeometry(100 + index * 10, 100, 102 + index * 10, 101)
   }));
   const overlappingTags = [
     {
       elementId: 1_491_500,
-      category: "Duct Tags",
-      builtInCategory: "OST_DuctTags",
       ownerViewId: 1_363_423,
       visibleText: "18x12",
       tagHeadPosition: { x: 7.885, y: -20.0335, z: 0 },
@@ -184,8 +180,6 @@ test("large annotation inventory preserves and ranks overlapping tag identities 
     },
     {
       elementId: 1_491_501,
-      category: "Duct Tags",
-      builtInCategory: "OST_DuctTags",
       ownerViewId: 1_363_423,
       visibleText: "14x10",
       tagHeadPosition: { x: 6.6555, y: -18.5945, z: 0 },
@@ -199,6 +193,7 @@ test("large annotation inventory preserves and ranks overlapping tag identities 
     count: items.length,
     elementIds: items.map(item => item.elementId),
     geometryIncluded: true,
+    resolvedCategories: [{ requested: "OST_DuctTags", categoryId: -2_008_003, name: "Duct Tags", builtInToken: "OST_DuctTags" }],
     physicalElementsOnlyApplied: false,
     topLevelInstancesOnlyApplied: false,
     itemsComplete: true,
@@ -212,6 +207,7 @@ test("large annotation inventory preserves and ranks overlapping tag identities 
   assert.equal(projected.spatialDuplicateCandidates.derivedFromReturnedItems, 0);
   assert.equal(projected.annotationLayoutCandidates.schema, "revit-operator.annotation-layout-candidate-summary/v1");
   assert.equal(projected.annotationLayoutCandidates.annotationItemsFound, 72);
+  assert.equal(projected.annotationLayoutCandidates.categoryInference, "all_items_from_exact_resolved_annotation_filter");
   assert.deepEqual(projected.annotationLayoutCandidates.candidates[0].elementIds, [1_491_500, 1_491_501]);
   assert.equal(projected.annotationLayoutCandidates.candidates[0].boundingBoxesOverlapInViewPlane, true);
   assert.equal(projected.annotationLayoutCandidates.candidates[0].overlapFt.x, 1.436);
@@ -237,6 +233,7 @@ test("annotation projection does not fabricate a collision from invalid or zero-
     count: items.length,
     elementIds: items.map(item => item.elementId),
     geometryIncluded: true,
+    resolvedCategories: [{ requested: "OST_MechanicalEquipmentTags", name: "Mechanical Equipment Tags", builtInToken: "OST_MechanicalEquipmentTags" }],
     itemsComplete: true,
     items
   }) as any;

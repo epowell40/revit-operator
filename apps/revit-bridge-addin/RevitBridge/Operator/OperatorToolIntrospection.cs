@@ -1164,10 +1164,30 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
+                if (string.Equals(p, "/revit/export-visible-elements", StringComparison.OrdinalIgnoreCase))
+                {
+                    return OneOf(
+                        Null(),
+                        Obj(
+                            props: new Dictionary<string, object>
+                            {
+                                { "viewId", Int() },
+                                { "imageSize", Int() },
+                                { "includeMapping", Bool() },
+                                { "categories", Arr(Str(), maxItems: 100) },
+                                { "excludeCategories", Arr(Str(), maxItems: 100) },
+                                { "includeGeometry", Bool() },
+                                { "includeLinked", Bool() },
+                                { "modelBounds", Arr(Num(), minItems: 6, maxItems: 6) },
+                                { "limit", Int(minimum: 1, maximum: 2000) }
+                            },
+                            required: Array.Empty<string>(),
+                            additionalProps: false));
+                }
+
                 // Some tools accept null bodies intentionally (back-compat and convenience).
                 if (string.Equals(p, "/revit/export-image", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(p, "/revit/export-view-frame", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(p, "/revit/export-visible-elements", StringComparison.OrdinalIgnoreCase))
+                    string.Equals(p, "/revit/export-view-frame", StringComparison.OrdinalIgnoreCase))
                 {
                     // null | object
                     var core = SchemaFromType(RequestTypesByPath[p], depth: 0);
