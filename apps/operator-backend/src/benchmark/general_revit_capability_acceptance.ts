@@ -634,27 +634,34 @@ function successfulEvidencePaths(evidence: Record<string, unknown>): Set<string>
     : []);
 }
 
-function successfulSemanticCapabilityIds(evidence: Record<string, unknown>): Set<string> {
-  const ids = new Set<string>();
-  for (const path of successfulEvidencePaths(evidence)) {
-    const id = benchmarkSemanticCapabilityId(path);
-    if (id) ids.add(id);
-  }
-  for (const value of Array.isArray(evidence.result_receipts) ? evidence.result_receipts : []) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const row = value as Record<string, unknown>;
+type ValidatedActionReceipt = { path: string; effect: GeneralRevitExpectedEffect; capabilityId: string; row: Record<string, unknown> };
+
+function validatedActionReceipts(evidence: Record<string, unknown>): ValidatedActionReceipt[] {
+  const rows = (Array.isArray(evidence.result_receipts) ? evidence.result_receipts : [])
+    .map((value) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null);
+  return rows.flatMap((row, index) => {
+    if (!row) return [];
     const path = canonicalBenchmarkRevitPath(String(row.path || ""));
     const capabilityId = benchmarkSemanticCapabilityId(path);
-    if (row.status === "completed" && row.envelope_succeeded === true && row.parsed_ok !== false
+    const effect = String(row.request_effect || "").trim().toLowerCase();
+    const valid = row.status === "completed" && row.envelope_succeeded === true && row.parsed_ok !== false
       && row.parsed_outcome_unknown !== true && row.parsed_reconciliation_required !== true
       && !(typeof row.parsed_error === "string" && row.parsed_error.trim())
-      && capabilityId && row.semantic_capability_id === capabilityId) ids.add(capabilityId);
-  }
-  return ids;
+      && !!capabilityId && row.semantic_capability_id === capabilityId
+      && (effect === "read" || effect === "preview" || effect === "apply")
+      && !!String(row.goal_id || "") && !!String(row.action_id || "")
+      && /^[a-f0-9]{64}$/.test(String(row.result_sha256 || ""));
+    if (!valid) return [];
+    const laterSamePath = rows.slice(index + 1).some((later) => later && canonicalBenchmarkRevitPath(String(later.path || "")) === path);
+    return laterSamePath ? [] : [{ path, effect: effect as GeneralRevitExpectedEffect, capabilityId, row }];
+  });
+}
+
+function successfulSemanticCapabilityIds(evidence: Record<string, unknown>): Set<string> {
+  return new Set(validatedActionReceipts(evidence).map((receipt) => receipt.capabilityId));
 }
 
 function trustedSemanticFacts(evidence: Record<string, unknown>): TrustedSemanticFact[] {
-  const receipts = Array.isArray(evidence.result_receipts) ? evidence.result_receipts : [];
   const candidates: TrustedSemanticFact[] = [];
   const redundantFields: Readonly<Record<string, string>> = {
     count: "parsed_count",
@@ -665,17 +672,7 @@ function trustedSemanticFacts(evidence: Record<string, unknown>): TrustedSemanti
     connectorScanTruncatedElementCount: "parsed_connector_scan_truncated_element_count",
     truncated: "parsed_truncated"
   };
-  for (const value of receipts) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-    const row = value as Record<string, unknown>;
-    const path = canonicalBenchmarkRevitPath(String(row.path || ""));
-    const capabilityId = benchmarkSemanticCapabilityId(path);
-    const resultSha = String(row.result_sha256 || "");
-    if (row.status !== "completed" || row.envelope_succeeded !== true || row.parsed_ok === false
-      || row.parsed_outcome_unknown === true || row.parsed_reconciliation_required === true
-      || (typeof row.parsed_error === "string" && row.parsed_error.trim())
-      || !capabilityId || row.semantic_capability_id !== capabilityId
-      || !String(row.goal_id || "") || !String(row.action_id || "") || !/^[a-f0-9]{64}$/.test(resultSha)) continue;
+  for (const { row, capabilityId } of validatedActionReceipts(evidence)) {
     const parsedFacts = row.parsed_semantic_facts;
     if (!parsedFacts || typeof parsedFacts !== "object" || Array.isArray(parsedFacts)) continue;
     for (const [key, factValue] of Object.entries(parsedFacts as Record<string, unknown>)) {
@@ -906,8 +903,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     };
   }
   const rows = actionRows(attempt);
+  const durableEvidence = durableEvidenceRecord(attempt);
+  const durableReceipts = validatedActionReceipts(durableEvidence);
   const durablePaths = new Set([
-    ...successfulEvidencePaths(durableEvidenceRecord(attempt)),
+    ...successfulEvidencePaths(durableEvidence),
     ...durableSpecificRevitPaths(attempt)
   ]);
   const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt).map(canonicalBenchmarkRevitPath);
@@ -1011,8 +1010,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && (assistantBlocked || durable.blocked || teammate.blocked)
     && !outcomeUnknown && !substantiveFailedAction && !teammate.mutationAttempted
     && !refusalReason;
-  const durableEffectCompleted = durable.completed && durable.requestedEffects.includes(testCase.expected_effect)
-    && [...durablePaths].some((candidate) => expectedPaths.has(candidate));
+  const durableEffectCompleted = durable.completed && durableReceipts.some((receipt) =>
+    receipt.effect === testCase.expected_effect && expectedPaths.has(receipt.path));
   const requestedEffectSatisfied = testCase.expected_effect === "apply"
     ? applyDispatched || verifiedNoop
     : testCase.expected_effect === "preview"

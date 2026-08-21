@@ -12,6 +12,8 @@ function numberValue(value: unknown): number {
 
 function evidenceEnvelopeSucceeded(status: string, parsed: JsonRecord, resultText: string): boolean {
   if (status !== "completed" || !resultText) return false;
+  const numericStatus = Number(parsed.status);
+  if (Number.isFinite(numericStatus) && numericStatus >= 400) return false;
   if (parsed.ok === false || parsed.outcome_unknown === true || parsed.reconciliation_required === true) return false;
   if (typeof parsed.error === "string" && parsed.error.trim()) return false;
   const terminal = String(parsed.status || parsed.outcome || "").trim().toLowerCase();
@@ -38,6 +40,7 @@ export function canonicalBenchmarkRevitPath(pathValue: string): string {
   const aliases: Readonly<Record<string, string>> = {
     "/revit/list-views": "/revit/views",
     "/revit/query-views": "/revit/views",
+    "/revit/query-elements": "/revit/query",
     "/revit/list-sheets": "/revit/sheets",
     "/revit/list-schedules": "/revit/schedules",
     "/revit/delete-elements": "/revit/delete"
@@ -160,7 +163,9 @@ export async function loadDurableToolEvidence(
       const requestBody = asRecord(argumentsRecord.body);
       const toolServer = String(tool.server || "").trim();
       const toolName = String(tool.tool || "").trim();
-      const explicitPath = String(argumentsRecord.path || "").trim();
+      const explicitPath = toolServer === "revit_operator" && toolName === "revit_call_tool"
+        ? String(argumentsRecord.path || "").trim()
+        : "";
       const path = canonicalBenchmarkRevitPath(explicitPath || canonicalRevitToolPath(toolServer, toolName));
       const semanticCapabilityId = benchmarkSemanticCapabilityId(path);
       const status = String(tool.status || "").trim().toLowerCase();
@@ -174,6 +179,9 @@ export async function loadDurableToolEvidence(
       if (semanticCapabilityId && envelopeSucceeded) semanticCapabilityIds.add(semanticCapabilityId);
       if (toolName && envelopeSucceeded) successfulTools.add(toolName);
       if (toolName && !envelopeSucceeded) failedTools.add(toolName);
+      const actionEffect = ["read", "preview", "apply"].includes(String(tool.request_effect || "").trim().toLowerCase())
+        ? String(tool.request_effect).trim().toLowerCase()
+        : "";
       if (!resultText || !path) continue;
       const resultSha256 = sha256(resultText);
       const elementIds = Array.isArray(parsed.elementIds) ? parsed.elementIds : [];
@@ -189,13 +197,13 @@ export async function loadDurableToolEvidence(
           parsedSemanticFacts[key] = value;
         }
       }
-      if (path === "/revit/find-elements") {
+      if (envelopeSucceeded && path === "/revit/find-elements") {
         maximumFindElementIds = Math.max(maximumFindElementIds, elementIds.length);
         maximumFindCount = Math.max(maximumFindCount, numberValue(parsed.count));
         if (parsed.truncated === false) observedUntruncatedFind = true;
       }
       const results = Array.isArray(parsed.results) ? parsed.results.map(asRecord) : [];
-      if (path === "/revit/get-connectors") {
+      if (envelopeSucceeded && path === "/revit/get-connectors") {
         const requestedConnectorIds = Array.isArray(requestBody.elementIds)
           ? requestBody.elementIds.map((value) => String(value ?? "").trim()).filter(Boolean)
           : [];
@@ -233,6 +241,7 @@ export async function loadDurableToolEvidence(
         tool: String(tool.tool || "") || null,
         path,
         semantic_capability_id: semanticCapabilityId || null,
+        request_effect: actionEffect || null,
         status,
         envelope_succeeded: envelopeSucceeded,
         duration_ms: numberValue(tool.duration_ms),

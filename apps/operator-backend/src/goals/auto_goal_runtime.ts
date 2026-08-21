@@ -537,7 +537,7 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
   appendGoalProgress(sessionId, {
     summary: `Live tool ${observation.tool} ${outcome}${observation.error ? `: ${observation.error}` : "."}`,
     artifact_paths: artifactPaths,
-    tool: observation,
+    tool: { ...observation, request_effect: observationEffect(observation) },
     work_item: {
       id: "auto.revit-work",
       title: "Complete and verify the requested Revit work",
