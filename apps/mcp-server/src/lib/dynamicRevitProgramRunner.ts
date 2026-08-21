@@ -93,6 +93,8 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
   const workspaceRoot = getWorkspaceRoot();
   const runsRoot = path.join(workspaceRoot, "artifacts", "dynamic-runtime-runs");
   ensureRunsRoot(workspaceRoot, runsRoot);
+  const compilationCacheDirectory = path.join(workspaceRoot, "artifacts", "dynamic-runtime-compilation-cache");
+  ensureRunsRoot(workspaceRoot, compilationCacheDirectory);
   if (input.resume !== undefined && input.continue_from_checkpoint !== undefined) throw new Error("Dynamic retry/repair and committed-checkpoint continuation are mutually exclusive.");
   const checkpoint = input.continue_from_checkpoint === undefined ? undefined : loadCheckpoint(input.continue_from_checkpoint, runsRoot);
   const resume = input.resume === undefined ? undefined : loadResume(input.resume, runsRoot, sourceHash, input.mode,
@@ -108,7 +110,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     operatorTokenFile: tokenFile, sourceFile, targetRevitYear: year, category: input.category ?? null,
     limit: boundedInteger(input.snapshot_limit, 1, 1000, 200), parameters, operationBudget: boundedInteger(input.operation_budget, 1, 256, 32),
     workerDeadlineMs: boundedInteger(input.worker_deadline_ms, 1000, 30_000, 15_000), apply: input.mode === "apply",
-    applyDeadlineMs: boundedInteger(input.apply_deadline_ms, 100, 5000, 5000),
+    applyDeadlineMs: boundedInteger(input.apply_deadline_ms, 100, 5000, 5000), compilationCacheDirectory,
     ...(resultReference ? {
       resultReference: true,
       requireExecutionTrace: true,
@@ -168,7 +170,10 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       deterministic_replay_verified: workerBoolean(evidence, "deterministicReplayVerified"),
       diagnostic_bundle_sha256: workerString(evidence, "diagnosticBundleHash"),
       compile_elapsed_ms: workerInteger(evidence, "compileElapsedMs"),
-      execution_elapsed_ms: workerInteger(evidence, "executionElapsedMs")
+      execution_elapsed_ms: workerInteger(evidence, "executionElapsedMs"),
+      compilation_cache_hit: workerBoolean(evidence, "compilationCacheHit"),
+      compilation_cache_key_sha256: canonicalHashOrNull(workerString(evidence, "compilationCacheKey")),
+      compiled_assembly_sha256: canonicalHashOrNull(workerString(evidence, "compiledAssemblyHash"))
     }
   };
 }

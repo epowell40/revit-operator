@@ -30,6 +30,8 @@ internal sealed class WorkerInput
     public IReadOnlyList<DynamicTrustedElementFactV1> TrustedExternalTargets { get; set; } = Array.Empty<DynamicTrustedElementFactV1>();
     public DynamicVerifiedContextRuleV1? VerifiedContextRule { get; set; }
     public IReadOnlyList<DynamicObservationEnvelopeV1> ContextObservationPages { get; set; } = Array.Empty<DynamicObservationEnvelopeV1>();
+    public string CompilationCacheKey { get; set; } = "";
+    public string? CachedAssemblyBase64 { get; set; }
 }
 
 internal sealed class WorkerOutput
@@ -46,6 +48,9 @@ internal sealed class WorkerOutput
     public string DiagnosticBundleHash { get; set; } = "";
     public long CompileElapsedMs { get; set; }
     public long ExecutionElapsedMs { get; set; }
+    public string CompilationCacheKey { get; set; } = "";
+    public bool CompilationCacheHit { get; set; }
+    public string? CompiledAssemblyBase64 { get; set; }
     public DynamicOperationGraph? Graph { get; set; }
     public DynamicResultReferenceProgramResultV1? ResultReferenceProgramResult { get; set; }
     public DynamicCoreProgramResultV1? CoreProgramResult { get; set; }
@@ -369,13 +374,29 @@ internal static class WorkerExecutor
         var compileClock = Stopwatch.StartNew();
         var admission = StaticAdmission.Check(source);
         if (admission.Length > 0) { output.Diagnostics = admission; return output; }
-        var compilation = Compiler.Compile(source);
+        if (!string.IsNullOrEmpty(request.CompilationCacheKey) && !IsHash(request.CompilationCacheKey))
+            return Fail(output, "COMPILATION_CACHE_KEY", "Compilation cache key is malformed.");
+        Compiler.Result compilation;
+        if (request.CachedAssemblyBase64 != null)
+        {
+            if (string.IsNullOrEmpty(request.CompilationCacheKey)) return Fail(output, "COMPILATION_CACHE_KEY", "Cached assembly requires an exact cache key.");
+            byte[] cached;
+            try { cached = Convert.FromBase64String(request.CachedAssemblyBase64); }
+            catch (FormatException) { return Fail(output, "COMPILATION_CACHE_ARTIFACT", "Cached assembly encoding is invalid."); }
+            if (cached.Length is < 1 or > 2 * 1024 * 1024) return Fail(output, "COMPILATION_CACHE_ARTIFACT", "Cached assembly exceeds the worker bound.");
+            compilation = new Compiler.Result { Assembly = cached };
+            output.CompilationCacheHit = true;
+        }
+        else compilation = Compiler.Compile(source);
         output.CompileElapsedMs = compileClock.ElapsedMilliseconds;
         if (compilation.Diagnostics.Length > 0) { output.Diagnostics = compilation.Diagnostics; return output; }
         output.ProgramHash = DynamicWire.Sha256(Convert.ToBase64String(compilation.Assembly!));
         output.CompiledAssemblyHash = DynamicWire.Sha256(compilation.Assembly!);
+        output.CompilationCacheKey = request.CompilationCacheKey;
         var metadata = StaticAdmission.CheckMetadata(compilation.Assembly!);
         if (metadata.Length > 0) { output.Diagnostics = metadata; return output; }
+        if (!output.CompilationCacheHit && !string.IsNullOrEmpty(request.CompilationCacheKey))
+            output.CompiledAssemblyBase64 = Convert.ToBase64String(compilation.Assembly!);
 
         using var timeout = new CancellationTokenSource(request.DeadlineMs);
         try
@@ -455,6 +476,9 @@ internal static class WorkerExecutor
             return aggregate.Flatten().InnerExceptions.Select(FindAssertion).FirstOrDefault(value => value != null);
         return error.InnerException == null ? null : FindAssertion(error.InnerException);
     }
+
+    private static bool IsHash(string value) => value.Length == 71 && value.StartsWith("sha256:", StringComparison.Ordinal) &&
+        value.Substring(7).All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     private static WorkerInput CloneExecutionRequest(WorkerInput request) =>
         JsonSerializer.Deserialize<WorkerInput>(JsonSerializer.Serialize(request, Compiler.Json), Compiler.Json)
