@@ -37,7 +37,7 @@ public static class DynamicRevitSdkProductionVersion
         typeof(DynamicExternalEffectV1), typeof(DynamicProgramRepairFeedbackV1), typeof(DynamicProgramReuseRecordV1),
         typeof(DynamicExecutionStrategyEvidenceV1), typeof(DynamicPrimitiveDescriptorV1),
         typeof(DynamicProgramFactReferenceV1), typeof(DynamicProgramStepV1), typeof(DynamicProgramAssertionV1),
-        typeof(DynamicProgramFactRequestV1), typeof(DynamicProgramExecutionTraceV1)
+        typeof(DynamicProgramFactRequestV1), typeof(DynamicProgramExecutionTraceV1), typeof(DynamicObservationDeltaV1)
     };
 
     public static string ContractSurfaceHash => DynamicWire.Sha256(string.Join("\n", WireTypes.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));

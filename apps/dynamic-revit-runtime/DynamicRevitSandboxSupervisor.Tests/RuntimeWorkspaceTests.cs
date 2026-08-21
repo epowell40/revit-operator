@@ -296,6 +296,59 @@ public sealed class Generated : IDynamicResultReferenceRevitProgramV1 {
     }
 
     [Fact]
+    public void SupervisorAcceptsOnlyAnExactNewDeltaScopeBoundToItsRetainedSet()
+    {
+        var document = DynamicWire.Sha256("retained-document");
+        var snapshot = DynamicWire.Sha256("retained-snapshot");
+        var initialSelector = new DynamicBuildingSystemsSelectorV1 { Kinds = new[] { "mep_curve" }, PageSize = 8 };
+        var initialPage = DynamicBuildingSystemsObservationPolicyV1.BuildPage(initialSelector, document, "retained-session", 21, snapshot,
+            Array.Empty<DynamicBuildingSystemsFactV1>());
+        var observation = new ResultReferenceObservationInput { Pages = new[] { initialPage } };
+        var requestedSelector = new DynamicBuildingSystemsSelectorV1 { Kinds = new[] { "equipment" }, PageSize = 8 };
+        var request = new DynamicProgramFactRequestV1
+        {
+            RequestId = "equipment-context",
+            Reason = "Need exact equipment connector facts.",
+            Selector = requestedSelector,
+            KnownScopeHashes = new[] { initialPage.ScopeHash },
+            AuthorizationGranted = false
+        };
+        request.RequestHash = DynamicExecutionProtocolV1.FactRequestHash(request);
+
+        Assert.Equal(DynamicBuildingSystemsObservationPolicyV1.ScopeHash(requestedSelector),
+            Program.ValidateFactRequestAgainstRetainedScopes(request, observation));
+
+        request.KnownScopeHashes = Array.Empty<string>();
+        request.RequestHash = DynamicExecutionProtocolV1.FactRequestHash(request);
+        Assert.Throws<InvalidOperationException>(() => Program.ValidateFactRequestAgainstRetainedScopes(request, observation));
+
+        request.Selector = initialSelector;
+        request.KnownScopeHashes = new[] { initialPage.ScopeHash };
+        request.RequestHash = DynamicExecutionProtocolV1.FactRequestHash(request);
+        Assert.Throws<ArgumentException>(() => Program.ValidateFactRequestAgainstRetainedScopes(request, observation));
+    }
+
+    [Fact]
+    public void DeltaEvidenceIsExplicitlyNonAuthorizingAndBoundedToTransportFacts()
+    {
+        var evidence = new DynamicObservationDeltaEvidenceV1
+        {
+            TurnIndex = 1,
+            FactRequestHash = DynamicWire.Sha256("request"),
+            DeltaHash = DynamicWire.Sha256("delta"),
+            NewScopeHash = DynamicWire.Sha256("scope"),
+            PageCount = 2,
+            FactCount = 14,
+            TransportBytes = 8192
+        };
+
+        Assert.False(evidence.AuthorizationGranted);
+        Assert.Equal("dynamic-revit-supervisor-observation-delta-evidence/v1", evidence.Schema);
+        Assert.Equal(2, evidence.PageCount);
+        Assert.Equal(14, evidence.FactCount);
+        Assert.Equal(8192, evidence.TransportBytes);
+    }
+    [Fact]
     public void WorkerReportsExactAssertionRepairCoordinates()
     {
         const string source = """

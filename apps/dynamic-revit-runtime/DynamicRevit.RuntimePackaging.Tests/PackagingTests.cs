@@ -326,6 +326,8 @@ public sealed class PackagingTests : IDisposable
         maximumAttributesPerNode = DynamicResultReferenceContractV1.MaximumAttributesPerNode,
         maximumBuildingSystemsPages = DynamicResultReferenceContractV1.MaximumBuildingSystemsPages,
         maximumTrustedExternalTargets = DynamicResultReferenceContractV1.MaximumTrustedExternalTargets,
+        maximumRetainedScopes = DynamicResultReferenceObservationSetV1.MaximumScopes,
+        maximumRetainedObservationPages = DynamicObservationDeltaPolicyV1.MaximumRetainedPages,
         productionExposed = false
     });
 
@@ -336,6 +338,11 @@ public sealed class PackagingTests : IDisposable
         contractIdentity = DynamicExecutionProtocolV1.ContractIdentity,
         traceSchema = DynamicExecutionProtocolV1.TraceSchema,
         factRequestSchema = DynamicExecutionProtocolV1.FactRequestSchema,
+        observationDeltaSchema = DynamicObservationDeltaPolicyV1.Schema,
+        maximumRetainedFactTurns = DynamicObservationDeltaPolicyV1.MaximumTurns,
+        maximumPagesPerScope = DynamicObservationDeltaPolicyV1.MaximumPagesPerScope,
+        maximumRetainedObservationPages = DynamicObservationDeltaPolicyV1.MaximumRetainedPages,
+        deltaOnlyWorkerTransport = true,
         maximumSteps = DynamicExecutionProtocolV1.MaximumSteps,
         maximumAssertions = DynamicExecutionProtocolV1.MaximumAssertions,
         maximumFactReferencesPerStep = DynamicExecutionProtocolV1.MaximumFactReferencesPerStep,

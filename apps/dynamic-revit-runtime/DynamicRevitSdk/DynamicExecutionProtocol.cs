@@ -21,7 +21,11 @@ public static class DynamicExecutionProtocolV1
     public static string ContractIdentity => DynamicWire.Sha256(DynamicCanonical.Join(
         "dynamic-revit-execution-protocol/v1", ManifestSchema, TraceSchema, FactRequestSchema,
         "bounded-needs-facts", "semantic-step-node-binding", "observation-provenance",
-        "structured-assertions", "non-authorizing", "deterministic-replay-attestation"));
+        "structured-assertions", "non-authorizing", "deterministic-replay-attestation",
+        DynamicObservationDeltaPolicyV1.Schema, DynamicObservationDeltaPolicyV1.MaximumTurns.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        DynamicObservationDeltaPolicyV1.MaximumPagesPerScope.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        DynamicObservationDeltaPolicyV1.MaximumRetainedPages.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        "retained-supervisor-host-snapshot", "delta-only-worker-transport", "bounded-scope-set"));
 
     public static string FactReferenceHash(DynamicProgramFactReferenceV1 value) => DynamicWire.Sha256(DynamicCanonical.Join(
         "dynamic-revit-fact-reference/v1", value.SnapshotHash, value.RevisionHash, value.ScopeHash,

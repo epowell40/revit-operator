@@ -17,13 +17,15 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
     internal static class DynamicResultReferenceFactAuthorityV1
     {
         internal static IReadOnlyDictionary<string, DynamicTrustedElementFactV1> Capture(
-            UIApplication application, IEnumerable<string> uniqueIds, DynamicBuildingSystemsSnapshotSealV1 snapshot,
-            DynamicBuildingSystemsSelectorV1 selector)
+            UIApplication application, IEnumerable<string> uniqueIds, DynamicRetainedBuildingSystemsSnapshotV1 snapshot,
+            IEnumerable<DynamicBuildingSystemsSelectorV1> selectors)
         {
+            var selectorValues = (selectors ?? throw new ArgumentNullException(nameof(selectors))).ToArray();
+            if (selectorValues.Length is < 1 or > DynamicResultReferenceObservationSetV1.MaximumScopes) throw new ArgumentException("Result-reference selector set is unbounded.", nameof(selectors));
             var document = application.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
             var ids = (uniqueIds ?? throw new ArgumentNullException(nameof(uniqueIds))).ToArray();
             if (ids.Length > DynamicResultReferenceContractV1.MaximumReferencesPerNode || ids.Any(value => !BoundedId(value, 256)) ||
-                ids.Distinct(StringComparer.Ordinal).Count() != ids.Length || ids.Any(value => !selector.ElementUniqueIds.Contains(value, StringComparer.Ordinal)))
+                ids.Distinct(StringComparer.Ordinal).Count() != ids.Length || ids.Any(value => !selectorValues.Any(selector => selector.ElementUniqueIds.Contains(value, StringComparer.Ordinal))))
                 throw new ArgumentException("Result-reference fact request is invalid, duplicated, unbounded, or outside the sealed selector.");
             if (snapshot.DocumentFingerprint != DynamicRuntimeSnapshotHandler.Fingerprint(document) || snapshot.DocumentSessionId != DynamicRuntimeSnapshotHandler.Session(document))
                 throw new InvalidOperationException("Result-reference fact request no longer binds the active document/session.");
@@ -109,16 +111,17 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
                 request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
             DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
-            var snapshot = DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "",
+            var snapshot = DynamicRetainedBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "",
                 DynamicRuntimeSnapshotHandler.Fingerprint(document), DynamicRuntimeSnapshotHandler.Session(document), request.Selector);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
-            var facts = DynamicResultReferenceFactAuthorityV1.Capture(app, request.TargetUniqueIds, snapshot, request.Selector).Values.ToArray();
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
+            var facts = DynamicResultReferenceFactAuthorityV1.Capture(app, request.TargetUniqueIds, snapshot, new[] { request.Selector }).Values.ToArray();
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.BindAuthorizedTargets(snapshot.SnapshotId, request.TargetUniqueIds);
             var receipt = new
             {
                 schema = "dynamic-revit-result-reference-facts-receipt/v1",
                 snapshot_id = snapshot.SnapshotId,
                 snapshot_hash = snapshot.SnapshotHash,
-                scope_hash = snapshot.ScopeHash,
+                scope_hash = snapshot.InitialScopeHash,
                 document_revision = snapshot.DocumentRevision,
                 document_fingerprint = snapshot.DocumentFingerprint,
                 document_session_id = snapshot.DocumentSessionId,
@@ -211,7 +214,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             public string? Schema { get; set; }
             public string? RuntimeInstanceId { get; set; }
             public string? SnapshotId { get; set; }
-            public DynamicBuildingSystemsSelectorV1? Selector { get; set; }
+            public DynamicBuildingSystemsSelectorV1[] Selectors { get; set; } = Array.Empty<DynamicBuildingSystemsSelectorV1>();
             public string[] ObservationEnvelopeHashes { get; set; } = Array.Empty<string>();
             public string? SourceHash { get; set; }
             public string? ProgramHash { get; set; }
@@ -226,26 +229,27 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             DynamicRuntimeV1LaboratoryBoundary.Require();
-            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "snapshotId", "selector", "observationEnvelopeHashes", "sourceHash", "programHash", "sdkHash", "graph", "effectBudget", "correlationId", "authExpiresUnixSeconds", "requestMac");
-            if (request.Schema != "dynamic-revit-mep-result-preview-request/v1" || request.Selector == null || request.Graph == null || request.EffectBudget == null)
+            var request = DynamicRuntimeV1Wire.ParseExact<Request>(jsonData, "schema", "runtimeInstanceId", "snapshotId", "selectors", "observationEnvelopeHashes", "sourceHash", "programHash", "sdkHash", "graph", "effectBudget", "correlationId", "authExpiresUnixSeconds", "requestMac");
+            if (request.Schema != "dynamic-revit-mep-result-preview-request/v1" || request.Selectors.Length is < 1 or > DynamicResultReferenceObservationSetV1.MaximumScopes || request.Graph == null || request.EffectBudget == null)
                 throw new ArgumentException("MEP result preview request v1 is invalid.");
             if (!DynamicRuntimePreviewHandler.IsHash(request.SourceHash) || !DynamicRuntimePreviewHandler.IsHash(request.ProgramHash) || !DynamicRuntimePreviewHandler.IsHash(request.SdkHash))
                 throw new ArgumentException("MEP result preview source, program, or SDK identity is invalid.");
-            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, snapshotId = request.SnapshotId, selector = request.Selector,
+            var core = new { schema = request.Schema, runtimeInstanceId = request.RuntimeInstanceId, snapshotId = request.SnapshotId, selectors = request.Selectors,
                 observationEnvelopeHashes = request.ObservationEnvelopeHashes, sourceHash = request.SourceHash, programHash = request.ProgramHash, sdkHash = request.SdkHash,
                 graph = request.Graph, effectBudget = request.EffectBudget };
             DynamicRuntimeBootstrapRegistry.VerifyRequest(request.RuntimeInstanceId ?? "", "mep-result-preview-v1", request.CorrelationId ?? "",
                 request.AuthExpiresUnixSeconds, DynamicRuntimeV1Wire.CoreHash(core), request.RequestMac ?? "");
             DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
-            var snapshot = DynamicBuildingSystemsSnapshotAuthorityV1.Require(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "",
-                DynamicRuntimeSnapshotHandler.Fingerprint(document), DynamicRuntimeSnapshotHandler.Session(document), request.Selector);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireCompleteEnvelopeSet(snapshot.SnapshotId, request.ObservationEnvelopeHashes);
+            var snapshot = DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireScopeSet(request.RuntimeInstanceId ?? "", request.SnapshotId ?? "",
+                DynamicRuntimeSnapshotHandler.Fingerprint(document), DynamicRuntimeSnapshotHandler.Session(document), request.Selectors);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(snapshot.SnapshotId, document);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireCompleteEnvelopeSet(snapshot.SnapshotId, request.Selectors.Select(DynamicBuildingSystemsObservationPolicyV1.ScopeHash), request.ObservationEnvelopeHashes);
             if (request.Graph.DocumentRevision != snapshot.DocumentRevision || request.Graph.DocumentFingerprint != snapshot.DocumentFingerprint || request.Graph.DocumentSessionId != snapshot.DocumentSessionId)
                 throw new InvalidOperationException("MEP result graph is not bound to the exact sealed observation revision.");
             var targetIds = request.Graph.Nodes.SelectMany(node => node.ExternalTargets).Select(value => value.TargetUniqueId).Distinct(StringComparer.Ordinal).ToArray();
-            var targets = DynamicResultReferenceFactAuthorityV1.Capture(app, targetIds, snapshot, request.Selector);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireAuthorizedTargets(snapshot.SnapshotId, targetIds);
+            var targets = DynamicResultReferenceFactAuthorityV1.Capture(app, targetIds, snapshot, request.Selectors);
             var preview = DynamicMepResultReferenceMutationHostV1.Preview(app, request.Graph, request.EffectBudget, targets, snapshot.DocumentRevision);
             var seal = new DynamicMepResultPreviewSealV1 { PreviewId = "mepresultpreview_" + Guid.NewGuid().ToString("N"), RuntimeId = request.RuntimeInstanceId ?? "",
                 SnapshotId = snapshot.SnapshotId, SourceHash = request.SourceHash ?? "", ProgramHash = request.ProgramHash ?? "", SdkHash = request.SdkHash ?? "",
@@ -282,7 +286,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var preview = DynamicMepResultLaboratoryStateV1.Require(request.RuntimeInstanceId ?? "", request.PreviewId ?? "", request.PreviewHash ?? "");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(preview.SnapshotId, document);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(preview.SnapshotId, document);
             var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             var authorization = DynamicMepMutationPolicyV1.IssueAuthorization(preview.Preview, preview.Budget, now, now + 90, runtime.Key, "mepresultauth_" + Guid.NewGuid().ToString("N"));
             DynamicMepResultLaboratoryStateV1.Authorize(preview, authorization);
@@ -310,7 +314,7 @@ namespace RevitBridge.Logic.Handlers.DynamicRuntime
             var runtime = DynamicRuntimeAdmissionRegistry.RequireV1Identity(request.RuntimeInstanceId ?? "");
             var seal = DynamicMepResultLaboratoryStateV1.Take(request.RuntimeInstanceId ?? "", request.PreviewId ?? "", request.AuthorizationId ?? "");
             var document = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active document.");
-            DynamicBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(seal.Preview.SnapshotId, document);
+            DynamicRetainedBuildingSystemsSnapshotAuthorityV1.RequireUnchanged(seal.Preview.SnapshotId, document);
             try
             {
                 var ledgerRoot = Environment.GetEnvironmentVariable("REVIT_OPERATOR_DYNAMIC_RESULT_APPLY_REPLAY_DIRECTORY");

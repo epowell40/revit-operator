@@ -128,6 +128,78 @@ public sealed class ResultReferenceObservationContextTests
         Assert.Equal(neighborFact.Category.StableId, node.Outputs[0].ExpectedCategoryStableId);
     }
 
+    [Fact]
+    public void ContextAcceptsCanonicalMultiScopeSetAndRejectsOverlapOrSubstitution()
+    {
+        var firstSelector = new DynamicBuildingSystemsSelectorV1
+        {
+            ElementUniqueIds = new[] { "equipment-a" }, Kinds = new[] { "equipment" }, PageSize = 8
+        };
+        var secondSelector = new DynamicBuildingSystemsSelectorV1
+        {
+            ElementUniqueIds = new[] { "equipment-b" }, Kinds = new[] { "equipment" }, PageSize = 8
+        };
+        var first = DynamicBuildingSystemsObservationPolicyV1.BuildPage(firstSelector, Document, "context-session", 7, Snapshot,
+            new[] { Asset("equipment-a", 11) });
+        var second = DynamicBuildingSystemsObservationPolicyV1.BuildPage(secondSelector, Document, "context-session", 7, Snapshot,
+            new[] { Asset("equipment-b", 12) });
+        var scopeSet = DynamicResultReferenceObservationSetV1.ScopeSetHash(new[] { first.ScopeHash, second.ScopeHash });
+        var context = new DynamicResultReferenceProgramContextV1(Input(), 7, Snapshot, scopeSet,
+            new[] { second, first }, new[] { Trusted("equipment-a", 11), Trusted("equipment-b", 12) });
+
+        Assert.Equal(2, context.BuildingSystemsFacts.Count);
+        Assert.Equal(scopeSet, context.ResultReferenceScopeHash);
+        Assert.Equal(DynamicResultReferenceObservationSetV1.RevisionSetHash(new[] { first, second }),
+            context.BuildingSystemsRevisionHash);
+        Assert.Equal(new[] { first.ScopeHash, second.ScopeHash }.OrderBy(value => value),
+            context.BuildingSystemsPages.Select(page => page.ScopeHash));
+
+        var overlapSelector = new DynamicBuildingSystemsSelectorV1
+        {
+            ElementUniqueIds = new[] { "equipment-a" }, Kinds = new[] { "equipment" },
+            ParameterNames = new[] { "Comments" }, PageSize = 8
+        };
+        var overlap = DynamicBuildingSystemsObservationPolicyV1.BuildPage(overlapSelector, Document, "context-session", 7, Snapshot,
+            new[] { Asset("equipment-a", 11) });
+        var overlapSet = DynamicResultReferenceObservationSetV1.ScopeSetHash(new[] { first.ScopeHash, overlap.ScopeHash });
+        Assert.Throws<ArgumentException>(() => new DynamicResultReferenceProgramContextV1(Input(), 7, Snapshot,
+            overlapSet, new[] { first, overlap }, new[] { Trusted("equipment-a", 11) }));
+        Assert.Throws<ArgumentException>(() => new DynamicResultReferenceProgramContextV1(Input(), 7, Snapshot,
+            H("substituted-scope-set"), new[] { first, second }, Array.Empty<DynamicTrustedElementFactV1>()));
+    }
+
+    [Fact]
+    public void ObservationDeltaBindsPriorRequestKnownScopesAndOnlyNewCompletePages()
+    {
+        var selector = new DynamicBuildingSystemsSelectorV1
+        {
+            ElementUniqueIds = new[] { "equipment-b" }, Kinds = new[] { "equipment" }, PageSize = 8
+        };
+        var page = DynamicBuildingSystemsObservationPolicyV1.BuildPage(selector, Document, "context-session", 7, Snapshot,
+            new[] { Asset("equipment-b", 12) });
+        var delta = new DynamicObservationDeltaV1
+        {
+            TurnIndex = 1, PriorFactRequestHash = H("fact-request"), SnapshotHash = Snapshot,
+            DocumentRevision = 7, KnownScopeHashes = new[] { H("known-scope") },
+            NewScopeHash = page.ScopeHash, Pages = new[] { page }
+        };
+        delta.DeltaHash = DynamicObservationDeltaPolicyV1.Hash(delta);
+        DynamicObservationDeltaPolicyV1.Validate(delta);
+
+        delta.PriorFactRequestHash = H("substituted-request");
+        Assert.Throws<ArgumentException>(() => DynamicObservationDeltaPolicyV1.Validate(delta));
+        delta.PriorFactRequestHash = H("fact-request");
+        delta.DeltaHash = DynamicObservationDeltaPolicyV1.Hash(delta);
+        delta.TurnIndex = 2;
+        delta.KnownScopeHashes = new[] { H("known-scope") };
+        delta.DeltaHash = DynamicObservationDeltaPolicyV1.Hash(delta);
+        Assert.Throws<ArgumentException>(() => DynamicObservationDeltaPolicyV1.Validate(delta));
+        delta.TurnIndex = 1;
+        delta.KnownScopeHashes = new[] { page.ScopeHash };
+        delta.DeltaHash = DynamicObservationDeltaPolicyV1.Hash(delta);
+        Assert.Throws<ArgumentException>(() => DynamicObservationDeltaPolicyV1.Validate(delta));
+    }
+
     private static (DynamicBuildingSystemsEnvelopeV1[] Pages, DynamicTrustedElementFactV1[] Facts) ContextData()
     {
         var observed = new[] { Asset("equipment-a", 11), Asset("equipment-b", 12) };

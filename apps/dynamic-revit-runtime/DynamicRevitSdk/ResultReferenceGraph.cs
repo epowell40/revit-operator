@@ -31,7 +31,8 @@ public static class DynamicResultReferenceManifestV1
         typeof(DynamicCreatedResultFactV1), typeof(DynamicResultReferenceReceiptV1), typeof(DynamicResultReferenceGraphBuilderV1),
         typeof(DynamicResultReferencePolicyV1), typeof(DynamicResultReferenceHostResolverV1), typeof(IDynamicResultReferenceTransactionalHostV1),
         typeof(DynamicResultReferencePreviewEngineV1), typeof(DynamicResultReferenceProgramResultV1),
-        typeof(DynamicResultReferenceProgramContextV1), typeof(IDynamicResultReferenceRevitProgramV1)
+        typeof(DynamicResultReferenceProgramContextV1), typeof(IDynamicResultReferenceRevitProgramV1),
+        typeof(DynamicObservationDeltaV1), typeof(DynamicResultReferenceObservationSetV1)
     };
     private static readonly string SurfaceHashValue = DynamicWire.Sha256(string.Join("\n", Types.OrderBy(type => type.FullName, StringComparer.Ordinal).Select(Surface)));
     private static readonly string ManifestHashValue = DynamicWire.Sha256(DynamicCanonical.Join(DynamicResultReferenceContractV1.ManifestSchema,

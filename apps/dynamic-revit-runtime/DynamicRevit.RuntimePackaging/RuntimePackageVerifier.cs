@@ -366,7 +366,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var value = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "executionProtocolIdentity", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "maximumBuildingSystemsPages", "maximumTrustedExternalTargets", "productionExposed" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractManifestHash", "contractSurfaceHash", "executionProtocolIdentity", "graphSchema", "outputFactSchema", "receiptSchema", "programResultSchema", "canonicalVersion", "maximumNodes", "maximumOutputsPerNode", "maximumReferencesPerNode", "maximumAttributesPerNode", "maximumBuildingSystemsPages", "maximumTrustedExternalTargets", "maximumRetainedScopes", "maximumRetainedObservationPages", "productionExposed" };
             var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length || fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
                 value.GetProperty("schema").GetString() != DynamicResultReferenceContractV1.ManifestSchema || string.IsNullOrWhiteSpace(value.GetProperty("manifestVersion").GetString()) ||
@@ -384,6 +384,8 @@ public static class RuntimePackageVerifier
                 value.GetProperty("maximumAttributesPerNode").GetInt32() != DynamicResultReferenceContractV1.MaximumAttributesPerNode ||
                 value.GetProperty("maximumBuildingSystemsPages").GetInt32() != DynamicResultReferenceContractV1.MaximumBuildingSystemsPages ||
                 value.GetProperty("maximumTrustedExternalTargets").GetInt32() != DynamicResultReferenceContractV1.MaximumTrustedExternalTargets ||
+                value.GetProperty("maximumRetainedScopes").GetInt32() != DynamicResultReferenceObservationSetV1.MaximumScopes ||
+                value.GetProperty("maximumRetainedObservationPages").GetInt32() != DynamicObservationDeltaPolicyV1.MaximumRetainedPages ||
                 value.GetProperty("productionExposed").ValueKind != JsonValueKind.False)
                 throw new InvalidDataException("Result-reference contract manifest identity or field set is invalid.");
         }
@@ -403,7 +405,7 @@ public static class RuntimePackageVerifier
             if (!File.Exists(path)) return;
             using var document = JsonDocument.Parse(File.ReadAllBytes(path));
             var value = document.RootElement;
-            var expectedFields = new[] { "schema", "manifestVersion", "contractIdentity", "traceSchema", "factRequestSchema", "maximumSteps", "maximumAssertions", "maximumFactReferencesPerStep", "maximumNodesPerStep", "maximumFactRequestSelectors", "exactObservationProvenance", "deterministicReplayRequired", "authorizationGranted", "productionExposed" };
+            var expectedFields = new[] { "schema", "manifestVersion", "contractIdentity", "traceSchema", "factRequestSchema", "observationDeltaSchema", "maximumRetainedFactTurns", "maximumPagesPerScope", "maximumRetainedObservationPages", "deltaOnlyWorkerTransport", "maximumSteps", "maximumAssertions", "maximumFactReferencesPerStep", "maximumNodesPerStep", "maximumFactRequestSelectors", "exactObservationProvenance", "deterministicReplayRequired", "authorizationGranted", "productionExposed" };
             var fields = value.ValueKind == JsonValueKind.Object ? value.EnumerateObject().Select(property => property.Name).ToArray() : [];
             if (fields.Length != expectedFields.Length || fields.Distinct(StringComparer.Ordinal).Count() != fields.Length ||
                 fields.Any(field => !expectedFields.Contains(field, StringComparer.Ordinal)) ||
@@ -412,6 +414,11 @@ public static class RuntimePackageVerifier
                 value.GetProperty("contractIdentity").GetString() != DynamicExecutionProtocolV1.ContractIdentity ||
                 value.GetProperty("traceSchema").GetString() != DynamicExecutionProtocolV1.TraceSchema ||
                 value.GetProperty("factRequestSchema").GetString() != DynamicExecutionProtocolV1.FactRequestSchema ||
+                value.GetProperty("observationDeltaSchema").GetString() != DynamicObservationDeltaPolicyV1.Schema ||
+                value.GetProperty("maximumRetainedFactTurns").GetInt32() != DynamicObservationDeltaPolicyV1.MaximumTurns ||
+                value.GetProperty("maximumPagesPerScope").GetInt32() != DynamicObservationDeltaPolicyV1.MaximumPagesPerScope ||
+                value.GetProperty("maximumRetainedObservationPages").GetInt32() != DynamicObservationDeltaPolicyV1.MaximumRetainedPages ||
+                value.GetProperty("deltaOnlyWorkerTransport").ValueKind != JsonValueKind.True ||
                 value.GetProperty("maximumSteps").GetInt32() != DynamicExecutionProtocolV1.MaximumSteps ||
                 value.GetProperty("maximumAssertions").GetInt32() != DynamicExecutionProtocolV1.MaximumAssertions ||
                 value.GetProperty("maximumFactReferencesPerStep").GetInt32() != DynamicExecutionProtocolV1.MaximumFactReferencesPerStep ||
