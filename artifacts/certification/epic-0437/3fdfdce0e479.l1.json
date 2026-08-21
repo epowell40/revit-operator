@@ -3172,6 +3172,10 @@
       "sha256": "sha256:b3c6a73530f2afe39df2983a01bdf1dff3b76bb7177d56b03cf048fd8077a4b8"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/FindElementsGeometryContractTests.cs",
+      "sha256": "sha256:8966670cdb31f1e4cb4ad31fb42d3cf559cb100c9eb23d78c9ef98e56618b41b"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/FireAlarmRuleEngineTests.cs",
       "sha256": "sha256:ec3ff292e6da546d3ba5248be40166235f86a2405f7f699fd7e7314bd7cd7714"
     },
@@ -4114,7 +4118,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/FindElementsHandler.cs",
-      "sha256": "sha256:ed7d8eb95b23f75286809cfe2286bc3c876abf38bc831f4e4a4836d64d185e9f"
+      "sha256": "sha256:98b652854c42e54f9476bcbb694196895f8e7f7d3ec1add85960657af6fe00f4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/FireAlarmLayoutHandler.cs",
@@ -5133,7 +5137,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:598eca661a5597946d0702d653339cfbf3e51dbd7eb1c9b4ad8f24f93cd3522d",
+  "inputs_hash": "sha256:8d60690af93a0904194d88326be4e500cd0ce4157017bff13a4e8181d5dcd247",
   "result": {
     "passed": true,
     "checks": [
