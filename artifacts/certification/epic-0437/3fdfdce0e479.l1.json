@@ -567,6 +567,10 @@
       "sha256": "sha256:1b3543dfd8b82975adaafb965f64f0c08bd8d5b17171626b5b178df919e0af8b"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/general_revit_capability_report.ts",
+      "sha256": "sha256:5294c5bbe1fa35cfb39254a310d605639af08b7eebf37b90045e6b0384ae1b51"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/general_revit_model_telemetry.ts",
       "sha256": "sha256:4b64f025a260c5a2cbe182afa4f246c5abdbd62ee85b8e641504a3fa3a6620dc"
     },
@@ -736,7 +740,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/openai_brain.ts",
-      "sha256": "sha256:105a2ad01037385c9532a36be76e77c51aa17970ff615442c3cae25f94273902"
+      "sha256": "sha256:56e7bd72f0bb30a77c2c761cc9becd66e99b3869b75d7a328855a1b81a506a6a"
     },
     {
       "path": "apps/operator-backend/src/brains/redline_fast_path_state.ts",
@@ -1813,7 +1817,7 @@
     },
     {
       "path": "apps/operator-backend/src/model_call_telemetry.ts",
-      "sha256": "sha256:3be2eb703679f7a80b69e21c33c86202315fcf78d470a0e02abb0ae4c5b429e4"
+      "sha256": "sha256:e1d405a8005ca73cc9127388271ea7985bdd0cee6b00408ef150aa6520e5a48e"
     },
     {
       "path": "apps/operator-backend/src/no_write_intent.ts",
@@ -2081,7 +2085,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:0bf7a8f55c0a3702f808de2916d136b1e973fd200ff16907df06f02bb136942c"
+      "sha256": "sha256:73bbc6a14b6dbe8147328012f5eae1b712eb6e11d3495dab42e8f5a8b4e2b3d5"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2792,6 +2796,10 @@
       "sha256": "sha256:75f5260a7674280fe520ffd0c3bf5956bac1c13381ba9ec97afaf1a75633694a"
     },
     {
+      "path": "apps/operator-backend/test/general_revit_capability_report.test.ts",
+      "sha256": "sha256:817ad8a6affb92119a0024c299220f82ce8ef6f3a7246eec1ba1dbad867f6d45"
+    },
+    {
       "path": "apps/operator-backend/test/general_revit_model_telemetry.test.ts",
       "sha256": "sha256:0c295d045320da84779da9bfb00c6ad0f1322086a193878f47b4fe69adf46e0c"
     },
@@ -2865,7 +2873,7 @@
     },
     {
       "path": "apps/operator-backend/test/model_call_telemetry.test.ts",
-      "sha256": "sha256:43805eaa89e64413f0c6165195578ce7a07f9b1b71a838397278b2fb79fc202c"
+      "sha256": "sha256:47267c34a170e35256805b8c53ad48a8f95a675d13179851f61675562187f7c4"
     },
     {
       "path": "apps/operator-backend/test/native_api_gateway_audit.test.ts",
@@ -5189,7 +5197,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:eeb170f3ef3f1b220800968df9f996c90e73c866ffc69c6eed73b48929b51282",
+  "inputs_hash": "sha256:4759f8d620cbf34833488f081b28553c7bf09d8f43bb510a004ff96c28bacd5e",
   "result": {
     "passed": true,
     "checks": [
