@@ -83,11 +83,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.test.ts",
-      "sha256": "sha256:1eeb1cc917a94e3f2582bed4b28560eefb2c98b353793f80d6f9f8483055d3b9"
+      "sha256": "sha256:126285360057cd0d458d9c08399cab98443b671a7bf9a935250324561f259118"
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.ts",
-      "sha256": "sha256:49bd8bf1c6c550c15618eb274d3502d87bb64f51dbeb87c75c3e7991bf3aee48"
+      "sha256": "sha256:29888a8c3342b2c8e3066415ee5b5899b8232591091f8d4300471cde5de93c3e"
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.test.ts",
@@ -143,11 +143,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.test.ts",
-      "sha256": "sha256:3fc275acd31f42bd8a2e5d82b6f25528115f877c8300d434affc7ec283ca5a31"
+      "sha256": "sha256:d3e7831d30e57ac1c08200c2a707ae2b9f27cc1bd6f6c9a1d98ef9a7a080d1d0"
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.ts",
-      "sha256": "sha256:9d5b17578f165bc2a09615f943b85435ed241d0b447c9b9d44111c5dfb28363b"
+      "sha256": "sha256:c160b024bb98ac9e863ca7dd0a174cbfe2d0155a69b75751c82cea3889c6323d"
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.test.ts",
@@ -324,7 +324,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:fd6a734c029f8f4ebf125dad1f5e3cb5f02f7bd516854d23b8ae1dd99e373b5f"
+      "sha256": "sha256:ce9a980eb2b695a5408add12529acc58f8472c21c9fa56d438362e9eca44df70"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -1241,7 +1241,7 @@
     },
     {
       "path": "apps/operator-backend/src/contracts.ts",
-      "sha256": "sha256:a8c1a7342fe9428375685c99c1f1ad0f6add3f69dd21b2fb7e36f66b8cf46dcd"
+      "sha256": "sha256:1ef618b312d3b3a94a4725de3ba346afde4d9f13de9789959243f103f294a816"
     },
     {
       "path": "apps/operator-backend/src/courier/active_job_index.ts",
@@ -1357,7 +1357,7 @@
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/admission.ts",
-      "sha256": "sha256:cce49cb8d524c11a9b7e5319c7279068e3edf49df89aef2bea41f129a389fb76"
+      "sha256": "sha256:7bc2d435ee43773d1e566a4e79d42adaea5d7a1ce24e86749c76e74c2700dc97"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/durable_replay.ts",
@@ -1373,7 +1373,7 @@
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/provider_dynamic_program.ts",
-      "sha256": "sha256:0367c114a590aceafd3bb9c337fcaee829933ec75bd72dd8f4c4ac0e59bfe62a"
+      "sha256": "sha256:2ca0d7a4cb33491b0907aa649232c4d0eba1dbff85edc58ada6ed4f5fcba3382"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/provider_supervisor_evidence.md",
@@ -1381,7 +1381,7 @@
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/provider_supervisor_evidence.ts",
-      "sha256": "sha256:0f4fdfe2abe14052f3c010e106cdfe0b0fafbf6deb2bc3b642d515382660824b"
+      "sha256": "sha256:9cc5db7368953f6abd17b8cea6a9b5d3c751d58e5040f42788b6a4003f81db4c"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/reuse_store.ts",
@@ -5137,7 +5137,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:8d60690af93a0904194d88326be4e500cd0ce4157017bff13a4e8181d5dcd247",
+  "inputs_hash": "sha256:15700a3bc7fc7b3ec8856376c4626b32be0dbf8761e0bae2051de168919c6b68",
   "result": {
     "passed": true,
     "checks": [
