@@ -25,6 +25,28 @@ function source(relativePath: string): string {
   return fs.readFileSync(path.join(repoRoot(), relativePath), "utf8");
 }
 
+function durableReceiptEvidence(pathValue: string, request_effect: "read" | "preview" | "apply") {
+  const path = pathValue === "/revit/query-elements" ? "/revit/query" : pathValue;
+  const semantic_capability_id = ({
+    "/revit/views": "revit.views.query",
+    "/revit/sheets": "revit.sheets.query",
+    "/revit/schedules": "revit.schedules.query",
+    "/revit/query": "revit.elements.query"
+  } as Record<string, string>)[path] || `revit.route.${path.slice("/revit/".length).replaceAll("/", ".")}`;
+  return {
+    successful_paths: [path],
+    result_receipts: [{
+      goal_id: "fixture-goal",
+      action_id: `fixture-${path}-${request_effect}`,
+      path,
+      semantic_capability_id,
+      request_effect,
+      status: "completed",
+      envelope_succeeded: true,
+      result_sha256: "d".repeat(64)
+    }]
+  };
+}
 test("benchmark defaults to the product General Agent surface and labels legacy chat diagnostic-only", () => {
   const runner = source("operator-backend/src/tools/general_revit_capability_acceptance.ts");
   assert.match(runner, /const useComputer = executionSurface\(\) === "operator_computer_general_agent"/);
@@ -277,11 +299,13 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
       "The dry-run reported 0 renames, 2 unchanged, 0 errors. Nothing was applied."
     ].join("\n"),
     assignment_projection: { assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
-      evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+      evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
       verification: { state: "verified", criteria: [{ status: "pass" }] },
       execution: { requested_effect: "apply", completion_mode: "verified_noop" }
-    }] }
+    }] },
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read")
   });
   assert.equal(capturedViewNoop.answer_assertion_passed, true);
   assert.equal(capturedViewNoop.tier, "verified");
@@ -696,6 +720,8 @@ test("durable evidence follows the exact benchmark session and run window when S
           id: "action-current",
           details: {
             tool: {
+              server: "revit_operator",
+              request_effect: "read",
               tool: "revit_call_tool",
               status: "completed",
               duration_ms: 25,
@@ -768,6 +794,8 @@ test("durable evidence counts a complete compact open-connector scan even when z
           id: "compact-open-scan",
           details: {
             tool: {
+              server: "revit_operator",
+              request_effect: "read",
               tool: "revit_call_tool",
               status: "completed",
               duration_ms: 25,
@@ -838,6 +866,8 @@ test("durable compact evidence counts distinct owners instead of treating two co
           id: "compact-one-owner",
           details: {
             tool: {
+              server: "revit_operator",
+              request_effect: "read",
               tool: "revit_call_tool",
               status: "completed",
               duration_ms: 25,
@@ -1089,6 +1119,150 @@ test("durable evidence normalizes direct Revit MCP tools to their canonical nati
   }
 });
 
+test("durable evidence uses the latest dispatched outcome while retaining recovery and hash-bound delegated receipts", async () => {
+  const action = (path: string, status: "completed" | "failed", result: Record<string, unknown>, body: Record<string, unknown> = {}) => ({
+    details: { tool: {
+      server: "revit_operator", tool: "revit_call_tool", status, arguments: { path, body },
+      result: [{ type: "inputText", text: JSON.stringify(result) }]
+    } }
+  });
+  const digest = `sha256:${"a".repeat(64)}`;
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: [
+      action("/revit/quantify", "failed", { error: "transient failure", request_dispatched: true }, { category: "Air Terminals" }),
+      action("/revit/quantify", "completed", { count: 509 }, { category: "Air Terminals" }),
+      { details: { tool: {
+        server: "revit_operator", tool: "revit_call_tool", status: "failed", arguments: { path: "/revit/set-parameter" },
+        result: { error: "schema rejected", request_dispatched: false }
+      } } },
+      { details: {
+        source: "operator_desktop_reported",
+        schema: "revit-operator.sidecar-function-tool-receipt-projection/v1",
+        tool_name: "revit_action",
+        path: "/revit/find-elements",
+        status: "success",
+        request_dispatched: true,
+        result_evidence_sha256: digest,
+        receipt_sha256: digest,
+        result: { count: 999, elementIds: Array.from({ length: 999 }, (_, index) => index + 1) }
+      } },
+      { details: { tool: {
+        server: "revit_operator", tool: "revit_call_tool", status: "completed", arguments: { path: "/revit/set-parameter", body: { elementId: 1, parameter: "Mark", value: "A" } },
+        result: { ok: false, error: "write rejected" }
+      } } },
+      action("/revit/delete-elements", "completed", { outcome_unknown: true }, { elementIds: [1] }),
+      action("/revit/move-elements", "completed", { reconciliation_required: true }, { elementIds: [1] }),
+      action("/revit/copy-elements", "completed", {
+        content: [{ type: "text", text: JSON.stringify({ result: { outcome_unknown: true } }) }]
+      }, { elementIds: [1], offset: [1, 0, 0] }),
+      action("/revit/rotate-elements", "completed", {
+        result: { transport: JSON.stringify({ ok: true, request_dispatched: false }) }
+      }, { elementIds: [1], angle: 90 }),
+      action("/revit/update-schedule-cell", "failed", { error: "target A failed", request_dispatched: true }, { scheduleId: 10, row: 1, column: 1, value: "A" }),
+      action("/revit/update-schedule-cell", "completed", { ok: true }, { scheduleId: 20, row: 1, column: 1, value: "B" }),
+      action("/revit/get-parameters", "completed", { ok: true, values: [] }, { elementIds: [1] })
+    ] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal", source_record_id: "recovery-goal", source_user_request: "inspect",
+        target: { session_id: "recovery-session" }, created_at: "2026-08-20T15:00:01.000Z"
+      }]
+    }, "inspect", { session_id: "recovery-session", started_at: "2026-08-20T15:00:00.000Z" });
+    assert.deepEqual(evidence.successful_paths, ["/revit/get-parameters", "/revit/quantify", "/revit/update-schedule-cell"]);
+    assert.deepEqual(evidence.failed_paths, ["/revit/copy-elements", "/revit/delete", "/revit/move-elements", "/revit/set-parameter", "/revit/update-schedule-cell"]);
+    assert.deepEqual(evidence.recovered_paths, ["/revit/quantify"]);
+    assert.deepEqual(evidence.historical_failed_paths, ["/revit/copy-elements", "/revit/delete", "/revit/move-elements", "/revit/quantify", "/revit/set-parameter", "/revit/update-schedule-cell"]);
+    assert.deepEqual(evidence.rejected_no_effect_paths, ["/revit/rotate-elements", "/revit/set-parameter"]);
+    assert.deepEqual(evidence.reported_receipt_paths, ["/revit/find-elements"]);
+    assert.equal((evidence.element_inventory as any).maximum_reported_count, 0);
+    const delegated = (evidence.result_receipts as Record<string, unknown>[])
+      .find((receipt) => receipt.authority === "operator_desktop_reported");
+    assert.equal(delegated?.hash_bound, true);
+    assert.equal(delegated?.integrity_only, true);
+    assert.equal(delegated?.result_sha256, digest);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable evidence fails closed on depth-limit encoded lifecycle flags", async () => {
+  const atDepthLimit = (leaf: Record<string, unknown>) => {
+    let value: unknown = JSON.stringify(leaf);
+    for (let index = 0; index < 5; index += 1) value = { wrapper: value };
+    return value;
+  };
+  const cases = [
+    ["/revit/deep-not-dispatched", { request_dispatched: false }],
+    ["/revit/deep-outcome-unknown", { outcome_unknown: true }],
+    ["/revit/deep-reconciliation", { reconciliation_required: true }],
+    ["/revit/deep-not-ok", { ok: false }]
+  ] as const;
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: cases.map(([path, leaf]) => ({
+      details: { tool: {
+        server: "revit_operator",
+        tool: "revit_call_tool",
+        status: "completed",
+        arguments: { path, body: { elementId: 101 } },
+        result: [{ type: "inputText", text: JSON.stringify(atDepthLimit(leaf)) }]
+      } }
+    })) } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal", source_record_id: "deep-envelope-goal", source_user_request: "deep envelope",
+        target: { session_id: "deep-envelope-session" }, created_at: "2026-08-20T15:30:01.000Z"
+      }]
+    }, "deep envelope", { session_id: "deep-envelope-session", started_at: "2026-08-20T15:30:00.000Z" });
+    assert.deepEqual(evidence.successful_paths, []);
+    assert.deepEqual(evidence.failed_paths, cases.map(([path]) => path).sort());
+    assert.deepEqual(evidence.rejected_no_effect_paths, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+test("durable recovery never crosses source-assignment append order", async () => {
+  const body = { elementId: 101, parameter: "Mark", value: "ERU-1", apply: true };
+  const server = http.createServer((request, response) => {
+    const failed = request.url?.endsWith("/failure-goal") === true;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: [{ details: { tool: {
+      server: "revit_operator",
+      tool: "revit_call_tool",
+      status: failed ? "failed" : "completed",
+      arguments: { path: "/revit/set-parameter", body },
+      result: { ok: !failed, request_dispatched: true }
+    } } }] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const assignments = ["failure-goal", "success-goal"].map((source_record_id) => ({
+      source_kind: "goal", source_record_id, source_user_request: "update one mark",
+      target: { session_id: "cross-goal-session" }, created_at: "2026-08-20T16:00:01.000Z"
+    }));
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, { assignments }, "update one mark", {
+      session_id: "cross-goal-session", started_at: "2026-08-20T16:00:00.000Z"
+    });
+    assert.deepEqual(evidence.successful_paths, ["/revit/set-parameter"]);
+    assert.deepEqual(evidence.failed_paths, ["/revit/set-parameter"]);
+    assert.deepEqual(evidence.recovered_paths, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
 test("the three-sheet titleblock discovery requires exact fixture facts and successful native evidence", () => {
   const productionCase = corpus.cases.find((candidate) => candidate.case_id === "lh04_titleblock_initials_discovery")!;
   const entry = generalRevitExecutionCase(productionCase, false);
@@ -1109,6 +1283,7 @@ test("the three-sheet titleblock discovery requires exact fixture facts and succ
     effect_state: "read_only_dispatched",
     actions: [{ path: "/revit/sheets", request_effect: "read", request_dispatched: true, status: "success" }],
     durable_tool_evidence: {
+      ...durableReceiptEvidence("/revit/sheets", "read"),
       successful_paths: ["/revit/sheets", "/revit/titleblock-label-map", "/revit/verify-parameter-on-sheet"]
     },
     assignment_projection: { assignments: [{
@@ -1451,18 +1626,20 @@ Therefore, no exact branch segment or transition point could be grounded for a r
 test("planned, previewed, completed, and verified remain distinct truth tiers", () => {
   const previewCase = corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!;
   const applyCase = { ...previewCase, expected_effect: "apply" as const };
-  const rounds = [{ actions: [{ path: "/revit/configure-schedule", request_effect: "preview" }] }];
-  assert.equal(evaluateGeneralRevitCapabilityAttempt(previewCase, { ok: true, effect_state: "not_dispatched", rounds }).tier, "planned");
-  const previewed = evaluateGeneralRevitCapabilityAttempt(previewCase, { ok: true, effect_state: "read_only_dispatched", rounds });
+  const plannedRounds = [{ actions: [{ path: "/revit/configure-schedule", request_effect: "preview" }] }];
+  const previewRounds = [{ actions: [{ path: "/revit/configure-schedule", request_effect: "preview", request_dispatched: true }] }];
+  const applyRounds = [{ actions: [{ path: "/revit/configure-schedule", request_effect: "apply", request_dispatched: true }] }];
+  assert.equal(evaluateGeneralRevitCapabilityAttempt(previewCase, { ok: true, effect_state: "not_dispatched", rounds: plannedRounds }).tier, "planned");
+  const previewed = evaluateGeneralRevitCapabilityAttempt(previewCase, { ok: true, effect_state: "read_only_dispatched", rounds: previewRounds });
   assert.equal(previewed.tier, "previewed");
   assert.equal(previewed.completed, true);
-  const completed = evaluateGeneralRevitCapabilityAttempt(applyCase, { ok: true, effect_state: "apply_dispatched", rounds });
+  const completed = evaluateGeneralRevitCapabilityAttempt(applyCase, { ok: true, effect_state: "apply_dispatched", rounds: applyRounds });
   assert.equal(completed.tier, "completed");
   assert.equal(completed.verified, false);
   const verified = evaluateGeneralRevitCapabilityAttempt(applyCase, {
     ok: true,
     effect_state: "apply_dispatched",
-    rounds,
+    rounds: applyRounds,
     verification_result: { readback: { schedule_filter_count: 1 }, result_hash: "a".repeat(64) }
   });
   assert.equal(verified.tier, "verified");
@@ -1657,7 +1834,7 @@ test("aggregate results never turn non-refusal into a completion claim", () => {
     ok: true,
     assistant_message: "509 total: Supply Grille - Double Deflection - Curve Face Rectangular Neck 266; Return Grille - Double Deflection - Curve Face Rectangular Neck 138; Air Terminal-Exhaust Cap-FB 37; Air Terminal-Supply Cap-FB 37; Supply Diffuser - Square - Hosted 28; Return Grille - Perforated - Rectangular Face Rectangular Neck 2; Supply Diffuser with Plenum - Linear Slot - Hosted 1.",
     effect_state: "read_only_dispatched",
-    rounds: [{ actions: [{ path: entry.dispatch_any_of[0], request_effect: "preview" }] }]
+    rounds: [{ actions: [{ path: entry.dispatch_any_of[0], request_effect: "preview", request_dispatched: true }] }]
   });
   const summary = summarizeGeneralRevitCapabilityReport([accepted, completed]);
   assert.equal(summary.non_refusal_count, 2);
@@ -1680,12 +1857,13 @@ test("durable assignment evidence closes the flight-recorder loop for MCP-native
         ] },
         verification: { state: "verified", criteria: [{ status: "pass" }] }
       }]
-    }
+    },
+    durable_tool_evidence: { successful_paths: [entry.dispatch_any_of[0]] }
   });
   assert.equal(result.tier, "verified");
   assert.equal(result.dispatched, true);
   assert.equal(result.completed, true);
-  assert.deepEqual(result.observed_paths, ["mcp:revit_call_tool"]);
+  assert.deepEqual(result.observed_paths, [entry.dispatch_any_of[0]]);
   assert.equal(result.verification_basis, "fixture_semantic_oracle");
 });
 
@@ -1708,7 +1886,8 @@ test("backend-observed export artifact paths independently verify a visual read 
         verification: { state: "verified", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "read" }
       }]
-    }
+    },
+    durable_tool_evidence: { successful_paths: [entry.dispatch_any_of[0]] }
   });
   assert.equal(result.tier, "verified");
   assert.equal(result.completed, true);
@@ -1902,7 +2081,7 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   const assignment_projection = {
     assignments: [{
       lifecycle: { phase: "complete" },
-      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      evidence: { entries: [{ summary: "Live tool revit_find_elements completed." }] },
       verification: { state: "verified", criteria: [{ status: "pass" }] },
       execution: { requested_effect: "read" }
     }]
@@ -1963,8 +2142,9 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
 test("durable read evidence cannot satisfy a preview contract without matching effect truth", () => {
   const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, false);
   const assignment = {
+    source_record_id: "fixture-goal",
     lifecycle: { phase: "complete" },
-    evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+    evidence: { entries: [{ summary: "Live tool revit_schedules completed." }] },
     verification: { state: "verified", criteria: [{ status: "pass" }] },
     execution: { requested_effect: "read" }
   };
@@ -1973,6 +2153,7 @@ test("durable read evidence cannot satisfy a preview contract without matching e
   assert.equal(failed.completed, false);
   const previewed = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
+    durable_tool_evidence: durableReceiptEvidence("/revit/schedules", "preview"),
     assignment_projection: { assignments: [{ ...assignment, execution: { requested_effect: "preview" } }] }
   });
   assert.equal(previewed.tier, "previewed");
@@ -1993,13 +2174,14 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   ].join("\n");
   const durableNoop = {
     assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       evidence: { entries: [{ summary: "Live tool revit_list_sheets completed." }] },
       verification: { state: "verified", criteria: [{ status: "pass" }] },
       execution: { requested_effect: "preview", completion_mode: "verified_noop" }
     }]
   };
-  const verified = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message, assignment_projection: durableNoop });
+  const verified = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message, assignment_projection: durableNoop, durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview") });
   assert.equal(verified.tier, "verified");
   assert.equal(verified.completed, true);
   assert.equal(verified.answer_assertion_passed, true);
@@ -2008,7 +2190,8 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   const naturalLanguage = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "No mechanical sheet numbers contain a dash, so the preview table is empty. All **17** sheets are mechanical M-sheets. No sheets were renamed or modified.",
-    assignment_projection: durableNoop
+    assignment_projection: durableNoop,
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview")
   });
   assert.equal(naturalLanguage.tier, "verified");
   assert.equal(naturalLanguage.answer_assertion_passed, true);
@@ -2021,7 +2204,8 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
       "| *No matching sheets* | — | — | Not applicable | Not applicable |",
       "No sheets were renamed or modified."
     ].join("\n"),
-    assignment_projection: durableNoop
+    assignment_projection: durableNoop,
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview")
   });
   assert.equal(liveWording.tier, "verified");
   assert.equal(liveWording.answer_assertion_passed, true);
@@ -2029,7 +2213,8 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   const exactReplayWording = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Live model contains **17 mechanical sheets**, and **none have dashes in their sheet numbers**. Dash-containing targets: 0. No sheets were renamed.",
-    assignment_projection: durableNoop
+    assignment_projection: durableNoop,
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview")
   });
   assert.equal(exactReplayWording.tier, "verified");
   assert.equal(exactReplayWording.answer_assertion_passed, true);
@@ -2042,7 +2227,8 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
       "Proposed mappings: none. Ordering and uniqueness remain unchanged.",
       "No sheets were renamed."
     ].join("\n"),
-    assignment_projection: durableNoop
+    assignment_projection: durableNoop,
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview")
   });
   assert.equal(capturedLiveWording.tier, "verified");
   assert.equal(capturedLiveWording.answer_assertion_passed, true);
@@ -2059,7 +2245,8 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   const wrongCount = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "Sheets inspected: 17 of 17\nDashed candidates: 2\nModel changes: None",
-    assignment_projection: durableNoop
+    assignment_projection: durableNoop,
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview")
   });
   assert.equal(wrongCount.tier, "failed");
   assert.equal(wrongCount.answer_assertion_passed, false);
@@ -2079,10 +2266,12 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message,
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "verified", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "preview", completion_mode: "verified_noop" }
       }]
@@ -2103,10 +2292,12 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
       "**No change.** Bottom and View Depth already stop at L2, so the View Range does not extend to the floor below. Altering it would not be defensible without evidence that View Range is causing the visibility.",
       '{ "status": "no_op", "viewId": 9948, "proposedChanges": [], "dryRun": true, "applied": false, "modelModified": false }'
     ].join("\n"),
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "verified", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "preview", completion_mode: "verified_noop" }
       }]
@@ -2122,10 +2313,12 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
       "Bottom: **L2 + 0′**; View Depth: **L2 + 0′**; Underlay: **None**.",
       "The rolled-back preview confirmed the smallest defensible setting is already present, so this is a verified no-op."
     ].join("\n"),
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_native_api_ops completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "verified", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "preview", completion_mode: "verified_noop" }
       }]
@@ -2152,7 +2345,7 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "read" }
       }]
@@ -2173,7 +2366,7 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
     ].join("\n"),
     assignment_projection: {
       assignments: [{
-        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] }, execution: { requested_effect: "read" }
       }]
     }
@@ -2192,7 +2385,7 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
     ].join("\n"),
     assignment_projection: {
       assignments: [{
-        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] }, execution: { requested_effect: "read" }
       }]
     }
@@ -2205,7 +2398,7 @@ test("Snowdon family evolution read-only plan requires fixture-grounded identity
     assistant_message: "Instance HRU202 ID 1365188; Family HeatRecoveryUnit; Source type Heat Recovery Unit (HRU) ID 1365172; Width 40 in; Length 1200 mm; nothing was edited, saved, reloaded, or swapped.",
     assignment_projection: {
       assignments: [{
-        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        lifecycle: { phase: "complete" }, evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] }, execution: { requested_effect: "read" }
       }]
     }
@@ -2237,7 +2430,7 @@ test("Snowdon clearance-family evolution oracle accepts a grounded candidate wit
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "read" }
       }]
@@ -2268,7 +2461,7 @@ test("Snowdon clearance-family evolution oracle accepts a grounded candidate wit
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "read" }
       }]
@@ -2299,7 +2492,7 @@ test("Snowdon clearance-family evolution oracle accepts a grounded candidate wit
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "read" }
       }]
@@ -2315,7 +2508,7 @@ test("Snowdon clearance-family evolution oracle accepts a grounded candidate wit
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_plan_family_evolution completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "read" }
       }]
@@ -2550,11 +2743,12 @@ test("Snowdon sheet-number no-op oracle accepts Markdown counts and native camel
 });
 
 test("captured cohort wording keeps fixture facts while remaining presentation-neutral", () => {
-  const completeProjection = (requested_effect: "read" | "preview", completion_mode?: string) => ({
+  const completeProjection = (requested_effect: "read" | "preview", tool: string, completion_mode?: string) => ({
     assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       plan: { steps: [] },
-      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      evidence: { entries: [{ summary: `Live tool ${tool} completed.` }] },
       verification: { state: "passed", criteria: [{ status: "pass" }] },
       execution: { requested_effect, completion_mode }
     }]
@@ -2570,7 +2764,8 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
         "Supply Air Pressure Drop: 0.08 in-wg to 0.10 in-wg",
         "Native dry-run: 1 requested/effective change; nothing was applied."
       ].join("\n"),
-      assignment_projection: completeProjection("preview")
+      assignment_projection: completeProjection("preview", "revit_schedules"),
+      durable_tool_evidence: durableReceiptEvidence("/revit/schedules", "preview"),
     }
   );
   assert.equal(schedule.tier, "verified");
@@ -2586,18 +2781,20 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
         "Output: artifacts/prints/TEST-MECHANICAL-ISSUE.pdf",
         "Content hash cannot be computed because no files were exported."
       ].join("\n"),
-      assignment_projection: completeProjection("read")
+      assignment_projection: completeProjection("read", "revit_sheets"),
+      durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "read"),
     }
   );
   assert.equal(pdf.tier, "verified");
 
-  const noopProjection = completeProjection("preview", "verified_noop");
+  const noopProjection = completeProjection("preview", "revit_views", "verified_noop");
   const names = evaluateGeneralRevitCapabilityAttempt(
     generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c02_clean_level2_view_names")!, false),
     {
       ok: true,
       assistant_message: "The Level 2 HVAC views already match the adjacent-level pattern: view name = level name. Floor Plan L2 → no rename; Ceiling Plan L2 → no rename. Verified no-op.",
-      assignment_projection: noopProjection
+      assignment_projection: noopProjection,
+      durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     }
   );
   assert.equal(names.tier, "verified");
@@ -2607,7 +2804,8 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
     {
       ok: true,
       assistant_message: "Selected L2 (view 9948). Bottom: L2 + 0. View Depth: L2 + 0. Underlay: None. The smallest defensible correction is a verified no-op; nothing was applied.",
-      assignment_projection: noopProjection
+      assignment_projection: noopProjection,
+      durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     }
   );
   assert.equal(range.tier, "verified");
@@ -2617,7 +2815,8 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
     {
       ok: true,
       assistant_message: "17 mechanical M-series sheets inventoried. 0 sheet numbers contain dashes. Dry-run: 0 candidates, applied: false. No sheets were renamed.",
-      assignment_projection: noopProjection
+      assignment_projection: completeProjection("preview", "revit_sheets", "verified_noop"),
+      durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview"),
     }
   );
   assert.equal(sheets.tier, "verified");
@@ -2627,7 +2826,8 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
     {
       ok: true,
       assistant_message: "Mechanical sheets inventoried: **17**\nSheet numbers containing dashes: **0**\nDry-run result: NoOp, modelModified: false\nNo sheets were renamed.",
-      assignment_projection: noopProjection
+      assignment_projection: completeProjection("preview", "revit_sheets", "verified_noop"),
+      durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "preview"),
     }
   );
   assert.equal(naturalInventoryOrder.tier, "verified");
@@ -2637,7 +2837,8 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
     {
       ok: true,
       assistant_message: "Heat Recovery Unit Summary 1488968; HRU202; element 1365188; Supply Air Pressure Drop 0.08 in-wg to 0.10 in-wg; 2 requested/effective changes; dry-run.",
-      assignment_projection: completeProjection("preview")
+      assignment_projection: completeProjection("preview", "revit_schedules"),
+      durable_tool_evidence: durableReceiptEvidence("/revit/schedules", "preview"),
     }
   );
   assert.equal(wrongSchedule.tier, "failed");
@@ -2647,7 +2848,8 @@ test("captured cohort wording keeps fixture facts while remaining presentation-n
     {
       ok: true,
       assistant_message: "M100 M101 M102 M103 M104 M105 M106; combined color; Seven-page check: 7 sheets selected; intended 8 pages; TEST-MECHANICAL-ISSUE.pdf; content hash; no files were exported.",
-      assignment_projection: completeProjection("read")
+      assignment_projection: completeProjection("read", "revit_sheets"),
+      durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "read"),
     }
   );
   assert.equal(wrongPdf.tier, "failed");
@@ -2667,9 +2869,10 @@ test("a session-bound completed assignment recovers an outer benchmark timeout w
   ].join("\n");
   const assignment_projection = {
     assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       plan: { steps: [{ result_summary: resultSummary }] },
-      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+      evidence: { entries: [{ summary: "Live tool revit_sheets completed." }] },
       verification: { state: "passed", criteria: [{ status: "pass" }] },
       execution: { requested_effect: "read" }
     }]
@@ -2679,6 +2882,7 @@ test("a session-bound completed assignment recovers an outer benchmark timeout w
     error: "Computer run exceeded 300000ms.",
     assistant_message: "",
     effect_state: "not_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "read"),
     assignment_projection
   });
   assert.equal(recovered.tier, "verified");
@@ -2896,7 +3100,7 @@ test("an ungrounded Dynamic Revit apply receipt cannot satisfy a typed mutation 
   assert.equal(result.expected_path_observed, true);
   assert.equal(result.completed, false);
   assert.equal(result.verified, false);
-  assert.equal(result.tier, "planned");
+  assert.equal(result.tier, "failed");
 });
 
 test("target-bound teammate verification requires an action-bound evidence digest", () => {
@@ -2905,7 +3109,7 @@ test("target-bound teammate verification requires an action-bound evidence diges
     assignments: [{
       lifecycle: { phase: "complete" },
       execution: { requested_effect: "apply" },
-      evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] }
+      evidence: { entries: [{ summary: "Live tool revit_views completed." }] }
     }]
   };
   const audited = evaluateGeneralRevitCapabilityAttempt(entry, {
@@ -2952,7 +3156,7 @@ test("a blocked mutation receipt overrides a contradictory completed assignment"
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] }
       }]
     }
@@ -3019,10 +3223,12 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "apply", completion_mode: "verified_noop" }
       }]
@@ -3039,11 +3245,13 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Inspected and verified all 10 HVAC floor-plan views. The established pattern is view name = associated level/area name, preserving identifiers such as Block 35. The Level 2 view already conforms: L2 -> L2 (view ID 9948). No renames were required. No elements or other views were changed.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [
-          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Live tool revit_views completed." },
           { summary: "Verified that the requested Revit state was already satisfied using 2 substantive live evidence calls; no write was necessary." }
         ] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
@@ -3061,11 +3269,13 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Inspected all 10 Mechanical/HVAC floor-plan views. The established pattern is view name = associated level/block name. The Level 2 view already conforms: 9948: L2 -> level L2. No views were renamed, and no model content was altered. Final readback verified the name remains L2.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [
-          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Live tool revit_views completed." },
           { summary: "Verified that the requested Revit state was already satisfied using 5 substantive live evidence calls; no write was necessary." }
         ] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
@@ -3083,11 +3293,13 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Preview complete — no changes needed. The other HVAC levels use the level name alone for both views. Level 2 already matches: Ceiling Plan L2 -> L2 and Floor Plan L2 -> L2. Dry-run result: 0 renames, 2 unchanged, 0 errors.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [
-          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Live tool revit_views completed." },
           { summary: "Verified that the requested Revit state was already satisfied using substantive live evidence; no write was necessary." }
         ] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
@@ -3106,7 +3318,7 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
       assignments: [{
         lifecycle: { phase: "complete" },
         evidence: { entries: [
-          { summary: "Live tool revit_call_tool completed." },
+          { summary: "Live tool revit_views completed." },
           { summary: "Verified that the requested Revit state was already satisfied using substantive live evidence; no write was necessary." }
         ] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
@@ -3133,7 +3345,7 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     assignment_projection: {
       assignments: [{
         lifecycle: { phase: "complete" },
-        evidence: { entries: [{ summary: "Live tool revit_call_tool completed." }] },
+        evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
         execution: { requested_effect: "apply" }
       }]
@@ -3684,4 +3896,447 @@ test("the Snowdon HRU schedule dry run is verified only when its fixture facts a
   });
   assert.equal(mutatedModel.tier, "failed");
   assert.equal(mutatedModel.verified, false);
+});
+
+test("outer chat transport cannot impersonate a Revit preview or apply effect", () => {
+  const previewCase = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!,
+    false
+  );
+  const outerOnly = {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/chat", request_effect: "preview", request_dispatched: true, status: "success" }]
+  };
+  const preview = evaluateGeneralRevitCapabilityAttempt(previewCase, outerOnly);
+  assert.equal(preview.tier, "failed");
+  assert.equal(preview.completed, false);
+
+  const apply = evaluateGeneralRevitCapabilityAttempt(
+    { ...previewCase, expected_effect: "apply" },
+    { ...outerOnly, effect_state: "apply_dispatched", actions: [{ path: "/chat", request_effect: "apply", request_dispatched: true, status: "success" }] }
+  );
+  assert.equal(apply.tier, "failed");
+  assert.equal(apply.apply_dispatched, false);
+  assert.equal(apply.completed, false);
+
+  const nativePreview = evaluateGeneralRevitCapabilityAttempt(previewCase, {
+    ...outerOnly,
+    actions: [{ path: "/revit/configure-schedule", request_effect: "preview", request_dispatched: true, status: "success" }]
+  });
+  assert.equal(nativePreview.tier, "previewed");
+  assert.equal(nativePreview.completed, true);
+});
+
+test("an unrelated successful Revit route cannot satisfy the expected capability or effect", () => {
+  const entry = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!,
+    false
+  );
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    actions: [{ path: "/revit/search-tools", request_effect: "preview", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: { successful_paths: ["/revit/search-tools"] },
+    assignment_projection: { assignments: [{
+      lifecycle: { phase: "complete" },
+      evidence: { entries: [
+        { summary: "Live tool revit_search_tools completed." },
+        { summary: "Live tool revit_call_tool completed." }
+      ] },
+      verification: { state: "verified", criteria: [{ status: "pass" }] },
+      execution: { requested_effect: "preview" }
+    }] }
+  });
+  assert.equal(result.expected_path_observed, false);
+  assert.equal(result.completed, false);
+  assert.equal(result.tier, "failed");
+});
+
+test("canonical semantic capabilities and typed facts are paraphrase-stable and provenance-bound", () => {
+  const base = corpus.cases.find((candidate) => candidate.case_id === "q01_air_device_inventory")!;
+  const entry = {
+    ...base,
+    dispatch_any_of: ["/revit/sheets"],
+    capability_paths: ["/revit/sheets"],
+    answer_assertions: {
+      must_match: ["\\bsheets?\\b"],
+      evidence: {
+        required_semantic_capability_ids: ["revit.sheets.query"],
+        required_semantic_facts: [{ capability_id: "revit.sheets.query", key: "count", equals: 17 }]
+      }
+    }
+  };
+  const receipt = {
+    goal_id: "goal-1",
+    action_id: "action-1",
+    path: "/revit/sheets",
+    semantic_capability_id: "revit.sheets.query",
+    request_effect: "read",
+    status: "completed",
+    envelope_succeeded: true,
+    result_sha256: "a".repeat(64),
+    parsed_semantic_facts: { count: 17 },
+    parsed_count: 17
+  };
+  const attempt = {
+    ok: true,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/list-sheets", request_effect: "read", request_dispatched: true, status: "success" }],
+    durable_tool_evidence: {
+      successful_paths: ["/revit/list-sheets"],
+      result_receipts: [receipt]
+    }
+  };
+
+  for (const assistant_message of [
+    "Sheet audit complete; the exact total is seventeen.",
+    "I counted the model's sheets without changing anything."
+  ]) {
+    const result = evaluateGeneralRevitCapabilityAttempt(entry, { ...attempt, assistant_message });
+    assert.equal(result.tier, "verified");
+    assert.equal(result.answer_assertion_passed, true);
+    assert.ok(result.observed_paths.includes("/revit/sheets"));
+  }
+
+  const wrongNumber = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: "Sheets: 17.",
+    durable_tool_evidence: {
+      ...attempt.durable_tool_evidence,
+      result_receipts: [{ ...receipt, parsed_semantic_facts: { count: 18 }, parsed_count: 18 }]
+    }
+  });
+  assert.equal(wrongNumber.tier, "failed");
+  assert.ok(wrongNumber.answer_assertion_failures.some((failure) => failure.startsWith("evidence_semantic_fact_mismatch:")));
+
+  const semanticResult = (resultReceipts: Array<Record<string, unknown>>) => evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: "Sheets: 17.",
+    durable_tool_evidence: { successful_paths: ["/revit/list-sheets"], result_receipts: resultReceipts }
+  });
+  const parsedCountDisagreement = semanticResult([{ ...receipt, parsed_count: 18 }]);
+  assert.equal(parsedCountDisagreement.tier, "failed");
+  assert.ok(parsedCountDisagreement.answer_assertion_failures.some((failure) => failure.startsWith("evidence_semantic_fact_mismatch:")));
+
+  const mismatchedCapability = semanticResult([{
+    ...receipt,
+    semantic_capability_id: "revit.schedules.query"
+  }]);
+  assert.equal(mismatchedCapability.tier, "failed");
+
+  for (const uncertainReceipt of [
+    { ...receipt, parsed_ok: false },
+    { ...receipt, parsed_outcome_unknown: true },
+    { ...receipt, parsed_reconciliation_required: true }
+  ]) {
+    const uncertain = semanticResult([uncertainReceipt]);
+    assert.equal(uncertain.tier, "failed");
+    assert.ok(uncertain.answer_assertion_failures.some((failure) => failure.startsWith("evidence_semantic_fact_mismatch:")));
+  }
+
+  const conflictingLaterReceipt = semanticResult([
+    receipt,
+    {
+      ...receipt,
+      action_id: "action-2",
+      result_sha256: "b".repeat(64),
+      parsed_semantic_facts: { count: 18 },
+      parsed_count: 18
+    }
+  ]);
+  assert.equal(conflictingLaterReceipt.tier, "failed");
+  assert.ok(conflictingLaterReceipt.answer_assertion_failures.some((failure) => failure.startsWith("evidence_semantic_fact_mismatch:")));
+
+  const forgedWithoutReceipt = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...attempt,
+    assistant_message: "Sheets: 17.",
+    durable_tool_evidence: {
+      successful_paths: ["/revit/list-sheets"],
+      result_receipts: [],
+      semantic_facts: [{ capability_id: "revit.sheets.query", key: "count", value: 17 }]
+    }
+  });
+  assert.equal(forgedWithoutReceipt.tier, "failed");
+  assert.ok(forgedWithoutReceipt.answer_assertion_failures.some((failure) => failure.startsWith("evidence_semantic_fact_mismatch:")));
+});
+
+test("durable receipt loading emits canonical sheet identity and typed scalar facts", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [{
+          id: "sheet-action",
+          details: {
+            tool: {
+              server: "revit_operator",
+              tool: "revit_list_sheets",
+              status: "completed",
+              result: [{ type: "inputText", text: JSON.stringify({ count: 17, truncated: false }) }]
+            }
+          }
+        }]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "sheet-goal",
+        source_user_request: "count sheets",
+        target: { session_id: "sheet-session" },
+        created_at: "2026-08-21T12:00:01.000Z"
+      }]
+    }, "count sheets", {
+      session_id: "sheet-session",
+      started_at: "2026-08-21T12:00:00.000Z"
+    });
+    assert.deepEqual(evidence.successful_paths, ["/revit/sheets"]);
+    assert.deepEqual(evidence.semantic_capability_ids, ["revit.sheets.query"]);
+    assert.equal(Object.prototype.hasOwnProperty.call(evidence, "semantic_facts"), false);
+    const receipts = evidence.result_receipts as Array<Record<string, unknown>>;
+    assert.equal(receipts.length, 1);
+    assert.equal(receipts[0].envelope_succeeded, true);
+    assert.equal(receipts[0].semantic_capability_id, "revit.sheets.query");
+    assert.deepEqual(receipts[0].parsed_semantic_facts, { count: 17, truncated: false });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable loading rejects completed tool records with failed or uncertain result envelopes", async () => {
+  const action = (id: string, result: Record<string, unknown>) => ({
+    id,
+    details: {
+      tool: {
+        server: "revit_operator",
+        tool: "revit_list_sheets",
+        status: "completed",
+        result: [{ type: "inputText", text: JSON.stringify({ count: 17, ...result }) }]
+      }
+    }
+  });
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [
+          action("reported-failure", { ok: false }),
+          action("unknown-outcome", { outcome_unknown: true }),
+          action("reconciliation-needed", { reconciliation_required: true }),
+          action("error-envelope", { error: "receipt parse failed" })
+        ]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "uncertain-goal",
+        source_user_request: "count sheets",
+        target: { session_id: "uncertain-session" },
+        created_at: "2026-08-21T13:00:01.000Z"
+      }]
+    }, "count sheets", {
+      session_id: "uncertain-session",
+      started_at: "2026-08-21T13:00:00.000Z"
+    });
+    assert.deepEqual(evidence.successful_paths, []);
+    assert.deepEqual(evidence.failed_paths, ["/revit/sheets"]);
+    assert.deepEqual(evidence.semantic_capability_ids, []);
+    const receipts = evidence.result_receipts as Array<Record<string, unknown>>;
+    assert.equal(receipts.length, 4);
+    assert.ok(receipts.every((receipt) => receipt.envelope_succeeded === false));
+    assert.ok(receipts.every((receipt) => JSON.stringify(receipt.parsed_semantic_facts) === "{}"));
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable loading trusts paths only from the authenticated Revit tool identity and gates uncertain inventories", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      goal: {
+        action_log: [
+          {
+            id: "spoofed-web-path",
+            details: { tool: {
+              server: "web",
+              tool: "web_fetch",
+              status: "completed",
+              arguments: { path: "/revit/sheets" },
+              result: [{ type: "inputText", text: JSON.stringify({ count: 999 }) }]
+            } }
+          },
+          {
+            id: "canonical-query",
+            details: { tool: {
+              server: "revit_operator",
+              tool: "revit_call_tool",
+              request_effect: "read",
+              status: "completed",
+              arguments: { path: "/revit/query-elements" },
+              result: [{ type: "inputText", text: JSON.stringify({ count: 3 }) }]
+            } }
+          },
+          {
+            id: "uncertain-connectors",
+            details: { tool: {
+              server: "revit_operator",
+              tool: "revit_call_tool",
+              request_effect: "read",
+              status: "completed",
+              arguments: { path: "/revit/get-connectors", body: { elementIds: [10, 20] } },
+              result: [{ type: "inputText", text: JSON.stringify({
+                status: 509,
+                requestedCount: 2,
+                scannedElementCount: 2,
+                failedElementCount: 0,
+                openPhysicalConnectorCount: 7,
+                filter: "openPhysicalConnectors",
+                results: [{ id: 10, openPhysicalConnectorCount: 7 }]
+              }) }]
+            } }
+          }
+        ]
+      }
+    }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, {
+      assignments: [{
+        source_kind: "goal",
+        source_record_id: "provenance-goal",
+        source_user_request: "inspect model",
+        target: { session_id: "provenance-session" },
+        created_at: "2026-08-21T14:00:01.000Z"
+      }]
+    }, "inspect model", { session_id: "provenance-session", started_at: "2026-08-21T14:00:00.000Z" });
+    assert.deepEqual(evidence.successful_paths, ["/revit/query"]);
+    assert.deepEqual(evidence.failed_paths, ["/revit/get-connectors"]);
+    assert.deepEqual(evidence.semantic_capability_ids, ["revit.elements.query"]);
+    const inventory = evidence.connector_inventory as Record<string, unknown>;
+    assert.equal(inventory.unique_element_ids, 0);
+    assert.equal(inventory.maximum_reported_scanned_count, 0);
+    assert.equal(inventory.maximum_reported_open_physical_connectors, 0);
+    assert.equal(inventory.compact_filter_used, false);
+    const receipts = evidence.result_receipts as Array<Record<string, unknown>>;
+    assert.equal(receipts.length, 2);
+    assert.equal(receipts[0].path, "/revit/query");
+    assert.equal(receipts[0].request_effect, "read");
+    assert.equal(receipts[1].envelope_succeeded, false);
+    assert.deepEqual(receipts[1].parsed_semantic_facts, {});
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable capability effects require one terminal receipt binding the expected path and effect", () => {
+  const entry = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!,
+    false
+  );
+  const receipt = (overrides: Record<string, unknown> = {}) => ({
+    goal_id: "goal-action-bound",
+    action_id: "expected-read",
+    path: "/revit/configure-schedule",
+    semantic_capability_id: "revit.route.configure-schedule",
+    request_effect: "read",
+    status: "completed",
+    envelope_succeeded: true,
+    result_sha256: "a".repeat(64),
+    ...overrides
+  });
+  const assignmentProjection = { assignments: [{
+    source_record_id: "goal-action-bound",
+    lifecycle: { phase: "complete" },
+    verification: { state: "verified", criteria: [{ status: "pass" }] },
+    execution: { requested_effect: "preview" }
+  }] };
+  const baseAttempt = {
+    ok: true,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/configure-schedule", "/revit/search-tools"],
+      result_receipts: [
+        receipt(),
+        receipt({
+          action_id: "unrelated-preview",
+          path: "/revit/search-tools",
+          semantic_capability_id: "revit.route.search-tools",
+          request_effect: "preview",
+          result_sha256: "b".repeat(64)
+        })
+      ]
+    },
+    assignment_projection: assignmentProjection
+  };
+  const pooled = evaluateGeneralRevitCapabilityAttempt(entry, baseAttempt);
+  assert.equal(pooled.expected_path_observed, true);
+  assert.equal(pooled.completed, false);
+  assert.equal(pooled.tier, "failed");
+
+  const bound = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...baseAttempt,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/configure-schedule"],
+      result_receipts: [receipt({ request_effect: "preview" })]
+    }
+  });
+  assert.equal(bound.completed, true);
+  assert.notEqual(bound.tier, "failed");
+
+  const crossGoalPooled = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...baseAttempt,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/configure-schedule"],
+      result_receipts: [receipt({ request_effect: "preview", goal_id: "goal-incomplete" })]
+    },
+    assignment_projection: { assignments: [
+      {
+        source_record_id: "goal-complete",
+        lifecycle: { phase: "complete" },
+        verification: { state: "verified", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      },
+      {
+        source_record_id: "goal-incomplete",
+        lifecycle: { phase: "in_progress" },
+        verification: { state: "pending" },
+        execution: { requested_effect: "preview" }
+      }
+    ] }
+  });
+  assert.equal(crossGoalPooled.completed, false);
+  assert.equal(crossGoalPooled.tier, "failed");
+
+  const laterFailed = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...baseAttempt,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/configure-schedule"],
+      result_receipts: [
+        receipt({ request_effect: "preview" }),
+        receipt({
+          action_id: "later-failed",
+          request_effect: "preview",
+          status: "failed",
+          envelope_succeeded: false,
+          result_sha256: "c".repeat(64)
+        })
+      ]
+    }
+  });
+  assert.equal(laterFailed.completed, false);
+  assert.equal(laterFailed.tier, "failed");
 });

@@ -300,6 +300,7 @@ function finalizeDecision(req: ChatRequest, decision: ChatResponse): ChatRespons
     : "Answer: I paused because the backend produced no actions and no explanation for this turn. This is an internal fallback response rather than a silent no-op.";
 
   const guarded = enforceVerificationDisclaimer(req, enforceModeledRedlineGuard(req, {
+    ...decision,
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: fallbackMessage,
     actions

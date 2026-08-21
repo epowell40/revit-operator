@@ -767,10 +767,10 @@
         ],
         "evidence": {
           "required_successful_paths": [
-            "/revit/sheets",
             "/revit/titleblock-label-map",
             "/revit/verify-parameter-on-sheet"
-          ]
+          ],
+          "required_semantic_capability_ids": ["revit.sheets.query"]
         }
       }
     },

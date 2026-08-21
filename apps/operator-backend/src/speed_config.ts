@@ -1,6 +1,6 @@
 import type { ChatRequest } from "./contracts.js";
 
-export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
 export type SpeedRouteKind = "classic" | "planner" | "executor";
 
 export type SpeedSettings = {
@@ -48,17 +48,24 @@ function intValue(value: unknown, fallback: number, min: number, max: number): n
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
-function stringValue(value: unknown, fallback: string): string {
-  const text = typeof value === "string" ? value.trim() : "";
-  return text || fallback;
+export function isSafeModelId(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(normalized);
+}
+
+export function normalizeModelId(value: unknown, fallback: string): string {
+  return isSafeModelId(value) ? value.trim() : fallback;
+}
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "none" || normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh" || normalized === "max";
 }
 
 export function normalizeReasoningEffort(value: unknown, fallback: ReasoningEffort = "medium"): ReasoningEffort {
-  if (typeof value !== "string") return fallback;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "none" || normalized === "low" || normalized === "medium" || normalized === "high" || normalized === "xhigh"
-    ? normalized
-    : fallback;
+  return isReasoningEffort(value) ? value.trim().toLowerCase() as ReasoningEffort : fallback;
 }
 
 export function resolveSpeedSettings(context: unknown): SpeedSettings {
@@ -71,12 +78,18 @@ export function resolveSpeedSettings(context: unknown): SpeedSettings {
   return {
     speed_mode: speedMode,
     split_planner_executor: split,
-    planner_model: stringValue(process.env.OPERATOR_PLANNER_MODEL, stringValue(raw.planner_model ?? raw.plannerModel, "gpt-5.6-sol")),
+    planner_model: normalizeModelId(
+      process.env.OPERATOR_PLANNER_MODEL,
+      normalizeModelId(raw.planner_model ?? raw.plannerModel, "gpt-5.6-sol")
+    ),
     planner_reasoning_effort: normalizeReasoningEffort(
       process.env.OPERATOR_PLANNER_REASONING_EFFORT,
       normalizeReasoningEffort(raw.planner_reasoning_effort ?? raw.plannerReasoningEffort, "medium")
     ),
-    executor_model: stringValue(process.env.OPERATOR_EXECUTOR_MODEL, stringValue(raw.executor_model ?? raw.executorModel, "gpt-5.6-terra")),
+    executor_model: normalizeModelId(
+      process.env.OPERATOR_EXECUTOR_MODEL,
+      normalizeModelId(raw.executor_model ?? raw.executorModel, "gpt-5.6-terra")
+    ),
     executor_reasoning_effort: normalizeReasoningEffort(
       process.env.OPERATOR_EXECUTOR_REASONING_EFFORT,
       normalizeReasoningEffort(raw.executor_reasoning_effort ?? raw.executorReasoningEffort, "medium")

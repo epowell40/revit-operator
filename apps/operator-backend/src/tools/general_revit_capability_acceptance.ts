@@ -30,6 +30,15 @@ import {
   localRevitProcessGuardTarget,
   type LocalRevitProcessGuardTarget
 } from "../benchmark/local_revit_process_liveness.js";
+import {
+  aggregateModelCallReceipts,
+  modelCallReceiptsFromSources,
+  modelCallReceiptsFromTraces,
+  requestedComputerAgentConfig,
+  requestedVsObservedComputerAgent,
+  speedSettingsForRequestedConfig
+} from "../benchmark/general_revit_model_telemetry.js";
+import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -174,15 +183,6 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function percent(value: unknown): string {
-  return `${(numberValue(value) * 100).toFixed(1)}%`;
-}
-
-function delta(current: unknown, previous: unknown): string {
-  const change = (numberValue(current) - numberValue(previous)) * 100;
-  return `${change >= 0 ? "+" : ""}${change.toFixed(1)} pp`;
-}
-
 function baselineCaseDeltas(traces: JsonRecord[], baselineReport: JsonRecord | null): JsonRecord[] {
   if (!baselineReport) return [];
   const baselineTraces = new Map((Array.isArray(baselineReport.task_traces) ? baselineReport.task_traces : [])
@@ -227,105 +227,6 @@ function groupedMultiSummary(traces: JsonRecord[], key: "corpus_task_types"): Re
   }
   return Object.fromEntries([...buckets.entries()].sort(([left], [right]) => left.localeCompare(right))
     .map(([bucket, evaluations]) => [bucket, summarizeGeneralRevitCapabilityReport(evaluations as never)]));
-}
-
-function markdownReport(report: JsonRecord): string {
-  const summary = asRecord(report.summary);
-  const baseline = asRecord(report.baseline_comparison);
-  const baselineSummary = asRecord(baseline.summary);
-  const traces = Array.isArray(report.task_traces) ? report.task_traces.map(asRecord) : [];
-  const computerAgent = asRecord(asRecord(report.suite_context).computer_agent);
-  const lines = [
-    "# General Revit benchmark result",
-    "",
-    `- Run: \`${String(report.run_id || "")}\``,
-    `- Label: ${String(report.label || "unlabeled")}`,
-    `- Generated: ${String(report.generated_at || "")}`,
-    `- Mode: ${asRecord(report.suite_context).mutation_policy || "unknown"}`,
-    `- Execution surface: ${asRecord(report.suite_context).execution_surface || "unknown"}`,
-    `- Computer model: ${String(computerAgent.outer_model || "unknown")}`,
-    `- Planner: ${String(computerAgent.planner_model || "unknown")} / ${String(computerAgent.planner_reasoning_effort || "unknown")}`,
-    `- Executor: ${String(computerAgent.executor_model || "unknown")} / ${String(computerAgent.executor_reasoning_effort || "unknown")}`,
-    `- Cases: ${numberValue(summary.total)}`,
-    `- Non-refusal: ${percent(summary.non_refusal_rate)} (${numberValue(summary.non_refusal_count)}/${numberValue(summary.total)})`,
-    `- Completion: ${percent(summary.completion_rate)} (${numberValue(summary.completed_count)}/${numberValue(summary.total)})`,
-    `- Verification: ${percent(summary.verification_rate)} (${numberValue(summary.verified_count)}/${numberValue(summary.total)})`,
-    `- Refused: ${numberValue(summary.refusal_count)}`,
-    `- Failed: ${numberValue(summary.failure_count)}`,
-    `- Wrong sample fixture: ${numberValue(report.fixture_mismatch_count)}`,
-    `- Fixture unverifiable: ${numberValue(report.fixture_unverifiable_count)}`,
-    `- Fixture-grounded answer checks: ${numberValue(report.selected_answer_assertion_case_count)}/${numberValue(summary.total)}`,
-    ""
-  ];
-  if (baseline.path) {
-    lines.push(
-      "## Baseline comparison",
-      "",
-      `Baseline: \`${String(baseline.path)}\``,
-      "",
-      "| Metric | Current | Baseline | Change |",
-      "|---|---:|---:|---:|",
-      `| Non-refusal | ${percent(summary.non_refusal_rate)} | ${percent(baselineSummary.non_refusal_rate)} | ${delta(summary.non_refusal_rate, baselineSummary.non_refusal_rate)} |`,
-      `| Completion | ${percent(summary.completion_rate)} | ${percent(baselineSummary.completion_rate)} | ${delta(summary.completion_rate, baselineSummary.completion_rate)} |`,
-      `| Verification | ${percent(summary.verification_rate)} | ${percent(baselineSummary.verification_rate)} | ${delta(summary.verification_rate, baselineSummary.verification_rate)} |`,
-      ""
-    );
-    const caseDeltas = Array.isArray(report.baseline_case_deltas) ? report.baseline_case_deltas.map(asRecord) : [];
-    if (caseDeltas.length > 0) {
-      lines.push("### Changed cases", "", "| Case | Before | After |", "|---|---|---|");
-      for (const row of caseDeltas) lines.push(`| ${String(row.case_id || "")} | ${String(row.from_tier || "not_run")} | ${String(row.to_tier || "not_run")} |`);
-      lines.push("");
-    }
-  }
-  const bySpecificity = asRecord(report.summary_by_specificity);
-  lines.push("## Prompt specificity", "", "| Specificity | Cases | Non-refusal | Completion | Verification |", "|---|---:|---:|---:|---:|");
-  for (const [specificity, value] of Object.entries(bySpecificity)) {
-    const row = asRecord(value);
-    lines.push(`| ${specificity} | ${numberValue(row.total)} | ${percent(row.non_refusal_rate)} | ${percent(row.completion_rate)} | ${percent(row.verification_rate)} |`);
-  }
-  lines.push("");
-  const byFixture = asRecord(report.summary_by_fixture);
-  lines.push("## Preferred sample fixture", "", "| Fixture | Cases | Non-refusal | Completion | Verification |", "|---|---:|---:|---:|---:|");
-  for (const [fixture, value] of Object.entries(byFixture)) {
-    const row = asRecord(value);
-    lines.push(`| ${fixture} | ${numberValue(row.total)} | ${percent(row.non_refusal_rate)} | ${percent(row.completion_rate)} | ${percent(row.verification_rate)} |`);
-  }
-  lines.push("");
-  const byVerificationBasis = asRecord(report.summary_by_verification_basis);
-  lines.push("## Verification basis", "", "| Basis | Cases |", "|---|---:|");
-  for (const [basis, count] of Object.entries(byVerificationBasis)) lines.push(`| ${basis} | ${numberValue(count)} |`);
-  lines.push("", "These labels describe the strongest recorded evidence for each case; they do not make generic receipts equivalent to fixture-grounded semantic or target-bound model-state proof.", "");
-  const byCorpusType = asRecord(report.summary_by_corpus_task_type);
-  lines.push("## Results by redline task type", "", "| Corpus task type | Cases | Non-refusal | Completion | Verification |", "|---|---:|---:|---:|---:|");
-  for (const [taskType, value] of Object.entries(byCorpusType)) {
-    const row = asRecord(value);
-    lines.push(`| ${taskType} | ${numberValue(row.total)} | ${percent(row.non_refusal_rate)} | ${percent(row.completion_rate)} | ${percent(row.verification_rate)} |`);
-  }
-  lines.push("");
-  const coverage = asRecord(report.corpus_coverage);
-  const taskTypes = Array.isArray(coverage.task_types) ? coverage.task_types.map(asRecord) : [];
-  lines.push(
-    "## Frozen redline-corpus coverage",
-    "",
-    `The benchmark maps ${numberValue(coverage.covered_task_type_count)}/${numberValue(coverage.top_task_type_count)} frozen top task types, representing ${numberValue(coverage.mapped_comment_total).toLocaleString()} comments (${percent(coverage.mapped_actionable_comment_rate)} of ${numberValue(coverage.actionable_comment_total).toLocaleString()} actionable comments). Coverage is a task-selection measure, not a performance claim.`,
-    "",
-    "| Rank | Corpus task type | Comments | Mapping | Benchmark cases |",
-    "|---:|---|---:|---|---|"
-  );
-  for (const row of taskTypes) {
-    const ids = Array.isArray(row.case_ids) ? row.case_ids.map(String) : [];
-    lines.push(`| ${numberValue(row.rank)} | ${String(row.task_type_id || "")} | ${numberValue(row.corpus_count).toLocaleString()} | ${String(row.coverage_kind || "gap")} | ${ids.join(", ")} |`);
-  }
-  lines.push("");
-  lines.push("## Cases", "", "| Case | Source | Operation | Tier | Verification basis | Duration |", "|---|---|---|---|---|---:|");
-  for (const trace of traces) {
-    const score = asRecord(trace.success_failure_score);
-    const efficiency = asRecord(trace.efficiency);
-    const evaluation = asRecord(asRecord(trace.verification_results).evaluation);
-    lines.push(`| ${String(trace.case_id || "").replaceAll("|", "\\|")} | ${String(trace.source || "")} | ${String(trace.operation_family || "")} | ${String(score.tier || "not_run")} | ${String(evaluation.verification_basis || "none")} | ${(numberValue(efficiency.duration_ms) / 1000).toFixed(1)}s |`);
-  }
-  lines.push("", "The suite is representative regression coverage, not a Revit capability allowlist. Non-refusal is not completion, and assistant prose alone is not verification.", "");
-  return lines.join("\n");
 }
 
 function safeGrant(value: JsonRecord): JsonRecord {
@@ -381,8 +282,16 @@ function rescoreTraceFromFlightRecord(trace: JsonRecord, testCase: GeneralRevitC
     ...rawAttempt,
     assignment_projection: assignmentProjection
   } as GeneralRevitAttempt);
+  const modelCallReceipts = modelCallReceiptsFromSources(rawAttempt, rawAttempt.computer_state, trace);
+  const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
   return {
     ...trace,
+    model_call_receipts: modelCallReceipts,
+    efficiency: {
+      ...asRecord(trace.efficiency),
+      token_count: modelCallSummary.total_tokens,
+      model_call_summary: modelCallSummary
+    },
     verification_results: { ...asRecord(trace.verification_results), evaluation },
     success_failure_score: {
       tier: evaluation.tier,
@@ -437,7 +346,8 @@ async function ensureFixtureActive(
   baseUrl: string,
   fixtureKey: string,
   fixture: { document_title: string; sample_filename: string },
-  fixtureRoot: string
+  fixtureRoot: string,
+  speedSettings: JsonRecord | null
 ): Promise<JsonRecord> {
   const startedAt = nowIso();
   const startedMs = Date.now();
@@ -518,7 +428,11 @@ async function ensureFixtureActive(
   try {
     runResponse = await requestJson(baseUrl, "/api/computer/run", {
       method: "POST",
-      body: JSON.stringify({ prompt, message_id: messageId })
+      body: JSON.stringify({
+        prompt,
+        message_id: messageId,
+        ...(speedSettings ? { speed_settings: speedSettings } : {})
+      })
     }, Math.min(fixtureTimeoutMs(), 30_000));
   } catch (error) {
     transportError = error instanceof Error ? error.message : String(error);
@@ -647,7 +561,8 @@ function computerPerformanceSummary(attempt: JsonRecord): JsonRecord {
 async function runComputerCase(
   baseUrl: string,
   testCase: GeneralRevitCapabilityCase,
-  processGuard: LocalRevitProcessGuardTarget | null
+  processGuard: LocalRevitProcessGuardTarget | null,
+  speedSettings: JsonRecord | null
 ): Promise<{ attempt: JsonRecord; sessionId: string }> {
   const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
   await waitForComputerIdle(baseUrl, Math.min(timeoutMs, 60_000), `Case ${testCase.case_id}`);
@@ -660,7 +575,12 @@ async function runComputerCase(
       method: "POST",
       body: JSON.stringify({
         prompt: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
-        message_id: messageId
+        message_id: messageId,
+        ...(speedSettings ? {
+          speed_settings: speedSettings,
+          outer_model: speedSettings.outer_model,
+          outer_reasoning_effort: speedSettings.outer_reasoning_effort
+        } : {})
       })
     }, Math.min(timeoutMs, 30_000));
   } catch (error) {
@@ -764,6 +684,8 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   const applyRequested = suiteContext.apply_requested === true;
   const executionCase = generalRevitExecutionCase(testCase, applyRequested);
   const executionExpectedEffect = executionCase.expected_effect;
+  const requestedSpeedSettings = asRecord(suiteContext.requested_speed_settings);
+  const speedSettings = Object.keys(requestedSpeedSettings).length > 0 ? requestedSpeedSettings : null;
   // Hosted production uses the durable Revit courier. A healthy background or
   // minimized workstation can legitimately need more than 30 seconds to claim,
   // execute, and settle the certified context job. Treat that as benchmark
@@ -785,7 +707,8 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
     const computerResult = await runComputerCase(
       baseUrl,
       testCase,
-      localRevitProcessGuardTarget(baseUrl, initialState)
+      localRevitProcessGuardTarget(baseUrl, initialState),
+      speedSettings
     );
     attempt = computerResult.attempt;
     sessionId = computerResult.sessionId;
@@ -801,7 +724,13 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
           session_id: sessionId,
           message_id: id(`capability-${testCase.case_id}`),
           user_text: applyRequested ? testCase.prompt : testCase.probe_prompt,
-          context: { ui: { client: "operator-desktop", surface: "general-revit-capability-acceptance" } }
+          context: {
+            ui: {
+              client: "operator-desktop",
+              surface: "general-revit-capability-acceptance",
+              ...(speedSettings ? { speed_settings: speedSettings } : {})
+            }
+          }
         })
       }, Number.parseInt(flag("--timeout-ms", "180000"), 10) || 180_000);
     } catch (error) {
@@ -833,6 +762,10 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
   };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);
   const toolCalls = extractToolCalls(attempt);
+  const modelCallReceipts = modelCallReceiptsFromSources(attempt, attempt.computer_state);
+  const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
+  const computerState = asRecord(attempt.computer_state);
+  const sidecarRequestedSpeedSettings = asRecord(computerState.requestedSpeedSettings);
   const finishedAt = nowIso();
   return {
     schema: "revit-operator.task-trace/v1",
@@ -858,8 +791,17 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       mutation_requested: applyRequested
     },
     initial_model_state: initialState,
-    context_supplied: { session_id: sessionId, ui_surface: "general-revit-capability-acceptance", suite: suiteContext },
+    context_supplied: {
+      session_id: sessionId,
+      ui_surface: "general-revit-capability-acceptance",
+      requested_speed_settings: speedSettings,
+      sidecar_requested_speed_settings: Object.keys(sidecarRequestedSpeedSettings).length > 0
+        ? sidecarRequestedSpeedSettings
+        : asRecord(computerState.requested_speed_settings),
+      suite: suiteContext
+    },
     agent_reasoning_plan_representation: Array.isArray(attempt.rounds) ? attempt.rounds : [],
+    model_call_receipts: modelCallReceipts,
     tool_calls: toolCalls,
     tool_results: {
       response_effect_state: attempt.effect_state ?? "not_dispatched",
@@ -894,7 +836,8 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
     },
     efficiency: {
       duration_ms: Date.now() - startedMs,
-      token_count: null,
+      token_count: modelCallSummary.total_tokens,
+      model_call_summary: modelCallSummary,
       tool_call_count: toolCalls.length,
       round_count: Array.isArray(attempt.rounds) ? attempt.rounds.length : 0,
       harness_health_ms: {
@@ -913,12 +856,14 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--outer-model MODEL] [--outer-effort none|low|medium|high|xhigh|max] [--planner-model MODEL] [--planner-effort none|low|medium|high|xhigh|max] [--executor-model MODEL] [--executor-effort none|low|medium|high|xhigh|max] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
     return;
   }
+  const invocationStartedMs = Date.now();
+  const invocationStartedAt = nowIso();
   const corpus = loadGeneralRevitCapabilityCorpus();
   const fixtureConfig = loadGeneralRevitSampleFixtures(corpus.cases);
   const requestedFixture = flag("--fixture").trim().toLowerCase();
@@ -971,18 +916,21 @@ async function main(): Promise<void> {
   const summaryOutput = resolvedOutputDir ? path.join(resolvedOutputDir, runId, "summary.md") : output.replace(/\.json$/i, ".md");
   const priorSuiteContext = asRecord(resumedCheckpoint?.suite_context);
   const priorComputerAgent = asRecord(priorSuiteContext.computer_agent);
+  const priorSuiteTiming = asRecord(resumedCheckpoint?.suite_timing);
+  const requestedComputerAgent = requestedComputerAgentConfig(process.argv, priorComputerAgent);
+  const requestedSpeedSettings = speedSettingsForRequestedConfig(requestedComputerAgent);
+  const suiteStartedAt = String(priorSuiteTiming.started_at_utc || invocationStartedAt);
+  const priorActiveWallClockMs = numberValue(priorSuiteTiming.active_wall_clock_ms);
   const [config, grant] = rescoreOnly
     ? [{
       runtimeProfile: asRecord(priorSuiteContext.runtime_profile),
-      computerModel: priorComputerAgent.outer_model,
-      speedDefaults: priorComputerAgent
+      computerModel: requestedComputerAgent.outer_model
     }, asRecord(priorSuiteContext.write_grant)]
     : await Promise.all([
       requestJson(sidecar, "/api/config", {}, 30_000),
       requestJson(sidecar, "/api/revit/write-grant", {}, 30_000)
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
-  const speedDefaults = asRecord(config.speedDefaults);
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
   let fixturePreflight: JsonRecord = {};
   let fixturePreflightAttempts = 0;
@@ -998,13 +946,18 @@ async function main(): Promise<void> {
     runtime_profile: runtimeProfile,
     write_grant: safeGrant(grant),
     computer_agent: {
-      outer_model: String(config.computerModel || speedDefaults.executor_model || "unknown"),
-      split_planner_executor: speedDefaults.split_planner_executor === true,
-      planner_model: String(speedDefaults.planner_model || "unknown"),
-      planner_reasoning_effort: String(speedDefaults.planner_reasoning_effort || "unknown"),
-      executor_model: String(speedDefaults.executor_model || config.computerModel || "unknown"),
-      executor_reasoning_effort: String(speedDefaults.executor_reasoning_effort || "unknown")
+      configuration_source: requestedSpeedSettings ? (resumedCheckpoint ? "resume_or_cli" : "benchmark_cli") : "unspecified",
+      requested: requestedComputerAgent,
+      observed_provider_calls: null,
+      outer_model: requestedComputerAgent.outer_model,
+      outer_reasoning_effort: requestedComputerAgent.outer_reasoning_effort,
+      split_planner_executor: requestedComputerAgent.split_planner_executor,
+      planner_model: requestedComputerAgent.planner_model,
+      planner_reasoning_effort: requestedComputerAgent.planner_reasoning_effort,
+      executor_model: requestedComputerAgent.executor_model,
+      executor_reasoning_effort: requestedComputerAgent.executor_reasoning_effort
     },
+    requested_speed_settings: requestedSpeedSettings,
     corpus_schema: corpus.schema_version,
     corpus_sha256: sha256(corpus),
     fixture_schema: fixtureConfig.schema,
@@ -1026,11 +979,15 @@ async function main(): Promise<void> {
   };
   if (resumedCheckpoint) {
     const priorContext = asRecord(resumedCheckpoint.suite_context);
+    const priorRequested = requestedComputerAgentConfig([], asRecord(priorContext.computer_agent));
     if (String(priorContext.corpus_sha256 || "") !== String(suiteContext.corpus_sha256) && !allowCorpusDrift) {
       throw new Error("Resume checkpoint was produced from a different benchmark corpus.");
     }
     if (String(resumedCheckpoint.suite || "") !== suite || priorContext.apply_requested !== applyRequested) {
       throw new Error("Resume checkpoint suite or mutation mode does not match this invocation.");
+    }
+    if (JSON.stringify(priorRequested) !== JSON.stringify(requestedComputerAgent)) {
+      throw new Error("Resume checkpoint requested a different outer/planner/executor model configuration.");
     }
   }
   const selectedIds = new Set(selected.map((entry) => entry.case_id));
@@ -1061,11 +1018,30 @@ async function main(): Promise<void> {
   }
   let activeFixtureKey = "";
   const fixtureRoot = path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples"));
+  const suiteTimingSnapshot = (finishedAt: string | null = null): JsonRecord => {
+    const nowMs = Date.now();
+    const parsedStart = Date.parse(suiteStartedAt);
+    return {
+      schema: "revit-operator.benchmark-suite-timing.v1",
+      started_at_utc: suiteStartedAt,
+      finished_at_utc: finishedAt,
+      last_checkpoint_at_utc: finishedAt || nowIso(),
+      wall_clock_ms: Number.isFinite(parsedStart) ? Math.max(0, nowMs - parsedStart) : null,
+      active_wall_clock_ms: priorActiveWallClockMs + Math.max(0, nowMs - invocationStartedMs),
+      resumed: resumedCheckpoint !== null
+    };
+  };
   for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
     const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
     if (orchestrateFixtures && preferredFixture !== activeFixtureKey) {
       console.log(`[fixture] ${preferredFixture}`);
-      const transition = await ensureFixtureActive(sidecar, preferredFixture, fixtureConfig.fixtures[preferredFixture], fixtureRoot);
+      const transition = await ensureFixtureActive(
+        sidecar,
+        preferredFixture,
+        fixtureConfig.fixtures[preferredFixture],
+        fixtureRoot,
+        requestedSpeedSettings
+      );
       (suiteContext.fixture_transitions as JsonRecord[]).push(transition);
       activeFixtureKey = preferredFixture;
     }
@@ -1083,12 +1059,20 @@ async function main(): Promise<void> {
       run_id: runId,
       suite,
       updated_at: nowIso(),
+      suite_timing: suiteTimingSnapshot(),
       suite_context: suiteContext,
       selected_case_ids: [...selectedIds],
       completed_case_ids: traces.map((trace) => trace.case_id),
       task_traces: traces
     });
   }
+  const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
+  const modelCallTelemetry = aggregateModelCallReceipts(suiteModelCallReceipts);
+  const requestedVsObserved = requestedVsObservedComputerAgent(requestedComputerAgent, modelCallTelemetry);
+  asRecord(suiteContext.computer_agent).observed_provider_calls = requestedVsObserved;
+  const suiteTiming = rescoreOnly && Object.keys(priorSuiteTiming).length > 0
+    ? priorSuiteTiming
+    : suiteTimingSnapshot(nowIso());
   const evaluations = traces.map((trace) => asRecord(asRecord(trace.verification_results).evaluation));
   const summary = summarizeGeneralRevitCapabilityReport(evaluations as never);
   const summaryByVerificationBasis = Object.fromEntries([...new Set(evaluations.map((entry) => String(entry.verification_basis || "none")))]
@@ -1116,6 +1100,7 @@ async function main(): Promise<void> {
     run_id: runId,
     label: flag("--label") || null,
     generated_at: nowIso(),
+    suite_timing: suiteTiming,
     suite_id: corpus.suite_id,
     suite,
     representative_not_exhaustive: true,
@@ -1133,8 +1118,9 @@ async function main(): Promise<void> {
     corpus_coverage: corpusCoverage,
     baseline_comparison: baselineComparison,
     baseline_case_deltas: caseDeltas,
+    model_call_telemetry: modelCallTelemetry,
     task_traces: traces,
-    report_sha256: sha256({ suiteContext, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, traces })
+    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, traces })
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));

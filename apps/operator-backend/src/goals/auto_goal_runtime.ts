@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
+import { classifyOutcomeEnvelope, outcomeEnvelopeIsUnsafe } from "../outcome_envelope.js";
 import {
   appendGoalAction,
   appendGoalEvidence,
@@ -40,6 +42,20 @@ export type AutoGoalTeammateReceipt = {
 
 type AutoGoalRequestedEffect = "read" | "preview" | "apply";
 type AutoGoalObservationEffect = AutoGoalRequestedEffect | "discovery";
+type AutoGoalCompletionMode =
+  | "successful_read"
+  | "successful_preview"
+  | "successful_apply"
+  | "verified_noop";
+type AutoGoalTerminalReason =
+  | AutoGoalCompletionMode
+  | "completed_after_recovery"
+  | "missing_target_or_artifact"
+  | "execution_failure"
+  | "verification_incomplete"
+  | "effect_reconciliation_required"
+  | "task_blocked";
+
 
 const APPLY_BEYOND_PREVIEW_TEXT = /\b(?:(?:do not|don't|dont|never)\s+(?:(?:just|only)\s+)?(?:stop|end|finish|halt|remain|return)\b[^.!?;\n]{0,40}\b(?:preview|preflight|dry[- ]?run)|(?:do not|don't|dont|never)\s+(?:just\s+|only\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:not|rather than)\s+(?:just\s+|only\s+)?(?:a\s+)?(?:preview|preflight|dry[- ]?run)\b|(?:proceed|continue|go)\s+beyond\s+(?:the\s+)?(?:preview|preflight|dry[- ]?run)\b)/i;
 
@@ -50,6 +66,18 @@ function assistantRequestsRequiredUserContext(assistantText: string): boolean {
   const reportsMissingContext = new RegExp(`\\b(?:selection (?:is|was) ${stateAdverb}empty|selected elements?\\s*:\\s*0|nothing (?:is|was) ${stateAdverb}selected|no (?:model )?placement point|no (?:region|location|point|target|element|instance|device|branch|segment|view) (?:is|was) ${stateAdverb}(?:selected|specified|identified|resolved)|no (?:marked|selected|specified|identified|resolved|unique) (?:region|location|point|target|element|instance|device|branch|segment|view)|(?:target|source|location|selection|placement point|host|view) (?:is|was|remains) ${stateAdverb}(?:missing|unavailable|unresolved|unspecified|not (?:available|provided|selected|identified|specified|resolved)))\\b`, "i").test(text);
   const asksForContext = /\b(?:(?:could|can|would|will)\s+you|please)\b[^?\n]{0,320}\b(?:open|select|indicate|identify|choose|confirm|specify|provide|attach|upload|mark)\b/i.test(text);
   return reportsMissingContext && asksForContext;
+}
+function terminalReasonForBlockedText(value: string): AutoGoalTerminalReason {
+  const text = value.normalize("NFKC").replace(/[*_`~]/g, " ");
+  if (/\b(?:target|artifact|file|attachment|schedule|sheet|view|family|type|element|selection|region|location)\b[^.\n]{0,100}\b(?:missing|not found|unavailable|unresolved|not provided|not selected)\b/i.test(text)
+      || /\bno (?:qualifying|matching|compatible|unambiguous) (?:target|artifact|file|schedule|sheet|view|family|type|element|selection|region|location)\b/i.test(text)) {
+    return "missing_target_or_artifact";
+  }
+  if (/\b(?:verification|readback|reconciliation)\b[^.\n]{0,100}\b(?:incomplete|failed|missing|unavailable|not verified|required)\b/i.test(text)) {
+    return "verification_incomplete";
+  }
+  if (/\b(?:execution|compile|compilation|transport|tool call|request)\b[^.\n]{0,100}\b(?:failed|error|closed|timed out|rejected)\b/i.test(text)) return "execution_failure";
+  return "task_blocked";
 }
 
 function observationObject(value: unknown): Record<string, unknown> {
@@ -64,6 +92,44 @@ function observationObject(value: unknown): Record<string, unknown> {
     return {};
   }
 }
+
+function canonicalRecoveryJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalRecoveryJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalRecoveryJson(child)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+const RECOVERY_IDENTITY_CONTROL_KEYS = new Set([
+  "apply", "dryRun", "dry_run", "preview", "mode", "method", "timeout", "timeoutMs",
+  "transaction", "request_effect", "requestEffect", "maxElements", "maxResults", "limit", "offset",
+  "page", "pageSize", "continuationToken", "discardExistingOpenDocument"
+]);
+
+function observationRecoveryKey(observation: AutoGoalToolObservation, effect: AutoGoalObservationEffect): string | null {
+  if (effect === "discovery") return null;
+  const tool = observation.tool.trim().toLowerCase();
+  const args = observationObject(observation.arguments);
+  const parsedBody = observationObject(args.body);
+  const route = tool === "revit_call_tool"
+    ? `${args.path || ""}`.trim().toLowerCase()
+    : /^revit_[a-z0-9_]+$/.test(tool) ? `/revit/${tool.slice("revit_".length).replaceAll("_", "-")}` : "";
+  if (!route) return null;
+  const source = Object.keys(parsedBody).length > 0
+    ? parsedBody
+    : Object.fromEntries(Object.entries(args).filter(([key]) => key !== "path" && key !== "body"));
+  const target = Object.fromEntries(Object.entries(source)
+    .filter(([key, child]) => !RECOVERY_IDENTITY_CONTROL_KEYS.has(key) && child !== undefined));
+  if (Object.keys(target).length === 0) return null;
+  const digest = createHash("sha256").update(canonicalRecoveryJson(target)).digest("hex");
+  return `${route}\n${effect}\nsha256:${digest}`;
+}
+
+
 
 const ARTIFACT_PATH_KEYS = new Set([
   "artifactpath",
@@ -140,8 +206,11 @@ export function createAutoGoalTurnObserver(sessionId: string) {
   let successfulApplyTools = 0;
   let failedRevitTools = 0;
   let knownNoEffectFailures = 0;
-  let lastCompletionRelevantSucceeded: boolean | null = null;
+  let unrecoverableFailures = 0;
+  let recoveredFailures = 0;
+  const unresolvedFailuresByIdentity = new Map<string, number>();
   const rollbackPreviewTemporaryElementIds = new Set<number>();
+  let rejectedNoEffectPreviews = 0;
   return {
     observe(observation: AutoGoalToolObservation) {
       const effect = observationEffect(observation);
@@ -153,15 +222,36 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         || isExpectedRollbackAbsenceFailure(observation, rollbackPreviewTemporaryElementIds);
       const explicitNoEffect = isExplicitNoEffectObservation(observation);
       const blockingNoEffect = isBlockingNoEffectObservation(observation);
-      if (!explicitNoEffect && isCompletionEvidence(observation) && observation.success === true) {
+      const outcomeEnvelope = classifyOutcomeEnvelope(observation.result ?? observation.output);
+      const unusableOutcome = outcomeEnvelopeIsUnsafe(outcomeEnvelope);
+      // The observer callback itself establishes dispatch when the result omits
+      // the field, but an explicit false anywhere in the transport envelope
+      // overrides that implicit authority and can never increment completion.
+      const dispatchedForCompletion = !outcomeEnvelope.request_dispatched_false;
+      const completionEvidence = !explicitNoEffect && dispatchedForCompletion && !unusableOutcome
+        && observation.success === true && isCompletionEvidence(observation);
+      const recoveryKey = observationRecoveryKey(observation, effect);
+      const failed = completionRelevant
+        && ((observation.success === false && !knownNoEffectFailure) || blockingNoEffect || (unusableOutcome && !knownNoEffectFailure));
+      if (completionRelevant && effect === "preview" && explicitNoEffect) rejectedNoEffectPreviews += 1;
+      if (completionEvidence) {
         if (effect === "apply") successfulApplyTools += 1;
         else if (effect === "preview") successfulPreviewTools += 1;
         else if (effect === "read") successfulReadTools += 1;
+        if (recoveryKey) {
+          const recovered = unresolvedFailuresByIdentity.get(recoveryKey) ?? 0;
+          if (recovered > 0) {
+            recoveredFailures += recovered;
+            unresolvedFailuresByIdentity.delete(recoveryKey);
+          }
+        }
       }
-      if (completionRelevant && ((observation.success === false && !knownNoEffectFailure) || blockingNoEffect)) failedRevitTools += 1;
+      if (failed) {
+        failedRevitTools += 1;
+        if (recoveryKey) unresolvedFailuresByIdentity.set(recoveryKey, (unresolvedFailuresByIdentity.get(recoveryKey) ?? 0) + 1);
+        else unrecoverableFailures += 1;
+      }
       if (completionRelevant && observation.success === false && knownNoEffectFailure) knownNoEffectFailures += 1;
-      if (completionRelevant && blockingNoEffect) lastCompletionRelevantSucceeded = false;
-      else if (completionRelevant && !explicitNoEffect && observation.success !== null && !knownNoEffectFailure) lastCompletionRelevantSucceeded = observation.success;
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
     finish(turnId: string, assistantText: string, teammateReceipt?: AutoGoalTeammateReceipt | null) {
@@ -174,7 +264,8 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           blockAutoGoalFromTurn(
             sessionId,
             teammateReceipt.blocked_reason?.trim()
-              || "The Revit mutation did not produce a successful target-bound post-apply verification."
+              || "The Revit mutation did not produce a successful target-bound post-apply verification.",
+            "verification_incomplete"
           );
           return;
         }
@@ -196,14 +287,16 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         const evidenceTools = requestedEffect === "apply"
           ? successfulApplyTools
           : requestedEffect === "preview"
-            ? Math.max(successfulPreviewTools, teammatePreviewReceiptCount)
+            ? successfulPreviewTools
             : successfulReadTools + successfulPreviewTools + successfulApplyTools;
+        const unresolvedFailureCount = unrecoverableFailures
+          + [...unresolvedFailuresByIdentity.values()].reduce((sum, count) => sum + count, 0);
         const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
         const verifiedNoop = requestedEffect !== "read"
           && successfulApplyTools === 0
           && successfulPreviewTools === 0
           && successfulReadTools > 0
-          && lastCompletionRelevantSucceeded === true
+          && unresolvedFailureCount === 0
           && (teammateReceipt?.apply_attempts ?? 0) === 0
           && !teammateReceipt?.blocked_reason?.trim()
           && alreadySatisfiedNoop;
@@ -222,36 +315,40 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             pending_approval: pendingApproval,
             blocked_outcome: blockedOutcome,
             unexpected_apply: unexpectedApply,
-            last_completion_relevant_succeeded: lastCompletionRelevantSucceeded
+            unresolved_failure_count: unresolvedFailureCount,
+            recovered_failure_count: recoveredFailures
           }));
         }
         if (unexpectedApply) {
-          blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`);
+          blockAutoGoalFromTurn(sessionId, `A ${requestedEffect}-only assignment dispatched an apply operation; completion requires effect reconciliation.`, "effect_reconciliation_required");
         } else if (!pendingApproval && !blockedOutcome && verifiedNoop) {
           completeAutoGoalFromValidatedTurn(sessionId, {
             turn_id: turnId,
             successful_tools: successfulReadTools + successfulPreviewTools,
-            failed_tools: failedRevitTools,
+            failed_tools: recoveredFailures,
             known_no_effect_failures: knownNoEffectFailures,
             assistant_summary: assistantText,
-            verified_noop: true
+            verified_noop: true,
+            completion_mode: "verified_noop",
+            rejected_no_effect_count: rejectedNoEffectPreviews
           });
-        } else if (!pendingApproval && !blockedOutcome && evidenceTools > 0 && lastCompletionRelevantSucceeded !== false) {
+        } else if (!pendingApproval && !blockedOutcome && evidenceTools > 0 && unresolvedFailureCount === 0) {
           completeAutoGoalFromValidatedTurn(sessionId, {
             turn_id: turnId,
             successful_tools: evidenceTools,
-            failed_tools: failedRevitTools,
+            failed_tools: recoveredFailures,
             known_no_effect_failures: knownNoEffectFailures,
-            assistant_summary: assistantText
+            assistant_summary: assistantText,
+            rejected_no_effect_count: rejectedNoEffectPreviews
           });
-        } else if ((failedRevitTools > 0 && (evidenceTools === 0 || lastCompletionRelevantSucceeded === false)) || blockedOutcome) {
-          // Preserve the final task-level blocker when the agent recovered from an
-          // exploratory read error and then grounded its conclusion in successful
-          // live evidence. A prior malformed read remains in the action log, but it
-          // must not replace a later, more specific model-state blocker.
+        } else if (unresolvedFailureCount > 0 || blockedOutcome) {
+          // Preserve a task-level blocker and every unresolved dispatched failure.
+          // Only a later authoritative success with the same route, effect, and
+          // stable request target may clear an earlier failure.
           blockAutoGoalFromTurn(sessionId, blockedOutcome
             ? assistantText || "The General Agent reported a concrete task-level blocker."
-            : "One or more live Revit tool calls failed; completion requires a clean verified turn.");
+            : "One or more live Revit tool calls failed; completion requires a clean verified turn.",
+          blockedOutcome ? terminalReasonForBlockedText(assistantText) : "execution_failure");
         }
       } catch (error) {
         console.error(JSON.stringify({
@@ -311,7 +408,7 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
     || /\b(?:candidate|match|preview)(?:\s+(?:table|list|set))?\s+(?:is|was)\s+empty\b/i.test(receiptText)
     || /\b(?:elements?|views?|sheets?|sheet numbers?|famil(?:y|ies)|types?|parameters?|marks?|targets?|candidates?)\s+(?:containing|with|matching)\s+[^:\n]{1,100}:\s*(?:none|zero|0)\b/i.test(receiptText)
   );
-  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date)\b/i.test(receiptText)
+  const alreadySatisfied = /\balready (?:conforms?|compliant|matches?|satisf(?:y|ies|ied)|correct|up[ -]to[ -]date|stops?|ends?)\b/i.test(receiptText)
     || /\b(?:candidate|match(?:ing)?|proposed[ _-]?(?:change|rename))s?[ _-]?(?:count)?\s*:\s*(?:none|zero|0)\b/i.test(receiptText)
     || /\b(?:no|zero|0)\s+(?:exact\s+)?(?:rename|renumber(?:ing)?|change|edit|update|modification)\s+candidates?\b/i.test(receiptText)
     || /\b(?:0|zero|none)\s+(?:planned|proposed|previewed)?\s*(?:changes?|edits?|actions?|renames?|updates?|modifications?|writes?)\b/i.test(receiptText)
@@ -339,47 +436,13 @@ function assistantReportsAlreadySatisfiedNoop(assistantText: string, requestedEf
   return alreadySatisfied && noMutationNeeded;
 }
 
-function objectContainsExplicitNoEffect(value: unknown, depth = 0): boolean {
-  if (depth > 6 || value === null || value === undefined) return false;
-  if (typeof value === "string") {
-    const parsed = observationObject(value);
-    return Object.keys(parsed).length > 0 && objectContainsExplicitNoEffect(parsed, depth + 1);
-  }
-  if (Array.isArray(value)) return value.some((entry) => objectContainsExplicitNoEffect(entry, depth + 1));
-  if (typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  if (record.completionEligible === false || record.completion_eligible === false) return true;
-  if (record.requestedEffectSatisfied === false || record.requested_effect_satisfied === false) return true;
-  if (record.requiresExplicitDiscardAndReopen === true || record.requires_explicit_discard_and_reopen === true) return true;
-  if (record.requiresExplicitUnloadAndOpen === true || record.requires_explicit_unload_and_open === true) return true;
-  const status = `${record.status || ""}`.trim().toLowerCase();
-  if (["already open inactive", "already loaded as link", "requires explicit action"].includes(status)) return true;
-  return Object.values(record).some((entry) => objectContainsExplicitNoEffect(entry, depth + 1));
-}
-
-function objectContainsBlockingNoEffect(value: unknown, depth = 0): boolean {
-  if (depth > 6 || value === null || value === undefined) return false;
-  if (typeof value === "string") {
-    const parsed = observationObject(value);
-    return Object.keys(parsed).length > 0 && objectContainsBlockingNoEffect(parsed, depth + 1);
-  }
-  if (Array.isArray(value)) return value.some((entry) => objectContainsBlockingNoEffect(entry, depth + 1));
-  if (typeof value !== "object") return false;
-  const record = value as Record<string, unknown>;
-  if (record.requestedEffectSatisfied === false || record.requested_effect_satisfied === false) return true;
-  if (record.requiresExplicitDiscardAndReopen === true || record.requires_explicit_discard_and_reopen === true) return true;
-  if (record.requiresExplicitUnloadAndOpen === true || record.requires_explicit_unload_and_open === true) return true;
-  const status = `${record.status || ""}`.trim().toLowerCase();
-  if (["already open inactive", "already loaded as link", "requires explicit action"].includes(status)) return true;
-  return Object.values(record).some((entry) => objectContainsBlockingNoEffect(entry, depth + 1));
-}
-
 function isExplicitNoEffectObservation(observation: AutoGoalToolObservation): boolean {
-  return objectContainsExplicitNoEffect(observation.result ?? observation.output);
+  const classification = classifyOutcomeEnvelope(observation.result ?? observation.output);
+  return classification.completion_ineligible || classification.classification_incomplete;
 }
 
 function isBlockingNoEffectObservation(observation: AutoGoalToolObservation): boolean {
-  return objectContainsBlockingNoEffect(observation.result ?? observation.output);
+  return classifyOutcomeEnvelope(observation.result ?? observation.output).blocking_no_effect;
 }
 
 function objectContainsKnownPreDispatchFailure(value: unknown, depth = 0): boolean {
@@ -537,7 +600,7 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
   appendGoalProgress(sessionId, {
     summary: `Live tool ${observation.tool} ${outcome}${observation.error ? `: ${observation.error}` : "."}`,
     artifact_paths: artifactPaths,
-    tool: observation,
+    tool: { ...observation, request_effect: observationEffect(observation) },
     work_item: {
       id: "auto.revit-work",
       title: "Complete and verify the requested Revit work",
@@ -550,15 +613,39 @@ export function recordAutoGoalToolObservation(sessionId: string, observation: Au
 
 export function completeAutoGoalFromValidatedTurn(
   sessionId: string,
-  input: { turn_id: string; successful_tools: number; failed_tools?: number; known_no_effect_failures?: number; assistant_summary: string; verified_noop?: boolean }
+  input: {
+    turn_id: string;
+    successful_tools: number;
+    failed_tools?: number;
+    known_no_effect_failures?: number;
+    rejected_no_effect_count?: number;
+    assistant_summary: string;
+    verified_noop?: boolean;
+    completion_mode?: AutoGoalCompletionMode;
+  }
 ): void {
   let goal = activeAutoGoal(sessionId);
   if (!goal || input.successful_tools < 1) return;
-  if (input.verified_noop) {
-    goal = updateGoal(goal.id, {
-      work_budget: { ...(goal.work_budget ?? {}), completion_mode: "verified_noop" }
-    });
-  }
+  const recoveredFailures = Math.max(0, input.failed_tools ?? 0);
+  const knownNoEffectFailures = Math.max(0, input.known_no_effect_failures ?? 0);
+  const rejectedNoEffectCount = Math.max(0, input.rejected_no_effect_count ?? 0);
+  const requestedEffect = requestedEffectForSession(sessionId);
+  const completionMode = input.completion_mode
+    ?? (input.verified_noop ? "verified_noop" : `successful_${requestedEffect}` as AutoGoalCompletionMode);
+  const terminalReason: AutoGoalTerminalReason = recoveredFailures > 0
+    ? "completed_after_recovery"
+    : completionMode;
+  goal = updateGoal(goal.id, {
+    work_budget: {
+      ...(goal.work_budget ?? {}),
+      completion_mode: completionMode,
+      terminal_reason: terminalReason,
+      latest_authoritative_outcome: "succeeded",
+      recovered_failure_count: recoveredFailures,
+      known_no_effect_rejection_count: knownNoEffectFailures,
+      rejected_no_effect_count: rejectedNoEffectCount
+    }
+  });
   goal = appendGoalProgress(sessionId, {
     summary: input.verified_noop
       ? `Verified that the requested Revit state was already satisfied using ${input.successful_tools} substantive live evidence call${input.successful_tools === 1 ? "" : "s"}; no write was necessary.`
@@ -571,8 +658,6 @@ export function completeAutoGoalFromValidatedTurn(
     }
   });
   const evidenceRefs: string[] = [];
-  const recoveredFailures = Math.max(0, input.failed_tools ?? 0);
-  const knownNoEffectFailures = Math.max(0, input.known_no_effect_failures ?? 0);
   const executionMethod = input.verified_noop
     ? `Backend-observed General Agent turn established a verified no-op with ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? "" : "s"}${recoveredFailures > 0 ? ` after ${recoveredFailures} earlier failed call${recoveredFailures === 1 ? "" : "s"}; the final completion-relevant call succeeded` : knownNoEffectFailures > 0 ? `; no failed calls reached Revit, and ${knownNoEffectFailures} known no-effect schema or registry rejection${knownNoEffectFailures === 1 ? " was" : "s were"} recorded before dispatch` : " and no failed calls"}, zero apply attempts, and an explicit already-satisfied result.`
     : recoveredFailures > 0
@@ -613,17 +698,65 @@ export type SidecarComputerGoalSettlement = {
   evidence?: unknown;
 };
 
-function sidecarReportedActionReceipts(evidence: unknown) {
+function sha256Json(value: unknown): { sha256: string; bytes: number } | null {
+  let serialized = "";
+  try { serialized = JSON.stringify(value); } catch { return null; }
+  if (!serialized) return null;
+  return {
+    sha256: `sha256:${createHash("sha256").update(serialized).digest("hex")}`,
+    bytes: Buffer.byteLength(serialized, "utf8")
+  };
+}
+
+function sidecarReportedActionReceipts(evidence: unknown): Array<Record<string, unknown>> {
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return [];
   const rows = Array.isArray((evidence as any).function_tools) ? (evidence as any).function_tools.slice(0, 100) : [];
   return rows.flatMap((row: any) => {
     if (!row || typeof row !== "object" || Array.isArray(row)) return [];
     const tool_name = `${row.tool_name || ""}`.trim().slice(0, 160);
     const path = `${row.path || ""}`.trim().slice(0, 500);
-    const status = row.status === "success" ? "success" : row.status === "failed" ? "failed" : "";
+    const result = observationObject(row.result);
+    const outcomeEnvelope = classifyOutcomeEnvelope({
+      request_dispatched: row.request_dispatched,
+      result: row.result
+    });
+    const unsafeReportedOutcome = outcomeEnvelopeIsUnsafe(outcomeEnvelope) || outcomeEnvelope.request_dispatched_false;
+    const status = row.status === "success" && !unsafeReportedOutcome
+      ? "success"
+      : row.status === "failed" || unsafeReportedOutcome ? "failed" : "";
     const request_effect = ["read", "preview", "apply"].includes(row.request_effect) ? row.request_effect : "";
     if (!tool_name || !status) return [];
-    return [{ tool_name, path, status, request_effect, request_dispatched: row.request_dispatched === true, call_id: `${row.call_id || ""}`.trim().slice(0, 240) }];
+    const nestedEvidence = observationObject(result.evidence);
+    const declaredDigest = `${row.evidence_sha256 || row.result_sha256 || result.evidence_sha256 || result.result_sha256 || nestedEvidence.result_json_sha256 || ""}`.trim().toLowerCase();
+    const inlineEvidence = nestedEvidence.result_json;
+    const computed = inlineEvidence !== undefined
+      ? sha256Json(inlineEvidence)
+      : row.result !== undefined ? sha256Json(row.result) : null;
+    const reportedEvidenceBytes = typeof nestedEvidence.result_json_bytes === "number"
+      && Number.isSafeInteger(nestedEvidence.result_json_bytes) && nestedEvidence.result_json_bytes >= 0
+      ? nestedEvidence.result_json_bytes : null;
+    const resultEvidenceSha256 = /^sha256:[a-f0-9]{64}$/.test(declaredDigest)
+      ? declaredDigest
+      : /^[a-f0-9]{64}$/.test(declaredDigest) ? `sha256:${declaredDigest}` : computed?.sha256 ?? null;
+    const receipt = {
+      schema: "revit-operator.sidecar-function-tool-receipt-projection/v1",
+      tool_name,
+      path,
+      status,
+      request_effect,
+      request_dispatched: outcomeEnvelope.request_dispatched_false
+        ? false
+        : outcomeEnvelope.request_dispatched_true ? true : null,
+      outcome_unknown: outcomeEnvelope.outcome_unknown,
+      reconciliation_required: outcomeEnvelope.reconciliation_required,
+      result_ok: outcomeEnvelope.ok_false ? false : typeof result.ok === "boolean" ? result.ok : null,
+      call_id: `${row.call_id || ""}`.trim().slice(0, 240),
+      step: Number.isSafeInteger(row.step) && row.step >= 0 ? row.step : null,
+      result_evidence_sha256: resultEvidenceSha256,
+      result_evidence_bytes: reportedEvidenceBytes ?? computed?.bytes ?? null,
+      result_evidence_hash_source: /^(?:sha256:)?[a-f0-9]{64}$/.test(declaredDigest) ? "reported_digest" : computed ? "backend_digest_of_reported_result" : null
+    };
+    return [{ ...receipt, receipt_sha256: sha256Json(receipt)?.sha256 ?? null }];
   });
 }
 
@@ -660,6 +793,16 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
 
   if (input?.outcome === "blocked") {
     const reason = `${input.reason || input.assistant_summary || "Operator Desktop work stopped before verified completion."}`.trim().slice(0, 2000);
+    const terminalReason = terminalReasonForBlockedText(reason);
+    goal = updateGoal(goal.id, {
+      current_phase: "blocked",
+      work_budget: {
+        ...(goal.work_budget ?? {}),
+        terminal_reason: terminalReason,
+        latest_authoritative_outcome: "blocked",
+        recovered_failure_count: 0
+      }
+    });
     appendGoalProgress(sessionId, {
       summary: reason,
       work_item: {
@@ -711,7 +854,13 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
       reported_outcome: "complete",
       reported_at: new Date().toISOString(),
       sidecar_turn_id: turnId,
-      verification_kind: verificationKind
+      verification_kind: verificationKind,
+      completion_mode: "reported_complete",
+      terminal_reason: "verification_incomplete",
+      latest_authoritative_outcome: "verification_incomplete",
+      reported_failed_tool_count: failedTools,
+      recovered_failure_count: 0,
+      rejected_no_effect_count: 0
     }
   });
   return requestGoalCompletionAudit(goal.id, {
@@ -738,9 +887,19 @@ function isKnownNoEffectFailure(observation: AutoGoalToolObservation): boolean {
     && /outcome_unknown[\s"':=]+false/i.test(serialized);
 }
 
-export function blockAutoGoalFromTurn(sessionId: string, reason: string): void {
-  const goal = activeAutoGoal(sessionId);
+export function blockAutoGoalFromTurn(sessionId: string, reason: string, terminalReason: AutoGoalTerminalReason = "task_blocked"): void {
+  let goal = activeAutoGoal(sessionId);
   if (!goal) return;
+  goal = updateGoal(goal.id, {
+    current_phase: "blocked",
+    work_budget: {
+      ...(goal.work_budget ?? {}),
+      terminal_reason: terminalReason,
+      latest_authoritative_outcome: "blocked",
+      recovered_failure_count: 0,
+      rejected_no_effect_count: 0
+    }
+  });
   appendGoalProgress(sessionId, {
     summary: reason,
     work_item: {

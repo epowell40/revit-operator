@@ -56,7 +56,11 @@ import { addProjectStandard, readProjectProfile } from "./memory/project_profile
 import { handleRequirementsHttpRoute } from "./memory/requirements_http_routes.js";
 import { requiresMemoryAuthentication } from "./memory/requirements_route_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "./openai_client.js";
-import { getDesktopComputerConfig, relayDesktopComputerResponse } from "./desktop_computer.js";
+import {
+  getDesktopComputerConfig,
+  getDesktopComputerProviderErrorReceipt,
+  relayDesktopComputerResponse
+} from "./desktop_computer.js";
 import {
   authenticateRequest,
   isPrincipalAuthMode,
@@ -1773,6 +1777,13 @@ const server = http.createServer(async (req, res) => {
         const response = await relayDesktopComputerResponse(body);
         return writeJson(res, 200, { ok: true, response });
       } catch (err) {
+        const modelCallReceipt = getDesktopComputerProviderErrorReceipt(err);
+        if (modelCallReceipt) {
+          return writeJson(res, 500, {
+            error: "Desktop computer provider request failed.",
+            model_call_receipts: [modelCallReceipt]
+          });
+        }
         const message = err instanceof Error ? err.message : "Unknown OpenAI error";
         return writeJson(res, 500, { error: message });
       }
