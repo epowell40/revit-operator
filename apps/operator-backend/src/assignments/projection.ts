@@ -188,6 +188,7 @@ function goalLifecycle(goal: GoalRecord): AssignmentLifecyclePhase {
   if (goal.status === "draft") return "understanding";
   const phase = text(goal.current_phase).toLowerCase().replace(/[\s-]+/g, "_");
   if (!phase) return "understanding";
+  if (/complete_with_issues|reported_complete/.test(phase)) return "complete_with_issues";
   if (/outcome.*uncertain|unknown.*outcome/.test(phase)) return "outcome_uncertain";
   if (/await.*approval|waiting.*approval/.test(phase)) return "awaiting_approval";
   if (/preview.*ready/.test(phase)) return "preview_ready";
@@ -402,7 +403,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     history: historyFromGoal(goal),
     created_at: goal.created_at,
     updated_at: goal.updated_at,
-    finished_at: goal.status === "complete" || goal.status === "canceled" || goal.status === "failed" ? goal.updated_at : null
+    finished_at: goal.status === "complete" || goal.status === "canceled" || goal.status === "failed" || goalLifecycle(goal) === "complete_with_issues" ? goal.updated_at : null
   };
 }
 

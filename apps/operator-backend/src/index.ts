@@ -147,7 +147,7 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { classifyAutoGoalRequest } from "./goals/auto_goal.js";
-import { supersedeBlockedAutoGoalForFreshRequest } from "./goals/auto_goal_runtime.js";
+import { settleSidecarComputerGoal, supersedeBlockedAutoGoalForFreshRequest } from "./goals/auto_goal_runtime.js";
 import {
   ASSIGNMENT_PROJECTION_SCHEMA,
   getAssignmentProjection,
@@ -1189,6 +1189,12 @@ const server = http.createServer(async (req, res) => {
       if (!sessionId) return writeJson(res, 400, { error: "session_id is required." });
       if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
       try {
+        const current = getCurrentGoalForSession(sessionId);
+        const replaceBlockedSidecar = (body as any)?.replace_blocked_sidecar === true
+          && current?.status === "blocked"
+          && current.work_budget?.mode === "sidecar_computer"
+          && current.work_budget?.source === "operator_desktop";
+        if (replaceBlockedSidecar) clearAgentGoal(sessionId, "Superseded by a fresh Operator Desktop assignment.");
         const owner = sessionOwnerForPrincipal(auth.principal);
         const goal = setAgentGoal(sessionId, {
           ...(body as any),
@@ -1210,7 +1216,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     {
-      const goalAction = url.pathname.match(/^\/api\/agent-goal\/(progress|blocked|complete)$/);
+      const goalAction = url.pathname.match(/^\/api\/agent-goal\/(progress|blocked|complete|sidecar-settle)$/);
       if (req.method === "POST" && goalAction) {
         const body = await readJson(req, 1_000_000).catch(() => ({}));
         const sessionId = trimText((body as any)?.session_id ?? (body as any)?.sessionId, 160);
@@ -1218,8 +1224,9 @@ const server = http.createServer(async (req, res) => {
         if (!sessionAccessAllowed(res, sessionId, auth.principal)) return;
         try {
           const action = goalAction[1];
-          const goal =
-            action === "progress"
+          const goal = action === "sidecar-settle"
+            ? settleSidecarComputerGoal(sessionId, body as any)
+            : action === "progress"
               ? appendGoalProgress(sessionId, body)
               : action === "blocked"
                 ? markAgentGoalBlocked(sessionId, (body as any)?.reason ?? (body as any)?.summary ?? "Blocked.", (body as any)?.evidence)

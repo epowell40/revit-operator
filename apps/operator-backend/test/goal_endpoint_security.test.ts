@@ -389,6 +389,45 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
     body: JSON.stringify({ related_session_id: bobSession })
   });
   assert.equal(bindToBobSession.status, 403);
+
+  const sidecarSessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: { authorization: aliceAuth } });
+  const sidecarSession = (await sidecarSessionResponse.json() as { session_id: string }).session_id;
+  const sidecarGoalResponse = await fetch(`${base}/api/agent-goal`, {
+    method: "POST",
+    headers: headers(aliceAuth),
+    body: JSON.stringify({
+      session_id: sidecarSession,
+      title: "Operator Desktop execution",
+      objective: "Execute and verify one local outer-agent task.",
+      acceptance_criteria: ["The task is complete."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    })
+  });
+  assert.equal(sidecarGoalResponse.status, 200);
+  const bobSidecarSettlement = await fetch(`${base}/api/agent-goal/sidecar-settle`, {
+    method: "POST",
+    headers: headers(bobAuth),
+    body: JSON.stringify({ session_id: sidecarSession, outcome: "complete", turn_id: "forged-bob-turn", assistant_summary: "forged" })
+  });
+  assert.equal(bobSidecarSettlement.status, 403);
+  const aliceSidecarSettlement = await fetch(`${base}/api/agent-goal/sidecar-settle`, {
+    method: "POST",
+    headers: headers(aliceAuth),
+    body: JSON.stringify({
+      session_id: sidecarSession,
+      outcome: "complete",
+      turn_id: "alice-sidecar-turn",
+      assistant_summary: "The authenticated Sidecar completed the task.",
+      successful_tools: 1,
+      verification_kind: "sidecar_turn_receipts",
+      evidence: { tool_name: "inspect_revit_context", status: "success" }
+    })
+  });
+  assert.equal(aliceSidecarSettlement.status, 200);
+  const settledSidecarGoal = (await aliceSidecarSettlement.json() as { goal: { status: string; completion_audit: { complete: boolean } } }).goal;
+  assert.equal(settledSidecarGoal.status, "active");
+  assert.equal(settledSidecarGoal.completion_audit.complete, false);
 });
 
 test("principal auto-goals bind ownership to the requester so approval authority rejects self-approval", async t => {

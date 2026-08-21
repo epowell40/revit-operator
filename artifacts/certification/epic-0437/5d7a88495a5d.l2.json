@@ -476,7 +476,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/projection.ts",
-      "sha256": "sha256:3766e06f6fdad18b446fc6b075dc5138a9bcca9ee180af9b2e5f9657e8d5edcd"
+      "sha256": "sha256:15a77ba56a62f112c9904f556902761db6590a1179a54e0bd5eb01b7d9982597"
     },
     {
       "path": "apps/operator-backend/src/attachments/extract.ts",
@@ -1701,7 +1701,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:ea9165199e3c199c70a0ae9d2c84c9ac5352e8e313fd2f50310065c333219d7b"
+      "sha256": "sha256:3b0930dec46a0558d8e78126d65ec35c1d79326350d57c21d731014f7a3c486b"
     },
     {
       "path": "apps/operator-backend/src/goals/list_cache.ts",
@@ -1753,7 +1753,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:d3a180ad0315a32a5ca8198867c442266aef904bf3872c71ba7545a8bc82d7d4"
+      "sha256": "sha256:b055415720952f08d1a3de9884402b738cb31e42c7f76914d82c1520a3cab5ed"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -2273,7 +2273,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_projection.test.ts",
-      "sha256": "sha256:1d79164245fe9b6141109a630f585a64285022c9492823f55e1d0d686bd96cf5"
+      "sha256": "sha256:8fbf55585ae1f38412237a440a143e99f5736bc9b5b4945c2344e2289b55dd55"
     },
     {
       "path": "apps/operator-backend/test/attachment_upload_request.test.ts",
@@ -2777,11 +2777,11 @@
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
-      "sha256": "sha256:29cda4a61dea24c111ac916e9765a6f62783aa844fd90e304ab9b9296070b329"
+      "sha256": "sha256:0cc3e440f314b15b97b8059f9afae9424cc52daa58a36fca33a65b25468c189b"
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
-      "sha256": "sha256:fe965774aca9eb3ac2f4f55985742ddb9bead1a322fa692f152ffc43440814e5"
+      "sha256": "sha256:55141850fa91045e252b9bfc76eb4d7d1a6691f268e5165048b3b199ddb284b0"
     },
     {
       "path": "apps/operator-backend/test/http_json_compression.test.ts",
@@ -5157,7 +5157,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:8e8308ed3c0869c98eae212debc21ea854d0e5b6ed5211f7b646f207bd4b81af",
+  "inputs_hash": "sha256:be67830e2a2f39e225ca5de864ea9b35f39dbb7b17ffdd751fbb496ffbc614ef",
   "result": {
     "passed": true,
     "checks": [

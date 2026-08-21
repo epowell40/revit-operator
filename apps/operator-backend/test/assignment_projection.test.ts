@@ -98,6 +98,26 @@ test("goal projection exposes the requested effect and explicit verified no-op c
   assert.equal(projectGoalAssignment(goal({ work_budget: { completion_mode: "invented" } })).execution.completion_mode, null);
 });
 
+test("Sidecar-reported completion projects as complete with issues until independently verified", () => {
+  const assignment = projectGoalAssignment(goal({
+    current_phase: "complete_with_issues",
+    work_items: [workItem("sidecar.requested-work", "complete")],
+    completion_audit: {
+      id: "audit-sidecar",
+      requested_at: CREATED_AT,
+      complete: false,
+      criteria_results: [{ criterion: "Report the result", status: "unknown", evidence_refs: [] }],
+      evidence_summary: "The Sidecar supplied execution receipts.",
+      remaining_work: ["Independent verification"],
+      blockers: [],
+      recommendation: "Retain complete-with-issues truth."
+    }
+  }));
+  assert.equal(assignment.lifecycle.phase, "complete_with_issues");
+  assert.equal(assignment.verification.state, "incomplete");
+  assert.equal(assignment.finished_at, goal().updated_at);
+});
+
 test("task projection preserves preview approval, target binding, effects, and uncertain truth", () => {
   const assignment = projectTaskAssignment({
     id: "task-1",

@@ -1,11 +1,13 @@
 import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import {
+  appendGoalEvidence,
   appendGoalProgress,
   appendTrustedServerGoalValidation,
   getActiveGoalForSession,
   getCurrentGoalForSession,
   markAgentGoalBlocked,
   markAgentGoalComplete,
+  requestGoalCompletionAudit,
   transitionGoal,
   updateGoal
 } from "./service.js";
@@ -596,6 +598,108 @@ export function completeAutoGoalFromValidatedTurn(
     evidence_summary: input.verified_noop
       ? `Verified no-op: ${input.successful_tools} substantive successful live Revit evidence call${input.successful_tools === 1 ? " was" : "s were"} observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : knownNoEffectFailures > 0 ? ` after ${knownNoEffectFailures} pre-dispatch schema or registry rejection${knownNoEffectFailures === 1 ? "" : "s"}` : ""}, the requested model state was already satisfied, and no apply was attempted.`
       : `${input.successful_tools} successful live Revit tool calls were observed${recoveredFailures > 0 ? ` after ${recoveredFailures} recovered failure${recoveredFailures === 1 ? "" : "s"}` : knownNoEffectFailures > 0 ? ` after ${knownNoEffectFailures} pre-dispatch schema or registry rejection${knownNoEffectFailures === 1 ? "" : "s"}` : ""} and the General Agent returned a result.`
+  });
+}
+
+export type SidecarComputerGoalSettlement = {
+  outcome: "complete" | "blocked";
+  turn_id: string;
+  assistant_summary?: string;
+  reason?: string;
+  successful_tools?: number;
+  failed_tools?: number;
+  verification_kind?: string;
+  evidence?: unknown;
+};
+
+function activeSidecarComputerGoal(sessionId: string) {
+  const goal = getActiveGoalForSession(sessionId);
+  return goal?.work_budget?.mode === "sidecar_computer"
+    && goal.work_budget?.source === "operator_desktop"
+    ? goal
+    : null;
+}
+
+/**
+ * Settles work executed by the authenticated Operator Desktop outer-agent
+ * lane. A caller-owned Sidecar report is persisted as completion evidence but
+ * can never mint backend validator receipts or impersonate independently
+ * verified completion. The projection therefore becomes complete-with-issues
+ * until a trusted verifier validates the model-state claims.
+ */
+export function settleSidecarComputerGoal(sessionId: string, input: SidecarComputerGoalSettlement) {
+  let goal = activeSidecarComputerGoal(sessionId);
+  if (!goal) throw new Error("No active Operator Desktop assignment for session.");
+  const turnId = `${input?.turn_id || ""}`.trim().slice(0, 240);
+  if (!turnId) throw new Error("turn_id is required.");
+  const successfulTools = Math.max(0, Math.floor(Number(input?.successful_tools) || 0));
+  const failedTools = Math.max(0, Math.floor(Number(input?.failed_tools) || 0));
+  const verificationKind = `${input?.verification_kind || "sidecar_turn_receipts"}`.trim().slice(0, 240) || "sidecar_turn_receipts";
+
+  if (input?.outcome === "blocked") {
+    const reason = `${input.reason || input.assistant_summary || "Operator Desktop work stopped before verified completion."}`.trim().slice(0, 2000);
+    appendGoalProgress(sessionId, {
+      summary: reason,
+      work_item: {
+        id: "sidecar.requested-work",
+        title: "Complete and verify the requested work",
+        status: "blocked",
+        blocker: reason,
+        result_summary: reason
+      }
+    });
+    return markAgentGoalBlocked(sessionId, reason, {
+      source: "operator_desktop",
+      turn_id: turnId,
+      verification_kind: verificationKind,
+      successful_tools: successfulTools,
+      failed_tools: failedTools,
+      evidence: input.evidence ?? null
+    });
+  }
+
+  if (input?.outcome !== "complete") throw new Error("outcome must be complete or blocked.");
+  const assistantSummary = `${input.assistant_summary || "Operator Desktop reported successful completion."}`.trim().slice(0, 3000);
+  goal = appendGoalProgress(sessionId, {
+    summary: assistantSummary,
+    work_item: {
+      id: "sidecar.requested-work",
+      title: "Complete and verify the requested work",
+      status: "complete",
+      result_summary: assistantSummary
+    }
+  });
+  goal = appendGoalEvidence(goal.id, {
+    summary: `Operator Desktop reported completion using '${verificationKind}'.`,
+    details: {
+      source: "operator_desktop",
+      turn_id: turnId,
+      verification_kind: verificationKind,
+      successful_tools: successfulTools,
+      failed_tools: failedTools,
+      evidence: input.evidence ?? null
+    }
+  });
+  goal = updateGoal(goal.id, {
+    current_phase: "complete_with_issues",
+    current_step: "Awaiting independent verification of Sidecar-reported evidence",
+    progress_summary: assistantSummary,
+    work_budget: {
+      ...(goal.work_budget ?? {}),
+      reported_outcome: "complete",
+      reported_at: new Date().toISOString(),
+      sidecar_turn_id: turnId,
+      verification_kind: verificationKind
+    }
+  });
+  return requestGoalCompletionAudit(goal.id, {
+    criteria_results: goal.acceptance_criteria.map((criterion) => ({
+      criterion,
+      status: "unknown",
+      evidence_refs: []
+    })),
+    evidence_summary: `${assistantSummary} Operator Desktop supplied execution receipts, but no independent backend validator has yet verified the model-state claims.`,
+    recommendation: "The Sidecar-reported work is finished; retain complete-with-issues truth until an independent validator verifies the attached evidence."
   });
 }
 
