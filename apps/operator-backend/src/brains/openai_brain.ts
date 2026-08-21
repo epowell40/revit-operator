@@ -28,7 +28,11 @@ import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
 import { projectContextForSpeedDiet, REVIT_MODEL_OPEN_PATH_RULE } from "../revit_host_model_inventory.js";
 import { captureRequirementsResponseGuard, enforceRequirementsResponseGuard, formatRequirementsPromptBlockSafely } from "../memory/requirements_response_policy.js";
 import { createOpenAiClient, resolveOpenAiApiKey } from "../openai_client.js";
-import { createOpenAiModelCallReceipt } from "../model_call_telemetry.js";
+import {
+  openAiUsageNotificationsEnabled,
+  recordOpenAiModelCallReceipt,
+  recordOpenAiUsageTelemetry
+} from "../model_call_telemetry.js";
 import { executeWorkbenchActions, maxWorkbenchActions, type WorkbenchAction, type WorkbenchActionResult } from "../workbench/workbench_runner.js";
 import { createArtifactShare } from "../artifacts/artifact_bus.js";
 import {
@@ -221,11 +225,6 @@ type OpenAiDecision = {
 };
 
 const lastPermissionSignatureBySession = new Map<string, string>();
-
-function openAiUsageNotificationsEnabled(): boolean {
-  const v = (process.env.OPERATOR_OPENAI_USAGE_NOTIFICATIONS ?? "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes" || v === "on";
-}
 
 function extractResponsesApiOutputText(response: any): string {
   const direct = typeof response?.output_text === "string" ? response.output_text : "";
@@ -22796,38 +22795,34 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
         response = await client.responses.create(requestBody, abortSignal ? { signal: abortSignal } : undefined);
       }
     } catch (err) {
-      const receipt = createOpenAiModelCallReceipt({
-        route: route.route,
-        requested_model: route.model,
-        reasoning_effort: route.reasoning_effort,
-        started_at_utc: requestStartedAtUtc,
-        duration_ms: Date.now() - requestStartedMs,
-        error: err
+      recordOpenAiModelCallReceipt({
+        receipts: modelCallReceipts,
+        receipt_input: {
+          route: route.route,
+          requested_model: route.model,
+          reasoning_effort: route.reasoning_effort,
+          started_at_utc: requestStartedAtUtc,
+          duration_ms: Date.now() - requestStartedMs,
+          error: err
+        },
+        append_receipt: receipt => appendEvent(r.session_id, "assistant", "model.call.receipt", receipt)
       });
-      modelCallReceipts.push(receipt);
-      try {
-        appendEvent(r.session_id, "assistant", "model.call.receipt", receipt);
-      } catch {
-        // A telemetry persistence failure must not mask the provider error.
-      }
       const message = err instanceof Error ? err.message : "Unknown OpenAI error";
       return { error: `Operator backend error while calling the model: ${message}` };
     }
     const modelLatencyMs = Date.now() - requestStartedMs;
-    const modelCallReceipt = createOpenAiModelCallReceipt({
-      route: route.route,
-      requested_model: route.model,
-      reasoning_effort: route.reasoning_effort,
-      started_at_utc: requestStartedAtUtc,
-      duration_ms: modelLatencyMs,
-      response
+    const modelCallReceipt = recordOpenAiModelCallReceipt({
+      receipts: modelCallReceipts,
+      receipt_input: {
+        route: route.route,
+        requested_model: route.model,
+        reasoning_effort: route.reasoning_effort,
+        started_at_utc: requestStartedAtUtc,
+        duration_ms: modelLatencyMs,
+        response
+      },
+      append_receipt: receipt => appendEvent(r.session_id, "assistant", "model.call.receipt", receipt)
     });
-    modelCallReceipts.push(modelCallReceipt);
-    try {
-      appendEvent(r.session_id, "assistant", "model.call.receipt", modelCallReceipt);
-    } catch {
-      // Receipt propagation on ChatResponse remains authoritative for this turn.
-    }
 
     const rawOutputText = extractResponsesApiOutputText(response);
 
@@ -22879,49 +22874,19 @@ async function decideOpenAiInternal(req: ChatRequest, abortSignal?: AbortSignal)
       };
     }
 
-    try {
-      const inputTokens = modelCallReceipt.tokens.input_tokens;
-      const cachedInputTokens = modelCallReceipt.tokens.cached_input_tokens;
-      const outputTokens = modelCallReceipt.tokens.output_tokens;
-      const reasoningOutputTokens = modelCallReceipt.tokens.reasoning_output_tokens;
-      const totalTokens = modelCallReceipt.tokens.total_tokens;
-      if (openAiUsageNotificationsEnabled()) {
-        appendNotification(req.session_id, "openai.usage", `OpenAI usage: model=${route.model}${inputTokens !== null ? `, in=${inputTokens}` : ""}${outputTokens !== null ? `, out=${outputTokens}` : ""}${totalTokens !== null ? `, total=${totalTokens}` : ""}`, {
-          model: route.model,
-          input_tokens: inputTokens,
-          cached_input_tokens: cachedInputTokens,
-          output_tokens: outputTokens,
-          reasoning_output_tokens: reasoningOutputTokens,
-          total_tokens: totalTokens
-        });
-        appendEvent(req.session_id, "assistant", "openai.usage", {
-          model: route.model,
-          input_tokens: inputTokens,
-          cached_input_tokens: cachedInputTokens,
-          output_tokens: outputTokens,
-          reasoning_output_tokens: reasoningOutputTokens,
-          total_tokens: totalTokens
-        });
-      }
-      appendEvent(req.session_id, "assistant", "speed.timing", {
-        route: route.route,
-        reason: route.reason,
-        model: route.model,
-        reasoning_effort: route.reasoning_effort,
-        call_id: modelCallReceipt.call_id,
-        success: modelCallReceipt.success,
-        prompt_build_ms: promptBuildMs,
-        model_latency_ms: modelLatencyMs,
-        input_chars: inputChars,
-        input_tokens: inputTokens,
-        cached_input_tokens: cachedInputTokens,
-        output_tokens: outputTokens,
-        reasoning_output_tokens: reasoningOutputTokens,
-        total_tokens: totalTokens
-      });
-    } catch {
-      // ignore usage telemetry errors
-    }
+    recordOpenAiUsageTelemetry({
+      receipt: modelCallReceipt,
+      route: route.route,
+      route_reason: route.reason,
+      model: route.model,
+      reasoning_effort: route.reasoning_effort,
+      prompt_build_ms: promptBuildMs,
+      model_latency_ms: modelLatencyMs,
+      input_chars: inputChars,
+      usage_notifications_enabled: openAiUsageNotificationsEnabled(),
+      append_event: (eventType, payload) => appendEvent(req.session_id, "assistant", eventType, payload),
+      append_notification: (eventType, message, payload) => appendNotification(req.session_id, eventType, message, payload)
+    });
     const workbenchNamespaceCorrection = buildWorkbenchNamespaceCorrection(
       decision,
       normalizeWorkbenchActions(decision.workbench_actions)

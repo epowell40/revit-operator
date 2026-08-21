@@ -4,6 +4,23 @@ import { normalizeModelId, type ReasoningEffort, type SpeedRouteKind } from "./s
 
 export type ModelCallRoute = SpeedRouteKind | "desktop_computer";
 
+type TelemetryPayload = Record<string, unknown>;
+
+export type OpenAiUsageTelemetrySink = {
+  append_event: (event_type: string, payload: TelemetryPayload) => void;
+  append_notification: (event_type: string, message: string, payload: TelemetryPayload) => void;
+};
+
+export type OpenAiModelCallReceiptInput = {
+  route: ModelCallRoute;
+  requested_model: string;
+  reasoning_effort: ReasoningEffort;
+  started_at_utc: string;
+  duration_ms: number;
+  response?: unknown;
+  error?: unknown;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -37,6 +54,11 @@ export function extractOpenAiTokenUsage(usageValue: unknown): ModelCallTokenUsag
   };
 }
 
+export function openAiUsageNotificationsEnabled(): boolean {
+  const value = (process.env.OPERATOR_OPENAI_USAGE_NOTIFICATIONS ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 function providerErrorCode(error: unknown): string | null {
   const record = asRecord(error);
   const explicit = boundedProviderValue(record.code);
@@ -46,15 +68,7 @@ function providerErrorCode(error: unknown): string | null {
   return error instanceof Error ? boundedProviderValue(error.name) : null;
 }
 
-export function createOpenAiModelCallReceipt(args: {
-  route: ModelCallRoute;
-  requested_model: string;
-  reasoning_effort: ReasoningEffort;
-  started_at_utc: string;
-  duration_ms: number;
-  response?: unknown;
-  error?: unknown;
-}): ModelCallReceipt {
+export function createOpenAiModelCallReceipt(args: OpenAiModelCallReceiptInput): ModelCallReceipt {
   const response = asRecord(args.response);
   const providerCallId = boundedProviderValue(response.id);
   const requestedModel = normalizeModelId(args.requested_model, "unknown");
@@ -75,4 +89,69 @@ export function createOpenAiModelCallReceipt(args: {
     error_code: args.error === undefined ? null : providerErrorCode(args.error),
     tokens: extractOpenAiTokenUsage(response.usage)
   };
+}
+
+export function recordOpenAiModelCallReceipt(args: {
+  receipts: ModelCallReceipt[];
+  receipt_input: OpenAiModelCallReceiptInput;
+  append_receipt: (receipt: ModelCallReceipt) => void;
+}): ModelCallReceipt {
+  const receipt = createOpenAiModelCallReceipt(args.receipt_input);
+  args.receipts.push(receipt);
+  try {
+    args.append_receipt(receipt);
+  } catch {
+    // Receipt propagation through the caller remains authoritative for this turn.
+  }
+  return receipt;
+}
+
+export function recordOpenAiUsageTelemetry(args: OpenAiUsageTelemetrySink & {
+  receipt: ModelCallReceipt;
+  route: SpeedRouteKind;
+  route_reason: string;
+  model: string;
+  reasoning_effort: ReasoningEffort;
+  prompt_build_ms: number;
+  model_latency_ms: number;
+  input_chars: number;
+  usage_notifications_enabled: boolean;
+}): void {
+  try {
+    const { input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens } = args.receipt.tokens;
+    const usagePayload = {
+      model: args.model,
+      input_tokens,
+      cached_input_tokens,
+      output_tokens,
+      reasoning_output_tokens,
+      total_tokens
+    };
+    if (args.usage_notifications_enabled) {
+      args.append_notification(
+        "openai.usage",
+        `OpenAI usage: model=${args.model}${input_tokens !== null ? `, in=${input_tokens}` : ""}${output_tokens !== null ? `, out=${output_tokens}` : ""}${total_tokens !== null ? `, total=${total_tokens}` : ""}`,
+        { ...usagePayload }
+      );
+      args.append_event("openai.usage", { ...usagePayload });
+    }
+    args.append_event("speed.timing", {
+      route: args.route,
+      reason: args.route_reason,
+      model: args.model,
+      reasoning_effort: args.reasoning_effort,
+      call_id: args.receipt.call_id,
+      success: args.receipt.success,
+      prompt_build_ms: args.prompt_build_ms,
+      model_latency_ms: args.model_latency_ms,
+      input_chars: args.input_chars,
+      input_tokens,
+      cached_input_tokens,
+      output_tokens,
+      reasoning_output_tokens,
+      total_tokens
+    });
+  } catch {
+    // Telemetry failures must not mask a completed provider response.
+  }
 }
