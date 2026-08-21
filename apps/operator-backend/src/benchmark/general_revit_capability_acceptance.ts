@@ -382,35 +382,58 @@ function durableSpecificRevitPaths(attempt: GeneralRevitAttempt): string[] {
   return [...paths];
 }
 
-function durableLifecycle(attempt: GeneralRevitAttempt): { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[]; completionModes: string[] } {
+type DurableLifecycleEntry = {
+  goalId: string;
+  completed: boolean;
+  blocked: boolean;
+  verified: boolean;
+  requestedEffect: GeneralRevitExpectedEffect | null;
+  completionMode: string;
+};
+
+type DurableLifecycle = { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[]; completionModes: string[]; assignments: DurableLifecycleEntry[] };
+
+function durableLifecycle(attempt: GeneralRevitAttempt): DurableLifecycle {
   let completed = false;
   let blocked = false;
   let verified = false;
   const requestedEffects = new Set<GeneralRevitExpectedEffect>();
   const completionModes = new Set<string>();
+  const assignments: DurableLifecycleEntry[] = [];
   for (const assignment of durableAssignments(attempt)) {
     const lifecycle = assignment.lifecycle && typeof assignment.lifecycle === "object" && !Array.isArray(assignment.lifecycle)
       ? assignment.lifecycle as { phase?: unknown; source_status?: unknown } : {};
     const phase = String(lifecycle.phase || lifecycle.source_status || "").trim().toLowerCase();
-    completed ||= ["complete", "completed", "verified"].includes(phase);
-    blocked ||= ["blocked", "failed", "outcome_unknown"].includes(phase);
+    const assignmentCompleted = ["complete", "completed", "verified"].includes(phase);
+    const assignmentBlocked = ["blocked", "failed", "outcome_unknown"].includes(phase);
+    completed ||= assignmentCompleted;
+    blocked ||= assignmentBlocked;
     const verification = assignment.verification && typeof assignment.verification === "object" && !Array.isArray(assignment.verification)
       ? assignment.verification as { state?: unknown; criteria?: unknown } : {};
     const state = String(verification.state || "").trim().toLowerCase();
     const criteria = Array.isArray(verification.criteria) ? verification.criteria : [];
-    verified ||= ["pass", "passed", "verified", "complete", "completed"].includes(state)
+    const assignmentVerified = ["pass", "passed", "verified", "complete", "completed"].includes(state)
       || (criteria.length > 0 && criteria.every((criterion) => {
         const status = criterion && typeof criterion === "object" ? String((criterion as { status?: unknown }).status || "").toLowerCase() : "";
         return ["pass", "passed", "verified"].includes(status);
       }));
+    verified ||= assignmentVerified;
     const execution = assignment.execution && typeof assignment.execution === "object" && !Array.isArray(assignment.execution)
       ? assignment.execution as { requested_effect?: unknown; completion_mode?: unknown } : {};
     const requestedEffect = String(execution.requested_effect || "").trim().toLowerCase();
     if (requestedEffect === "read" || requestedEffect === "preview" || requestedEffect === "apply") requestedEffects.add(requestedEffect);
     const completionMode = String(execution.completion_mode || "").trim().toLowerCase();
     if (completionMode) completionModes.add(completionMode);
+    assignments.push({
+      goalId: String(assignment.source_record_id || "").trim(),
+      completed: assignmentCompleted,
+      blocked: assignmentBlocked,
+      verified: assignmentVerified,
+      requestedEffect: requestedEffect === "read" || requestedEffect === "preview" || requestedEffect === "apply" ? requestedEffect : null,
+      completionMode
+    });
   }
-  return { completed, blocked, verified, requestedEffects: [...requestedEffects], completionModes: [...completionModes] };
+  return { completed, blocked, verified, requestedEffects: [...requestedEffects], completionModes: [...completionModes], assignments };
 }
 
 function durableResultSummary(attempt: GeneralRevitAttempt): string {
@@ -655,6 +678,26 @@ function validatedActionReceipts(evidence: Record<string, unknown>): ValidatedAc
     const laterSamePath = rows.slice(index + 1).some((later) => later && canonicalBenchmarkRevitPath(String(later.path || "")) === path);
     return laterSamePath ? [] : [{ path, effect: effect as GeneralRevitExpectedEffect, capabilityId, row }];
   });
+}
+
+function durableReceiptBoundToLifecycle(
+  durable: DurableLifecycle,
+  receipts: ValidatedActionReceipt[],
+  expectedPaths: Set<string>,
+  expectedEffect: GeneralRevitExpectedEffect,
+  options: { requireVerified?: boolean; completionMode?: string; requireReceiptEffect?: boolean } = {}
+): boolean {
+  const requireReceiptEffect = options.requireReceiptEffect !== false;
+  return receipts.some((receipt) => expectedPaths.has(receipt.path)
+    && (!requireReceiptEffect || receipt.effect === expectedEffect)
+    && durable.assignments.some((assignment) =>
+      assignment.goalId.length > 0
+      && assignment.goalId === String(receipt.row.goal_id || "").trim()
+      && assignment.completed
+      && !assignment.blocked
+      && (!options.requireVerified || assignment.verified)
+      && assignment.requestedEffect === expectedEffect
+      && (!options.completionMode || assignment.completionMode === options.completionMode)));
 }
 
 function successfulSemanticCapabilityIds(evidence: Record<string, unknown>): Set<string> {
@@ -951,10 +994,15 @@ export function evaluateGeneralRevitCapabilityAttempt(
     || durablePaths.size > 0;
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
+  const durableEffectReceiptCompleted = durableReceiptBoundToLifecycle(
+    durable, durableReceipts, expectedPaths, testCase.expected_effect
+  );
+  const durableVerifiedEffectReceiptCompleted = durableReceiptBoundToLifecycle(
+    durable, durableReceipts, expectedPaths, testCase.expected_effect, { requireVerified: true }
+  );
   const recoveredCanonicalTimeout = attempt.ok === false
     && /^Computer run exceeded \d+ms\.$/i.test(String(attempt.error || "").trim())
-    && durable.completed && durable.verified && !durable.blocked
-    && durable.requestedEffects.includes(testCase.expected_effect)
+    && durableVerifiedEffectReceiptCompleted
     && durableResultSummary(attempt).length > 0;
   const attemptSucceeded = attempt.ok !== false || recoveredCanonicalTimeout;
   const assistantIncomplete = assistantReportsIncompleteMutation(attempt);
@@ -993,8 +1041,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const verifiedNoop = testCase.expected_effect === "apply" && testCase.allow_verified_noop === true
     && answerAssertionPassed === true && successfulExpectedPathObserved && !applyDispatched
     && assistantReportsVerifiedNoop(attempt) && !assistantBlocked && !assistantIncomplete
-    && durable.completed && durable.verified && durable.requestedEffects.includes("apply")
-    && durable.completionModes.includes("verified_noop");
+    && durableReceiptBoundToLifecycle(
+      durable, durableReceipts, expectedPaths, "apply",
+      { requireVerified: true, completionMode: "verified_noop", requireReceiptEffect: false }
+    );
   const directPreviewDispatched = rows.some((row) => rowMatchesExpectedPathAndEffect(row, "preview"))
     || rows.some((row) => successfulDynamicRuntimeAlternative(row, "preview"));
   // A certified preview is a stronger non-mutating observation than a plain
@@ -1010,8 +1060,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && (assistantBlocked || durable.blocked || teammate.blocked)
     && !outcomeUnknown && !substantiveFailedAction && !teammate.mutationAttempted
     && !refusalReason;
-  const durableEffectCompleted = durable.completed && durableReceipts.some((receipt) =>
-    receipt.effect === testCase.expected_effect && expectedPaths.has(receipt.path));
+  const durableEffectCompleted = durableEffectReceiptCompleted;
   const requestedEffectSatisfied = testCase.expected_effect === "apply"
     ? applyDispatched || verifiedNoop
     : testCase.expected_effect === "preview"
@@ -1020,7 +1069,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
   const targetBoundPreviewVerificationMissing = testCase.require_target_bound_preview_verification === true && !teammate.verified;
   const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked && !missingTargetClarification
-    && !targetBoundPreviewVerificationMissing && (dispatched || durable.completed);
+    && !targetBoundPreviewVerificationMissing && (dispatched || durableEffectCompleted);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;

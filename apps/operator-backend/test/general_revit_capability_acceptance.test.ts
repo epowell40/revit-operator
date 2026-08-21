@@ -299,12 +299,13 @@ test("fixture oracles accept truthful view-rename no-ops and verify the bounded 
       "The dry-run reported 0 renames, 2 unchanged, 0 errors. Nothing was applied."
     ].join("\n"),
     assignment_projection: { assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
       verification: { state: "verified", criteria: [{ status: "pass" }] },
       execution: { requested_effect: "apply", completion_mode: "verified_noop" }
     }] },
-    durable_tool_evidence: { successful_paths: [viewNames.dispatch_any_of[0]] }
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read")
   });
   assert.equal(capturedViewNoop.answer_assertion_passed, true);
   assert.equal(capturedViewNoop.tier, "verified");
@@ -1997,6 +1998,7 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
 test("durable read evidence cannot satisfy a preview contract without matching effect truth", () => {
   const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, false);
   const assignment = {
+    source_record_id: "fixture-goal",
     lifecycle: { phase: "complete" },
     evidence: { entries: [{ summary: "Live tool revit_schedules completed." }] },
     verification: { state: "verified", criteria: [{ status: "pass" }] },
@@ -2028,6 +2030,7 @@ test("fixture-grounded zero-candidate preview completes only with durable verifi
   ].join("\n");
   const durableNoop = {
     assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       evidence: { entries: [{ summary: "Live tool revit_list_sheets completed." }] },
       verification: { state: "verified", criteria: [{ status: "pass" }] },
@@ -2122,6 +2125,7 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
     durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "verified", criteria: [{ status: "pass" }] },
@@ -2147,6 +2151,7 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
     durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "verified", criteria: [{ status: "pass" }] },
@@ -2167,6 +2172,7 @@ test("Snowdon view-range no-op accepts the grounded live Markdown receipt", () =
     durable_tool_evidence: durableReceiptEvidence("/revit/views", "preview"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "verified", criteria: [{ status: "pass" }] },
@@ -2595,6 +2601,7 @@ test("Snowdon sheet-number no-op oracle accepts Markdown counts and native camel
 test("captured cohort wording keeps fixture facts while remaining presentation-neutral", () => {
   const completeProjection = (requested_effect: "read" | "preview", tool: string, completion_mode?: string) => ({
     assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       plan: { steps: [] },
       evidence: { entries: [{ summary: `Live tool ${tool} completed.` }] },
@@ -2718,6 +2725,7 @@ test("a session-bound completed assignment recovers an outer benchmark timeout w
   ].join("\n");
   const assignment_projection = {
     assignments: [{
+      source_record_id: "fixture-goal",
       lifecycle: { phase: "complete" },
       plan: { steps: [{ result_summary: resultSummary }] },
       evidence: { entries: [{ summary: "Live tool revit_sheets completed." }] },
@@ -2730,6 +2738,7 @@ test("a session-bound completed assignment recovers an outer benchmark timeout w
     error: "Computer run exceeded 300000ms.",
     assistant_message: "",
     effect_state: "not_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/sheets", "read"),
     assignment_projection
   });
   assert.equal(recovered.tier, "verified");
@@ -3070,8 +3079,10 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Pattern: each view name exactly matches its associated level name. L2 already conforms. Renames: none required.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [{ summary: "Live tool revit_views completed." }] },
         verification: { state: "passed", criteria: [{ status: "pass" }] },
@@ -3090,8 +3101,10 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Inspected and verified all 10 HVAC floor-plan views. The established pattern is view name = associated level/area name, preserving identifiers such as Block 35. The Level 2 view already conforms: L2 -> L2 (view ID 9948). No renames were required. No elements or other views were changed.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [
           { summary: "Live tool revit_views completed." },
@@ -3112,8 +3125,10 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Inspected all 10 Mechanical/HVAC floor-plan views. The established pattern is view name = associated level/block name. The Level 2 view already conforms: 9948: L2 -> level L2. No views were renamed, and no model content was altered. Final readback verified the name remains L2.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [
           { summary: "Live tool revit_views completed." },
@@ -3134,8 +3149,10 @@ test("a fixture-oracled no-op can verify an already-satisfied conditional mutati
     ok: true,
     assistant_message: "Preview complete — no changes needed. The other HVAC levels use the level name alone for both views. Level 2 already matches: Ceiling Plan L2 -> L2 and Floor Plan L2 -> L2. Dry-run result: 0 renames, 2 unchanged, 0 errors.",
     effect_state: "read_only_dispatched",
+    durable_tool_evidence: durableReceiptEvidence("/revit/views", "read"),
     assignment_projection: {
       assignments: [{
+        source_record_id: "fixture-goal",
         lifecycle: { phase: "complete" },
         evidence: { entries: [
           { summary: "Live tool revit_views completed." },
@@ -4099,6 +4116,7 @@ test("durable capability effects require one terminal receipt binding the expect
     ...overrides
   });
   const assignmentProjection = { assignments: [{
+    source_record_id: "goal-action-bound",
     lifecycle: { phase: "complete" },
     verification: { state: "verified", criteria: [{ status: "pass" }] },
     execution: { requested_effect: "preview" }
@@ -4134,6 +4152,30 @@ test("durable capability effects require one terminal receipt binding the expect
   });
   assert.equal(bound.completed, true);
   assert.notEqual(bound.tier, "failed");
+
+  const crossGoalPooled = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ...baseAttempt,
+    durable_tool_evidence: {
+      successful_paths: ["/revit/configure-schedule"],
+      result_receipts: [receipt({ request_effect: "preview", goal_id: "goal-incomplete" })]
+    },
+    assignment_projection: { assignments: [
+      {
+        source_record_id: "goal-complete",
+        lifecycle: { phase: "complete" },
+        verification: { state: "verified", criteria: [{ status: "pass" }] },
+        execution: { requested_effect: "read" }
+      },
+      {
+        source_record_id: "goal-incomplete",
+        lifecycle: { phase: "in_progress" },
+        verification: { state: "pending" },
+        execution: { requested_effect: "preview" }
+      }
+    ] }
+  });
+  assert.equal(crossGoalPooled.completed, false);
+  assert.equal(crossGoalPooled.tier, "failed");
 
   const laterFailed = evaluateGeneralRevitCapabilityAttempt(entry, {
     ...baseAttempt,
