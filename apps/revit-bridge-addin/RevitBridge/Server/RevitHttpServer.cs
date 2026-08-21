@@ -86,6 +86,7 @@ namespace RevitBridge.Server
                 { "/revit/computer-use-observe", new ComputerUseObserveHandler() },
                 { "/revit/computer-use-act", new ComputerUseActHandler() },
                 { "/revit/computer-use-guard", new ComputerUseGuardHandler() },
+                { "/revit/capture-screenshare", new RevitBridge.Logic.Handlers.CaptureScreenshareHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/query", new QueryElementsHandler() },
                 { "/revit/delete", new DeleteElementsHandler() },

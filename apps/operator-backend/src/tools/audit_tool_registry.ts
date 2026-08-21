@@ -49,8 +49,7 @@ export type ToolRegistryReconciliation = {
 
 const PANE_BACKEND_PATHS = new Set([
   "/revit/batch-control",
-  "/revit/batch-job",
-  "/revit/capture-screenshare"
+  "/revit/batch-job"
 ]);
 
 const CONTROL_PLANE_PATHS = new Set([

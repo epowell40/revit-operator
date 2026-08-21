@@ -4253,18 +4253,18 @@
       "path": "/revit/capture-screenshare",
       "examples": [
         {
-          "name": "Capture Revit window screenshot with context",
+          "name": "Capture Revit visual state with context, including minimized fallback",
           "request": {
             "includeContext": true
           },
           "expected_response_shape": {
-            "status": "ok",
-            "image": {
-              "path": "C:\\\\...\\\\artifacts\\\\uploads\\\\screenshare_*.jpg"
-            },
-            "context": {
-              "path": "C:\\\\...\\\\artifacts\\\\uploads\\\\screenshare_*_context.json"
-            }
+            "ok": true,
+            "capture_mode": "revit_window | active_view_export",
+            "fallback_used": false,
+            "path": "C:\\\\...\\\\artifacts\\\\uploads\\\\screenshare_*.*",
+            "context_path": "C:\\\\...\\\\artifacts\\\\uploads\\\\screenshare_*_context.json",
+            "sha256": "<sha256>",
+            "files": []
           }
         }
       ]
