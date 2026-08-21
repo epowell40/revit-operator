@@ -29,7 +29,7 @@ import {
   type GoalRecord
 } from "../src/goals/service.js";
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
-import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation, supersedeBlockedAutoGoalForFreshRequest } from "../src/goals/auto_goal_runtime.js";
+import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation, settleSidecarComputerGoal, supersedeBlockedAutoGoalForFreshRequest } from "../src/goals/auto_goal_runtime.js";
 import { reconcileTeammateReceiptWithAssistant } from "../src/teammate_loop_runtime.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
@@ -1622,6 +1622,60 @@ test("successful live tools complete a quick auto assignment with trusted eviden
     assert.equal(persisted?.completion_audit?.complete, true);
     assert.equal(persisted?.work_items[0]?.status, "complete");
     assert.equal(persisted?.validation_log.length, 2);
+  });
+});
+
+test("authenticated Sidecar settlement records reported completion without minting trusted validation", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-sidecar-complete", {
+      title: "Compute air terminal counts",
+      objective: "Use Dynamic Revit code execution to compute counts by level.",
+      acceptance_criteria: ["The requested work is complete.", "The result is supported by execution evidence."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop", requested_effect: "preview" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    });
+
+    const settled = settleSidecarComputerGoal("session-sidecar-complete", {
+      outcome: "complete",
+      turn_id: "dynamic-run-1",
+      assistant_summary: "Computed 509 air terminals and verified the level sum.",
+      successful_tools: 2,
+      failed_tools: 0,
+      verification_kind: "dynamic_revit_trusted_evidence",
+      evidence: { run_id: "dynamic-run-1", execution_ok: true, report: { total: 509 } }
+    });
+
+    assert.equal(settled.status, "active");
+    assert.equal(settled.current_phase, "complete_with_issues");
+    assert.equal(settled.work_items[0]?.status, "complete");
+    assert.equal(settled.completion_audit?.complete, false);
+    assert.equal(settled.validation_log.length, 0);
+    assert.match(settled.completion_audit?.recommendation || "", /retain complete-with-issues truth/);
+    assert.match(JSON.stringify(getGoal(goal.id)?.evidence_log), /dynamic-run-1/);
+  });
+});
+
+test("Sidecar settlement blocks rather than completing when the local run fails", () => {
+  withWorkspace(() => {
+    setAgentGoal("session-sidecar-blocked", {
+      title: "Run a bounded Revit program",
+      objective: "Run a bounded Revit program.",
+      acceptance_criteria: ["The program completes."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    });
+    const settled = settleSidecarComputerGoal("session-sidecar-blocked", {
+      outcome: "blocked",
+      turn_id: "dynamic-run-failed",
+      reason: "Compilation failed before Revit dispatch.",
+      successful_tools: 0,
+      failed_tools: 1,
+      evidence: { request_dispatched: false }
+    });
+    assert.equal(settled.status, "blocked");
+    assert.equal(settled.work_items[0]?.status, "blocked");
+    assert.match(settled.blocker || "", /Compilation failed/);
+    assert.equal(settled.completion_audit, null);
   });
 });
 
