@@ -23,10 +23,26 @@ type SpatialCandidate = JsonObject & {
   _distance: number;
 };
 
+type AnnotationItem = {
+  source: JsonObject;
+  elementId: number;
+  min: Xyz;
+  max: Xyz;
+  center: Xyz;
+  size: Xyz;
+};
+
+type AnnotationCandidate = JsonObject & {
+  elementIds: number[];
+  _score: number;
+  _distance: number;
+};
+
 const MAX_SOURCE_ITEMS = 2_000;
 const MAX_RETURNED_CANDIDATES = 48;
 const MAX_INLINE_ITEMS = 64;
 const MAX_CANDIDATE_ITEMS = 48;
+const MAX_ANNOTATION_ITEMS = 64;
 
 function asObject(value: unknown): JsonObject | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : null;
@@ -79,6 +95,31 @@ function spatialItem(value: unknown): SpatialItem | null {
     size,
     facing: xyz(geometry?.facingOrientation)
   };
+}
+
+function isAnnotationItem(source: JsonObject): boolean {
+  const categoryKey = [source.builtInCategory, source.category]
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toLowerCase();
+  return /(^|[_\s])(tag|tags|annotation|annotations|dimension|dimensions|textnote|textnotes)([_\s]|$)/.test(categoryKey)
+    || categoryKey.includes(" tags")
+    || categoryKey.endsWith("tags");
+}
+
+function annotationItem(value: unknown): AnnotationItem | null {
+  const source = asObject(value);
+  if (!source || !isAnnotationItem(source)) return null;
+  const geometry = asObject(source.geometry);
+  const box = asObject(geometry?.boundingBox);
+  const elementId = safeInteger(source.elementId ?? source.id);
+  const min = xyz(box?.min);
+  const max = xyz(box?.max);
+  const center = xyz(box?.center);
+  const size = xyz(box?.size);
+  if (elementId === null || !min || !max || !center || !size) return null;
+  if (max.x < min.x || max.y < min.y || max.z < min.z || size.x <= 1e-6 || size.y <= 1e-6) return null;
+  return { source, elementId, min, max, center, size };
 }
 
 function rounded(value: number, digits = 6): number {
@@ -179,6 +220,92 @@ function retainCandidate(candidates: SpatialCandidate[], candidate: SpatialCandi
   while (index < candidates.length && compareCandidates(candidates[index]!, candidate) <= 0) index += 1;
   candidates.splice(index, 0, candidate);
   if (candidates.length > MAX_RETURNED_CANDIDATES) candidates.pop();
+}
+
+function compareAnnotationCandidates(a: AnnotationCandidate, b: AnnotationCandidate): number {
+  return b._score - a._score
+    || a._distance - b._distance
+    || a.elementIds[0]! - b.elementIds[0]!
+    || a.elementIds[1]! - b.elementIds[1]!;
+}
+
+function retainAnnotationCandidate(candidates: AnnotationCandidate[], candidate: AnnotationCandidate): void {
+  if (candidates.length === MAX_RETURNED_CANDIDATES
+    && compareAnnotationCandidates(candidate, candidates[MAX_RETURNED_CANDIDATES - 1]!) >= 0) return;
+  let index = 0;
+  while (index < candidates.length && compareAnnotationCandidates(candidates[index]!, candidate) <= 0) index += 1;
+  candidates.splice(index, 0, candidate);
+  if (candidates.length > MAX_RETURNED_CANDIDATES) candidates.pop();
+}
+
+function buildAnnotationLayoutSummary(values: unknown[], complete: boolean): JsonObject {
+  const source = values.map(annotationItem).filter((item): item is AnnotationItem => item !== null).slice(0, MAX_SOURCE_ITEMS);
+  const candidates: AnnotationCandidate[] = [];
+  let pairCount = 0;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const a = source[i]!;
+    for (let j = i + 1; j < source.length; j += 1) {
+      const b = source[j]!;
+      const overlapX = Math.max(0, Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x));
+      const overlapY = Math.max(0, Math.min(a.max.y, b.max.y) - Math.max(a.min.y, b.min.y));
+      if (overlapX <= 1e-6 || overlapY <= 1e-6) continue;
+
+      const overlapArea = overlapX * overlapY;
+      const areaA = Math.max(1e-12, a.size.x * a.size.y);
+      const areaB = Math.max(1e-12, b.size.x * b.size.y);
+      const overlapFractionOfSmaller = Math.min(1, overlapArea / Math.min(areaA, areaB));
+      const centerDistance = Math.hypot(a.center.x - b.center.x, a.center.y - b.center.y);
+      const score = overlapFractionOfSmaller * 1_000 + overlapArea * 100 + 100 / (1 + centerDistance);
+      pairCount += 1;
+      retainAnnotationCandidate(candidates, {
+        _score: rounded(score),
+        _distance: rounded(centerDistance),
+        elementIds: [a.elementId, b.elementId],
+        categories: [a.source.category ?? a.source.builtInCategory ?? null, b.source.category ?? b.source.builtInCategory ?? null],
+        boundingBoxesOverlapInViewPlane: true,
+        overlapFt: { x: rounded(overlapX), y: rounded(overlapY) },
+        overlapAreaSqFt: rounded(overlapArea),
+        overlapFractionOfSmaller: rounded(overlapFractionOfSmaller),
+        centerDistanceFt: rounded(centerDistance),
+        centerDistanceIn: rounded(centerDistance * 12, 3)
+      });
+    }
+  }
+
+  const returned = candidates.map(({ _score, _distance, ...candidate }) => ({
+    ...candidate,
+    rankingScore: rounded(_score)
+  }));
+  const candidateElementIds = [...new Set(returned.flatMap(candidate => candidate.elementIds))];
+  const boundedItemIds = candidateElementIds.length > 0
+    ? candidateElementIds.slice(0, MAX_ANNOTATION_ITEMS)
+    : source.slice(0, MAX_ANNOTATION_ITEMS).map(item => item.elementId);
+  const boundedItemSet = new Set(boundedItemIds);
+  const items = source
+    .filter(item => boundedItemSet.has(item.elementId))
+    .sort((a, b) => boundedItemIds.indexOf(a.elementId) - boundedItemIds.indexOf(b.elementId))
+    .map(item => compactCandidateItem(item.source))
+    .filter((item): item is JsonObject => item !== null);
+
+  return {
+    schema: "revit-operator.annotation-layout-candidate-summary/v1",
+    derivedFromReturnedItems: source.length,
+    annotationItemsFound: source.length,
+    candidatePairsFound: pairCount,
+    candidatePairsReturned: returned.length,
+    candidatePairsOmitted: Math.max(0, pairCount - returned.length),
+    complete: complete && source.length === values.filter(value => {
+      const item = asObject(value);
+      return item ? isAnnotationItem(item) : false;
+    }).length,
+    interpretation: "Annotation boxes are compared in the active view plane, where zero model-space thickness is normal. Overlap is a review candidate, not proof that either annotation should move; inspect text, target, leader, crop, and view context before previewing a change.",
+    candidateElementIds,
+    candidates: returned,
+    items,
+    itemsReturned: items.length,
+    itemsOmitted: Math.max(0, source.length - items.length)
+  };
 }
 
 function buildSpatialSummary(values: unknown[], complete: boolean): JsonObject {
@@ -301,6 +428,12 @@ function compactCandidateItem(value: unknown): JsonObject | null {
     mark: item.mark ?? null,
     levelId: item.levelId ?? null,
     hostId: item.hostId ?? null,
+    ownerViewId: item.ownerViewId ?? null,
+    sourceViewId: item.sourceViewId ?? null,
+    taggedElementIds: Array.isArray(item.taggedElementIds) ? item.taggedElementIds.slice(0, 20) : null,
+    tagHeadPosition: roundedXyz(item.tagHeadPosition),
+    hasLeader: typeof item.hasLeader === "boolean" ? item.hasLeader : null,
+    visibleText: typeof item.visibleText === "string" ? item.visibleText.slice(0, 500) : null,
     geometry: geometry ? {
       units: geometry.units ?? null,
       coordinateSystem: geometry.coordinateSystem ?? null,
@@ -335,17 +468,29 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     && inheritedIdsOmitted === 0;
   const summary = buildSpatialSummary(root.items, sourceComplete);
   const routeSummary = routeCurveSummary(root.items, sourceComplete);
+  const annotationSummary = buildAnnotationLayoutSummary(root.items, sourceComplete);
   const candidates = Array.isArray(summary.candidates) ? summary.candidates : [];
   const candidateIds = [...new Set(candidates.flatMap(candidate => {
     const ids = asObject(candidate)?.elementIds;
     return Array.isArray(ids) ? ids.filter(id => Number.isSafeInteger(id)) as number[] : [];
   }))];
   const inlineCandidateIds = candidateIds.slice(0, MAX_CANDIDATE_ITEMS);
-  const candidateSet = new Set(inlineCandidateIds);
+  const annotationCandidateIds = Array.isArray(annotationSummary.candidateElementIds)
+    ? annotationSummary.candidateElementIds.filter(id => Number.isSafeInteger(id)) as number[]
+    : [];
+  const combinedCandidateIds = [...new Set([...inlineCandidateIds, ...annotationCandidateIds])].slice(0, MAX_CANDIDATE_ITEMS);
+  const candidateSet = new Set(combinedCandidateIds);
   const candidateItems = root.items
     .filter(item => {
       const obj = asObject(item);
       return candidateSet.has(Number(obj?.elementId ?? obj?.id));
+    })
+    .sort((a, b) => {
+      const aObject = asObject(a);
+      const bObject = asObject(b);
+      const aIndex = combinedCandidateIds.indexOf(Number(aObject?.elementId ?? aObject?.id));
+      const bIndex = combinedCandidateIds.indexOf(Number(bObject?.elementId ?? bObject?.id));
+      return aIndex - bIndex;
     })
     .map(compactCandidateItem)
     .filter((item): item is JsonObject => item !== null);
@@ -354,6 +499,7 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     return {
       spatialDuplicateCandidates: summary,
       routeCurveCandidates: routeSummary,
+      annotationLayoutCandidates: annotationSummary,
       ...root,
       items: root.items.map(compactCandidateItem).filter((item): item is JsonObject => item !== null),
       warnings: [
@@ -368,12 +514,17 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     projection: "find-elements-spatial-candidates",
     spatialDuplicateCandidates: summary,
     routeCurveCandidates: routeSummary,
-    candidateElementIds: candidateIds,
+    annotationLayoutCandidates: annotationSummary,
+    candidateElementIds: [...new Set([...candidateIds, ...annotationCandidateIds])],
     candidateItems,
-    candidateItemsOmitted: Math.max(0, candidateIds.length - candidateItems.length),
-    recommendedNextStep: candidateIds.length > 0
-      ? "Call /revit/get-connectors once with candidateElementIds, includeAllRefs:true, then trace or rollback-preview only candidates whose topology remains suspicious. Do not stop after rejecting one pair while bounded candidates remain unreviewed."
-      : "The complete bounded inventory produced no same-type spatial candidates under this summary; broaden only if the requested duplicate definition uses a different spatial threshold.",
+    candidateItemsOmitted: Math.max(0, new Set([...candidateIds, ...annotationCandidateIds]).size - candidateItems.length),
+    recommendedNextStep: annotationCandidateIds.length > 0
+      ? "Inspect annotationLayoutCandidates in ranked order, then use an annotation/tag inspection or rollback preview before changing positions, leaders, targets, or text."
+      : candidateIds.length > 0
+        ? "Call /revit/get-connectors once with candidateElementIds, includeAllRefs:true, then trace or rollback-preview only candidates whose topology remains suspicious. Do not stop after rejecting one pair while bounded candidates remain unreviewed."
+        : Number(annotationSummary.annotationItemsFound) > 0
+          ? "No view-plane overlaps were found. Use annotationLayoutCandidates.items as a bounded identity-and-geometry inventory before broadening the search or changing any annotation."
+          : "The complete bounded inventory produced no same-type spatial candidates under this summary; broaden only if the requested duplicate definition uses a different spatial threshold.",
     status: root.status ?? null,
     scope: root.scope ?? null,
     count: root.count ?? root.elementIds.length,
@@ -391,6 +542,7 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     warnings: [
       "The raw geometry inventory was projected to a bounded candidate-first result for agent speed; sourceItemsComplete describes the authoritative source inventory.",
       "Unique Marks do not rule out duplicated instances. Opposite-facing peers require batched connector/network review.",
+      ...(Number(annotationSummary.annotationItemsFound) > 0 ? ["View annotations were retained in annotationLayoutCandidates with 2D overlap ranking; zero Z thickness is expected for annotation boxes."] : []),
       ...(Array.isArray(root.warnings) ? root.warnings.slice(0, 20) : [])
     ]
   };

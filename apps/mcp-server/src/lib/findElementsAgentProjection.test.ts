@@ -45,6 +45,19 @@ function routeGeometry(lengthFt: number, isStraight = true) {
   };
 }
 
+function annotationGeometry(minX: number, minY: number, maxX: number, maxY: number) {
+  return {
+    units: "feet",
+    coordinateSystem: "revit_internal_world",
+    boundingBox: {
+      min: { x: minX, y: minY, z: 0 },
+      max: { x: maxX, y: maxY, z: 0 },
+      center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: 0 },
+      size: { x: maxX - minX, y: maxY - minY, z: 0 }
+    }
+  };
+}
+
 test("large geometry inventory becomes a bounded candidate-first projection", () => {
   const filler = Array.from({ length: 70 }, (_, index) => ({
     elementId: 2_000_000 + index,
@@ -148,6 +161,89 @@ test("large geometry projection preserves straight route candidates outside dupl
   assert.equal(projected.routeCurveCandidates.sizeTransitionMinimumHostLengthFt, 1);
   assert.equal(projected.routeCurveCandidates.requiredConnectorTopology, "exactly_two_physical_end_connectors_no_side_taps");
   assert.ok(!projected.candidateElementIds.includes(1_396_164));
+});
+
+test("large annotation inventory preserves and ranks overlapping tag identities in the view plane", () => {
+  const filler = Array.from({ length: 70 }, (_, index) => ({
+    elementId: 3_000_000 + index,
+    category: "Duct Tags",
+    builtInCategory: "OST_DuctTags",
+    ownerViewId: 1_363_423,
+    geometry: annotationGeometry(100 + index * 10, 100, 102 + index * 10, 101)
+  }));
+  const overlappingTags = [
+    {
+      elementId: 1_491_500,
+      category: "Duct Tags",
+      builtInCategory: "OST_DuctTags",
+      ownerViewId: 1_363_423,
+      visibleText: "18x12",
+      tagHeadPosition: { x: 7.885, y: -20.0335, z: 0 },
+      hasLeader: false,
+      geometry: annotationGeometry(6.552, -20.846, 9.217, -19.221)
+    },
+    {
+      elementId: 1_491_501,
+      category: "Duct Tags",
+      builtInCategory: "OST_DuctTags",
+      ownerViewId: 1_363_423,
+      visibleText: "14x10",
+      tagHeadPosition: { x: 6.6555, y: -18.5945, z: 0 },
+      hasLeader: true,
+      geometry: annotationGeometry(5.323, -19.407, 7.988, -17.782)
+    }
+  ];
+  const items = [...filler, ...overlappingTags];
+  const raw = {
+    status: "Ok",
+    count: items.length,
+    elementIds: items.map(item => item.elementId),
+    geometryIncluded: true,
+    physicalElementsOnlyApplied: false,
+    topLevelInstancesOnlyApplied: false,
+    itemsComplete: true,
+    truncated: false,
+    scanCapReached: false,
+    items
+  };
+
+  const projected = projectFindElementsResultForAgent(raw) as any;
+  assert.equal(projected._agent_projection, true);
+  assert.equal(projected.spatialDuplicateCandidates.derivedFromReturnedItems, 0);
+  assert.equal(projected.annotationLayoutCandidates.schema, "revit-operator.annotation-layout-candidate-summary/v1");
+  assert.equal(projected.annotationLayoutCandidates.annotationItemsFound, 72);
+  assert.deepEqual(projected.annotationLayoutCandidates.candidates[0].elementIds, [1_491_500, 1_491_501]);
+  assert.equal(projected.annotationLayoutCandidates.candidates[0].boundingBoxesOverlapInViewPlane, true);
+  assert.equal(projected.annotationLayoutCandidates.candidates[0].overlapFt.x, 1.436);
+  assert.equal(projected.annotationLayoutCandidates.candidates[0].overlapFt.y, 0.186);
+  assert.deepEqual(projected.candidateElementIds, [1_491_500, 1_491_501]);
+  assert.deepEqual(projected.candidateItems.map((item: any) => item.elementId), [1_491_500, 1_491_501]);
+  assert.equal(projected.candidateItems[0].ownerViewId, 1_363_423);
+  assert.equal(projected.candidateItems[0].visibleText, "18x12");
+  assert.equal(projected.candidateItems[1].hasLeader, true);
+  assert.match(projected.recommendedNextStep, /annotationLayoutCandidates/);
+  assert.ok(!projected.candidateElementIds.includes(3_000_000));
+});
+
+test("annotation projection does not fabricate a collision from invalid or zero-area boxes", () => {
+  const items = Array.from({ length: 65 }, (_, index) => ({
+    elementId: 4_000_000 + index,
+    category: "Mechanical Equipment Tags",
+    builtInCategory: "OST_MechanicalEquipmentTags",
+    geometry: annotationGeometry(index, 0, index, 1)
+  }));
+  const projected = projectFindElementsResultForAgent({
+    status: "Ok",
+    count: items.length,
+    elementIds: items.map(item => item.elementId),
+    geometryIncluded: true,
+    itemsComplete: true,
+    items
+  }) as any;
+
+  assert.equal(projected.annotationLayoutCandidates.annotationItemsFound, 0);
+  assert.deepEqual(projected.annotationLayoutCandidates.candidates, []);
+  assert.deepEqual(projected.candidateElementIds, []);
 });
 
 test("small geometry inventory keeps all bounded items while putting the summary first", () => {

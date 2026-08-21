@@ -135,11 +135,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/findElementsAgentProjection.test.ts",
-      "sha256": "sha256:ce08c83f815c1b8cc540c52bca9ba8b15c9d3e326222f9301b164ccfd11a58a8"
+      "sha256": "sha256:1522a9d70f24395528ffec463ee894d8a7a93ca8bbf39a0c9e0afb38b10f50de"
     },
     {
       "path": "apps/mcp-server/src/lib/findElementsAgentProjection.ts",
-      "sha256": "sha256:78e9a426e17c1acddc515f9705d7efa4b289e3803bd4a8b9c46163cbf7e4a04e"
+      "sha256": "sha256:918a65a81f78f32e9dc253b28ff3b14b0435863d3177ff354af523a8b191a894"
     },
     {
       "path": "apps/mcp-server/src/lib/generalAgentCapabilityDiscovery.test.ts",
@@ -5133,7 +5133,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:7ec772b03eb5482a2bc33d4552c6e891c5317fc09a249b727a746b1113747f6b",
+  "inputs_hash": "sha256:f3ba20ef9f6cf1244696b452618b3fbde08d6f9b5645fc299372c0be4577649e",
   "result": {
     "passed": true,
     "checks": [
