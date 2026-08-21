@@ -1,5 +1,6 @@
 import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import {
+  appendGoalAction,
   appendGoalEvidence,
   appendGoalProgress,
   appendTrustedServerGoalValidation,
@@ -612,6 +613,20 @@ export type SidecarComputerGoalSettlement = {
   evidence?: unknown;
 };
 
+function sidecarReportedActionReceipts(evidence: unknown) {
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return [];
+  const rows = Array.isArray((evidence as any).function_tools) ? (evidence as any).function_tools.slice(0, 100) : [];
+  return rows.flatMap((row: any) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+    const tool_name = `${row.tool_name || ""}`.trim().slice(0, 160);
+    const path = `${row.path || ""}`.trim().slice(0, 500);
+    const status = row.status === "success" ? "success" : row.status === "failed" ? "failed" : "";
+    const request_effect = ["read", "preview", "apply"].includes(row.request_effect) ? row.request_effect : "";
+    if (!tool_name || !status) return [];
+    return [{ tool_name, path, status, request_effect, request_dispatched: row.request_dispatched === true, call_id: `${row.call_id || ""}`.trim().slice(0, 240) }];
+  });
+}
+
 function activeSidecarComputerGoal(sessionId: string) {
   const goal = getActiveGoalForSession(sessionId);
   return goal?.work_budget?.mode === "sidecar_computer"
@@ -635,6 +650,13 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
   const successfulTools = Math.max(0, Math.floor(Number(input?.successful_tools) || 0));
   const failedTools = Math.max(0, Math.floor(Number(input?.failed_tools) || 0));
   const verificationKind = `${input?.verification_kind || "sidecar_turn_receipts"}`.trim().slice(0, 240) || "sidecar_turn_receipts";
+  for (const receipt of sidecarReportedActionReceipts(input.evidence)) {
+    const label = receipt.path ? `${receipt.tool_name} ${receipt.path}` : receipt.tool_name;
+    goal = appendGoalAction(goal.id, {
+      summary: `Operator Desktop reported ${label} ${receipt.status}.`,
+      details: { source: "operator_desktop_reported", ...receipt }
+    });
+  }
 
   if (input?.outcome === "blocked") {
     const reason = `${input.reason || input.assistant_summary || "Operator Desktop work stopped before verified completion."}`.trim().slice(0, 2000);
