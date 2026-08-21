@@ -141,6 +141,19 @@ test("find-elements discovery keeps every project inventory selector optional", 
   assert.doesNotMatch(findElements, /required: new\[\]/);
 });
 
+test("visible-element export discovery publishes the native inventory bound", () => {
+  const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
+  const manifest = addinFile(path.join("RevitBridge", "Operator", "OperatorToolManifest.cs"));
+  const exportSchema = schemas.slice(
+    schemas.indexOf('if (string.Equals(p, "/revit/export-visible-elements", StringComparison.OrdinalIgnoreCase))'),
+    schemas.indexOf("// Some tools accept null bodies intentionally"),
+  );
+  assert.match(exportSchema, /"limit", Int\(minimum: 1, maximum: 2000\)/);
+  assert.match(exportSchema, /"modelBounds", Arr\(Num\(\), minItems: 6, maxItems: 6\)/);
+  assert.match(exportSchema, /required: Array\.Empty<string>\(\)/);
+  assert.match(manifest, /limit is 1\.\.2000; page, filter categories, or use modelBounds/);
+});
+
 test("computer-use observation keeps dialog filters optional", () => {
   const schemas = addinFile(path.join("RevitBridge", "Operator", "OperatorToolIntrospection.cs"));
   const observe = schemas.slice(

@@ -97,8 +97,8 @@ function spatialItem(value: unknown): SpatialItem | null {
   };
 }
 
-function isAnnotationItem(source: JsonObject): boolean {
-  const categoryKey = [source.builtInCategory, source.category]
+function isAnnotationCategory(source: JsonObject): boolean {
+  const categoryKey = [source.builtInCategory, source.category, source.builtInToken, source.name, source.requested]
     .filter((value): value is string => typeof value === "string")
     .join(" ")
     .toLowerCase();
@@ -107,9 +107,9 @@ function isAnnotationItem(source: JsonObject): boolean {
     || categoryKey.endsWith("tags");
 }
 
-function annotationItem(value: unknown): AnnotationItem | null {
+function annotationItem(value: unknown, assumeAnnotation: boolean): AnnotationItem | null {
   const source = asObject(value);
-  if (!source || !isAnnotationItem(source)) return null;
+  if (!source || (!assumeAnnotation && !isAnnotationCategory(source))) return null;
   const geometry = asObject(source.geometry);
   const box = asObject(geometry?.boundingBox);
   const elementId = safeInteger(source.elementId ?? source.id);
@@ -238,8 +238,8 @@ function retainAnnotationCandidate(candidates: AnnotationCandidate[], candidate:
   if (candidates.length > MAX_RETURNED_CANDIDATES) candidates.pop();
 }
 
-function buildAnnotationLayoutSummary(values: unknown[], complete: boolean): JsonObject {
-  const source = values.map(annotationItem).filter((item): item is AnnotationItem => item !== null).slice(0, MAX_SOURCE_ITEMS);
+function buildAnnotationLayoutSummary(values: unknown[], complete: boolean, assumeAnnotation: boolean): JsonObject {
+  const source = values.map(value => annotationItem(value, assumeAnnotation)).filter((item): item is AnnotationItem => item !== null).slice(0, MAX_SOURCE_ITEMS);
   const candidates: AnnotationCandidate[] = [];
   let pairCount = 0;
 
@@ -297,8 +297,9 @@ function buildAnnotationLayoutSummary(values: unknown[], complete: boolean): Jso
     candidatePairsOmitted: Math.max(0, pairCount - returned.length),
     complete: complete && source.length === values.filter(value => {
       const item = asObject(value);
-      return item ? isAnnotationItem(item) : false;
+      return item ? assumeAnnotation || isAnnotationCategory(item) : false;
     }).length,
+    categoryInference: assumeAnnotation ? "all_items_from_exact_resolved_annotation_filter" : "per_item_category",
     interpretation: "Annotation boxes are compared in the active view plane, where zero model-space thickness is normal. Overlap is a review candidate, not proof that either annotation should move; inspect text, target, leader, crop, and view context before previewing a change.",
     candidateElementIds,
     candidates: returned,
@@ -468,7 +469,11 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
     && inheritedIdsOmitted === 0;
   const summary = buildSpatialSummary(root.items, sourceComplete);
   const routeSummary = routeCurveSummary(root.items, sourceComplete);
-  const annotationSummary = buildAnnotationLayoutSummary(root.items, sourceComplete);
+  const resolvedCategoryObjects = Array.isArray(root.resolvedCategories)
+    ? root.resolvedCategories.map(asObject).filter((item): item is JsonObject => item !== null)
+    : [];
+  const resolvedAnnotationOnly = resolvedCategoryObjects.length > 0 && resolvedCategoryObjects.every(isAnnotationCategory);
+  const annotationSummary = buildAnnotationLayoutSummary(root.items, sourceComplete, resolvedAnnotationOnly);
   const candidates = Array.isArray(summary.candidates) ? summary.candidates : [];
   const candidateIds = [...new Set(candidates.flatMap(candidate => {
     const ids = asObject(candidate)?.elementIds;
