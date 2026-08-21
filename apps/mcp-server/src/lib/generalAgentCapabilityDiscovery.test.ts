@@ -24,6 +24,8 @@ test("general-agent discovery adds exactly one concise non-authorizing dynamic s
   assert.equal(result.executionSubstrates[0]?.admission.state, "not_admitted_by_discovery");
   assert.equal(result.executionSubstrates[0]?.admission.authorizationGranted, false);
   assert.equal(result.executionSubstrates[0]?.execution.tool, "operator_run_dynamic_revit_program");
+  assert.equal(result.executionSubstrates[0]?.execution.availability, "authenticated_general_agent_or_laboratory");
+  assert.equal(result.executionSubstrates[0]?.execution.hostedGeneralAgentExposure, true);
   assert.equal(result.executionSubstrates[0]?.execution.certifiedProductionExposure, false);
 });
 

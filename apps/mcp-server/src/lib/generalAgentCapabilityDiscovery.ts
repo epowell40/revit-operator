@@ -97,7 +97,8 @@ export const DYNAMIC_REVIT_PROGRAM_SUBSTRATE_V1 = {
   },
   execution: {
     tool: "operator_run_dynamic_revit_program",
-    availability: "local_lab_mode_gated",
+    availability: "authenticated_general_agent_or_laboratory",
+    hostedGeneralAgentExposure: true,
     certifiedProductionExposure: false
   }
 } as const;
