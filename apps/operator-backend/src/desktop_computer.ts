@@ -30,6 +30,20 @@ type DesktopComputerRelayResponse = {
   model_call_receipt: ModelCallReceipt;
 };
 
+class DesktopComputerProviderError extends Error {
+  readonly modelCallReceipt: ModelCallReceipt;
+
+  constructor(modelCallReceipt: ModelCallReceipt, cause: unknown) {
+    super("Desktop computer provider request failed.", { cause });
+    this.name = "DesktopComputerProviderError";
+    this.modelCallReceipt = modelCallReceipt;
+  }
+}
+
+export function getDesktopComputerProviderErrorReceipt(error: unknown): ModelCallReceipt | null {
+  return error instanceof DesktopComputerProviderError ? error.modelCallReceipt : null;
+}
+
 function resolveDesktopComputerModel(): string {
   return normalizeModelId(process.env.OPERATOR_DESKTOP_COMPUTER_MODEL, "gpt-5.6-terra");
 }
@@ -122,14 +136,27 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
   const startedAtUtc = new Date().toISOString();
   const startedMs = Date.now();
-  const response = await client.responses.create({
-    model,
-    reasoning: { effort: reasoningEffort },
-    instructions: body.instructions,
-    tools: body.tools,
-    input: body.input,
-    previous_response_id: body.previous_response_id
-  } as any);
+  let response: unknown;
+  try {
+    response = await client.responses.create({
+      model,
+      reasoning: { effort: reasoningEffort },
+      instructions: body.instructions,
+      tools: body.tools,
+      input: body.input,
+      previous_response_id: body.previous_response_id
+    } as any);
+  } catch (error) {
+    const receipt = createOpenAiModelCallReceipt({
+      route: "desktop_computer",
+      requested_model: model,
+      reasoning_effort: reasoningEffort,
+      started_at_utc: startedAtUtc,
+      duration_ms: Date.now() - startedMs,
+      error
+    });
+    throw new DesktopComputerProviderError(receipt, error);
+  }
 
   return simplifyRelayResponse(response, createOpenAiModelCallReceipt({
     route: "desktop_computer",
