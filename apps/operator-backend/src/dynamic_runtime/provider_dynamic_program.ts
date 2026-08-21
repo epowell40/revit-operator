@@ -499,8 +499,13 @@ export async function runTrustedProviderDynamicProgram(
     const tokenStat = fs.statSync(tokenFile);
     if (tokenStat.size < 16 || tokenStat.size > 64 * 1024) throw new Error("Operator token file size is invalid");
 
+    const sessionsRoot = dependencies.runsSessionsDirectory ?? ensureWorkspaceLayout().runsSessions;
+    const compilationCacheDirectory = path.join(sessionsRoot, ".dynamic-compilation-cache");
+    fs.mkdirSync(compilationCacheDirectory, { recursive: true, mode: 0o700 });
+    assertNoLinkComponents(compilationCacheDirectory, "Dynamic Revit compilation cache");
+    fs.chmodSync(compilationCacheDirectory, 0o700);
     const runDirectory = path.join(
-      dependencies.runsSessionsDirectory ?? ensureWorkspaceLayout().runsSessions,
+      sessionsRoot,
       safeSegment(req.session_id),
       "dynamic-programs",
       `${safeSegment(req.message_id)}-${randomUUID()}`
@@ -536,7 +541,8 @@ export async function runTrustedProviderDynamicProgram(
       operationBudget: program.operation_budget,
       workerDeadlineMs: program.worker_deadline_ms,
       apply: program.apply,
-      applyDeadlineMs: program.apply_deadline_ms
+      applyDeadlineMs: program.apply_deadline_ms,
+      compilationCacheDirectory
     };
     fs.writeFileSync(configPath, JSON.stringify(liveTaskConfig), { encoding: "utf8", mode: 0o600, flag: "wx" });
 

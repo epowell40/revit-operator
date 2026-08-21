@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 using RevitOperator.DynamicRevit.RuntimePackaging;
 using RevitOperator.DynamicRevitSdk;
 
@@ -117,6 +118,16 @@ internal static class Program
         var workerExecutableHash = workspace.RuntimeImage.WorkerExecutableHash;
         var compilerRuntimeHash = workspace.RuntimeImage.CompilerRuntimeHash;
         var sdkArtifactHash = workspace.RuntimeImage.SdkArtifactHash;
+        var normalizedSourceHash = DynamicWire.Sha256(source.Replace("\r\n", "\n").Replace("\r", "\n"));
+        CompilationCache? compilationCache = null; CompilationCacheLookup? compilationLookup = null;
+        if (!string.IsNullOrWhiteSpace(config.CompilationCacheDirectory))
+        {
+            compilationCache = new CompilationCache(config.CompilationCacheDirectory);
+            var key = CompilationCache.Key(normalizedSourceHash, compilerRuntimeHash, sdkArtifactHash, workerRuntimePackageHash);
+            compilationLookup = compilationCache.TryRead(key, normalizedSourceHash, compilerRuntimeHash, sdkArtifactHash, workerRuntimePackageHash);
+        }
+        var compilationCacheKey = compilationLookup?.CacheKey ?? "";
+        var cachedAssemblyBase64 = compilationLookup?.Assembly == null ? null : Convert.ToBase64String(compilationLookup.Assembly);
         using var worker = profile.Launch(executable, arguments, scratch, memoryMb: 256, cpuTimeLimit: TimeSpan.FromMilliseconds(Math.Max(config.WorkerDeadlineMs, 1_000) + 5_000), inheritedHandles: new[] { new IntPtr(long.Parse(inputPipeHandle, System.Globalization.CultureInfo.InvariantCulture)) });
         var startupNonceHash = DynamicWire.Sha256(nonce);
         var taskDirectoryIdentity = DynamicWire.Sha256(Path.GetFullPath(taskRoot));
@@ -134,7 +145,7 @@ internal static class Program
             {
                 schema = "dynamic-revit-worker-input/v0", source, input = taskInput, deadlineMs = config.WorkerDeadlineMs,
                 resultReferenceDocumentRevision = contextRuleInput.DocumentRevision, verifiedContextRule = contextRuleInput.Rule,
-                contextObservationPages = contextRuleInput.Pages
+                contextObservationPages = contextRuleInput.Pages, compilationCacheKey, cachedAssemblyBase64
             }, Json);
         }
         else if (config.ResultReference)
@@ -154,12 +165,14 @@ internal static class Program
                 resultReferenceSnapshotHash = resultReferenceInput.SnapshotHash,
                 resultReferenceScopeHash = resultReferenceInput.ScopeHash,
                 buildingSystemsPages = resultReferenceInput.Pages,
-                trustedExternalTargets = resultReferenceInput.TrustedExternalTargets
+                trustedExternalTargets = resultReferenceInput.TrustedExternalTargets,
+                compilationCacheKey, cachedAssemblyBase64
             }, Json);
         }
         else
         {
-            workerInput = JsonSerializer.Serialize(new { schema = "dynamic-revit-worker-input/v0", source, input = taskInput, deadlineMs = config.WorkerDeadlineMs }, Json);
+            workerInput = JsonSerializer.Serialize(new { schema = "dynamic-revit-worker-input/v0", source, input = taskInput, deadlineMs = config.WorkerDeadlineMs,
+                compilationCacheKey, cachedAssemblyBase64 }, Json);
         }
         inputPipe.DisposeLocalCopyOfClientHandle();
         using (var inputWriter = new StreamWriter(inputPipe, new UTF8Encoding(false), 64 * 1024, leaveOpen: true) { AutoFlush = true }) await inputWriter.WriteLineAsync(JsonSerializer.Serialize(new { nonce, correlation, channelKeyBase64 = Convert.ToBase64String(channelKey), request = JsonDocument.Parse(workerInput).RootElement }, WireJson));
@@ -181,7 +194,28 @@ internal static class Program
         if (!pidMatches || !nonceMatches || !correlationMatches || !hmacMatches)
             throw new InvalidOperationException("Sandboxed worker channel authentication failed: pid=" + pidMatches + ", nonce=" + nonceMatches + ", correlation=" + correlationMatches + ", payload/HMAC=" + hmacMatches + ", expectedPid=" + worker.ProcessId + ", observedPid=" + messagePid + ".");
         if (!worker.Wait(TimeSpan.FromSeconds(5))) worker.Kill();
-        var output = DecodePayload(message);
+        var rawOutput = DecodePayload(message);
+        if (compilationCache != null && compilationLookup != null && rawOutput.TryGetProperty("ok", out var cacheOk) && cacheOk.GetBoolean())
+        {
+            if (rawOutput.GetProperty("compilationCacheKey").GetString() != compilationLookup.CacheKey)
+                throw new InvalidOperationException("Worker compilation cache key was substituted.");
+            var emittedHash = rawOutput.GetProperty("compiledAssemblyHash").GetString() ?? throw new InvalidOperationException("Worker omitted its compiled assembly identity.");
+            if (compilationLookup.Hit)
+            {
+                if (emittedHash != compilationLookup.ArtifactHash || !rawOutput.GetProperty("compilationCacheHit").GetBoolean())
+                    throw new InvalidOperationException("Worker did not execute the exact trusted cached artifact.");
+            }
+            else
+            {
+                var encoded = rawOutput.GetProperty("compiledAssemblyBase64").GetString() ?? throw new InvalidOperationException("Worker omitted a cacheable compiled artifact.");
+                if (encoded.Length > CompilationCache.MaximumArtifactBytes * 2) throw new InvalidOperationException("Worker cache artifact encoding exceeds bounds.");
+                var assembly = Convert.FromBase64String(encoded);
+                if (DynamicWire.Sha256(assembly) != emittedHash) throw new InvalidOperationException("Worker cache artifact hash is invalid.");
+                var stored = compilationCache.Store(compilationLookup.CacheKey, normalizedSourceHash, compilerRuntimeHash, sdkArtifactHash, workerRuntimePackageHash, assembly);
+                if (!stored.Hit || stored.ArtifactHash != emittedHash) throw new InvalidOperationException("Compilation cache did not retain the exact verified artifact.");
+            }
+        }
+        var output = SanitizeWorkerOutput(rawOutput);
         if (!output.GetProperty("ok").GetBoolean()) return LiveEvidence.Failed(started, profile.ProfileName, taskRoot, workspace.RuntimeImage, registration, snapshotRaw, output.Clone(), "Worker compilation or execution failed.");
         var sourceHash = output.GetProperty("sourceHash").GetString()!;
         var programHash = output.GetProperty("programHash").GetString()!;
@@ -731,6 +765,14 @@ internal static class Program
 
     internal static bool RequiresInitialWriteGrant(LiveTaskConfig config) => config.Apply && !config.ResultReference;
 
+    internal static JsonElement SanitizeWorkerOutput(JsonElement value)
+    {
+        var node = JsonNode.Parse(value.GetRawText())?.AsObject() ?? throw new InvalidOperationException("Worker output is not an object.");
+        node.Remove("compiledAssemblyBase64");
+        using var document = JsonDocument.Parse(node.ToJsonString(WireJson));
+        return document.RootElement.Clone();
+    }
+
     internal static DynamicOperationGraph GraphForApply(JsonElement graph)
     {
         var typed = graph.Deserialize<DynamicOperationGraph>(Json) ?? throw new InvalidOperationException("Worker graph is invalid.");
@@ -997,6 +1039,7 @@ internal sealed class LiveTaskConfig
     public string CheckpointTaskSessionId { get; set; } = ""; public int CheckpointIndex { get; set; }
     public string CheckpointHash { get; set; } = ""; public string CheckpointDocumentFingerprint { get; set; } = "";
     public string CheckpointDocumentSessionId { get; set; } = ""; public string CheckpointApplyReceiptHash { get; set; } = "";
+    public string CompilationCacheDirectory { get; set; } = "";
 }
 internal sealed class TaskCheckpointBindingEvidence
 {
