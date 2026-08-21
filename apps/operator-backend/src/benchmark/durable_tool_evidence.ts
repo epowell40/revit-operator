@@ -10,6 +10,14 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function evidenceEnvelopeSucceeded(status: string, parsed: JsonRecord, resultText: string): boolean {
+  if (status !== "completed" || !resultText) return false;
+  if (parsed.ok === false || parsed.outcome_unknown === true || parsed.reconciliation_required === true) return false;
+  if (typeof parsed.error === "string" && parsed.error.trim()) return false;
+  const terminal = String(parsed.status || parsed.outcome || "").trim().toLowerCase();
+  return !["failed", "error", "blocked", "outcome_unknown", "reconciliation_required"].includes(terminal);
+}
+
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
@@ -19,7 +27,7 @@ const REVIT_TOOL_PATH_ALIASES: Readonly<Record<string, string>> = Object.freeze(
   revit_query_views: "/revit/views",
   revit_list_sheets: "/revit/sheets",
   revit_list_schedules: "/revit/schedules",
-  revit_query_elements: "/revit/find-elements",
+  revit_query_elements: "/revit/query",
   revit_find_elements: "/revit/find-elements",
   revit_delete_elements: "/revit/delete"
 });
@@ -32,8 +40,6 @@ export function canonicalBenchmarkRevitPath(pathValue: string): string {
     "/revit/query-views": "/revit/views",
     "/revit/list-sheets": "/revit/sheets",
     "/revit/list-schedules": "/revit/schedules",
-    "/revit/query-elements": "/revit/find-elements",
-    "/revit/get-elements": "/revit/find-elements",
     "/revit/delete-elements": "/revit/delete"
   };
   return aliases[path] || path;
@@ -46,6 +52,7 @@ export function benchmarkSemanticCapabilityId(pathValue: string): string {
     "/revit/sheets": "revit.sheets.query",
     "/revit/schedules": "revit.schedules.query",
     "/revit/find-elements": "revit.elements.find",
+    "/revit/query": "revit.elements.query",
     "/revit/delete": "revit.elements.delete"
   };
   if (known[path]) return known[path];
@@ -122,7 +129,6 @@ export async function loadDurableToolEvidence(
   const successfulTools = new Set<string>();
   const failedTools = new Set<string>();
   const semanticCapabilityIds = new Set<string>();
-  const semanticFacts: JsonRecord[] = [];
   const connectorRows = new Map<string, JsonRecord>();
   const compactlyScannedConnectorElementIds = new Set<string>();
   const resultReceipts: JsonRecord[] = [];
@@ -158,19 +164,21 @@ export async function loadDurableToolEvidence(
       const path = canonicalBenchmarkRevitPath(explicitPath || canonicalRevitToolPath(toolServer, toolName));
       const semanticCapabilityId = benchmarkSemanticCapabilityId(path);
       const status = String(tool.status || "").trim().toLowerCase();
-      if (path && status === "completed") successfulPaths.add(path);
-      if (path && status === "failed") failedPaths.add(path);
-      if (semanticCapabilityId && status === "completed") semanticCapabilityIds.add(semanticCapabilityId);
-      if (toolName && status === "completed") successfulTools.add(toolName);
-      if (toolName && status === "failed") failedTools.add(toolName);
       const contents = Array.isArray(tool.result) ? tool.result.map(asRecord) : [];
       const resultText = contents.map((content) => String(content.text || "")).find(Boolean) || "";
-      if (!resultText || !path) continue;
       let parsed: JsonRecord = {};
       try { parsed = asRecord(JSON.parse(resultText)); } catch { /* receipt still records the bounded digest */ }
+      const envelopeSucceeded = evidenceEnvelopeSucceeded(status, parsed, resultText);
+      if (path && envelopeSucceeded) successfulPaths.add(path);
+      if (path && !envelopeSucceeded) failedPaths.add(path);
+      if (semanticCapabilityId && envelopeSucceeded) semanticCapabilityIds.add(semanticCapabilityId);
+      if (toolName && envelopeSucceeded) successfulTools.add(toolName);
+      if (toolName && !envelopeSucceeded) failedTools.add(toolName);
+      if (!resultText || !path) continue;
       const resultSha256 = sha256(resultText);
       const elementIds = Array.isArray(parsed.elementIds) ? parsed.elementIds : [];
-      if (status === "completed" && semanticCapabilityId) {
+      const parsedSemanticFacts: JsonRecord = {};
+      if (envelopeSucceeded && semanticCapabilityId) {
         for (const key of [
           "count", "requestedCount", "scannedElementCount", "failedElementCount",
           "openPhysicalConnectorCount", "connectorScanTruncatedElementCount", "truncated"
@@ -178,14 +186,7 @@ export async function loadDurableToolEvidence(
           if (!Object.prototype.hasOwnProperty.call(parsed, key)) continue;
           const value = parsed[key];
           if (typeof value !== "number" && typeof value !== "boolean" && typeof value !== "string") continue;
-          semanticFacts.push({
-            capability_id: semanticCapabilityId,
-            key,
-            value,
-            source_goal_id: goalId,
-            source_action_id: String(action.id || "") || null,
-            source_result_sha256: resultSha256
-          });
+          parsedSemanticFacts[key] = value;
         }
       }
       if (path === "/revit/find-elements") {
@@ -233,9 +234,15 @@ export async function loadDurableToolEvidence(
         path,
         semantic_capability_id: semanticCapabilityId || null,
         status,
+        envelope_succeeded: envelopeSucceeded,
         duration_ms: numberValue(tool.duration_ms),
         result_text_bytes: Buffer.byteLength(resultText, "utf8"),
         result_sha256: resultSha256,
+        parsed_ok: typeof parsed.ok === "boolean" ? parsed.ok : null,
+        parsed_outcome_unknown: parsed.outcome_unknown === true,
+        parsed_reconciliation_required: parsed.reconciliation_required === true,
+        parsed_error: typeof parsed.error === "string" && parsed.error.trim() ? parsed.error.trim() : null,
+        parsed_semantic_facts: parsedSemanticFacts,
         parsed_count: numberValue(parsed.count),
         parsed_element_id_count: elementIds.length,
         parsed_result_count: results.length,
@@ -281,7 +288,6 @@ export async function loadDurableToolEvidence(
     successful_tools: [...successfulTools].sort(),
     failed_tools: [...failedTools].sort(),
     semantic_capability_ids: [...semanticCapabilityIds].sort(),
-    semantic_facts: semanticFacts,
     element_inventory: {
       maximum_element_id_count: maximumFindElementIds,
       maximum_reported_count: maximumFindCount,
