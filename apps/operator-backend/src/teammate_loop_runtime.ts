@@ -5,6 +5,7 @@ import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
+import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -61,6 +62,7 @@ type TeammateLoopState = {
   verification_evidence_sha256: string | null;
   tool_doc_calls: number;
   documented_tool_routes: Map<string, DocumentedToolRoute>;
+  attempt_budget: TeammateLoopAttemptBudget;
   blocked_reason: string | null;
   active_host_version_year: string;
 };
@@ -74,19 +76,6 @@ const MAX_STATE_AGE_MS = 5 * 60_000;
 const MAX_POST_APPLY_VERIFICATION_ACTIONS = 6;
 // Transient UI/derived-state POSTs must not replace the last persistent mutation's verification target.
 const NAVIGATION_PATHS = new Set(["/revit/activate-view", "/revit/regenerate"]);
-const DISCOVERY_PATHS = new Set(["/revit/ping", "/revit/context", "/revit/write-grant-status", "/revit/tool-registry", "/revit/tool-search", "/revit/tool-doc", "/revit/tool-examples"]);
-const DISCOVERY_TOOLS = new Set([
-  "operator_discover_capabilities",
-  "operator_plan_semantic_mep_route",
-  "operator_record_execution_strategy",
-  "revit_ping",
-  "revit_get_context",
-  "revit_write_grant_status",
-  "revit_search_tools",
-  "revit_tool_registry",
-  "revit_tool_doc",
-  "revit_tool_examples"
-]);
 const DEFAULT_PREVIEW_TOOLS = new Set(["revit_update_schedule_cell", "revit_replace_schedule_values", "revit_set_parameters"]);
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -501,7 +490,7 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   const expected_values = expectedValues(normalizedBody, operation !== "create");
   const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
-  if (DISCOVERY_PATHS.has(path)) return call("discovery");
+  if (isTeammateDiscoveryPath(path)) return call("discovery");
   if (methodName === "GET") return call("read");
   if (methodName === "POST" && path === "/revit/transaction-plan") return call("preview");
   if (methodName === "POST" && !path.startsWith("/revit/")) return call("unknown");
@@ -526,7 +515,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const operation = operationFor(tool, args);
   const expected_values = expectedValues(args, operation !== "create");
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation });
-  if (DISCOVERY_TOOLS.has(tool)) return call("discovery");
+  if (isTeammateDiscoveryTool(tool)) return call("discovery");
   if (tool === "web_fetch_evidence") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
@@ -643,6 +632,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     verification_evidence_sha256: null,
     tool_doc_calls: 0,
     documented_tool_routes: new Map(),
+    attempt_budget: newTeammateLoopAttemptBudget(),
     blocked_reason: null,
     active_host_version_year: activeHostVersionYear(req.context)
   };
@@ -666,6 +656,8 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
+  const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
+  if (attemptBudgetReason) return attemptBudgetReason;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
   if (call.effect === "unknown") return "unknown_revit_contract_requires_one_tool_doc_lookup";
   if (contract.turn_kind === "conversation") return "conceptual_turn_does_not_require_revit";
@@ -682,6 +674,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     if (contract.turn_kind !== "mutation") return "turn_does_not_authorize_model_mutation";
     if (contract.no_write) return "user_no_write_limit";
     if (!contract.write_authorized) return "explicit_write_authority_required";
+    if (state.apply_attempts >= contract.max_apply_attempts) return "apply_attempt_budget_exhausted";
     if (state.stage_apply_attempts >= 1) {
       if (!state.apply_succeeded || !state.verified) return "prior_apply_verification_required";
       if (state.completed_apply_signatures.has(call.signature)) return "completed_apply_may_not_be_retried";
@@ -725,6 +718,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
 
 function registerPending(state: TeammateLoopState, actionId: string, call: PendingCall): void {
   if (state.blocked_reason !== "apply_failed_or_outcome_unknown_no_retry") state.blocked_reason = null;
+  registerTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   state.pending.set(actionId, call);
   if (call.effect === "discovery" && /(?:tool-doc|revit_tool_doc)$/.test(call.path)) state.tool_doc_calls += 1;
   if (call.effect === "preview") state.preview_action_ids.push(actionId);
@@ -893,6 +887,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   const pending = state.pending.get(actionId);
   if (!pending) return;
   state.pending.delete(actionId);
+  if (pending.effect === "discovery" && succeeded) recordSuccessfulTeammateDiscovery(state.attempt_budget, pending.signature);
   if (pending.effect === "preview" && succeeded) {
     state.successful_preview_signatures.add(pending.signature);
     state.successful_preview_operations.add(pending.operation);

@@ -40,6 +40,7 @@ import {
   speedSettingsForRequestedConfig
 } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
+import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import {
   baselineCaseDeltas,
@@ -1103,6 +1104,10 @@ async function main(): Promise<void> {
   const modelTelemetryCoverage = modelTelemetryCaseCoverage(traces);
   const requestedVsObserved = requestedVsObservedComputerAgent(requestedComputerAgent, modelCallTelemetry);
   const latencyTelemetry = summarizeGeneralRevitLatency(traces, suiteContext);
+  const fixturePreconditionCoverage = summarizeGeneralRevitFixturePreconditionCoverage(
+    selected,
+    suiteContext.fixture_preconditions as JsonRecord[]
+  );
   asRecord(suiteContext.computer_agent).observed_provider_calls = requestedVsObserved;
   const suiteTiming = rescoreOnly && Object.keys(priorSuiteTiming).length > 0
     ? priorSuiteTiming
@@ -1154,14 +1159,16 @@ async function main(): Promise<void> {
     baseline_case_deltas: caseDeltas,
     model_call_telemetry: modelCallTelemetry,
     model_telemetry_coverage: modelTelemetryCoverage,
+    fixture_precondition_coverage: fixturePreconditionCoverage,
     latency_telemetry: latencyTelemetry,
     telemetry_valid_for_model_comparison: requestedSpeedSettings !== null
       && requestedVsObserved.comparable_configuration === true
       && modelTelemetryCoverage.complete === true
+      && fixturePreconditionCoverage.complete === true
       && modelCallTelemetry.token_status === "complete"
       && modelCallTelemetry.cost_status === "estimated_from_exact_provider_tokens",
     task_traces: traces,
-    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, modelTelemetryCoverage, latencyTelemetry, traces })
+    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, modelTelemetryCoverage, fixturePreconditionCoverage, latencyTelemetry, traces })
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));

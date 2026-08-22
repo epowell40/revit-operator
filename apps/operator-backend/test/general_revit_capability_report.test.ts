@@ -63,6 +63,23 @@ test("General Revit markdown keeps requested configuration distinct from observe
       expected_case_count: 1,
       cases_with_model_receipts: 1
     },
+    fixture_precondition_coverage: {
+      expected_case_count: 1,
+      prepared_case_count: 1,
+      missing_case_ids: [],
+      complete: true
+    },
+    latency_telemetry: {
+      case_wall_clock: { total_ms: 1_234, mean_ms: 1_234, p95_ms: 1_234 },
+      product_run_total_ms: 1_000,
+      harness_health_total_ms: 200,
+      fixture_transition_total_ms: 500,
+      revit_tool_duration: { count: 2, total_ms: 300 },
+      revit_tool_failed_or_rejected_count: 1,
+      same_case_repeated_path_call_count: 1,
+      provider_duration_known_ms: 2_500,
+      provider_duration_unknown_call_count: 0
+    },
     telemetry_valid_for_model_comparison: true,
     summary_by_specificity: {},
     summary_by_fixture: {},
@@ -80,9 +97,11 @@ test("General Revit markdown keeps requested configuration distinct from observe
   });
 
   assert.match(markdown, /\| agent \| gpt-5\.6-luna \/ max \| gpt-5\.6-luna \/ max \| 3 \| 2\.5s \| 360 \| \$0\.0123 \|/);
-  assert.match(markdown, /Telemetry coverage: 1\/1 cases; valid for model comparison: yes/);
+  assert.match(markdown, /Telemetry coverage: 1\/1 cases; fixture preconditions prepared: 1\/1; valid for model comparison: yes/);
   assert.match(markdown, /\| codex_agent \| gpt-5\.6-luna \| max \| 3 \| 2\.5s \| 360 \| \$0\.0123 \|/);
   assert.match(markdown, /not an invoice or account-credit measurement/);
+  assert.match(markdown, /Fixture close\/reopen transitions: 0\.5s total/);
+  assert.match(markdown, /Revit calls: 2 calls, 0\.3s endpoint time, 1 failed or rejected/);
   assert.match(markdown, /fixture_grounded_semantic/);
   assert.match(markdown, /assistant prose alone is not verification/);
 });
