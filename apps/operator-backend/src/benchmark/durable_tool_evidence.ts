@@ -120,6 +120,28 @@ export function benchmarkSemanticCapabilityId(pathValue: string): string {
   return `revit.route.${path.slice("/revit/".length).replaceAll("/", ".")}`;
 }
 
+export function verifiedSessionMutationPaths(evidence: JsonRecord): Set<string> {
+  const rows = Array.isArray(evidence.session_mutation_verifications)
+    ? evidence.session_mutation_verifications
+    : [];
+  return new Set(rows.flatMap((value) => {
+    const row = asRecord(value);
+    const readback = asRecord(row.readback);
+    const valid = row.schema === "revit-operator.session-mutation-verification/v1"
+      && !!String(row.source_session_id || "").trim()
+      && /^notification:\d+$/.test(String(row.apply_action_id || ""))
+      && /^notification:\d+$/.test(String(row.verification_action_id || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.apply_result_sha256 || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.verification_result_sha256 || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.target_tokens_sha256 || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.value_tokens_sha256 || ""))
+      && readback.matched_target === true
+      && readback.matched_after_value === true;
+    const path = canonicalBenchmarkRevitPath(String(row.apply_path || ""));
+    return valid && path ? [path] : [];
+  }));
+}
+
 function canonicalRevitToolPath(server: string, toolName: string): string {
   if (server !== "revit_operator"
     || toolName === "revit_call_tool"
