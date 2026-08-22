@@ -977,6 +977,22 @@ test("sample fixture adapters bind discipline-specific tasks without changing th
   assert.equal(fixtures.fixtures.snowdon_electrical.sample_filename, "Snowdon Towers Sample Electrical.rvt");
 });
 
+test("fixture-dependent production prompts declare deterministic active-view and selection preconditions", () => {
+  for (const caseId of ["b01_equipment_rename", "r01_text_note_edit", "r07_type_change", "c21_add_another_selected_device"]) {
+    const entry = corpus.cases.find((candidate) => candidate.case_id === caseId)!;
+    assert.ok(entry.fixture_precondition?.active_view, `${caseId} must establish its implied active view`);
+    assert.ok(entry.fixture_precondition?.selection, `${caseId} must establish its implied selection`);
+  }
+  for (const caseId of ["b04_duplicate_view", "b10_change_view_scale_and_settings", "v04_create_view_template", "c03_level4_enlarged_plan_terse", "c15_move_notes_clear", "c30_hide_arch_rooms_level4", "c42_research_revit_template_controls"]) {
+    const entry = corpus.cases.find((candidate) => candidate.case_id === caseId)!;
+    assert.equal(entry.fixture_precondition?.active_view?.name, "L4");
+    assert.equal(entry.fixture_precondition?.active_view?.view_type, "FloorPlan");
+  }
+  const runner = fs.readFileSync(path.join(backendRoot(), "src", "tools", "general_revit_capability_acceptance.ts"), "utf8");
+  assert.match(runner, /\/api\/benchmark\/revit-fixture\/prepare-case/);
+  assert.match(runner, /fixture_preconditions/);
+});
+
 test("every corpus capability has a public backend and bridge execution lane", () => {
   const allowlist = fs.readFileSync(path.join(backendRoot(), "src", "allowlist.ts"), "utf8");
   const bridgeSources = [

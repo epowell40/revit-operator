@@ -79,7 +79,7 @@ namespace RevitBridge.Operator
 
         private static JsonNode? DefaultSpeedSettingsNode()
         {
-            return JsonNode.Parse("{\"speed_mode\":true,\"split_planner_executor\":true,\"planner_model\":\"gpt-5.6-sol\",\"planner_reasoning_effort\":\"medium\",\"executor_model\":\"gpt-5.6-terra\",\"executor_reasoning_effort\":\"medium\",\"force_planner\":false,\"force_executor\":false,\"context_diet\":true,\"max_recent_turns\":8,\"include_full_revit_state\":false,\"include_screenshot_every_turn\":false,\"verbose_tool_results\":false,\"batch_execution\":false,\"persistent_session_mode\":false}");
+            return JsonNode.Parse("{\"agent_model\":\"gpt-5.6-sol\",\"agent_reasoning_effort\":\"medium\",\"speed_mode\":true,\"split_planner_executor\":false,\"planner_model\":\"gpt-5.6-sol\",\"planner_reasoning_effort\":\"medium\",\"executor_model\":\"gpt-5.6-sol\",\"executor_reasoning_effort\":\"medium\",\"force_planner\":false,\"force_executor\":false,\"context_diet\":true,\"max_recent_turns\":8,\"include_full_revit_state\":false,\"include_screenshot_every_turn\":false,\"verbose_tool_results\":false,\"batch_execution\":false,\"persistent_session_mode\":false}");
         }
 
         // "Interrupt and continue" support: when the user sends a message during an active tool loop,

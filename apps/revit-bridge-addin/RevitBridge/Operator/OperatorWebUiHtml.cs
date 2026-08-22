@@ -686,7 +686,8 @@ namespace RevitBridge.Operator
                 <option value=""low"">Fast</option>
                 <option value=""medium"" selected>Balanced</option>
                 <option value=""high"">Deep</option>
-                <option value=""xhigh"">Max</option>
+                <option value=""xhigh"">Very deep</option>
+                <option value=""max"">Max</option>
               </select>
             </div>
             <div class=""controlRow controlRowPolicies"">
@@ -701,17 +702,11 @@ namespace RevitBridge.Operator
             </div>
             <div class=""controlRow controlRowPolicies"">
               <div class=""policy"">
-                <span>Planner:</span>
-                <select id=""speedPlanner"" title=""Model for ambiguous, visual, failed, or planning-heavy turns."">
+                <span>Agent:</span>
+                <select id=""agentModel"" title=""One model for the complete Operator turn, including planning, tool use, execution, and verification."">
                   <option value=""gpt-5.6-sol"" selected>GPT-5.6 Sol</option>
                   <option value=""gpt-5.6-terra"">GPT-5.6 Terra</option>
-                </select>
-              </div>
-              <div class=""policy"">
-                <span>Exec:</span>
-                <select id=""speedExecutor"" title=""Model for direct commands and tool-loop continuations."">
-                  <option value=""gpt-5.6-terra"" selected>GPT-5.6 Terra</option>
-                  <option value=""gpt-5.6-sol"">GPT-5.6 Sol</option>
+                  <option value=""gpt-5.6-luna"">GPT-5.6 Luna</option>
                 </select>
               </div>
             </div>
@@ -890,8 +885,7 @@ namespace RevitBridge.Operator
       const reasoningSel = document.getElementById('reasoning');
       const speedModeEl = document.getElementById('speedMode');
       const speedDietEl = document.getElementById('speedDiet');
-      const speedPlannerEl = document.getElementById('speedPlanner');
-      const speedExecutorEl = document.getElementById('speedExecutor');
+      const agentModelEl = document.getElementById('agentModel');
       const newChatBtn = document.getElementById('newChat');
       const runStatusEl = document.getElementById('runStatus');
       const runStatusLabelEl = document.getElementById('runStatusLabel');
@@ -1117,26 +1111,30 @@ namespace RevitBridge.Operator
 
       function normalizeReasoningValue(value) {
         const v = (value || '').toString().trim().toLowerCase();
-        if (v === 'low' || v === 'medium' || v === 'high' || v === 'xhigh') return v;
+        if (v === 'low' || v === 'medium' || v === 'high' || v === 'xhigh' || v === 'max') return v;
         return 'medium';
       }
 
-      function normalizeSpeedModel(value, fallback) {
+      function normalizeAgentModel(value, fallback) {
         const v = (value || '').toString().trim();
-        if (v === 'gpt-5.6-sol' || v === 'gpt-5.6-terra') return v;
+        if (v === 'gpt-5.6-sol' || v === 'gpt-5.6-terra' || v === 'gpt-5.6-luna') return v;
         return fallback;
       }
 
       function getSpeedSettings() {
         const speedMode = !!(speedModeEl && speedModeEl.checked);
         const contextDiet = !!(speedDietEl ? speedDietEl.checked : true);
+        const agentModel = normalizeAgentModel(agentModelEl ? agentModelEl.value : '', 'gpt-5.6-sol');
+        const agentEffort = normalizeReasoningValue(reasoningSel ? reasoningSel.value : 'medium');
         return {
+          agent_model: agentModel,
+          agent_reasoning_effort: agentEffort,
           speed_mode: speedMode,
-          split_planner_executor: true,
-          planner_model: normalizeSpeedModel(speedPlannerEl ? speedPlannerEl.value : '', 'gpt-5.6-sol'),
-          planner_reasoning_effort: 'medium',
-          executor_model: normalizeSpeedModel(speedExecutorEl ? speedExecutorEl.value : '', 'gpt-5.6-terra'),
-          executor_reasoning_effort: 'medium',
+          split_planner_executor: false,
+          planner_model: agentModel,
+          planner_reasoning_effort: agentEffort,
+          executor_model: agentModel,
+          executor_reasoning_effort: agentEffort,
           force_planner: false,
           force_executor: false,
           context_diet: contextDiet,
@@ -2546,13 +2544,12 @@ namespace RevitBridge.Operator
       }
       if (speedModeEl) {
         try {
-          if (localStorage.getItem('op.speedDefaultsVersion') !== 'speed-on-56-sol-terra-medium-v2') {
+          if (localStorage.getItem('op.speedDefaultsVersion') !== 'unified-agent-56-v3') {
             localStorage.setItem('op.speedMode', '1');
             localStorage.setItem('op.speedDiet', '1');
             localStorage.setItem('op.reasoningEffort', 'medium');
-            localStorage.setItem('op.speedPlanner', 'gpt-5.6-sol');
-            localStorage.setItem('op.speedExecutor', 'gpt-5.6-terra');
-            localStorage.setItem('op.speedDefaultsVersion', 'speed-on-56-sol-terra-medium-v2');
+            localStorage.setItem('op.agentModel', 'gpt-5.6-sol');
+            localStorage.setItem('op.speedDefaultsVersion', 'unified-agent-56-v3');
             if (reasoningSel) {
               reasoningSel.value = 'medium';
               post('reasoning.set', { effort: 'medium' });
@@ -2572,18 +2569,11 @@ namespace RevitBridge.Operator
         try { speedDietEl.checked = readBoolPref('op.speedDiet', true); } catch {}
         speedDietEl.addEventListener('change', () => writeBoolPref('op.speedDiet', !!speedDietEl.checked));
       }
-      if (speedPlannerEl) {
-        try { speedPlannerEl.value = normalizeSpeedModel(readStringPref('op.speedPlanner', 'gpt-5.6-sol'), 'gpt-5.6-sol'); } catch {}
-        speedPlannerEl.addEventListener('change', () => {
-          speedPlannerEl.value = normalizeSpeedModel(speedPlannerEl.value, 'gpt-5.6-sol');
-          writeStringPref('op.speedPlanner', speedPlannerEl.value);
-        });
-      }
-      if (speedExecutorEl) {
-        try { speedExecutorEl.value = normalizeSpeedModel(readStringPref('op.speedExecutor', 'gpt-5.6-terra'), 'gpt-5.6-terra'); } catch {}
-        speedExecutorEl.addEventListener('change', () => {
-          speedExecutorEl.value = normalizeSpeedModel(speedExecutorEl.value, 'gpt-5.6-terra');
-          writeStringPref('op.speedExecutor', speedExecutorEl.value);
+      if (agentModelEl) {
+        try { agentModelEl.value = normalizeAgentModel(readStringPref('op.agentModel', 'gpt-5.6-sol'), 'gpt-5.6-sol'); } catch {}
+        agentModelEl.addEventListener('change', () => {
+          agentModelEl.value = normalizeAgentModel(agentModelEl.value, 'gpt-5.6-sol');
+          writeStringPref('op.agentModel', agentModelEl.value);
         });
       }
 

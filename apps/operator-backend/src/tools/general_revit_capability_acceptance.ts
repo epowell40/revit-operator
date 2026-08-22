@@ -976,6 +976,7 @@ async function main(): Promise<void> {
     fixture_transitions: (Array.isArray(priorSuiteContext.fixture_transitions)
       ? priorSuiteContext.fixture_transitions.map(asRecord)
       : []) as JsonRecord[],
+    fixture_preconditions: (Array.isArray(priorSuiteContext.fixture_preconditions) ? priorSuiteContext.fixture_preconditions.map(asRecord) : []) as JsonRecord[],
     fixture_preflight: requestedFixture ? {
       document_title: asRecord(asRecord(fixturePreflight.context).document).title ?? null,
       document_path: asRecord(asRecord(fixturePreflight.context).document).path ?? null,
@@ -1066,6 +1067,15 @@ async function main(): Promise<void> {
       );
       (suiteContext.fixture_transitions as JsonRecord[]).push(transition);
       activeFixtureKey = preferredFixture;
+    }
+    if (testCase.fixture_precondition) {
+      console.log(`[fixture-precondition] ${testCase.case_id}`);
+      const prepared = await requestJson(sidecar, "/api/benchmark/revit-fixture/prepare-case", {
+        method: "POST",
+        body: JSON.stringify({ fixture: preferredFixture, expected_document_title: fixtureConfig.fixtures[preferredFixture].document_title,
+          case_id: testCase.case_id, precondition: testCase.fixture_precondition })
+      }, fixtureTimeoutMs());
+      (suiteContext.fixture_preconditions as JsonRecord[]).push(prepared);
     }
     console.log(`[${traces.length + 1}/${selected.length}] ${testCase.case_id}`);
     traces.push(await runCase(
