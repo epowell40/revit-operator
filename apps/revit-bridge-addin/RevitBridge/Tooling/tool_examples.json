@@ -8627,6 +8627,22 @@
             "oldText": "MEP ENGINEER",
             "newText": "ACME MEP"
           }
+        },
+        {
+          "name": "Apply one conditional text-note replacement",
+          "request": {
+            "elementId": 321,
+            "expectedOldText": "MEP ENGINEER",
+            "newText": "ACME MEP",
+            "apply": true,
+            "confirm": "APPLY 1 TEXT NOTE CHANGE"
+          },
+          "expected_response_shape": {
+            "status": "Success",
+            "elementId": 321,
+            "oldText": "MEP ENGINEER",
+            "newText": "ACME MEP"
+          }
         }
       ]
     },

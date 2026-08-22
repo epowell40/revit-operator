@@ -26,6 +26,11 @@ namespace RevitBridge.Common
         public string? ExceptionType { get; set; }
         public string? DeadlineClass { get; set; }
         public int? DeadlineMs { get; set; }
+        public string? UserErrorCode { get; set; }
+        public string? RequiredConfirm { get; set; }
+        public string? ConfirmReceived { get; set; }
+        public int? MaxChangesPerCall { get; set; }
+        public string? Hint { get; set; }
     }
 
     public static class OperatorCourierFailureClassifier
@@ -39,6 +44,24 @@ namespace RevitBridge.Common
             {
                 return Create(root, metadata.Code, metadata.Retryable, metadata.Phase,
                     metadata.HostHealth, metadata.OpensCircuit, metadata.OutcomeUnknown, correlationId);
+            }
+
+            if (root is OperatorToolUserErrorException userError)
+            {
+                var receipt = Create(root,
+                    string.IsNullOrWhiteSpace(userError.Code) ? "revit_action_rejected" : userError.Code,
+                    retryable: false,
+                    phase: "revit_validation",
+                    hostHealth: "healthy",
+                    opensCircuit: false,
+                    outcomeUnknown: false,
+                    correlationId: correlationId);
+                receipt.UserErrorCode = string.IsNullOrWhiteSpace(userError.Code) ? null : userError.Code;
+                receipt.RequiredConfirm = userError.RequiredConfirm;
+                receipt.ConfirmReceived = userError.ConfirmReceived;
+                receipt.MaxChangesPerCall = userError.MaxChangesPerCall;
+                receipt.Hint = userError.Hint;
+                return receipt;
             }
 
             if (root is TimeoutException)
