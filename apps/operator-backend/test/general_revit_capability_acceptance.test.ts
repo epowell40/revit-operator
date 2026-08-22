@@ -2036,6 +2036,47 @@ test("backend-observed export artifact paths independently verify a visual read 
 
 test("fixture-grounded air-terminal inventory requires the exact seven-group reconciliation", () => {
   const entry = corpus.cases.find((candidate) => candidate.case_id === "q01_air_device_inventory")!;
+  const splitFamilyTypeTable = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: `## Air devices — 509 total
+| Family | Type | Count |
+| Supply Grille – Double Deflection | 16x4 Connection 8 Diameter Duct | 266 |
+| Return Grille – Double Deflection | 16x4 Connection 8 Diameter Duct | 138 |
+| Air Terminal–Exhaust Cap-FB | 4" DIA | 37 |
+| Air Terminal–Supply Cap-FB | 4" DIA | 37 |
+| Supply Diffuser – Square – Hosted | 12" x 12" | 28 |
+| Return Grille – Perforated | 16x10 | 2 |
+| Supply Diffuser with Plenum – Linear Slot | 48x4 1/4-8 In Inlet 2-Slot | 1 |`,
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/revit/find-elements", request_effect: "read", request_dispatched: true, status: "success" }]
+  });
+  assert.equal(splitFamilyTypeTable.tier, "verified");
+  assert.equal(splitFamilyTypeTable.answer_assertion_passed, true);
+
+  const recoveredStaleLifecycle = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: splitFamilyTypeTable.answer_assertion_passed ? `509 total:
+Supply Grille – Double Deflection | 266
+Return Grille – Double Deflection | 138
+Air Terminal–Exhaust Cap-FB | 37
+Air Terminal–Supply Cap-FB | 37
+Supply Diffuser – Square – Hosted | 28
+Return Grille – Perforated | 2
+Supply Diffuser with Plenum – Linear Slot | 1` : "",
+    effect_state: "read_only_dispatched",
+    assignment_projection: {
+      assignments: [{
+        lifecycle: { phase: "blocked", terminal_reason: "execution_failure" },
+        evidence: { entries: [{ summary: "Live tool revit_find_elements completed." }] },
+        verification: { state: "unknown", criteria: [] },
+        execution: { requested_effect: "read" }
+      }]
+    },
+    durable_tool_evidence: { successful_paths: ["/revit/find-elements"] }
+  });
+  assert.equal(recoveredStaleLifecycle.tier, "verified");
+  assert.equal(recoveredStaleLifecycle.verification_basis, "fixture_semantic_oracle");
+
   const result = evaluateGeneralRevitCapabilityAttempt(entry, {
     ok: true,
     assistant_message: "509 air terminals. The largest group has 267 and the rest are omitted.",

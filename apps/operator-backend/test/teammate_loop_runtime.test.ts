@@ -915,6 +915,68 @@ test("known pre-dispatch mutation failures may be corrected and retried", () => 
   }
 });
 
+test("plain-text typed-confirmation rejection is known no-effect and permits a corrected text-note retry", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Replace the selected outdated note with Design Development."));
+  const args = {
+    method: "POST",
+    path: "/revit/replace-text-note",
+    body: { elementId: 1421361, searchPattern: "Issued for Review", replaceWith: "Design Development", apply: true }
+  };
+  try {
+    const first = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: args });
+    assert.equal(first.allowed, true);
+    recordTeammateMcpResult(owner, first, {
+      content: [{ type: "text", text: "RevitCourierError: revit_action_failed: TextNote edit requires typed confirmation." }]
+    });
+    const afterFailure = teammateLoopReceiptForOwner(owner);
+    assert.equal(afterFailure?.blocked_reason, null);
+    assert.equal(afterFailure?.stage, "apply");
+
+    const retry = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { ...args, body: { ...args.body, confirmationText: "APPLY" } }
+    });
+    assert.equal(retry.allowed, true);
+    assert.equal(retry.call?.effect, "apply");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.apply_attempts, 2);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("post-apply verification reads have a bounded attempt budget", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set selected equipment Mark to TEST-AHU-01."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { changes: [{ elementId: 42, parameterName: "Mark", value: "TEST-AHU-01" }], apply: true }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
+
+    for (let index = 0; index < 6; index += 1) {
+      const read = guardTeammateMcpCall(owner, {
+        tool: "revit_get_parameters",
+        arguments: { elementIds: [100 + index], names: ["Mark"] }
+      });
+      assert.equal(read.allowed, true);
+      recordTeammateMcpResult(owner, read, { content: [{ type: "text", text: JSON.stringify({ ok: true, elementId: 100 + index, Mark: "OLD" }) }] });
+    }
+    const exhausted = guardTeammateMcpCall(owner, {
+      tool: "revit_get_parameters",
+      arguments: { elementIds: [999], names: ["Mark"] }
+    });
+    assert.equal(exhausted.allowed, false);
+    assert.match(exhausted.message || "", /verification attempt budget exhausted/i);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("read-only titleblock inspection does not poison a later preview and apply", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

@@ -88,5 +88,5 @@ export function evidenceIsKnownNoEffectFailure(
     && texts.some(value => /\bmodel was saved (?:by|in) a later version of Revit\b/i.test(value));
   return structuredNoDispatch
     || incompatibleFirstDocumentOpen
-    || texts.some(value => /\bbulk_confirm_required\b|bulk (?:query-based |panel-|type )?parameter (?:edit|update) requires typed confirmation/i.test(value));
+    || texts.some(value => /\bbulk_confirm_required\b|\brequires typed confirmation\b/i.test(value));
 }
