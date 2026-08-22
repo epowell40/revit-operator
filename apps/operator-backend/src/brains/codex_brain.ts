@@ -4,7 +4,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { appendEvent, appendNotification, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
-import type { UserInput } from "../codex/generated/app_server_0_144_5/v2/UserInput.js";
+import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";

@@ -1668,6 +1668,12 @@ test("safe mode scores the safe probe contract without weakening production muta
   assert.equal(result.apply_dispatched, false);
 });
 
+test("apply mode upgrades legacy preview-labelled mutation prompts to apply truth", () => {
+  const legacyMutation = corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!;
+  assert.equal(legacyMutation.expected_effect, "preview");
+  assert.equal(generalRevitExecutionCase(legacyMutation, true).expected_effect, "apply");
+});
+
 test("a nested teammate preview receipt satisfies the preview effect through delegate_revit_task", () => {
   const safeCase = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "r02_add_tag")!, false);
   const result = evaluateGeneralRevitCapabilityAttempt(safeCase, {

@@ -173,7 +173,15 @@ export function generalRevitExecutionCase(
   testCase: GeneralRevitCapabilityCase,
   applyRequested: boolean
 ): GeneralRevitCapabilityCase {
-  if (applyRequested || testCase.expected_effect === "read") return testCase;
+  if (applyRequested) {
+    // The corpus historically stored preview as the safe-probe expectation for
+    // many mutation prompts. An explicitly authorized apply run must grade the
+    // production prompt as an apply unless the task is intrinsically read-only.
+    return testCase.expected_effect === "read" || testCase.expected_effect === "apply"
+      ? testCase
+      : { ...testCase, expected_effect: "apply" };
+  }
+  if (testCase.expected_effect === "read") return testCase;
   return { ...testCase, expected_effect: testCase.probe_expected_effect ?? "preview" };
 }
 

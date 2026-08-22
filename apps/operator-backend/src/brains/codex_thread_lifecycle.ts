@@ -1,5 +1,5 @@
 import type { CodexAppServer } from "../codex/app_server.js";
-import type { DynamicToolSpec } from "../codex/generated/app_server_0_144_5/v2/DynamicToolSpec.js";
+import type { DynamicToolSpec } from "../codex/generated/app_server_0_149_0/v2/DynamicToolSpec.js";
 import { appendEvent, getCodexThreadId, setCodexThreadId } from "../memory/sqlite_store.js";
 import type { AgentModelSettings } from "../speed_config.js";
 import { isMissingCodexThreadError } from "./codex_tool_observation.js";
@@ -74,4 +74,3 @@ export async function getOrCreateCodexThread(args: {
   }
   return threadId;
 }
-

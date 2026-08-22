@@ -13,7 +13,7 @@ type CodexNotification = {
 export function codexTelemetryThreadKey(profile: CodexThreadStartProfile): string {
   // Thread resume cannot opt an old thread into raw Responses API events.
   // Versioning the key starts one telemetry-capable durable thread per profile.
-  return `${profile.threadKey}:raw-usage-v1`;
+  return `${profile.threadKey}:raw-usage-v2`;
 }
 
 export function createCodexTurnModelTelemetry(args: {
@@ -55,4 +55,3 @@ export function createCodexTurnModelTelemetry(args: {
     }
   };
 }
-
