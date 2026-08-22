@@ -71,6 +71,7 @@ export type TeammateMcpGate = { allowed: boolean; message?: string; call?: Pendi
 const statesByTurn = new Map<string, TeammateLoopState>();
 const statesByOwner = new WeakMap<object, { unbound: Set<TeammateLoopOwnerLease>; by_turn: Map<string, TeammateLoopOwnerLease> }>();
 const MAX_STATE_AGE_MS = 5 * 60_000;
+const MAX_POST_APPLY_VERIFICATION_ACTIONS = 6;
 // Transient UI/derived-state POSTs must not replace the last persistent mutation's verification target.
 const NAVIGATION_PATHS = new Set(["/revit/activate-view", "/revit/regenerate"]);
 const DISCOVERY_PATHS = new Set(["/revit/ping", "/revit/context", "/revit/write-grant-status", "/revit/tool-registry", "/revit/tool-search", "/revit/tool-doc", "/revit/tool-examples"]);
@@ -713,6 +714,12 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     state.apply_operation = "";
     state.blocked_reason = null;
   }
+  if ((call.effect === "read" || call.effect === "navigation")
+      && state.stage_apply_attempts > 0
+      && !state.verified
+      && state.verification_action_ids.length >= MAX_POST_APPLY_VERIFICATION_ACTIONS) {
+    return "post_apply_verification_attempt_budget_exhausted";
+  }
   return null;
 }
 
@@ -1174,10 +1181,14 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
 function mcpResultSucceeded(result: unknown): boolean {
   const root = objectValue(result);
   if (root.isError === true) return false;
+  const rootError = boundedString(root.error, 4_000);
+  if (rootError && root.ok !== true && root.success !== true) return false;
   const content = Array.isArray(root.content) ? root.content : [];
   for (const item of content) {
     const text = boundedString(objectValue(item).text, 2_000_000);
-    if (!text || (!text.startsWith("{") && !text.startsWith("["))) continue;
+    if (!text) continue;
+    if (/^(?:RevitCourierError|OperatorToolUserError|Error):|^\[(?:teammate_loop_blocked|revit_tool_quarantined|assignment_(?:paused|blocked))\]/i.test(text.trim())) return false;
+    if (!text.startsWith("{") && !text.startsWith("[")) continue;
     try {
       const parsed = objectValue(JSON.parse(text));
       if (parsed.ok === false || parsed.success === false) return false;

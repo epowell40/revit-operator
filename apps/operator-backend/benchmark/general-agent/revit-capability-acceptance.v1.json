@@ -78,13 +78,13 @@
       "answer_assertions": {
         "must_match": [
           "(?<!\\d)509(?!\\d)",
-          "Supply Grille\\s*[-–—]\\s*Double Deflection\\s*[-–—]\\s*Curve Face Rectangular Neck[\\s\\S]*?(?<!\\d)266(?!\\d)",
-          "Return Grille\\s*[-–—]\\s*Double Deflection\\s*[-–—]\\s*Curve Face Rectangular Neck[\\s\\S]*?(?<!\\d)138(?!\\d)",
-          "Air Terminal\\s*[-–—]\\s*Exhaust Cap\\s*[-–—]\\s*FB[\\s\\S]*?(?<!\\d)37(?!\\d)",
-          "Air Terminal\\s*[-–—]\\s*Supply Cap\\s*[-–—]\\s*FB[\\s\\S]*?(?<!\\d)37(?!\\d)",
-          "Supply Diffuser\\s*[-–—]\\s*Square\\s*[-–—]\\s*Hosted[\\s\\S]*?(?<!\\d)28(?!\\d)",
-          "Return Grille\\s*[-–—]\\s*Perforated\\s*[-–—]\\s*Rectangular Face Rectangular Neck[\\s\\S]*?(?<!\\d)2(?!\\d)",
-          "Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot\\s*[-–—]\\s*Hosted[\\s\\S]*?(?<!\\d)1(?!\\d)"
+          "Supply Grille\\s*[-–—]\\s*Double Deflection(?:\\s*[-–—]\\s*Curve Face Rectangular Neck)?[^\\r\\n;]*?(?<!\\d)266(?!\\d)",
+          "Return Grille\\s*[-–—]\\s*Double Deflection(?:\\s*[-–—]\\s*Curve Face Rectangular Neck)?[^\\r\\n;]*?(?<!\\d)138(?!\\d)",
+          "Air Terminal\\s*[-–—]\\s*Exhaust Cap\\s*[-–—]\\s*FB[^\\r\\n;]*?(?<!\\d)37(?!\\d)",
+          "Air Terminal\\s*[-–—]\\s*Supply Cap\\s*[-–—]\\s*FB[^\\r\\n;]*?(?<!\\d)37(?!\\d)",
+          "Supply Diffuser\\s*[-–—]\\s*Square(?:\\s*[-–—]\\s*Hosted)?[^\\r\\n;]*?(?<!\\d)28(?!\\d)",
+          "Return Grille\\s*[-–—]\\s*Perforated(?:\\s*[-–—]\\s*Rectangular Face Rectangular Neck)?[^\\r\\n;]*?(?<!\\d)2(?!\\d)",
+          "Supply Diffuser with Plenum\\s*[-–—]\\s*Linear Slot(?:\\s*[-–—]\\s*Hosted)?[^\\r\\n;]*?(?<!\\d)1(?!\\d)"
         ]
       },
       "epic0441_task_refs": ["g23_schedule_configure", "g26_context_rule"]

@@ -1113,12 +1113,23 @@ export function evaluateGeneralRevitCapabilityAttempt(
       : teammatePreviewDispatched
   );
   const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted || authoritativeTeammateEffect;
+  // A stale Assignment lifecycle flag must not veto an exact fixture-semantic
+  // read answer when the same flight record proves a successful expected Revit
+  // route and contains no unresolved action or transport failure. This recovery
+  // is deliberately read-only: mutation truth still requires target-bound
+  // execution receipts and cannot be inferred from answer prose.
+  const authoritativeReadAnswerRecovery = testCase.expected_effect === "read"
+    && answerAssertionPassed === true
+    && successfulExpectedPathObserved
+    && attemptSucceeded
+    && !substantiveFailedAction
+    && !outcomeUnknown;
   // Exploratory failures remain visible in telemetry, but they cannot negate a
   // later action-bound, target-bound verification receipt for the requested
   // effect. The receipt and expected-lane checks above prevent an unrelated
   // successful route from masking a failed task.
   const effectiveSubstantiveFailedAction = substantiveFailedAction && !authoritativeEffectRecovery;
-  const effectiveDurableBlocked = durable.blocked && !authoritativeEffectRecovery;
+  const effectiveDurableBlocked = durable.blocked && !authoritativeEffectRecovery && !authoritativeReadAnswerRecovery;
   const effectiveTeammateBlocked = teammate.blocked && !authoritativeEffectRecovery;
   const effectiveAssistantIncomplete = assistantIncomplete && !authoritativeEffectRecovery;
   const effectiveAssistantBlocked = assistantBlocked && !authoritativeEffectRecovery;

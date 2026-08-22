@@ -47,14 +47,28 @@ namespace RevitBridge.Logic.Handlers
             if (view.IsTemplate) throw new ArgumentException("Cannot activate a view template.");
 
             var warnings = new List<string>();
+            var activationPending = false;
 
-            try
+            if (uidoc.ActiveView == null || uidoc.ActiveView.Id != view.Id)
             {
-                uidoc.ActiveView = view;
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Failed to activate view {targetViewId} ('{view.Name}'): {ex.Message}", ex);
+                try
+                {
+                    uidoc.ActiveView = view;
+                }
+                catch (Exception ex) when (CanRequestDeferredActivation(p) && IsTemporarilyDisabled(ex))
+                {
+                    // Revit can keep synchronous view activation disabled after
+                    // OpenAndActivateDocument even though the document is otherwise
+                    // healthy. RequestViewChange queues the same non-mutating change
+                    // for the next idle cycle, after this external event returns.
+                    uidoc.RequestViewChange(view);
+                    activationPending = true;
+                    warnings.Add("Synchronous view activation was temporarily disabled; Revit accepted a deferred view-change request.");
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"Failed to activate view {targetViewId} ('{view.Name}'): {ex.Message}", ex);
+                }
             }
 
             var shown = new List<long>();
@@ -155,7 +169,7 @@ namespace RevitBridge.Logic.Handlers
                 warnings.Add("Requested bbox zoom but no open UIView was found for the activated view.");
             }
 
-            if (uiView != null && p.zoomToFit)
+            if (uiView != null && p.zoomToFit && !activationPending)
             {
                 try
                 {
@@ -167,10 +181,15 @@ namespace RevitBridge.Logic.Handlers
                     warnings.Add($"ZoomToFit failed: {ex.Message}");
                 }
             }
+            else if (p.zoomToFit && activationPending)
+            {
+                warnings.Add("ZoomToFit was deferred because the requested view change is pending.");
+            }
 
             return Task.FromResult<object>(new
             {
                 ok = true,
+                activationPending,
                 activeViewId = RevitBridge.Common.ElementIdCompat.GetValue(view.Id),
                 activeViewName = view.Name,
                 requestedViewId = targetViewId,
@@ -179,6 +198,18 @@ namespace RevitBridge.Logic.Handlers
                 didZoom,
                 warnings
             });
+        }
+
+        private static bool CanRequestDeferredActivation(Params p)
+        {
+            var hasShowElements = p.showElementIds != null && p.showElementIds.Count > 0;
+            var hasBoundingBox = p.bboxMinXyz != null || p.bboxMaxXyz != null;
+            return !hasShowElements && !hasBoundingBox;
+        }
+
+        private static bool IsTemporarilyDisabled(Exception exception)
+        {
+            return exception.Message.IndexOf("temporarily disabled", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static long ResolveTargetViewId(UIApplication app, Params p)
