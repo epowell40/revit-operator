@@ -4,7 +4,7 @@ import type {
   ExistingConditionsGroundTruth,
   ExistingConditionsPoint3,
   ExistingConditionsSnapshot
-} from "../benchmark/existing_conditions_reconstruction.js";
+} from "./model_contract.js";
 import {
   buildAtomicMepDraftWorkflowRequest,
   type AtomicMepDraftWorkflowRequest

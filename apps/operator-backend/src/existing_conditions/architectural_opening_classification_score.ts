@@ -1,7 +1,7 @@
 import type {
   ExistingConditionsElement,
   ExistingConditionsGroundTruth
-} from "../benchmark/existing_conditions_reconstruction.js";
+} from "./model_contract.js";
 import {
   validateArchitecturalOpeningClassification,
   type ArchitecturalOpeningClassificationReceipt

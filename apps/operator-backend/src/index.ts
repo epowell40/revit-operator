@@ -150,13 +150,18 @@ import {
   transitionGoal,
   updateGoal
 } from "./goals/service.js";
-import { classifyAutoGoalRequest } from "./goals/auto_goal.js";
-import { settleSidecarComputerGoal, supersedeBlockedAutoGoalForFreshRequest } from "./goals/auto_goal_runtime.js";
+import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
+import { startAutoGoalIfEligible } from "./goals/auto_goal_start.js";
 import {
   ASSIGNMENT_PROJECTION_SCHEMA,
   getAssignmentProjection,
   listAssignmentProjections
 } from "./assignments/projection.js";
+import {
+  ensureAssignmentRunForTurn,
+  journalAssignmentActions,
+  journalAssignmentToolResults
+} from "./assignments/turn_journal.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -2083,7 +2088,7 @@ const server = http.createServer(async (req, res) => {
         return res.end("Provide user_text or tool_results");
       }
 
-      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "stream", auth.principal, canonicalRequest.context);
+      prepareAssignmentTurn(parsed.session_id, parsed.message_id, userTextWithAttachments, toolResults, "stream", auth.principal, canonicalRequest.context);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2145,6 +2150,7 @@ const server = http.createServer(async (req, res) => {
       const devUnlocked = devAgentUnlocked(req);
       if (macroResp) {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
+        journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_stream_macro");
         ensureSession(parsed.session_id);
         if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
@@ -2275,6 +2281,7 @@ const server = http.createServer(async (req, res) => {
             }
           }
         );
+        journalAssignmentActions(parsed.session_id, decision.actions, "outer_stream_decision");
         if (heartbeat) {
           clearInterval(heartbeat);
           heartbeat = null;
@@ -2445,7 +2452,7 @@ const server = http.createServer(async (req, res) => {
         return writeJson(res, 400, { error: "Provide user_text or tool_results" });
       }
 
-      maybeStartAutoGoal(parsed.session_id, userTextWithAttachments, toolResults.length, "chat", auth.principal, parsed.context);
+      prepareAssignmentTurn(parsed.session_id, parsed.message_id, userTextWithAttachments, toolResults, "chat", auth.principal, parsed.context);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2482,6 +2489,7 @@ const server = http.createServer(async (req, res) => {
         : maybeHandleMacroSkill(brainRequest);
       if (macroResp) {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
+        journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_chat_macro");
         ensureSession(parsed.session_id);
         if (userTextWithAttachments.trim()) appendMessage(parsed.session_id, { role: "user", text: userTextWithAttachments });
         for (const tr of toolResults) appendToolSummary(parsed.session_id, summarizeToolResult(tr));
@@ -2592,6 +2600,7 @@ const server = http.createServer(async (req, res) => {
           tool_results: toolResults,
           user_attachments: userAttachments
         });
+        journalAssignmentActions(parsed.session_id, decision.actions, "outer_chat_decision");
         appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message });
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
@@ -3991,60 +4000,28 @@ function appendAttachmentsToUserText(userText: string, attachments: NonNullable<
   return `${t}\n\n${block}`;
 }
 
-function maybeStartAutoGoal(
+function prepareAssignmentTurn(
   sessionId: string,
+  messageId: string,
   userText: string,
-  toolResultCount: number,
+  toolResults: ToolResult[],
   source: string,
   principal?: RequestPrincipal,
   requestContext?: unknown
 ): void {
   try {
-    if (toolResultCount > 0) return;
-    const decision = classifyAutoGoalRequest(userText);
-    if (!decision.shouldStart) return;
-    const current = getCurrentGoalForSession(sessionId);
-    if (current && !supersedeBlockedAutoGoalForFreshRequest(sessionId)) return;
     const owner = sessionOwnerForPrincipal(principal);
-    const context = objectRecord(requestContext);
-    const revit = objectRecord(context.revit);
-    const document = objectRecord(revit.document);
-    const projectIdentity = objectRecord(document.projectIdentity);
-    const goal = setAgentGoal(sessionId, {
-      title: decision.title,
-      objective: decision.objective,
-      success_criteria: decision.acceptanceCriteria,
-      current_phase: "observe",
-      current_step: "Capability-aware preflight",
-      progress_summary: `Auto-entered goal mode (${decision.signals.join("; ")}).`,
-      work_items: [{
-        id: "auto.revit-work",
-        title: "Complete and verify the requested Revit work",
-        status: "in_progress",
-        planned_actions: ["Inspect the live model", "Perform the bounded request", "Verify and report the result"]
-      }],
-      work_budget: {
-        mode: "auto_goal",
-        source,
-        source_user_request: decision.objective,
-        requested_effect: decision.requestedEffect,
-        executor_id: trimText(revit.courier_executor_id, 180) || null,
-        document_fingerprint: trimText(projectIdentity.fingerprint, 128) || null,
-        document_title: trimText(document.title, 260) || null,
-        document_path: trimText(document.path, 1000) || null,
-        score: decision.score,
-        signals: decision.signals,
-        retry_policy: "bounded spatial/workflow retries; ask or block after no defensible next action"
-      },
-      created_by: owner?.owner_user_id ?? `auto_goal:${source}`
+    startAutoGoalIfEligible({
+      session_id: sessionId, user_text: userText, tool_result_count: toolResults.length,
+      source, created_by: owner?.owner_user_id ?? null, request_context: requestContext,
+      on_started: (goal, signals) => appendNotification(sessionId, "goal.auto_started", `Goal mode started: ${goal.title}`, {
+        goal_id: goal.id, status: goal.status, signals
+      })
     });
-    appendNotification(sessionId, "goal.auto_started", `Goal mode started: ${goal.title}`, {
-      goal_id: goal.id,
-      status: goal.status,
-      signals: decision.signals
-    });
+    ensureAssignmentRunForTurn(sessionId, `chat:${messageId}`, `outer_${source}`, toolResults.length === 0 && !!userText.trim());
+    journalAssignmentToolResults(sessionId, toolResults, `outer_${source}_result`);
   } catch {
-    // Auto-goal routing should never block a chat turn.
+    // Assignment journaling is fail-safe and must not block the user turn.
   }
 }
 

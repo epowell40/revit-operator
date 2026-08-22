@@ -9,6 +9,12 @@ import {
   type GoalAuthorityEnvelope,
   type GoalEvidenceAuthorityProvider
 } from "./authority.js";
+import {
+  emptyAssignmentControlPlane,
+  normalizeAssignmentControlPlane,
+  reduceAssignmentControlPlane,
+  type AssignmentControlPlaneLog
+} from "../assignments/control_plane.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -159,6 +165,7 @@ export type GoalRecord = {
   artifacts: string[];
   error?: string | null;
   blocker?: string | null;
+  assignment_control_plane?: AssignmentControlPlaneLog;
 };
 
 export type GoalCreateInput = {
@@ -708,6 +715,34 @@ function saveGoal(goal: GoalRecord): GoalRecord {
   });
 }
 
+function normalizeLoadedGoal(goal: GoalRecord): GoalRecord {
+  return {
+    ...goal,
+    revision: Number.isInteger(goal.revision) ? goal.revision : 0,
+    work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
+    assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : [],
+    assignment_control_plane: normalizeAssignmentControlPlane(goal.assignment_control_plane)
+  };
+}
+
+/** Atomically mutates the existing Goal record under its durable file lock. */
+export function mutateGoalRecord(goalId: string, mutator: (goal: GoalRecord) => GoalRecord): GoalRecord {
+  const id = clip(goalId, 160);
+  if (!id) throw new Error("Goal id is required.");
+  return withGoalLock(id, () => {
+    const persisted = readJson<GoalRecord>(goalPath(id));
+    if (!persisted) throw new Error("Goal not found.");
+    const goal = normalizeLoadedGoal(persisted);
+    const candidate = mutator(goal);
+    if (candidate.id !== goal.id) throw new Error("Goal mutation cannot change identity.");
+    const persistedRevision = Number.isInteger(persisted.revision) ? Number(persisted.revision) : 0;
+    const next = { ...candidate, revision: persistedRevision + 1, updated_at: nowIso() };
+    writeJson(goalPath(id), next);
+    observeListedGoal(goalsRoot(), next);
+    return next;
+  });
+}
+
 export function createGoal(input: GoalCreateInput): GoalRecord {
   const title = clip(input.title, 180);
   const objective = clip(input.objective, 5000);
@@ -748,7 +783,8 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
     related_project_id: clip(input.related_project_id ?? input.relatedProjectId, 180) || null,
     artifacts: asStringList(input.artifacts, 80, 600),
     error: null,
-    blocker: null
+    blocker: null,
+    assignment_control_plane: emptyAssignmentControlPlane()
   };
   writeJson(goalPath(goal.id), goal);
   observeListedGoal(goalsRoot(), goal);
@@ -764,24 +800,14 @@ export function getGoal(goalId: string): GoalRecord | null {
   if (!id) return null;
   const goal = readJson<GoalRecord>(goalPath(id));
   if (!goal) return null;
-  return {
-    ...goal,
-    revision: Number.isInteger(goal.revision) ? goal.revision : 0,
-    work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
-    assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
-  };
+  return normalizeLoadedGoal(goal);
 }
 
 function readAllGoals(): GoalRecord[] {
   const root = goalsRoot();
   return listCachedGoals(root, id => {
     const goal = readJson<GoalRecord>(path.join(root, id, "goal.json"));
-    return goal ? {
-      ...goal,
-      revision: Number.isInteger(goal.revision) ? goal.revision : 0,
-      work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
-      assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : []
-    } : null;
+    return goal ? normalizeLoadedGoal(goal) : null;
   });
 }
 
@@ -792,7 +818,7 @@ export function listGoals(limit = 50): GoalRecord[] {
 export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
   const goal = getGoal(goalId);
   if (!goal) throw new Error("Goal not found.");
-  if (goal.status === "complete" || goal.status === "canceled") {
+  if (goal.status === "complete" || goal.status === "canceled" || goal.status === "failed") {
     throw new Error(`Cannot edit a ${goal.status} goal.`);
   }
 
@@ -1073,6 +1099,9 @@ export function markAgentGoalComplete(sessionId: string, evidence?: unknown): Go
 
 export function formatActiveGoalContext(goal: GoalRecord | null): string {
   if (!goal || goal.status !== "active") return "";
+  const control = reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection;
+  const recentAttempts = control.attempts.slice(-8).map(attempt =>
+    `- ${attempt.attempt_id} [${attempt.purpose}/${attempt.requested_effect}] ${attempt.action_path} effect=${attempt.effect.state} authority=${attempt.effect.authority} verification=${attempt.verification.state}`);
   const recentActions = goal.action_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
   const recentEvidence = goal.evidence_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
   const recentValidations = goal.validation_log.slice(-5).map(e => `- ${e.ts}: ${e.summary}`);
@@ -1094,6 +1123,10 @@ export function formatActiveGoalContext(goal: GoalRecord | null): string {
     `current_step: ${goal.current_step || "(unset)"}`,
     `progress_summary: ${goal.progress_summary || "(empty)"}`,
     `blocker: ${goal.blocker || "(none)"}`,
+    `canonical_control_plane: generation=${control.generation} run_id=${control.run_id ?? "(none)"} phase=${control.phase} terminal=${control.terminal_state}`,
+    `canonical_unknown_attempts: ${control.unresolved_unknown_attempt_ids.join(", ") || "(none)"}`,
+    `canonical_progress_decision: ${control.progress.decision}${control.progress.reason ? ` (${control.progress.reason})` : ""}`,
+    `canonical_recent_attempts:\n${recentAttempts.length ? recentAttempts.join("\n") : "- (none)"}`,
     `work_items:\n${workItems.length ? workItems.join("\n") : "- (none)"}`,
     `assumptions:\n${assumptions.length ? assumptions.join("\n") : "- (none)"}`,
     `recent_action_log:\n${recentActions.length ? recentActions.join("\n") : "- (none)"}`,

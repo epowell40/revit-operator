@@ -10,6 +10,7 @@ import { buildTeammateTurnContract } from "../teammate_loop_runtime.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { normalizeProviderSupervisorEvidence } from "./provider_supervisor_evidence.js";
 import { computeDynamicRuntimePackageDirectoryIdentity } from "./runtime_package_directory_identity.js";
+import { journalProviderDynamicRuntimeSettlement } from "../assignments/dynamic_runtime_settlement.js";
 
 export const PROVIDER_DYNAMIC_PROGRAM_V1 = "revit-operator.provider-dynamic-program.v1" as const;
 export const PROVIDER_DYNAMIC_PROGRAM_EXECUTION_RECEIPT_V1 =
@@ -77,6 +78,8 @@ export type ProviderDynamicProgramExecutionReceipt = {
   evidence_sha256: string | null;
   authority: "trusted_supervisor_receipt";
   provider_prose_authorized: false;
+  request_dispatched: boolean;
+  outcome_unknown: boolean;
   failure: string | null;
   supervisor_executable_sha256?: string | null;
   supervisor_package_sha256?: string | null;
@@ -442,6 +445,8 @@ function receipt(args: Partial<ProviderDynamicProgramExecutionReceipt> & Pick<Pr
     evidence_sha256: args.evidence_sha256 ?? null,
     authority: "trusted_supervisor_receipt",
     provider_prose_authorized: false,
+    request_dispatched: args.request_dispatched ?? args.status === "completed",
+    outcome_unknown: args.outcome_unknown ?? false,
     failure: args.failure ?? null,
     ...(args.supervisor_executable_sha256 !== undefined ? { supervisor_executable_sha256: args.supervisor_executable_sha256 } : {}),
     ...(args.supervisor_package_sha256 !== undefined ? { supervisor_package_sha256: args.supervisor_package_sha256 } : {}),
@@ -479,6 +484,7 @@ export async function runTrustedProviderDynamicProgram(
   }
 
   let stagedPackageForCleanup: string | null = null;
+  let supervisorDispatched = false;
   try {
     const supervisorPath = trustedFile(env.OPERATOR_DYNAMIC_REVIT_SUPERVISOR_EXECUTABLE_PATH, "Dynamic Revit supervisor executable");
     const supervisorDirectory = trustedDirectory(path.dirname(supervisorPath), "Dynamic Revit supervisor directory");
@@ -565,6 +571,7 @@ export async function runTrustedProviderDynamicProgram(
         || stableDirectoryIdentity(stagedSupervisorDirectory, "Staged Dynamic Revit supervisor directory") !== stagedDirectoryFilesystemIdentity) {
         throw new Error("Staged Dynamic Revit supervisor package changed before launch");
       }
+      supervisorDispatched = true;
       launched = await (dependencies.executeSupervisor ?? spawnSupervisor)(
         stagedSupervisorPath,
         ["--execute-task", configPath],
@@ -610,6 +617,8 @@ export async function runTrustedProviderDynamicProgram(
       receipt({
         status: "blocked",
         apply_requested: program.apply,
+        request_dispatched: supervisorDispatched,
+        outcome_unknown: program.apply && supervisorDispatched,
         failure: error instanceof Error ? error.message : String(error)
       })
     );
@@ -675,6 +684,7 @@ export async function executeProviderDynamicProgramLane(args: {
     );
   }
   const response = await (args.runner ?? runTrustedProviderDynamicProgram)(args.req, program);
+  journalProviderDynamicRuntimeSettlement(args.req, program, response);
   return args.strategyEvidence && !response.execution_strategy_evidence
     ? { ...response, execution_strategy_evidence: args.strategyEvidence }
     : response;

@@ -308,13 +308,13 @@ namespace RevitBridge.Common.Tests
                 "if (string.Equals(path, \"/revit/ping\", StringComparison.OrdinalIgnoreCase))\n" +
                 "            {\n" +
                 "                " + finalGate + "\n" +
-                "                return new { status = \"ok\", timestamp = DateTime.Now };",
+                "                return AttachSettlement(action, new { status = \"ok\", timestamp = DateTime.Now }, requestedEffect, method, path);",
                 source);
             Assert.Contains(
                 "if (string.Equals(path, \"/revit/capabilities\", StringComparison.OrdinalIgnoreCase))\n" +
                 "            {\n" +
                 "                " + finalGate + "\n" +
-                "                return OperatorCapabilities.Get();",
+                "                return AttachSettlement(action, OperatorCapabilities.Get(), requestedEffect, method, path);",
                 source);
             Assert.Contains(
                 "if (string.Equals(path, \"/revit/write-grant-status\", StringComparison.OrdinalIgnoreCase))\n" +
@@ -326,14 +326,15 @@ namespace RevitBridge.Common.Tests
                 "if (IsDirectDialogComputerUsePath(path))\n" +
                 "            {\n" +
                 "                " + finalGate + "\n" +
-                "                return await handler.Handle(null!, jsonBody)",
+                "                return AttachSettlement(action, await handler.Handle(null!, jsonBody)",
                 source);
             Assert.Contains(
                 "if (IsDirectControlPlanePath(path))\n" +
                 "            {\n" +
                 "                " + finalGate + "\n" +
-                "                return handler is NativeApiPolicyHandler",
+                "                var directResult = handler is NativeApiPolicyHandler",
                 source);
+            Assert.Contains("return AttachSettlement(action, directResult, requestedEffect, method, path);", source);
             Assert.Contains("\"/revit/computer-use-act\"", source);
             Assert.Contains("\"/revit/computer-use-guard\"", source);
             Assert.Contains("\"/revit/tool-registry\"", source);
@@ -345,7 +346,10 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("authorization.RequestFamilyAdmission != null\n" +
                 "                    && !string.Equals(authorization.AuthorizationStage, \"final\", StringComparison.Ordinal)", source);
             Assert.Contains("OperatorCertifiedMovePreviewAuthority.IsIndependentlyVerifiedCertifiedFamilyResult(result)", source);
-            Assert.Contains("return result;\n                throw new OperatorRecoveredDialogException", source);
+            Assert.Contains(
+                "return AttachSettlement(action, result, requestedEffect, method, path);\n" +
+                "                throw new OperatorRecoveredDialogException",
+                source);
         }
 
         [Theory]

@@ -30,6 +30,23 @@ namespace RevitBridge.Services
         public string? CorrelationId { get; }
     }
 
+    public sealed class RevitEventCanceledBeforeDispatchException : OperationCanceledException, IOperatorRevitFailureMetadata, IOperatorCorrelationMetadata
+    {
+        public RevitEventCanceledBeforeDispatchException(string? correlationId)
+            : base("The Revit action deadline elapsed before the ExternalEvent callback started; no mutation was dispatched.")
+        {
+            CorrelationId = OperatorCorrelationId.IsValid(correlationId) ? correlationId!.Trim() : null;
+        }
+
+        public string Code => "revit_action_deadline_elapsed_before_dispatch";
+        public bool Retryable => true;
+        public string Phase => "pre_dispatch";
+        public string HostHealth => "degraded";
+        public bool OpensCircuit => false;
+        public bool OutcomeUnknown => false;
+        public string? CorrelationId { get; }
+    }
+
     public class RevitEventService : IExternalEventHandler
     {
         private sealed class QueueItem
@@ -213,8 +230,6 @@ namespace RevitBridge.Services
 
         private void CancelQueuedItem(QueueItem expected)
         {
-            expected.Completion.TrySetCanceled();
-
             // If Execute already started, it owns the slot until the Revit API callback
             // returns. Releasing it here would permit overlapping access to Revit's API.
             if (Interlocked.CompareExchange(
@@ -222,8 +237,11 @@ namespace RevitBridge.Services
                     QueueItem.CancelledBeforeStart,
                     QueueItem.Pending) != QueueItem.Pending)
             {
+                expected.Completion.TrySetCanceled();
                 return;
             }
+
+            expected.Completion.TrySetException(new RevitEventCanceledBeforeDispatchException(expected.CorrelationId));
 
             // Only one item can be in flight, so the head is expected to be this item. If
             // Execute won the dequeue race, it will observe CancelledBeforeStart and release

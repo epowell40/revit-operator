@@ -109,7 +109,7 @@ test("text type discovery remains read-only before a create-text dry-run", () =>
   }
 });
 
-test("an assistant report of an incomplete mutation overrides an optimistic receipt", () => {
+test("assistant prose cannot downgrade an authoritative mutation receipt", () => {
   const receipt = reconcileTeammateReceiptWithAssistant({
     schema: "revit-operator.teammate-loop-receipt.v1",
     turn_kind: "mutation",
@@ -125,9 +125,9 @@ test("an assistant report of an incomplete mutation overrides an optimistic rece
     verification_evidence_sha256: `sha256:${"a".repeat(64)}`,
     blocked_reason: null
   }, "The assignment is blocked. The requested new assignment is not yet complete.");
-  assert.equal(receipt?.stage, "blocked");
-  assert.equal(receipt?.verified, false);
-  assert.equal(receipt?.blocked_reason, "assistant_reported_incomplete");
+  assert.equal(receipt?.stage, "report");
+  assert.equal(receipt?.verified, true);
+  assert.equal(receipt?.blocked_reason, null);
 });
 
 test("a nested PDF dry-run is recorded as an executable preview", () => {

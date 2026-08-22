@@ -31,6 +31,7 @@ import {
 import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation, settleSidecarComputerGoal, supersedeBlockedAutoGoalForFreshRequest } from "../src/goals/auto_goal_runtime.js";
 import { reconcileTeammateReceiptWithAssistant } from "../src/teammate_loop_runtime.js";
+import { ensureAssignmentRunForTurn, journalAssignmentActions, journalAssignmentToolResults } from "../src/assignments/turn_journal.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   createLocalGoalEvidenceAuthority,
@@ -1826,6 +1827,76 @@ test("Sidecar settlement blocks rather than completing when the local run fails"
     assert.equal(settled.work_budget?.latest_authoritative_outcome, "blocked");
     assert.match(settled.blocker || "", /Compilation failed/);
     assert.equal(settled.completion_audit, null);
+  });
+});
+
+test("canonical Sidecar settlement completes only from a bound native rollback preview", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-sidecar-canonical-preview", {
+      title: "Preview one exact change", objective: "Preview one exact change without committing it.",
+      acceptance_criteria: ["The exact preview completed and rolled back."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop", requested_effect: "preview" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    });
+    const run = ensureAssignmentRunForTurn("session-sidecar-canonical-preview", "sidecar-run-1", "outer_chat", true)!;
+    const action = {
+      action_id: "preview-1", method: "POST" as const, path: "/revit/native-api-mutation-ops",
+      request_effect: "preview" as const,
+      body: { elementIds: [101], transaction: { mode: "rollback" } }
+    };
+    journalAssignmentActions("session-sidecar-canonical-preview", [action], "outer_desktop");
+    journalAssignmentToolResults("session-sidecar-canonical-preview", [{
+      action_id: action.action_id, method: action.method, path: action.path, status: "done",
+      request_dispatched: true,
+      result_json: { canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1",
+        assignment_id: goal.id, attempt_id: action.action_id, run_id: run.runId, generation: run.generation,
+        requested_effect: "preview", method: action.method, path: action.path,
+        action_signature: (action as any).action_signature, target_fingerprint: (action as any).target_fingerprint,
+        request_dispatched: true, effect_state: "none", effect_reason: "native_transaction_rolled_back",
+        effect_authority: "native_rollback", affected_target_identities: ["element_id:101"],
+        receipt_refs: ["native:rollback:preview-1"], evidence_refs: [], settled_at_utc: new Date().toISOString()
+      } }
+    }], "operator_desktop");
+
+    const settled = settleSidecarComputerGoal("session-sidecar-canonical-preview", {
+      outcome: "complete", turn_id: "sidecar-turn-1", assistant_summary: "Preview completed.",
+      assignment_run_id: run.runId, assignment_generation: run.generation,
+      evidence: { function_tools: [] }
+    });
+    assert.equal(settled.status, "complete");
+    assert.equal(settled.validation_log.length, 1);
+    assert.match(JSON.stringify(settled.completion_audit), /Canonical effect and exact verification truth/);
+  });
+});
+
+test("stale Sidecar callback is quarantined and cannot block an unknown canonical effect", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-sidecar-canonical-unknown", {
+      title: "Apply one exact change", objective: "Apply one exact change.",
+      acceptance_criteria: ["The exact change is independently verified."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop", requested_effect: "apply" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    });
+    const run = ensureAssignmentRunForTurn("session-sidecar-canonical-unknown", "sidecar-run-current", "outer_chat", true)!;
+    journalAssignmentActions("session-sidecar-canonical-unknown", [{
+      action_id: "apply-unknown", method: "POST", path: "/revit/move-elements", body: { elementIds: [101] }
+    }], "outer_desktop");
+    journalAssignmentToolResults("session-sidecar-canonical-unknown", [{
+      action_id: "apply-unknown", method: "POST", path: "/revit/move-elements", status: "failed",
+      request_dispatched: true, outcome_unknown: true, reconciliation_required: true, error: "courier timeout"
+    }], "operator_desktop");
+
+    const settled = settleSidecarComputerGoal("session-sidecar-canonical-unknown", {
+      outcome: "blocked", turn_id: "stale-turn", reason: "I think it failed.",
+      assignment_run_id: "sidecar-run-old", assignment_generation: run.generation - 1,
+      evidence: { function_tools: [{ tool_name: "revit_action", path: "/revit/move-elements", status: "failed", request_dispatched: true, result: { outcome_unknown: true } }] }
+    });
+    assert.equal(settled.status, "active");
+    assert.equal(settled.current_phase, "reconciling");
+    assert.equal(settled.work_items[0]?.status, "in_progress");
+    assert.equal(settled.work_budget?.latest_authoritative_outcome, "stale_or_unbound_outer_report");
+    assert.match(JSON.stringify(getGoal(goal.id)?.action_log), /operator_desktop_quarantined_report/);
   });
 });
 

@@ -4,7 +4,7 @@ import type {
   ExistingConditionsElement,
   ExistingConditionsGroundTruth,
   ExistingConditionsPoint3
-} from "../benchmark/existing_conditions_reconstruction.js";
+} from "./model_contract.js";
 import type {
   ArchitecturalPlanGeometryPreviewElement,
   CompiledArchitecturalPlanGeometryPreview

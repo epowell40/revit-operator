@@ -1,6 +1,11 @@
 import type { GoalLogEntry, GoalRecord, GoalWorkItem } from "../goals/service.js";
 import { getGoal, listGoals } from "../goals/service.js";
 import { getOperatorTask, listOperatorTasks } from "../tasks/service.js";
+import {
+  normalizeAssignmentControlPlane,
+  reduceAssignmentControlPlane,
+  type AssignmentControlPlaneProjection
+} from "./control_plane.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -161,11 +166,25 @@ export type AssignmentProjection = {
     outcome_uncertain: AssignmentTruthValue;
     reconciliation_required: AssignmentTruthValue;
   };
+  control_plane: AssignmentControlPlaneProjection | null;
   history: Array<{ ts: string; kind: string; text: string }>;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
 };
+
+function canonicalLifecycle(control: AssignmentControlPlaneProjection): AssignmentLifecyclePhase {
+  if (control.terminal_state === "verified" || control.terminal_state === "complete") return "complete";
+  if (control.terminal_state === "blocked") return "blocked";
+  if (control.terminal_state === "failed") return "failed";
+  if (control.terminal_state === "canceled") return "cancelled";
+  if (control.unresolved_unknown_attempt_ids.length > 0) return "outcome_uncertain";
+  if (control.phase === "verifying") return "verifying";
+  if (control.phase === "reconciling") return "outcome_uncertain";
+  if (control.phase === "executing") return "applying";
+  if (control.phase === "planning") return "planning";
+  return "unknown";
+}
 
 function object(value: unknown): JsonMap {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonMap : {};
@@ -384,6 +403,11 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
   const steps = goalSteps(goal.work_items);
   const evidence = goalEvidence(goal);
   const workBudget = object(goal.work_budget);
+  const controlPlane = reduceAssignmentControlPlane(
+    goal.id,
+    normalizeAssignmentControlPlane(goal.assignment_control_plane).events
+  ).projection;
+  const hasCanonicalTruth = controlPlane.last_event_at !== null;
   const criteria = goal.completion_audit?.criteria_results.map(result => ({
     criterion: result.criterion,
     status: result.status,
@@ -405,7 +429,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     source_user_request: text(workBudget.source_user_request ?? workBudget.user_request) || goal.objective,
     acceptance_criteria: [...goal.acceptance_criteria],
     lifecycle: {
-      phase: goalLifecycle(goal), source_status: goal.status, source_phase: goal.current_phase ?? null,
+      phase: hasCanonicalTruth ? canonicalLifecycle(controlPlane) : goalLifecycle(goal), source_status: goal.status, source_phase: goal.current_phase ?? null,
       current_step: goal.current_step ?? null, summary: goal.progress_summary || null,
       terminal_reason: normalizedEnum(workBudget.terminal_reason, TERMINAL_REASONS)
     },
@@ -436,16 +460,23 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     artifacts: artifactsFromGoal(goal, evidence),
     blockers,
     verification: {
-      state: goal.completion_audit ? (goal.completion_audit.complete ? "passed" : "incomplete") : "unknown",
+      state: hasCanonicalTruth
+        ? controlPlane.terminal_state === "verified" ? "passed"
+          : controlPlane.phase === "verifying" ? "pending"
+            : controlPlane.terminal_state === "failed" ? "failed"
+              : "unknown"
+        : goal.completion_audit ? (goal.completion_audit.complete ? "passed" : "incomplete") : "unknown",
       criteria,
       evidence_paths: evidence.artifact_paths,
       notes: goal.completion_audit ? unique([goal.completion_audit.evidence_summary, ...goal.completion_audit.remaining_work]) : []
     },
     execution: {
       substrate: text(workBudget.execution_substrate ?? workBudget.mode) || null,
-      requested_effect: ["read", "preview", "apply"].includes(text(workBudget.requested_effect).toLowerCase())
-        ? text(workBudget.requested_effect).toLowerCase() as "read" | "preview" | "apply"
-        : null,
+      requested_effect: hasCanonicalTruth
+        ? [...controlPlane.attempts].reverse().find(attempt => attempt.purpose === "action")?.requested_effect ?? null
+        : ["read", "preview", "apply"].includes(text(workBudget.requested_effect).toLowerCase())
+          ? text(workBudget.requested_effect).toLowerCase() as "read" | "preview" | "apply"
+          : null,
       completion_mode: normalizedEnum(workBudget.completion_mode, COMPLETION_MODES),
       latest_authoritative_outcome: normalizedEnum(workBudget.latest_authoritative_outcome, AUTHORITATIVE_OUTCOMES),
       recovered_failure_count: finite(workBudget.recovered_failure_count),
@@ -455,9 +486,10 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     },
     truth: {
       stale: explicitBoolean(workBudget.stale),
-      outcome_uncertain: explicitBoolean(workBudget.outcome_uncertain),
-      reconciliation_required: explicitBoolean(workBudget.reconciliation_required)
+      outcome_uncertain: hasCanonicalTruth ? controlPlane.unresolved_unknown_attempt_ids.length > 0 : explicitBoolean(workBudget.outcome_uncertain),
+      reconciliation_required: hasCanonicalTruth ? controlPlane.unresolved_unknown_attempt_ids.length > 0 : explicitBoolean(workBudget.reconciliation_required)
     },
+    control_plane: hasCanonicalTruth ? controlPlane : null,
     history: historyFromGoal(goal),
     created_at: goal.created_at,
     updated_at: goal.updated_at,
@@ -597,6 +629,7 @@ export function projectTaskAssignment(task: JsonMap): AssignmentProjection {
       outcome_uncertain: explicitBoolean(result.outcome_uncertain, result.reconciliation_required === true ? true : undefined),
       reconciliation_required: explicitBoolean(result.reconciliation_required)
     },
+    control_plane: null,
     history: [{ ts: text(task.created_at), kind: "created", text: `Created ${text(task.title) || "Operator task"}` }, ...events]
       .filter(event => event.ts)
       .sort((a, b) => a.ts.localeCompare(b.ts)),

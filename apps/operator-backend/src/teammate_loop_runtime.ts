@@ -965,14 +965,6 @@ function receipt(state: TeammateLoopState): NonNullable<ChatResponse["teammate_l
   return buildTeammateLoopReceipt(state);
 }
 
-const INCOMPLETE_MUTATION_REPORTS = [
-  /\[teammate_loop_blocked\]/i,
-  /\bassignment is blocked\b/i,
-  /\bcannot claim (?:the )?(?:revit )?change is complete\b/i,
-  /\brequest(?:ed)?(?: [^.\n]{0,80})? (?:is|was) not (?:yet )?complete\b/i,
-  /\bnot yet complete\b/i
-];
-
 function assistantClaimsExecutedPreview(text: string): boolean {
   return /\b(?:preview|preflight|dry[ -]?run)\b[^.!?\n]{0,80}\b(?:complete(?:d)?|successful|passed|receipt|done|ready|generated|created|produced)\b/i.test(text)
     || /\b(?:complete(?:d)?|successful|passed|done|generated|created|produced)\b[^.!?\n]{0,80}\b(?:preview|preflight|dry[ -]?run)\b/i.test(text);
@@ -986,23 +978,9 @@ function assistantReportsNoPreviewCandidate(text: string): boolean {
 
 export function reconcileTeammateReceiptWithAssistant(
   value: ChatResponse["teammate_loop_receipt"] | undefined,
-  assistantText: string
+  _assistantText: string
 ): ChatResponse["teammate_loop_receipt"] | undefined {
   if (!value) return value;
-  if (value.turn_kind === "mutation"
-      && value.apply_attempts > 0
-      && INCOMPLETE_MUTATION_REPORTS.some(pattern => pattern.test(assistantText))) {
-    return {
-      ...value,
-      stage: "blocked",
-      verified: false,
-      verification_mode: "none",
-      verification_action_id: null,
-      verification_evidence_sha256: null,
-      blocked_reason: value.blocked_reason || "assistant_reported_incomplete"
-    };
-  }
-
   // The Codex turn finishes before the outer generic-decision guard performs
   // its final stage promotion. At this boundary a successful rollback receipt
   // is already terminal evidence: no apply was attempted, no blocker remains,

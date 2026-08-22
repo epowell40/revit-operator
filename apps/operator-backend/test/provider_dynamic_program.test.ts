@@ -319,6 +319,8 @@ test("trusted dynamic completion advances the teammate lifecycle without inventi
       evidence_sha256: "b".repeat(64),
       authority: "trusted_supervisor_receipt",
       provider_prose_authorized: false,
+      request_dispatched: true,
+      outcome_unknown: false,
       failure: null
     }
   });
@@ -581,6 +583,8 @@ test("Gemini structured response executes only the dynamic supervisor lane", asy
         evidence_sha256: "a".repeat(64),
         authority: "trusted_supervisor_receipt",
         provider_prose_authorized: false,
+        request_dispatched: true,
+        outcome_unknown: false,
         failure: null
       }
     };

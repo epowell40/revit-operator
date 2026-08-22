@@ -7,6 +7,14 @@ export type ActionCall = {
   method: HttpMethod;
   path: string;
   body?: unknown;
+  /** Backend-planned effect; callers and tool results cannot downgrade it. */
+  request_effect?: "read" | "preview" | "apply";
+  assignment_id?: string;
+  attempt_id?: string;
+  assignment_run_id?: string;
+  assignment_generation?: number;
+  action_signature?: string;
+  target_fingerprint?: string;
 };
 
 export type ToolAttachment =
@@ -123,6 +131,8 @@ export type ChatResponse = {
     evidence_sha256: string | null;
     authority: "trusted_supervisor_receipt";
     provider_prose_authorized: false;
+    request_dispatched: boolean;
+    outcome_unknown: boolean;
     failure: string | null;
     supervisor_executable_sha256?: string | null;
     supervisor_package_sha256?: string | null;

@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-opening-classification.v1.schema.json",
+  "title": "Existing conditions architectural opening classification V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_role",
+    "fixture_id",
+    "scope_id",
+    "candidate_receipt_sha256",
+    "status",
+    "classifications",
+    "native_write"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_role": { "const": "architectural_opening_classification" },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "candidate_receipt_sha256": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+    },
+    "status": { "type": "string", "enum": ["classified", "clarification_required"] },
+    "classifications": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "opening_hypothesis_id",
+          "host_candidate_id",
+          "classification",
+          "confidence",
+          "cues",
+          "evidence_artifact_sha256s",
+          "rationale",
+          "selected_host_candidate_id"
+        ],
+        "properties": {
+          "opening_hypothesis_id": { "type": "string", "minLength": 1 },
+          "host_candidate_id": { "type": "string", "minLength": 1 },
+          "classification": { "type": "string", "enum": ["door", "window", "unknown"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "cues": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "swing_arc",
+                "door_leaf",
+                "paired_jambs",
+                "parallel_glazing_lines",
+                "sill_line",
+                "annotation_occlusion",
+                "symbol_occlusion",
+                "insufficient_symbol"
+              ]
+            }
+          },
+          "evidence_artifact_sha256s": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+            }
+          },
+          "rationale": { "type": "string", "minLength": 1 },
+          "selected_host_candidate_id": { "type": "null" }
+        }
+      }
+    },
+    "native_write": { "const": false }
+  }
+}

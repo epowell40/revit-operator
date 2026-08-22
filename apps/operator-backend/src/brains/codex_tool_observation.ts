@@ -1,4 +1,5 @@
 export type DynamicToolObservation = {
+  action_id?: string;
   server: string | null;
   tool: string;
   status: string | null;
@@ -23,7 +24,9 @@ export function adaptDynamicToolCompletedItem(item: any): DynamicToolObservation
         .filter(Boolean)
         .join("\n")
     : "";
+  const actionId = typeof item.id === "string" ? item.id : typeof item.callId === "string" ? item.callId : null;
   return {
+    ...(actionId ? { action_id: actionId } : {}),
     server: typeof item.namespace === "string" ? item.namespace : null,
     tool: item.tool,
     status: typeof item.status === "string" ? item.status : null,
