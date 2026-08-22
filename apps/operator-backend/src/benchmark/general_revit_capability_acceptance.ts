@@ -1,12 +1,10 @@
 import path from "node:path";
 import { benchmarkDataRoot, readJsonFile } from "./files.js";
-import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath } from "./durable_tool_evidence.js";
-
+import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath, verifiedSessionMutationPaths } from "./durable_tool_evidence.js";
 export const GENERAL_REVIT_CAPABILITY_SCHEMA = "revit-operator.general-revit-capability-acceptance/v1" as const;
 export const GENERAL_REVIT_RESULT_TIERS = [
   "not_run", "accepted", "planned", "previewed", "completed", "verified", "refused", "failed"
 ] as const;
-
 export type GeneralRevitResultTier = (typeof GENERAL_REVIT_RESULT_TIERS)[number];
 export type GeneralRevitExpectedEffect = "read" | "preview" | "apply";
 export type GeneralRevitVerificationBasis =
@@ -1017,8 +1015,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
     || rows.some((row) => rowMatchesExpectedPathAndEffect(row, testCase.expected_effect))
     || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect));
   const teammate = teammateLoopTruth(attempt);
+  const verifiedSessionMutation = testCase.expected_effect === "apply" && [...verifiedSessionMutationPaths(durableEvidence)].some((candidate) => expectedPaths.has(candidate));
   const applyDispatched = rows.some((row) => rowMatchesExpectedPathAndEffect(row, "apply"))
-    || rows.some((row) => successfulDynamicRuntimeAlternative(row, "apply"))
+    || rows.some((row) => successfulDynamicRuntimeAlternative(row, "apply")) || verifiedSessionMutation
     || (teammate.mutationAttempted && [...durablePaths].some((candidate) => expectedPaths.has(candidate)));
   const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true)
     || durablePaths.size > 0;
@@ -1112,7 +1111,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ? teammate.mutationAttempted && applyDispatched
       : teammatePreviewDispatched
   );
-  const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted || authoritativeTeammateEffect;
+  const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted || authoritativeTeammateEffect || verifiedSessionMutation;
   // A stale Assignment lifecycle flag must not veto an exact fixture-semantic
   // read answer when the same flight record proves a successful expected Revit
   // route and contains no unresolved action or transport failure. This recovery

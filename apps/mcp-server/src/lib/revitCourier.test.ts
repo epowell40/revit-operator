@@ -370,6 +370,51 @@ test("MCP courier preserves structured unknown-outcome metadata when resolving a
   }
 });
 
+test("MCP courier exposes actionable typed-confirmation metadata from a durable failure receipt", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-confirm-error-"));
+  const restore = saveEnv();
+  try {
+    process.env.OPERATOR_WORKSPACE_ROOT = root;
+    process.env.OPERATOR_REVIT_COURIER_TIMEOUT_MS = "5000";
+    process.env.REVIT_OPERATOR_MODE = "development";
+    process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+    writeContext(root, { session_id: "session-confirm-error", message_id: "message-confirm-error" });
+
+    const pending = callRevitViaCourier("/revit/ping", "GET");
+    const jobRef = await waitForJob(root);
+    fs.writeFileSync(path.join(jobRef.dir, "result.json"), JSON.stringify({
+      version: "revit-operator.revit-tool-result.v1",
+      id: jobRef.id,
+      correlation_id: jobRef.id,
+      status: "failed",
+      result: {
+        requiredConfirm: "APPLY 1 TEXT NOTE CHANGE",
+        confirmReceived: "REPLACE",
+        hint: "Retry with confirm set to the requiredConfirm string."
+      },
+      error: "TextNote edit requires typed confirmation.",
+      code: "bulk_confirm_required",
+      retryable: false,
+      outcome_unknown: false
+    }), "utf8");
+
+    await assert.rejects(pending, (error: unknown) => {
+      assert.ok(error instanceof RevitCourierError);
+      assert.equal(error.code, "bulk_confirm_required");
+      assert.equal(error.requiredConfirm, "APPLY 1 TEXT NOTE CHANGE");
+      assert.equal(error.required_confirm, "APPLY 1 TEXT NOTE CHANGE");
+      assert.equal(error.confirmReceived, "REPLACE");
+      assert.equal(error.confirm_received, "REPLACE");
+      assert.equal(error.hint, "Retry with confirm set to the requiredConfirm string.");
+      assert.match(error.message, /Required confirmation: "APPLY 1 TEXT NOTE CHANGE"/);
+      assert.match(error.message, /Retry with confirm set to the requiredConfirm string/);
+      return true;
+    });
+  } finally {
+    restore();
+  }
+});
+
 test("certified MCP courier persists a deterministic immutable v2 certification envelope", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-mcp-courier-certified-"));
   const restore = saveEnv();

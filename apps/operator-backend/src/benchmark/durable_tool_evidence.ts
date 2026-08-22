@@ -120,6 +120,28 @@ export function benchmarkSemanticCapabilityId(pathValue: string): string {
   return `revit.route.${path.slice("/revit/".length).replaceAll("/", ".")}`;
 }
 
+export function verifiedSessionMutationPaths(evidence: JsonRecord): Set<string> {
+  const rows = Array.isArray(evidence.session_mutation_verifications)
+    ? evidence.session_mutation_verifications
+    : [];
+  return new Set(rows.flatMap((value) => {
+    const row = asRecord(value);
+    const readback = asRecord(row.readback);
+    const valid = row.schema === "revit-operator.session-mutation-verification/v1"
+      && !!String(row.source_session_id || "").trim()
+      && /^notification:\d+$/.test(String(row.apply_action_id || ""))
+      && /^notification:\d+$/.test(String(row.verification_action_id || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.apply_result_sha256 || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.verification_result_sha256 || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.target_tokens_sha256 || ""))
+      && /^[a-f0-9]{64}$/.test(String(row.value_tokens_sha256 || ""))
+      && readback.matched_target === true
+      && readback.matched_after_value === true;
+    const path = canonicalBenchmarkRevitPath(String(row.apply_path || ""));
+    return valid && path ? [path] : [];
+  }));
+}
+
 function canonicalRevitToolPath(server: string, toolName: string): string {
   if (server !== "revit_operator"
     || toolName === "revit_call_tool"
@@ -146,6 +168,89 @@ async function requestGoal(baseUrl: string, goalId: string): Promise<JsonRecord>
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function requestSessionNotifications(baseUrl: string, sessionId: string): Promise<JsonRecord[]> {
+  if (!sessionId) return [];
+  const rows: JsonRecord[] = [];
+  let afterId = 0;
+  for (let page = 0; page < 5; page += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(new Error("Session evidence fetch exceeded 30000ms.")), 30_000);
+    try {
+      const pathname = `/api/notifications?session_id=${encodeURIComponent(sessionId)}&after_id=${afterId}&limit=100`;
+      const origin = new URL(baseUrl).origin;
+      const response = await fetch(new URL(pathname, `${baseUrl}/`), {
+        headers: { "content-type": "application/json", origin },
+        signal: controller.signal
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`GET ${pathname} returned ${response.status}: ${text.slice(0, 1000)}`);
+      const body = parsedRecord(text);
+      const pageRows = Array.isArray(body.notifications) ? body.notifications.map(asRecord) : [];
+      rows.push(...pageRows);
+      const next = numberValue(body.next_after_id);
+      if (pageRows.length < 100 || next <= afterId) break;
+      afterId = next;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return rows;
+}
+
+function resultRecord(value: unknown): JsonRecord {
+  const direct = parsedRecord(value);
+  if (Object.keys(direct).length > 0) return direct;
+  for (const item of Array.isArray(value) ? value.map(asRecord) : []) {
+    const parsed = parsedRecord(item.text);
+    if (Object.keys(parsed).length > 0) return parsed;
+  }
+  return {};
+}
+
+function evidenceIdentityTokens(value: unknown, depth = 0): Set<string> {
+  const tokens = new Set<string>();
+  if (depth > 8 || value === null || value === undefined) return tokens;
+  if (Array.isArray(value)) {
+    for (const child of value) for (const token of evidenceIdentityTokens(child, depth + 1)) tokens.add(token);
+    return tokens;
+  }
+  if (typeof value !== "object") return tokens;
+  for (const [key, child] of Object.entries(value as JsonRecord)) {
+    if (/^(?:elementId|textNoteId|uniqueId|scheduleId|viewId)$/i.test(key)
+      && (typeof child === "string" || typeof child === "number") && String(child).trim()) {
+      tokens.add(`${key.toLowerCase()}:${String(child).trim().toLowerCase()}`);
+    }
+    for (const token of evidenceIdentityTokens(child, depth + 1)) tokens.add(token);
+  }
+  return tokens;
+}
+
+function evidenceValueTokens(value: unknown, depth = 0, parentKey = ""): Set<string> {
+  const tokens = new Set<string>();
+  if (depth > 8 || value === null || value === undefined) return tokens;
+  if (Array.isArray(value)) {
+    for (const child of value) for (const token of evidenceValueTokens(child, depth + 1, parentKey)) tokens.add(token);
+    return tokens;
+  }
+  if (typeof value !== "object") return tokens;
+  for (const [key, child] of Object.entries(value as JsonRecord)) {
+    const normalizedKey = key.toLowerCase();
+    const excluded = /^(?:x|y|z|widthfeet|modelspacewidthft|viewscale|count|status|dryrun|action|scope)$/.test(normalizedKey)
+      || /(?:id|uniqueid)$/.test(normalizedKey);
+    if (!excluded && (typeof child === "string" || typeof child === "number" || typeof child === "boolean")) {
+      const normalized = String(child).trim().toLowerCase();
+      if (normalized) tokens.add(`${normalizedKey}:${normalized}`);
+    }
+    for (const token of evidenceValueTokens(child, depth + 1, normalizedKey || parentKey)) tokens.add(token);
+  }
+  return tokens;
+}
+
+function intersects(left: Set<string>, right: Set<string>): boolean {
+  for (const value of left) if (right.has(value)) return true;
+  return false;
 }
 
 export async function loadDurableToolEvidence(
@@ -211,6 +316,88 @@ export async function loadDurableToolEvidence(
   let maximumConnectorFailedCount = 0;
   let maximumReportedOpenPhysicalConnectors = 0;
   const openPhysicalConnectorOwnerIds = new Set<string>();
+
+  type SessionReceipt = {
+    notification_id: number; notification_ts: string; source_session_id: string; action_id: string;
+    path: string; request_effect: "read" | "preview" | "apply"; status: string;
+    envelope_succeeded: boolean; result_sha256: string; parsed_result: JsonRecord;
+  };
+  const sessionResultReceipts: SessionReceipt[] = [];
+  if (expectedSessionId) {
+    try {
+      const notifications = await requestSessionNotifications(baseUrl, expectedSessionId);
+      for (const notification of notifications) {
+        if (notification.type !== "codex.tool_call") continue;
+        const ts = String(notification.ts || "");
+        const tsMs = Date.parse(ts);
+        if (Number.isFinite(startedAtMs) && (!Number.isFinite(tsMs) || tsMs < startedAtMs - 1_000)) continue;
+        const payload = asRecord(notification.payload);
+        if (String(payload.server || "") !== "revit_operator") continue;
+        const toolName = String(payload.tool || "");
+        const argumentsRecord = asRecord(payload.arguments);
+        const explicitPath = toolName === "revit_call_tool" ? String(argumentsRecord.path || "") : "";
+        const path = canonicalBenchmarkRevitPath(explicitPath || canonicalRevitToolPath("revit_operator", toolName));
+        if (!path) continue;
+        const body = parsedRecord(argumentsRecord.body);
+        const effect = requestEffect(path, argumentsRecord, body);
+        const parsed = resultRecord(payload.result);
+        const status = String(payload.status || "").trim().toLowerCase();
+        const envelope = classifyOutcomeEnvelope(parsed);
+        const succeeded = ["success", "ok", "done", "completed"].includes(status)
+          && !String(payload.error || "").trim()
+          && !parsedEnvelopeHasFailure(parsed)
+          && !outcomeEnvelopeIsUnsafe(envelope);
+        const resultText = Object.keys(parsed).length > 0 ? canonicalJson(parsed) : canonicalJson(payload.result ?? null);
+        const receipt: SessionReceipt = {
+          notification_id: numberValue(notification.id),
+          notification_ts: ts,
+          source_session_id: expectedSessionId,
+          action_id: `notification:${numberValue(notification.id)}`,
+          path,
+          request_effect: effect,
+          status: succeeded ? "completed" : "failed",
+          envelope_succeeded: succeeded,
+          result_sha256: sha256(resultText),
+          parsed_result: parsed
+        };
+        sessionResultReceipts.push(receipt);
+        (succeeded ? successfulPaths : failedPaths).add(path);
+        (succeeded ? successfulTools : failedTools).add(toolName);
+      }
+    } catch (error) {
+      resultReceipts.push({ goal_id: null, status: "session_notifications_fetch_failed", error: String(error) });
+    }
+  }
+
+  const sessionMutationVerifications: JsonRecord[] = [];
+  for (const [index, applyReceipt] of sessionResultReceipts.entries()) {
+    if (!applyReceipt.envelope_succeeded || applyReceipt.request_effect !== "apply") continue;
+    const before = asRecord(applyReceipt.parsed_result.before);
+    const after = asRecord(applyReceipt.parsed_result.after);
+    if (Object.keys(before).length === 0 || Object.keys(after).length === 0 || canonicalJson(before) === canonicalJson(after)) continue;
+    const applyIdentities = evidenceIdentityTokens({ before, after });
+    const afterValues = evidenceValueTokens(after);
+    if (applyIdentities.size === 0 || afterValues.size === 0) continue;
+    const readback = sessionResultReceipts.slice(index + 1).find((candidate) => {
+      if (!candidate.envelope_succeeded || candidate.request_effect !== "read") return false;
+      return intersects(applyIdentities, evidenceIdentityTokens(candidate.parsed_result))
+        && intersects(afterValues, evidenceValueTokens(candidate.parsed_result));
+    });
+    if (!readback) continue;
+    sessionMutationVerifications.push({
+      schema: "revit-operator.session-mutation-verification/v1",
+      source_session_id: expectedSessionId,
+      apply_action_id: applyReceipt.action_id,
+      apply_path: applyReceipt.path,
+      apply_result_sha256: applyReceipt.result_sha256,
+      verification_action_id: readback.action_id,
+      verification_path: readback.path,
+      verification_result_sha256: readback.result_sha256,
+      target_tokens_sha256: sha256(canonicalJson([...applyIdentities].sort())),
+      value_tokens_sha256: sha256(canonicalJson([...afterValues].sort())),
+      readback: { matched_target: true, matched_after_value: true }
+    });
+  }
 
   for (const goalId of goalIds) {
     let response: JsonRecord;
@@ -497,6 +684,8 @@ export async function loadDurableToolEvidence(
       open_physical_connector_owner_ids: [...openPhysicalConnectorOwnerIds].sort((left, right) => Number(left) - Number(right)),
       scan_truncated: connectorScanTruncated
     },
-    result_receipts: resultReceipts
+    result_receipts: resultReceipts,
+    session_result_receipts: sessionResultReceipts.map(({ parsed_result: _parsed, ...receipt }) => receipt),
+    session_mutation_verifications: sessionMutationVerifications
   };
 }

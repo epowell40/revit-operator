@@ -4313,6 +4313,76 @@ test("durable receipt loading emits canonical sheet identity and typed scalar fa
   }
 });
 
+test("session-scoped tool notifications recover a timed-out mutation only after target-bound readback", async () => {
+  const notifications = [
+    {
+      id: 101, ts: "2026-08-22T17:22:04.347Z", type: "codex.tool_call",
+      payload: {
+        server: "revit_operator", tool: "revit_call_tool", status: "completed", error: null,
+        arguments: { method: "POST", path: "/revit/create-text", body: {
+          action: "repair", textNoteId: 1421361, viewId: 1420963, text: "Design Development", dryRun: false
+        } },
+        result: [{ type: "inputText", text: JSON.stringify({
+          status: "Success", action: "repair", dryRun: false,
+          before: { textNoteId: 1421361, viewId: 1420963, text: "OLD\r" },
+          after: { textNoteId: 1421361, viewId: 1420963, text: "DESIGN DEVELOPMENT\r" }
+        }) }]
+      }
+    },
+    {
+      id: 102, ts: "2026-08-22T17:22:31.367Z", type: "codex.tool_call",
+      payload: {
+        server: "revit_operator", tool: "revit_call_tool", status: "completed", error: null,
+        arguments: { method: "POST", path: "/revit/find-text-notes", body: {
+          regex: "^DESIGN DEVELOPMENT\\r?$", viewId: 1420963, max: 20
+        } },
+        result: [{ type: "inputText", text: JSON.stringify({
+          ok: true, elementIds: [1421361], items: [{ textNoteId: 1421361, viewId: 1420963, text: "DESIGN DEVELOPMENT\r" }]
+        }) }]
+      }
+    }
+  ];
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(request.url?.startsWith("/api/notifications")
+      ? { notifications, next_after_id: 102 }
+      : { goal: { action_log: [] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, { assignments: [] },
+      "Replace the outdated selected note with the current issue wording without creating a duplicate.", {
+        session_id: "session-timeout-recovery",
+        started_at: "2026-08-22T17:22:00.000Z"
+      });
+    assert.deepEqual(evidence.successful_paths, ["/revit/create-text", "/revit/find-text-notes"]);
+    assert.equal((evidence.session_mutation_verifications as unknown[]).length, 1);
+
+    const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "r01_text_note_edit")!, true);
+    const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+      ok: true,
+      assistant_message: "Updated the existing selected note and verified one exact match.",
+      actions: [{ path: "/chat", request_effect: "apply", request_dispatched: true, status: "success" }],
+      durable_tool_evidence: evidence,
+      teammate_loop_receipt: {
+        schema: "revit-operator.teammate-loop-receipt.v1", turn_kind: "mutation", context_state: "live",
+        stage: "preview", preview_action_ids: [], preview_receipts: [], apply_action_id: null,
+        verification_action_ids: [], apply_attempts: 0, verified: false, verification_mode: "none",
+        verification_action_id: null, verification_evidence_sha256: null, blocked_reason: null
+      }
+    });
+    assert.equal(result.apply_dispatched, true);
+    assert.equal(result.completed, true);
+    assert.equal(result.verified, true);
+    assert.equal(result.tier, "verified");
+    assert.equal(result.verification_basis, "model_state_readback");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("durable loading rejects completed tool records with failed or uncertain result envelopes", async () => {
   const action = (id: string, result: Record<string, unknown>) => ({
     id,

@@ -65,6 +65,29 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("revit_external_event", receipt.Phase);
         }
 
+        [Fact]
+        public void User_actionable_confirmation_metadata_survives_the_courier_boundary()
+        {
+            var receipt = OperatorCourierFailureClassifier.Classify(new OperatorToolUserErrorException(
+                "TextNote edit requires typed confirmation.",
+                "bulk_confirm_required",
+                requiredConfirm: "APPLY 1 TEXT NOTE CHANGE",
+                confirmReceived: "REPLACE",
+                maxChangesPerCall: 1,
+                hint: "Retry with confirm set to requiredConfirm."));
+
+            Assert.Equal("bulk_confirm_required", receipt.Code);
+            Assert.Equal("bulk_confirm_required", receipt.UserErrorCode);
+            Assert.Equal("APPLY 1 TEXT NOTE CHANGE", receipt.RequiredConfirm);
+            Assert.Equal("REPLACE", receipt.ConfirmReceived);
+            Assert.Equal(1, receipt.MaxChangesPerCall);
+            Assert.Equal("Retry with confirm set to requiredConfirm.", receipt.Hint);
+            Assert.False(receipt.Retryable);
+            Assert.False(receipt.OpensCircuit);
+            Assert.Equal("healthy", receipt.HostHealth);
+            Assert.Equal("revit_validation", receipt.Phase);
+        }
+
         private sealed class TestHostException : InvalidOperationException, IOperatorRevitFailureMetadata
         {
             public TestHostException() : base("host is busy") { }

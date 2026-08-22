@@ -115,6 +115,11 @@ export class RevitCourierError extends Error {
   readonly outcomeUnknown: boolean;
   readonly job_id: string;
   readonly jobId: string;
+  readonly required_confirm: string | null;
+  readonly requiredConfirm: string | null;
+  readonly confirm_received: string | null;
+  readonly confirmReceived: string | null;
+  readonly hint: string | null;
 
   constructor(input: {
     code: string;
@@ -122,6 +127,9 @@ export class RevitCourierError extends Error {
     retryable: boolean;
     outcomeUnknown?: boolean;
     jobId: string;
+    requiredConfirm?: string | null;
+    confirmReceived?: string | null;
+    hint?: string | null;
   }) {
     super(input.message);
     this.name = "RevitCourierError";
@@ -132,6 +140,11 @@ export class RevitCourierError extends Error {
     this.retryable = this.outcome_unknown ? false : input.retryable;
     this.job_id = input.jobId;
     this.jobId = input.jobId;
+    this.required_confirm = input.requiredConfirm || null;
+    this.requiredConfirm = this.required_confirm;
+    this.confirm_received = input.confirmReceived || null;
+    this.confirmReceived = this.confirm_received;
+    this.hint = input.hint || null;
   }
 }
 
@@ -571,15 +584,28 @@ function publishOrResumeJob(jobPath: string, candidate: CourierJob): CourierJob 
 
 function resolveResult<T>(receipt: CourierResult): T {
   if (receipt.status === "succeeded") return receipt.result as T;
+  const failure = receipt.result && typeof receipt.result === "object" && !Array.isArray(receipt.result)
+    ? receipt.result as Record<string, unknown>
+    : {};
+  const requiredConfirm = String(failure.requiredConfirm ?? failure.required_confirm ?? "").trim() || null;
+  const confirmReceived = String(failure.confirmReceived ?? failure.confirm_received ?? "").trim() || null;
+  const hint = String(failure.hint ?? "").trim() || null;
+  const actionable = [
+    requiredConfirm ? `Required confirmation: ${JSON.stringify(requiredConfirm)}.` : "",
+    hint || ""
+  ].filter(Boolean).join(" ");
   const details = [receipt.code, receipt.error].filter(Boolean).join(": ") || "Revit courier execution failed.";
   const outcomeUnknown = receipt.outcome_unknown === true;
   const retryable = outcomeUnknown ? false : receipt.retryable === true;
   throw new RevitCourierError({
     code: receipt.code || "courier_execution_failed",
-    message: `${details}${retryable ? " (retryable)" : ""}`,
+    message: `${details}${actionable ? ` ${actionable}` : ""}${retryable ? " (retryable)" : ""}`,
     retryable,
     outcomeUnknown,
-    jobId: receipt.id || "unknown"
+    jobId: receipt.id || "unknown",
+    requiredConfirm,
+    confirmReceived,
+    hint
   });
 }
 
