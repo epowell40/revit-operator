@@ -664,6 +664,7 @@
       "capability_paths": ["/revit/trace-connected-network", "/revit/delete"],
       "dispatch_any_of": ["/revit/trace-connected-network", "/revit/get-connectors", "/revit/delete", "/revit/find-elements"],
       "expected_effect": "preview",
+      "production_expected_effect": "preview",
       "epic0441_task_refs": ["r20_delete_route_preflight"]
     },
     {

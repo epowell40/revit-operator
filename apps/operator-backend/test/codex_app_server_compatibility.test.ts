@@ -286,6 +286,8 @@ test("Codex instructions reuse known primitives before capability discovery", ()
   assert.match(instructions, /Call `operator_discover_capabilities` only when/i);
   assert.match(instructions, /session-cached/i);
   assert.match(instructions, /document\/model results are never satisfied from that cache/i);
+  assert.match(instructions, /very next Revit action must be a target-bound readback/i);
+  assert.match(instructions, /do not repeat synonymous searches/i);
   assert.doesNotMatch(instructions, /call `operator_discover_capabilities` first/i);
 });
 

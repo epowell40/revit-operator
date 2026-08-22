@@ -1831,6 +1831,10 @@ test("apply mode upgrades legacy preview-labelled mutation prompts to apply trut
   const legacyMutation = corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!;
   assert.equal(legacyMutation.expected_effect, "preview");
   assert.equal(generalRevitExecutionCase(legacyMutation, true).expected_effect, "apply");
+
+  const intrinsicPreview = corpus.cases.find((candidate) => candidate.case_id === "r19_delete_bounded_route_preflight")!;
+  assert.equal(intrinsicPreview.production_expected_effect, "preview");
+  assert.equal(generalRevitExecutionCase(intrinsicPreview, true).expected_effect, "preview");
 });
 
 test("apply grading ignores legacy preview prose and trusts verified mutation evidence", () => {
@@ -1904,6 +1908,44 @@ test("authoritative target-bound preview evidence supersedes a stale blocked ass
     }
   });
   assert.equal(result.completed, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verification_basis, "target_bound_model_state");
+});
+
+test("authoritative target-bound mutation evidence supersedes an earlier failed exploratory route", () => {
+  const entry = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!,
+    true
+  );
+  const expectedPath = entry.dispatch_any_of[0];
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The requested rename was applied and independently read back.",
+    actions: [{
+      path: "/revit/call-tool",
+      request_effect: "apply",
+      request_dispatched: true,
+      status: "failed"
+    }],
+    durable_tool_evidence: durableReceiptEvidence(expectedPath, "apply"),
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "mutation",
+      context_state: "live",
+      stage: "report",
+      apply_action_id: "mcp:apply",
+      apply_attempts: 1,
+      verified: true,
+      verification_mode: "target_bound_readback",
+      verification_action_ids: ["mcp:verify"],
+      verification_action_id: "mcp:verify",
+      verification_evidence_sha256: `sha256:${"f".repeat(64)}`,
+      blocked_reason: null
+    }
+  });
+  assert.equal(result.apply_dispatched, true);
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
   assert.equal(result.tier, "verified");
   assert.equal(result.verification_basis, "target_bound_model_state");
 });
