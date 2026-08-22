@@ -232,7 +232,12 @@ function recoveredAction(context: JournalContext, result: ToolResult): ActionCal
   return { action_id: result.action_id, method: result.method, path: result.path };
 }
 
-export function journalAssignmentToolResults(sessionId: string, results: readonly ToolResult[], actor: string): AssignmentControlPlaneProjection | null {
+export function journalAssignmentToolResults(
+  sessionId: string,
+  results: readonly ToolResult[],
+  actor: string,
+  options: { trustNativeSettlement?: boolean } = {}
+): AssignmentControlPlaneProjection | null {
   let context = currentContext(sessionId);
   if (!context) return null;
   for (const result of results) {
@@ -255,7 +260,7 @@ export function journalAssignmentToolResults(sessionId: string, results: readonl
       result: result.result_json
     });
     const nativeSettlement = parseNativeAttemptSettlement(result.result_json);
-    const trustedNativeSettlement = nativeSettlement && nativeSettlementMatchesAttempt({
+    const trustedNativeSettlement = options.trustNativeSettlement !== false && nativeSettlement && nativeSettlementMatchesAttempt({
       settlement: nativeSettlement,
       assignment_id: context.assignmentId,
       attempt_id: attempt.attempt_id,

@@ -1870,6 +1870,35 @@ test("canonical Sidecar settlement completes only from a bound native rollback p
   });
 });
 
+test("bound Sidecar action reports journal through the canonical contract but cannot self-prove apply", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-sidecar-reported-apply", {
+      title: "Apply one exact change", objective: "Apply and verify one exact change.",
+      acceptance_criteria: ["The exact change is independently verified."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop", requested_effect: "apply" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    });
+    const run = ensureAssignmentRunForTurn("session-sidecar-reported-apply", "sidecar-run-reported", "operator_desktop", true)!;
+
+    const settled = settleSidecarComputerGoal("session-sidecar-reported-apply", {
+      outcome: "complete", turn_id: "sidecar-turn-reported", assistant_summary: "The change succeeded.",
+      assignment_run_id: run.runId, assignment_generation: run.generation,
+      evidence: { function_tools: [{
+        tool_name: "revit_action", call_id: "reported-apply-1", method: "POST", path: "/revit/move-elements",
+        status: "success", request_effect: "apply", request_dispatched: true,
+        result: { ok: true, canonical_attempt_settlement: { effect_state: "applied", effect_authority: "native_transaction" } }
+      }] }
+    });
+
+    const projection = getGoal(goal.id)?.assignment_control_plane;
+    assert.equal(settled.status, "active");
+    assert.equal(settled.current_phase, "reconciling");
+    assert.match(JSON.stringify(projection), /reported-apply-1/);
+    assert.match(JSON.stringify(projection), /caller_report_requires_independent_settlement/);
+    assert.equal(settled.completion_audit?.complete, false);
+  });
+});
+
 test("stale Sidecar callback is quarantined and cannot block an unknown canonical effect", () => {
   withWorkspace(() => {
     const goal = setAgentGoal("session-sidecar-canonical-unknown", {

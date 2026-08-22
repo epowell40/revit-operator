@@ -14,7 +14,11 @@ import {
   transitionGoal,
   updateGoal
 } from "./service.js";
-import { journalAssignmentToolObservation } from "../assignments/turn_journal.js";
+import {
+  journalAssignmentActions,
+  journalAssignmentToolObservation,
+  journalAssignmentToolResults
+} from "../assignments/turn_journal.js";
 import { recordAssignmentTurnProgress, settleAssignmentReportedBlocked, settleAssignmentTurn } from "../assignments/turn_settlement.js";
 
 export type AutoGoalToolObservation = {
@@ -830,6 +834,7 @@ function sidecarReportedActionReceipts(evidence: unknown): Array<Record<string, 
       schema: "revit-operator.sidecar-function-tool-receipt-projection/v1",
       tool_name,
       path,
+      method: `${row.method || result.method || (path ? "POST" : "")}`.trim().toUpperCase().slice(0, 12) || "POST",
       status,
       request_effect,
       request_dispatched: outcomeEnvelope.request_dispatched_false
@@ -872,12 +877,37 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
   const failedTools = Math.max(0, Math.floor(Number(input?.failed_tools) || 0));
   const verificationKind = `${input?.verification_kind || "sidecar_turn_receipts"}`.trim().slice(0, 240) || "sidecar_turn_receipts";
   const requestedEffect = requestedEffectForSession(sessionId);
-  const canonical = settleAssignmentTurn(sessionId, requestedEffect);
+  let canonical = settleAssignmentTurn(sessionId, requestedEffect);
   const reportBoundToActiveRun = canonical.projection === null || (
     input.assignment_run_id === canonical.projection.run_id
     && input.assignment_generation === canonical.projection.generation
   );
   for (const receipt of sidecarReportedActionReceipts(input.evidence)) {
+    if (reportBoundToActiveRun && canonical.projection) {
+      const actionId = `${receipt.call_id || receipt.receipt_sha256 || ""}`.trim().slice(0, 240);
+      const actionPath = `${receipt.path || ""}`.trim();
+      const actionMethod = receipt.method === "GET" ? "GET" : "POST";
+      if (actionId && actionPath) {
+        journalAssignmentActions(sessionId, [{
+          action_id: actionId,
+          method: actionMethod,
+          path: actionPath,
+          body: { reported_receipt_sha256: receipt.receipt_sha256 },
+          request_effect: receipt.request_effect as "read" | "preview" | "apply"
+        }], "operator_desktop_reported");
+        journalAssignmentToolResults(sessionId, [{
+          action_id: actionId,
+          method: actionMethod,
+          path: actionPath,
+          status: receipt.status === "success" ? "done" : "failed",
+          request_effect: receipt.request_effect as "read" | "preview" | "apply",
+          request_dispatched: receipt.request_dispatched === true,
+          outcome_unknown: receipt.outcome_unknown === true,
+          reconciliation_required: receipt.reconciliation_required === true,
+          error: receipt.status === "failed" ? "Operator Desktop reported tool failure." : undefined
+        }], "operator_desktop_reported", { trustNativeSettlement: false });
+      }
+    }
     const label = receipt.path ? `${receipt.tool_name} ${receipt.path}` : receipt.tool_name;
     goal = appendGoalAction(goal.id, {
       summary: `Operator Desktop reported ${label} ${receipt.status}.`,
@@ -887,6 +917,9 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
         ...receipt
       }
     });
+  }
+  if (reportBoundToActiveRun && canonical.projection) {
+    canonical = settleAssignmentTurn(sessionId, requestedEffect);
   }
 
   // Legacy durable records without a canonical run retain the prior projection
