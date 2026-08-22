@@ -618,6 +618,10 @@ namespace RevitBridge.Server
             string responseText = "{}";
             int statusCode = 200;
             var correlationId = Guid.NewGuid().ToString("N");
+            var actionPath = "";
+            var actionMethod = "";
+            var requestedEffect = "read";
+            var nativeDispatchStarted = false;
             OperatorNativeTransportRequestContext? protectedTransportRequest = null;
             var operatorToken = "";
 
@@ -803,6 +807,9 @@ namespace RevitBridge.Server
                 // is no longer the only approval gate.
                 // GET is always treated as read-only here.
                 var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;
+                actionMethod = effectiveMethod;
+                actionPath = path;
+                requestedEffect = ResolveCanonicalRequestedEffect(effectiveMethod, path, requestBody);
                 var isGet = string.Equals(effectiveMethod, "GET", StringComparison.OrdinalIgnoreCase);
                 if (!isGet && path != "/revit/ping" && path != "/revit/capabilities")
                 {
@@ -827,7 +834,11 @@ namespace RevitBridge.Server
                                 {
                                     error = "Write requires approval (missing/invalid X-Operator-Write-Grant).",
                                     details = err,
-                                    hint = "Approve writes in the Operator pane, or explicitly issue a short-lived pane-free grant with the public MCP external-agent helper, then retry."
+                                    hint = "Approve writes in the Operator pane, or explicitly issue a short-lived pane-free grant with the public MCP external-agent helper, then retry.",
+                                    request_dispatched = false,
+                                    outcome_unknown = false,
+                                    canonical_attempt_settlement = OperatorAttemptSettlement.None(
+                                        requestedEffect, effectiveMethod, path, "write_grant_required", "write_grant")
                                 });
 
                                 byte[] denied = Encoding.UTF8.GetBytes(responseText);
@@ -846,7 +857,11 @@ namespace RevitBridge.Server
                         responseText = JsonSerializer.Serialize(new
                         {
                             error = "Write requires approval (write gate error).",
-                            details = ex.Message
+                            details = ex.Message,
+                            request_dispatched = false,
+                            outcome_unknown = false,
+                            canonical_attempt_settlement = OperatorAttemptSettlement.None(
+                                requestedEffect, effectiveMethod, path, "write_grant_validation_failed", "write_grant")
                         });
                         byte[] denied = Encoding.UTF8.GetBytes(responseText);
                         resp.ContentType = "application/json";
@@ -861,20 +876,24 @@ namespace RevitBridge.Server
                 {
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
-                    responseText = JsonSerializer.Serialize(new { status = "ok", timestamp = DateTime.Now });
+                    responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
+                        new { status = "ok", timestamp = DateTime.Now }, requestedEffect, effectiveMethod, path,
+                        attemptId: correlationId));
                 }
                 else if (path == "/revit/capabilities")
                 {
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
-                    responseText = JsonSerializer.Serialize(RevitBridge.Operator.OperatorCapabilities.Get());
+                    responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
+                        RevitBridge.Operator.OperatorCapabilities.Get(), requestedEffect, effectiveMethod, path,
+                        attemptId: correlationId));
                 }
                 else if (path == "/revit/write-grant-status")
                 {
                     if (effectiveRequest != null && !protectedLaboratoryEvidence)
                         requestBody = await RequireFinalNativeAuthorizationAsync(effectiveRequest, requestBody, CancellationToken.None, deploymentGeneralAgentFinalReceipt);
                     var status = OperatorWriteGrant.ReadStatus();
-                    responseText = JsonSerializer.Serialize(new
+                    responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(new
                     {
                         status = "ok",
                         active = status.Active,
@@ -883,7 +902,7 @@ namespace RevitBridge.Server
                         uses_remaining = status.UsesRemaining,
                         error = status.Error,
                         write_ready = status.Active
-                    });
+                    }, requestedEffect, effectiveMethod, path, attemptId: correlationId));
                 }
                 else if (_handlers.TryGetValue(path, out var handler))
                 {
@@ -956,6 +975,7 @@ namespace RevitBridge.Server
                                     object nativeResult;
                                     try
                                     {
+                                        nativeDispatchStarted = true;
                                         nativeResult = handler.Handle(app, dispatchBody).GetAwaiter().GetResult();
                                     }
                                     catch (Exception error) when (executionStart?.Phase == "apply"
@@ -1000,7 +1020,8 @@ namespace RevitBridge.Server
                             throw deadline.CreateTimeoutException(correlationId);
                         }
                     }
-                    responseText = JsonSerializer.Serialize(result);
+                    responseText = JsonSerializer.Serialize(OperatorAttemptSuccessfulSettlement.Attach(
+                        result, requestedEffect, effectiveMethod, path, attemptId: correlationId));
                 }
                 else
                 {
@@ -1029,8 +1050,11 @@ namespace RevitBridge.Server
                         phase = nativeAdmission.Phase,
                         host_health = nativeAdmission.HostHealth,
                         opens_circuit = nativeAdmission.OpensCircuit,
+                        request_dispatched = false,
                         outcome_unknown = false,
-                        correlation_id = correlationId
+                        correlation_id = correlationId,
+                        canonical_attempt_settlement = OperatorAttemptSettlement.None(
+                            requestedEffect, actionMethod, actionPath, nativeAdmission.Code, "admission_policy")
                     });
                 }
                 else if (root is OperatorToolUserErrorException uex)
@@ -1048,7 +1072,11 @@ namespace RevitBridge.Server
                         confirmReceived = uex.ConfirmReceived,
                         maxChangesPerCall = uex.MaxChangesPerCall,
                         hint = uex.Hint,
-                        correlation_id = correlationId
+                        correlation_id = correlationId,
+                        request_dispatched = false,
+                        outcome_unknown = false,
+                        canonical_attempt_settlement = OperatorAttemptSettlement.None(
+                            requestedEffect, actionMethod, actionPath, uex.Code, "schema_validator")
                     });
                 }
                 else if (root is RevitEventQueueException qex)
@@ -1062,13 +1090,20 @@ namespace RevitBridge.Server
                         retryable = qex.Retryable,
                         phase = qex.Phase,
                         host_health = qex.HostHealth,
+                        request_dispatched = qex.OutcomeUnknown,
                         outcome_unknown = qex.OutcomeUnknown,
-                        correlation_id = qex.CorrelationId ?? correlationId
+                        correlation_id = qex.CorrelationId ?? correlationId,
+                        canonical_attempt_settlement = qex.OutcomeUnknown
+                            ? OperatorAttemptSettlement.Unknown(requestedEffect, actionMethod, actionPath, qex.Code)
+                            : OperatorAttemptSettlement.None(requestedEffect, actionMethod, actionPath, qex.Code)
                     });
                 }
                 else if (root is IOperatorRevitFailureMetadata)
                 {
                     var failure = OperatorCourierFailureClassifier.Classify(root, correlationId);
+                    failure.AttemptSettlement = OperatorAttemptFailureSettlement.FromFailure(
+                        failure, requestedEffect, actionMethod, actionPath).Bind(
+                            null, correlationId, null, null, null, null);
                     statusCode = failure.OutcomeUnknown
                         ? 408
                         : string.Equals(failure.HostHealth, "unavailable", StringComparison.OrdinalIgnoreCase)
@@ -1083,10 +1118,12 @@ namespace RevitBridge.Server
                         phase = failure.Phase,
                         host_health = failure.HostHealth,
                         opens_circuit = failure.OpensCircuit,
+                        request_dispatched = failure.AttemptSettlement?.RequestDispatched,
                         outcome_unknown = failure.OutcomeUnknown,
                         correlation_id = failure.CorrelationId ?? correlationId,
                         deadline_class = failure.DeadlineClass,
-                        deadline_ms = failure.DeadlineMs
+                        deadline_ms = failure.DeadlineMs,
+                        canonical_attempt_settlement = failure.AttemptSettlement
                     });
                 }
                 else if (root is OperationCanceledException)
@@ -1100,8 +1137,11 @@ namespace RevitBridge.Server
                         retryable = false,
                         phase = "revit_external_event",
                         host_health = "degraded",
+                        request_dispatched = true,
                         outcome_unknown = true,
-                        correlation_id = correlationId
+                        correlation_id = correlationId,
+                        canonical_attempt_settlement = OperatorAttemptSettlement.Unknown(
+                            requestedEffect, actionMethod, actionPath, "revit_action_canceled_outcome_unknown")
                     });
                 }
                 else if (root is ArgumentException)
@@ -1114,7 +1154,11 @@ namespace RevitBridge.Server
                         code = "invalid_revit_tool_request",
                         retryable = false,
                         phase = "request_validation",
-                        correlation_id = correlationId
+                        request_dispatched = false,
+                        outcome_unknown = false,
+                        correlation_id = correlationId,
+                        canonical_attempt_settlement = OperatorAttemptSettlement.None(
+                            requestedEffect, actionMethod, actionPath, "invalid_revit_tool_request", "schema_validator")
                     });
                 }
                 else
@@ -1126,7 +1170,12 @@ namespace RevitBridge.Server
                         type = root.GetType().FullName,
                         stack = root.StackTrace,
                         inner = root.InnerException?.Message,
-                        correlation_id = correlationId
+                        correlation_id = correlationId,
+                        request_dispatched = nativeDispatchStarted,
+                        outcome_unknown = requestedEffect == "apply" && nativeDispatchStarted,
+                        canonical_attempt_settlement = requestedEffect == "apply" && nativeDispatchStarted
+                            ? OperatorAttemptSettlement.Unknown(requestedEffect, actionMethod, actionPath, "native_handler_failed_after_dispatch")
+                            : OperatorAttemptSettlement.None(requestedEffect, actionMethod, actionPath, "native_handler_failed_without_persistent_effect")
                     });
                 }
             }
@@ -1154,6 +1203,23 @@ namespace RevitBridge.Server
             }
             await resp.OutputStream.WriteAsync(data, 0, data.Length);
             resp.Close();
+        }
+
+        private static string ResolveCanonicalRequestedEffect(string method, string path, string bodyJson)
+        {
+            var risk = GetRequestRisk(method, path, bodyJson);
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) || risk < OperatorActionRisk.Medium) return "read";
+            try
+            {
+                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(bodyJson) ? "{}" : bodyJson);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object
+                    && ((root.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True)
+                        || (root.TryGetProperty("dry_run", out var snakeDryRun) && snakeDryRun.ValueKind == JsonValueKind.True)
+                        || (root.TryGetProperty("preview", out var preview) && preview.ValueKind == JsonValueKind.True))) return "preview";
+            }
+            catch { }
+            return "apply";
         }
 
         private async Task<string> RequireFinalNativeAuthorizationAsync(

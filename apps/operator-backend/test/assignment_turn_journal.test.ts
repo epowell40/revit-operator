@@ -1,0 +1,151 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { createGoal, getGoal } from "../src/goals/service.js";
+import {
+  ensureAssignmentRunForTurn,
+  journalAssignmentActions,
+  journalAssignmentToolResults
+} from "../src/assignments/turn_journal.js";
+
+function withWorkspace(fn: () => void): void {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-turn-journal-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try { fn(); }
+  finally {
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function activeGoal() {
+  return createGoal({
+    title: "Move exact element", objective: "Move element 101 and verify it.",
+    acceptance_criteria: ["Element 101 has the expected location."], status: "active",
+    related_session_id: "session-journal",
+    work_budget: { mode: "auto_goal", requested_effect: "apply", document_fingerprint: "document-1" }
+  });
+}
+
+test("request-level journal covers any planner and keeps caller apply success unknown", () => {
+  withWorkspace(() => {
+    const goal = activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:message-1", "outer_chat", true);
+    const planned = journalAssignmentActions("session-journal", [{
+      action_id: "action-1", method: "POST", path: "/revit/move-elements",
+      body: { elementIds: [101], translation: { x: 1, y: 0, z: 0 }, dryRun: false }
+    }], "deterministic_fast_path");
+    assert.equal(planned?.attempts[0]?.admission.state, "admitted");
+    assert.equal(planned?.attempts[0]?.effect.state, "none");
+
+    const settled = journalAssignmentToolResults("session-journal", [{
+      action_id: "action-1", method: "POST", path: "/revit/move-elements", status: "done",
+      request_dispatched: true, result_json: { status: "Moved", movedIds: [101], rolledBack: false }
+    }], "operator_desktop");
+    assert.equal(settled?.attempts[0]?.effect.state, "unknown");
+    assert.deepEqual(settled?.unresolved_unknown_attempt_ids, ["action-1"]);
+    assert.equal(getGoal(goal.id)?.assignment_control_plane?.events.length, 5);
+  });
+});
+
+test("unknown effect only admits an exact-target reconciliation read", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:message-1", "outer_chat", true);
+    journalAssignmentActions("session-journal", [{
+      action_id: "apply-1", method: "POST", path: "/revit/move-elements",
+      body: { elementIds: [101], translation: { x: 1 }, dryRun: false }
+    }], "codex");
+    journalAssignmentToolResults("session-journal", [{
+      action_id: "apply-1", method: "POST", path: "/revit/move-elements", status: "failed",
+      request_dispatched: true, outcome_unknown: true, reconciliation_required: true, error: "timeout"
+    }], "operator_desktop");
+
+    const unrelated = journalAssignmentActions("session-journal", [{
+      action_id: "discover-1", method: "POST", path: "/revit/tool-search", body: { query: "move" }
+    }], "codex");
+    assert.equal(unrelated?.attempts.some(attempt => attempt.attempt_id === "discover-1"), false);
+
+    const reconciliation = journalAssignmentActions("session-journal", [{
+      action_id: "reconcile-1", method: "POST", path: "/revit/get-element-summary", body: { elementIds: [101] }
+    }], "codex");
+    assert.equal(reconciliation?.attempts.at(-1)?.purpose, "reconciliation");
+    assert.equal(reconciliation?.attempts.at(-1)?.reconciliation_of_attempt_id, "apply-1");
+    assert.equal(reconciliation?.phase, "reconciling");
+  });
+});
+
+test("a late outer callback is fenced by the attempt's original generation", () => {
+  withWorkspace(() => {
+    const goal = activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:message-1", "outer_chat", true);
+    journalAssignmentActions("session-journal", [{
+      action_id: "old-action", method: "POST", path: "/revit/move-elements", body: { elementIds: [101], dryRun: false }
+    }], "codex");
+    ensureAssignmentRunForTurn("session-journal", "chat:message-2", "outer_chat", true);
+    journalAssignmentToolResults("session-journal", [{
+      action_id: "old-action", method: "POST", path: "/revit/move-elements", status: "done",
+      request_dispatched: true, result_json: { status: "Moved", rolledBack: false }
+    }], "late_sidecar");
+    const persisted = getGoal(goal.id)!;
+    assert.equal(persisted.assignment_control_plane?.quarantined_events.length, 2);
+    const old = persisted.assignment_control_plane?.events.find(entry => entry.attempt_id === "old-action" && entry.kind === "attempt_opened");
+    assert.equal(old?.generation, 1);
+  });
+});
+
+test("native transaction settlement upgrades raw apply truth and ignores caller wording", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:message-native", "outer_chat", true);
+    journalAssignmentActions("session-journal", [{
+      action_id: "native-apply", method: "POST", path: "/revit/native-api-mutation-ops",
+      body: { elementIds: [101], transaction: { mode: "commit" } }
+    }], "codex");
+    const settled = journalAssignmentToolResults("session-journal", [{
+      action_id: "native-apply", method: "POST", path: "/revit/native-api-mutation-ops", status: "done",
+      result_json: {
+        assistant_message: "I could not make the change.",
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-apply", requested_effect: "apply", method: "POST", path: "/revit/native-api-mutation-ops",
+          request_dispatched: true, effect_state: "applied", effect_reason: "native_transaction_committed",
+          effect_authority: "native_transaction", affected_target_identities: ["element_id:101"],
+          receipt_refs: ["native:transaction:1"], evidence_refs: [], settled_at_utc: new Date().toISOString()
+        }
+      }
+    }], "operator_desktop");
+
+    assert.equal(settled?.attempts[0]?.effect.state, "applied");
+    assert.equal(settled?.attempts[0]?.effect.authority, "native_transaction");
+    assert.equal(settled?.phase, "verifying");
+  });
+});
+
+test("a native settlement bound to another attempt cannot alter canonical truth", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:message-native", "outer_chat", true);
+    journalAssignmentActions("session-journal", [{
+      action_id: "real-attempt", method: "POST", path: "/revit/move-elements",
+      body: { elementIds: [101], dryRun: false }
+    }], "codex");
+    const settled = journalAssignmentToolResults("session-journal", [{
+      action_id: "real-attempt", method: "POST", path: "/revit/move-elements", status: "done",
+      result_json: { canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1",
+        attempt_id: "different-attempt", requested_effect: "apply", method: "POST", path: "/revit/move-elements",
+        request_dispatched: true, effect_state: "applied", effect_reason: "spoofed",
+        effect_authority: "native_transaction", affected_target_identities: [], receipt_refs: [], evidence_refs: []
+      } }
+    }], "operator_desktop");
+
+    assert.equal(settled?.attempts[0]?.effect.state, "unknown");
+    assert.equal(settled?.attempts[0]?.effect.authority, "caller_report");
+  });
+});

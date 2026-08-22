@@ -76,6 +76,9 @@ namespace RevitBridge.Operator
             string? sessionId = null;
             string? jobId = null;
             string? correlationId = null;
+            var method = "";
+            var path = "";
+            var requestedEffect = "read";
             var executionCompleted = false;
             try
             {
@@ -106,8 +109,6 @@ namespace RevitBridge.Operator
                 OperatorLaboratoryEvidenceDispatch? laboratoryEvidence = null;
                 OperatorLaboratoryMoveEvidenceAdmission? laboratoryMoveEvidence = null;
                 OperatorCourierCertificationEnvelopeValidationResult? verifiedV2 = null;
-                string method;
-                string path;
                 string bodyJson;
                 DateTimeOffset expiresAt;
 
@@ -232,6 +233,8 @@ namespace RevitBridge.Operator
                 var risk = OperatorDryRunTurnPolicy.IsScheduleCellUpdatePreview(method, path, bodyJson)
                     ? OperatorActionRisk.Low
                     : OperatorApprovalPolicy.GetRisk(method, path, bodyJson);
+                requestedEffect = ResolveRequestedEffect(method, risk, bodyJson);
+                if (legacyAction != null) legacyAction.RequestEffect = requestedEffect;
                 var approvalMode = _getApprovalMode();
                 if (OperatorApprovalPolicy.RequiresApproval(approvalMode, risk))
                 {
@@ -274,6 +277,7 @@ namespace RevitBridge.Operator
                             "preflight",
                             cancellationToken).ConfigureAwait(false);
                         var action = CreateCertifiedAction(claimedV2, authorization, _executorId);
+                        action.RequestEffect = requestedEffect;
                         // The prequeue receipt only decides whether it is safe
                         // to schedule the ExternalEvent. This delegate is the
                         // authoritative second fixed-route check, executed on
@@ -353,6 +357,11 @@ namespace RevitBridge.Operator
                 else if (!string.IsNullOrWhiteSpace(sessionId) && !string.IsNullOrWhiteSpace(jobId))
                 {
                     var failure = OperatorCourierFailureClassifier.Classify(ex, correlationId ?? jobId);
+                    failure.AttemptSettlement = OperatorAttemptFailureSettlement.FromFailure(
+                        failure,
+                        requestedEffect,
+                        method,
+                        path).Bind(null, jobId, null, null, null, null);
                     if (failure.OpensCircuit)
                     {
                         _hostCircuit.Open(failure.Code, DateTimeOffset.UtcNow);
@@ -643,6 +652,22 @@ namespace RevitBridge.Operator
                 CourierVerifiedClaim = claimed,
                 CourierLocalExecutorId = localExecutorId
             };
+        }
+
+        private static string ResolveRequestedEffect(string method, OperatorActionRisk risk, string bodyJson)
+        {
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) || risk < OperatorActionRisk.Medium) return "read";
+            try
+            {
+                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(bodyJson) ? "{}" : bodyJson);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object
+                    && ((root.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True)
+                        || (root.TryGetProperty("dry_run", out var snakeDryRun) && snakeDryRun.ValueKind == JsonValueKind.True)
+                        || (root.TryGetProperty("preview", out var preview) && preview.ValueKind == JsonValueKind.True))) return "preview";
+            }
+            catch { }
+            return "apply";
         }
 
         private async Task LogAsync(string kind, object payload)

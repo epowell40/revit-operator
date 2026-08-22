@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 
 namespace RevitBridge.Common
 {
@@ -31,6 +32,8 @@ namespace RevitBridge.Common
         public string? ConfirmReceived { get; set; }
         public int? MaxChangesPerCall { get; set; }
         public string? Hint { get; set; }
+        [JsonPropertyName("canonical_attempt_settlement")]
+        public OperatorAttemptSettlement? AttemptSettlement { get; set; }
     }
 
     public static class OperatorCourierFailureClassifier

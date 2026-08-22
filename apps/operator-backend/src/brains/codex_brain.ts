@@ -935,6 +935,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
           const mcpStatus = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
           const mcpError = typeof item.error === "string" ? item.error.trim() : "";
           assignmentObserver.observe({
+            action_id: typeof item.id === "string" ? item.id : typeof item.callId === "string" ? item.callId : null,
             server: typeof item.server === "string" ? item.server : null,
             tool: typeof item.tool === "string" ? item.tool : "mcp_tool",
             success: mcpError ? false : mcpStatus ? ["success", "ok", "done", "completed"].includes(mcpStatus) : null,

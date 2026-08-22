@@ -4,7 +4,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import type {
   ExistingConditionsElement,
   ExistingConditionsGroundTruth
-} from "../benchmark/existing_conditions_reconstruction.js";
+} from "./model_contract.js";
 import type { ArchitecturalSourceDeltaReceipt } from "./architectural_source_delta.js";
 
 export type ArchitecturalRedactionVisibilityPolicy = {

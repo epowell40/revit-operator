@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-candidate.v1.schema.json",
+  "title": "Existing conditions reconstruction candidate V1 (legacy transport only)",
+  "description": "Legacy parsing contract. V1 candidates are not scoreable and must be migrated to evaluator-authenticated V2.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fixture_id", "scope_id", "visible_evidence", "accessed_artifact_roles", "out_of_scope_changed_element_keys", "snapshot", "visual_receipt"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "architectural", "mixed", "other"] },
+    "visible_evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidence" } },
+    "accessed_artifact_roles": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "out_of_scope_changed_element_keys": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "evaluator_change_receipt": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["native_diff_readback", "changed_element_keys", "out_of_scope_changed_element_keys", "receipt_sha256"],
+      "properties": {
+        "native_diff_readback": { "const": true },
+        "changed_element_keys": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "out_of_scope_changed_element_keys": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "receipt_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source_coverage_receipt": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "scope_id",
+        "source_evidence_sha256",
+        "registered_render_sha256",
+        "coordinate_space",
+        "region",
+        "region_sha256",
+        "coverage_contract_sha256",
+        "coverage_status",
+        "disciplines",
+        "candidate_count",
+        "resolved_candidate_ids",
+        "unresolved_candidate_ids",
+        "covered_observation_ids"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "scope_id": { "type": "string", "minLength": 1 },
+        "source_evidence_sha256": { "$ref": "#/$defs/sha256" },
+        "registered_render_sha256": { "$ref": "#/$defs/sha256" },
+        "coordinate_space": { "const": "registered_render_pixels_top_left" },
+        "region": { "$ref": "#/$defs/pixel_bounds" },
+        "region_sha256": { "$ref": "#/$defs/sha256" },
+        "coverage_contract_sha256": { "$ref": "#/$defs/sha256" },
+        "coverage_status": { "enum": ["complete", "partial"] },
+        "disciplines": { "type": "array", "minItems": 1, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["mechanical", "plumbing", "electrical"] } },
+        "candidate_count": { "type": "integer", "minimum": 1 },
+        "resolved_candidate_ids": { "$ref": "#/$defs/strings" },
+        "unresolved_candidate_ids": { "$ref": "#/$defs/strings" },
+        "covered_observation_ids": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "snapshot": { "$ref": "existing-conditions-ground-truth.v1.schema.json#/$defs/snapshot" },
+    "visual_receipt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["post_change_capture_sha256", "post_change_pdf_sha256", "evaluator_review"],
+      "properties": {
+        "post_change_capture_sha256": { "$ref": "#/$defs/sha256" },
+        "post_change_pdf_sha256": { "$ref": "#/$defs/sha256" },
+        "evaluator_review": {
+          "type": "object", "additionalProperties": false,
+          "required": ["reviewer_role", "review_status", "notes", "receipt_sha256"],
+          "properties": {
+            "reviewer_role": { "const": "evaluator" },
+            "review_status": { "type": "string", "enum": ["pass", "needs_review", "fail"] },
+            "notes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "receipt_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "strings": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "pixel_point": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+    },
+    "pixel_bounds": {
+      "type": "object", "additionalProperties": false, "required": ["min", "max"],
+      "properties": { "min": { "$ref": "#/$defs/pixel_point" }, "max": { "$ref": "#/$defs/pixel_point" } }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false, "required": ["role", "sha256"],
+      "properties": { "role": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    }
+  }
+}

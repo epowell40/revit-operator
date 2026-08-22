@@ -121,10 +121,15 @@ export function benchmarkSemanticCapabilityId(pathValue: string): string {
 }
 
 export function verifiedSessionMutationPaths(evidence: JsonRecord): Set<string> {
+  const paths = new Set<string>();
+  for (const value of Array.isArray(evidence.canonical_verified_mutation_paths) ? evidence.canonical_verified_mutation_paths : []) {
+    const path = canonicalBenchmarkRevitPath(String(value || ""));
+    if (path) paths.add(path);
+  }
   const rows = Array.isArray(evidence.session_mutation_verifications)
     ? evidence.session_mutation_verifications
     : [];
-  return new Set(rows.flatMap((value) => {
+  for (const value of rows) {
     const row = asRecord(value);
     const readback = asRecord(row.readback);
     const valid = row.schema === "revit-operator.session-mutation-verification/v1"
@@ -138,8 +143,21 @@ export function verifiedSessionMutationPaths(evidence: JsonRecord): Set<string> 
       && readback.matched_target === true
       && readback.matched_after_value === true;
     const path = canonicalBenchmarkRevitPath(String(row.apply_path || ""));
-    return valid && path ? [path] : [];
-  }));
+    if (valid && path) paths.add(path);
+  }
+  const canonicalRows = Array.isArray(evidence.canonical_attempt_receipts)
+    ? evidence.canonical_attempt_receipts : [];
+  for (const value of canonicalRows) {
+    const row = asRecord(value);
+    const path = canonicalBenchmarkRevitPath(String(row.path || ""));
+    const valid = row.schema === "revit-operator.benchmark-canonical-attempt-receipt/v1"
+      && row.requested_effect === "apply" && row.effect_state === "applied"
+      && ["native_transaction", "native_receipt", "target_readback"].includes(String(row.effect_authority || ""))
+      && row.canonical_verified === true
+      && !!String(row.goal_id || "").trim() && !!String(row.attempt_id || "").trim();
+    if (valid && path) paths.add(path);
+  }
+  return paths;
 }
 
 function canonicalRevitToolPath(server: string, toolName: string): string {
@@ -306,6 +324,8 @@ export async function loadDurableToolEvidence(
   const connectorRows = new Map<string, JsonRecord>();
   const compactlyScannedConnectorElementIds = new Set<string>();
   const resultReceipts: JsonRecord[] = [];
+  const canonicalAttemptReceipts: JsonRecord[] = [];
+  const canonicalVerifiedMutationPaths = new Set<string>();
   let maximumFindElementIds = 0;
   let maximumFindCount = 0;
   let observedUntruncatedFind = false;
@@ -316,6 +336,79 @@ export async function loadDurableToolEvidence(
   let maximumConnectorFailedCount = 0;
   let maximumReportedOpenPhysicalConnectors = 0;
   const openPhysicalConnectorOwnerIds = new Set<string>();
+
+  // Benchmark code consumes the generic production projection. It does not
+  // infer effect truth again from assistant text or caller-shaped receipts.
+  for (const assignment of selectedAssignments) {
+    const goalId = String(assignment.source_record_id || "").trim();
+    const controlPlane = asRecord(assignment.control_plane);
+    const attempts = Array.isArray(controlPlane.attempts) ? controlPlane.attempts.map(asRecord) : [];
+    const byId = new Map(attempts.map(attempt => [String(attempt.attempt_id || ""), attempt]));
+    for (const attempt of attempts) {
+      if (attempt.purpose !== "action") continue;
+      const path = canonicalBenchmarkRevitPath(String(attempt.action_path || ""));
+      const effect = asRecord(attempt.effect);
+      const dispatch = asRecord(attempt.dispatch);
+      const receiptRefs = Array.isArray(attempt.receipt_refs) ? attempt.receipt_refs.map(String).filter(Boolean) : [];
+      const requestedEffect = String(attempt.requested_effect || "");
+      const authoritativeSuccess = requestedEffect === "apply"
+        ? effect.state === "applied" && ["native_transaction", "native_receipt", "target_readback"].includes(String(effect.authority || ""))
+        : requestedEffect === "preview"
+          ? effect.state === "none" && effect.authority === "native_rollback" && receiptRefs.length > 0
+          : requestedEffect === "read" && effect.state === "none"
+            && ["native_host", "native_receipt", "target_readback", "independent_verifier"].includes(String(effect.authority || ""))
+            && dispatch.state === "acknowledged" && receiptRefs.length > 0;
+      const uncertain = effect.state === "unknown";
+      const rejectedNoEffect = effect.state === "none" && requestedEffect === "apply"
+        && effect.authority !== "native_rollback";
+      const verification = attempts.find(candidate => {
+        const candidateVerification = asRecord(candidate.verification);
+        return candidate.purpose === "verification"
+          && candidate.reconciliation_of_attempt_id === attempt.attempt_id
+          && candidate.target_fingerprint === attempt.target_fingerprint
+          && candidateVerification.state === "passed";
+      });
+      const canonicalVerified = !!verification && ["verified", "complete"].includes(String(controlPlane.terminal_state || ""));
+      const row = {
+        schema: "revit-operator.benchmark-canonical-attempt-receipt/v1",
+        goal_id: goalId,
+        assignment_run_id: controlPlane.run_id || null,
+        assignment_generation: controlPlane.generation ?? null,
+        assignment_terminal_state: controlPlane.terminal_state || null,
+        attempt_id: String(attempt.attempt_id || "") || null,
+        path: path || null,
+        tool: String(attempt.tool_identity || "") || null,
+        request_effect: requestedEffect || null,
+        action_signature: String(attempt.action_signature || "") || null,
+        target_fingerprint: String(attempt.target_fingerprint || "") || null,
+        dispatch_state: dispatch.state || null,
+        effect_state: effect.state || null,
+        effect_reason: effect.reason || null,
+        effect_authority: effect.authority || null,
+        receipt_refs: receiptRefs,
+        evidence_refs: Array.isArray(attempt.evidence_refs) ? attempt.evidence_refs : [],
+        retry_of_attempt_id: attempt.retry_of_attempt_id || null,
+        retry_delta: attempt.retry_delta || null,
+        exact_verification_attempt_id: verification?.attempt_id || null,
+        exact_verification_state: verification ? "passed" : "not_verified",
+        canonical_verified: canonicalVerified
+      };
+      canonicalAttemptReceipts.push(row);
+      if (path && requestedEffect === "apply" && effect.state === "applied" && canonicalVerified) {
+        canonicalVerifiedMutationPaths.add(path);
+      }
+      if (path && authoritativeSuccess) successfulPaths.add(path);
+      if (path && uncertain) {
+        failedPaths.add(path);
+        historicalFailedPaths.add(path);
+      }
+      if (path && rejectedNoEffect) rejectedNoEffectPaths.add(path);
+      const retryOf = String(attempt.retry_of_attempt_id || "");
+      if (path && authoritativeSuccess && retryOf && asRecord(byId.get(retryOf)).effect && asRecord(asRecord(byId.get(retryOf)).effect).state === "none") {
+        recoveredPaths.add(path);
+      }
+    }
+  }
 
   type SessionReceipt = {
     notification_id: number; notification_ts: string; source_session_id: string; action_id: string;
@@ -685,6 +778,8 @@ export async function loadDurableToolEvidence(
       scan_truncated: connectorScanTruncated
     },
     result_receipts: resultReceipts,
+    canonical_attempt_receipts: canonicalAttemptReceipts,
+    canonical_verified_mutation_paths: [...canonicalVerifiedMutationPaths].sort(),
     session_result_receipts: sessionResultReceipts.map(({ parsed_result: _parsed, ...receipt }) => receipt),
     session_mutation_verifications: sessionMutationVerifications
   };

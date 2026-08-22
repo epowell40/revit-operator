@@ -14,8 +14,15 @@ import {
   transitionGoal,
   updateGoal
 } from "./service.js";
+import {
+  journalAssignmentActions,
+  journalAssignmentToolObservation,
+  journalAssignmentToolResults
+} from "../assignments/turn_journal.js";
+import { recordAssignmentTurnProgress, settleAssignmentReportedBlocked, settleAssignmentTurn } from "../assignments/turn_settlement.js";
 
 export type AutoGoalToolObservation = {
+  action_id?: string | null;
   server?: string | null;
   tool: string;
   success: boolean | null;
@@ -32,6 +39,10 @@ export type AutoGoalTeammateReceipt = {
   verified?: boolean | null;
   apply_attempts?: number | null;
   blocked_reason?: string | null;
+  apply_action_id?: string | null;
+  verification_action_id?: string | null;
+  verification_evidence_sha256?: string | null;
+  verification_mode?: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
   preview_receipts?: Array<{
     action_id?: string | null;
     path?: string | null;
@@ -230,6 +241,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
   const unresolvedPredispatchFailuresByRouteEffect = new Map<string, number>();
   const rollbackPreviewTemporaryElementIds = new Set<number>();
   let rejectedNoEffectPreviews = 0;
+  let canonicalObservationSequence = 0;
   return {
     observe(observation: AutoGoalToolObservation) {
       const effect = observationEffect(observation);
@@ -286,10 +298,53 @@ export function createAutoGoalTurnObserver(sessionId: string) {
         else unrecoverableFailures += 1;
       }
       if (completionRelevant && observation.success === false && knownNoEffectFailure) knownNoEffectFailures += 1;
+      try {
+        canonicalObservationSequence += 1;
+        journalAssignmentToolObservation(
+          sessionId,
+          observation,
+          "codex_inner_mcp",
+          `${observation.action_id || `inner:${canonicalObservationSequence}`}`
+        );
+      } catch {}
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
     },
     finish(turnId: string, assistantText: string, teammateReceipt?: AutoGoalTeammateReceipt | null) {
       try {
+        const canonical = settleAssignmentTurn(
+          sessionId,
+          requestedEffectForSession(sessionId),
+          teammateReceipt as NonNullable<import("../contracts.js").ChatResponse["teammate_loop_receipt"]> | null | undefined
+        );
+        const progressed = canonical.completed
+          ? canonical.projection
+          : recordAssignmentTurnProgress(sessionId, turnId) ?? canonical.projection;
+        if (canonical.completed) {
+          completeAutoGoalFromValidatedTurn(sessionId, {
+            turn_id: turnId,
+            successful_tools: Math.max(1, canonical.successful_tools),
+            assistant_summary: assistantText,
+            verified_noop: canonical.verified_noop,
+            completion_mode: canonical.verified_noop
+              ? "verified_noop"
+              : `successful_${requestedEffectForSession(sessionId)}` as AutoGoalCompletionMode
+          });
+          return;
+        }
+        if (progressed?.terminal_state === "blocked" || progressed?.terminal_state === "failed") {
+          blockAutoGoalFromTurn(
+            sessionId,
+            progressed.terminal_reason || "The canonical Assignment progress watchdog terminated repeated no-progress work.",
+            progressed.terminal_reason === "repeated_identical_no_progress" ? "task_blocked" : "verification_incomplete"
+          );
+          return;
+        }
+        if (canonical.projection) {
+          // Canonical open/unknown state is resumable. In particular, never
+          // convert an unknown effect into legacy completion or a retryable
+          // Goal blocker based on counters or assistant prose.
+          return;
+        }
         const receiptBlocked = teammateReceipt && (
           teammateReceipt.stage === "blocked"
           || ((teammateReceipt.apply_attempts ?? 0) > 0 && teammateReceipt.verified !== true)
@@ -616,7 +671,7 @@ function activeAutoGoal(sessionId: string) {
 }
 
 function requestedEffectForSession(sessionId: string): AutoGoalRequestedEffect {
-  const goal = activeAutoGoal(sessionId);
+  const goal = getActiveGoalForSession(sessionId);
   const declared = `${goal?.work_budget?.requested_effect || ""}`.trim().toLowerCase();
   if (declared === "read" || declared === "preview" || declared === "apply") return declared;
   const objective = `${goal?.objective || ""}`;
@@ -731,6 +786,8 @@ export type SidecarComputerGoalSettlement = {
   failed_tools?: number;
   verification_kind?: string;
   evidence?: unknown;
+  assignment_run_id?: string;
+  assignment_generation?: number;
 };
 
 function sha256Json(value: unknown): { sha256: string; bytes: number } | null {
@@ -777,6 +834,7 @@ function sidecarReportedActionReceipts(evidence: unknown): Array<Record<string, 
       schema: "revit-operator.sidecar-function-tool-receipt-projection/v1",
       tool_name,
       path,
+      method: `${row.method || result.method || (path ? "POST" : "")}`.trim().toUpperCase().slice(0, 12) || "POST",
       status,
       request_effect,
       request_dispatched: outcomeEnvelope.request_dispatched_false
@@ -818,11 +876,176 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
   const successfulTools = Math.max(0, Math.floor(Number(input?.successful_tools) || 0));
   const failedTools = Math.max(0, Math.floor(Number(input?.failed_tools) || 0));
   const verificationKind = `${input?.verification_kind || "sidecar_turn_receipts"}`.trim().slice(0, 240) || "sidecar_turn_receipts";
+  const requestedEffect = requestedEffectForSession(sessionId);
+  let canonical = settleAssignmentTurn(sessionId, requestedEffect);
+  const reportBoundToActiveRun = canonical.projection === null || (
+    input.assignment_run_id === canonical.projection.run_id
+    && input.assignment_generation === canonical.projection.generation
+  );
   for (const receipt of sidecarReportedActionReceipts(input.evidence)) {
+    if (reportBoundToActiveRun && canonical.projection) {
+      const actionId = `${receipt.call_id || receipt.receipt_sha256 || ""}`.trim().slice(0, 240);
+      const actionPath = `${receipt.path || ""}`.trim();
+      const actionMethod = receipt.method === "GET" ? "GET" : "POST";
+      if (actionId && actionPath) {
+        journalAssignmentActions(sessionId, [{
+          action_id: actionId,
+          method: actionMethod,
+          path: actionPath,
+          body: { reported_receipt_sha256: receipt.receipt_sha256 },
+          request_effect: receipt.request_effect as "read" | "preview" | "apply"
+        }], "operator_desktop_reported");
+        journalAssignmentToolResults(sessionId, [{
+          action_id: actionId,
+          method: actionMethod,
+          path: actionPath,
+          status: receipt.status === "success" ? "done" : "failed",
+          request_effect: receipt.request_effect as "read" | "preview" | "apply",
+          request_dispatched: receipt.request_dispatched === true,
+          outcome_unknown: receipt.outcome_unknown === true,
+          reconciliation_required: receipt.reconciliation_required === true,
+          error: receipt.status === "failed" ? "Operator Desktop reported tool failure." : undefined
+        }], "operator_desktop_reported", { trustNativeSettlement: false });
+      }
+    }
     const label = receipt.path ? `${receipt.tool_name} ${receipt.path}` : receipt.tool_name;
     goal = appendGoalAction(goal.id, {
       summary: `Operator Desktop reported ${label} ${receipt.status}.`,
-      details: { source: "operator_desktop_reported", ...receipt }
+      details: {
+        source: reportBoundToActiveRun ? "operator_desktop_reported" : "operator_desktop_quarantined_report",
+        quarantine_reason: reportBoundToActiveRun ? null : "stale_or_unbound_outer_report",
+        ...receipt
+      }
+    });
+  }
+  if (reportBoundToActiveRun && canonical.projection) {
+    canonical = settleAssignmentTurn(sessionId, requestedEffect);
+  }
+
+  // Legacy durable records without a canonical run retain the prior projection
+  // below. Once a run exists, the reducer exclusively owns terminal truth.
+  if (canonical.projection) {
+    const assistantSummary = `${input.assistant_summary || input.reason || "Operator Desktop reported its turn result."}`.trim().slice(0, 3000);
+    goal = appendGoalEvidence(goal.id, {
+      summary: `Operator Desktop reported '${input.outcome}' using '${verificationKind}'.`,
+      details: {
+        source: reportBoundToActiveRun ? "operator_desktop" : "operator_desktop_quarantined_report",
+        quarantine_reason: reportBoundToActiveRun ? null : "stale_or_unbound_outer_report",
+        turn_id: turnId,
+        assignment_run_id: input.assignment_run_id ?? null,
+        assignment_generation: input.assignment_generation ?? null,
+        verification_kind: verificationKind,
+        successful_tools: successfulTools,
+        failed_tools: failedTools,
+        evidence: input.evidence ?? null
+      }
+    });
+
+    let projection = canonical.projection;
+    const canonicalEffectState = () => projection.unresolved_unknown_attempt_ids.length > 0
+      ? "unknown"
+      : projection.attempts.some(attempt => attempt.effect.state === "applied") ? "applied" : "none";
+    if (input.outcome === "blocked") {
+      const reported = settleAssignmentReportedBlocked(
+        sessionId,
+        input.assignment_run_id,
+        input.assignment_generation,
+        assistantSummary || "Operator Desktop work stopped before completion."
+      );
+      projection = reported.projection ?? projection;
+      if (reported.accepted || projection.terminal_state === "blocked") {
+        goal = appendGoalProgress(sessionId, {
+          summary: reported.reason,
+          work_item: {
+            id: "sidecar.requested-work", title: "Complete and verify the requested work",
+            status: "blocked", blocker: reported.reason, result_summary: assistantSummary
+          }
+        });
+        return markAgentGoalBlocked(sessionId, reported.reason, {
+          source: "canonical_assignment_control_plane", turn_id: turnId,
+          assignment_run_id: projection.run_id, assignment_generation: projection.generation,
+          effect_state: canonicalEffectState()
+        });
+      }
+    } else if (input.outcome !== "complete") {
+      throw new Error("outcome must be complete or blocked.");
+    }
+
+    if (canonical.completed && reportBoundToActiveRun && input.outcome === "complete") {
+      const evidenceRefs = [...new Set(projection.attempts.flatMap(attempt => [
+        ...attempt.receipt_refs, ...attempt.evidence_refs, ...attempt.verification.evidence_refs
+      ]))];
+      goal = appendGoalProgress(sessionId, {
+        summary: assistantSummary,
+        work_item: {
+          id: "sidecar.requested-work", title: "Complete and verify the requested work",
+          status: "complete", result_summary: assistantSummary
+        }
+      });
+      const validationRefs: string[] = [];
+      for (const criterion of goal.acceptance_criteria) {
+        const validated = appendTrustedServerGoalValidation(goal.id, {
+          criterion,
+          validator_id: `canonical-assignment:${projection.run_id}:${projection.generation}`,
+          method: `Canonical attempt/effect projection reached ${projection.terminal_state}; exact target-bound evidence: ${evidenceRefs.join(", ") || "durable canonical events"}.`,
+          status: "pass"
+        });
+        const entry = validated.validation_log.at(-1);
+        if (entry) validationRefs.push(`validation:${entry.id}`);
+      }
+      goal = updateGoal(goal.id, {
+        current_phase: "complete",
+        current_step: "Canonical Assignment verification settled",
+        progress_summary: assistantSummary,
+        work_budget: {
+          ...(goal.work_budget ?? {}), completion_mode: `successful_${requestedEffect}`,
+          terminal_reason: projection.terminal_reason ?? "canonical_assignment_verified",
+          latest_authoritative_outcome: "succeeded", reported_failed_tool_count: failedTools
+        }
+      });
+      return markAgentGoalComplete(sessionId, {
+        source: "canonical_assignment_control_plane",
+        assignment_run_id: projection.run_id,
+        assignment_generation: projection.generation,
+        criteria_results: goal.acceptance_criteria.map((criterion, index) => ({
+          criterion, status: "pass", evidence_refs: validationRefs[index] ? [validationRefs[index]] : evidenceRefs
+        })),
+        evidence_summary: `Canonical effect and exact verification truth settled independently of the Sidecar response wording. ${assistantSummary}`
+      });
+    }
+
+    const unresolvedReason = !reportBoundToActiveRun
+      ? "stale_or_unbound_outer_report"
+      : projection.unresolved_unknown_attempt_ids.length > 0
+        ? "effect_reconciliation_required"
+        : projection.attempts.some(attempt => attempt.effect.state === "applied")
+          ? "post_apply_verification_required"
+          : canonical.reason;
+    const phase = projection.unresolved_unknown_attempt_ids.length > 0
+      ? "reconciling" : projection.attempts.some(attempt => attempt.effect.state === "applied")
+        ? "verifying" : projection.phase;
+    goal = appendGoalProgress(sessionId, {
+      summary: `${assistantSummary} Canonical settlement remains open: ${unresolvedReason}.`,
+      work_item: {
+        id: "sidecar.requested-work", title: "Complete and verify the requested work",
+        status: "in_progress", blocker: null, result_summary: unresolvedReason
+      }
+    });
+    goal = updateGoal(goal.id, {
+      current_phase: phase,
+      current_step: unresolvedReason,
+      progress_summary: assistantSummary,
+      work_budget: {
+        ...(goal.work_budget ?? {}), reported_outcome: input.outcome,
+        reported_at: new Date().toISOString(), sidecar_turn_id: turnId,
+        verification_kind: verificationKind, terminal_reason: unresolvedReason,
+        latest_authoritative_outcome: unresolvedReason, reported_failed_tool_count: failedTools
+      }
+    });
+    return requestGoalCompletionAudit(goal.id, {
+      criteria_results: goal.acceptance_criteria.map(criterion => ({ criterion, status: "unknown", evidence_refs: [] })),
+      evidence_summary: `The Sidecar report is retained as untrusted evidence; canonical Assignment state remains ${canonicalEffectState()}/${phase}.`,
+      recommendation: unresolvedReason
     });
   }
 

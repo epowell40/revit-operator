@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { verifyEpic0439LiveEvidenceReceipt } from "../benchmark/epic0439_evidence.js";
+import { verifyDynamicRevitLiveEvidenceReceipt } from "./live_evidence_receipt_verifier.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -179,7 +179,7 @@ export function normalizeProviderSupervisorEvidence(rawBytes: Buffer, expected: 
     if (expected.applyRequested) throw new Error("apply execution cannot terminate with a read-only report");
     bindingHash = validateReadReport(top, worker, admission, graph);
   } else {
-    const verified = verifyEpic0439LiveEvidenceReceipt(rawBytes);
+    const verified = verifyDynamicRevitLiveEvidenceReceipt(rawBytes);
     if (!verified.completed) throw new Error("supervisor receipt chain did not establish completion");
     bindingHash = verified.bindingHash;
   }

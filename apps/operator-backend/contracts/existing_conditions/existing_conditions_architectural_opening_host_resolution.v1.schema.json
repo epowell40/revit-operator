@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-opening-host-resolution.v1.schema.json",
+  "title": "Existing conditions architectural opening host resolution V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_role",
+    "fixture_id",
+    "scope_id",
+    "candidate_receipt_sha256",
+    "classification_receipt_sha256",
+    "status",
+    "policy",
+    "resolutions",
+    "clarification_question",
+    "native_write",
+    "promotion_allowed",
+    "promotion_blockers"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "artifact_role": { "const": "architectural_opening_host_resolution" },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "scope_id": { "type": "string", "minLength": 1 },
+    "candidate_receipt_sha256": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+    },
+    "classification_receipt_sha256": {
+      "$ref": "https://bimtools.com/schemas/revit-operator/existing-conditions-architectural-preview.v1.schema.json#/$defs/sha256"
+    },
+    "status": { "type": "string", "enum": ["resolved", "clarification_required"] },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum_classification_confidence",
+        "minimum_gap_evidence_score",
+        "minimum_host_source_ink_coverage",
+        "maximum_axis_snap_degrees",
+        "minimum_junction_topology_score",
+        "maximum_junction_endpoint_distance_ft",
+        "maximum_junction_projection_adjustment_ft",
+        "minimum_resolved_wall_length_ft",
+        "minimum_opening_end_clearance_ft",
+        "minimum_resolution_confidence"
+      ],
+      "properties": {
+        "minimum_classification_confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_gap_evidence_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "minimum_host_source_ink_coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_axis_snap_degrees": { "type": "number", "exclusiveMinimum": 0, "maximum": 45 },
+        "minimum_junction_topology_score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "maximum_junction_endpoint_distance_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "maximum_junction_projection_adjustment_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_resolved_wall_length_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_opening_end_clearance_ft": { "type": "number", "exclusiveMinimum": 0 },
+        "minimum_resolution_confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "resolutions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "opening_hypothesis_id",
+          "classification",
+          "opening_model_center",
+          "selected_host_candidate_id",
+          "host_wall_observation_id",
+          "refined_host_model_points",
+          "axis_degrees",
+          "endpoint_evidence",
+          "confidence",
+          "blockers"
+        ],
+        "properties": {
+          "opening_hypothesis_id": { "type": "string", "minLength": 1 },
+          "classification": { "type": "string", "enum": ["door", "window", "unknown"] },
+          "opening_model_center": { "$ref": "#/$defs/point" },
+          "selected_host_candidate_id": { "type": ["string", "null"], "minLength": 1 },
+          "host_wall_observation_id": { "type": ["string", "null"], "minLength": 1 },
+          "refined_host_model_points": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "items": { "$ref": "#/$defs/point" }
+              }
+            ]
+          },
+          "axis_degrees": { "type": ["number", "null"], "enum": [0, 90, null] },
+          "endpoint_evidence": {
+            "type": "array",
+            "maxItems": 2,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["endpoint", "source", "junction_id", "model_point", "confidence"],
+              "properties": {
+                "endpoint": { "type": "string", "enum": ["start", "end"] },
+                "source": { "type": "string", "enum": ["junction", "supporting_face_extents"] },
+                "junction_id": { "type": ["string", "null"], "minLength": 1 },
+                "model_point": { "$ref": "#/$defs/point" },
+                "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+              }
+            }
+          },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "blockers": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "clarification_question": { "type": ["string", "null"], "minLength": 1 },
+    "native_write": { "const": false },
+    "promotion_allowed": { "const": false },
+    "promotion_blockers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  },
+  "$defs": {
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    }
+  }
+}

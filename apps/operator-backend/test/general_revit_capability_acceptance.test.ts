@@ -17,7 +17,7 @@ import { loadEpic0441Campaign } from "../src/benchmark/epic0441_campaign.js";
 import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../src/benchmark/general_revit_sample_fixtures.js";
 import { localProcessIsAlive, localRevitProcessGuardTarget } from "../src/benchmark/local_revit_process_liveness.js";
 import { backendRoot, repoRoot } from "../src/benchmark/files.js";
-import { loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
+import { loadDurableToolEvidence, verifiedSessionMutationPaths } from "../src/benchmark/durable_tool_evidence.js";
 
 const corpus = loadGeneralRevitCapabilityCorpus();
 
@@ -1251,6 +1251,57 @@ test("durable evidence fails closed on depth-limit encoded lifecycle flags", asy
     assert.deepEqual(evidence.rejected_no_effect_paths, []);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("durable benchmark recovery consumes canonical unknown and verified apply truth", async () => {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ goal: { action_log: [] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const base = {
+      source_kind: "goal", source_user_request: "move one element",
+      target: { session_id: "canonical-benchmark-session" }, created_at: "2026-08-20T15:45:01.000Z"
+    };
+    const attempt = (effect_state: "unknown" | "applied") => ({
+      purpose: "action", attempt_id: "apply-1", action_path: "/revit/move-elements", tool_identity: "outer_action",
+      requested_effect: "apply", action_signature: `sha256:${"a".repeat(64)}`, target_fingerprint: `sha256:${"b".repeat(64)}`,
+      dispatch: { state: "acknowledged" }, effect: {
+        state: effect_state, reason: effect_state === "applied" ? "native_transaction_committed" : "courier_timeout",
+        authority: effect_state === "applied" ? "native_transaction" : "dispatch_transport"
+      }, receipt_refs: ["native:transaction:1"], evidence_refs: [], retry_of_attempt_id: null, retry_delta: null
+    });
+    const unknown = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, { assignments: [{
+      ...base, source_record_id: "canonical-unknown", control_plane: {
+        schema: "revit-operator.assignment-control-plane-projection/v1", run_id: "run-1", generation: 1,
+        terminal_state: "open", attempts: [attempt("unknown")]
+      }
+    }] }, "move one element", { session_id: "canonical-benchmark-session", started_at: "2026-08-20T15:45:00.000Z" });
+    assert.deepEqual(unknown.successful_paths, []);
+    assert.deepEqual(unknown.failed_paths, ["/revit/move-elements"]);
+    assert.deepEqual([...verifiedSessionMutationPaths(unknown)], []);
+
+    const appliedAttempt = attempt("applied");
+    const verified = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, { assignments: [{
+      ...base, source_record_id: "canonical-verified", control_plane: {
+        schema: "revit-operator.assignment-control-plane-projection/v1", run_id: "run-2", generation: 1,
+        terminal_state: "verified", attempts: [appliedAttempt, {
+          purpose: "verification", attempt_id: "verify-1", action_path: "/revit/get-element-summary",
+          requested_effect: "read", target_fingerprint: appliedAttempt.target_fingerprint,
+          reconciliation_of_attempt_id: "apply-1", verification: { state: "passed" },
+          dispatch: { state: "acknowledged" }, effect: { state: "none", authority: "target_readback" },
+          receipt_refs: ["native:readback:1"], evidence_refs: ["sha256:readback"]
+        }]
+      }
+    }] }, "move one element", { session_id: "canonical-benchmark-session", started_at: "2026-08-20T15:45:00.000Z" });
+    assert.deepEqual(verified.successful_paths, ["/revit/move-elements"]);
+    assert.deepEqual([...verifiedSessionMutationPaths(verified)], ["/revit/move-elements"]);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
 test("durable recovery never crosses source-assignment append order", async () => {

@@ -29,6 +29,27 @@ namespace RevitBridge.Operator
         [JsonPropertyName("body")]
         public object? Body { get; set; }
 
+        [JsonPropertyName("request_effect")]
+        public string? RequestEffect { get; set; }
+
+        [JsonPropertyName("assignment_id")]
+        public string? AssignmentId { get; set; }
+
+        [JsonPropertyName("attempt_id")]
+        public string? AttemptId { get; set; }
+
+        [JsonPropertyName("assignment_run_id")]
+        public string? AssignmentRunId { get; set; }
+
+        [JsonPropertyName("assignment_generation")]
+        public int? AssignmentGeneration { get; set; }
+
+        [JsonPropertyName("action_signature")]
+        public string? ActionSignature { get; set; }
+
+        [JsonPropertyName("target_fingerprint")]
+        public string? TargetFingerprint { get; set; }
+
         [JsonIgnore]
         public string ExpectedDocumentTitle { get; set; } = "";
 

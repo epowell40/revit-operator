@@ -30,8 +30,9 @@ let candidateV2Validator: ValidateFunction | null = null;
 
 function contractsDirectory(): string {
   const candidates = [
-    path.resolve(process.cwd(), "benchmark", "contracts"),
-    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../benchmark/contracts")
+    path.resolve(process.cwd(), "contracts", "existing_conditions"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../contracts/existing_conditions"),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../contracts/existing_conditions")
   ];
   const found = candidates.find((candidate) => fs.existsSync(path.join(candidate, FILES.ground_truth)));
   if (!found) throw new Error(`existing_conditions_contracts_not_found:${candidates.join("|")}`);

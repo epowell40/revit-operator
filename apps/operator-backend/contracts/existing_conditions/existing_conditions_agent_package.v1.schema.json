@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bimtools.com/schemas/revit-operator/existing-conditions-agent-package.v1.schema.json",
+  "title": "Existing conditions agent-visible package V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fixture_id", "discipline", "task_class", "task", "standards_profile", "acceptance_contract", "working_model", "evidence", "scope", "allowed_categories", "write_policy", "output_contract"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "fixture_id": { "type": "string", "minLength": 1 },
+    "discipline": { "type": "string", "enum": ["mechanical", "plumbing", "electrical", "architectural", "mixed"] },
+    "task_class": { "type": "string", "enum": ["exact_reconstruction", "standards_compliance_repair", "generative_layout"] },
+    "task": { "type": "string", "minLength": 1 },
+    "standards_profile": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "path", "sha256"],
+          "properties": {
+            "role": { "const": "standards_profile" },
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "acceptance_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acceptance_basis", "allows_multiple_valid_solutions", "requires_exact_element_ids", "requires_exact_coordinates"],
+      "properties": {
+        "acceptance_basis": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["hidden_truth_geometry", "engineering_invariants", "system_topology", "architectural_topology", "constructability", "drawing_legibility", "scope_safety"]
+          }
+        },
+        "allows_multiple_valid_solutions": { "type": "boolean" },
+        "requires_exact_element_ids": { "const": false },
+        "requires_exact_coordinates": { "type": "boolean" }
+      }
+    },
+    "working_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "path", "sha256"],
+      "properties": {
+        "role": { "const": "redacted_model" },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "registration_artifact": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "path", "sha256"],
+          "properties": {
+            "role": { "const": "source_to_model_registration" },
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "type_mapping_artifact": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "path", "sha256"],
+          "properties": {
+            "role": { "const": "approved_type_catalog" },
+            "path": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "derived_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "path", "sha256"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "architectural_source_redacted_delta",
+              "architectural_source_aligned",
+              "architectural_redacted_aligned",
+              "architectural_candidate_delta_mask",
+              "architectural_source_redacted_comparison",
+              "architectural_registered_measurement",
+              "architectural_registered_measurement_overlay",
+              "architectural_wall_line_candidates",
+              "architectural_wall_line_candidate_overlay",
+              "architectural_opening_source_crop",
+              "architectural_opening_evidence_overlay"
+            ]
+          },
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "path", "sha256"],
+        "properties": {
+          "role": { "type": "string", "enum": ["source_pdf", "source_pdf_render", "scope_preview", "surrounding_model_capture"] },
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "$ref": "#/$defs/sha256" },
+          "page": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope_id", "view_id", "model_bounds_ft", "image_region_normalized"],
+      "properties": {
+        "scope_id": { "type": "string", "minLength": 1 },
+        "view_id": { "type": "integer", "minimum": 1 },
+        "sheet_number": { "type": ["string", "null"] },
+        "model_bounds_ft": { "$ref": "#/$defs/bounds3" },
+        "image_region_normalized": { "$ref": "#/$defs/rect" }
+      }
+    },
+    "allowed_categories": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "write_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dry_run_required", "bounded_scope_required", "out_of_scope_changes_allowed", "maximum_created_elements", "max_repairs", "material_confidence_threshold", "forbidden_artifact_roles", "require_native_readback", "require_source_observation_grounding", "require_post_change_visual_receipt", "require_evaluator_change_receipt", "require_evaluator_access_provenance"],
+      "properties": {
+        "dry_run_required": { "const": true },
+        "bounded_scope_required": { "const": true },
+        "out_of_scope_changes_allowed": { "const": false },
+        "maximum_created_elements": { "type": "integer", "minimum": 1, "maximum": 500 },
+        "max_repairs": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "material_confidence_threshold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "forbidden_artifact_roles": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "require_native_readback": { "const": true },
+        "require_source_observation_grounding": { "type": "boolean" },
+        "require_post_change_visual_receipt": { "const": true },
+        "require_evaluator_change_receipt": { "const": true },
+        "require_evaluator_access_provenance": { "const": true }
+      }
+    },
+    "output_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_snapshot_path", "post_change_capture_path", "post_change_pdf_path", "run_receipt_path", "controller_state_path", "evaluator_access_provenance_path"],
+      "properties": {
+        "candidate_snapshot_path": { "type": "string", "minLength": 1 },
+        "post_change_capture_path": { "type": "string", "minLength": 1 },
+        "post_change_pdf_path": { "type": "string", "minLength": 1 },
+        "run_receipt_path": { "type": "string", "minLength": 1 },
+        "controller_state_path": { "type": "string", "minLength": 1 },
+        "evaluator_access_provenance_path": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "task_class": { "const": "exact_reconstruction" } } },
+      "then": {
+        "properties": {
+          "standards_profile": { "type": "null" },
+          "registration_artifact": { "type": "object" },
+          "write_policy": {
+            "type": "object",
+            "properties": { "require_source_observation_grounding": { "const": true } }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "standards_profile": { "type": "object" },
+          "acceptance_contract": {
+            "type": "object",
+            "properties": {
+              "allows_multiple_valid_solutions": { "const": true },
+              "requires_exact_coordinates": { "const": false },
+              "acceptance_basis": { "type": "array", "contains": { "const": "engineering_invariants" } }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "point3": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y", "z"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "z": { "type": "number" } }
+    },
+    "bounds3": {
+      "type": "object", "additionalProperties": false, "required": ["min", "max"],
+      "properties": { "min": { "$ref": "#/$defs/point3" }, "max": { "$ref": "#/$defs/point3" } }
+    },
+    "rect": {
+      "type": "object", "additionalProperties": false, "required": ["min_x", "min_y", "max_x", "max_y"],
+      "properties": {
+        "min_x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "min_y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_y": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}

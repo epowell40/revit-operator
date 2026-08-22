@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ensureDir, writeJsonFile, writeTextFile } from "../benchmark/files.js";
+import { ensureDirectory as ensureDir, writeJsonFile, writeTextFile } from "../file_utils.js";
 import { analyzeRedlineFile, type RedlineAnalyzeResponse } from "./redline_analyzer.js";
 
 export type RedlineOperationClass =

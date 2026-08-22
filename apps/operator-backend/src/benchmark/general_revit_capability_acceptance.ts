@@ -1,6 +1,7 @@
 import path from "node:path";
 import { benchmarkDataRoot, readJsonFile } from "./files.js";
 import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath, verifiedSessionMutationPaths } from "./durable_tool_evidence.js";
+import { canonicalAssignmentLifecycleTruth } from "./canonical_assignment_truth.js";
 export const GENERAL_REVIT_CAPABILITY_SCHEMA = "revit-operator.general-revit-capability-acceptance/v1" as const;
 export const GENERAL_REVIT_RESULT_TIERS = [
   "not_run", "accepted", "planned", "previewed", "completed", "verified", "refused", "failed"
@@ -412,23 +413,23 @@ type DurableLifecycleEntry = {
   completionMode: string;
 };
 
-type DurableLifecycle = { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[]; completionModes: string[]; assignments: DurableLifecycleEntry[] };
+type DurableLifecycle = { completed: boolean; blocked: boolean; verified: boolean; outcomeUnknown: boolean; requestedEffects: GeneralRevitExpectedEffect[]; completionModes: string[]; assignments: DurableLifecycleEntry[] };
 
 function durableLifecycle(attempt: GeneralRevitAttempt): DurableLifecycle {
-  let completed = false;
-  let blocked = false;
-  let verified = false;
-  const requestedEffects = new Set<GeneralRevitExpectedEffect>();
-  const completionModes = new Set<string>();
+  let completed = false, blocked = false, verified = false, outcomeUnknown = false;
+  const requestedEffects = new Set<GeneralRevitExpectedEffect>(), completionModes = new Set<string>();
   const assignments: DurableLifecycleEntry[] = [];
   for (const assignment of durableAssignments(attempt)) {
     const lifecycle = assignment.lifecycle && typeof assignment.lifecycle === "object" && !Array.isArray(assignment.lifecycle)
       ? assignment.lifecycle as { phase?: unknown; source_status?: unknown } : {};
     const phase = String(lifecycle.phase || lifecycle.source_status || "").trim().toLowerCase();
+    const canonicalTruth = canonicalAssignmentLifecycleTruth(assignment as Record<string, unknown>);
     const assignmentCompleted = ["complete", "completed", "verified"].includes(phase);
-    const assignmentBlocked = ["blocked", "failed", "outcome_unknown"].includes(phase);
+    const assignmentBlocked = ["blocked", "failed", "outcome_unknown"].includes(phase)
+      || (canonicalTruth.canonical && !assignmentCompleted);
     completed ||= assignmentCompleted;
     blocked ||= assignmentBlocked;
+    outcomeUnknown ||= canonicalTruth.outcome_unknown;
     const verification = assignment.verification && typeof assignment.verification === "object" && !Array.isArray(assignment.verification)
       ? assignment.verification as { state?: unknown; criteria?: unknown } : {};
     const state = String(verification.state || "").trim().toLowerCase();
@@ -454,7 +455,7 @@ function durableLifecycle(attempt: GeneralRevitAttempt): DurableLifecycle {
       completionMode
     });
   }
-  return { completed, blocked, verified, requestedEffects: [...requestedEffects], completionModes: [...completionModes], assignments };
+  return { completed, blocked, verified, outcomeUnknown, requestedEffects: [...requestedEffects], completionModes: [...completionModes], assignments };
 }
 
 function durableResultSummary(attempt: GeneralRevitAttempt): string {
@@ -1023,8 +1024,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
     || durablePaths.size > 0;
   const answerAssertionsApplicable = !!testCase.answer_assertions
     && (testCase.expected_effect !== "apply" || !applyDispatched);
-  const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
+  const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true || durable.outcomeUnknown;
   const durableEffectReceiptCompleted = durableReceiptBoundToLifecycle(
     durable, durableReceipts, expectedPaths, testCase.expected_effect
   );

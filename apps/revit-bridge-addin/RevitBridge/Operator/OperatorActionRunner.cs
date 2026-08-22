@@ -276,6 +276,7 @@ namespace RevitBridge.Operator
                 }
             }
             var risk = OperatorApprovalPolicy.GetRisk(method, path, jsonBody);
+            var requestedEffect = ResolveRequestedEffect(action.RequestEffect, method, risk, jsonBody);
             var correlationId = OperatorCorrelationId.NormalizeOrCreate(action.CorrelationId, action.ActionId);
             action.CorrelationId = correlationId;
 
@@ -305,20 +306,20 @@ namespace RevitBridge.Operator
             if (string.Equals(path, "/revit/ping", StringComparison.OrdinalIgnoreCase))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
-                return new { status = "ok", timestamp = DateTime.Now };
+                return AttachSettlement(action, new { status = "ok", timestamp = DateTime.Now }, requestedEffect, method, path);
             }
 
             if (string.Equals(path, "/revit/capabilities", StringComparison.OrdinalIgnoreCase))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
-                return OperatorCapabilities.Get();
+                return AttachSettlement(action, OperatorCapabilities.Get(), requestedEffect, method, path);
             }
 
             if (string.Equals(path, "/revit/write-grant-status", StringComparison.OrdinalIgnoreCase))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
                 var status = OperatorWriteGrant.ReadStatus();
-                return new
+                return AttachSettlement(action, new
                 {
                     status = "ok",
                     active = status.Active,
@@ -327,7 +328,7 @@ namespace RevitBridge.Operator
                     uses_remaining = status.UsesRemaining,
                     error = status.Error,
                     write_ready = status.Active
-                };
+                }, requestedEffect, method, path);
             }
 
             if (!_handlers.TryGetValue(path, out var handler))
@@ -338,7 +339,7 @@ namespace RevitBridge.Operator
             if (IsDirectDialogComputerUsePath(path))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
-                return await handler.Handle(null!, jsonBody).ConfigureAwait(false);
+                return AttachSettlement(action, await handler.Handle(null!, jsonBody).ConfigureAwait(false), requestedEffect, method, path);
             }
 
             // Catalog, documentation, and policy operations do not touch the Revit API.
@@ -347,9 +348,10 @@ namespace RevitBridge.Operator
             if (IsDirectControlPlanePath(path))
             {
                 RefreshAndValidateCourierFinalExecutionAuthorization(action, method, path, correlationId, cancellationToken);
-                return handler is NativeApiPolicyHandler nativeApiPolicyHandler
+                var directResult = handler is NativeApiPolicyHandler nativeApiPolicyHandler
                     ? await nativeApiPolicyHandler.HandleForMethod(null!, jsonBody, method).ConfigureAwait(false)
                     : await handler.Handle(null!, jsonBody).ConfigureAwait(false);
+                return AttachSettlement(action, directResult, requestedEffect, method, path);
             }
 
             var dialogComputerUse = App.Instance?.DialogComputerUse;
@@ -402,6 +404,12 @@ namespace RevitBridge.Operator
                     {
                         throw new OperatorCertifiedFamilyOutcomeUnknownException(
                             "Committed move handler failed after native dispatch; mutation outcome requires reconciliation.",
+                            error);
+                    }
+                    catch (Exception error) when (requestedEffect == "apply" || requestedEffect == "preview")
+                    {
+                        throw new OperatorDispatchedMutationOutcomeUnknownException(
+                            "The native mutation handler failed after Revit dispatch; reconcile the exact target before any retry.",
                             error);
                     }
                     handlerResult = OperatorCertifiedMovePreviewAuthority.AttachReceiptAfterVerifiedRollback(
@@ -466,11 +474,47 @@ namespace RevitBridge.Operator
             {
                 if (action.CourierVerifiedClaim?.Envelope?.RequestFamilyAdmission != null
                     && OperatorCertifiedMovePreviewAuthority.IsIndependentlyVerifiedCertifiedFamilyResult(result))
-                    return result;
+                    return AttachSettlement(action, result, requestedEffect, method, path);
                 throw new OperatorRecoveredDialogException(recoveredDialog, result);
             }
 
-            return result;
+            return AttachSettlement(action, result, requestedEffect, method, path);
+        }
+
+        private static object AttachSettlement(
+            OperatorActionCall action,
+            object result,
+            string requestedEffect,
+            string method,
+            string path)
+            => OperatorAttemptSuccessfulSettlement.Attach(
+                result,
+                requestedEffect,
+                method,
+                path,
+                action.AssignmentId,
+                action.AttemptId ?? action.ActionId,
+                action.AssignmentRunId,
+                action.AssignmentGeneration,
+                action.ActionSignature,
+                action.TargetFingerprint);
+
+        private static string ResolveRequestedEffect(string? declared, string method, OperatorActionRisk risk, string jsonBody)
+        {
+            var normalized = (declared ?? "").Trim().ToLowerInvariant();
+            if (normalized == "read" || normalized == "preview" || normalized == "apply") return normalized;
+            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) || risk < OperatorActionRisk.Medium) return "read";
+            try
+            {
+                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonBody) ? "{}" : jsonBody);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Object
+                    && ((root.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True)
+                        || (root.TryGetProperty("dry_run", out var snakeDryRun) && snakeDryRun.ValueKind == JsonValueKind.True)
+                        || (root.TryGetProperty("preview", out var preview) && preview.ValueKind == JsonValueKind.True))) return "preview";
+            }
+            catch { }
+            return "apply";
         }
 
         private static void ValidateCourierFinalExecutionAuthorization(
@@ -626,6 +670,17 @@ namespace RevitBridge.Operator
             public string HostHealth => "healthy";
             public bool OpensCircuit => false;
             public bool OutcomeUnknown => false;
+        }
+
+        private sealed class OperatorDispatchedMutationOutcomeUnknownException : InvalidOperationException, IOperatorRevitFailureMetadata
+        {
+            public OperatorDispatchedMutationOutcomeUnknownException(string message, Exception inner) : base(message, inner) { }
+            public string Code => "revit_mutation_failed_after_dispatch_outcome_unknown";
+            public bool Retryable => false;
+            public string Phase => "revit_execution";
+            public string HostHealth => "degraded";
+            public bool OpensCircuit => false;
+            public bool OutcomeUnknown => true;
         }
 
         internal async Task ProbeRevitHostAsync(CancellationToken cancellationToken)
