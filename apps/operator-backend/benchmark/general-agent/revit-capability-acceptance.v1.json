@@ -387,8 +387,8 @@
       "prompt": "Replace the outdated selected note with the current issue wording without creating a duplicate.",
       "probe_prompt": "Find one project TextNote, report its exact identity, and preview a conditional text replacement that would not create a duplicate. Do not apply it.",
       "fixture_precondition": {"active_view": {"name": "L4", "view_type": "FloorPlan"}, "selection": {"category": "Text Notes"}},
-      "capability_paths": ["/revit/find-text-notes", "/revit/replace-text-note"],
-      "dispatch_any_of": ["/revit/find-text-notes", "/revit/replace-text-note", "/revit/tool-search"],
+      "capability_paths": ["/revit/find-text-notes", "/revit/replace-text-note", "/revit/create-text"],
+      "dispatch_any_of": ["/revit/find-text-notes", "/revit/replace-text-note", "/revit/create-text", "/revit/tool-search"],
       "expected_effect": "preview",
       "epic0441_task_refs": ["r02_text_note_edit"]
     },
