@@ -342,7 +342,7 @@ function developerInstructions(): string {
   // even when sandboxed to Workspace-write (cannot read the repo checkout directly).
   const lib = (getSkillLibraryText() || "").trim();
   const executionRule =
-    "Revit execution rule: never issue multiple Revit model calls in one tool batch when a later call depends on an earlier result. Execute one call, inspect its result, then issue the next call only if still needed.";
+    "Revit execution rule: never issue multiple Revit model calls in one tool batch when a later call depends on an earlier result. Execute one call, inspect its result, then issue the next call only if still needed. The host enforces bounded Revit work per turn: at most 64 admitted Revit calls and 16 discovery calls; a successful identical discovery call is not admitted again, and an identical failed discovery may be tried only once more. If a host attempt budget is exhausted, stop calling tools and report the exact blocker and strongest completed evidence.";
   if (!lib) return executionRule;
   return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }

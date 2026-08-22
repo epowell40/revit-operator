@@ -37,6 +37,8 @@ export function markdownReport(report: JsonRecord): string {
   const modelTelemetry = asRecord(report.model_call_telemetry);
   const routeBuckets = Array.isArray(modelTelemetry.by_route_model_effort) ? modelTelemetry.by_route_model_effort.map(asRecord) : [];
   const telemetryCoverage = asRecord(report.model_telemetry_coverage);
+  const fixturePreconditionCoverage = asRecord(report.fixture_precondition_coverage);
+  const latency = asRecord(report.latency_telemetry);
   const suiteTiming = asRecord(report.suite_timing);
   const lines = [
     "# General Revit benchmark result",
@@ -76,7 +78,7 @@ export function markdownReport(report: JsonRecord): string {
   lines.push(`| agent | ${String(requestedModel)} / ${String(requestedEffort)} | ${observed} | ${numberValue(agentRole.call_count)} | ${durationSeconds(agentRole.provider_duration_ms)} | ${nullableNumber(agentRole.total_tokens)} | ${agentCost} |`);
   lines.push(
     "",
-    `Configuration drift detected: ${observedProviderCalls.configuration_drift_detected === true ? "yes" : "no"}. Telemetry coverage: ${numberValue(telemetryCoverage.cases_with_model_receipts)}/${numberValue(telemetryCoverage.expected_case_count)} cases; valid for model comparison: ${report.telemetry_valid_for_model_comparison === true ? "yes" : "no"}.`,
+    `Configuration drift detected: ${observedProviderCalls.configuration_drift_detected === true ? "yes" : "no"}. Telemetry coverage: ${numberValue(telemetryCoverage.cases_with_model_receipts)}/${numberValue(telemetryCoverage.expected_case_count)} cases; fixture preconditions prepared: ${numberValue(fixturePreconditionCoverage.prepared_case_count)}/${numberValue(fixturePreconditionCoverage.expected_case_count)}; valid for model comparison: ${report.telemetry_valid_for_model_comparison === true ? "yes" : "no"}.`,
     "",
     "The unified setting configures both execution paths. The receipt routes below show which path actually made provider calls; a model-bound Revit task normally bypasses the outer desktop inference loop and runs through the Codex agent route.",
     "",
@@ -88,6 +90,30 @@ export function markdownReport(report: JsonRecord): string {
     lines.push(`| ${String(bucket.route || "unknown")} | ${String(bucket.model || "unknown")} | ${String(bucket.reasoning_effort || "unknown")} | ${numberValue(bucket.call_count)} | ${durationSeconds(bucket.provider_duration_ms)} | ${nullableNumber(bucket.total_tokens)} | ${cost} |`);
   }
   lines.push("", "Cost is a list-price estimate from exact provider token receipts, not an invoice or account-credit measurement.", "");
+  const missingPreconditions = Array.isArray(fixturePreconditionCoverage.missing_case_ids)
+    ? fixturePreconditionCoverage.missing_case_ids.map(String)
+    : [];
+  if (missingPreconditions.length > 0) {
+    lines.push(`Missing fixture preconditions invalidate model comparison for: ${missingPreconditions.join(", ")}.`, "");
+  }
+  if (Object.keys(latency).length > 0) {
+    const caseWall = asRecord(latency.case_wall_clock);
+    const revitTool = asRecord(latency.revit_tool_duration);
+    lines.push(
+      "## Latency accounting",
+      "",
+      "These clocks identify where time was observed. Nested provider, Codex, and Revit clocks overlap and are not added together as independent wall time.",
+      "",
+      `- Case wall time: ${durationSeconds(caseWall.total_ms)} total; ${durationSeconds(caseWall.mean_ms)} mean; ${durationSeconds(caseWall.p95_ms)} p95.`,
+      `- Product computer runs: ${durationSeconds(latency.product_run_total_ms)} total.`,
+      `- Harness health checks: ${durationSeconds(latency.harness_health_total_ms)} total.`,
+      `- Fixture close/reopen transitions: ${durationSeconds(latency.fixture_transition_total_ms)} total.`,
+      `- Revit calls: ${numberValue(revitTool.count)} calls, ${durationSeconds(revitTool.total_ms)} endpoint time, ${numberValue(latency.revit_tool_failed_or_rejected_count)} failed or rejected.`,
+      `- Same-case repeated Revit paths: ${numberValue(latency.same_case_repeated_path_call_count)}.`,
+      `- Provider duration with exact receipts: ${durationSeconds(latency.provider_duration_known_ms)}; calls missing provider duration: ${numberValue(latency.provider_duration_unknown_call_count)}.`,
+      ""
+    );
+  }
   if (baseline.path) {
     lines.push(
       "## Baseline comparison",

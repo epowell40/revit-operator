@@ -1597,7 +1597,7 @@ test("Codex MCP host guard classifies conditional route bodies by their actual e
   }
 });
 
-test("empty-text continuation preserves the original turn and tool discovery may inspect multiple contracts", () => {
+test("empty-text continuation preserves the original turn and successful discovery is reused instead of repeated", () => {
   __testOnlyResetTeammateLoopState();
   const text = "Set element 42 Manufacturer to WATTS.";
   const preview = guardGenericTeammateDecision(request(text), response([{
@@ -1626,8 +1626,46 @@ test("empty-text continuation preserves the original turn and tool discovery may
     assert.equal(first.allowed, true);
     recordTeammateMcpResult(owner, first, { content: [{ type: "text", text: "{}" }] });
     const second = guardTeammateMcpCall(owner, { tool: "revit_tool_doc", arguments: { method: "POST", path: "/revit/set-parameters" } });
-    assert.equal(second.allowed, true);
-    assert.equal(second.call?.effect, "discovery");
+    assert.equal(second.allowed, false);
+    assert.match(second.message || "", /successful discovery already available/i);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("Codex MCP host guard bounds failed discovery retries and total Revit calls", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Inspect the current model and find the requested equipment."));
+  try {
+    const failedSearch = {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/search-tools", body: { query: "equipment edit" } }
+    };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const gate = guardTeammateMcpCall(owner, failedSearch);
+      assert.equal(gate.allowed, true);
+      assert.equal(gate.call?.effect, "discovery");
+      recordTeammateMcpResult(owner, gate, { isError: true, error: "transient discovery failure" });
+    }
+    const exhaustedRetry = guardTeammateMcpCall(owner, failedSearch);
+    assert.equal(exhaustedRetry.allowed, false);
+    assert.match(exhaustedRetry.message || "", /discovery retry budget exhausted/i);
+
+    for (let index = 0; index < 62; index += 1) {
+      const gate = guardTeammateMcpCall(owner, {
+        tool: "revit_call_tool",
+        arguments: { method: "POST", path: "/revit/find-elements", body: { identityTerms: [`bounded-${index}`], limit: 1 } }
+      });
+      assert.equal(gate.allowed, true, `read ${index} should fit the total-call budget`);
+      recordTeammateMcpResult(owner, gate, { content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [] }) }] });
+    }
+    const exhaustedTotal = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { identityTerms: ["over-budget"], limit: 1 } }
+    });
+    assert.equal(exhaustedTotal.allowed, false);
+    assert.match(exhaustedTotal.message || "", /total revit call attempt budget exhausted/i);
   } finally {
     endTeammateLoopOwner(lease);
   }
