@@ -29,6 +29,9 @@ export type GeneralRevitCapabilityCase = {
   capability_paths: string[];
   dispatch_any_of: string[];
   expected_effect: GeneralRevitExpectedEffect;
+  fixture_precondition?: {
+    active_view?: { name: string; view_type?: string }; selection?: { category: string };
+  };
   production_expected_effect?: GeneralRevitExpectedEffect;
   probe_expected_effect?: Exclude<GeneralRevitExpectedEffect, "apply">;
   allow_verified_noop?: boolean;
@@ -301,6 +304,12 @@ export function validateGeneralRevitCapabilityCorpus(corpus: GeneralRevitCapabil
     families.add(testCase.operation_family);
     if (testCase.prompt.trim().length < 12 || testCase.probe_prompt.trim().length < 30) throw new Error(`Case ${testCase.case_id} has no meaningful user or probe prompt.`);
     if (testCase.probe_expected_effect && !["read", "preview"].includes(testCase.probe_expected_effect)) throw new Error(`Case ${testCase.case_id} has an invalid safe-probe effect.`);
+    if (testCase.fixture_precondition) {
+      const { active_view: activeView, selection } = testCase.fixture_precondition;
+      if (!activeView && !selection) throw new Error(`Case ${testCase.case_id} has an empty fixture precondition.`);
+      if (activeView && (!activeView.name.trim() || (activeView.view_type != null && !activeView.view_type.trim()))) throw new Error(`Case ${testCase.case_id} has an invalid active-view fixture precondition.`);
+      if (selection && !selection.category.trim()) throw new Error(`Case ${testCase.case_id} has an invalid selection fixture precondition.`);
+    }
     if (testCase.allow_verified_noop && (testCase.expected_effect !== "apply" || !testCase.answer_assertions)) {
       throw new Error(`Case ${testCase.case_id} may allow a verified no-op only for an apply case with fixture answer assertions.`);
     }
