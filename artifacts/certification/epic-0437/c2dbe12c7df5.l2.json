@@ -428,7 +428,7 @@
     },
     {
       "path": "apps/operator-backend/package.json",
-      "sha256": "sha256:bb7a828e09408aa11c1b96be75617bc2ac5c719d671d8f7c78f0753c0a993917"
+      "sha256": "sha256:4b5ce7ed1c37889a027d214c813e46f3f711378d6a568d80e1079464f6b9dccc"
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
@@ -5321,7 +5321,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:a36a97f2888661a63aec372d171c5d0f8d7a167238a060a005566d814a265b2b",
+  "inputs_hash": "sha256:eb0146eca98d90d5f11b567ad695e1029aa3de3bc9b76bfddd23bdd7e21c4497",
   "result": {
     "passed": true,
     "checks": [
