@@ -1853,6 +1853,33 @@ test("a recovered Revit tool failure remains visible in trusted completion evide
   });
 });
 
+test("a later authoritative same-route success clears a predispatch contract failure with corrected arguments", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-predispatch-contract-recovery", {
+      title: "Preview a view", objective: "Preview one exact Revit view creation.",
+      acceptance_criteria: ["The preview receipt is verified."],
+      work_budget: { mode: "auto_goal", requested_effect: "preview" },
+      work_items: [{ id: "auto.revit-work", title: "Preview view", status: "in_progress" }]
+    });
+    const observer = createAutoGoalTurnObserver("session-predispatch-contract-recovery");
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: false,
+      arguments: { path: "/revit/create-view", body: { planType: "invalid", dryRun: true } },
+      error: "Request violates published tool contract: planType is invalid."
+    });
+    observer.observe({
+      server: "revit_operator", tool: "revit_call_tool", success: true,
+      arguments: { path: "/revit/create-view", body: { viewType: "FloorPlan", levelId: 30, dryRun: true } },
+      result: { ok: true, rollback_verified: true, temporaryElementIds: [404] }
+    });
+    observer.finish("turn-predispatch-contract-recovery", "The corrected rollback preview completed.");
+    const persisted = getGoal(goal.id);
+    assert.equal(persisted?.status, "complete");
+    assert.equal(persisted?.work_budget?.terminal_reason, "completed_after_recovery");
+    assert.equal(persisted?.work_budget?.recovered_failure_count, 1);
+  });
+});
+
 test("failed apply settlement cannot be recovered by a later read, a different target, or an uncertain receipt", () => {
   withWorkspace(() => {
     const blockedByRead = setAgentGoal("session-failed-apply-then-read", {

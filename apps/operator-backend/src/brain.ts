@@ -20,7 +20,6 @@ import {
 import { maybeBuildZippyBimToolDecision } from "./brains/zippybim_intent.js";
 import { enforceVerificationDisclaimer } from "./verification/titleblock_verify_guard.js";
 import { enforceModeledRedlineGuard } from "./verification/model_redline_guard.js";
-import { resolveOpenAiApiKey } from "./openai_client.js";
 import { applyEnvironmentPolicyToActions } from "./environment_profile.js";
 import { buildTeammateTurnContract, guardGenericTeammateDecision } from "./teammate_loop_runtime.js";
 import { maybeRunDeterministicEnlargedPlanSheet } from "./deterministic/enlarged_plan_sheet.js";
@@ -384,7 +383,10 @@ export function resolveOperatorBrainRoute(): OperatorBrainRoute {
   if (forced === "codex") return "codex";
   if (forced === "gemini") return "gemini";
   if (forced === "anthropic" || forced === "claude") return "anthropic";
-  return resolveOpenAiApiKey() ? "openai" : "rule";
+  // Codex app-server is the canonical durable agent runtime. The legacy
+  // OpenAI brain remains available only through an explicit OPERATOR_BRAIN
+  // override while its deterministic helpers are migrated out.
+  return "codex";
 }
 
 async function decideWithSelectedBrain(

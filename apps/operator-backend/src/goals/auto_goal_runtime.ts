@@ -129,6 +129,24 @@ function observationRecoveryKey(observation: AutoGoalToolObservation, effect: Au
   return `${route}\n${effect}\nsha256:${digest}`;
 }
 
+function observationRouteEffectKey(observation: AutoGoalToolObservation, effect: AutoGoalObservationEffect): string | null {
+  if (effect === "discovery") return null;
+  const tool = observation.tool.trim().toLowerCase();
+  const args = observationObject(observation.arguments);
+  const route = tool === "revit_call_tool"
+    ? `${args.path || ""}`.trim().toLowerCase()
+    : /^revit_[a-z0-9_]+$/.test(tool) ? `/revit/${tool.slice("revit_".length).replaceAll("_", "-")}` : "";
+  return route ? `${route}\n${effect}` : null;
+}
+
+function isPredispatchContractFailure(observation: AutoGoalToolObservation, outcome: ReturnType<typeof classifyOutcomeEnvelope>): boolean {
+  if (outcome.request_dispatched_false) return true;
+  const text = [observation.error, observation.result, observation.output]
+    .map(value => typeof value === "string" ? value : canonicalRecoveryJson(value))
+    .join("\n");
+  return /(?:pre[- ]?dispatch|published tool contract|contract validation|invalid (?:tool )?(?:arguments?|request|body)|schema validation|missing required (?:field|property)|unknown (?:field|property)|must (?:be|contain|include)|is required)/i.test(text);
+}
+
 
 
 const ARTIFACT_PATH_KEYS = new Set([
@@ -209,6 +227,7 @@ export function createAutoGoalTurnObserver(sessionId: string) {
   let unrecoverableFailures = 0;
   let recoveredFailures = 0;
   const unresolvedFailuresByIdentity = new Map<string, number>();
+  const unresolvedPredispatchFailuresByRouteEffect = new Map<string, number>();
   const rollbackPreviewTemporaryElementIds = new Set<number>();
   let rejectedNoEffectPreviews = 0;
   return {
@@ -231,6 +250,9 @@ export function createAutoGoalTurnObserver(sessionId: string) {
       const completionEvidence = !explicitNoEffect && dispatchedForCompletion && !unusableOutcome
         && observation.success === true && isCompletionEvidence(observation);
       const recoveryKey = observationRecoveryKey(observation, effect);
+      const routeEffectKey = observationRouteEffectKey(observation, effect);
+      const predispatchContractFailure = observation.success === false
+        && isPredispatchContractFailure(observation, outcomeEnvelope);
       const failed = completionRelevant
         && ((observation.success === false && !knownNoEffectFailure) || blockingNoEffect || (unusableOutcome && !knownNoEffectFailure));
       if (completionRelevant && effect === "preview" && explicitNoEffect) rejectedNoEffectPreviews += 1;
@@ -245,10 +267,22 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             unresolvedFailuresByIdentity.delete(recoveryKey);
           }
         }
+        if (routeEffectKey) {
+          const recovered = unresolvedPredispatchFailuresByRouteEffect.get(routeEffectKey) ?? 0;
+          if (recovered > 0) {
+            recoveredFailures += recovered;
+            unresolvedPredispatchFailuresByRouteEffect.delete(routeEffectKey);
+          }
+        }
       }
       if (failed) {
         failedRevitTools += 1;
-        if (recoveryKey) unresolvedFailuresByIdentity.set(recoveryKey, (unresolvedFailuresByIdentity.get(recoveryKey) ?? 0) + 1);
+        if (predispatchContractFailure && routeEffectKey) {
+          unresolvedPredispatchFailuresByRouteEffect.set(
+            routeEffectKey,
+            (unresolvedPredispatchFailuresByRouteEffect.get(routeEffectKey) ?? 0) + 1
+          );
+        } else if (recoveryKey) unresolvedFailuresByIdentity.set(recoveryKey, (unresolvedFailuresByIdentity.get(recoveryKey) ?? 0) + 1);
         else unrecoverableFailures += 1;
       }
       if (completionRelevant && observation.success === false && knownNoEffectFailure) knownNoEffectFailures += 1;
@@ -290,7 +324,8 @@ export function createAutoGoalTurnObserver(sessionId: string) {
             ? successfulPreviewTools
             : successfulReadTools + successfulPreviewTools + successfulApplyTools;
         const unresolvedFailureCount = unrecoverableFailures
-          + [...unresolvedFailuresByIdentity.values()].reduce((sum, count) => sum + count, 0);
+          + [...unresolvedFailuresByIdentity.values()].reduce((sum, count) => sum + count, 0)
+          + [...unresolvedPredispatchFailuresByRouteEffect.values()].reduce((sum, count) => sum + count, 0);
         const unexpectedApply = requestedEffect !== "apply" && successfulApplyTools > 0;
         const verifiedNoop = requestedEffect !== "read"
           && successfulApplyTools === 0

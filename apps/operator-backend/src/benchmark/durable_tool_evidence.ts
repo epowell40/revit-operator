@@ -82,19 +82,25 @@ const REVIT_TOOL_PATH_ALIASES: Readonly<Record<string, string>> = Object.freeze(
   revit_list_schedules: "/revit/schedules",
   revit_query_elements: "/revit/query",
   revit_find_elements: "/revit/find-elements",
+  revit_set_parameters: "/revit/set-parameter",
   revit_delete_elements: "/revit/delete"
 });
 
 export function canonicalBenchmarkRevitPath(pathValue: string): string {
-  const path = pathValue.trim().toLowerCase();
+  let path = pathValue.trim().toLowerCase();
   if (!path) return "";
+  if (/^revit_[a-z0-9_]+$/.test(path)) {
+    path = REVIT_TOOL_PATH_ALIASES[path]
+      || `/revit/${path.slice("revit_".length).replaceAll("_", "-")}`;
+  }
   const aliases: Readonly<Record<string, string>> = {
     "/revit/list-views": "/revit/views",
     "/revit/query-views": "/revit/views",
     "/revit/query-elements": "/revit/query",
     "/revit/list-sheets": "/revit/sheets",
     "/revit/list-schedules": "/revit/schedules",
-    "/revit/delete-elements": "/revit/delete"
+    "/revit/delete-elements": "/revit/delete",
+    "/revit/set-parameters": "/revit/set-parameter"
   };
   return aliases[path] || path;
 }

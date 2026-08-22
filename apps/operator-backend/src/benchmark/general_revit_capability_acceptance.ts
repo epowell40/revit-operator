@@ -1012,15 +1012,22 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const answerText = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
     ? attempt.assistant_message
     : durableResultSummary(attempt);
+  const answerEvidenceAssertionFailures = testCase.answer_assertions ? answerEvidenceFailures(testCase, attempt) : [];
+  const answerEvidenceRequirements = testCase.answer_assertions?.evidence;
+  const answerEvidenceIsAuthoritative = (
+    (answerEvidenceRequirements?.required_semantic_facts?.length ?? 0) > 0
+    || (testCase.expected_effect !== "read" && (answerEvidenceRequirements?.required_successful_paths?.length ?? 0) > 0)
+  )
+    && answerEvidenceAssertionFailures.length === 0;
   const answerAssertionFailures = testCase.answer_assertions
     ? [
-        ...testCase.answer_assertions.must_match
+        ...(answerEvidenceIsAuthoritative ? [] : testCase.answer_assertions.must_match
           .filter((pattern) => !assertionPatternMatches(pattern, answerText))
-          .map((pattern) => `missing:${pattern}`),
+          .map((pattern) => `missing:${pattern}`)),
         ...(testCase.answer_assertions.must_not_match || [])
           .filter((pattern) => assertionPatternMatches(pattern, answerText))
           .map((pattern) => `forbidden:${pattern}`),
-        ...answerEvidenceFailures(testCase, attempt)
+        ...answerEvidenceAssertionFailures
       ]
     : [];
   const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
@@ -1068,15 +1075,22 @@ export function evaluateGeneralRevitCapabilityAttempt(
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
   const targetBoundPreviewVerificationMissing = testCase.require_target_bound_preview_verification === true && !teammate.verified;
-  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked && !missingTargetClarification
+  const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted
+    || (testCase.expected_effect !== "apply" && teammatePreviewDispatched && teammate.verified);
+  const effectiveDurableBlocked = durable.blocked && !authoritativeEffectRecovery;
+  const effectiveTeammateBlocked = teammate.blocked && !authoritativeEffectRecovery;
+  const effectiveAssistantIncomplete = assistantIncomplete && !authoritativeEffectRecovery;
+  const effectiveAssistantBlocked = assistantBlocked && !authoritativeEffectRecovery;
+  const effectiveMissingTargetClarification = missingTargetClarification && !authoritativeEffectRecovery;
+  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !effectiveDurableBlocked && !effectiveTeammateBlocked && !effectiveAssistantIncomplete && !effectiveAssistantBlocked && !effectiveMissingTargetClarification
     && !targetBoundPreviewVerificationMissing && (dispatched || durableEffectCompleted);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
-  else if (missingTargetClarification && attemptSucceeded && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
+  else if (effectiveMissingTargetClarification && attemptSucceeded && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
   else if (fixtureBlockerAccepted) tier = "accepted";
-  else if (!attemptSucceeded || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || targetBoundPreviewVerificationMissing || answerAssertionPassed === false) tier = "failed";
+  else if (!attemptSucceeded || substantiveFailedAction || outcomeUnknown || effectiveDurableBlocked || effectiveTeammateBlocked || effectiveAssistantIncomplete || effectiveAssistantBlocked || requiredEffectMissing || targetBoundPreviewVerificationMissing || answerAssertionPassed === false) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";

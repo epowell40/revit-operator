@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ModelCallReceipt, ModelCallTokenUsage } from "./contracts.js";
 import { normalizeModelId, type ReasoningEffort, type SpeedRouteKind } from "./speed_config.js";
 
-export type ModelCallRoute = SpeedRouteKind | "desktop_computer";
+export type ModelCallRoute = SpeedRouteKind | "codex_agent" | "desktop_computer";
 
 type TelemetryPayload = Record<string, unknown>;
 
@@ -33,6 +33,14 @@ function nonNegativeInteger(value: unknown): number | null {
     : null;
 }
 
+function firstNonNegativeInteger(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = nonNegativeInteger(value);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
 function boundedProviderValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim();
@@ -51,6 +59,55 @@ export function extractOpenAiTokenUsage(usageValue: unknown): ModelCallTokenUsag
     output_tokens: nonNegativeInteger(usage.output_tokens),
     reasoning_output_tokens: nonNegativeInteger(outputDetails.reasoning_tokens),
     total_tokens: nonNegativeInteger(usage.total_tokens)
+  };
+}
+
+export function createCodexRawModelCallReceipt(args: {
+  params: unknown;
+  requested_model: string;
+  actual_model?: string;
+  reasoning_effort: ReasoningEffort;
+  started_at_utc: string;
+  turn_id: string;
+}): ModelCallReceipt | null {
+  const params = asRecord(args.params);
+  const usage = asRecord(params.usage);
+  const callId = boundedProviderValue(params.responseId ?? params.response_id);
+  if (!callId) return null;
+  const inputTokens = firstNonNegativeInteger(usage.inputTokens, usage.input_tokens);
+  const cachedInputTokens = firstNonNegativeInteger(usage.cachedInputTokens, usage.cached_input_tokens);
+  const cacheWriteInputTokens = firstNonNegativeInteger(usage.cacheWriteInputTokens, usage.cache_write_input_tokens);
+  const outputTokens = firstNonNegativeInteger(usage.outputTokens, usage.output_tokens);
+  const reasoningOutputTokens = firstNonNegativeInteger(usage.reasoningOutputTokens, usage.reasoning_output_tokens);
+  const totalTokens = firstNonNegativeInteger(
+    usage.totalTokens,
+    usage.total_tokens,
+    inputTokens !== null && outputTokens !== null ? inputTokens + outputTokens : null
+  );
+  const requestedModel = normalizeModelId(args.requested_model, "unknown");
+  return {
+    schema: "revit-operator.model-call-receipt.v1",
+    call_id: callId,
+    provider: "openai",
+    route: "codex_agent",
+    requested_model: requestedModel,
+    model: normalizeModelId(args.actual_model, requestedModel),
+    reasoning_effort: args.reasoning_effort,
+    started_at_utc: args.started_at_utc,
+    duration_ms: null,
+    success: true,
+    response_status: "completed",
+    error_code: null,
+    tokens: {
+      input_tokens: inputTokens,
+      cached_input_tokens: cachedInputTokens,
+      cache_write_input_tokens: cacheWriteInputTokens,
+      output_tokens: outputTokens,
+      reasoning_output_tokens: reasoningOutputTokens,
+      total_tokens: totalTokens
+    },
+    usage_source: "responses_api_raw_completion",
+    turn_id: args.turn_id
   };
 }
 
