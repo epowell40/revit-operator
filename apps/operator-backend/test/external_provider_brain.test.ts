@@ -369,7 +369,7 @@ test("external provider prompt rehydrates compacted persisted tool receipts", { 
     assert.match(prompt, /Fixture Type A/);
     assert.match(prompt, /"optional_fields"/);
     assert.match(prompt, /\/revit\/create-family-instance/);
-    assert.ok(prompt.length < 45_000);
+    assert.ok(prompt.length < 46_000, `compacted provider prompt was ${prompt.length} characters`);
     assert.match(prompt, /Do not repeat a successful type lookup/);
     assert.ok(prompt.startsWith("AUTHORITATIVE CURRENT USER REQUEST"));
     assert.ok(

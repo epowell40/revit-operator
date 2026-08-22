@@ -10,10 +10,8 @@ const ENV_KEYS = [
   "OPERATOR_OPENAI_BASE_URL",
   "OPERATOR_OPENAI_CONTINUATION_ROUNDS",
   "OPERATOR_SPEED_MODE",
-  "OPERATOR_PLANNER_MODEL",
-  "OPERATOR_PLANNER_REASONING_EFFORT",
-  "OPERATOR_EXECUTOR_MODEL",
-  "OPERATOR_EXECUTOR_REASONING_EFFORT"
+  "OPERATOR_AGENT_MODEL",
+  "OPERATOR_AGENT_REASONING_EFFORT"
 ] as const;
 
 function request(sessionId: string): ChatRequest {
@@ -42,13 +40,11 @@ function configureProvider(port: number): void {
   process.env.OPERATOR_OPENAI_BASE_URL = `http://127.0.0.1:${port}`;
   process.env.OPERATOR_OPENAI_CONTINUATION_ROUNDS = "0";
   process.env.OPERATOR_SPEED_MODE = "1";
-  process.env.OPERATOR_PLANNER_MODEL = "gpt-5.6-sol";
-  process.env.OPERATOR_PLANNER_REASONING_EFFORT = "medium";
-  process.env.OPERATOR_EXECUTOR_MODEL = "gpt-5.6-luna";
-  process.env.OPERATOR_EXECUTOR_REASONING_EFFORT = "max";
+  process.env.OPERATOR_AGENT_MODEL = "gpt-5.6-luna";
+  process.env.OPERATOR_AGENT_REASONING_EFFORT = "max";
 }
 
-test("OpenAI brain returns provider usage and actual Luna/max route on successful decisions", { concurrency: false }, async () => {
+test("OpenAI brain returns provider usage and the unified Luna/max route on successful decisions", { concurrency: false }, async () => {
   let requestBody: any = null;
   const server = http.createServer((incoming, outgoing) => {
     const chunks: Buffer[] = [];
@@ -100,7 +96,7 @@ test("OpenAI brain returns provider usage and actual Luna/max route on successfu
     assert.equal(result.model_call_receipts?.length, 1);
     const receipt = result.model_call_receipts?.[0];
     assert.equal(receipt?.call_id, "resp_brain_luna");
-    assert.equal(receipt?.route, "executor");
+    assert.equal(receipt?.route, "classic");
     assert.equal(receipt?.requested_model, "gpt-5.6-luna");
     assert.equal(receipt?.model, "gpt-5.6-luna");
     assert.equal(receipt?.reasoning_effort, "max");
@@ -135,7 +131,7 @@ test("OpenAI brain returns a content-free receipt when the provider call fails",
 
     assert.equal(result.model_call_receipts?.length, 1);
     const receipt = result.model_call_receipts?.[0];
-    assert.equal(receipt?.route, "executor");
+    assert.equal(receipt?.route, "classic");
     assert.equal(receipt?.success, false);
     assert.equal(receipt?.tokens.input_tokens, null);
     assert.ok(receipt?.error_code);
