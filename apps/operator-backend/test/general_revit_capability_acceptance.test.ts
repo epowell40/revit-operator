@@ -711,6 +711,11 @@ test("the live runner reuses orchestrator-established fixture health between cas
 test("durable evidence follows the exact benchmark session and run window when Sidecar expands the prompt", async () => {
   const requestedGoalIds: string[] = [];
   const server = http.createServer((request, response) => {
+    if (String(request.url || "").startsWith("/api/notifications?")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ notifications: [] }));
+      return;
+    }
     const goalId = decodeURIComponent(String(request.url || "").split("/").at(-1) || "");
     requestedGoalIds.push(goalId);
     response.writeHead(200, { "content-type": "application/json" });
