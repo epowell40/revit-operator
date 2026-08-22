@@ -34,6 +34,7 @@ import {
   aggregateModelCallReceipts,
   modelCallReceiptsFromSources,
   modelCallReceiptsFromTraces,
+  modelTelemetryCaseCoverage,
   requestedComputerAgentConfig,
   requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig
@@ -352,6 +353,37 @@ async function waitForComputerIdle(baseUrl: string, timeoutMs: number, label: st
   return state;
 }
 
+function persistedRecoveryMessageId(state: JsonRecord): string {
+  const events = Array.isArray(state.events) ? state.events.map(asRecord) : [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const match = String(events[index].text || "").match(/recovering message ([A-Za-z0-9._:-]{1,300}) from its persisted result/i);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+async function recoverTimedOutModelTelemetry(baseUrl: string, state: JsonRecord): Promise<JsonRecord> {
+  const sessionId = String(state.backendSessionId || "").trim();
+  const messageId = persistedRecoveryMessageId(state);
+  if (!sessionId || !messageId) {
+    return { status: "unavailable", reason: "persisted_result_identity_missing", model_call_receipts: [] };
+  }
+  const deadline = Date.now() + 30_000;
+  let last: JsonRecord = {};
+  while (Date.now() < deadline) {
+    last = await requestJson(baseUrl, "/api/computer/model-telemetry/recover", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, message_id: messageId })
+    }, Math.min(15_000, Math.max(1_000, deadline - Date.now())));
+    const receipts = modelCallReceiptsFromSources(last);
+    if (String(last.status || "") !== "pending") {
+      return { ...last, session_id: sessionId, message_id: messageId, model_call_receipts: receipts };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  return { ...last, status: "pending_timeout", session_id: sessionId, message_id: messageId, model_call_receipts: [] };
+}
+
 async function ensureFixtureActive(
   baseUrl: string,
   fixtureKey: string,
@@ -396,16 +428,30 @@ async function ensureFixtureActive(
   const samplePath = path.resolve(fixtureRoot, fixture.sample_filename);
   if (!fs.existsSync(samplePath)) throw new Error(`Fixture file does not exist: ${samplePath}`);
   await waitForComputerIdle(baseUrl, Math.min(fixtureTimeoutMs(), 60_000), `Fixture transition ${fixtureKey}`);
+  const deterministicDeadline = startedMs + fixtureTimeoutMs();
+  let deterministicConflictRetries = 0;
   try {
-    const deterministic = await requestJson(baseUrl, "/api/benchmark/revit-fixture/open", {
-      method: "POST",
-      body: JSON.stringify({
-        fixture: fixtureKey,
-        sample_path: samplePath,
-        expected_document_title: fixture.document_title,
-        force_reopen: forceReopen
-      })
-    }, fixtureTimeoutMs());
+    let deterministic: JsonRecord;
+    while (true) {
+      try {
+        deterministic = await requestJson(baseUrl, "/api/benchmark/revit-fixture/open", {
+          method: "POST",
+          body: JSON.stringify({
+            fixture: fixtureKey,
+            sample_path: samplePath,
+            expected_document_title: fixture.document_title,
+            force_reopen: forceReopen
+          })
+        }, Math.max(1_000, deterministicDeadline - Date.now()));
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const actionStillDraining = /POST \/api\/benchmark\/revit-fixture\/open returned 502:[\s\S]*409[\s\S]*(?:action in flight|Retry after that action completes)/i.test(message);
+        if (!actionStillDraining || Date.now() + 1_000 >= deterministicDeadline) throw error;
+        deterministicConflictRetries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    }
     const after = asRecord(deterministic.health);
     if (healthDocumentTitle(after) !== fixture.document_title) {
       throw new Error(`Deterministic fixture transition ${fixtureKey} returned without the exact authoritative target title.`);
@@ -422,6 +468,7 @@ async function ensureFixtureActive(
       before,
       after: stable.health,
       readiness_attempts: stable.attempts,
+      action_in_flight_retries: deterministicConflictRetries,
       deterministic_response: deterministic
     };
   } catch (error) {
@@ -651,6 +698,23 @@ async function runComputerCase(
       );
     }
   }
+  let modelTelemetryRecovery: JsonRecord | null = null;
+  if ((timeoutSettlement || contextLossSettlement)
+    && modelCallReceiptsFromSources(state).length === 0) {
+    try {
+      modelTelemetryRecovery = await recoverTimedOutModelTelemetry(baseUrl, state);
+      const recoveredReceipts = modelCallReceiptsFromSources(modelTelemetryRecovery);
+      if (recoveredReceipts.length > 0) {
+        state = { ...state, modelCallReceipts: recoveredReceipts };
+      }
+    } catch (error) {
+      modelTelemetryRecovery = {
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+        model_call_receipts: []
+      };
+    }
+  }
   const ownsObservedRun = computerStateHasMessage(state, messageId);
   if (!ownsObservedRun) {
     transportError = transportError
@@ -685,6 +749,7 @@ async function runComputerCase(
     ...(teammateLoopReceipt ? { teammate_loop_receipt: teammateLoopReceipt } : {}),
     harness_timeout_settlement: timeoutSettlement,
     harness_context_loss_settlement: contextLossSettlement,
+    harness_model_telemetry_recovery: modelTelemetryRecovery,
     computer_state: state
   };
   return { attempt, sessionId: String(state.backendSessionId || "").trim() };
@@ -977,7 +1042,9 @@ async function main(): Promise<void> {
     fixture_selection: requestedFixture || (orchestrateFixtures ? "orchestrated" : "single_fixture_unpinned"),
     fixture_health_is_authoritative: Boolean(requestedFixture || orchestrateFixtures),
     fixture_root: orchestrateFixtures ? path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples")) : null,
-    fixture_transitions: [] as JsonRecord[],
+    fixture_transitions: (Array.isArray(priorSuiteContext.fixture_transitions)
+      ? priorSuiteContext.fixture_transitions.map(asRecord)
+      : []) as JsonRecord[],
     fixture_preflight: requestedFixture ? {
       document_title: asRecord(asRecord(fixturePreflight.context).document).title ?? null,
       document_path: asRecord(asRecord(fixturePreflight.context).document).path ?? null,
@@ -1092,6 +1159,7 @@ async function main(): Promise<void> {
   }
   const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
   const modelCallTelemetry = aggregateModelCallReceipts(suiteModelCallReceipts);
+  const modelTelemetryCoverage = modelTelemetryCaseCoverage(traces);
   const requestedVsObserved = requestedVsObservedComputerAgent(requestedComputerAgent, modelCallTelemetry);
   const latencyTelemetry = summarizeGeneralRevitLatency(traces, suiteContext);
   asRecord(suiteContext.computer_agent).observed_provider_calls = requestedVsObserved;
@@ -1144,13 +1212,15 @@ async function main(): Promise<void> {
     baseline_comparison: baselineComparison,
     baseline_case_deltas: caseDeltas,
     model_call_telemetry: modelCallTelemetry,
+    model_telemetry_coverage: modelTelemetryCoverage,
     latency_telemetry: latencyTelemetry,
     telemetry_valid_for_model_comparison: requestedSpeedSettings !== null
       && requestedVsObserved.comparable_configuration === true
+      && modelTelemetryCoverage.complete === true
       && modelCallTelemetry.token_status === "complete"
       && modelCallTelemetry.cost_status === "estimated_from_exact_provider_tokens",
     task_traces: traces,
-    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, latencyTelemetry, traces })
+    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, modelTelemetryCoverage, latencyTelemetry, traces })
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));

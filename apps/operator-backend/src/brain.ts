@@ -4,8 +4,6 @@ import path from "node:path";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ChatResponse } from "./contracts.js";
 import { decideRule } from "./brains/rule_brain.js";
 import {
-  decideOpenAi,
-  decideOpenAiStreaming,
   isExplicitReadOnlyRedlineAnalysisRequest,
   prepareExistingConditionsProviderDecision,
   prepareExistingConditionsSourcePreflight
@@ -352,8 +350,6 @@ export type BrainDecisionDependencies = {
   semanticAecWorkflow?: typeof maybeRunSemanticAecWorkflow;
   mepServiceAccessoryPreflight?: typeof maybeRunMepServiceAccessoryPreflight;
   ruleBrain?: typeof decideRule;
-  openAiBrain?: typeof decideOpenAi;
-  openAiStreamingBrain?: typeof decideOpenAiStreaming;
   codexBrain?: typeof decideCodex;
   codexStreamingBrain?: typeof decideCodexStreaming;
   geminiBrain?: typeof decideGemini;
@@ -364,7 +360,7 @@ export type BrainDecisionDependencies = {
   existingConditionsSourcePreflight?: typeof prepareExistingConditionsSourcePreflight;
 };
 
-export type OperatorBrainRoute = "rule" | "openai" | "codex" | "gemini" | "anthropic";
+export type OperatorBrainRoute = "rule" | "codex" | "gemini" | "anthropic";
 
 export function isDirectBrainRouteRequest(req: Pick<ChatRequest, "context">): boolean {
   const context = req.context;
@@ -379,13 +375,15 @@ export function isDirectBrainRouteRequest(req: Pick<ChatRequest, "context">): bo
 export function resolveOperatorBrainRoute(): OperatorBrainRoute {
   const forced = (process.env.OPERATOR_BRAIN || "").toLowerCase().trim();
   if (forced === "rule") return "rule";
-  if (forced === "openai") return "openai";
+  if (forced === "openai") {
+    throw new Error("OPERATOR_BRAIN=openai is retired; use the canonical OPERATOR_BRAIN=codex agent runtime.");
+  }
   if (forced === "codex") return "codex";
   if (forced === "gemini") return "gemini";
   if (forced === "anthropic" || forced === "claude") return "anthropic";
-  // Codex app-server is the canonical durable agent runtime. The legacy
-  // OpenAI brain remains available only through an explicit OPERATOR_BRAIN
-  // override while its deterministic helpers are migrated out.
+  // Codex app-server is the canonical durable agent runtime. The retired
+  // OpenAI module is not an executable route; remaining imports from it are
+  // deterministic workflow helpers awaiting mechanical extraction.
   return "codex";
 }
 
@@ -395,7 +393,6 @@ async function decideWithSelectedBrain(
   dependencies: BrainDecisionDependencies
 ): Promise<ChatResponse> {
   if (route === "rule") return (dependencies.ruleBrain ?? decideRule)(req);
-  if (route === "openai") return (dependencies.openAiBrain ?? decideOpenAi)(req);
   if (route === "codex") return (dependencies.codexBrain ?? decideCodex)(req);
   if (route === "gemini") return (dependencies.geminiBrain ?? decideGemini)(req);
   return (dependencies.anthropicBrain ?? decideAnthropic)(req);
@@ -407,9 +404,6 @@ async function decideWithSelectedBrainStreaming(
   cb: StreamCallbacks,
   dependencies: BrainDecisionDependencies
 ): Promise<ChatResponse> {
-  if (route === "openai") {
-    return (dependencies.openAiStreamingBrain ?? decideOpenAiStreaming)(req, cb);
-  }
   if (route === "codex") {
     return (dependencies.codexStreamingBrain ?? decideCodexStreaming)(req, cb);
   }
@@ -516,10 +510,10 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
   }
 
   const route = resolveOperatorBrainRoute();
-  const routedReq = route !== "openai" && route !== "rule"
+  const routedReq = route !== "rule"
     ? await (dependencies.existingConditionsSourcePreflight ?? prepareExistingConditionsSourcePreflight)(req)
     : req;
-  if (route !== "openai" && route !== "rule") {
+  if (route !== "rule") {
     const providerDecision = await (
       dependencies.existingConditionsProviderDecision ??
       prepareExistingConditionsProviderDecision
@@ -723,10 +717,10 @@ export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dep
   }
 
   const route = resolveOperatorBrainRoute();
-  const routedReq = route !== "openai" && route !== "rule"
+  const routedReq = route !== "rule"
     ? await (dependencies.existingConditionsSourcePreflight ?? prepareExistingConditionsSourcePreflight)(req)
     : req;
-  if (route !== "openai" && route !== "rule") {
+  if (route !== "rule") {
     const providerDecision = await (
       dependencies.existingConditionsProviderDecision ??
       prepareExistingConditionsProviderDecision

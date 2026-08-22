@@ -942,11 +942,18 @@ export function evaluateGeneralRevitCapabilityAttempt(
   testCase: GeneralRevitCapabilityCase,
   attempt: GeneralRevitAttempt | null | undefined
 ): GeneralRevitEvaluation {
+  // Natural-language assertions in this corpus were authored for read and
+  // rollback-preview probes. They are useful semantic oracles for those
+  // non-mutating modes, but they must not veto an authorized mutation whose
+  // structured receipt and readback prove the requested model-state change.
+  // Apply truth is therefore determined from tool/lifecycle evidence, not from
+  // whether the assistant repeated legacy preview wording.
   if (!attempt) {
     return {
       case_id: testCase.case_id, tier: "not_run", non_refusal: false, completed: false, verified: false,
       expected_path_observed: false, observed_paths: [], dispatched: false, apply_dispatched: false,
-      outcome_unknown: false, refusal_reason: null, answer_assertion_available: !!testCase.answer_assertions,
+      outcome_unknown: false, refusal_reason: null,
+      answer_assertion_available: testCase.expected_effect !== "apply" && !!testCase.answer_assertions,
       answer_assertion_passed: null, answer_assertion_failures: [],
       fixture_blocker_assertion_available: !!testCase.fixture_blocker_assertions,
       fixture_blocker_assertion_passed: null, fixture_blocker_assertion_failures: [], fixture_blocker_accepted: false,
@@ -1000,6 +1007,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
     || (teammate.mutationAttempted && [...durablePaths].some((candidate) => expectedPaths.has(candidate)));
   const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true)
     || durablePaths.size > 0;
+  const answerAssertionsApplicable = !!testCase.answer_assertions
+    && (testCase.expected_effect !== "apply" || !applyDispatched);
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
   const durableEffectReceiptCompleted = durableReceiptBoundToLifecycle(
@@ -1020,14 +1029,14 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const answerText = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
     ? attempt.assistant_message
     : durableResultSummary(attempt);
-  const answerEvidenceAssertionFailures = testCase.answer_assertions ? answerEvidenceFailures(testCase, attempt) : [];
-  const answerEvidenceRequirements = testCase.answer_assertions?.evidence;
+  const answerEvidenceAssertionFailures = answerAssertionsApplicable ? answerEvidenceFailures(testCase, attempt) : [];
+  const answerEvidenceRequirements = answerAssertionsApplicable ? testCase.answer_assertions?.evidence : undefined;
   const answerEvidenceIsAuthoritative = (
     (answerEvidenceRequirements?.required_semantic_facts?.length ?? 0) > 0
     || (testCase.expected_effect !== "read" && (answerEvidenceRequirements?.required_successful_paths?.length ?? 0) > 0)
   )
     && answerEvidenceAssertionFailures.length === 0;
-  const answerAssertionFailures = testCase.answer_assertions
+  const answerAssertionFailures = answerAssertionsApplicable && testCase.answer_assertions
     ? [
         ...(answerEvidenceIsAuthoritative ? [] : testCase.answer_assertions.must_match
           .filter((pattern) => !assertionPatternMatches(pattern, answerText))
@@ -1038,7 +1047,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
         ...answerEvidenceAssertionFailures
       ]
     : [];
-  const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
+  const answerAssertionPassed = answerAssertionsApplicable ? answerAssertionFailures.length === 0 : null;
   const fixtureBlockerAssertionFailures = testCase.fixture_blocker_assertions
     ? [
         ...testCase.fixture_blocker_assertions.must_match
@@ -1117,7 +1126,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     apply_dispatched: applyDispatched,
     outcome_unknown: outcomeUnknown,
     refusal_reason: refusalReason,
-    answer_assertion_available: !!testCase.answer_assertions,
+    answer_assertion_available: answerAssertionsApplicable,
     answer_assertion_passed: answerAssertionPassed,
     answer_assertion_failures: answerAssertionFailures,
     fixture_blocker_assertion_available: !!testCase.fixture_blocker_assertions,

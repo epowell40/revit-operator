@@ -262,6 +262,21 @@ export function modelCallReceiptsFromTraces(traces: unknown[]): JsonRecord[] {
   return deduplicateModelCallReceipts(receipts);
 }
 
+export function modelTelemetryCaseCoverage(traces: unknown[]): JsonRecord {
+  const rows = traces.map(asRecord);
+  const missingCaseIds = rows
+    .filter((trace) => modelCallReceiptsFromSources(trace).length === 0)
+    .map((trace) => String(trace.case_id || ""));
+  return {
+    schema: "revit-operator.model-telemetry-case-coverage.v1",
+    expected_case_count: rows.length,
+    cases_with_model_receipts: rows.length - missingCaseIds.length,
+    cases_missing_model_receipts: missingCaseIds.length,
+    missing_case_ids: missingCaseIds,
+    complete: missingCaseIds.length === 0
+  };
+}
+
 export function requestedVsObservedComputerAgent(
   requested: RequestedComputerAgentConfig,
   telemetryValue: unknown

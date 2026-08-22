@@ -17,29 +17,19 @@ test("General Revit markdown keeps requested configuration distinct from observe
       execution_surface: "operator_computer_general_agent",
       computer_agent: {
         requested: {
-          planner_model: "gpt-5.6-sol",
-          planner_reasoning_effort: "medium",
-          executor_model: "gpt-5.6-luna",
-          executor_reasoning_effort: "max",
-          outer_model: "gpt-5.6-luna",
-          outer_reasoning_effort: "max"
+          agent_model: "gpt-5.6-luna",
+          agent_reasoning_effort: "max"
         },
         observed_provider_calls: {
           configuration_drift_detected: false,
           roles: [{
-            role: "planner",
-            observed_models: ["gpt-5.6-sol"],
-            observed_reasoning_efforts: ["medium"],
-            call_count: 2,
-            provider_duration_ms: 1_500,
-            total_tokens: 240
-          }, {
-            role: "executor",
+            role: "agent",
             observed_models: ["gpt-5.6-luna"],
             observed_reasoning_efforts: ["max"],
             call_count: 3,
             provider_duration_ms: 2_500,
-            total_tokens: 360
+            total_tokens: 360,
+            cost_usd: 0.0123
           }]
         }
       }
@@ -58,6 +48,22 @@ test("General Revit markdown keeps requested configuration distinct from observe
     fixture_mismatch_count: 0,
     fixture_unverifiable_count: 0,
     selected_answer_assertion_case_count: 1,
+    model_call_telemetry: {
+      by_route_model_effort: [{
+        route: "codex_agent",
+        model: "gpt-5.6-luna",
+        reasoning_effort: "max",
+        call_count: 3,
+        provider_duration_ms: 2_500,
+        total_tokens: 360,
+        cost_usd: 0.0123
+      }]
+    },
+    model_telemetry_coverage: {
+      expected_case_count: 1,
+      cases_with_model_receipts: 1
+    },
+    telemetry_valid_for_model_comparison: true,
     summary_by_specificity: {},
     summary_by_fixture: {},
     summary_by_verification_basis: { fixture_grounded_semantic: 1 },
@@ -73,10 +79,10 @@ test("General Revit markdown keeps requested configuration distinct from observe
     }]
   });
 
-  assert.match(markdown, /\| planner \| gpt-5\.6-sol \/ medium \| gpt-5\.6-sol \/ medium \| 2 \| 1\.5s \| 240 \| missing pricing \|/);
-  assert.match(markdown, /\| executor \| gpt-5\.6-luna \/ max \| gpt-5\.6-luna \/ max \| 3 \| 2\.5s \| 360 \| missing pricing \|/);
-  assert.match(markdown, /\| outer \| gpt-5\.6-luna \/ max \| no receipt \| 0 \| unknown \| unknown \| missing pricing \|/);
-  assert.match(markdown, /Configuration drift detected: no\. Cost is `null`/);
+  assert.match(markdown, /\| agent \| gpt-5\.6-luna \/ max \| gpt-5\.6-luna \/ max \| 3 \| 2\.5s \| 360 \| \$0\.0123 \|/);
+  assert.match(markdown, /Telemetry coverage: 1\/1 cases; valid for model comparison: yes/);
+  assert.match(markdown, /\| codex_agent \| gpt-5\.6-luna \| max \| 3 \| 2\.5s \| 360 \| \$0\.0123 \|/);
+  assert.match(markdown, /not an invoice or account-credit measurement/);
   assert.match(markdown, /fixture_grounded_semantic/);
   assert.match(markdown, /assistant prose alone is not verification/);
 });

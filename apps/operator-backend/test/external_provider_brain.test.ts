@@ -703,7 +703,6 @@ test("streaming and non-streaming dispatch resolve the same configured brain", a
   const previous = { OPERATOR_BRAIN: process.env.OPERATOR_BRAIN };
   const routes = [
     { configured: "rule", resolved: "rule" },
-    { configured: "openai", resolved: "openai" },
     { configured: "codex", resolved: "codex" },
     { configured: "gemini", resolved: "gemini" },
     { configured: "claude", resolved: "anthropic" }
@@ -723,14 +722,6 @@ test("streaming and non-streaming dispatch resolve the same configured brain", a
         ruleBrain: async () => {
           calls.push("rule:nonstream");
           return responseFor("nonstream");
-        },
-        openAiBrain: async () => {
-          calls.push("openai:nonstream");
-          return responseFor("nonstream");
-        },
-        openAiStreamingBrain: async () => {
-          calls.push("openai:stream");
-          return responseFor("stream");
         },
         codexBrain: async () => {
           calls.push("codex:nonstream");
@@ -782,6 +773,17 @@ test("streaming and non-streaming dispatch resolve the same configured brain", a
     }
   } finally {
     restoreEnvironment(previous);
+  }
+});
+
+test("the legacy OpenAI brain route is retired instead of silently creating a second agent", { concurrency: false }, () => {
+  const previous = process.env.OPERATOR_BRAIN;
+  process.env.OPERATOR_BRAIN = "openai";
+  try {
+    assert.throws(() => resolveOperatorBrainRoute(), /OPERATOR_BRAIN=openai is retired/);
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_BRAIN;
+    else process.env.OPERATOR_BRAIN = previous;
   }
 });
 
@@ -909,7 +911,7 @@ test("explicit direct existing-conditions routes retain the provider-neutral reg
   }
 });
 
-test("explicit direct existing-conditions registration is provider-neutral for OpenAI and rule routes", { concurrency: false }, async () => {
+test("explicit direct existing-conditions registration is provider-neutral for Codex and rule routes", { concurrency: false }, async () => {
   const previous = {
     OPERATOR_BRAIN: process.env.OPERATOR_BRAIN,
     OPERATOR_WORKSPACE_ROOT: process.env.OPERATOR_WORKSPACE_ROOT
@@ -927,7 +929,7 @@ test("explicit direct existing-conditions registration is provider-neutral for O
   };
 
   try {
-    for (const configured of ["openai", "rule"] as const) {
+    for (const configured of ["codex", "rule"] as const) {
       process.env.OPERATOR_BRAIN = configured;
       let gateCalls = 0;
       let providerCalls = 0;
@@ -943,11 +945,11 @@ test("explicit direct existing-conditions registration is provider-neutral for O
           gateCalls += 1;
           return gateResponse;
         },
-        openAiBrain: async () => {
+        codexBrain: async () => {
           providerCalls += 1;
           return gateResponse;
         },
-        openAiStreamingBrain: async () => {
+        codexStreamingBrain: async () => {
           providerCalls += 1;
           return gateResponse;
         },

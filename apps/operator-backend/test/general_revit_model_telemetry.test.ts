@@ -4,6 +4,7 @@ import {
   aggregateModelCallReceipts,
   modelCallReceiptsFromSources,
   modelCallReceiptsFromTraces,
+  modelTelemetryCaseCoverage,
   requestedComputerAgentConfig,
   requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig
@@ -28,6 +29,21 @@ test("benchmark CLI accepts one model pair and rejects removed split flags", () 
     speed_mode: true, agent_model: "gpt-5.6-luna", agent_reasoning_effort: "max"
   });
   assert.throws(() => requestedComputerAgentConfig(["--planner-model", "gpt-5.6-sol"]), /removed split-agent option/);
+});
+
+test("model comparison coverage fails closed when any delegated case lacks receipts", () => {
+  const covered = { case_id: "covered", model_call_receipts: [receipt()] };
+  assert.deepEqual(modelTelemetryCaseCoverage([covered]), {
+    schema: "revit-operator.model-telemetry-case-coverage.v1",
+    expected_case_count: 1,
+    cases_with_model_receipts: 1,
+    cases_missing_model_receipts: 0,
+    missing_case_ids: [],
+    complete: true
+  });
+  const partial = modelTelemetryCaseCoverage([covered, { case_id: "timed_out", model_call_receipts: [] }]);
+  assert.equal(partial.complete, false);
+  assert.deepEqual(partial.missing_case_ids, ["timed_out"]);
 });
 
 test("raw Codex completion becomes an exact content-free provider receipt", () => {

@@ -1668,12 +1668,6 @@ test("safe mode scores the safe probe contract without weakening production muta
   assert.equal(result.apply_dispatched, false);
 });
 
-test("apply mode upgrades legacy preview-labelled mutation prompts to apply truth", () => {
-  const legacyMutation = corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!;
-  assert.equal(legacyMutation.expected_effect, "preview");
-  assert.equal(generalRevitExecutionCase(legacyMutation, true).expected_effect, "apply");
-});
-
 test("a nested teammate preview receipt satisfies the preview effect through delegate_revit_task", () => {
   const safeCase = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "r02_add_tag")!, false);
   const result = evaluateGeneralRevitCapabilityAttempt(safeCase, {
@@ -1831,6 +1825,50 @@ test("a certified transaction-plan preview is the composable safe execution lane
   });
   assert.equal(missingNativeReceipt.completed, false);
   assert.notEqual(missingNativeReceipt.tier, "verified");
+});
+
+test("apply mode upgrades legacy preview-labelled mutation prompts to apply truth", () => {
+  const legacyMutation = corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!;
+  assert.equal(legacyMutation.expected_effect, "preview");
+  assert.equal(generalRevitExecutionCase(legacyMutation, true).expected_effect, "apply");
+});
+
+test("apply grading ignores legacy preview prose and trusts verified mutation evidence", () => {
+  const applyCase = generalRevitExecutionCase({
+    case_id: "apply_truth_over_preview_prose",
+    source: "user_basic",
+    operation_family: "parameter_edit",
+    prompt: "Rename the disposable element.",
+    probe_prompt: "Preview the rename without changing anything.",
+    capability_paths: ["/revit/set-parameter"],
+    dispatch_any_of: ["/revit/set-parameter"],
+    expected_effect: "preview",
+    epic0441_task_refs: [],
+    answer_assertions: {
+      must_match: ["Nothing was changed"],
+      must_not_match: ["Applied"]
+    }
+  }, true);
+  const result = evaluateGeneralRevitCapabilityAttempt(applyCase, {
+    ok: true,
+    assistant_message: "Applied and verified the requested rename.",
+    actions: [{
+      path: "/revit/set-parameter",
+      request_effect: "apply",
+      request_dispatched: true,
+      status: "success",
+      receipt: {
+        verification: { state: "verified", before: "Old", after: "New" },
+        readback: { value: "New" },
+        changed_element_ids: [123]
+      }
+    }]
+  });
+  assert.equal(result.answer_assertion_available, false);
+  assert.equal(result.answer_assertion_passed, null);
+  assert.deepEqual(result.answer_assertion_failures, []);
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
 });
 
 test("authoritative target-bound preview evidence supersedes a stale blocked assignment projection", () => {
