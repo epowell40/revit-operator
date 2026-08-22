@@ -34,11 +34,19 @@ import {
   aggregateModelCallReceipts,
   modelCallReceiptsFromSources,
   modelCallReceiptsFromTraces,
+  modelTelemetryCaseCoverage,
   requestedComputerAgentConfig,
   requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig
 } from "../benchmark/general_revit_model_telemetry.js";
+import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
+import {
+  baselineCaseDeltas,
+  computerPerformanceSummary,
+  groupedMultiSummary,
+  groupedSummary
+} from "../benchmark/general_revit_trace_reporting.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -171,8 +179,17 @@ function selectCases(cases: GeneralRevitCapabilityCase[]): GeneralRevitCapabilit
     && (suite !== "code-execution" || entry.source === "code_execution")
     && (requestedIds.size === 0 || requestedIds.has(entry.case_id))
     && (requestedSources.size === 0 || requestedSources.has(entry.source)));
-  const limit = Number.parseInt(flag("--limit", `${filtered.length}`), 10);
-  return filtered.slice(0, Number.isFinite(limit) && limit >= 0 ? limit : filtered.length);
+  const sampleEvery = Number.parseInt(flag("--sample-every", "1"), 10);
+  const sampleOffset = Number.parseInt(flag("--sample-offset", "0"), 10);
+  if (!Number.isInteger(sampleEvery) || sampleEvery < 1) throw new Error("--sample-every must be a positive integer.");
+  if (!Number.isInteger(sampleOffset) || sampleOffset < 0 || sampleOffset >= sampleEvery) {
+    throw new Error("--sample-offset must be an integer from zero through sample-every minus one.");
+  }
+  const sampled = sampleEvery === 1
+    ? filtered
+    : filtered.filter((_entry, index) => index % sampleEvery === sampleOffset);
+  const limit = Number.parseInt(flag("--limit", `${sampled.length}`), 10);
+  return sampled.slice(0, Number.isFinite(limit) && limit >= 0 ? limit : sampled.length);
 }
 
 function fileStamp(): string {
@@ -181,52 +198,6 @@ function fileStamp(): string {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function baselineCaseDeltas(traces: JsonRecord[], baselineReport: JsonRecord | null): JsonRecord[] {
-  if (!baselineReport) return [];
-  const baselineTraces = new Map((Array.isArray(baselineReport.task_traces) ? baselineReport.task_traces : [])
-    .map(asRecord).map((trace) => [String(trace.case_id || ""), trace] as const));
-  return traces.flatMap((trace) => {
-    const prior = baselineTraces.get(String(trace.case_id || ""));
-    if (!prior) return [];
-    const currentScore = asRecord(trace.success_failure_score);
-    const priorScore = asRecord(prior.success_failure_score);
-    if (JSON.stringify(currentScore) === JSON.stringify(priorScore)) return [];
-    return [{
-      case_id: trace.case_id,
-      from_tier: priorScore.tier ?? "not_run",
-      to_tier: currentScore.tier ?? "not_run",
-      completion_changed: currentScore.completed !== priorScore.completed,
-      verification_changed: currentScore.verified !== priorScore.verified
-    }];
-  });
-}
-
-function groupedSummary(traces: JsonRecord[], key: "operation_family" | "prompt_specificity" | "preferred_fixture"): Record<string, unknown> {
-  const buckets = new Map<string, JsonRecord[]>();
-  for (const trace of traces) {
-    const bucket = String(trace[key] || "unknown");
-    const rows = buckets.get(bucket) || [];
-    rows.push(asRecord(asRecord(trace.verification_results).evaluation));
-    buckets.set(bucket, rows);
-  }
-  return Object.fromEntries([...buckets.entries()].sort(([left], [right]) => left.localeCompare(right))
-    .map(([bucket, evaluations]) => [bucket, summarizeGeneralRevitCapabilityReport(evaluations as never)]));
-}
-
-function groupedMultiSummary(traces: JsonRecord[], key: "corpus_task_types"): Record<string, unknown> {
-  const buckets = new Map<string, JsonRecord[]>();
-  for (const trace of traces) {
-    const values = Array.isArray(trace[key]) ? trace[key].map(String) : [];
-    for (const bucket of values.length > 0 ? values : ["unmapped"]) {
-      const rows = buckets.get(bucket) || [];
-      rows.push(asRecord(asRecord(trace.verification_results).evaluation));
-      buckets.set(bucket, rows);
-    }
-  }
-  return Object.fromEntries([...buckets.entries()].sort(([left], [right]) => left.localeCompare(right))
-    .map(([bucket, evaluations]) => [bucket, summarizeGeneralRevitCapabilityReport(evaluations as never)]));
 }
 
 function safeGrant(value: JsonRecord): JsonRecord {
@@ -342,12 +313,44 @@ async function waitForComputerIdle(baseUrl: string, timeoutMs: number, label: st
   return state;
 }
 
+function persistedRecoveryMessageId(state: JsonRecord): string {
+  const events = Array.isArray(state.events) ? state.events.map(asRecord) : [];
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const match = String(events[index].text || "").match(/recovering message ([A-Za-z0-9._:-]{1,300}) from its persisted result/i);
+    if (match) return match[1];
+  }
+  return "";
+}
+
+async function recoverTimedOutModelTelemetry(baseUrl: string, state: JsonRecord): Promise<JsonRecord> {
+  const sessionId = String(state.backendSessionId || "").trim();
+  const messageId = persistedRecoveryMessageId(state);
+  if (!sessionId || !messageId) {
+    return { status: "unavailable", reason: "persisted_result_identity_missing", model_call_receipts: [] };
+  }
+  const deadline = Date.now() + 30_000;
+  let last: JsonRecord = {};
+  while (Date.now() < deadline) {
+    last = await requestJson(baseUrl, "/api/computer/model-telemetry/recover", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, message_id: messageId })
+    }, Math.min(15_000, Math.max(1_000, deadline - Date.now())));
+    const receipts = modelCallReceiptsFromSources(last);
+    if (String(last.status || "") !== "pending") {
+      return { ...last, session_id: sessionId, message_id: messageId, model_call_receipts: receipts };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  return { ...last, status: "pending_timeout", session_id: sessionId, message_id: messageId, model_call_receipts: [] };
+}
+
 async function ensureFixtureActive(
   baseUrl: string,
   fixtureKey: string,
   fixture: { document_title: string; sample_filename: string },
   fixtureRoot: string,
-  speedSettings: JsonRecord | null
+  speedSettings: JsonRecord | null,
+  forceReopen = false
 ): Promise<JsonRecord> {
   const startedAt = nowIso();
   const startedMs = Date.now();
@@ -368,7 +371,7 @@ async function ensureFixtureActive(
       error: message
     };
   }
-  if (healthDocumentTitle(before) === fixture.document_title) {
+  if (healthDocumentTitle(before) === fixture.document_title && !forceReopen) {
     const stable = await readExactFixtureHealth(baseUrl, fixture.document_title);
     return {
       fixture: fixtureKey,
@@ -385,15 +388,30 @@ async function ensureFixtureActive(
   const samplePath = path.resolve(fixtureRoot, fixture.sample_filename);
   if (!fs.existsSync(samplePath)) throw new Error(`Fixture file does not exist: ${samplePath}`);
   await waitForComputerIdle(baseUrl, Math.min(fixtureTimeoutMs(), 60_000), `Fixture transition ${fixtureKey}`);
+  const deterministicDeadline = startedMs + fixtureTimeoutMs();
+  let deterministicConflictRetries = 0;
   try {
-    const deterministic = await requestJson(baseUrl, "/api/benchmark/revit-fixture/open", {
-      method: "POST",
-      body: JSON.stringify({
-        fixture: fixtureKey,
-        sample_path: samplePath,
-        expected_document_title: fixture.document_title
-      })
-    }, fixtureTimeoutMs());
+    let deterministic: JsonRecord;
+    while (true) {
+      try {
+        deterministic = await requestJson(baseUrl, "/api/benchmark/revit-fixture/open", {
+          method: "POST",
+          body: JSON.stringify({
+            fixture: fixtureKey,
+            sample_path: samplePath,
+            expected_document_title: fixture.document_title,
+            force_reopen: forceReopen
+          })
+        }, Math.max(1_000, deterministicDeadline - Date.now()));
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const actionStillDraining = /POST \/api\/benchmark\/revit-fixture\/open returned 502:[\s\S]*409[\s\S]*(?:action in flight|Retry after that action completes)/i.test(message);
+        if (!actionStillDraining || Date.now() + 1_000 >= deterministicDeadline) throw error;
+        deterministicConflictRetries += 1;
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+      }
+    }
     const after = asRecord(deterministic.health);
     if (healthDocumentTitle(after) !== fixture.document_title) {
       throw new Error(`Deterministic fixture transition ${fixtureKey} returned without the exact authoritative target title.`);
@@ -410,6 +428,7 @@ async function ensureFixtureActive(
       before,
       after: stable.health,
       readiness_attempts: stable.attempts,
+      action_in_flight_retries: deterministicConflictRetries,
       deterministic_response: deterministic
     };
   } catch (error) {
@@ -419,7 +438,7 @@ async function ensureFixtureActive(
   const prompt = [
     "Benchmark fixture transition. The user explicitly authorized opening, saving, or discarding changes in Autodesk sample models for this test campaign; do not ask for confirmation.",
     `In the currently running Revit instance, use the Revit bridge primitive revit_open_model to open and activate exactly: ${samplePath}`,
-    "Use audit=false, detach=false, discardExistingOpenDocument=true, and continueOnUnresolvedReferences=true. If that exact target document is already open but inactive, you are explicitly authorized to close it without saving and reopen it so it becomes active. If Revit reports unresolved references, you are explicitly authorized to ignore that warning and continue opening this disposable sample fixture. Do not modify model content. Do not launch another Revit process and do not use Windows file association.",
+    `Use audit=false, detach=false, discardExistingOpenDocument=true, and continueOnUnresolvedReferences=true. ${forceReopen ? "Close the active sample without saving and reopen this exact target even if it is already active; this resets the disposable fixture between benchmark cases." : "If that exact target document is already open but inactive, you are explicitly authorized to close it without saving and reopen it so it becomes active."} If Revit reports unresolved references, you are explicitly authorized to ignore that warning and continue opening this disposable sample fixture. Do not modify model content. Do not launch another Revit process and do not use Windows file association.`,
     `Finish only after the authoritative active document title is exactly '${fixture.document_title}'.`
   ].join("\n");
   let runResponse: JsonRecord = {};
@@ -529,35 +548,6 @@ async function stopComputerRunBestEffort(baseUrl: string): Promise<void> {
   }
 }
 
-function computerPerformanceSummary(attempt: JsonRecord): JsonRecord {
-  const state = asRecord(attempt.computer_state);
-  const receipts = Array.isArray(state.performanceReceipts) ? state.performanceReceipts.map(asRecord) : [];
-  const byPhase: Record<string, JsonRecord> = {};
-  for (const receipt of receipts) {
-    const phase = String(receipt.phase || "unknown");
-    const current = byPhase[phase] || { count: 0, total_ms: 0, max_ms: 0, request_bytes: 0, response_bytes: 0 };
-    const durationMs = numberValue(receipt.duration_ms);
-    current.count = numberValue(current.count) + 1;
-    current.total_ms = numberValue(current.total_ms) + durationMs;
-    current.max_ms = Math.max(numberValue(current.max_ms), durationMs);
-    current.request_bytes = numberValue(current.request_bytes) + numberValue(receipt.request_bytes);
-    current.response_bytes = numberValue(current.response_bytes) + numberValue(receipt.response_bytes);
-    byPhase[phase] = current;
-  }
-  const progress = asRecord(state.progress);
-  const startedAt = Date.parse(String(progress.startedAt || ""));
-  const completedAt = Date.parse(String(progress.completedAt || progress.updatedAt || ""));
-  return {
-    schema: "revit-operator.computer-performance-summary/v1",
-    product_run_ms: Number.isFinite(startedAt) && Number.isFinite(completedAt) ? Math.max(0, completedAt - startedAt) : null,
-    receipt_count: receipts.length,
-    total_request_bytes: receipts.reduce((sum, receipt) => sum + numberValue(receipt.request_bytes), 0),
-    total_response_bytes: receipts.reduce((sum, receipt) => sum + numberValue(receipt.response_bytes), 0),
-    by_phase: byPhase,
-    receipts
-  };
-}
-
 async function runComputerCase(
   baseUrl: string,
   testCase: GeneralRevitCapabilityCase,
@@ -639,6 +629,23 @@ async function runComputerCase(
       );
     }
   }
+  let modelTelemetryRecovery: JsonRecord | null = null;
+  if ((timeoutSettlement || contextLossSettlement)
+    && modelCallReceiptsFromSources(state).length === 0) {
+    try {
+      modelTelemetryRecovery = await recoverTimedOutModelTelemetry(baseUrl, state);
+      const recoveredReceipts = modelCallReceiptsFromSources(modelTelemetryRecovery);
+      if (recoveredReceipts.length > 0) {
+        state = { ...state, modelCallReceipts: recoveredReceipts };
+      }
+    } catch (error) {
+      modelTelemetryRecovery = {
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+        model_call_receipts: []
+      };
+    }
+  }
   const ownsObservedRun = computerStateHasMessage(state, messageId);
   if (!ownsObservedRun) {
     transportError = transportError
@@ -673,6 +680,7 @@ async function runComputerCase(
     ...(teammateLoopReceipt ? { teammate_loop_receipt: teammateLoopReceipt } : {}),
     harness_timeout_settlement: timeoutSettlement,
     harness_context_loss_settlement: contextLossSettlement,
+    harness_model_telemetry_recovery: modelTelemetryRecovery,
     computer_state: state
   };
   return { attempt, sessionId: String(state.backendSessionId || "").trim() };
@@ -856,7 +864,7 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--outer-model MODEL] [--outer-effort none|low|medium|high|xhigh|max] [--planner-model MODEL] [--planner-effort none|low|medium|high|xhigh|max] [--executor-model MODEL] [--executor-effort none|low|medium|high|xhigh|max] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
@@ -873,6 +881,11 @@ async function main(): Promise<void> {
     throw new Error(`Unknown General Revit sample fixture '${requestedFixture}'.`);
   }
   const applyRequested = process.argv.includes("--apply");
+  if (process.argv.includes("--isolate-cases") && process.argv.includes("--reuse-fixture-state")) {
+    throw new Error("Use either --isolate-cases or --reuse-fixture-state, not both.");
+  }
+  const isolateCases = process.argv.includes("--isolate-cases")
+    || (applyRequested && !process.argv.includes("--reuse-fixture-state"));
   let selected = selectCases(corpus.cases).filter((entry) => !requestedFixture
     || generalRevitFixtureForCase(fixtureConfig, entry.case_id) === requestedFixture);
   const selectedFixtureKeys = new Set(selected.map((entry) => generalRevitFixtureForCase(fixtureConfig, entry.case_id)));
@@ -924,7 +937,7 @@ async function main(): Promise<void> {
   const [config, grant] = rescoreOnly
     ? [{
       runtimeProfile: asRecord(priorSuiteContext.runtime_profile),
-      computerModel: requestedComputerAgent.outer_model
+      computerModel: requestedComputerAgent.agent_model
     }, asRecord(priorSuiteContext.write_grant)]
     : await Promise.all([
       requestJson(sidecar, "/api/config", {}, 30_000),
@@ -949,13 +962,8 @@ async function main(): Promise<void> {
       configuration_source: requestedSpeedSettings ? (resumedCheckpoint ? "resume_or_cli" : "benchmark_cli") : "unspecified",
       requested: requestedComputerAgent,
       observed_provider_calls: null,
-      outer_model: requestedComputerAgent.outer_model,
-      outer_reasoning_effort: requestedComputerAgent.outer_reasoning_effort,
-      split_planner_executor: requestedComputerAgent.split_planner_executor,
-      planner_model: requestedComputerAgent.planner_model,
-      planner_reasoning_effort: requestedComputerAgent.planner_reasoning_effort,
-      executor_model: requestedComputerAgent.executor_model,
-      executor_reasoning_effort: requestedComputerAgent.executor_reasoning_effort
+      agent_model: requestedComputerAgent.agent_model,
+      agent_reasoning_effort: requestedComputerAgent.agent_reasoning_effort
     },
     requested_speed_settings: requestedSpeedSettings,
     corpus_schema: corpus.schema_version,
@@ -965,7 +973,9 @@ async function main(): Promise<void> {
     fixture_selection: requestedFixture || (orchestrateFixtures ? "orchestrated" : "single_fixture_unpinned"),
     fixture_health_is_authoritative: Boolean(requestedFixture || orchestrateFixtures),
     fixture_root: orchestrateFixtures ? path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples")) : null,
-    fixture_transitions: [] as JsonRecord[],
+    fixture_transitions: (Array.isArray(priorSuiteContext.fixture_transitions)
+      ? priorSuiteContext.fixture_transitions.map(asRecord)
+      : []) as JsonRecord[],
     fixture_preflight: requestedFixture ? {
       document_title: asRecord(asRecord(fixturePreflight.context).document).title ?? null,
       document_path: asRecord(asRecord(fixturePreflight.context).document).path ?? null,
@@ -973,9 +983,20 @@ async function main(): Promise<void> {
       readiness_attempts: fixturePreflightAttempts
     } : null,
     apply_requested: applyRequested,
+    fixture_isolation: {
+      enabled: isolateCases,
+      policy: isolateCases
+        ? "close without saving and reopen the canonical sample before every case"
+        : "fixture state may be reused across cases"
+    },
     mutation_policy: applyRequested
       ? "production prompts; mutation explicitly requested by the test operator"
-      : "safe probe prompts only; no apply requested"
+      : "safe probe prompts only; no apply requested",
+    sampling: {
+      every: Number.parseInt(flag("--sample-every", "1"), 10),
+      offset: Number.parseInt(flag("--sample-offset", "0"), 10),
+      selected_case_count: selected.length
+    }
   };
   if (resumedCheckpoint) {
     const priorContext = asRecord(resumedCheckpoint.suite_context);
@@ -987,7 +1008,7 @@ async function main(): Promise<void> {
       throw new Error("Resume checkpoint suite or mutation mode does not match this invocation.");
     }
     if (JSON.stringify(priorRequested) !== JSON.stringify(requestedComputerAgent)) {
-      throw new Error("Resume checkpoint requested a different outer/planner/executor model configuration.");
+      throw new Error("Resume checkpoint requested a different unified agent model configuration.");
     }
   }
   const selectedIds = new Set(selected.map((entry) => entry.case_id));
@@ -1033,14 +1054,15 @@ async function main(): Promise<void> {
   };
   for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
     const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
-    if (orchestrateFixtures && preferredFixture !== activeFixtureKey) {
+    if ((orchestrateFixtures || requestedFixture) && (isolateCases || preferredFixture !== activeFixtureKey)) {
       console.log(`[fixture] ${preferredFixture}`);
       const transition = await ensureFixtureActive(
         sidecar,
         preferredFixture,
         fixtureConfig.fixtures[preferredFixture],
         fixtureRoot,
-        requestedSpeedSettings
+        requestedSpeedSettings,
+        isolateCases
       );
       (suiteContext.fixture_transitions as JsonRecord[]).push(transition);
       activeFixtureKey = preferredFixture;
@@ -1068,7 +1090,9 @@ async function main(): Promise<void> {
   }
   const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
   const modelCallTelemetry = aggregateModelCallReceipts(suiteModelCallReceipts);
+  const modelTelemetryCoverage = modelTelemetryCaseCoverage(traces);
   const requestedVsObserved = requestedVsObservedComputerAgent(requestedComputerAgent, modelCallTelemetry);
+  const latencyTelemetry = summarizeGeneralRevitLatency(traces, suiteContext);
   asRecord(suiteContext.computer_agent).observed_provider_calls = requestedVsObserved;
   const suiteTiming = rescoreOnly && Object.keys(priorSuiteTiming).length > 0
     ? priorSuiteTiming
@@ -1119,8 +1143,15 @@ async function main(): Promise<void> {
     baseline_comparison: baselineComparison,
     baseline_case_deltas: caseDeltas,
     model_call_telemetry: modelCallTelemetry,
+    model_telemetry_coverage: modelTelemetryCoverage,
+    latency_telemetry: latencyTelemetry,
+    telemetry_valid_for_model_comparison: requestedSpeedSettings !== null
+      && requestedVsObserved.comparable_configuration === true
+      && modelTelemetryCoverage.complete === true
+      && modelCallTelemetry.token_status === "complete"
+      && modelCallTelemetry.cost_status === "estimated_from_exact_provider_tokens",
     task_traces: traces,
-    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, traces })
+    report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, modelTelemetryCoverage, latencyTelemetry, traces })
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));
@@ -1136,6 +1167,7 @@ async function main(): Promise<void> {
   }
   console.log(JSON.stringify({ output, summary_output: summaryOutput, latest: resolvedOutputDir ? path.join(resolvedOutputDir, "latest.md") : null, summary }, null, 2));
   const requireCompletion = process.argv.includes("--require-completion");
+  if (requestedSpeedSettings && report.telemetry_valid_for_model_comparison !== true) process.exitCode = 1;
   if (summary.refusal_count > 0 || summary.failure_count > 0 || (requireCompletion && summary.completed_count !== summary.total)) process.exitCode = 1;
 }
 

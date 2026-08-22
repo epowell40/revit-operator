@@ -19,17 +19,17 @@ import { EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/c
 import { canonicalizeProtocolJson, resolveOperatorBackendRoot, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
-  assert.equal(parseCodexCliVersion("codex-cli 0.144.5\n"), "0.144.5");
-  const receipt = evaluateCodexCliVersion("codex-cli 0.144.5", {});
+  assert.equal(parseCodexCliVersion("codex-cli 0.149.0\n"), "0.149.0");
+  const receipt = evaluateCodexCliVersion("codex-cli 0.149.0", {});
   assert.equal(receipt.compatible, true);
   assert.equal(receipt.actual_version, CODEX_APP_SERVER_COMPATIBILITY.codex_cli_version);
-  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_typescript.file_count, 671);
-  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_json_schema.file_count, 337);
+  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_typescript.file_count, 781);
+  assert.equal(CODEX_APP_SERVER_COMPATIBILITY.generated_json_schema.file_count, 401);
 });
 
 test("Codex app-server compatibility rejects drift unless explicitly overridden", () => {
-  assert.throws(() => evaluateCodexCliVersion("codex-cli 0.145.0", {}), /pinned to 0\.144\.5/);
-  const receipt = evaluateCodexCliVersion("codex-cli 0.145.0", { OPERATOR_CODEX_ALLOW_UNPINNED: "1" });
+  assert.throws(() => evaluateCodexCliVersion("codex-cli 0.148.0", {}), /pinned to 0\.149\.0/);
+  const receipt = evaluateCodexCliVersion("codex-cli 0.148.0", { OPERATOR_CODEX_ALLOW_UNPINNED: "1" });
   assert.equal(receipt.compatible, false);
   assert.equal(receipt.override_used, true);
 });
@@ -114,7 +114,7 @@ test("Codex version probing retries a timed-out cold start and caches the succes
     };
     if (spawnCount > 1) {
       queueMicrotask(() => {
-        proc.stdout.write("codex-cli 0.144.5\n");
+        proc.stdout.write("codex-cli 0.149.0\n");
         proc.emit("exit", 0, null);
       });
     }
@@ -122,9 +122,9 @@ test("Codex version probing retries a timed-out cold start and caches the succes
   }) as unknown as typeof import("node:child_process").spawn;
 
   const options = { timeoutMs: 100, retryDelayMs: 0, maxAttempts: 2, spawnProcess };
-  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.144.5");
+  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.149.0");
   assert.equal(spawnCount, 2);
-  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.144.5");
+  assert.equal(await probeCodexVersion("codex-test", "/workspace", { PATH: "/fixture" }, options), "codex-cli 0.149.0");
   assert.equal(spawnCount, 2);
   __testOnlyResetCodexVersionProbeCache();
 });
@@ -286,6 +286,8 @@ test("Codex instructions reuse known primitives before capability discovery", ()
   assert.match(instructions, /Call `operator_discover_capabilities` only when/i);
   assert.match(instructions, /session-cached/i);
   assert.match(instructions, /document\/model results are never satisfied from that cache/i);
+  assert.match(instructions, /very next Revit action must be a target-bound readback/i);
+  assert.match(instructions, /do not repeat synonymous searches/i);
   assert.doesNotMatch(instructions, /call `operator_discover_capabilities` first/i);
 });
 

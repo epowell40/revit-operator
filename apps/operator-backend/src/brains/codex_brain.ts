@@ -2,10 +2,9 @@ import path from "node:path";
 import type { ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
-import { appendEvent, appendNotification, getCodexThreadId, setCodexThreadId } from "../memory/sqlite_store.js";
+import { appendEvent, appendNotification, setCodexThreadId } from "../memory/sqlite_store.js";
 import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
-import type { DynamicToolSpec } from "../codex/generated/app_server_0_144_5/v2/DynamicToolSpec.js";
-import type { UserInput } from "../codex/generated/app_server_0_144_5/v2/UserInput.js";
+import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
@@ -52,6 +51,9 @@ import {
 import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
 import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement, isSuccessfulAuthoritativeWebEvidenceCall } from "./authoritative_web_evidence.js";
 import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
+import { resolveAgentModelSettings } from "../speed_config.js";
+import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
+import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -150,11 +152,6 @@ function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function getDefaultModel(): string | null {
-  const fromEnv = (process.env.OPERATOR_CODEX_MODEL || "").trim();
-  return fromEnv ? fromEnv : "gpt-5.6-sol";
-}
-
 function shouldNotifyCodexToolCalls(): boolean {
   const v = (process.env.OPERATOR_NOTIFY_CODEX_TOOL_CALLS ?? "1").toString().trim().toLowerCase();
   return v !== "0" && v !== "false" && v !== "no";
@@ -182,6 +179,8 @@ export function getOperatorAgentBaseInstructions(): string {
     "You can interact with Revit via MCP tools exposed by the local `revit_operator` MCP server (alias: `revit-operator`) (tools like `revit_ping`, `revit_list_views`, `revit_capture_view`, etc.).",
     "Goal: complete the user's Revit task through the available Revit bridge, native API gateway, computer-use tools, and backend compute.",
     "Success criteria: act when there is a safe executable path; preserve the user's intent; verify writes and file outputs with concrete post-change evidence; if blocked, report the exact blocker and the next best check.",
+    "After any Revit apply succeeds, the very next Revit action must be a target-bound readback, regenerate/capture, or other non-mutating verification of that exact apply. Do not search for tools, request tool docs, preview a correction, or start another apply until the first apply is verified. If a correction is needed, verify the first committed state before beginning the next bounded preview/apply stage.",
+    "Bound capability discovery within a turn: reuse a known typed tool or previously documented route; search once for an operation only when no known route fits; request one tool schema only after an argument-shape rejection; and do not repeat synonymous searches or rediscover a route already returned in the same turn. Preserve successful route and schema results as working memory for later steps.",
     ...AGENT_RESPONSE_STYLE_LINES,
     "Use clean markdown (short headings/bullets/code blocks when helpful) so answers are easy to scan in the Operator UI.",
     "Users will talk naturally (e.g., \"update the MEP engineers on the cover sheet to WSP\"). Infer the missing details by calling read-only tools first (resolve the sheet, locate the titleblock, inspect candidates). Do not ask the user for exact tool names or brittle JSON unless absolutely required.",
@@ -575,69 +574,27 @@ export function getCodexAppServerCompatibility(): { version: ReturnType<CodexApp
   return receipt ? { version: receipt.version, initialized: receipt.initialize_response !== null } : null;
 }
 
-async function getOrCreateThreadId(req: ChatRequest, client: CodexAppServer, workspaceRoot: string): Promise<string> {
+async function getOrCreateThreadId(
+  req: ChatRequest,
+  client: CodexAppServer,
+  workspaceRoot: string,
+  agent = resolveAgentModelSettings(req.context)
+): Promise<string> {
   const profile = getCodexThreadStartProfileForTest(req);
   const profilePaths = getCodexProfilePaths(workspaceRoot, profile);
-  const existing = getCodexThreadId(profile.threadKey);
-  if (existing) {
-    if (client.hasLoadedThread(existing)) return existing;
-    try {
-      const resumed = await client.resumeThread({
-        threadId: existing,
-        cwd: profilePaths.cwd,
-        sandbox: profile.sandbox,
-        approvalPolicy: profile.approvalPolicy,
-        model: getDefaultModel(),
-        baseInstructions: profile.baseInstructions,
-        developerInstructions: profile.developerInstructions,
-        excludeTurns: true
-      });
-      const resumedThreadId = resumed.thread.id;
-      setCodexThreadId(profile.threadKey, resumedThreadId);
-      try {
-        appendEvent(req.session_id, "assistant", "codex.thread.resume", profile.certified
-          ? { thread_id: resumedThreadId, certified: true }
-          : { thread_id: resumedThreadId });
-      } catch {
-        // ignore
-      }
-      return resumedThreadId;
-    } catch (error) {
-      if (!isMissingCodexThreadError(error)) throw error;
-      setCodexThreadId(profile.threadKey, "");
-      try {
-        appendEvent(req.session_id, "assistant", "codex.thread.replace_missing", { thread_id: existing });
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  const dynamicTools: DynamicToolSpec[] = [];
-  if (profile.dynamicToolMode === "revit_runtime") {
-    const runtime = mcpRuntimesByWorkspace.get(workspaceRoot);
-    if (!runtime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
-    dynamicTools.push(await runtime.getDynamicToolNamespace());
-  }
-  const response = await client.startThread({
+  return getOrCreateCodexThread({
+    sessionId: req.session_id,
+    client,
+    profile,
     cwd: profilePaths.cwd,
-    sandbox: profile.sandbox,
-    approvalPolicy: profile.approvalPolicy,
-    model: getDefaultModel(),
-    baseInstructions: profile.baseInstructions,
-    developerInstructions: profile.developerInstructions,
-    dynamicTools,
-    experimentalRawEvents: false
+    settings: agent,
+    getDynamicTools: async () => {
+      if (profile.dynamicToolMode !== "revit_runtime") return [];
+      const runtime = mcpRuntimesByWorkspace.get(workspaceRoot);
+      if (!runtime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+      return [await runtime.getDynamicToolNamespace()];
+    }
   });
-
-  const threadId = response.thread.id;
-  setCodexThreadId(profile.threadKey, threadId);
-  try {
-    appendEvent(req.session_id, "assistant", "codex.thread.start", profile.certified ? { thread_id: threadId, certified: true } : { thread_id: threadId });
-  } catch {
-    // ignore
-  }
-  return threadId;
 }
 
 export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
@@ -648,6 +605,7 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
   const threadProfile = getCodexThreadStartProfileForTest(req);
+  const agentSettings = resolveAgentModelSettings(req.context);
   const certifiedDirect = threadProfile.certified;
   let courierTarget: ReturnType<typeof revitCourierTargetFromContext> | undefined;
   if (!certifiedDirect) {
@@ -663,7 +621,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let c = await getClient(workspaceRoot, threadProfile);
   let threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
     c = activeClient;
-    return await getOrCreateThreadId(req, activeClient, workspaceRoot);
+    return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
   });
 
 
@@ -801,6 +759,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
   let start: Awaited<ReturnType<CodexAppServer["startTurn"]>>;
+  const agentTurnStartedAt = new Date().toISOString();
+  const agentTurnStartedMs = Date.now();
   try {
     if (threadProfile.startRevitTurnRuntime) {
       teammateContext = beginTeammateLoopOwner(mcpRuntime!, req);
@@ -814,16 +774,26 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     try {
       start = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await activeClient.startTurn({ threadId, input });
+        return await activeClient.startTurn({
+          threadId,
+          input,
+          model: agentSettings.model,
+          effort: agentSettings.reasoning_effort
+        });
       });
     } catch (error) {
       if (!isMissingCodexThreadError(error)) throw error;
-      setCodexThreadId(threadProfile.threadKey, "");
+      setCodexThreadId(codexTelemetryThreadKey(threadProfile), "");
       threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
-        return await getOrCreateThreadId(req, activeClient, workspaceRoot);
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
       });
-      start = await c.startTurn({ threadId, input });
+      start = await c.startTurn({
+        threadId,
+        input,
+        model: agentSettings.model,
+        effort: agentSettings.reasoning_effort
+      });
     }
   } catch (error) {
     endTeammateLoopOwner(teammateContext);
@@ -852,6 +822,13 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   let assistantText = "";
   let assistantDeltas = "";
+  const modelTelemetry = createCodexTurnModelTelemetry({
+    sessionId: req.session_id,
+    threadId,
+    turnId,
+    settings: agentSettings,
+    startedAtUtc: agentTurnStartedAt
+  });
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
   let hasAuthoritativeWebEvidence = !webEvidenceRequirement.required;
   const assignmentObserver = createAutoGoalTurnObserver(req.session_id);
@@ -859,6 +836,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   const unsubscribe = c.onNotification(n => {
     try {
       if (!n || n.threadId !== threadId) return;
+      modelTelemetry.observe(n);
       if (n.method === "item/agentMessage/delta") {
         if (n.params?.turnId !== turnId) return;
         const delta = typeof n.params?.delta === "string" ? n.params.delta : "";
@@ -1122,7 +1100,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
       if (!activeClient.hasLoadedThread(threadId)) {
-        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot);
+        const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
         if (resumedThreadId !== threadId) throw new Error(`Codex active thread ${threadId} could not be resumed after reconnect.`);
       }
       return await activeClient.waitForTurnCompleted({
@@ -1155,6 +1133,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: "",
       actions: [],
+      model_call_receipts: modelTelemetry.receipts,
       ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
     };
   }
@@ -1208,7 +1187,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     appendEvent(req.session_id, "assistant", "codex.turn.completed", {
       thread_id: threadId,
       turn_id: turnId,
-      assistant_chars: (assistantText || "").length
+      assistant_chars: (assistantText || "").length,
+      agent_model: agentSettings.model,
+      agent_reasoning_effort: agentSettings.reasoning_effort,
+      agent_turn_duration_ms: Date.now() - agentTurnStartedMs,
+      upstream_response_count: modelTelemetry.receipts.length
     });
   } catch {
     // ignore
@@ -1218,6 +1201,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: assistantText || "",
     actions: [],
+    model_call_receipts: modelTelemetry.receipts,
     ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})
   };

@@ -79,14 +79,14 @@ test("existing-conditions reconstruction analyzes the source before any fast Rev
 test("authoritative step 1968 safety list keeps both dispatches on one analysis-only lane", async () => {
   const req = { version: "operator.backend.v1", session_id: "ff088c6a-359c-4d15-97ff-7894e1d3415c", message_id: "f053cd9f-2b13-4389-b455-434f65f0f000", user_text: step1968Prompt, user_attachments: step1968Attachment } as any;
   const action = __testOnlyBuildInitialRedlinePreflightAction({ userText: step1968Prompt, userAttachments: step1968Attachment }); assert.equal(action?.type, "analyze_redline"); if (action?.type === "analyze_redline") assert.equal(action.file_path, step1968Attachment[0].relative_path);
-  const previousBrain = process.env.OPERATOR_BRAIN; process.env.OPERATOR_BRAIN = "openai";
+  const previousBrain = process.env.OPERATOR_BRAIN; process.env.OPERATOR_BRAIN = "codex";
   try {
     let mepResolverCalls = 0, semanticResolverCalls = 0, nonStreamingAnalysisCalls = 0, streamingAnalysisCalls = 0;
     const dependencies = {
       mepRouteRedline: async () => { mepResolverCalls += 1; return { version: "operator.backend.v1", assistant_message: "mep resolver", actions: [] }; },
       semanticAecWorkflow: async () => { semanticResolverCalls += 1; return { version: "operator.backend.v1", assistant_message: "semantic resolver", actions: [] }; },
-      openAiBrain: async () => { nonStreamingAnalysisCalls += 1; return { version: "operator.backend.v1", assistant_message: "non-streaming analysis lane", actions: [] }; },
-      openAiStreamingBrain: async () => { streamingAnalysisCalls += 1; return { version: "operator.backend.v1", assistant_message: "streaming analysis lane", actions: [] }; }
+      codexBrain: async () => { nonStreamingAnalysisCalls += 1; return { version: "operator.backend.v1", assistant_message: "non-streaming analysis lane", actions: [] }; },
+      codexStreamingBrain: async () => { streamingAnalysisCalls += 1; return { version: "operator.backend.v1", assistant_message: "streaming analysis lane", actions: [] }; }
     } as any;
     const nonStreaming = await decide(req, dependencies);
     const streaming = await decideStreaming(req, {}, dependencies);

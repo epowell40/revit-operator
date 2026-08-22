@@ -29,6 +29,7 @@ export type GeneralRevitCapabilityCase = {
   capability_paths: string[];
   dispatch_any_of: string[];
   expected_effect: GeneralRevitExpectedEffect;
+  production_expected_effect?: GeneralRevitExpectedEffect;
   probe_expected_effect?: Exclude<GeneralRevitExpectedEffect, "apply">;
   allow_verified_noop?: boolean;
   require_target_bound_preview_verification?: boolean;
@@ -173,7 +174,20 @@ export function generalRevitExecutionCase(
   testCase: GeneralRevitCapabilityCase,
   applyRequested: boolean
 ): GeneralRevitCapabilityCase {
-  if (applyRequested || testCase.expected_effect === "read") return testCase;
+  if (applyRequested) {
+    if (testCase.production_expected_effect) {
+      return testCase.production_expected_effect === testCase.expected_effect
+        ? testCase
+        : { ...testCase, expected_effect: testCase.production_expected_effect };
+    }
+    // The corpus historically stored preview as the safe-probe expectation for
+    // many mutation prompts. An explicitly authorized apply run must grade the
+    // production prompt as an apply unless the task is intrinsically read-only.
+    return testCase.expected_effect === "read" || testCase.expected_effect === "apply"
+      ? testCase
+      : { ...testCase, expected_effect: "apply" };
+  }
+  if (testCase.expected_effect === "read") return testCase;
   return { ...testCase, expected_effect: testCase.probe_expected_effect ?? "preview" };
 }
 
@@ -934,11 +948,18 @@ export function evaluateGeneralRevitCapabilityAttempt(
   testCase: GeneralRevitCapabilityCase,
   attempt: GeneralRevitAttempt | null | undefined
 ): GeneralRevitEvaluation {
+  // Natural-language assertions in this corpus were authored for read and
+  // rollback-preview probes. They are useful semantic oracles for those
+  // non-mutating modes, but they must not veto an authorized mutation whose
+  // structured receipt and readback prove the requested model-state change.
+  // Apply truth is therefore determined from tool/lifecycle evidence, not from
+  // whether the assistant repeated legacy preview wording.
   if (!attempt) {
     return {
       case_id: testCase.case_id, tier: "not_run", non_refusal: false, completed: false, verified: false,
       expected_path_observed: false, observed_paths: [], dispatched: false, apply_dispatched: false,
-      outcome_unknown: false, refusal_reason: null, answer_assertion_available: !!testCase.answer_assertions,
+      outcome_unknown: false, refusal_reason: null,
+      answer_assertion_available: testCase.expected_effect !== "apply" && !!testCase.answer_assertions,
       answer_assertion_passed: null, answer_assertion_failures: [],
       fixture_blocker_assertion_available: !!testCase.fixture_blocker_assertions,
       fixture_blocker_assertion_passed: null, fixture_blocker_assertion_failures: [], fixture_blocker_accepted: false,
@@ -992,6 +1013,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
     || (teammate.mutationAttempted && [...durablePaths].some((candidate) => expectedPaths.has(candidate)));
   const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true)
     || durablePaths.size > 0;
+  const answerAssertionsApplicable = !!testCase.answer_assertions
+    && (testCase.expected_effect !== "apply" || !applyDispatched);
   const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true;
   const durable = durableLifecycle(attempt);
   const durableEffectReceiptCompleted = durableReceiptBoundToLifecycle(
@@ -1012,18 +1035,25 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const answerText = typeof attempt.assistant_message === "string" && attempt.assistant_message.trim()
     ? attempt.assistant_message
     : durableResultSummary(attempt);
-  const answerAssertionFailures = testCase.answer_assertions
+  const answerEvidenceAssertionFailures = answerAssertionsApplicable ? answerEvidenceFailures(testCase, attempt) : [];
+  const answerEvidenceRequirements = answerAssertionsApplicable ? testCase.answer_assertions?.evidence : undefined;
+  const answerEvidenceIsAuthoritative = (
+    (answerEvidenceRequirements?.required_semantic_facts?.length ?? 0) > 0
+    || (testCase.expected_effect !== "read" && (answerEvidenceRequirements?.required_successful_paths?.length ?? 0) > 0)
+  )
+    && answerEvidenceAssertionFailures.length === 0;
+  const answerAssertionFailures = answerAssertionsApplicable && testCase.answer_assertions
     ? [
-        ...testCase.answer_assertions.must_match
+        ...(answerEvidenceIsAuthoritative ? [] : testCase.answer_assertions.must_match
           .filter((pattern) => !assertionPatternMatches(pattern, answerText))
-          .map((pattern) => `missing:${pattern}`),
+          .map((pattern) => `missing:${pattern}`)),
         ...(testCase.answer_assertions.must_not_match || [])
           .filter((pattern) => assertionPatternMatches(pattern, answerText))
           .map((pattern) => `forbidden:${pattern}`),
-        ...answerEvidenceFailures(testCase, attempt)
+        ...answerEvidenceAssertionFailures
       ]
     : [];
-  const answerAssertionPassed = testCase.answer_assertions ? answerAssertionFailures.length === 0 : null;
+  const answerAssertionPassed = answerAssertionsApplicable ? answerAssertionFailures.length === 0 : null;
   const fixtureBlockerAssertionFailures = testCase.fixture_blocker_assertions
     ? [
         ...testCase.fixture_blocker_assertions.must_match
@@ -1068,15 +1098,31 @@ export function evaluateGeneralRevitCapabilityAttempt(
       : successfulExpectedPathObserved;
   const requiredEffectMissing = testCase.expected_effect !== "read" && dispatched && !requestedEffectSatisfied;
   const targetBoundPreviewVerificationMissing = testCase.require_target_bound_preview_verification === true && !teammate.verified;
-  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !substantiveFailedAction && !outcomeUnknown && !durable.blocked && !teammate.blocked && !assistantIncomplete && !assistantBlocked && !missingTargetClarification
+  const authoritativeTeammateEffect = teammate.verified && (
+    testCase.expected_effect === "apply"
+      ? teammate.mutationAttempted && applyDispatched
+      : teammatePreviewDispatched
+  );
+  const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted || authoritativeTeammateEffect;
+  // Exploratory failures remain visible in telemetry, but they cannot negate a
+  // later action-bound, target-bound verification receipt for the requested
+  // effect. The receipt and expected-lane checks above prevent an unrelated
+  // successful route from masking a failed task.
+  const effectiveSubstantiveFailedAction = substantiveFailedAction && !authoritativeEffectRecovery;
+  const effectiveDurableBlocked = durable.blocked && !authoritativeEffectRecovery;
+  const effectiveTeammateBlocked = teammate.blocked && !authoritativeEffectRecovery;
+  const effectiveAssistantIncomplete = assistantIncomplete && !authoritativeEffectRecovery;
+  const effectiveAssistantBlocked = assistantBlocked && !authoritativeEffectRecovery;
+  const effectiveMissingTargetClarification = missingTargetClarification && !authoritativeEffectRecovery;
+  const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !effectiveSubstantiveFailedAction && !outcomeUnknown && !effectiveDurableBlocked && !effectiveTeammateBlocked && !effectiveAssistantIncomplete && !effectiveAssistantBlocked && !effectiveMissingTargetClarification
     && !targetBoundPreviewVerificationMissing && (dispatched || durableEffectCompleted);
   const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
-  else if (missingTargetClarification && attemptSucceeded && !substantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
+  else if (effectiveMissingTargetClarification && attemptSucceeded && !effectiveSubstantiveFailedAction && !outcomeUnknown && !teammate.mutationAttempted && !applyDispatched) tier = "accepted";
   else if (fixtureBlockerAccepted) tier = "accepted";
-  else if (!attemptSucceeded || substantiveFailedAction || outcomeUnknown || durable.blocked || teammate.blocked || assistantIncomplete || assistantBlocked || requiredEffectMissing || targetBoundPreviewVerificationMissing || answerAssertionPassed === false) tier = "failed";
+  else if (!attemptSucceeded || effectiveSubstantiveFailedAction || outcomeUnknown || effectiveDurableBlocked || effectiveTeammateBlocked || effectiveAssistantIncomplete || effectiveAssistantBlocked || requiredEffectMissing || targetBoundPreviewVerificationMissing || answerAssertionPassed === false) tier = "failed";
   else if (verified) tier = "verified";
   else if (completed && testCase.expected_effect === "preview") tier = "previewed";
   else if (completed) tier = "completed";
@@ -1095,7 +1141,7 @@ export function evaluateGeneralRevitCapabilityAttempt(
     apply_dispatched: applyDispatched,
     outcome_unknown: outcomeUnknown,
     refusal_reason: refusalReason,
-    answer_assertion_available: !!testCase.answer_assertions,
+    answer_assertion_available: answerAssertionsApplicable,
     answer_assertion_passed: answerAssertionPassed,
     answer_assertion_failures: answerAssertionFailures,
     fixture_blocker_assertion_available: !!testCase.fixture_blocker_assertions,

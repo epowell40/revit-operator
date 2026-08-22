@@ -42,7 +42,7 @@ export function getSidecarAgentProfileState(env: NodeJS.ProcessEnv = process.env
   const exactHostedProduction = env.REVIT_OPERATOR_MODE === "hosted" || env.REVIT_OPERATOR_MODE === "production";
   const configuredAuth = (env.OPERATOR_AUTH_MODE ?? "").trim().toLowerCase();
   const principalAuth = configuredAuth === "principal_jwt" || (configuredAuth === "" && exactHostedProduction);
-  const productionBrain = env.OPERATOR_BRAIN === "codex" || env.OPERATOR_BRAIN === "openai" || env.OPERATOR_BRAIN === "auto";
+  const productionBrain = env.OPERATOR_BRAIN === "codex" || env.OPERATOR_BRAIN === "auto";
   const providerReady = !!((env.OPERATOR_OPENAI_API_KEY ?? "").trim() || (env.OPENAI_API_KEY ?? "").trim());
   const hostedProductionReady = exactHostedProduction && principalAuth && productionBrain && providerReady;
   const generalAgentReady = laboratoryReady || hostedProductionReady;

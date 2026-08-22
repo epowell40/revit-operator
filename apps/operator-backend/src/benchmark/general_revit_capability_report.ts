@@ -34,6 +34,9 @@ export function markdownReport(report: JsonRecord): string {
   const requestedComputerAgent = asRecord(computerAgent.requested);
   const observedProviderCalls = asRecord(computerAgent.observed_provider_calls);
   const observedRoles = Array.isArray(observedProviderCalls.roles) ? observedProviderCalls.roles.map(asRecord) : [];
+  const modelTelemetry = asRecord(report.model_call_telemetry);
+  const routeBuckets = Array.isArray(modelTelemetry.by_route_model_effort) ? modelTelemetry.by_route_model_effort.map(asRecord) : [];
+  const telemetryCoverage = asRecord(report.model_telemetry_coverage);
   const suiteTiming = asRecord(report.suite_timing);
   const lines = [
     "# General Revit benchmark result",
@@ -60,19 +63,31 @@ export function markdownReport(report: JsonRecord): string {
     "",
     "Requested configuration comes from benchmark CLI flags. Observed models come only from provider receipts; a request is not treated as proof that the provider used it.",
     "",
-    "| Role | Requested | Observed | Calls | Provider duration | Tokens | Cost |",
+    "| Setting | Requested | Observed | Calls | Provider duration | Tokens | List-price estimate |",
     "|---|---|---|---:|---:|---:|---|"
   ];
-  for (const roleName of ["planner", "executor", "outer"]) {
-    const role = observedRoles.find((entry) => entry.role === roleName) || {};
-    const requestedModel = requestedComputerAgent[`${roleName}_model`] ?? computerAgent[`${roleName}_model`] ?? "unspecified";
-    const requestedEffort = requestedComputerAgent[`${roleName}_reasoning_effort`] ?? computerAgent[`${roleName}_reasoning_effort`] ?? "unspecified";
-    const models = Array.isArray(role.observed_models) ? role.observed_models.map(String) : [];
-    const efforts = Array.isArray(role.observed_reasoning_efforts) ? role.observed_reasoning_efforts.map(String) : [];
-    const observed = models.length > 0 ? `${models.join(", ")} / ${efforts.join(", ") || "unknown"}` : "no receipt";
-    lines.push(`| ${roleName} | ${String(requestedModel)} / ${String(requestedEffort)} | ${observed} | ${numberValue(role.call_count)} | ${durationSeconds(role.provider_duration_ms)} | ${nullableNumber(role.total_tokens)} | missing pricing |`);
+  const agentRole = observedRoles.find((entry) => entry.role === "agent") || {};
+  const requestedModel = requestedComputerAgent.agent_model ?? computerAgent.agent_model ?? "unspecified";
+  const requestedEffort = requestedComputerAgent.agent_reasoning_effort ?? computerAgent.agent_reasoning_effort ?? "unspecified";
+  const models = Array.isArray(agentRole.observed_models) ? agentRole.observed_models.map(String) : [];
+  const efforts = Array.isArray(agentRole.observed_reasoning_efforts) ? agentRole.observed_reasoning_efforts.map(String) : [];
+  const observed = models.length > 0 ? `${models.join(", ")} / ${efforts.join(", ") || "unknown"}` : "no receipt";
+  const agentCost = typeof agentRole.cost_usd === "number" ? `$${agentRole.cost_usd.toFixed(4)}` : "incomplete";
+  lines.push(`| agent | ${String(requestedModel)} / ${String(requestedEffort)} | ${observed} | ${numberValue(agentRole.call_count)} | ${durationSeconds(agentRole.provider_duration_ms)} | ${nullableNumber(agentRole.total_tokens)} | ${agentCost} |`);
+  lines.push(
+    "",
+    `Configuration drift detected: ${observedProviderCalls.configuration_drift_detected === true ? "yes" : "no"}. Telemetry coverage: ${numberValue(telemetryCoverage.cases_with_model_receipts)}/${numberValue(telemetryCoverage.expected_case_count)} cases; valid for model comparison: ${report.telemetry_valid_for_model_comparison === true ? "yes" : "no"}.`,
+    "",
+    "The unified setting configures both execution paths. The receipt routes below show which path actually made provider calls; a model-bound Revit task normally bypasses the outer desktop inference loop and runs through the Codex agent route.",
+    "",
+    "| Receipt route | Model | Effort | Calls | Provider duration | Tokens | List-price estimate |",
+    "|---|---|---|---:|---:|---:|---:|"
+  );
+  for (const bucket of routeBuckets) {
+    const cost = typeof bucket.cost_usd === "number" ? `$${bucket.cost_usd.toFixed(4)}` : "incomplete";
+    lines.push(`| ${String(bucket.route || "unknown")} | ${String(bucket.model || "unknown")} | ${String(bucket.reasoning_effort || "unknown")} | ${numberValue(bucket.call_count)} | ${durationSeconds(bucket.provider_duration_ms)} | ${nullableNumber(bucket.total_tokens)} | ${cost} |`);
   }
-  lines.push("", `Configuration drift detected: ${observedProviderCalls.configuration_drift_detected === true ? "yes" : "no"}. Cost is \`null\` until an authoritative versioned price is available for every observed model.`, "");
+  lines.push("", "Cost is a list-price estimate from exact provider token receipts, not an invoice or account-credit measurement.", "");
   if (baseline.path) {
     lines.push(
       "## Baseline comparison",

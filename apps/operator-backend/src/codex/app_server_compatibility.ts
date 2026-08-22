@@ -2,18 +2,18 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const CODEX_APP_SERVER_COMPATIBILITY = Object.freeze({
-  codex_cli_version: "0.144.5",
+  codex_cli_version: "0.149.0",
   protocol_mode: "experimental",
-  generated_at: "2026-07-24",
+  generated_at: "2026-08-21",
   generated_typescript: {
-    file_count: 671,
-    byte_count: 377_094,
-    sha256: "6f6b715a249dae95a0363aee8f5a10f8a183ceb49339f9393d5d70c117525b7f"
+    file_count: 781,
+    byte_count: 454_645,
+    sha256: "2c6938681ea2f9d521987335d3bfc84f5c0c72d1b5596636db3d40f727f54182"
   },
   generated_json_schema: {
-    file_count: 337,
-    byte_count: 3_159_797,
-    sha256: "24ec98d7a5dad407a3b5eaa2f42a62d366b3971ae7e3d7331c016720902d3f01"
+    file_count: 401,
+    byte_count: 3_778_968,
+    sha256: "b0560d8c302423145d4f203ef49b6c5eea5ddc6e1b8a8ec7b794c496698def5c"
   }
 });
 

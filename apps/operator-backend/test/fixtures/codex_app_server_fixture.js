@@ -3,7 +3,7 @@ import readline from "node:readline";
 
 const args = process.argv.slice(2);
 if (args.includes("--version")) {
-  process.stdout.write("codex-cli 0.144.5\n");
+  process.stdout.write("codex-cli 0.149.0\n");
   process.exit(0);
 }
 if (args[0] !== "app-server") throw new Error(`Unexpected fixture command: ${args.join(" ")}`);
@@ -49,7 +49,7 @@ input.on("line", line => {
       return;
     }
     initialized = true;
-    respond({ userAgent: "fixture/0.144.5", codexHome: process.cwd(), platformFamily: "windows", platformOs: "windows" });
+    respond({ userAgent: "fixture/0.149.0", codexHome: process.cwd(), platformFamily: "windows", platformOs: "windows" });
     return;
   }
   if (!initialized) throw new Error(`Method ${message.method} arrived before initialize.`);

@@ -39,7 +39,7 @@ test("Sidecar exposes the full General Agent by default for an authenticated hos
     const state = getSidecarAgentProfileState({
       REVIT_OPERATOR_MODE: runtime,
       OPERATOR_AUTH_MODE: "principal_jwt",
-      OPERATOR_BRAIN: "openai",
+      OPERATOR_BRAIN: "codex",
       OPERATOR_OPENAI_API_KEY: "test-provider-key"
     });
     assert.equal(state.capability_profile, "general_agent");
@@ -51,13 +51,13 @@ test("Sidecar exposes the full General Agent by default for an authenticated hos
 
 test("Sidecar hosted production readiness requires principal auth and a live general provider", () => {
   const missingPrincipal = getSidecarAgentProfileState({
-    REVIT_OPERATOR_MODE: "hosted", OPERATOR_AUTH_MODE: "shared_token", OPERATOR_BRAIN: "openai", OPERATOR_OPENAI_API_KEY: "test-key"
+    REVIT_OPERATOR_MODE: "hosted", OPERATOR_AUTH_MODE: "shared_token", OPERATOR_BRAIN: "codex", OPERATOR_OPENAI_API_KEY: "test-key"
   });
   assert.equal(missingPrincipal.reason_code, "GENERAL_AGENT_UNAVAILABLE_PRINCIPAL_AUTH_REQUIRED");
   assert.equal(missingPrincipal.tool_exposure_profile, "unavailable");
 
   const missingProvider = getSidecarAgentProfileState({
-    REVIT_OPERATOR_MODE: "hosted", OPERATOR_AUTH_MODE: "principal_jwt", OPERATOR_BRAIN: "openai"
+    REVIT_OPERATOR_MODE: "hosted", OPERATOR_AUTH_MODE: "principal_jwt", OPERATOR_BRAIN: "codex"
   });
   assert.equal(missingProvider.reason_code, "GENERAL_AGENT_UNAVAILABLE_PROVIDER_REQUIRED");
   assert.equal(missingProvider.general_agent_ready, false);

@@ -4,6 +4,8 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "ma
 export type SpeedRouteKind = "classic" | "planner" | "executor";
 
 export type SpeedSettings = {
+  agent_model: string;
+  agent_reasoning_effort: ReasoningEffort;
   speed_mode: boolean;
   split_planner_executor: boolean;
   planner_model: string;
@@ -19,6 +21,11 @@ export type SpeedSettings = {
   verbose_tool_results: boolean;
   batch_execution: boolean;
   persistent_session_mode: boolean;
+};
+
+export type AgentModelSettings = {
+  model: string;
+  reasoning_effort: ReasoningEffort;
 };
 
 export type SpeedRouteDecision = {
@@ -73,29 +80,30 @@ export function resolveSpeedSettings(context: unknown): SpeedSettings {
   const raw = asRecord(ui.speed_settings ?? ui.speedSettings);
   const envSpeed = boolValue(process.env.OPERATOR_SPEED_MODE, true);
   const speedMode = boolValue(raw.speed_mode ?? raw.speedMode, envSpeed);
-  const split = boolValue(raw.split_planner_executor ?? raw.splitPlannerExecutor, speedMode);
+  const agentModel = normalizeModelId(
+    raw.agent_model ?? raw.agentModel,
+    normalizeModelId(process.env.OPERATOR_AGENT_MODEL,
+      normalizeModelId(process.env.OPERATOR_CODEX_MODEL, "gpt-5.6-sol"))
+  );
+  const agentReasoningEffort = normalizeReasoningEffort(
+    raw.agent_reasoning_effort ?? raw.agentReasoningEffort,
+    normalizeReasoningEffort(process.env.OPERATOR_AGENT_REASONING_EFFORT
+      ?? process.env.OPERATOR_CODEX_REASONING_EFFORT, "medium")
+  );
 
   return {
+    agent_model: agentModel,
+    agent_reasoning_effort: agentReasoningEffort,
     speed_mode: speedMode,
-    split_planner_executor: split,
-    planner_model: normalizeModelId(
-      process.env.OPERATOR_PLANNER_MODEL,
-      normalizeModelId(raw.planner_model ?? raw.plannerModel, "gpt-5.6-sol")
-    ),
-    planner_reasoning_effort: normalizeReasoningEffort(
-      process.env.OPERATOR_PLANNER_REASONING_EFFORT,
-      normalizeReasoningEffort(raw.planner_reasoning_effort ?? raw.plannerReasoningEffort, "medium")
-    ),
-    executor_model: normalizeModelId(
-      process.env.OPERATOR_EXECUTOR_MODEL,
-      normalizeModelId(raw.executor_model ?? raw.executorModel, "gpt-5.6-terra")
-    ),
-    executor_reasoning_effort: normalizeReasoningEffort(
-      process.env.OPERATOR_EXECUTOR_REASONING_EFFORT,
-      normalizeReasoningEffort(raw.executor_reasoning_effort ?? raw.executorReasoningEffort, "medium")
-    ),
-    force_planner: boolValue(raw.force_planner ?? raw.forcePlanner, false),
-    force_executor: boolValue(raw.force_executor ?? raw.forceExecutor, false),
+    // Compatibility aliases for the explicitly selected legacy OpenAI brain.
+    // They deliberately cannot express a split configuration anymore.
+    split_planner_executor: false,
+    planner_model: agentModel,
+    planner_reasoning_effort: agentReasoningEffort,
+    executor_model: agentModel,
+    executor_reasoning_effort: agentReasoningEffort,
+    force_planner: false,
+    force_executor: false,
     context_diet: boolValue(raw.context_diet ?? raw.contextDiet, true),
     max_recent_turns: intValue(raw.max_recent_turns ?? raw.maxRecentTurns, 8, 2, 40),
     include_full_revit_state: boolValue(raw.include_full_revit_state ?? raw.includeFullRevitState, !speedMode),
@@ -104,6 +112,11 @@ export function resolveSpeedSettings(context: unknown): SpeedSettings {
     batch_execution: boolValue(raw.batch_execution ?? raw.batchExecution, false),
     persistent_session_mode: boolValue(raw.persistent_session_mode ?? raw.persistentSessionMode, false)
   };
+}
+
+export function resolveAgentModelSettings(context: unknown): AgentModelSettings {
+  const settings = resolveSpeedSettings(context);
+  return { model: settings.agent_model, reasoning_effort: settings.agent_reasoning_effort };
 }
 
 function hasFailedToolResult(req: ChatRequest): boolean {

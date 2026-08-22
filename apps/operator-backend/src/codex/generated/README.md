@@ -1,7 +1,7 @@
 # Generated Codex app-server types
 
-The `app_server_0_144_5` directory is an unmodified, transitive subset of the
-TypeScript protocol emitted by `@openai/codex@0.144.5 app-server generate-ts
+The `app_server_0_149_0` directory is an unmodified, transitive subset of the
+TypeScript protocol emitted by `@openai/codex@0.149.0 app-server generate-ts
 --experimental`.
 
 Only the lifecycle roots used by Revit Operator and their generated imports are

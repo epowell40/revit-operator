@@ -1827,6 +1827,129 @@ test("a certified transaction-plan preview is the composable safe execution lane
   assert.notEqual(missingNativeReceipt.tier, "verified");
 });
 
+test("apply mode upgrades legacy preview-labelled mutation prompts to apply truth", () => {
+  const legacyMutation = corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!;
+  assert.equal(legacyMutation.expected_effect, "preview");
+  assert.equal(generalRevitExecutionCase(legacyMutation, true).expected_effect, "apply");
+
+  const intrinsicPreview = corpus.cases.find((candidate) => candidate.case_id === "r19_delete_bounded_route_preflight")!;
+  assert.equal(intrinsicPreview.production_expected_effect, "preview");
+  assert.equal(generalRevitExecutionCase(intrinsicPreview, true).expected_effect, "preview");
+});
+
+test("apply grading ignores legacy preview prose and trusts verified mutation evidence", () => {
+  const applyCase = generalRevitExecutionCase({
+    case_id: "apply_truth_over_preview_prose",
+    source: "user_basic",
+    operation_family: "parameter_edit",
+    prompt: "Rename the disposable element.",
+    probe_prompt: "Preview the rename without changing anything.",
+    capability_paths: ["/revit/set-parameter"],
+    dispatch_any_of: ["/revit/set-parameter"],
+    expected_effect: "preview",
+    epic0441_task_refs: [],
+    answer_assertions: {
+      must_match: ["Nothing was changed"],
+      must_not_match: ["Applied"]
+    }
+  }, true);
+  const result = evaluateGeneralRevitCapabilityAttempt(applyCase, {
+    ok: true,
+    assistant_message: "Applied and verified the requested rename.",
+    actions: [{
+      path: "/revit/set-parameter",
+      request_effect: "apply",
+      request_dispatched: true,
+      status: "success",
+      receipt: {
+        verification: { state: "verified", before: "Old", after: "New" },
+        readback: { value: "New" },
+        changed_element_ids: [123]
+      }
+    }]
+  });
+  assert.equal(result.answer_assertion_available, false);
+  assert.equal(result.answer_assertion_passed, null);
+  assert.deepEqual(result.answer_assertion_failures, []);
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+});
+
+test("authoritative target-bound preview evidence supersedes a stale blocked assignment projection", () => {
+  const safeCase = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "c03_level4_enlarged_plan_terse")!, false);
+  const result = evaluateGeneralRevitCapabilityAttempt(safeCase, {
+    ok: true,
+    assistant_message: "The corrected rollback preview completed and was read back.",
+    effect_state: "read_only_dispatched",
+    actions: [{ path: "/chat", request_effect: "preview", request_dispatched: true, status: "success" }],
+    assignment_projection: { assignments: [{
+      source_record_id: "stale-goal",
+      lifecycle: { phase: "blocked" },
+      execution: { requested_effect: "preview" },
+      verification: { state: "failed", criteria: [{ status: "fail" }] }
+    }] },
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "inspection",
+      context_state: "live",
+      stage: "report",
+      preview_action_ids: ["mcp:preview"],
+      preview_receipts: [{
+        action_id: "mcp:preview", path: "/revit/transaction-plan", status: "success",
+        evidence_sha256: `sha256:${"d".repeat(64)}`
+      }],
+      apply_attempts: 0,
+      verified: true,
+      verification_mode: "target_bound_readback",
+      verification_action_ids: ["mcp:verify"],
+      verification_action_id: "mcp:verify",
+      verification_evidence_sha256: `sha256:${"e".repeat(64)}`,
+      blocked_reason: null
+    }
+  });
+  assert.equal(result.completed, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verification_basis, "target_bound_model_state");
+});
+
+test("authoritative target-bound mutation evidence supersedes an earlier failed exploratory route", () => {
+  const entry = generalRevitExecutionCase(
+    corpus.cases.find((candidate) => candidate.case_id === "b07_grounded_equipment_rename")!,
+    true
+  );
+  const expectedPath = entry.dispatch_any_of[0];
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The requested rename was applied and independently read back.",
+    actions: [{
+      path: "/revit/call-tool",
+      request_effect: "apply",
+      request_dispatched: true,
+      status: "failed"
+    }],
+    durable_tool_evidence: durableReceiptEvidence(expectedPath, "apply"),
+    teammate_loop_receipt: {
+      schema: "revit-operator.teammate-loop-receipt.v1",
+      turn_kind: "mutation",
+      context_state: "live",
+      stage: "report",
+      apply_action_id: "mcp:apply",
+      apply_attempts: 1,
+      verified: true,
+      verification_mode: "target_bound_readback",
+      verification_action_ids: ["mcp:verify"],
+      verification_action_id: "mcp:verify",
+      verification_evidence_sha256: `sha256:${"f".repeat(64)}`,
+      blocked_reason: null
+    }
+  });
+  assert.equal(result.apply_dispatched, true);
+  assert.equal(result.completed, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.tier, "verified");
+  assert.equal(result.verification_basis, "target_bound_model_state");
+});
+
 test("aggregate results never turn non-refusal into a completion claim", () => {
   const entry = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "b01_equipment_rename")!, false);
   const accepted = evaluateGeneralRevitCapabilityAttempt(entry, { ok: true, assistant_message: "Which equipment should I change?" });
@@ -2137,6 +2260,31 @@ test("fixture-grounded answer assertions reject a tool-backed but semantically w
   });
   assert.equal(wrongBreakdown.tier, "failed");
   assert.equal(wrongBreakdown.answer_assertion_passed, false);
+});
+
+test("authenticated mutation evidence is authoritative over answer presentation wording", () => {
+  const base = generalRevitExecutionCase(corpus.cases.find((candidate) => candidate.case_id === "s03_schedule_filter")!, false);
+  const entry = {
+    ...base,
+    answer_assertions: {
+      must_match: ["this prose form is intentionally absent"],
+      evidence: { required_successful_paths: ["/revit/configure-schedule"] }
+    }
+  };
+  const result = evaluateGeneralRevitCapabilityAttempt(entry, {
+    ok: true,
+    assistant_message: "The requested evidence is attached to the completed assignment.",
+    durable_tool_evidence: durableReceiptEvidence("/revit/configure-schedule", "preview"),
+    assignment_projection: { assignments: [{
+      source_record_id: "fixture-goal",
+      lifecycle: { phase: "complete" },
+      execution: { requested_effect: "preview" },
+      verification: { state: "verified", criteria: [{ status: "pass" }] }
+    }] }
+  });
+  assert.equal(result.answer_assertion_passed, true);
+  assert.equal(result.completed, true);
+  assert.equal(result.tier, "verified");
 });
 
 test("durable read evidence cannot satisfy a preview contract without matching effect truth", () => {

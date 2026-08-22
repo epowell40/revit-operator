@@ -75,6 +75,7 @@ export type ChatRequest = {
 export type ModelCallTokenUsage = {
   input_tokens: number | null;
   cached_input_tokens: number | null;
+  cache_write_input_tokens?: number | null;
   output_tokens: number | null;
   reasoning_output_tokens: number | null;
   total_tokens: number | null;
@@ -84,16 +85,19 @@ export type ModelCallReceipt = {
   schema: "revit-operator.model-call-receipt.v1";
   call_id: string;
   provider: "openai";
-  route: "classic" | "planner" | "executor" | "desktop_computer";
+  route: "classic" | "planner" | "executor" | "codex_agent" | "desktop_computer";
   requested_model: string;
   model: string;
   reasoning_effort: "none" | "low" | "medium" | "high" | "xhigh" | "max";
   started_at_utc: string;
-  duration_ms: number;
+  /** Provider-only duration when the provider exposes it; null otherwise. */
+  duration_ms: number | null;
   success: boolean;
   response_status: string | null;
   error_code: string | null;
   tokens: ModelCallTokenUsage;
+  usage_source?: "responses_api_response" | "responses_api_raw_completion";
+  turn_id?: string;
 };
 
 export type ChatResponse = {
