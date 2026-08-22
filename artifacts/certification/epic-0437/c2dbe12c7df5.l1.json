@@ -2745,7 +2745,7 @@
     },
     {
       "path": "apps/operator-backend/test/external_provider_brain.test.ts",
-      "sha256": "sha256:623eb42b3fe1d0f0b83e8f6427e39641a555dc45ae086eb93fa1ec41a792b53a"
+      "sha256": "sha256:ab98dd8573b089a11b09d4989ca4d178ec1d95a218dbe59a8ec5879678cb7777"
     },
     {
       "path": "apps/operator-backend/test/feedback_store.test.ts",
@@ -2929,7 +2929,7 @@
     },
     {
       "path": "apps/operator-backend/test/openai_brain_model_call_receipts.test.ts",
-      "sha256": "sha256:b0028de50fa1b7a56472d6810eec8d1f3b1a23c6b53ddfd455f8313607239a42"
+      "sha256": "sha256:c49741b9f611d13687298686c2c17596952ddc0d36213e21b17991805ac3918f"
     },
     {
       "path": "apps/operator-backend/test/openai_brain_model_open_prompt.test.ts",
@@ -5237,7 +5237,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:b570429427b1e111c6610ac24243351183bbc8360303af91b205f17277f651fa",
+  "inputs_hash": "sha256:d4802a8982c2e1d118fd6bbfd234c669a51e1e21ab52871ba1e148cdb291c357",
   "result": {
     "passed": true,
     "checks": [
