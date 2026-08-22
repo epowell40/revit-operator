@@ -401,10 +401,18 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
       objective: "Execute and verify one local outer-agent task.",
       acceptance_criteria: ["The task is complete."],
       work_budget: { mode: "sidecar_computer", source: "operator_desktop" },
-      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }],
+      start_assignment_run: true,
+      assignment_run_id: "sidecar-run-alice",
+      assignment_run_actor: "operator_desktop_outer_agent"
     })
   });
   assert.equal(sidecarGoalResponse.status, 200);
+  const sidecarStart = await sidecarGoalResponse.json() as {
+    assignment_run: { assignment_id: string; run_id: string; generation: number };
+  };
+  assert.equal(sidecarStart.assignment_run.run_id, "sidecar-run-alice");
+  assert.equal(sidecarStart.assignment_run.generation, 1);
   const bobSidecarSettlement = await fetch(`${base}/api/agent-goal/sidecar-settle`, {
     method: "POST",
     headers: headers(bobAuth),
@@ -421,6 +429,8 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
       assistant_summary: "The authenticated Sidecar completed the task.",
       successful_tools: 1,
       verification_kind: "sidecar_turn_receipts",
+      assignment_run_id: sidecarStart.assignment_run.run_id,
+      assignment_generation: sidecarStart.assignment_run.generation,
       evidence: { tool_name: "inspect_revit_context", status: "success" }
     })
   });

@@ -1209,8 +1209,27 @@ const server = http.createServer(async (req, res) => {
           ...(body as any),
           ...(owner ? { created_by: owner.owner_user_id } : {})
         });
+        const requestedRunId = trimText((body as any)?.assignment_run_id ?? (body as any)?.assignmentRunId, 200);
+        const assignmentRun = (body as any)?.start_assignment_run === true
+          ? ensureAssignmentRunForTurn(
+              sessionId,
+              requestedRunId || `external:${randomUUID()}`,
+              trimText((body as any)?.assignment_run_actor, 160) || "external_assignment_controller",
+              false
+            )
+          : null;
         appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: goal.status });
-        return writeJson(res, 200, { ok: true, goal });
+        return writeJson(res, 200, {
+          ok: true,
+          goal,
+          ...(assignmentRun ? {
+            assignment_run: {
+              assignment_id: assignmentRun.assignmentId,
+              run_id: assignmentRun.runId,
+              generation: assignmentRun.generation
+            }
+          } : {})
+        });
       } catch (error) {
         return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
       }

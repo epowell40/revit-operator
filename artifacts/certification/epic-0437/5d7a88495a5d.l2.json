@@ -1849,7 +1849,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:ebced5610094d4b5b32d8bd7e396372698ccaf01d0f94c3743933dd904217ae4"
+      "sha256": "sha256:f720d190a5b529bfcda79e2503170f8abac13fc6a8c11acd4f7a951eadcbe9d9"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -2913,7 +2913,7 @@
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
-      "sha256": "sha256:0cc3e440f314b15b97b8059f9afae9424cc52daa58a36fca33a65b25468c189b"
+      "sha256": "sha256:ed3cddc495e696f75d2b759a036955b55480d871e0a217d7983d77b37451b401"
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
@@ -5321,7 +5321,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:eb0146eca98d90d5f11b567ad695e1029aa3de3bc9b76bfddd23bdd7e21c4497",
+  "inputs_hash": "sha256:3d93698862268f686ad239b5f8abbb226c97824e0919353429adaec80bd1c23e",
   "result": {
     "passed": true,
     "checks": [

@@ -8,6 +8,12 @@ settlement record exists. The pure reducer in
 `apps/operator-backend/src/assignments/control_plane.ts` deterministically
 projects that stream after a process restart.
 
+External controllers start or recover their bound run through the generic Goal
+API by sending `start_assignment_run: true` and, preferably, their durable
+`assignment_run_id`. The response returns `assignment_run` with the Assignment
+ID, exact run ID, and generation. Every later settlement callback must carry
+that run/generation pair; it is never inferred from caller prose.
+
 ## Effect invariant
 
 Every attempt has exactly one authoritative persistent-effect state:
@@ -52,7 +58,7 @@ event contract and consumes the same reducer projection.
 
 | Path | Before | Canonical flow |
 | --- | --- | --- |
-| Goal/Assignment creation | Goal service created lifecycle truth; other lanes inferred their own run | Goal service creates the sole durable event container; the outer chat turn begins the run and generation |
+| Goal/Assignment creation | Goal service created lifecycle truth; other lanes inferred their own run | Goal service creates the sole durable event container; the outer chat turn or explicitly bound external controller begins the run and generation |
 | Codex General Agent | Tool observations, counters, teammate prose, and completion audit independently inferred success | MCP observations journal action, admission, dispatch, native effect and exact verification events; turn settlement consumes the reducer |
 | Desktop computer loop | Planned `ActionCall`s and returned `ToolResult`s were a separate transport truth | Every outgoing action receives Assignment/run/generation/signature/target binding; every result journals against that attempt |
 | deterministic/semantic fast paths | Bypassed General-Agent settlement and could complete without equivalent history | Alternative planning only; `/chat` journals their actions/results identically to delegated actions |
@@ -65,7 +71,8 @@ event contract and consumes the same reducer projection.
 ## Ownership after convergence
 
 - Creation and durable ownership: Goal/Assignment service.
-- Run and generation ownership: outer `/chat` or `/chat/stream` turn.
+- Run and generation ownership: outer `/chat` or `/chat/stream` turn, or the
+  explicitly bound external controller returned by the Goal API.
 - Planning: Codex, deterministic, semantic, or Dynamic Runtime planner.
 - Authorization/admission: existing backend and native policies, journaled on the
   attempt.
