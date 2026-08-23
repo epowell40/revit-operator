@@ -1,5 +1,10 @@
 # Operator Benchmark Harness
 
+> New General Revit release measurements use immutable Benchmark Protocol V2.
+> See [`docs/BENCHMARK_PROTOCOL_V2.md`](../../../docs/BENCHMARK_PROTOCOL_V2.md).
+> New runs require a complete V2 envelope; V1 is retained only for historical
+> inspection and immutable rescoring.
+
 EPIC-0439 adds a paired typed-capability versus Dynamic Runtime usefulness/anti-demo package. See `docs/epics/EPIC-0439_general-agent-dynamic-runtime/usefulness_benchmark.md`; it deliberately keeps source-only, mocked, and live Revit evidence distinct and ships no claimed live outcomes.
 
 This harness lives under `operator-backend` and compares Operator routing setups with latency and verified workflow success as primary metrics.

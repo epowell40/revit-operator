@@ -29,6 +29,7 @@
     "probe:live-revit-tools": "tsx src/tools/probe_live_revit_tools.ts",
     "check:codex-app-server": "tsx src/tools/verify_codex_app_server_protocol.ts",
     "benchmark": "tsx src/tools/benchmark.ts",
+    "benchmark:protocol-v2": "tsx src/tools/benchmark_protocol_v2.ts",
     "benchmark:epic0439": "tsx src/tools/epic0439_usefulness.ts",
     "benchmark:epic0441": "tsx src/tools/epic0441_scoreboard.ts",
     "probe:general-revit-capabilities": "tsx src/tools/general_revit_capability_acceptance.ts",
