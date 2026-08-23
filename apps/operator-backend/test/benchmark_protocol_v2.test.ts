@@ -19,7 +19,7 @@ import {
   generalRevitProtocolManifestPathV2,
   loadGeneralRevitProtocolInputsV2
 } from "../src/benchmark/protocol_v2_general_revit.js";
-import { benchmarkDataRoot, sourceControlledRoots } from "../src/benchmark/files.js";
+import { backendRoot, benchmarkDataRoot, pathIsWithin, sourceControlledRoots } from "../src/benchmark/files.js";
 import { sha256File, sha256Value } from "../src/benchmark/protocol_v2_hash.js";
 import { validateBenchmarkRepairCohortV2 } from "../src/benchmark/protocol_v2_maintenance.js";
 import { buildBenchmarkRawReportV2, summarizeBenchmarkLanesV2, writeBenchmarkRawReportV2 } from "../src/benchmark/protocol_v2_report.js";
@@ -203,7 +203,7 @@ test("ordinary Protocol V2 manifest is backend-owned in compiled public layout",
   assert.equal(fs.existsSync(actual), true);
   assert.doesNotMatch(actual.replaceAll("\\", "/"), /\/apps\/apps\/operator-backend\//);
   const roots = sourceControlledRoots();
-  assert.ok(roots.some(root => path.basename(root).toLowerCase() === "epic0451-public"));
+  assert.ok(roots.some(root => pathIsWithin(backendRoot(), root) && fs.existsSync(path.join(root, ".git"))));
   assert.throws(() => loadExternalHiddenHoldoutV2({
     manifestPath: path.join(roots[0]!, "docs", "ARCHITECTURE.md"), forbiddenSourceRoots: roots
   }), /must remain external/);

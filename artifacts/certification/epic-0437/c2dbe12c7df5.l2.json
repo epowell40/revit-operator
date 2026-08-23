@@ -2541,7 +2541,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:127012ca0652b1d6811278066177ff604c7d918d929c1ee88bedef4b43dc3760"
+      "sha256": "sha256:873eb0a4cca5c00500a484fa1d8e88d7f5005b6eefa33d0aec68648e16a9d4fa"
     },
     {
       "path": "apps/operator-backend/test/benchmark_report.test.ts",
@@ -5457,7 +5457,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:d4dec7be37cd2451765ab1dcfc4de2e7e86001a5974e1ae5d975c45f8a9ef799",
+  "inputs_hash": "sha256:8940e2593bdb62ea4aa6e219e7b9d5e408efc13217d467ffb96663c545d4395a",
   "result": {
     "passed": true,
     "checks": [
