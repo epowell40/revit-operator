@@ -90,6 +90,24 @@ const READ_ONLY_PATHS = new Set<string>([
   "/revit/read-family-evolution"
 ]);
 
+// Typed MCP aliases and their native HTTP routes are one capability identity.
+// Keep this production mapping generic so execution truth does not depend on a
+// benchmark-only normalizer or on which controller recorded the action.
+const REVIT_ACTION_PATH_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  "/revit/list-views": "/revit/views",
+  "/revit/query-views": "/revit/views",
+  "/revit/list-sheets": "/revit/sheets",
+  "/revit/list-schedules": "/revit/schedules",
+  "/revit/query-elements": "/revit/query",
+  "/revit/delete-elements": "/revit/delete",
+  "/revit/set-parameters": "/revit/set-parameter"
+});
+
+export function canonicalRevitActionPath(pathname: string): string {
+  const normalized = (pathname || "").trim().toLowerCase();
+  return REVIT_ACTION_PATH_ALIASES[normalized] || normalized;
+}
+
 function bodyRecord(body: unknown): Record<string, unknown> {
   if (body && typeof body === "object" && !Array.isArray(body)) return body as Record<string, unknown>;
   if (typeof body !== "string" || !body.trim()) return {};
@@ -111,7 +129,7 @@ const ARTIFACT_PUBLICATION_PATHS = new Set([
 ]);
 
 export function conditionalActionPathEffect(pathname: string, body?: unknown): ConditionalActionPathEffect | undefined {
-  const normalized = (pathname || "").trim().toLowerCase();
+  const normalized = canonicalRevitActionPath(pathname);
   const row = bodyRecord(body);
   // These handlers are observational during an explicit preflight, but create
   // durable files otherwise. Keep their endpoint-specific defaults here rather
@@ -163,7 +181,7 @@ export function pathLooksWrite(pathname: string, body?: unknown, method: string 
   if (normalizedMethod === "GET" || normalizedMethod === "HEAD" || normalizedMethod === "OPTIONS") return false;
   if (normalizedMethod !== "POST") return true;
 
-  const normalized = (pathname || "").trim().toLowerCase();
+  const normalized = canonicalRevitActionPath(pathname);
   const conditional = conditionalActionPathEffect(normalized, body);
   if (conditional !== undefined) return conditional !== "read";
   return normalized.startsWith("/revit/") && !READ_ONLY_PATHS.has(normalized);

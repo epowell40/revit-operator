@@ -1,9 +1,8 @@
-import fs from "node:fs";
 import path from "node:path";
 import { buildBenchmarkCaseResultV2 } from "../benchmark/protocol_v2_case.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
 import { compareBenchmarkExactRerunsV2, writeBenchmarkExactRerunComparisonV2 } from "../benchmark/protocol_v2_compare.js";
-import { readJsonFile, repoRoot, writeJsonFile } from "../benchmark/files.js";
+import { benchmarkDataRoot, readJsonFile, sourceControlledRoots, writeJsonFile } from "../benchmark/files.js";
 import {
   generalRevitExecutionCase,
   loadGeneralRevitCapabilityCorpus,
@@ -60,9 +59,7 @@ function help(): string {
 }
 
 function sourceRoots(): string[] {
-  const publicRoot = repoRoot();
-  const parent = path.resolve(publicRoot, "..");
-  return [publicRoot, ...(fs.existsSync(path.join(parent, "public")) ? [parent] : [])];
+  return sourceControlledRoots();
 }
 
 function loadCases(): GeneralRevitCapabilityCase[] {
@@ -94,7 +91,7 @@ function main(): void {
       outputPath: path.resolve(requiredFlag("--output")),
       cases: loadCases(),
       corpusValue: loadGeneralRevitCapabilityCorpus(),
-      originalManifestPath: path.join(repoRoot(), "apps", "operator-backend", "benchmark", "general-agent", "revit-capability-acceptance.v1.json")
+      originalManifestPath: path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json")
     });
     console.log(JSON.stringify({ output: result.json_path, report_sha256: result.report.report_sha256 }, null, 2));
     return;

@@ -22,6 +22,7 @@ export function createCodexTurnModelTelemetry(args: {
   turnId: string;
   settings: AgentModelSettings;
   startedAtUtc: string;
+  onReceipt?: (receipt: ModelCallReceipt) => void;
 }): { receipts: ModelCallReceipt[]; observe: (notification: CodexNotification) => void } {
   const receipts: ModelCallReceipt[] = [];
   let actualModel = args.settings.model;
@@ -47,6 +48,7 @@ export function createCodexTurnModelTelemetry(args: {
       });
       if (!receipt || receipts.some(existing => existing.call_id === receipt.call_id)) return;
       receipts.push(receipt);
+      args.onReceipt?.(receipt);
       try {
         appendEvent(args.sessionId, "assistant", "codex.model_call.completed", receipt);
       } catch {

@@ -8,6 +8,7 @@ import { createGoal, getGoal } from "../src/goals/service.js";
 import {
   ensureAssignmentRunForTurn,
   journalAssignmentActions,
+  journalAssignmentToolObservation,
   journalAssignmentToolResults
 } from "../src/assignments/turn_journal.js";
 
@@ -50,6 +51,77 @@ test("request-level journal covers any planner and keeps caller apply success un
     assert.equal(settled?.attempts[0]?.effect.state, "unknown");
     assert.deepEqual(settled?.unresolved_unknown_attempt_ids, ["action-1"]);
     assert.equal(getGoal(goal.id)?.assignment_control_plane?.events.length, 5);
+  });
+});
+
+test("recovered read-only POST result preserves explicit effect and cannot consume apply opportunity", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:q01-recovered-read", "outer_chat", true);
+
+    const settled = journalAssignmentToolResults("session-journal", [{
+      action_id: "q01-schedules-read",
+      method: "POST",
+      // Retained q01 used the typed-tool alias. The raw native receipt later
+      // canonicalized this to /revit/schedules, but recovery saw this path.
+      path: "/revit/list-schedules",
+      request_effect: "read",
+      request_dispatched: true,
+      status: "done",
+      result_json: { ok: true, count: 509, rows: [] }
+    }], "operator_desktop");
+
+    assert.equal(settled?.attempts.length, 1);
+    assert.equal(settled?.attempts[0]?.requested_effect, "read");
+    assert.equal(settled?.attempts[0]?.effect.state, "none");
+    assert.equal(settled?.apply_opportunity_consumed, false);
+    assert.deepEqual(settled?.unresolved_unknown_attempt_ids, []);
+  });
+});
+
+test("typed schedule observation and conditional POST neighbors retain read provenance", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:q01-neighbors", "outer_chat", true);
+    let projection = journalAssignmentToolObservation("session-journal", {
+      action_id: "typed-schedules", server: "revit_operator", tool: "revit_list_schedules",
+      success: true, arguments: {}, result: { ok: true, count: 509 }
+    }, "codex_inner_mcp", "typed-schedules", "read");
+    projection = journalAssignmentToolResults("session-journal", [{
+      action_id: "conditional-read", method: "POST", path: "/revit/create-text",
+      request_effect: "read", request_dispatched: true, status: "done",
+      result_json: { ok: true, action: "list_types", count: 3 }
+    }], "operator_desktop");
+    assert.deepEqual(projection?.attempts.map(row => row.requested_effect), ["read", "read"]);
+    assert.equal(projection?.attempts.every(row => row.effect.state === "none"), true);
+    assert.equal(projection?.apply_opportunity_consumed, false);
+  });
+});
+
+test("bound native apply outranks a contradictory lower-authority ToolResult effect", () => {
+  withWorkspace(() => {
+    activeGoal();
+    const run = ensureAssignmentRunForTurn("session-journal", "chat:native-authority", "outer_chat", true)!;
+    journalAssignmentActions("session-journal", [{
+      action_id: "native-authority", method: "POST", path: "/revit/move-elements",
+      request_effect: "apply", body: { elementIds: [101], dryRun: false }
+    }], "codex");
+    const settled = journalAssignmentToolResults("session-journal", [{
+      action_id: "native-authority", method: "POST", path: "/revit/move-elements",
+      request_effect: "read", assignment_id: run.assignmentId, assignment_run_id: run.runId,
+      assignment_generation: run.generation, status: "done", request_dispatched: true,
+      result_json: { canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", assignment_id: run.assignmentId,
+        attempt_id: "native-authority", run_id: run.runId, generation: run.generation,
+        requested_effect: "apply", method: "POST", path: "/revit/move-elements",
+        request_dispatched: true, effect_state: "applied", effect_reason: "native_commit",
+        effect_authority: "native_transaction", affected_target_identities: ["element_id:101"],
+        receipt_refs: ["native:101"], evidence_refs: []
+      } }
+    }], "operator_desktop");
+    assert.equal(settled?.attempts[0]?.requested_effect, "apply");
+    assert.equal(settled?.attempts[0]?.effect.state, "applied");
+    assert.equal(settled?.attempts[0]?.effect.authority, "native_transaction");
   });
 });
 

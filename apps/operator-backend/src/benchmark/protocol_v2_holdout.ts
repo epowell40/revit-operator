@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { GeneralRevitCapabilityCase } from "./general_revit_capability_acceptance.js";
 import { sha256File, sha256Value } from "./protocol_v2_hash.js";
+import { canonicalContainmentPath, pathIsWithin } from "./files.js";
 
 export const EXTERNAL_HOLDOUT_MANIFEST_V2 = "revit-operator.external-holdout-manifest/v2" as const;
 
@@ -32,17 +33,12 @@ export type ExternalHoldoutDescriptorV2 = {
   fixture_hashes: Array<{ identity: string; sha256: string }>;
 };
 
-function isWithin(candidate: string, root: string): boolean {
-  const relative = path.relative(path.resolve(root), path.resolve(candidate));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
 export function loadExternalHiddenHoldoutV2(args: {
   manifestPath: string;
   forbiddenSourceRoots: string[];
 }): { manifest: ExternalHoldoutManifestV2; descriptor: ExternalHoldoutDescriptorV2 } {
-  const manifestPath = path.resolve(args.manifestPath);
-  if (args.forbiddenSourceRoots.some((root) => isWithin(manifestPath, root))) {
+  const manifestPath = canonicalContainmentPath(args.manifestPath);
+  if (args.forbiddenSourceRoots.some((root) => pathIsWithin(manifestPath, root))) {
     throw new Error("Hidden holdout manifests must remain external to public and ordinary private source trees.");
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as ExternalHoldoutManifestV2;
@@ -62,8 +58,11 @@ export function loadExternalHiddenHoldoutV2(args: {
     if (!testCase.prompt?.trim() || !testCase.probe_prompt?.trim()) throw new Error(`External holdout case ${testCase.case_id} is incomplete.`);
   }
   for (const fixture of manifest.fixtures) {
-    const fixturePath = path.resolve(manifestDir, fixture.path);
+    const fixturePath = canonicalContainmentPath(path.resolve(manifestDir, fixture.path));
     if (!fs.existsSync(fixturePath)) throw new Error(`External holdout fixture '${fixture.identity}' is missing.`);
+    if (args.forbiddenSourceRoots.some((root) => pathIsWithin(fixturePath, root))) {
+      throw new Error(`External holdout fixture '${fixture.identity}' must remain outside source-controlled trees.`);
+    }
     if (sha256File(fixturePath).toLowerCase() !== fixture.sha256.toLowerCase()) {
       throw new Error(`External holdout fixture '${fixture.identity}' hash does not match.`);
     }
@@ -88,7 +87,7 @@ export function loadExternalHiddenHoldoutV2(args: {
 }
 
 export function assertExternalHoldoutOutputV2(outputPath: string, forbiddenSourceRoots: string[]): void {
-  if (forbiddenSourceRoots.some((root) => isWithin(outputPath, root))) {
+  if (forbiddenSourceRoots.some((root) => pathIsWithin(outputPath, root))) {
     throw new Error("Hidden holdout reports and retained raw traces must be written outside source-controlled repository trees.");
   }
 }

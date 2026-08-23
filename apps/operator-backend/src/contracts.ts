@@ -39,6 +39,12 @@ export type ToolResult = {
   method: HttpMethod;
   path: string;
   request_effect?: "read" | "preview" | "apply";
+  /** Canonical control-plane binding carried by an authenticated controller. */
+  assignment_id?: string;
+  assignment_run_id?: string;
+  assignment_generation?: number;
+  action_signature?: string;
+  target_fingerprint?: string;
   status: "done" | "failed";
   /** A failed call may have reached Revit without a settled execution receipt. */
   retryable?: boolean;
@@ -75,6 +81,10 @@ export type ChatRequest = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   session_id: string;
   message_id: string;
+  /** Existing canonical Assignment binding supplied by an outer controller. */
+  assignment_id?: string;
+  assignment_run_id?: string;
+  assignment_generation?: number;
   /**
    * User text for the turn. For multi-turn tool loops, this may be an empty string
    * on continuation steps where tool_results are provided.

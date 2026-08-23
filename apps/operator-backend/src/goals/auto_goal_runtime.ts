@@ -304,7 +304,8 @@ export function createAutoGoalTurnObserver(sessionId: string) {
           sessionId,
           observation,
           "codex_inner_mcp",
-          `${observation.action_id || `inner:${canonicalObservationSequence}`}`
+          `${observation.action_id || `inner:${canonicalObservationSequence}`}`,
+          effect === "discovery" ? undefined : effect
         );
       } catch {}
       try { recordAutoGoalToolObservation(sessionId, observation); } catch {}
@@ -473,6 +474,7 @@ function successfulTeammatePreviewReceiptCount(receipt?: AutoGoalTeammateReceipt
 function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
   const server = (observation.server ?? "").trim().toLowerCase();
   const tool = observation.tool.trim().toLowerCase();
+  if (tool === "operator_retrieve_evidence") return false;
   return server === "revit_operator" || server.startsWith("mcp__revit_operator") || tool.startsWith("revit_");
 }
 

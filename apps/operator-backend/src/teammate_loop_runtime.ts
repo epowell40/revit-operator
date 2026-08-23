@@ -27,7 +27,7 @@ export type TeammateTurnContract = {
   document_signature: string | null;
 };
 
-type Effect = "read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
+type Effect = "read" | "evidence_read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
 type PendingCall = { effect: Effect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
@@ -516,6 +516,10 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const expected_values = expectedValues(args, operation !== "create");
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation });
   if (isTeammateDiscoveryTool(tool)) return call("discovery");
+  // Durable EvidenceRef expansion is an explicitly certified, bounded host
+  // read. It neither calls Revit nor creates fresh verification truth, so it
+  // must not enter typed-Revit tool discovery or consume the Revit budget.
+  if (tool === "operator_retrieve_evidence") return call("evidence_read");
   if (tool === "web_fetch_evidence") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
@@ -664,7 +668,8 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   // Opening the first document is the one exact mutation that must be able to
   // establish live document context. All ordinary reads, navigation, previews,
   // and model writes remain fail-closed until a document identity is live.
-  if (call.effect !== "discovery" && contract.context_state !== "live" && !isContextFreeDocumentBootstrapCall(call)) {
+  if (call.effect !== "discovery" && call.effect !== "evidence_read"
+      && contract.context_state !== "live" && !isContextFreeDocumentBootstrapCall(call)) {
     return "live_revit_context_required";
   }
   if (isContextFreeDocumentBootstrapCall(call) && openModelActiveHostMismatch(state.active_host_version_year, call.target_tokens)) {

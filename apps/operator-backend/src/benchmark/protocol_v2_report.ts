@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readJsonFile, writeJsonFile, writeTextFile } from "./files.js";
+import { readJsonFile, writeJsonFileNew, writeTextFileNew } from "./files.js";
 import { sha256Value } from "./protocol_v2_hash.js";
 import { validateBenchmarkRunEnvelopeV2 } from "./protocol_v2_envelope.js";
 import {
@@ -145,8 +145,8 @@ export function writeBenchmarkRawReportV2(outputPath: string, report: BenchmarkR
   validateBenchmarkRawReportV2(report);
   const markdownPath = outputPath.replace(/\.json$/i, ".md");
   if (fs.existsSync(markdownPath)) throw new Error(`Immutable report companion already exists: ${markdownPath}`);
-  writeJsonFile(outputPath, report);
-  writeTextFile(markdownPath, benchmarkProtocolV2Markdown(report));
+  writeJsonFileNew(outputPath, report);
+  writeTextFileNew(markdownPath, benchmarkProtocolV2Markdown(report));
   return { json_path: path.resolve(outputPath), markdown_path: path.resolve(markdownPath) };
 }
 

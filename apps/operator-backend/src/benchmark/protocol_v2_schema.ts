@@ -8,7 +8,8 @@ const CONTRACTS: Record<string, string> = {
   case_result: "benchmark_case_result.v2.schema.json",
   raw_report: "benchmark_raw_report.v2.schema.json",
   rescore: "benchmark_rescore.v2.schema.json",
-  external_holdout: "benchmark_external_holdout.v2.schema.json"
+  external_holdout: "benchmark_external_holdout.v2.schema.json",
+  finalization_failure: "benchmark_finalization_failure.v2.schema.json"
 };
 
 export type BenchmarkProtocolV2Contract = keyof typeof CONTRACTS;

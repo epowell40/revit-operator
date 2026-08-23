@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.com/schemas/benchmark_finalization_failure.v2.schema.json",
+  "title": "Benchmark Protocol V2 immutable finalization failure",
+  "type": "object",
+  "required": [
+    "schema", "finalization_status", "promotion_eligible", "failure_code",
+    "failing_stage", "missing_receipt_classes", "conflicting_receipt_classes",
+    "source_flight", "envelope_draft", "evaluator_version", "case_stage_vectors",
+    "work_packets", "telemetry_completeness", "error", "generated_at", "artifact_sha256"
+  ],
+  "properties": {
+    "schema": { "const": "revit-operator.benchmark-finalization-failure/v2" },
+    "finalization_status": { "const": "failed" },
+    "promotion_eligible": { "const": false },
+    "failure_code": { "type": "string", "minLength": 1 },
+    "failing_stage": { "type": "string", "minLength": 1 },
+    "missing_receipt_classes": { "type": "array", "items": { "type": "string" } },
+    "conflicting_receipt_classes": { "type": "array", "items": { "type": "string" } },
+    "source_flight": {
+      "type": "object",
+      "required": ["ref", "sha256", "run_id"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "sha256": { "type": ["string", "null"], "pattern": "^[a-fA-F0-9]{64}$" },
+        "run_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "envelope_draft": {
+      "type": "object",
+      "required": ["ref", "sha256"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1 },
+        "sha256": { "type": ["string", "null"], "pattern": "^[a-fA-F0-9]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "evaluator_version": { "type": ["string", "null"] },
+    "case_stage_vectors": { "type": "array", "items": { "type": "object" } },
+    "work_packets": {
+      "type": "object",
+      "required": ["generated_case_ids", "missing_case_ids"],
+      "properties": {
+        "generated_case_ids": { "type": "array", "items": { "type": "string" } },
+        "missing_case_ids": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "telemetry_completeness": {
+      "enum": ["complete", "provider_contract_unobservable", "collection_failed", "missing", "conflicting_or_quarantined"]
+    },
+    "error": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "minLength": 1 },
+    "artifact_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+  },
+  "additionalProperties": false
+}

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { repoRoot } from "./files.js";
+import { benchmarkDataRoot, sourceControlledRoots } from "./files.js";
 import {
   loadGeneralRevitCapabilityCorpus,
   summarizeGeneralRevitCorpusCoverage,
@@ -34,8 +34,7 @@ export type GeneralRevitProtocolInputsV2 = {
 
 export function loadGeneralRevitProtocolInputsV2(externalHoldoutPath: string): GeneralRevitProtocolInputsV2 {
   const publicCorpus = loadGeneralRevitCapabilityCorpus();
-  const candidatePrivateRoot = path.resolve(repoRoot(), "..");
-  const forbiddenSourceRoots = [repoRoot(), ...(fs.existsSync(path.join(candidatePrivateRoot, "public")) ? [candidatePrivateRoot] : [])];
+  const forbiddenSourceRoots = sourceControlledRoots();
   const externalHoldout = externalHoldoutPath
     ? loadExternalHiddenHoldoutV2({ manifestPath: externalHoldoutPath, forbiddenSourceRoots })
     : null;
@@ -104,7 +103,7 @@ export function generalRevitProtocolCorpusCoverageV2(inputs: GeneralRevitProtoco
 }
 
 export function generalRevitProtocolManifestPathV2(inputs: GeneralRevitProtocolInputsV2): string {
-  return inputs.externalHoldoutPath || path.join(repoRoot(), "apps", "operator-backend", "benchmark", "general-agent", "revit-capability-acceptance.v1.json");
+  return inputs.externalHoldoutPath || path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json");
 }
 
 export function resolveGeneralRevitProtocolRunV2(args: {

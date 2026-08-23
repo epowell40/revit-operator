@@ -11,6 +11,7 @@ import {
 } from "../src/evidence/evidence_store.js";
 import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload, modelEvidenceEnvelope } from "../src/evidence/model_context_budget.js";
 import { __clearServerPlannedActionsForTests, normalizeIncomingToolResults, registerServerPlannedActions } from "../src/revit_batch/tool_result_normalization.js";
+import { __closeForTests, upsertStepPlanned } from "../src/memory/sqlite_store.js";
 
 function withWorkspace<T>(fn: (root: string) => T): T {
   const prior = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -18,6 +19,7 @@ function withWorkspace<T>(fn: (root: string) => T): T {
   process.env.OPERATOR_WORKSPACE_ROOT = root;
   try { return fn(root); }
   finally {
+    __closeForTests();
     if (prior === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
     else process.env.OPERATOR_WORKSPACE_ROOT = prior;
     fs.rmSync(root, { recursive: true, force: true });
@@ -110,7 +112,11 @@ test("content-addressed reuse deduplicates bytes and survives restart-style ref 
 
 test("scope fencing, path traversal protection, bounded purpose, and secret screening fail closed", { concurrency: false }, () => withWorkspace(root => {
   const stored = storeEvidence({ scope, source: "scope_test", trust_level: "host_observed", raw: { targetId: 9, safe: true } });
+  assert.equal(stored.projection.generation, scope.generation);
+  assert.equal(stored.projection.retrieval.tool_name, "operator_retrieve_evidence");
+  assert.ok(stored.projection.retrieval.selector_forms.includes("fields"));
   assert.throws(() => retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope: { ...scope, assignment_id: "assignment-b" }, purpose: "read target", fields: ["targetId"] }), /outside the requested Assignment scope/);
+  assert.throws(() => retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope: { ...scope, generation: scope.generation! + 1 }, purpose: "read target", fields: ["targetId"] }), /outside the requested Assignment generation/);
   assert.throws(() => retrieveEvidence({ evidence_id: "../../secrets", scope, purpose: "read target", fields: ["targetId"] }), /Invalid evidence_id/);
   assert.throws(() => retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "all evidence", fields: ["targetId"] }), /Focused evidence retrieval purpose/);
   assert.throws(() => retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "read target", fields: ["__proto__.polluted"] }), /Invalid typed field path/);
@@ -150,16 +156,20 @@ test("model request assembly enforces item and aggregate budgets with explicit o
 
 test("incoming native results bind canonical Assignment identity, retain images once, and send refs by default", { concurrency: false }, () => withWorkspace(() => {
   __clearServerPlannedActionsForTests();
-  registerServerPlannedActions(scope.session_id, [{
+  const plannedAction = {
     action_id: "action-1",
     method: "GET",
     path: "/revit/find-elements",
+    request_effect: "read" as const,
     assignment_id: scope.assignment_id,
     assignment_run_id: scope.run_id,
     attempt_id: scope.attempt_id,
     assignment_generation: scope.generation,
     target_fingerprint: "category:air-terminals"
-  }]);
+  };
+  registerServerPlannedActions(scope.session_id, [plannedAction]);
+  upsertStepPlanned(scope.session_id, "message-action-1", "inventory", [plannedAction]);
+  __clearServerPlannedActionsForTests();
   const imageBytes = Buffer.from("bounded-visual-image");
   const [result] = normalizeIncomingToolResults([{
     action_id: "action-1",

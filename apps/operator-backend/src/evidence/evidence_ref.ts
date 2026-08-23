@@ -61,6 +61,7 @@ export type EvidenceProjectionV1 = {
   assignment_id: string | null;
   run_id: string | null;
   attempt_id: string | null;
+  generation: number | null;
   target_scope: string[];
   key_counts: Record<string, number>;
   key_facts: Record<string, string | number | boolean | null>;
@@ -70,6 +71,11 @@ export type EvidenceProjectionV1 = {
   artifact_ref: string;
   verification_relevance: EvidenceVerificationRelevance;
   additional_evidence: boolean;
+  retrieval: {
+    tool_name: "operator_retrieve_evidence";
+    selector_forms: string[];
+    max_bytes: number;
+  };
   projected_bytes: number;
   truncated: boolean;
 };

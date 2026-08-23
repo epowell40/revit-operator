@@ -208,6 +208,32 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
   });
 
   await waitForHealth(`http://127.0.0.1:${backendPort}/health`, token);
+  const sessionId = "desktop-provider-error-bound-session";
+  const unbound = await fetch(`http://127.0.0.1:${backendPort}/desktop/computer/respond`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-operator-token": token },
+    body: JSON.stringify({ session_id: sessionId, model: "gpt-5.6-luna", reasoning_effort: "max", input: "unbound" })
+  });
+  assert.equal(unbound.status, 500);
+  assert.match(await unbound.text(), /desktop_computer_assignment_binding_required/);
+  assert.equal(providerCalls, 0);
+  const goalResponse = await fetch(`http://127.0.0.1:${backendPort}/api/agent-goal`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-operator-token": token },
+    body: JSON.stringify({
+      session_id: sessionId,
+      title: "Bound desktop provider telemetry",
+      objective: "Prove provider failure telemetry remains bound.",
+      acceptance_criteria: ["The provider boundary returns one safe receipt."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop" },
+      work_items: [{ id: "provider-call", title: "Call the provider", status: "in_progress" }],
+      start_assignment_run: true,
+      assignment_run_id: "desktop-provider-error-run",
+      assignment_run_actor: "operator_desktop_outer_agent"
+    })
+  });
+  assert.equal(goalResponse.status, 200);
+  const binding = (await goalResponse.json() as any).assignment_run;
   const response = await fetch(`http://127.0.0.1:${backendPort}/desktop/computer/respond`, {
     method: "POST",
     headers: {
@@ -215,6 +241,10 @@ test("desktop endpoint returns one content-free failed receipt for a dispatched 
       "x-operator-token": token
     },
     body: JSON.stringify({
+      session_id: sessionId,
+      assignment_id: binding.assignment_id,
+      assignment_run_id: binding.run_id,
+      assignment_generation: binding.generation,
       model: "gpt-5.6-luna",
       reasoning_effort: "max",
       input: "sensitive prompt that must not be returned"

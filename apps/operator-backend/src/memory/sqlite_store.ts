@@ -397,6 +397,26 @@ export function upsertStepPlanned(sessionId: string, messageId: string, userText
   }
 }
 
+export function getPersistedPlannedAction(sessionId: string, actionId: string): unknown | null {
+  const d = openDb();
+  if (!d || !sessionId.trim() || !actionId.trim()) return null;
+  const row = d.prepare(
+    `SELECT s.planned_actions_json
+       FROM action_map a
+       JOIN steps s ON s.session_id=a.session_id AND s.message_id=a.message_id
+      WHERE a.action_id=? AND a.session_id=?`
+  ).get(actionId.trim(), sessionId.trim());
+  if (typeof row?.planned_actions_json !== "string") return null;
+  try {
+    const actions = JSON.parse(row.planned_actions_json);
+    return Array.isArray(actions)
+      ? actions.find(value => value && typeof value === "object" && (value as any).action_id === actionId.trim()) ?? null
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export function attachToolResultToPlannedStep(sessionId: string, toolResult: unknown): void {
   const d = openDb();
   if (!d) return;

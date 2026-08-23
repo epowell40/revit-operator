@@ -15,6 +15,38 @@ export function benchmarkDataRoot(): string {
   return path.join(backendRoot(), "benchmark");
 }
 
+/** Every enclosing Git checkout/worktree that owns backend source. */
+export function sourceControlledRoots(start = backendRoot()): string[] {
+  const roots: string[] = [];
+  let current = path.resolve(start);
+  for (;;) {
+    if (fs.existsSync(path.join(current, ".git"))) roots.push(fs.realpathSync.native(current));
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return [...new Set(roots.map(root => path.normalize(root)))];
+}
+
+/** Canonicalize existing paths and the nearest existing parent of new output. */
+export function canonicalContainmentPath(candidate: string): string {
+  const absolute = path.resolve(candidate);
+  let existing = absolute;
+  const suffix: string[] = [];
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) return absolute;
+    suffix.unshift(path.basename(existing));
+    existing = parent;
+  }
+  return path.resolve(fs.realpathSync.native(existing), ...suffix);
+}
+
+export function pathIsWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(canonicalContainmentPath(root), canonicalContainmentPath(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
 export function ensureDir(dirPath: string): string {
   fs.mkdirSync(dirPath, { recursive: true });
   return dirPath;
@@ -29,9 +61,19 @@ export function writeJsonFile(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
 }
 
+export function writeJsonFileNew(filePath: string, value: unknown): void {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, JSON.stringify(value, null, 2) + "\n", { encoding: "utf8", flag: "wx" });
+}
+
 export function writeTextFile(filePath: string, value: string): void {
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, value, "utf8");
+}
+
+export function writeTextFileNew(filePath: string, value: string): void {
+  ensureDir(path.dirname(filePath));
+  fs.writeFileSync(filePath, value, { encoding: "utf8", flag: "wx" });
 }
 
 export function appendJsonl(filePath: string, value: unknown): void {

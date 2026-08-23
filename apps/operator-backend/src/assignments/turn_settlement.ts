@@ -269,6 +269,33 @@ export function settleAssignmentReportedBlocked(
   return { projection, accepted: projection.terminal_state === "blocked", reason: projection.terminal_reason ?? "outer_execution_stopped_without_effect" };
 }
 
+export function settleAssignmentProviderFailure(
+  sessionId: string,
+  assignmentId: string,
+  runId: string,
+  generation: number,
+  reason: string
+): AssignmentReportedTerminalSettlement {
+  const state = current(sessionId);
+  if (!state || state.projection.assignment_id !== assignmentId || state.projection.run_id !== runId
+      || state.projection.generation !== generation) {
+    return { projection: state?.projection ?? null, accepted: false, reason: "stale_or_unbound_provider_failure" };
+  }
+  if (state.projection.terminal_state !== "open") {
+    return { projection: state.projection, accepted: false, reason: `assignment_terminal:${state.projection.terminal_state}` };
+  }
+  const unresolved = state.projection.unresolved_unknown_attempt_ids.length > 0;
+  const applied = state.projection.attempts.some(attempt => attempt.effect.state === "applied");
+  const terminalReason = unresolved
+    ? `provider_failure_with_unknown_effect:${reason}`
+    : applied ? `provider_failure_after_apply_verification_incomplete:${reason}`
+      : `provider_failure_no_continuation:${reason}`;
+  const projection = append(state.projection, "assignment_terminal", null, {
+    terminal_state: "failed", reason: terminalReason.slice(0, 1000)
+  }, { assignmentId, runId, generation, terminalReason });
+  return { projection, accepted: projection.terminal_state === "failed", reason: projection.terminal_reason ?? terminalReason };
+}
+
 function progressSnapshot(input: AssignmentProgressInput): Record<string, unknown> {
   return {
     grounded_targets: input.grounded_targets,

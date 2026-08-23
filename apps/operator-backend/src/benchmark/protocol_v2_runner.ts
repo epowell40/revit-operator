@@ -1,5 +1,6 @@
+import fs from "node:fs";
 import path from "node:path";
-import { readJsonFile } from "./files.js";
+import { ensureDir, readJsonFile, writeJsonFileNew } from "./files.js";
 import {
   generalRevitExecutionCase,
   type GeneralRevitCapabilityCase
@@ -7,9 +8,12 @@ import {
 import { buildBenchmarkCaseResultV2 } from "./protocol_v2_case.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "./protocol_v2_envelope.js";
 import { sha256File, sha256Value } from "./protocol_v2_hash.js";
+import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
+import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
 import type {
   BenchmarkLaneV2,
+  BenchmarkFinalizationFailureV2,
   BenchmarkRawReportV2,
   BenchmarkRunEnvelopeDraftV2,
   BenchmarkRunEnvelopeV2
@@ -65,7 +69,77 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     if (evaluation.dispatched === true && records(trace.tool_calls).length === 0) {
       throw new Error(`Benchmark Protocol V2 has incomplete dispatched-action receipts for ${caseId}.`);
     }
+    const packetBundle = record(toolResults.durable_work_packets);
+    const packets = records(packetBundle.packets);
+    if (packetBundle.schema !== "revit-operator.benchmark-work-packets/v1" || packets.length === 0
+        || packets.some(packet => !String(packet.packet_id || "").trim() || !String(packet.packet_hash || "").trim())) {
+      throw new Error(`Benchmark Protocol V2 is missing a complete Verified Work Packet for ${caseId}.`);
+    }
   }
+}
+
+function finalizationFailureDetails(message: string): {
+  code: string; stage: string; missing: string[]; telemetry: BenchmarkFinalizationFailureV2["telemetry_completeness"];
+} {
+  if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
+  if (/Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "complete" };
+  if (/Revit receipts|action-attempt receipt|dispatched-action receipts/i.test(message)) return { code: "missing_revit_receipt", stage: "revit_receipts", missing: ["revit_receipt"], telemetry: "complete" };
+  if (/manifest|corpus hash|case .*hash|ENOENT/i.test(message)) return { code: "path_or_manifest_resolution_failure", stage: "bound_inputs", missing: ["bound_manifest"], telemetry: "collection_failed" };
+  if (/evaluator|oracle/i.test(message)) return { code: "evaluator_exception", stage: "evaluation", missing: [], telemetry: "complete" };
+  return { code: "finalization_exception", stage: "finalization", missing: [], telemetry: "collection_failed" };
+}
+
+function bestEffortFailureArtifact(args: {
+  error: unknown;
+  draftPath: string;
+  retainedDraftPath: string;
+  legacyReportPath: string;
+  legacyReport: JsonRecord | null;
+  draft: BenchmarkRunEnvelopeDraftV2 | null;
+  outputPath: string;
+}): BenchmarkFinalizationFailureV2 {
+  const message = args.error instanceof Error ? args.error.message : String(args.error);
+  const details = finalizationFailureDetails(message);
+  const traces = records(args.legacyReport?.task_traces);
+  const generated: string[] = [];
+  const missing: string[] = [];
+  const caseStageVectors = traces.map(trace => {
+    const caseId = String(trace.case_id || "");
+    const packets = records(record(record(trace.tool_results).durable_work_packets).packets);
+    (packets.length > 0 ? generated : missing).push(caseId);
+    const stages = records(record(trace.protocol_v2_partial).stages);
+    return {
+      case_id: caseId,
+      stages,
+      first_failed_or_uncertain_stage: String(record(trace.protocol_v2_partial).first_failed_or_uncertain_stage || "").trim() || null
+    };
+  });
+  const base = {
+    schema: BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA,
+    finalization_status: "failed" as const,
+    promotion_eligible: false as const,
+    failure_code: details.code,
+    failing_stage: details.stage,
+    missing_receipt_classes: details.missing,
+    conflicting_receipt_classes: /conflict|quarantin/i.test(message) ? ["conflicting_or_quarantined_receipt"] : [],
+    source_flight: {
+      ref: path.resolve(args.legacyReportPath),
+      sha256: fs.existsSync(args.legacyReportPath) ? sha256File(args.legacyReportPath) : null,
+      run_id: String(args.legacyReport?.run_id || "").trim() || null
+    },
+    envelope_draft: {
+      ref: fs.existsSync(args.retainedDraftPath) ? path.resolve(args.retainedDraftPath) : path.resolve(args.draftPath),
+      sha256: fs.existsSync(args.retainedDraftPath) ? sha256File(args.retainedDraftPath)
+        : fs.existsSync(args.draftPath) ? sha256File(args.draftPath) : null
+    },
+    evaluator_version: args.draft?.evaluator_version ?? null,
+    case_stage_vectors: caseStageVectors,
+    work_packets: { generated_case_ids: [...new Set(generated)], missing_case_ids: [...new Set(missing)] },
+    telemetry_completeness: details.telemetry,
+    error: message.slice(0, 2_000),
+    generated_at: new Date().toISOString()
+  };
+  return { ...base, artifact_sha256: sha256Value(base) };
 }
 
 export function buildProtocolV2ReportFromFlight(args: {
@@ -126,19 +200,39 @@ export function writeProtocolV2ReportFromFlight(args: {
   originalManifestPath?: string;
   requireCompleteReceipts?: boolean;
 }): { report: BenchmarkRawReportV2; json_path: string; markdown_path: string } {
-  const draft = loadBenchmarkRunEnvelopeDraftV2(args.draftPath);
-  const legacyReport = readJsonFile<JsonRecord>(path.resolve(args.legacyReportPath));
-  const report = buildProtocolV2ReportFromFlight({
-    draft,
-    legacyReport,
-    legacyReportRef: args.legacyReportPath,
-    cases: args.cases,
-    corpusValue: args.corpusValue,
-    originalManifestPath: args.originalManifestPath,
-    requireCompleteReceipts: args.requireCompleteReceipts
-  });
-  const written = writeBenchmarkRawReportV2(path.resolve(args.outputPath), report);
-  return { report, ...written };
+  const outputPath = path.resolve(args.outputPath);
+  const outputDir = ensureDir(path.dirname(outputPath));
+  const retainedDraftPath = path.join(outputDir, "envelope-draft.json");
+  const failurePath = path.join(outputDir, "finalization-failure.json");
+  let draft: BenchmarkRunEnvelopeDraftV2 | null = null;
+  let legacyReport: JsonRecord | null = null;
+  try {
+    if (fs.existsSync(retainedDraftPath)) throw new Error(`Immutable envelope draft already exists: ${retainedDraftPath}`);
+    fs.copyFileSync(path.resolve(args.draftPath), retainedDraftPath, fs.constants.COPYFILE_EXCL);
+    draft = loadBenchmarkRunEnvelopeDraftV2(retainedDraftPath);
+    legacyReport = readJsonFile<JsonRecord>(path.resolve(args.legacyReportPath));
+    const report = buildProtocolV2ReportFromFlight({
+      draft,
+      legacyReport,
+      legacyReportRef: args.legacyReportPath,
+      cases: args.cases,
+      corpusValue: args.corpusValue,
+      originalManifestPath: args.originalManifestPath,
+      requireCompleteReceipts: args.requireCompleteReceipts
+    });
+    const written = writeBenchmarkRawReportV2(outputPath, report);
+    return { report, ...written };
+  } catch (error) {
+    const failure = bestEffortFailureArtifact({
+      error, draftPath: args.draftPath, retainedDraftPath, legacyReportPath: args.legacyReportPath,
+      legacyReport, draft, outputPath
+    });
+    validateBenchmarkProtocolV2Contract("finalization_failure", failure);
+    try { writeJsonFileNew(failurePath, failure); } catch (publicationError) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; immutable failure publication failed: ${publicationError instanceof Error ? publicationError.message : String(publicationError)}`);
+    }
+    throw error;
+  }
 }
 
 export function protocolLaneFromFlags(args: { apply: boolean; controlled: boolean; ambient: boolean }): BenchmarkLaneV2 {
