@@ -689,6 +689,7 @@ function requiresOperatorToken(pathname: string): boolean {
     pathname === "/voice/speak" ||
     pathname === "/desktop/computer/config" ||
     pathname === "/desktop/computer/respond" ||
+    pathname.startsWith("/evidence/") ||
     pathname === "/attachments/upload" ||
     pathname === "/api/agent-goal" ||
     pathname.startsWith("/api/agent-goal/") ||
