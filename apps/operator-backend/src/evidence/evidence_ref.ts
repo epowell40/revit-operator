@@ -129,4 +129,3 @@ export type EvidenceTelemetryEventV1 = {
   budget_events: number;
   estimated_model_tokens_avoided: number | null;
 };
-

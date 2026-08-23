@@ -130,4 +130,3 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
   if (projected_bytes > maxBytes) throw new Error(`Evidence projection cannot fit configured ${maxBytes}-byte item budget.`);
   return { ...candidate, projected_bytes };
 }
-

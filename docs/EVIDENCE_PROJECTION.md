@@ -63,4 +63,3 @@ duplicate bytes avoided, focused expansions, budget events, and estimated
 token avoidance per session/Assignment/model call where those identities are
 available. Aggregation reports the largest evidence producers. Telemetry is
 observability only and cannot establish effect or verification truth.
-
