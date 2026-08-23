@@ -428,7 +428,7 @@
     },
     {
       "path": "apps/operator-backend/package.json",
-      "sha256": "sha256:4b5ce7ed1c37889a027d214c813e46f3f711378d6a568d80e1079464f6b9dccc"
+      "sha256": "sha256:bafe30969c2608b431e1ee9c8e2bf9dbeff0755f1ad263d91d3c0e4bfa3e0394"
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
@@ -633,6 +633,58 @@
     {
       "path": "apps/operator-backend/src/benchmark/prompts.ts",
       "sha256": "sha256:e64827d3eb2e3b013888550b9ff025b7350acb49f36374aa7c665a3ae795b20f"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_canary.ts",
+      "sha256": "sha256:87df27ef89120892d7ff7821d2e85c5ff1eacbea89d992092aff7186adb8cc79"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_case.ts",
+      "sha256": "sha256:a6730b3b789e70fba0007a655bd833cb10d966a63e14a08424e86697f9f4a073"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_compare.ts",
+      "sha256": "sha256:cb59759d841c1603b3b87c43a0fe332d1ab4830034083c41479c828b68831f4f"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_envelope.ts",
+      "sha256": "sha256:ca1ec7902beea5035f3ed0a31fef3c9ebe45863be9da4ba18b2f876dba060c72"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_general_revit.ts",
+      "sha256": "sha256:81b171a9a264ce8482148711380ffc44c468b64ed64e6e135ce10600369f839b"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_hash.ts",
+      "sha256": "sha256:125c801ebc12be2cb7bf909b77d9cab70f6b73cea6640aab6c7e1e01b34f7b83"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_holdout.ts",
+      "sha256": "sha256:3da42c9c04239ba620c216d5f5b618faf43cfd32de7f9eed454efad42b4d3a4b"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_maintenance.ts",
+      "sha256": "sha256:1f6d3b6f384cf6ab3eec0905eee8cb84ea90b14b5a88c695661f7715cbfb9fc2"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_report.ts",
+      "sha256": "sha256:bbd824d345f868e10f9af2a6271dcb5ba3f9abda02ec4f11ad38e9dff480279f"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_rescore.ts",
+      "sha256": "sha256:38b38db49771acd4b51e024ffeef597ab9bfd5a33c66ee8fb7e0eccfe2e525f2"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
+      "sha256": "sha256:5a4321a666d3829724f4ac603451974590783ad319dbefa159b65cdfeac27c24"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
+      "sha256": "sha256:0a0454653fe69748abcc0b10f868b1ddc6675453c3eb0fdf32d33f87d8d3fea1"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_types.ts",
+      "sha256": "sha256:451666527ec43386925918d3b6220a5d3f4df858108538e3619240dbb32bdf59"
     },
     {
       "path": "apps/operator-backend/src/benchmark/redline_add_family_instance_hydration.ts",
@@ -2124,6 +2176,10 @@
       "sha256": "sha256:71137b5c69445187bc1cebd6c7598ef6aca9c1bb704219fb4d7ffe90332bc807"
     },
     {
+      "path": "apps/operator-backend/src/tools/benchmark_protocol_v2.ts",
+      "sha256": "sha256:6bc3f5b27b4599cf9ffdaf94d9365451139217ac8e813f85d2946873bd355a82"
+    },
+    {
       "path": "apps/operator-backend/src/tools/build_redline_review_pack.ts",
       "sha256": "sha256:b3e49082ddb447d2283958be55152abfe6fc9650d89fb00067a685b81dfc5e0a"
     },
@@ -2177,7 +2233,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:dfbed39d5dcdfa994ae5955fe07c57efeade23b756d6d7f45244802750b80ea3"
+      "sha256": "sha256:4c1f6366f8dcf7b5bfbff57e75722157a986eeffc8f6e839984d8d00ab3c7359"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2418,6 +2474,10 @@
     {
       "path": "apps/operator-backend/test/benchmark_loaders.test.ts",
       "sha256": "sha256:72bdfe260967b1f3ad6f695174babe543a0cc667118cfabe86201be72be41d8a"
+    },
+    {
+      "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
+      "sha256": "sha256:adc718aa91f24d20007e13b33a51b19d283bd9d6ff16dc700d4cc94efcd7cd8b"
     },
     {
       "path": "apps/operator-backend/test/benchmark_report.test.ts",
@@ -2897,7 +2957,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:1fa6f8155979ed9ad2a47cee8981a3be56b3d8e8acc95202e0357e943cb39f84"
+      "sha256": "sha256:0d626fbd8b934c339c782aa75926633bbc1563584db2bd5c0bf31faa659a0a37"
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_report.test.ts",
@@ -5321,7 +5381,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:4f26319e485fb5ebad2f11caf5193ff9d4d3d932102d9bd4b81bb0e94830fbd5",
+  "inputs_hash": "sha256:d2620c00ac2587e5426347487adb94679cde82a6a509a6f23deb70859ce97c71",
   "result": {
     "passed": true,
     "checks": [

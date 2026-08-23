@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.com/schemas/benchmark_rescore.v2.schema.json",
+  "title": "Benchmark Protocol V2 immutable rescore",
+  "type": "object",
+  "required": ["schema", "source_report_ref", "source_report_sha256", "source_run_id", "evaluator_version", "rescored_at", "cases", "verdict_changes", "rescore_sha256"],
+  "properties": {
+    "schema": { "const": "revit-operator.benchmark-rescore/v2" },
+    "source_report_ref": { "type": "string", "minLength": 1 },
+    "source_report_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "source_run_id": { "type": "string", "minLength": 1 },
+    "evaluator_version": { "type": "string", "minLength": 1 },
+    "rescored_at": { "type": "string", "minLength": 1 },
+    "cases": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+    "verdict_changes": { "type": "array", "items": { "type": "object", "required": ["case_id", "original_verdict", "current_verdict", "explanation"], "properties": { "case_id": { "type": "string", "minLength": 1 }, "original_verdict": { "type": "string", "minLength": 1 }, "current_verdict": { "type": "string", "minLength": 1 }, "explanation": { "type": "string", "minLength": 1 } }, "additionalProperties": false } },
+    "rescore_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+  },
+  "additionalProperties": false
+}
