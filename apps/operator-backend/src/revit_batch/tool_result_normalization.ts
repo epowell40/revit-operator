@@ -3,6 +3,7 @@ import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import type { ActionCall, ToolResult } from "../contracts.js";
 import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
+import { getPersistedPlannedAction } from "../memory/sqlite_store.js";
 
 const MAX_SESSIONS = 200;
 const MAX_ACTIONS_PER_SESSION = 1_000;
@@ -25,6 +26,7 @@ function canonicalPlannedAction(value: unknown): ActionCall | null {
     method,
     path: actionPath,
     ...(Object.prototype.hasOwnProperty.call(row, "body") ? { body: row.body } : {}),
+    ...(row.request_effect === "read" || row.request_effect === "preview" || row.request_effect === "apply" ? { request_effect: row.request_effect } : {}),
     ...(typeof row.assignment_id === "string" ? { assignment_id: clipped(row.assignment_id, 240) } : {}),
     ...(typeof row.attempt_id === "string" ? { attempt_id: clipped(row.attempt_id, 240) } : {}),
     ...(typeof row.assignment_run_id === "string" ? { assignment_run_id: clipped(row.assignment_run_id, 240) } : {}),
@@ -66,6 +68,7 @@ export function registerServerPlannedActions(sessionIdValue: unknown, actions: u
 }
 
 function plannedRequestEffect(action: ActionCall): NonNullable<ToolResult["request_effect"]> {
+  if (action.request_effect === "read" || action.request_effect === "preview" || action.request_effect === "apply") return action.request_effect;
   if (action.method === "GET") return "read";
   const conditional = conditionalActionPathEffect(action.path, action.body);
   if (conditional) return conditional;
@@ -99,7 +102,7 @@ export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unk
     if (typeof row.path !== "string" || !row.path.trim()) continue;
     if (row.status !== "done" && row.status !== "failed") continue;
 
-    const serverAction = planned?.get(actionId);
+    const serverAction = planned?.get(actionId) ?? canonicalPlannedAction(getPersistedPlannedAction(sessionId, actionId));
     let method = row.method as "GET" | "POST";
     let actionPath = row.path.trim();
     let requestEffect: ToolResult["request_effect"];
@@ -125,6 +128,11 @@ export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unk
       method,
       path: actionPath,
       ...(requestEffect ? { request_effect: requestEffect } : {}),
+      ...(serverAction?.assignment_id ? { assignment_id: serverAction.assignment_id } : {}),
+      ...(serverAction?.assignment_run_id ? { assignment_run_id: serverAction.assignment_run_id } : {}),
+      ...(serverAction?.assignment_generation !== undefined ? { assignment_generation: serverAction.assignment_generation } : {}),
+      ...(serverAction?.action_signature ? { action_signature: serverAction.action_signature } : {}),
+      ...(serverAction?.target_fingerprint ? { target_fingerprint: serverAction.target_fingerprint } : {}),
       status: row.outcome_unknown === true ? "failed" : row.status,
       ...(typeof row.request_dispatched === "boolean" ? { request_dispatched: row.request_dispatched } : {}),
       ...(typeof row.outcome_unknown === "boolean" ? { outcome_unknown: row.outcome_unknown } : {}),

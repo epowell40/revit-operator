@@ -959,6 +959,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     assignmentId: z.string().nullable().optional(),
     runId: z.string().nullable().optional(),
     attemptId: z.string().nullable().optional(),
+    generation: z.number().int().min(0).nullable().optional(),
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
     fields: z.array(z.string()).max(64).optional(),
     itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).optional(),
@@ -976,7 +977,8 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
           session_id: args.sessionId,
           assignment_id: args.assignmentId ?? null,
           run_id: args.runId ?? null,
-          attempt_id: args.attemptId ?? null
+          attempt_id: args.attemptId ?? null,
+          generation: args.generation ?? null
         },
         purpose: args.purpose,
         ...(args.fields ? { fields: args.fields } : {}),

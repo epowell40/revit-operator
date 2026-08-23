@@ -1297,6 +1297,101 @@ test("host-owned web evidence reads bypass the unknown Revit contract documentat
   }
 });
 
+test("bounded EvidenceRef retrieval is a first-class non-Revit read with no tool-doc dependency", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(
+    "Count all air devices and expand the retained authoritative inventory evidence. Do not edit the model."
+  ));
+  const retrieval = {
+    tool: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: "ev1_0123456789abcdefghijklmnopqrstuv",
+      sessionId: "session-q01",
+      assignmentId: "assignment-q01",
+      runId: "run-q01",
+      purpose: "Read the seven family/type counts needed for the inventory answer.",
+      fields: ["__proto__"],
+      maxBytes: 8192
+    }
+  };
+  try {
+    const first = guardTeammateMcpCall(owner, retrieval);
+    assert.equal(first.allowed, true);
+    assert.equal(first.call?.effect, "evidence_read");
+    recordTeammateMcpResult(owner, first, {
+      content: [{ type: "text", text: JSON.stringify({ ok: false, error: "unsafe field selector" }) }]
+    });
+
+    const corrected = guardTeammateMcpCall(owner, {
+      ...retrieval,
+      arguments: {
+        ...retrieval.arguments,
+        fields: ["count", "groups"]
+      }
+    });
+    assert.equal(corrected.allowed, true);
+    assert.equal(corrected.call?.effect, "evidence_read");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("retained evidence stays readable after Revit context loss and cannot verify a fresh mutation", () => {
+  __testOnlyResetTeammateLoopState();
+  const disconnectedOwner = {};
+  const disconnectedRequest = request("Inspect the retained inventory evidence without reconnecting to Revit.");
+  disconnectedRequest.context = {};
+  const disconnectedLease = beginTeammateLoopOwner(disconnectedOwner, disconnectedRequest);
+  try {
+    const admitted = guardTeammateMcpCall(disconnectedOwner, {
+      tool: "operator_retrieve_evidence",
+      arguments: {
+        evidenceId: "ev1_0123456789abcdefghijklmnopqrstuv", sessionId: "session-1",
+        assignmentId: "assignment-1", runId: "run-1", generation: 1,
+        purpose: "Read the retained count.", fields: ["count"], maxBytes: 1024
+      }
+    });
+    assert.equal(admitted.allowed, true);
+    assert.equal(admitted.call?.effect, "evidence_read");
+  } finally {
+    endTeammateLoopOwner(disconnectedLease);
+  }
+
+  const mutationOwner = {};
+  const mutationLease = beginTeammateLoopOwner(mutationOwner, request("Set element 42 Manufacturer to WATTS and verify it."));
+  try {
+    const apply = guardTeammateMcpCall(mutationOwner, {
+      tool: "revit_set_parameters",
+      arguments: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(mutationOwner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42] }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(mutationOwner)?.verified, false);
+
+    const retrieval = guardTeammateMcpCall(mutationOwner, {
+      tool: "operator_retrieve_evidence",
+      arguments: {
+        evidenceId: "ev1_0123456789abcdefghijklmnopqrstuv", sessionId: "session-1",
+        assignmentId: "assignment-1", runId: "run-1", generation: 1,
+        purpose: "Inspect an older retained value.", fields: ["elementIds", "values"], maxBytes: 2048
+      }
+    });
+    assert.equal(retrieval.allowed, true);
+    recordTeammateMcpResult(mutationOwner, retrieval, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+    });
+    const receipt = teammateLoopReceiptForOwner(mutationOwner);
+    assert.equal(receipt?.verified, false);
+    assert.deepEqual(receipt?.verification_action_ids, []);
+  } finally {
+    endTeammateLoopOwner(mutationLease);
+  }
+});
+
 test("Revit document lifecycle commands authorize execution without treating no-element-edit wording as read-only", () => {
   const inspectOpenModel = buildTeammateTurnContract(request(
     "Inspect the open Revit model and count all HVAC air terminal diffusers."

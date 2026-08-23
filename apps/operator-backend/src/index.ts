@@ -152,13 +152,14 @@ import {
   updateGoal
 } from "./goals/service.js";
 import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
-import { startAutoGoalIfEligible } from "./goals/auto_goal_start.js";
 import { handleAssignmentHttpRoute } from "./assignments/http_routes.js";
 import {
   ensureAssignmentRunForTurn,
-  journalAssignmentActions,
-  journalAssignmentToolResults
+  journalAssignmentActions
 } from "./assignments/turn_journal.js";
+import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.js";
+import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
+import { prepareAssignmentTurn } from "./assignments/turn_preparation.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1778,6 +1779,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/desktop/computer/respond") {
       try {
         const body = await readJson(req, 30_000_000);
+        const bound = requireProviderAssignmentBinding(body, "desktop_computer");
+        if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
         const response = await relayDesktopComputerResponse(body);
         return writeJson(res, 200, { ok: true, response });
       } catch (err) {
@@ -2087,7 +2090,15 @@ const server = http.createServer(async (req, res) => {
         return res.end("Provide user_text or tool_results");
       }
 
-      prepareAssignmentTurn(parsed.session_id, parsed.message_id, userTextWithAttachments, toolResults, "stream", auth.principal, canonicalRequest.context);
+      const owner = sessionOwnerForPrincipal(auth.principal);
+      const assignmentBinding = prepareAssignmentTurn({
+        sessionId: parsed.session_id, messageId: parsed.message_id, userText: userTextWithAttachments,
+        toolResults, source: "stream", createdBy: owner?.owner_user_id ?? null,
+        requestContext: canonicalRequest.context, suppliedBinding: parsed,
+        onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
+          goal_id: goal.id, status: goal.status, signals
+        })
+      });
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2344,6 +2355,12 @@ const server = http.createServer(async (req, res) => {
           heartbeat = null;
         }
         if (streamAbort.signal.aborted || streamClosed) {
+          if (assignmentBinding) {
+            settleAssignmentProviderFailure(
+              parsed.session_id, assignmentBinding.assignmentId, assignmentBinding.runId,
+              assignmentBinding.generation, "provider_turn_interrupted_or_stream_closed"
+            );
+          }
           try {
             persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
             setStepStopReason(parsed.session_id as any, parsed.message_id as any, "USER_CANCELLED");
@@ -2451,7 +2468,15 @@ const server = http.createServer(async (req, res) => {
         return writeJson(res, 400, { error: "Provide user_text or tool_results" });
       }
 
-      prepareAssignmentTurn(parsed.session_id, parsed.message_id, userTextWithAttachments, toolResults, "chat", auth.principal, parsed.context);
+      const owner = sessionOwnerForPrincipal(auth.principal);
+      const assignmentBinding = prepareAssignmentTurn({
+        sessionId: parsed.session_id, messageId: parsed.message_id, userText: userTextWithAttachments,
+        toolResults, source: "chat", createdBy: owner?.owner_user_id ?? null,
+        requestContext: parsed.context, suppliedBinding: parsed,
+        onGoalStarted: (goal, signals) => appendNotification(String(parsed.session_id), "goal.auto_started", `Goal mode started: ${goal.title}`, {
+          goal_id: goal.id, status: goal.status, signals
+        })
+      });
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2659,6 +2684,12 @@ const server = http.createServer(async (req, res) => {
         return resp;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
+        if (assignmentBinding) {
+          settleAssignmentProviderFailure(
+            parsed.session_id, assignmentBinding.assignmentId, assignmentBinding.runId,
+            assignmentBinding.generation, message
+          );
+        }
         try {
           appendEvent(parsed.session_id, "assistant", "backend.error", {
             message_id: parsed.message_id,
@@ -3411,7 +3442,13 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, r.ok ? 200 : 400, r);
     }
 
-    if (req.method === "POST" && url.pathname === "/tools/aec/task-intent") { const r = await resolveAecTaskIntentHttp(await readJson(req)); return writeJson(res, r.status, r.body); }
+    if (req.method === "POST" && url.pathname === "/tools/aec/task-intent") {
+      const body = await readJson(req);
+      const bound = requireProviderAssignmentBinding(body, "semantic_task_intent");
+      if (!sessionAccessAllowed(res, bound.sessionId, auth.principal)) return;
+      const r = await resolveAecTaskIntentHttp(body);
+      return writeJson(res, r.status, r.body);
+    }
     if (req.method === "POST" && url.pathname === "/tools/mep/semantic-route-plan") {
       const body = await readJson(req);
       const parsed = body as any;
@@ -3997,31 +4034,6 @@ function appendAttachmentsToUserText(userText: string, attachments: NonNullable<
   if (!block) return t;
   if (!t) return block;
   return `${t}\n\n${block}`;
-}
-
-function prepareAssignmentTurn(
-  sessionId: string,
-  messageId: string,
-  userText: string,
-  toolResults: ToolResult[],
-  source: string,
-  principal?: RequestPrincipal,
-  requestContext?: unknown
-): void {
-  try {
-    const owner = sessionOwnerForPrincipal(principal);
-    startAutoGoalIfEligible({
-      session_id: sessionId, user_text: userText, tool_result_count: toolResults.length,
-      source, created_by: owner?.owner_user_id ?? null, request_context: requestContext,
-      on_started: (goal, signals) => appendNotification(sessionId, "goal.auto_started", `Goal mode started: ${goal.title}`, {
-        goal_id: goal.id, status: goal.status, signals
-      })
-    });
-    ensureAssignmentRunForTurn(sessionId, `chat:${messageId}`, `outer_${source}`, toolResults.length === 0 && !!userText.trim());
-    journalAssignmentToolResults(sessionId, toolResults, `outer_${source}_result`);
-  } catch {
-    // Assignment journaling is fail-safe and must not block the user turn.
-  }
 }
 
 function appendToolFailureEvent(sessionId: string, messageId: string, r: ToolResult): void {

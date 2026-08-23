@@ -413,6 +413,40 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
   };
   assert.equal(sidecarStart.assignment_run.run_id, "sidecar-run-alice");
   assert.equal(sidecarStart.assignment_run.generation, 1);
+  const boundChat = await fetch(`${base}/chat`, {
+    method: "POST",
+    headers: headers(aliceAuth),
+    body: JSON.stringify({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sidecarSession,
+      message_id: "sidecar-bound-r01",
+      user_text: "Replace the outdated selected note with the current issue wording without creating a duplicate.",
+      assignment_id: sidecarStart.assignment_run.assignment_id,
+      assignment_run_id: sidecarStart.assignment_run.run_id,
+      assignment_generation: sidecarStart.assignment_run.generation
+    })
+  });
+  assert.equal(boundChat.status, 200);
+  const sidecarGoalsResponse = await fetch(`${base}/api/goals?session_id=${encodeURIComponent(sidecarSession)}`, {
+    headers: { authorization: aliceAuth }
+  });
+  const sidecarGoals = (await sidecarGoalsResponse.json() as { goals: Array<{ id: string }> }).goals;
+  assert.deepEqual(sidecarGoals.map(goal => goal.id), [sidecarStart.assignment_run.assignment_id]);
+  const staleBoundChat = await fetch(`${base}/chat`, {
+    method: "POST",
+    headers: headers(aliceAuth),
+    body: JSON.stringify({
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sidecarSession,
+      message_id: "sidecar-stale-r01",
+      user_text: "Continue the same Revit note edit.",
+      assignment_id: sidecarStart.assignment_run.assignment_id,
+      assignment_run_id: sidecarStart.assignment_run.run_id,
+      assignment_generation: sidecarStart.assignment_run.generation + 1
+    })
+  });
+  assert.equal(staleBoundChat.status, 500);
+  assert.match(JSON.stringify(await staleBoundChat.json()), /assignment_binding_stale_or_mismatched/);
   const bobSidecarSettlement = await fetch(`${base}/api/agent-goal/sidecar-settle`, {
     method: "POST",
     headers: headers(bobAuth),

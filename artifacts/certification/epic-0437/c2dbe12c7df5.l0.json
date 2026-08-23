@@ -332,7 +332,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:94db5dc54a41768a2da8e6c85d25cc69cc47f9d7155c21673ebf76f9a6ea77f3"
+      "sha256": "sha256:da441e73561c5e9ef7d678532b1b3a6d43ff8c01ed9fbaf800ab38c03b0743d2"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -432,7 +432,7 @@
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
-      "sha256": "sha256:958ef41ce5c3400f9dae1b0784f1ec0cce4bd7fbffa39f9cc471b533b9f5505c"
+      "sha256": "sha256:26031d68d99656d5de29ced3d1902e664c446581b77e5fba947efadef9caf15e"
     },
     {
       "path": "apps/operator-backend/src/aec_intent_evidence.ts",
@@ -491,20 +491,32 @@
       "sha256": "sha256:fe06ffeb2dbf7ac1e9283b017ef81c478ad75881a3c9d64203bd9f8f6e4cde49"
     },
     {
+      "path": "apps/operator-backend/src/assignments/model_call_budget.ts",
+      "sha256": "sha256:08b4a40ddf436a3c013e2fc7b44b89ffd9fe5130517ac006950a6f3db14dc015"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/native_attempt_settlement.ts",
-      "sha256": "sha256:f126fe6ab845820101aa5e854fe6831a514900b0fab9bf9b16da675405a4fee7"
+      "sha256": "sha256:bfc87e246b71bd56d67cc296a56fac9cb7e48f3ef8a9ac3c25402e6cb90cce9b"
     },
     {
       "path": "apps/operator-backend/src/assignments/projection.ts",
       "sha256": "sha256:034afc640b6b5ec94d2429361436df483eae2209b642f34e199e336f51189518"
     },
     {
+      "path": "apps/operator-backend/src/assignments/provider_binding.ts",
+      "sha256": "sha256:d2545ffbe348a5499e6c68be35380938674773e8a9368d22fd06e33dc6c23111"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/turn_journal.ts",
-      "sha256": "sha256:08c72e10041fa10927b2dd11536af1d0ae2e0c88da5117ed0c73be82160ae612"
+      "sha256": "sha256:40221df6bf2cda4af62805fb5918b69bfd53e0d2e298ef539376f7855bcaa09e"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/turn_preparation.ts",
+      "sha256": "sha256:4cb46663ab764ec63e73a86bada6e9fc359f8a8612b46a820eca10b87cda4ac3"
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_settlement.ts",
-      "sha256": "sha256:5a37e342f1148a462508d5d79748c80fa47f4c78734a9e63e03f4f8379d057ef"
+      "sha256": "sha256:7b79d4e2e136cf6d3088f6e9f236daf5be92702e5a7e5adc9a79f677fd982291"
     },
     {
       "path": "apps/operator-backend/src/attachments/extract.ts",
@@ -588,7 +600,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/files.ts",
-      "sha256": "sha256:3ba1e4fea6707100e046b39569471b6a43bded82df437796a773edbeec7e82c1"
+      "sha256": "sha256:b628ee094b51df03eae9631da0491adcc60ae6a500bfea9860bf9cfd523ff24f"
     },
     {
       "path": "apps/operator-backend/src/benchmark/filter_rule_types.ts",
@@ -656,7 +668,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_general_revit.ts",
-      "sha256": "sha256:81b171a9a264ce8482148711380ffc44c468b64ed64e6e135ce10600369f839b"
+      "sha256": "sha256:e8d5c23ec3b31f4931330109e1b26b306ff0a8e1f84745663da18029a2e36d93"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_hash.ts",
@@ -664,7 +676,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_holdout.ts",
-      "sha256": "sha256:3da42c9c04239ba620c216d5f5b618faf43cfd32de7f9eed454efad42b4d3a4b"
+      "sha256": "sha256:be207363270bd0e8b5f9572adb6e59751bb7e5789223420167fcecd2de03de87"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_maintenance.ts",
@@ -672,7 +684,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_report.ts",
-      "sha256": "sha256:bbd824d345f868e10f9af2a6271dcb5ba3f9abda02ec4f11ad38e9dff480279f"
+      "sha256": "sha256:566ac04a1a39c1eefb5ba826db6711e6e37288535f80313bd94bc14984ead7d8"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_rescore.ts",
@@ -680,15 +692,15 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:5a4321a666d3829724f4ac603451974590783ad319dbefa159b65cdfeac27c24"
+      "sha256": "sha256:e01f8cfc88288364842ab4132e58e0dde494ce741d3b46a4fe2e565744f2da31"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
-      "sha256": "sha256:0a0454653fe69748abcc0b10f868b1ddc6675453c3eb0fdf32d33f87d8d3fea1"
+      "sha256": "sha256:6c5f99f25cb2d55b10e216eb5de555255b38629fe0b79ed208edd6e41940ea42"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_types.ts",
-      "sha256": "sha256:451666527ec43386925918d3b6220a5d3f4df858108538e3619240dbb32bdf59"
+      "sha256": "sha256:bf6c88eb16d3c448183d690935379ffd1916fcb230a8d1ff8f2351ffbb69f196"
     },
     {
       "path": "apps/operator-backend/src/benchmark/redline_add_family_instance_hydration.ts",
@@ -799,6 +811,10 @@
       "sha256": "sha256:8051c13e4381cc8fdd0e597bbe98aaa167dcbdbc3295046e948bd9e3fc4ffa15"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/work_packet_collection.ts",
+      "sha256": "sha256:5c5bf1dd8ef4a6f7af3889c5d44c830de5d6b7e88273fe1a8d11c77ccb682b41"
+    },
+    {
       "path": "apps/operator-backend/src/brain.ts",
       "sha256": "sha256:cdebe8ed20ed4d0ece67df03d94910a4337e6232e4af9f46d859008a88b5857d"
     },
@@ -808,7 +824,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:dfb2960ae2b13ddb671e8601ab6bb825bf2e41144aa73c23db7d2f301c428d8b"
+      "sha256": "sha256:f6d1bd99b4eb8a8abf005f25bed3540f7ec8b536ab486a1bf979da29c817c7e0"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -828,7 +844,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_model_telemetry.ts",
-      "sha256": "sha256:d598c88482d8e8778bdf4d36cd96351e6b5425152f475a698d2c8c128b1b609c"
+      "sha256": "sha256:63360098086fe3335b6209defd15e09ebddec8fa7463e1421bea57c8ae8eb100"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_turn_profile.ts",
@@ -1389,7 +1405,7 @@
     },
     {
       "path": "apps/operator-backend/src/contracts.ts",
-      "sha256": "sha256:52c68de72b2ea64a9d497b4239625217e0c69168546d487b8a6504d4febd4b33"
+      "sha256": "sha256:423255e0df03739fe2c0ce472cf53cfaf0de06a9c2698eaf8cf1836355d3b219"
     },
     {
       "path": "apps/operator-backend/src/courier/active_job_index.ts",
@@ -1561,15 +1577,15 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_projection.ts",
-      "sha256": "sha256:c037f0809efdc6d9f5b67d2c3f2e10b7a570d26b8ee310865782dbecfd25a877"
+      "sha256": "sha256:c69435e03eed7f4bc7d517d74725e8ae90b7e9f68b4409d1e0abd72e40336784"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_ref.ts",
-      "sha256": "sha256:a10c482b762e92431c2607a816db1bfd6086e376f0327a1586cfdf45b2e7a202"
+      "sha256": "sha256:f825ca1925233e39d7f00f0a60f873e7718168c0becf6e5f31af5ded01b72ac6"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_store.ts",
-      "sha256": "sha256:accd1c2828488882dcbfa14cde8aee19302d29fc2b3340b870c551ca02941f2a"
+      "sha256": "sha256:fa340bf7499e4184314e042293c60fb23f0f4b03d588a60258493d316d54516b"
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
@@ -1873,7 +1889,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
-      "sha256": "sha256:11f0523acb8aac4202d16e9c7734849960ca908f638ce15129a4d4cfe5d56448"
+      "sha256": "sha256:0b40792e7b526e4bc6b1c19f881cce93853cb7986bbd2de403652938e9795598"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_start.ts",
@@ -1929,7 +1945,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:dc570854168ddef7a40f30761c6fbfb835177b08f7d17dde9ed3353964d6d262"
+      "sha256": "sha256:ac376fea70708792637bdd4e0b2cbb9f69476f7d91a625110c893c16436cca58"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -1981,7 +1997,7 @@
     },
     {
       "path": "apps/operator-backend/src/memory/sqlite_store.ts",
-      "sha256": "sha256:1d8dbd98fa24b0c4fa333cb73e9fa691e967c7dcd89d8c3dafe0e7773e3151e4"
+      "sha256": "sha256:7dd3fec66fe9a2f0be6dace37887dedc8d03e9c2a7cff78018a85e57765900b5"
     },
     {
       "path": "apps/operator-backend/src/model_call_telemetry.ts",
@@ -2109,7 +2125,7 @@
     },
     {
       "path": "apps/operator-backend/src/revit_batch/tool_result_normalization.ts",
-      "sha256": "sha256:5480debebd79454c07735ed8503d32b1a1d0ff6c69d053a364c8455b4f27294b"
+      "sha256": "sha256:9d61bfdafead23c739cc970b53d21c5203163f3c62f42b3058d8cce9c485c427"
     },
     {
       "path": "apps/operator-backend/src/revit_context_policy.ts",
@@ -2173,7 +2189,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_attempt_budget.ts",
-      "sha256": "sha256:a0aab55e310264ae97fe716d94d93f0aea3899c9af2afd1563c9c91d1ccd8c18"
+      "sha256": "sha256:dc865d25db17fb22b0a1022132aa72070154f9d203e1a9ce458eec09956b4452"
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_receipt.ts",
@@ -2181,7 +2197,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:8721d01128647e22c91dc9675ca6919d285213e960872549392452fbff8ec628"
+      "sha256": "sha256:98e1c60c67cfe8f16853ef571e0efc898a323e16563d890ac367e007d84c5fc6"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -2205,7 +2221,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/benchmark_protocol_v2.ts",
-      "sha256": "sha256:6bc3f5b27b4599cf9ffdaf94d9365451139217ac8e813f85d2946873bd355a82"
+      "sha256": "sha256:51fd803e3086e8b41c1e6c313cb735fd0f20bb4c91b22615e737f72873a7cfaf"
     },
     {
       "path": "apps/operator-backend/src/tools/build_redline_review_pack.ts",
@@ -2261,7 +2277,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:4c1f6366f8dcf7b5bfbff57e75722157a986eeffc8f6e839984d8d00ab3c7359"
+      "sha256": "sha256:ced7a1f028be5f580ccd1ff0ce1885b58d48f6c6f9f6f3d34336c04c04998022"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2493,11 +2509,11 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_turn_journal.test.ts",
-      "sha256": "sha256:f202a386e46d943020e4d5781b86587942475e31a891b7d90896442bc5393dc8"
+      "sha256": "sha256:49b7fe50b820a7d6d0c32e2c53fe53fad417d06ae2dd72297e99b831d1ccac3e"
     },
     {
       "path": "apps/operator-backend/test/assignment_turn_settlement.test.ts",
-      "sha256": "sha256:f8692897644ac8b5d7ecfc9dffed73af8fd7fad43053ede22428846db1f5354d"
+      "sha256": "sha256:511d1157ed19a89e020f8e5ac9ca95be44db1b3c75ee116d66556625d30c4fb9"
     },
     {
       "path": "apps/operator-backend/test/attachment_upload_request.test.ts",
@@ -2525,7 +2541,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:adc718aa91f24d20007e13b33a51b19d283bd9d6ff16dc700d4cc94efcd7cd8b"
+      "sha256": "sha256:873eb0a4cca5c00500a484fa1d8e88d7f5005b6eefa33d0aec68648e16a9d4fa"
     },
     {
       "path": "apps/operator-backend/test/benchmark_report.test.ts",
@@ -2581,7 +2597,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:373b5ac948b16c09971159a1ab5c5aa08de9ab753a4b937340f019b30d322f7c"
+      "sha256": "sha256:a7a91075faf7aba32f2164c0e4b70ad62610c3ee235730b195bb709919e717ac"
     },
     {
       "path": "apps/operator-backend/test/deterministic_raster_registration.test.ts",
@@ -2645,7 +2661,7 @@
     },
     {
       "path": "apps/operator-backend/test/evidence_projection.test.ts",
-      "sha256": "sha256:21f806ee85aef24c17f3efebfea57346df426fc377ec2a46cc117f7927e9977b"
+      "sha256": "sha256:ca47b619f4057d97e0e516fd7b64b5da6046f17c9ab50c6c419a9c6ecfc54dfc"
     },
     {
       "path": "apps/operator-backend/test/execution_strategy.test.ts",
@@ -3029,7 +3045,7 @@
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
-      "sha256": "sha256:ed3cddc495e696f75d2b759a036955b55480d871e0a217d7983d77b37451b401"
+      "sha256": "sha256:12f8e3e4823fbf569f6c5118afd670bf4cca478252bb756fc0b2d06efc716b4c"
     },
     {
       "path": "apps/operator-backend/test/goals_service.test.ts",
@@ -3317,7 +3333,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:1139bfa33ad88386716414d8e99c475bd9a42c20fde1bc73f55f26446194924b"
+      "sha256": "sha256:74ae18bc2144f3cadb8a39127e9a1e489451c22c9516006f48f534057b455fe1"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -5441,7 +5457,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:6ebdaf011675e9045f6c11473f6c91cd610808bee0e85affd901143e59279231",
+  "inputs_hash": "sha256:8940e2593bdb62ea4aa6e219e7b9d5e408efc13217d467ffb96663c545d4395a",
   "result": {
     "passed": true,
     "checks": [

@@ -307,6 +307,7 @@ function assertScope(ref: EvidenceRefV1, request: EvidenceRetrievalRequest): voi
   if (ref.assignment_id !== assignmentId) throw new Error("Evidence is outside the requested Assignment scope.");
   if (request.scope.run_id != null && ref.run_id !== scopePart(request.scope.run_id, "scope.run_id")) throw new Error("Evidence is outside the requested run scope.");
   if (request.scope.attempt_id != null && ref.attempt_id !== scopePart(request.scope.attempt_id, "scope.attempt_id")) throw new Error("Evidence is outside the requested attempt scope.");
+  if (request.scope.generation != null && ref.generation !== request.scope.generation) throw new Error("Evidence is outside the requested Assignment generation.");
 }
 
 function readSettledEvidenceBytes(ref: EvidenceRefV1): Buffer {

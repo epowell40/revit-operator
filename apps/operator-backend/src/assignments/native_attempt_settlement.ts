@@ -1,4 +1,5 @@
 import type { AssignmentEffectAuthority, AssignmentRequestedEffect } from "./control_plane.js";
+import { canonicalRevitActionPath } from "../action_path_mutability.js";
 
 export const NATIVE_ATTEMPT_SETTLEMENT_SCHEMA = "revit-operator.native-attempt-settlement.v1" as const;
 
@@ -117,7 +118,7 @@ export function nativeSettlementMatchesAttempt(input: {
     && (settlement.generation === null || settlement.generation === input.generation)
     && settlement.requested_effect === input.requested_effect
     && (!settlement.method || settlement.method === input.method.toUpperCase())
-    && (!settlement.path || settlement.path === input.path)
+    && (!settlement.path || canonicalRevitActionPath(settlement.path) === canonicalRevitActionPath(input.path))
     && (!settlement.action_signature || settlement.action_signature === input.action_signature)
     && (!settlement.target_fingerprint || settlement.target_fingerprint === input.target_fingerprint);
 }

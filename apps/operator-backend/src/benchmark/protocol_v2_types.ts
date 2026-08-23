@@ -5,6 +5,7 @@ export const BENCHMARK_RAW_REPORT_V2_SCHEMA = "revit-operator.benchmark-raw-repo
 export const BENCHMARK_RESCORE_V2_SCHEMA = "revit-operator.benchmark-rescore/v2" as const;
 export const BENCHMARK_RUNNER_V2 = "revit-operator.benchmark-runner/v2" as const;
 export const BENCHMARK_REPORT_V2 = "revit-operator.benchmark-report/v2" as const;
+export const BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA = "revit-operator.benchmark-finalization-failure/v2" as const;
 export const GENERAL_REVIT_EVALUATOR_V2 = "revit-operator.general-revit-evaluator/v2" as const;
 
 export const BENCHMARK_LANES = [
@@ -187,6 +188,25 @@ export type BenchmarkRawReportV2 = {
   cases: BenchmarkCaseResultV2[];
   generated_at: string;
   report_sha256: string;
+};
+
+export type BenchmarkFinalizationFailureV2 = {
+  schema: typeof BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA;
+  finalization_status: "failed";
+  promotion_eligible: false;
+  failure_code: string;
+  failing_stage: string;
+  missing_receipt_classes: string[];
+  conflicting_receipt_classes: string[];
+  source_flight: { ref: string; sha256: string | null; run_id: string | null };
+  envelope_draft: { ref: string; sha256: string | null };
+  evaluator_version: string | null;
+  case_stage_vectors: Array<{ case_id: string; stages: unknown[]; first_failed_or_uncertain_stage: string | null }>;
+  work_packets: { generated_case_ids: string[]; missing_case_ids: string[] };
+  telemetry_completeness: "complete" | "provider_contract_unobservable" | "collection_failed" | "missing" | "conflicting_or_quarantined";
+  error: string;
+  generated_at: string;
+  artifact_sha256: string;
 };
 
 export type BenchmarkVerdictChangeV2 = {

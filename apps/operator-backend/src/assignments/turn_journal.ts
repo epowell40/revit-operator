@@ -172,8 +172,10 @@ export function journalAssignmentActions(sessionId: string, actions: readonly Ac
   const documentFingerprint = goal?.work_budget?.document_fingerprint ?? null;
   for (const action of actions) {
     const effect = actionEffect(action);
-    const signature = assignmentActionSignature({ requested_effect: effect, action_path: action.path, tool_identity: "outer_action", request: action.body ?? null });
-    const target = targetFingerprint(action, documentFingerprint);
+    const signature = action.action_signature?.trim() || assignmentActionSignature({
+      requested_effect: effect, action_path: action.path, tool_identity: "outer_action", request: action.body ?? null
+    });
+    const target = action.target_fingerprint?.trim() || targetFingerprint(action, documentFingerprint);
     action.request_effect = effect;
     action.assignment_id = context.assignmentId;
     action.attempt_id = action.action_id;
@@ -228,8 +230,68 @@ function preDispatchAuthority(result: ToolResult): "schema_validator" | "write_g
   return "transport_pre_dispatch";
 }
 
-function recoveredAction(context: JournalContext, result: ToolResult): ActionCall {
-  return { action_id: result.action_id, method: result.method, path: result.path };
+function resultBindingMatches(context: JournalContext, result: ToolResult): boolean {
+  return (!result.assignment_id || result.assignment_id === context.assignmentId)
+    && (!result.assignment_run_id || result.assignment_run_id === context.runId)
+    && (result.assignment_generation === undefined || result.assignment_generation === context.generation);
+}
+
+export function assignmentRunForBinding(
+  sessionId: string,
+  assignmentId: string,
+  runId: string,
+  generation: number
+): JournalContext | null {
+  const context = currentContext(sessionId);
+  if (!context || context.assignmentId !== assignmentId || context.runId !== runId
+      || context.generation !== generation || context.projection.terminal_state !== "open") return null;
+  return context;
+}
+
+function settlementBindingMatches(context: JournalContext, settlement: NonNullable<ReturnType<typeof parseNativeAttemptSettlement>>): boolean {
+  return (!settlement.assignment_id || settlement.assignment_id === context.assignmentId)
+    && (!settlement.run_id || settlement.run_id === context.runId)
+    && (settlement.generation === null || settlement.generation === context.generation);
+}
+
+function recoveredAction(
+  context: JournalContext,
+  result: ToolResult,
+  nativeSettlement: ReturnType<typeof parseNativeAttemptSettlement>
+): ActionCall {
+  if (nativeSettlement && settlementBindingMatches(context, nativeSettlement)) {
+    return {
+      action_id: nativeSettlement.attempt_id || result.action_id,
+      method: nativeSettlement.method === "GET" ? "GET" : result.method,
+      path: nativeSettlement.path || result.path,
+      request_effect: nativeSettlement.requested_effect,
+      assignment_id: nativeSettlement.assignment_id || context.assignmentId,
+      assignment_run_id: nativeSettlement.run_id || context.runId,
+      assignment_generation: nativeSettlement.generation ?? context.generation,
+      ...(nativeSettlement.action_signature ? { action_signature: nativeSettlement.action_signature } : {}),
+      ...(nativeSettlement.target_fingerprint ? { target_fingerprint: nativeSettlement.target_fingerprint } : {})
+    };
+  }
+  return {
+    action_id: result.action_id,
+    method: result.method,
+    path: result.path,
+    ...(result.request_effect ? { request_effect: result.request_effect } : {}),
+    ...(result.assignment_id ? { assignment_id: result.assignment_id } : {}),
+    ...(result.assignment_run_id ? { assignment_run_id: result.assignment_run_id } : {}),
+    ...(result.assignment_generation !== undefined ? { assignment_generation: result.assignment_generation } : {}),
+    ...(result.action_signature ? { action_signature: result.action_signature } : {}),
+    ...(result.target_fingerprint ? { target_fingerprint: result.target_fingerprint } : {})
+  };
+}
+
+function quarantineResult(context: JournalContext, result: ToolResult, actor: string, reason: string): void {
+  appendAssignmentEvent(context.assignmentId, canonicalEvent(context, "dispatch_recorded", `quarantine:${result.action_id}:${reason}`, `${actor}:quarantine`, {
+    dispatch_state: "failed",
+    dispatch_id: result.action_id,
+    dispatch_may_have_occurred: result.request_dispatched === true,
+    reason
+  }, { result, quarantine_reason: reason }));
 }
 
 export function journalAssignmentToolResults(
@@ -241,13 +303,41 @@ export function journalAssignmentToolResults(
   let context = currentContext(sessionId);
   if (!context) return null;
   for (const result of results) {
-    let attempt = context.projection.attempts.find(candidate => candidate.attempt_id === result.action_id);
-    if (!attempt) {
-      journalAssignmentActions(sessionId, [recoveredAction(context, result)], `${actor}:recovered_action`);
+    const nativeSettlement = parseNativeAttemptSettlement(result.result_json);
+    if (!resultBindingMatches(context, result)) {
+      quarantineResult(context, result, actor, "tool_result_assignment_binding_mismatch");
       context = currentContext(sessionId) ?? context;
-      attempt = context.projection.attempts.find(candidate => candidate.attempt_id === result.action_id);
+      continue;
+    }
+    if (nativeSettlement && !settlementBindingMatches(context, nativeSettlement)) {
+      quarantineResult(context, result, actor, "native_settlement_assignment_binding_mismatch");
+      context = currentContext(sessionId) ?? context;
+      continue;
+    }
+    let attempt = context.projection.attempts.find(candidate => candidate.attempt_id === result.action_id);
+    const canonicalAttemptId = attempt?.attempt_id || nativeSettlement?.attempt_id || result.action_id;
+    if (!attempt) attempt = context.projection.attempts.find(candidate => candidate.attempt_id === canonicalAttemptId);
+    if (!attempt) {
+      journalAssignmentActions(sessionId, [recoveredAction(context, result, nativeSettlement)], `${actor}:recovered_action`);
+      context = currentContext(sessionId) ?? context;
+      attempt = context.projection.attempts.find(candidate => candidate.attempt_id === canonicalAttemptId);
     }
     if (!attempt) continue;
+    if (nativeSettlement?.attempt_id && nativeSettlement.attempt_id !== attempt.attempt_id) {
+      quarantineResult(context, result, actor, "native_settlement_attempt_binding_conflict");
+      context = currentContext(sessionId) ?? context;
+    }
+    if (nativeSettlement && nativeSettlement.requested_effect !== attempt.requested_effect) {
+      quarantineResult(context, result, actor, "native_settlement_requested_effect_conflict");
+      context = currentContext(sessionId) ?? context;
+      continue;
+    }
+    if (result.request_effect && result.request_effect !== attempt.requested_effect) {
+      // Preserve the lower-authority contradiction without allowing it to
+      // rewrite the original planned action or a bound native settlement.
+      quarantineResult(context, result, actor, "tool_result_requested_effect_conflict_ignored");
+      context = currentContext(sessionId) ?? context;
+    }
     const attemptContext: JournalContext = {
       ...context,
       runId: attempt.run_id,
@@ -259,7 +349,6 @@ export function journalAssignmentToolResults(
       reconciliation_required: result.reconciliation_required,
       result: result.result_json
     });
-    const nativeSettlement = parseNativeAttemptSettlement(result.result_json);
     const trustedNativeSettlement = options.trustNativeSettlement !== false && nativeSettlement && nativeSettlementMatchesAttempt({
       settlement: nativeSettlement,
       assignment_id: context.assignmentId,
@@ -268,7 +357,7 @@ export function journalAssignmentToolResults(
       generation: attempt.generation,
       requested_effect: attempt.requested_effect,
       method: result.method,
-      path: result.path,
+      path: attempt.action_path,
       action_signature: attempt.action_signature,
       target_fingerprint: attempt.target_fingerprint
     }) ? nativeSettlement : null;
@@ -278,15 +367,15 @@ export function journalAssignmentToolResults(
     const mayHaveDispatched = trustedNativeSettlement
       ? trustedNativeSettlement.request_dispatched
       : result.request_dispatched === true || envelope.request_dispatched_true || result.status === "done";
-    const dispatch = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "dispatch_recorded", result.action_id, actor, {
+    const dispatch = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "dispatch_recorded", attempt.attempt_id, actor, {
       dispatch_state: didNotDispatch ? "not_dispatched" : mayHaveDispatched ? "acknowledged" : "failed",
       dispatch_id: result.action_id,
       dispatch_may_have_occurred: !didNotDispatch && (mayHaveDispatched || result.outcome_unknown === true),
       reason: result.error ?? result.failure_code ?? (result.status === "done" ? "tool_result_returned" : "tool_result_failed")
-    }, result));
+    }, { result, canonical_attempt_id: attempt.attempt_id }));
     context = { ...context, projection: dispatch.projection };
     if (trustedNativeSettlement) {
-      const nativeEffect = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", result.action_id, actor, {
+      const nativeEffect = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", attempt.attempt_id, actor, {
         effect_state: trustedNativeSettlement.effect_state,
         effect_authority: trustedNativeSettlement.effect_authority,
         reason: trustedNativeSettlement.effect_reason,
@@ -299,7 +388,7 @@ export function journalAssignmentToolResults(
       continue;
     }
     if (didNotDispatch) {
-      const rejected = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", result.action_id, actor, {
+      const rejected = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", attempt.attempt_id, actor, {
         effect_state: "none", effect_authority: preDispatchAuthority(result),
         reason: result.failure_code ?? result.failure_kind ?? result.error ?? "rejected_before_dispatch",
         receipt_refs: [receiptRef(result)]
@@ -313,7 +402,7 @@ export function journalAssignmentToolResults(
     const effectState = uncertain || (requestedEffect !== "read" && mayHaveDispatched)
       ? "unknown"
       : "none";
-    const effect = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", result.action_id, actor, {
+    const effect = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", attempt.attempt_id, actor, {
       effect_state: effectState,
       effect_authority: effectState === "unknown" ? "caller_report" : "admission_policy",
       reason: effectState === "unknown"
@@ -326,7 +415,11 @@ export function journalAssignmentToolResults(
   return context.projection;
 }
 
-function observationAction(observation: AutoGoalToolObservation, actionId: string): ActionCall | null {
+function observationAction(
+  observation: AutoGoalToolObservation,
+  actionId: string,
+  requestedEffect?: AssignmentRequestedEffect
+): ActionCall | null {
   const server = `${observation.server ?? ""}`.trim().toLowerCase();
   const tool = observation.tool.trim().toLowerCase();
   if (server !== "revit_operator" && !server.startsWith("mcp__revit_operator")
@@ -336,17 +429,18 @@ function observationAction(observation: AutoGoalToolObservation, actionId: strin
     const path = `${args.path ?? ""}`.trim();
     if (!path.startsWith("/revit/")) return null;
     const method = `${args.method ?? "POST"}`.trim().toUpperCase() === "GET" ? "GET" : "POST";
-    return { action_id: actionId, method, path, ...(args.body === undefined ? {} : { body: args.body }) };
+    return { action_id: actionId, method, path, ...(args.body === undefined ? {} : { body: args.body }), ...(requestedEffect ? { request_effect: requestedEffect } : {}) };
   }
   if (tool === "run_dynamic_revit_program") {
-    return { action_id: actionId, method: "POST", path: "/revit/dynamic-program", body: args };
+    return { action_id: actionId, method: "POST", path: "/revit/dynamic-program", body: args, ...(requestedEffect ? { request_effect: requestedEffect } : {}) };
   }
   if (!/^revit_[a-z0-9_]+$/.test(tool)) return null;
   return {
     action_id: actionId,
     method: "POST",
     path: `/revit/${tool.slice("revit_".length).replaceAll("_", "-")}`,
-    body: args
+    body: args,
+    ...(requestedEffect ? { request_effect: requestedEffect } : {})
   };
 }
 
@@ -355,11 +449,12 @@ export function journalAssignmentToolObservation(
   sessionId: string,
   observation: AutoGoalToolObservation,
   actor: string,
-  actionId: string
+  actionId: string,
+  requestedEffect?: AssignmentRequestedEffect
 ): AssignmentControlPlaneProjection | null {
   const nativeAttemptId = parseNativeAttemptSettlement(observation.result ?? observation.output)?.attempt_id;
   const canonicalActionId = nativeAttemptId || actionId;
-  const action = observationAction(observation, canonicalActionId);
+  const action = observationAction(observation, canonicalActionId, requestedEffect);
   if (!action) return currentContext(sessionId)?.projection ?? null;
   journalAssignmentActions(sessionId, [action], actor);
   const envelope = classifyOutcomeEnvelope(observation.result ?? observation.output);

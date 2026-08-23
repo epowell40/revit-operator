@@ -7,6 +7,7 @@ import path from "node:path";
 import { createGoal } from "../src/goals/service.js";
 import { ensureAssignmentRunForTurn, journalAssignmentActions, journalAssignmentToolResults } from "../src/assignments/turn_journal.js";
 import { recordAssignmentTurnProgress, settleAssignmentTurn } from "../src/assignments/turn_settlement.js";
+import { assignmentModelReceiptObserver } from "../src/assignments/model_call_budget.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -138,5 +139,24 @@ test("production turn watchdog diagnoses, switches, then terminates repeated no 
     const terminal = recordAssignmentTurnProgress("settlement-session", "turn-4");
     assert.equal(terminal?.progress.decision, "terminate");
     assert.equal(terminal?.terminal_state, "blocked");
+  });
+});
+
+test("nested provider receipts share the Assignment watchdog budget", () => {
+  workspace(() => {
+    goal("read");
+    let terminal = 0;
+    const observe = assignmentModelReceiptObserver("settlement-session", () => { terminal += 1; });
+    for (let index = 0; index < 4; index += 1) {
+      observe({
+        schema: "revit-operator.model-call-receipt.v1", call_id: `nested-${index}`,
+        provider: "openai", route: index % 2 === 0 ? "desktop_computer" : "codex_agent",
+        requested_model: "gpt-5.6-sol", model: "gpt-5.6-sol", reasoning_effort: "medium",
+        started_at_utc: new Date().toISOString(), duration_ms: 1, success: true,
+        response_status: "200", error_code: null,
+        tokens: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 2 }
+      });
+    }
+    assert.equal(terminal, 1);
   });
 });

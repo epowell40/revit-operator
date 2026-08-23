@@ -12,9 +12,7 @@ import {
   type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
-import {
-  generalRevitFixtureForCase
-} from "../benchmark/general_revit_sample_fixtures.js";
+import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
 import { settleTimedOutComputerRun } from "../benchmark/computer_run_settlement.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
@@ -29,6 +27,7 @@ import { aggregateModelCallReceipts, modelCallReceiptsFromSources, modelCallRece
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
 import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
@@ -40,7 +39,6 @@ import {
 } from "../benchmark/general_revit_trace_reporting.js";
 
 type JsonRecord = Record<string, unknown>;
-
 const SMOKE_CASE_IDS = new Set([
   "q01_air_device_inventory",
   "b07_grounded_equipment_rename",
@@ -749,6 +747,7 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       : Promise.resolve({ ok: false, error: "Computer run did not expose a backend session id." }))
       .catch((error) => ({ ok: false, error: String(error) }))
   ]);
+  const durableWorkPackets = await loadVerifiedWorkPackets(baseUrl, assignmentProjection, requestJson);
   const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
   const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
     session_id: sessionId,
@@ -808,6 +807,7 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       reconciliation_required: attempt.reconciliation_required === true,
       durable_assignment_projection: assignmentProjection,
       durable_tool_evidence: durableToolEvidence,
+      durable_work_packets: durableWorkPackets,
       raw_sidecar_response_sha256: sha256(evaluatedAttempt),
       raw_sidecar_response: evaluatedAttempt
     },

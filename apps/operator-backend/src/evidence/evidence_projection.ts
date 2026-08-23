@@ -105,6 +105,7 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     assignment_id: ref.assignment_id,
     run_id: ref.run_id,
     attempt_id: ref.attempt_id,
+    generation: ref.generation,
     target_scope: [...new Set([...ref.target_scope, ...extracted.targets])].slice(0, 32),
     key_counts: extracted.counts,
     key_facts: { ...ref.key_typed_facts, ...extracted.facts },
@@ -114,6 +115,11 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     artifact_ref: ref.evidence_id,
     verification_relevance: ref.verification_relevance,
     additional_evidence: true,
+    retrieval: {
+      tool_name: "operator_retrieve_evidence",
+      selector_forms: ["fields", "itemRange", "textRange", "targetSubset", "image"],
+      max_bytes: 1_048_576
+    },
     truncated: extracted.omitted
   } satisfies Omit<EvidenceProjectionV1, "projected_bytes">;
   let candidate: Omit<EvidenceProjectionV1, "projected_bytes"> = base;

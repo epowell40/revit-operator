@@ -14,11 +14,16 @@ import { assertReleaseCanaryInvocationV2, RELEASE_CANARY_CASE_IDS_V2, selectRele
 import { compareBenchmarkExactRerunsV2 } from "../src/benchmark/protocol_v2_compare.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "../src/benchmark/protocol_v2_envelope.js";
 import { loadExternalHiddenHoldoutV2, redactedExternalHoldoutDescriptorV2 } from "../src/benchmark/protocol_v2_holdout.js";
-import { assertGeneralRevitProtocolOutputV2, loadGeneralRevitProtocolInputsV2 } from "../src/benchmark/protocol_v2_general_revit.js";
+import {
+  assertGeneralRevitProtocolOutputV2,
+  generalRevitProtocolManifestPathV2,
+  loadGeneralRevitProtocolInputsV2
+} from "../src/benchmark/protocol_v2_general_revit.js";
+import { backendRoot, benchmarkDataRoot, pathIsWithin, sourceControlledRoots } from "../src/benchmark/files.js";
 import { sha256File, sha256Value } from "../src/benchmark/protocol_v2_hash.js";
 import { validateBenchmarkRepairCohortV2 } from "../src/benchmark/protocol_v2_maintenance.js";
 import { buildBenchmarkRawReportV2, summarizeBenchmarkLanesV2, writeBenchmarkRawReportV2 } from "../src/benchmark/protocol_v2_report.js";
-import { assertCompleteProtocolV2Receipts } from "../src/benchmark/protocol_v2_runner.js";
+import { assertCompleteProtocolV2Receipts, writeProtocolV2ReportFromFlight } from "../src/benchmark/protocol_v2_runner.js";
 import { buildBenchmarkRescoreV2, writeBenchmarkRescoreV2 } from "../src/benchmark/protocol_v2_rescore.js";
 import { validateBenchmarkProtocolV2Contract } from "../src/benchmark/protocol_v2_schema.js";
 import {
@@ -133,6 +138,15 @@ function traceFor(testCase: GeneralRevitCapabilityCase, args: {
     durable_tool_evidence: { assignments: [] }
   };
   const evaluation = args.evaluation ?? evaluateGeneralRevitCapabilityAttempt(testCase, raw);
+  const durableEvidence = {
+    schema: "revit-operator.benchmark-durable-tool-evidence/v1",
+    canonical_attempt_receipts: [{ attempt_id: "attempt-1", requested_effect: testCase.expected_effect }]
+  };
+  const durableWorkPackets = {
+    schema: "revit-operator.benchmark-work-packets/v1",
+    packets: [{ packet_id: "packet-1", packet_hash: sha256Value({ packet: 1 }) }],
+    failures: []
+  };
   return {
     schema: "revit-operator.task-trace/v1",
     case_id: testCase.case_id,
@@ -147,7 +161,8 @@ function traceFor(testCase: GeneralRevitCapabilityCase, args: {
       raw_sidecar_response_sha256: sha256Value(raw),
       raw_sidecar_response: raw,
       durable_assignment_projection: projection,
-      durable_tool_evidence: { assignments: [] }
+      durable_tool_evidence: durableEvidence,
+      durable_work_packets: durableWorkPackets
     },
     errors_retries_recoveries: { error: null },
     verification_results: { evaluation },
@@ -178,6 +193,106 @@ test("new Protocol V2 runs refuse to overwrite retained legacy or V2 raw evidenc
   fs.writeFileSync(output, "{}", "utf8");
   assert.throws(() => assertGeneralRevitProtocolOutputV2(inputs, output, true), /refuses to overwrite/);
   assert.doesNotThrow(() => assertGeneralRevitProtocolOutputV2(inputs, output, false));
+});
+
+test("ordinary Protocol V2 manifest is backend-owned in compiled public layout", () => {
+  const inputs = loadGeneralRevitProtocolInputsV2("");
+  const expected = path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json");
+  const actual = generalRevitProtocolManifestPathV2(inputs);
+  assert.equal(actual, expected);
+  assert.equal(fs.existsSync(actual), true);
+  assert.doesNotMatch(actual.replaceAll("\\", "/"), /\/apps\/apps\/operator-backend\//);
+  const roots = sourceControlledRoots();
+  assert.ok(roots.some(root => pathIsWithin(backendRoot(), root) && fs.existsSync(path.join(root, ".git"))));
+  assert.throws(() => loadExternalHiddenHoldoutV2({
+    manifestPath: path.join(roots[0]!, "docs", "ARCHITECTURE.md"), forbiddenSourceRoots: roots
+  }), /must remain external/);
+});
+
+test("failed Protocol V2 finalization publishes one immutable auditable failure artifact", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "benchmark-v2-finalization-failure-"));
+  const testCase = benchmarkCase();
+  const draftPath = path.join(tmp, "draft.json");
+  const legacyPath = path.join(tmp, "legacy.json");
+  const outputPath = path.join(tmp, "protocol-v2", "raw-report.json");
+  fs.writeFileSync(draftPath, JSON.stringify(envelopeDraft(testCase)), "utf8");
+  fs.writeFileSync(legacyPath, JSON.stringify({
+    run_id: "run-v2", generated_at: FINISH, suite_timing: { finished_at_utc: FINISH },
+    model_call_telemetry: { by_route_model_effort: [{ route: "codex_agent", model: "gpt-5.6-sol", reasoning_effort: "medium", call_count: 1 }] },
+    model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
+    task_traces: [traceFor(testCase)]
+  }), "utf8");
+  assert.throws(() => writeProtocolV2ReportFromFlight({
+    draftPath, legacyReportPath: legacyPath, outputPath, cases: [testCase]
+  }), /incomplete provider telemetry/);
+  const failurePath = path.join(path.dirname(outputPath), "finalization-failure.json");
+  assert.equal(fs.existsSync(outputPath), false);
+  assert.equal(fs.existsSync(failurePath), true);
+  const failure = JSON.parse(fs.readFileSync(failurePath, "utf8"));
+  validateBenchmarkProtocolV2Contract("finalization_failure", failure);
+  assert.equal(failure.finalization_status, "failed");
+  assert.equal(failure.promotion_eligible, false);
+  assert.equal(failure.failure_code, "missing_provider_receipt");
+  assert.equal(failure.source_flight.sha256, sha256File(legacyPath));
+  assert.throws(() => writeProtocolV2ReportFromFlight({
+    draftPath, legacyReportPath: legacyPath, outputPath, cases: [testCase]
+  }), /immutable failure publication failed|Immutable envelope draft already exists/);
+  assert.equal(JSON.parse(fs.readFileSync(failurePath, "utf8")).artifact_sha256, failure.artifact_sha256);
+});
+
+test("Protocol V2 preserves typed failure artifacts and a timeout with recovered receipts can finalize", () => {
+  const testCase = benchmarkCase();
+  const publish = (name: string, mutate: (legacy: any, draft: any) => void) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `benchmark-v2-${name}-`));
+    const draft = envelopeDraft(testCase) as any;
+    const legacy: any = {
+      run_id: "run-v2", generated_at: FINISH, suite_timing: { finished_at_utc: FINISH },
+      model_call_telemetry: { by_route_model_effort: [{ route: "codex_agent", model: "gpt-5.6-sol", reasoning_effort: "medium", call_count: 1 }] },
+      model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+      task_traces: [traceFor(testCase)]
+    };
+    mutate(legacy, draft);
+    const draftPath = path.join(tmp, "draft.json");
+    const legacyPath = path.join(tmp, "legacy.json");
+    const outputPath = path.join(tmp, "out", "raw-report.json");
+    fs.writeFileSync(draftPath, JSON.stringify(draft), "utf8");
+    fs.writeFileSync(legacyPath, JSON.stringify(legacy), "utf8");
+    return { draftPath, legacyPath, outputPath };
+  };
+  const failures: Array<[string, (legacy: any, draft: any) => void, string]> = [
+    ["revit", legacy => { legacy.task_traces[0].tool_results.durable_tool_evidence = {}; }, "missing_revit_receipt"],
+    ["packet", legacy => { legacy.task_traces[0].tool_results.durable_work_packets = { schema: "revit-operator.benchmark-work-packets/v1", packets: [], failures: [{ error: "blocked" }] }; }, "incomplete_work_packet"],
+    ["evaluator", (_legacy, draft) => { draft.evaluator_version = ""; }, "evaluator_exception"]
+  ];
+  for (const [name, mutate, expectedCode] of failures) {
+    const value = publish(name, mutate);
+    assert.throws(() => writeProtocolV2ReportFromFlight({
+      draftPath: value.draftPath, legacyReportPath: value.legacyPath, outputPath: value.outputPath, cases: [testCase]
+    }));
+    const failure = JSON.parse(fs.readFileSync(path.join(path.dirname(value.outputPath), "finalization-failure.json"), "utf8"));
+    assert.equal(failure.failure_code, expectedCode);
+    assert.equal(failure.promotion_eligible, false);
+  }
+  const missingPath = publish("path", () => {});
+  fs.rmSync(missingPath.draftPath);
+  assert.throws(() => writeProtocolV2ReportFromFlight({
+    draftPath: missingPath.draftPath, legacyReportPath: missingPath.legacyPath,
+    outputPath: missingPath.outputPath, cases: [testCase]
+  }));
+  const pathFailure = JSON.parse(fs.readFileSync(path.join(path.dirname(missingPath.outputPath), "finalization-failure.json"), "utf8"));
+  assert.equal(pathFailure.failure_code, "path_or_manifest_resolution_failure");
+
+  const recovered = publish("timeout-recovered", legacy => {
+    legacy.task_traces[0].errors_retries_recoveries = {
+      error: "provider_timeout", recovered_receipts: ["provider", "canonical_revit"]
+    };
+  });
+  const result = writeProtocolV2ReportFromFlight({
+    draftPath: recovered.draftPath, legacyReportPath: recovered.legacyPath,
+    outputPath: recovered.outputPath, cases: [testCase]
+  });
+  assert.equal(fs.existsSync(result.json_path), true);
+  assert.equal(fs.existsSync(path.join(path.dirname(recovered.outputPath), "finalization-failure.json")), false);
 });
 
 test("release canary maps the exact ten high-information cases and rejects resume", () => {

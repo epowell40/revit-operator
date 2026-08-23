@@ -53,6 +53,7 @@ import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement
 import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
+import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 import { assembleBoundedEvidenceContext, getEvidenceContextBudget } from "../evidence/model_context_budget.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
@@ -822,14 +823,19 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     // ignore
   }
 
-  let assistantText = "";
-  let assistantDeltas = "";
+  let assistantText = "", assistantDeltas = "";
+  let assignmentBudgetInterrupt: (() => void) | null = null;
+  let assignmentBudgetTerminated = false;
   const modelTelemetry = createCodexTurnModelTelemetry({
     sessionId: req.session_id,
     threadId,
     turnId,
     settings: agentSettings,
-    startedAtUtc: agentTurnStartedAt
+    startedAtUtc: agentTurnStartedAt,
+    onReceipt: assignmentModelReceiptObserver(req.session_id, () => {
+      assignmentBudgetTerminated = true;
+      assignmentBudgetInterrupt?.();
+    })
   });
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
   let hasAuthoritativeWebEvidence = !webEvidenceRequirement.required;
@@ -1090,6 +1096,9 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       await c.interruptTurn({ threadId, turnId });
     }
   };
+  assignmentBudgetInterrupt = () => {
+    void requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
+  };
   const priorActiveTurn = activeCodexTurns.get(activeTurnKey);
   if (priorActiveTurn) void requestActiveCodexTurnInterrupt(priorActiveTurn).catch(() => {});
   activeCodexTurns.set(activeTurnKey, activeTurn);
@@ -1123,6 +1132,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     if (activeCodexTurns.get(activeTurnKey) === activeTurn) {
       activeCodexTurns.delete(activeTurnKey);
     }
+    assignmentBudgetInterrupt = null;
     endRequirementsPlanningLease(requirementsLease);
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
     endTeammateLoopOwner(teammateContext);
@@ -1132,9 +1142,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   if (turnCancelled) {
+    const budgetMessage = assignmentBudgetTerminated
+      ? "The canonical Assignment watchdog terminated repeated provider work that produced no new grounded target, verified fact, plan, action, model-state change, or terminal reason."
+      : "";
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
-      assistant_message: "",
+      assistant_message: budgetMessage,
       actions: [],
       model_call_receipts: modelTelemetry.receipts,
       ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
