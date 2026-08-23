@@ -804,7 +804,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:afc7ae7506ff8da2c785ab2eac4ccd0512bc0d56a708eb2dbc8ba34bdbe6aff8"
+      "sha256": "sha256:dfb2960ae2b13ddb671e8601ab6bb825bf2e41144aa73c23db7d2f301c428d8b"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -844,7 +844,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/openai_brain.ts",
-      "sha256": "sha256:1d6d578b6c5aa58c2184db165d3046bfb6b5597ec60b5e3a21ee1f8cfbac6676"
+      "sha256": "sha256:cd19cc69705415f62c29f51c612b5457a516dcdf1b6d140f6970a7ce1d2dc956"
     },
     {
       "path": "apps/operator-backend/src/brains/redline_fast_path_state.ts",
@@ -1421,7 +1421,7 @@
     },
     {
       "path": "apps/operator-backend/src/desktop_computer.ts",
-      "sha256": "sha256:6969870155bc45d4f0784327d0d2824f82ec4a4e1d4fbba543874d6ffce72d0e"
+      "sha256": "sha256:e63fb6d2351333d7654c6de41a56db951623788702d87eb31d15590b803c6b77"
     },
     {
       "path": "apps/operator-backend/src/deterministic/aec_level_identity.ts",
@@ -1569,7 +1569,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
-      "sha256": "sha256:d70e8955763682c4d04c6dcfc9075640d258851eb70f5ec3022102ffb51541a4"
+      "sha256": "sha256:7dd9df5395a858322ff827b6f44b58a34123a2861f34bb9137179fafc3a033b2"
     },
     {
       "path": "apps/operator-backend/src/execution_strategy.ts",
@@ -2557,7 +2557,7 @@
     },
     {
       "path": "apps/operator-backend/test/desktop_computer_telemetry.test.ts",
-      "sha256": "sha256:3c280eb855e30a4dc180d312f9299e867208c6b60dabc8c3cbe1ace0aa469405"
+      "sha256": "sha256:373b5ac948b16c09971159a1ab5c5aa08de9ab753a4b937340f019b30d322f7c"
     },
     {
       "path": "apps/operator-backend/test/deterministic_raster_registration.test.ts",
@@ -2621,7 +2621,7 @@
     },
     {
       "path": "apps/operator-backend/test/evidence_projection.test.ts",
-      "sha256": "sha256:5a3cdcaebe10259e3071ebe071e68da7d502965a940bdaab8d5c1bd02090ef4e"
+      "sha256": "sha256:21f806ee85aef24c17f3efebfea57346df426fc377ec2a46cc117f7927e9977b"
     },
     {
       "path": "apps/operator-backend/test/execution_strategy.test.ts",
@@ -5413,7 +5413,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:54c8e5975ae77664ff6d511be3336f065f80409b88072a8574d5e1f8c8991adb",
+  "inputs_hash": "sha256:2f8d7c67d7dc60cb8410c047cdaacb2b9927eebc5cbc4dcb43ba0a2feed7ebc3",
   "result": {
     "passed": true,
     "checks": [
