@@ -6,6 +6,15 @@ import os from "node:os";
 import path from "node:path";
 import { handleEvidenceHttpRoute } from "../src/evidence/evidence_http_routes.js";
 
+test("evidence HTTP endpoints remain behind the shared-token authentication boundary", () => {
+  const source = fs.readFileSync(path.resolve("src", "index.ts"), "utf8");
+  const policy = source.slice(
+    source.indexOf("function requiresOperatorToken(pathname: string): boolean {"),
+    source.indexOf("function sessionOwnerForPrincipal(")
+  );
+  assert.match(policy, /pathname\.startsWith\("\/evidence\/"\)/);
+});
+
 test("caller evidence route cannot forge trust and stores admitted bytes as untrusted", { concurrency: false }, async () => {
   const prior = process.env.OPERATOR_WORKSPACE_ROOT;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-evidence-http-"));
