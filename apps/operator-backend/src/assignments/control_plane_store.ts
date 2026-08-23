@@ -7,6 +7,7 @@ import {
   type AssignmentControlPlaneProjection
 } from "./control_plane.js";
 import { getGoal, mutateGoalRecord, type GoalRecord } from "../goals/service.js";
+import { persistVerifiedWorkPacket } from "../work_packets/store.js";
 
 export type AssignmentEventAppendResult = {
   goal: GoalRecord;
@@ -52,9 +53,11 @@ export function appendAssignmentEvent(goalId: string, event: AssignmentAttemptEv
     return { ...current, assignment_control_plane: controlPlane };
   });
   const controlPlane = normalizeAssignmentControlPlane(goal.assignment_control_plane);
+  const projection = reduceAssignmentControlPlane(goal.id, controlPlane.events).projection;
+  if (projection.terminal_state !== "open") persistVerifiedWorkPacket(goal);
   return {
     goal,
-    projection: reduceAssignmentControlPlane(goal.id, controlPlane.events).projection,
+    projection,
     accepted,
     quarantined_reason: quarantinedReason
   };
