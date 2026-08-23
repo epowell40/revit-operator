@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.com/schemas/benchmark_case_result.v2.schema.json",
+  "title": "Benchmark Protocol V2 case result",
+  "type": "object",
+  "required": ["schema", "run_id", "case_id", "case_sha256", "lane", "execution_truth", "original_runtime_verdict", "original_evaluator_verdict", "current_evaluator_verdict", "presentation_verdict", "delivery_verdict", "stages", "first_failed_or_uncertain_stage", "primary_failure_cause", "contributing_failure_causes", "release_blocking", "metrics", "raw_trace_ref", "raw_trace_sha256"],
+  "properties": {
+    "schema": { "const": "revit-operator.benchmark-case-result/v2" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "case_id": { "type": "string", "minLength": 1 },
+    "case_sha256": { "$ref": "#/$defs/hash" },
+    "lane": { "$ref": "#/$defs/lane" },
+    "execution_truth": { "type": "object", "required": ["requested_effect", "effect_state", "authority", "dispatched", "assignment_id", "attempt_ids", "target_identities", "affected_target_identities", "evidence_refs", "collateral_or_unauthorized_mutation"], "properties": { "requested_effect": { "enum": ["read", "preview", "apply"] }, "effect_state": { "enum": ["none", "unknown", "applied"] }, "authority": { "type": "string", "minLength": 1 }, "dispatched": { "type": "boolean" }, "assignment_id": { "type": ["string", "null"] }, "attempt_ids": { "type": "array", "items": { "type": "string" } }, "target_identities": { "type": "array", "items": { "type": "string" } }, "affected_target_identities": { "type": "array", "items": { "type": "string" } }, "evidence_refs": { "type": "array", "items": { "type": "object" } }, "collateral_or_unauthorized_mutation": { "type": "boolean" } }, "additionalProperties": false },
+    "original_runtime_verdict": { "$ref": "#/$defs/judgment" },
+    "original_evaluator_verdict": { "$ref": "#/$defs/judgment" },
+    "current_evaluator_verdict": { "$ref": "#/$defs/judgment" },
+    "presentation_verdict": { "$ref": "#/$defs/judgment" },
+    "delivery_verdict": { "enum": ["verified_committed_completion", "first_pass_verified", "recovered_verified", "verified_noop", "truthful_fixture_blocker", "truthful_ambiguity_blocker", "genuine_product_limitation_blocker", "avoidable_clarification", "execution_failure", "verification_evidence_failure", "infrastructure_harness_failure", "false_completion", "collateral_or_unauthorized_mutation", "safe_readiness_only", "not_run"] },
+    "stages": { "type": "array", "minItems": 11, "maxItems": 11, "items": { "$ref": "#/$defs/stage" } },
+    "first_failed_or_uncertain_stage": { "oneOf": [{ "$ref": "#/$defs/stage_name" }, { "type": "null" }] },
+    "primary_failure_cause": { "oneOf": [{ "$ref": "#/$defs/failure" }, { "type": "null" }] },
+    "contributing_failure_causes": { "type": "array", "items": { "$ref": "#/$defs/failure" } },
+    "release_blocking": { "type": "boolean" },
+    "metrics": { "type": "object", "required": ["completion_time_ms", "model_calls", "revit_calls", "repeated_no_progress_calls", "input_tokens", "output_tokens", "estimated_cost_usd", "human_interventions"], "properties": { "completion_time_ms": { "type": ["number", "null"], "minimum": 0 }, "model_calls": { "type": "integer", "minimum": 0 }, "revit_calls": { "type": "integer", "minimum": 0 }, "repeated_no_progress_calls": { "type": "integer", "minimum": 0 }, "input_tokens": { "type": ["integer", "null"], "minimum": 0 }, "output_tokens": { "type": ["integer", "null"], "minimum": 0 }, "estimated_cost_usd": { "type": ["number", "null"], "minimum": 0 }, "human_interventions": { "type": ["integer", "null"], "minimum": 0 } }, "additionalProperties": false },
+    "raw_trace_ref": { "type": "string", "minLength": 1 },
+    "raw_trace_sha256": { "$ref": "#/$defs/hash" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "lane": { "enum": ["controlled_capability", "ambient_context", "safe_readiness", "committed_apply"] },
+    "judgment": { "type": "object", "required": ["version", "verdict", "judged_at", "reasons"], "properties": { "version": { "type": "string", "minLength": 1 }, "verdict": { "type": "string", "minLength": 1 }, "judged_at": { "type": "string", "minLength": 1 }, "reasons": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false },
+    "stage_name": { "enum": ["fixture_valid", "intent_understood", "target_grounded", "plan_admissible", "authorization_admission_satisfied", "preview_correct_where_required", "action_dispatched", "effect_classified", "postcondition_read_back", "task_semantics_satisfied", "user_facing_result_accurate"] },
+    "stage": { "type": "object", "required": ["stage", "status", "reason", "evidence_refs"], "properties": { "stage": { "$ref": "#/$defs/stage_name" }, "status": { "enum": ["pass", "fail", "uncertain", "not_applicable"] }, "reason": { "type": "string" }, "evidence_refs": { "type": "array", "items": { "type": "string" } } }, "additionalProperties": false },
+    "failure": { "enum": ["fixture_applicability", "missing_or_ambiguous_user_context", "intent_misunderstanding", "target_grounding_failure", "planning_tool_selection_failure", "authorization_control_failure", "schema_admission_failure", "dispatch_transaction_failure", "unknown_effect_reconciliation_failure", "verification_failure", "lifecycle_evidence_projection_failure", "evaluator_oracle_failure", "presentation_only_failure", "infrastructure_harness_failure", "false_completion", "unauthorized_or_collateral_mutation"] }
+  }
+}

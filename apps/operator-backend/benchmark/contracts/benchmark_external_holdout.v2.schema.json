@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.com/schemas/benchmark_external_holdout.v2.schema.json",
+  "title": "External hidden holdout manifest",
+  "type": "object",
+  "required": ["schema", "manifest_id", "corpus_version", "fixture_adapter_version", "fixtures", "cases"],
+  "properties": {
+    "schema": { "const": "revit-operator.external-holdout-manifest/v2" },
+    "manifest_id": { "type": "string", "minLength": 1 },
+    "corpus_version": { "type": "string", "minLength": 1 },
+    "fixture_adapter_version": { "type": "string", "minLength": 1 },
+    "fixtures": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["identity", "path", "sha256", "discipline", "document_title", "case_ids"], "properties": { "identity": { "type": "string", "minLength": 1 }, "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }, "discipline": { "type": "string", "minLength": 1 }, "document_title": { "type": "string", "minLength": 1 }, "case_ids": { "type": "array", "items": { "type": "string", "minLength": 1 } } }, "additionalProperties": false } },
+    "cases": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["case_id", "prompt", "probe_prompt", "expected_effect", "capability_paths", "dispatch_any_of"], "properties": { "case_id": { "type": "string", "minLength": 1 }, "prompt": { "type": "string", "minLength": 1 }, "probe_prompt": { "type": "string", "minLength": 1 }, "expected_effect": { "enum": ["read", "preview", "apply"] }, "capability_paths": { "type": "array", "minItems": 1 }, "dispatch_any_of": { "type": "array", "minItems": 1 } }, "additionalProperties": true } }
+  },
+  "additionalProperties": false
+}

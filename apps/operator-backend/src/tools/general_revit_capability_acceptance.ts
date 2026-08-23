@@ -7,16 +7,13 @@ import {
   generalRevitGroundingDemand,
   generalRevitPromptSpecificity,
   generalRevitResearchDemand,
-  loadGeneralRevitCapabilityCorpus,
-  summarizeGeneralRevitCorpusCoverage,
   summarizeGeneralRevitCapabilityReport,
   type GeneralRevitCapabilityCase,
   type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import {
-  generalRevitFixtureForCase,
-  loadGeneralRevitSampleFixtures
+  generalRevitFixtureForCase
 } from "../benchmark/general_revit_sample_fixtures.js";
 import { settleTimedOutComputerRun } from "../benchmark/computer_run_settlement.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
@@ -25,23 +22,16 @@ import {
   waitForExactRevitFixtureHealth,
   type ExactRevitFixtureHealthResult
 } from "../benchmark/revit_fixture_readiness.js";
-import {
-  localProcessIsAlive,
-  localRevitProcessGuardTarget,
-  type LocalRevitProcessGuardTarget
-} from "../benchmark/local_revit_process_liveness.js";
-import {
-  aggregateModelCallReceipts,
-  modelCallReceiptsFromSources,
-  modelCallReceiptsFromTraces,
-  modelTelemetryCaseCoverage,
-  requestedComputerAgentConfig,
-  requestedVsObservedComputerAgent,
-  speedSettingsForRequestedConfig
-} from "../benchmark/general_revit_model_telemetry.js";
+import { localProcessIsAlive, localRevitProcessGuardTarget,
+  type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
+import { aggregateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
+  modelTelemetryCaseCoverage, requestedComputerAgentConfig, requestedVsObservedComputerAgent,
+  speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
+import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
+import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
 import {
   baselineCaseDeltas,
   computerPerformanceSummary,
@@ -865,7 +855,7 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--sidecar URL] [--case ID[,ID]] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--case ID[,ID] | --release-canary] [--protocol-v2-envelope FILE --lane controlled_capability|ambient_context|safe_readiness|committed_apply] [--sidecar URL] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
@@ -873,8 +863,9 @@ async function main(): Promise<void> {
   }
   const invocationStartedMs = Date.now();
   const invocationStartedAt = nowIso();
-  const corpus = loadGeneralRevitCapabilityCorpus();
-  const fixtureConfig = loadGeneralRevitSampleFixtures(corpus.cases);
+  const externalHoldoutPath = flag("--external-holdout");
+  const protocolInputs = loadGeneralRevitProtocolInputsV2(externalHoldoutPath);
+  const { corpus, fixtureConfig, externalHoldout } = protocolInputs;
   const requestedFixture = flag("--fixture").trim().toLowerCase();
   const orchestrateFixtures = process.argv.includes("--orchestrate-fixtures");
   if (requestedFixture && orchestrateFixtures) throw new Error("Use either --fixture or --orchestrate-fixtures, not both.");
@@ -889,6 +880,12 @@ async function main(): Promise<void> {
     || (applyRequested && !process.argv.includes("--reuse-fixture-state"));
   let selected = selectCases(corpus.cases).filter((entry) => !requestedFixture
     || generalRevitFixtureForCase(fixtureConfig, entry.case_id) === requestedFixture);
+  const releaseCanary = process.argv.includes("--release-canary");
+  if (releaseCanary) {
+    if (flagValues("--case").length > 0 || process.argv.includes("--resume")) throw new Error("Release canary uses the frozen ten-case selector and is non-resumed by default.");
+    selected = selectReleaseCanaryCasesV2(corpus.cases).filter((entry) => !requestedFixture
+      || generalRevitFixtureForCase(fixtureConfig, entry.case_id) === requestedFixture);
+  }
   const selectedFixtureKeys = new Set(selected.map((entry) => generalRevitFixtureForCase(fixtureConfig, entry.case_id)));
   if (orchestrateFixtures) {
     const fixtureOrder = Object.keys(fixtureConfig.fixtures);
@@ -903,7 +900,7 @@ async function main(): Promise<void> {
       operation_family: entry.operation_family,
       preferred_fixture: generalRevitFixtureForCase(fixtureConfig, entry.case_id),
       prompt_specificity: generalRevitPromptSpecificity(entry),
-      prompt: entry.prompt
+      ...(externalHoldout ? {} : { prompt: entry.prompt })
     })), null, 2));
     return;
   }
@@ -918,6 +915,12 @@ async function main(): Promise<void> {
     throw new Error("Selected cases span multiple sample models. Use --orchestrate-fixtures or run one explicit --fixture cohort at a time.");
   }
   let runId = String(resumedCheckpoint?.run_id || `${fileStamp()}-${suite}-${applyRequested ? "apply" : "safe"}`);
+  const protocolEnvelopePath = flag("--protocol-v2-envelope");
+  const protocolRun = resolveGeneralRevitProtocolRunV2({ envelopePath: protocolEnvelopePath, releaseCanary,
+    legacyProtocol: process.argv.includes("--legacy-protocol-v1"), proposedRunId: runId, applyRequested,
+    requestedFixture, orchestrateFixtures, laneFlag: flag("--lane"), inputs: protocolInputs });
+  const protocolDraft = protocolRun.draft;
+  runId = protocolRun.runId;
   const explicitOutput = flag("--output");
   const outputDir = flag("--output-dir");
   if (explicitOutput && outputDir) throw new Error("Use either --output or --output-dir, not both.");
@@ -927,6 +930,7 @@ async function main(): Promise<void> {
     : resolvedOutputDir
       ? path.join(resolvedOutputDir, runId, "report.json")
       : path.resolve(`general-revit-capability-report-${Date.now()}.json`);
+  assertGeneralRevitProtocolOutputV2(protocolInputs, output, protocolDraft !== null);
   const summaryOutput = resolvedOutputDir ? path.join(resolvedOutputDir, runId, "summary.md") : output.replace(/\.json$/i, ".md");
   const priorSuiteContext = asRecord(resumedCheckpoint?.suite_context);
   const priorComputerAgent = asRecord(priorSuiteContext.computer_agent);
@@ -1040,7 +1044,7 @@ async function main(): Promise<void> {
     }
   }
   let activeFixtureKey = "";
-  const fixtureRoot = path.resolve(flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples"));
+  const fixtureRoot = generalRevitProtocolFixtureRootV2(protocolInputs, flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples"));
   const suiteTimingSnapshot = (finishedAt: string | null = null): JsonRecord => {
     const nowMs = Date.now();
     const parsedStart = Date.parse(suiteStartedAt);
@@ -1120,7 +1124,7 @@ async function main(): Promise<void> {
   const summaryBySpecificity = groupedSummary(traces, "prompt_specificity");
   const summaryByFixture = groupedSummary(traces, "preferred_fixture");
   const summaryByCorpusTaskType = groupedMultiSummary(traces, "corpus_task_types");
-  const corpusCoverage = summarizeGeneralRevitCorpusCoverage(corpus);
+  const corpusCoverage = generalRevitProtocolCorpusCoverageV2(protocolInputs);
   const fixtureMismatchCount = traces.filter((trace) => asRecord(trace.fixture_applicability).fixture_match === false).length;
   const fixtureUnverifiableCount = traces.filter((trace) => asRecord(trace.fixture_applicability).fixture_match == null).length;
   const answerAssertionCaseCount = corpus.cases.filter((entry) => !!entry.answer_assertions).length;
@@ -1172,6 +1176,8 @@ async function main(): Promise<void> {
   };
   writeJsonFile(output, report);
   writeTextFile(summaryOutput, markdownReport(report));
+  const protocolV2Output = rescoreOnly ? null : writeGeneralRevitProtocolReportV2({ draft: protocolDraft,
+    envelopePath: protocolEnvelopePath, legacyReportPath: output, corpus, inputs: protocolInputs, releaseCanary });
   if (resolvedOutputDir) {
     writeJsonFile(path.join(resolvedOutputDir, "latest.json"), {
       schema: "revit-operator.general-revit-capability-latest/v1",
@@ -1182,7 +1188,7 @@ async function main(): Promise<void> {
     });
     writeTextFile(path.join(resolvedOutputDir, "latest.md"), markdownReport(report));
   }
-  console.log(JSON.stringify({ output, summary_output: summaryOutput, latest: resolvedOutputDir ? path.join(resolvedOutputDir, "latest.md") : null, summary }, null, 2));
+  console.log(JSON.stringify({ output, protocol_v2_output: protocolV2Output, summary_output: summaryOutput, latest: resolvedOutputDir ? path.join(resolvedOutputDir, "latest.md") : null, summary }, null, 2));
   const requireCompletion = process.argv.includes("--require-completion");
   if (requestedSpeedSettings && report.telemetry_valid_for_model_comparison !== true) process.exitCode = 1;
   if (summary.refusal_count > 0 || summary.failure_count > 0 || (requireCompletion && summary.completed_count !== summary.total)) process.exitCode = 1;

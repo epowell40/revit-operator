@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.com/schemas/benchmark_run_envelope_draft.v2.schema.json",
+  "title": "Benchmark Protocol V2 preflight run envelope draft",
+  "type": "object",
+  "required": ["schema", "protocol_version", "corpus", "evaluator_version", "fixture_adapter", "revit_version", "installed_release_identity", "source_revisions", "policy_hashes", "instruction_bundle_hashes", "requested_agent", "feature_flags", "authorization_mode", "identity", "execution_lane", "started_at", "runner_schema_version", "report_schema_version"],
+  "properties": {
+    "schema": { "const": "revit-operator.benchmark-run-envelope/v2" },
+    "protocol_version": { "const": "revit-operator.benchmark-protocol/v2" },
+    "corpus": {
+      "type": "object",
+      "required": ["version", "sha256", "original_case_manifest_sha256", "case_hashes"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "original_case_manifest_sha256": { "$ref": "#/$defs/hash" },
+        "case_hashes": { "type": "object", "minProperties": 1, "additionalProperties": { "$ref": "#/$defs/hash" } }
+      },
+      "additionalProperties": false
+    },
+    "evaluator_version": { "type": "string", "minLength": 1 },
+    "fixture_adapter": {
+      "type": "object",
+      "required": ["version", "fixtures"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "fixtures": { "type": "array", "minItems": 1, "items": { "type": "object", "required": ["identity", "rvt_sha256"], "properties": { "identity": { "type": "string", "minLength": 1 }, "rvt_sha256": { "$ref": "#/$defs/hash" } }, "additionalProperties": false } }
+      },
+      "additionalProperties": false
+    },
+    "revit_version": { "type": "string", "minLength": 1 },
+    "installed_release_identity": { "type": "string", "minLength": 1 },
+    "source_revisions": { "type": "object", "required": ["public", "private"], "properties": { "public": { "$ref": "#/$defs/revision" }, "private": { "$ref": "#/$defs/revision" } }, "additionalProperties": false },
+    "policy_hashes": { "$ref": "#/$defs/hash_map" },
+    "instruction_bundle_hashes": { "$ref": "#/$defs/hash_map" },
+    "requested_agent": { "type": "object", "required": ["model", "reasoning_effort"], "properties": { "model": { "type": "string", "minLength": 1 }, "reasoning_effort": { "type": "string", "minLength": 1 } }, "additionalProperties": false },
+    "feature_flags": { "type": "object", "additionalProperties": { "type": ["boolean", "number", "string"] } },
+    "authorization_mode": { "type": "string", "minLength": 1 },
+    "identity": { "type": "object", "required": ["run_id", "session_id", "generation"], "properties": { "run_id": { "type": "string", "minLength": 1 }, "session_id": { "type": "string", "minLength": 1 }, "generation": { "type": "integer", "minimum": 1 } }, "additionalProperties": false },
+    "execution_lane": { "enum": ["controlled_capability", "ambient_context", "safe_readiness", "committed_apply"] },
+    "started_at": { "type": "string", "minLength": 1 },
+    "runner_schema_version": { "const": "revit-operator.benchmark-runner/v2" },
+    "report_schema_version": { "const": "revit-operator.benchmark-report/v2" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+    "revision": { "type": "string", "pattern": "^[a-fA-F0-9]{40}$" },
+    "hash_map": { "type": "object", "minProperties": 3, "additionalProperties": { "$ref": "#/$defs/hash" } }
+  }
+}
