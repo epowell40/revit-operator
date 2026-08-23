@@ -138,6 +138,17 @@ test("MCP results adapt to app-server dynamic tool responses without losing erro
     contentItems: [{ type: "inputImage", imageUrl: "data:image/png;base64,AA==" }],
     success: false
   });
+  const boundedVisuals = adaptMcpToolCallResultToDynamicResponse({
+    content: Array.from({ length: 5 }, (_, index) => ({ type: "image", mimeType: "image/png", data: Buffer.from(`${index}`).toString("base64") }))
+  });
+  assert.equal(boundedVisuals.contentItems.filter(item => item.type === "inputImage").length, 3);
+  const projected = adaptMcpToolCallResultToDynamicResponse({
+    content: [{ type: "resource", raw: "x".repeat(100_000) }, { type: "image", mimeType: "image/png", data: "AA==" }]
+  }, {
+    projections: [{ schema: "revit-operator.evidence-projection.v1", evidence_id: "ev1_fixture", content_hash: "sha256:fixture", byte_count: 100_000 } as any]
+  });
+  assert.equal(projected.contentItems.length, 2);
+  assert.equal(JSON.stringify(projected.contentItems).includes("x".repeat(100)), false);
 });
 
 test("app-server dynamic Revit parameter reads are compacted before returning to Codex", () => {

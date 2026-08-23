@@ -64,9 +64,18 @@ export function assertBoundedModelEvidencePayload(input: unknown, budget = getEv
     const row = value as Record<string, unknown>;
     if (row.type === "function_call_output" && typeof row.output === "string") {
       const bytes = Buffer.byteLength(row.output, "utf8");
-      let projectionEnvelope: { schema?: unknown; evidence_projections?: unknown } | null = null;
+      let projectionEnvelope: { schema?: unknown; evidence_projections?: unknown; omitted?: unknown; retrieval?: unknown } | null = null;
       try { projectionEnvelope = JSON.parse(row.output); } catch {}
-      const projections = projectionEnvelope?.schema === MODEL_EVIDENCE_ENVELOPE_SCHEMA && Array.isArray(projectionEnvelope.evidence_projections)
+      const envelopeKeys = projectionEnvelope && typeof projectionEnvelope === "object"
+        ? Object.keys(projectionEnvelope)
+        : [];
+      const validEnvelopeShape = projectionEnvelope?.schema === MODEL_EVIDENCE_ENVELOPE_SCHEMA
+        && envelopeKeys.every(key => ["schema", "evidence_projections", "omitted", "retrieval"].includes(key))
+        && Number.isSafeInteger(projectionEnvelope.omitted)
+        && Number(projectionEnvelope.omitted) >= 0
+        && typeof projectionEnvelope.retrieval === "string"
+        && projectionEnvelope.retrieval.length <= 500;
+      const projections = validEnvelopeShape && Array.isArray(projectionEnvelope?.evidence_projections)
         ? projectionEnvelope.evidence_projections
         : [];
       const isEvidenceProjection = projections.length > 0 && projections.every(projection => {

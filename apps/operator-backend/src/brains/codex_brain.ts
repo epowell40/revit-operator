@@ -29,7 +29,7 @@ import {
   type RequirementsReceipt
 } from "../memory/requirements_store.js";
 import { getPinnedGoal } from "../session_store.js";
-import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
+import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { createAutoGoalTurnObserver, findInterruptedAutoGoalForSession } from "../goals/auto_goal_runtime.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
@@ -54,9 +54,10 @@ import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSucce
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
-import { assembleBoundedEvidenceContext, getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
+import { assembleBoundedEvidenceContext, getEvidenceContextBudget } from "../evidence/model_context_budget.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
 import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
+import { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -81,6 +82,7 @@ const activeCodexTurns = new Map<string, ActiveCodexTurn>();
 export { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 export { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
 export { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
+export { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
 export { assertCertifiedMcpServerStatus };
 
 function codexTurnAbortKey(sessionId: string, messageId: string): string {
@@ -360,77 +362,6 @@ function developerInstructions(): string {
   return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
 }
 
-function parseToolArguments(value: unknown): any {
-  if (typeof value !== "string") return value && typeof value === "object" ? value : {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
-  if (typeof tool !== "string" || tool.trim() !== "revit_call_tool") return text;
-  const args = parseToolArguments(rawArguments);
-  const path = typeof args.path === "string" ? args.path.trim().toLowerCase() : "";
-  if (path !== "/revit/get-parameters") return text;
-  try {
-    const parsed = JSON.parse(text);
-    const body = parseToolArguments(args.body);
-    const requestedNames = Array.isArray(body.names)
-      ? body.names.filter((name: unknown): name is string => typeof name === "string" && Boolean(name.trim()))
-      : [];
-    const requestedElementCount = Array.isArray(body.elementIds) ? body.elementIds.length : 0;
-    const maxEvidence = requestedNames.length > 0 && requestedElementCount > 0
-      ? Math.max(16, Math.min(100, requestedNames.length * requestedElementCount))
-      : 16;
-    return JSON.stringify(compactParameterReadResultForPrompt(parsed, {
-      maxEvidence,
-      maxElementIds: 64,
-      preferredParameterNames: requestedNames
-    }), null, 2);
-  } catch {
-    return text;
-  }
-}
-
-export function adaptMcpToolCallResultToDynamicResponse(
-  result: any,
-  context?: { tool?: unknown; arguments?: unknown; projections?: EvidenceProjectionV1[] }
-): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
-  const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
-  const content = Array.isArray(result?.content) ? result.content : [];
-  if (context?.projections?.length) {
-    contentItems.push({
-      type: "inputText",
-      text: JSON.stringify(modelEvidenceEnvelope(context.projections))
-    });
-  }
-  for (const item of content) {
-    if (item?.type === "text" && typeof item.text === "string") {
-      if (context?.projections?.length) continue;
-      contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
-      continue;
-    }
-    if (item?.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string") {
-      contentItems.push({ type: "inputImage", imageUrl: `data:${item.mimeType};base64,${item.data}` });
-      continue;
-    }
-    try {
-      contentItems.push({ type: "inputText", text: JSON.stringify(item) });
-    } catch {
-      contentItems.push({ type: "inputText", text: String(item) });
-    }
-  }
-  if (contentItems.length === 0 && result?.structuredContent !== undefined) {
-    const text = JSON.stringify(result.structuredContent);
-    contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, text) });
-  }
-  if (contentItems.length === 0) contentItems.push({ type: "inputText", text: result?.isError ? "MCP tool failed without an error body." : "MCP tool completed without output." });
-  return { contentItems, success: result?.isError !== true };
-}
-
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   if (request.method === "item/tool/call") {
     const params = request.params ?? {};
@@ -515,10 +446,17 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
         relationships: imageEvidence.map((item: { ref: { evidence_id: string } }) => ({ evidence_id: item.ref.evidence_id, relation: "capture_for" as const })),
         raw: durableResult
       }, getEvidenceContextBudget().item_bytes);
+      const context = assembleBoundedEvidenceContext({
+        projections: [stored.projection, ...imageEvidence.map((item: { projection: EvidenceProjectionV1 }) => item.projection)],
+        session_id: sessionId,
+        source: `codex_dynamic_context:${params.tool}`,
+        budget: getEvidenceContextBudget()
+      });
       return adaptMcpToolCallResultToDynamicResponse(result, {
         tool: params.tool,
         arguments: params.arguments,
-        projections: [stored.projection, ...imageEvidence.map((item: { projection: EvidenceProjectionV1 }) => item.projection)]
+        projections: context.projections,
+        omitted: context.omitted
       });
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true });

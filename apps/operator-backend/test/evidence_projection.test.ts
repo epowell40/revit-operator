@@ -9,7 +9,7 @@ import {
   retrieveEvidence,
   storeEvidence
 } from "../src/evidence/evidence_store.js";
-import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload } from "../src/evidence/model_context_budget.js";
+import { assembleBoundedEvidenceContext, assertBoundedModelEvidencePayload, modelEvidenceEnvelope } from "../src/evidence/model_context_budget.js";
 import { __clearServerPlannedActionsForTests, normalizeIncomingToolResults, registerServerPlannedActions } from "../src/revit_batch/tool_result_normalization.js";
 
 function withWorkspace<T>(fn: (root: string) => T): T {
@@ -102,6 +102,10 @@ test("content-addressed reuse deduplicates bytes and survives restart-style ref 
   assert.equal(second.duplicate_bytes_avoided, first.ref.byte_count);
   assert.deepEqual(readEvidenceRef(first.ref.evidence_id), first.ref);
   assert.equal(readAuthoritativeEvidence(readEvidenceRef(first.ref.evidence_id), scope).toString("utf8"), JSON.stringify(input.raw));
+  const differentTrust = storeEvidence({ ...input, trust_level: "untrusted_caller" });
+  assert.notEqual(differentTrust.ref.evidence_id, first.ref.evidence_id);
+  assert.equal(differentTrust.stored_unique_bytes, 0);
+  assert.equal(differentTrust.ref.trust_level, "untrusted_caller");
 }));
 
 test("scope fencing, path traversal protection, bounded purpose, and secret screening fail closed", { concurrency: false }, () => withWorkspace(root => {
@@ -132,6 +136,10 @@ test("model request assembly enforces item and aggregate budgets with explicit o
   assert.ok(result.bytes <= 4_000);
   assert.ok(result.omitted > 0);
   assert.ok(result.projections.length < projections.length);
+  const valid = JSON.stringify(modelEvidenceEnvelope(result.projections, result.omitted));
+  assert.doesNotThrow(() => assertBoundedModelEvidencePayload([{ type: "function_call_output", output: valid }], { item_bytes: 1_500, request_bytes: 4_000 }));
+  const smuggled = JSON.stringify({ ...modelEvidenceEnvelope(result.projections, result.omitted), raw: "x".repeat(6_000) });
+  assert.throws(() => assertBoundedModelEvidencePayload([{ type: "function_call_output", output: smuggled }], { item_bytes: 1_500, request_bytes: 12_000 }), /store it and send an EvidenceRef/);
 }));
 
 test("incoming native results bind canonical Assignment identity, retain images once, and send refs by default", { concurrency: false }, () => withWorkspace(() => {

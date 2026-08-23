@@ -150,10 +150,17 @@ function assertEvidencePathSafe(evidenceRoot: string, candidate: string): void {
   }
 }
 
-function refIdentity(input: EvidenceStoreInput, hash: string): string {
+function refIdentity(input: EvidenceStoreInput, hash: string, mediaType: string): string {
   const identity = JSON.stringify({
     hash,
     source: input.source,
+    media_type: mediaType,
+    trust_level: input.trust_level,
+    target_scope: [...new Set(input.target_scope ?? [])].sort(),
+    verification_relevance: input.verification_relevance ?? "supporting",
+    relationships: [...(input.relationships ?? [])]
+      .map(relationship => ({ evidence_id: relationship.evidence_id, relation: relationship.relation }))
+      .sort((left, right) => `${left.evidence_id}:${left.relation}`.localeCompare(`${right.evidence_id}:${right.relation}`)),
     session_id: input.scope.session_id,
     assignment_id: input.scope.assignment_id ?? null,
     run_id: input.scope.run_id ?? null,
@@ -235,7 +242,7 @@ export function storeEvidence(input: EvidenceStoreInput, projectionMaxBytes = 8_
   const bytes = rawBytes(input.raw, mediaType);
   assertSecretFree(bytes, mediaType);
   const hash = sha256(bytes);
-  const evidenceId = refIdentity(input, hash);
+  const evidenceId = refIdentity(input, hash, mediaType);
   const paths = evidencePaths(hash, evidenceId);
   const objectCreated = writeImmutable(paths.object, bytes);
   const parsed = parseRaw(bytes, mediaType);
@@ -401,12 +408,13 @@ export function hydratePersistedToolOutputRecord(record: Record<string, unknown>
       const refs = Array.isArray(toolResult?.evidence_refs) ? toolResult.evidence_refs : [];
       const primary = refs.find(value => value && typeof value === "object" && (value as any).media_type?.includes("json")) as EvidenceRefV1 | undefined;
       if (primary) {
-        const hydrated = JSON.parse(readAuthoritativeEvidence(primary, {
-          session_id: primary.session_id,
-          assignment_id: primary.assignment_id,
-          run_id: primary.run_id,
-          attempt_id: primary.attempt_id,
-          generation: primary.generation
+        const canonical = readRef(primary.evidence_id);
+        const hydrated = JSON.parse(readAuthoritativeEvidence(canonical, {
+          session_id: canonical.session_id,
+          assignment_id: canonical.assignment_id,
+          run_id: canonical.run_id,
+          attempt_id: canonical.attempt_id,
+          generation: canonical.generation
         }).toString("utf8"));
         return { ...record, tool_result: { ...hydrated, evidence_refs: refs, evidence_projections: toolResult?.evidence_projections ?? [] } };
       }
@@ -415,12 +423,13 @@ export function hydratePersistedToolOutputRecord(record: Record<string, unknown>
       const refs = Array.isArray(record.evidence_refs) ? record.evidence_refs : [];
       const primary = refs.find(value => value && typeof value === "object" && (value as any).media_type?.includes("json")) as EvidenceRefV1 | undefined;
       if (primary) {
-        const result = JSON.parse(readAuthoritativeEvidence(primary, {
-          session_id: primary.session_id,
-          assignment_id: primary.assignment_id,
-          run_id: primary.run_id,
-          attempt_id: primary.attempt_id,
-          generation: primary.generation
+        const canonical = readRef(primary.evidence_id);
+        const result = JSON.parse(readAuthoritativeEvidence(canonical, {
+          session_id: canonical.session_id,
+          assignment_id: canonical.assignment_id,
+          run_id: canonical.run_id,
+          attempt_id: canonical.attempt_id,
+          generation: canonical.generation
         }).toString("utf8"));
         return { ...record, result };
       }
