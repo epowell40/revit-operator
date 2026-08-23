@@ -153,11 +153,7 @@ import {
 } from "./goals/service.js";
 import { settleSidecarComputerGoal } from "./goals/auto_goal_runtime.js";
 import { startAutoGoalIfEligible } from "./goals/auto_goal_start.js";
-import {
-  ASSIGNMENT_PROJECTION_SCHEMA,
-  getAssignmentProjection,
-  listAssignmentProjections
-} from "./assignments/projection.js";
+import { handleAssignmentHttpRoute } from "./assignments/http_routes.js";
 import {
   ensureAssignmentRunForTurn,
   journalAssignmentActions,
@@ -1157,27 +1153,7 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, 200, { ok: true, result: runDemoReadinessCheck(profile) });
     }
 
-    if (req.method === "GET" && url.pathname === "/api/assignments") {
-      const limit = Math.max(1, Math.min(200, Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50));
-      const sessionId = trimText(url.searchParams.get("session_id"), 160);
-      const lifecycle = trimText(url.searchParams.get("lifecycle"), 80);
-      if (sessionId && !sessionAccessAllowed(res, sessionId, auth.principal)) return;
-      const assignments = listAssignmentProjections({
-        limit,
-        session_id: sessionId || undefined,
-        lifecycle: lifecycle || undefined
-      });
-      return writeJson(res, 200, { ok: true, schema: ASSIGNMENT_PROJECTION_SCHEMA, assignments });
-    }
-
-    if (req.method === "GET" && url.pathname.startsWith("/api/assignments/")) {
-      const assignmentId = trimText(decodeURIComponent(url.pathname.slice("/api/assignments/".length)), 240);
-      if (!assignmentId) return writeJson(res, 400, { error: "assignment id is required." });
-      const assignment = getAssignmentProjection(assignmentId);
-      if (!assignment) return writeJson(res, 404, { error: "Assignment not found." });
-      if (assignment.target.session_id && !sessionAccessAllowed(res, assignment.target.session_id, auth.principal)) return;
-      return writeJson(res, 200, { ok: true, schema: ASSIGNMENT_PROJECTION_SCHEMA, assignment });
-    }
+    if (handleAssignmentHttpRoute(req, res, url, sessionId => sessionAccessAllowed(res, sessionId, auth.principal))) return;
 
     if (req.method === "GET" && url.pathname === "/api/goals") {
       const limit = Math.max(1, Math.min(100, Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50));

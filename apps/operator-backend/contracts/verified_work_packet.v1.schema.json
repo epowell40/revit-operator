@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/verified_work_packet.v1.schema.json",
+  "title": "Revit Operator Verified Work Packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "packet_version", "packet_id", "packet_hash", "parent_packet_id", "identity", "assignment", "status", "status_reason", "grounded_targets", "actions", "acceptance_criteria", "collateral_checks", "artifacts", "issues", "rollback", "performance", "trust_presentation"],
+  "properties": {
+    "schema": { "const": "revit-operator.verified-work-packet/v1" },
+    "packet_version": { "const": 1 },
+    "packet_id": { "type": "string", "pattern": "^vwp1_[A-Za-z0-9_-]{32}$" },
+    "packet_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "parent_packet_id": { "type": ["string", "null"] },
+    "identity": { "type": "object" },
+    "assignment": { "type": "object" },
+    "status": { "enum": ["verified_complete", "complete_with_issues", "verified_no_op", "blocked_truthfully", "awaiting_clarification", "failed", "rolled_back"] },
+    "status_reason": { "type": "string" },
+    "grounded_targets": { "type": "array" },
+    "actions": { "type": "array" },
+    "acceptance_criteria": { "type": "array" },
+    "collateral_checks": { "type": "array" },
+    "artifacts": { "type": "array" },
+    "issues": { "type": "array" },
+    "rollback": { "type": "object" },
+    "performance": { "type": "object" },
+    "trust_presentation": { "type": "object" }
+  }
+}

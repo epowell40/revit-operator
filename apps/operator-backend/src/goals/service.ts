@@ -15,6 +15,7 @@ import {
   reduceAssignmentControlPlane,
   type AssignmentControlPlaneLog
 } from "../assignments/control_plane.js";
+import { persistVerifiedWorkPacket } from "../work_packets/store.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -851,7 +852,9 @@ export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
     blocker: input.blocker !== undefined ? clip(input.blocker, 2000) || null : goal.blocker ?? null
   };
   if (next.acceptance_criteria.length === 0) throw new Error("acceptance_criteria cannot be empty.");
-  return saveGoal(next);
+  const saved = saveGoal(next);
+  if (["blocked", "complete", "canceled", "failed"].includes(saved.status)) persistVerifiedWorkPacket(saved);
+  return saved;
 }
 
 export function transitionGoal(goalId: string, status: GoalStatus, reason?: unknown): GoalRecord {
@@ -875,7 +878,9 @@ export function transitionGoal(goalId: string, status: GoalStatus, reason?: unkn
               ? "Goal canceled."
               : goal.progress_summary
   };
-  return saveGoal(next);
+  const saved = saveGoal(next);
+  if (["blocked", "complete", "canceled", "failed"].includes(saved.status)) persistVerifiedWorkPacket(saved);
+  return saved;
 }
 
 export function appendGoalAction(goalId: string, entry: unknown): GoalRecord {
@@ -992,7 +997,9 @@ export function completeGoalAfterAudit(goalId: string): GoalRecord {
     recommendation: goal.completion_audit.recommendation
   });
   if (!refreshed.completion_audit?.complete) throw new Error("Goal cannot be marked complete because its completion evidence no longer passes verification.");
-  return saveGoal({ ...refreshed, status: "complete", progress_summary: "Goal completed after passing completion audit." });
+  const completed = saveGoal({ ...refreshed, status: "complete", progress_summary: "Goal completed after passing completion audit." });
+  persistVerifiedWorkPacket(completed);
+  return completed;
 }
 
 export function getActiveGoalForSession(sessionId?: string | null): GoalRecord | null {

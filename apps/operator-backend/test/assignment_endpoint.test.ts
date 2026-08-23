@@ -109,6 +109,29 @@ test("assignment endpoints expose an authenticated read-only Goal/Task projectio
     reconciliation_required: null
   });
 
+  const blockedResponse = await fetch(`${base}/api/goals/${encodeURIComponent(created.goal.id)}/block`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ reason: "The required fixture is unavailable." })
+  });
+  assert.equal(blockedResponse.status, 200);
+
+  const packetPath = `/api/assignments/${encodeURIComponent(`goal:${created.goal.id}`)}/verified-work-packet`;
+  const unauthenticatedPacket = await fetch(`${base}${packetPath}`);
+  assert.equal(unauthenticatedPacket.status, 401);
+  const packetResponse = await fetch(`${base}${packetPath}`, { headers });
+  assert.equal(packetResponse.status, 200);
+  const packet = await packetResponse.json() as { packet: { schema: string; status: string; identity: { assignment_id: string } }; json_path: string; markdown_path: string };
+  assert.equal(packet.packet.schema, "revit-operator.verified-work-packet/v1");
+  assert.equal(packet.packet.status, "blocked_truthfully");
+  assert.equal(packet.packet.identity.assignment_id, created.goal.id);
+  assert.match(packet.json_path, /verified-work-packets\/vwp1_/);
+
+  const markdownResponse = await fetch(`${base}${packetPath}?format=markdown`, { headers });
+  assert.equal(markdownResponse.status, 200);
+  assert.match(markdownResponse.headers.get("content-type") ?? "", /text\/markdown/);
+  assert.match(await markdownResponse.text(), /Blocked Truthfully/);
+
   const missing = await fetch(`${base}/api/assignments/goal%3Amissing`, { headers });
   assert.equal(missing.status, 404);
 });
