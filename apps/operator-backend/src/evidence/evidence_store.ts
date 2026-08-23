@@ -393,8 +393,9 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
 }
 
 export function readAuthoritativeEvidence(ref: EvidenceRefV1, scope: EvidenceRetrievalRequest["scope"]): Buffer {
-  assertScope(ref, { evidence_id: ref.evidence_id, scope, purpose: "authoritative verifier read", text_range: { start: 0, length: 1 } });
-  return readSettledEvidenceBytes(ref);
+  const canonical = readRef(ref.evidence_id);
+  assertScope(canonical, { evidence_id: canonical.evidence_id, scope, purpose: "authoritative verifier read", text_range: { start: 0, length: 1 } });
+  return readSettledEvidenceBytes(canonical);
 }
 
 export function readEvidenceRef(evidenceId: string): EvidenceRefV1 {

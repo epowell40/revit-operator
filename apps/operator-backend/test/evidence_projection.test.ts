@@ -114,6 +114,9 @@ test("scope fencing, path traversal protection, bounded purpose, and secret scre
   assert.throws(() => retrieveEvidence({ evidence_id: "../../secrets", scope, purpose: "read target", fields: ["targetId"] }), /Invalid evidence_id/);
   assert.throws(() => retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "all evidence", fields: ["targetId"] }), /Focused evidence retrieval purpose/);
   assert.throws(() => retrieveEvidence({ evidence_id: stored.ref.evidence_id, scope, purpose: "read target", fields: ["__proto__.polluted"] }), /Invalid typed field path/);
+  const other = storeEvidence({ scope, source: "other_object", trust_level: "host_observed", raw: { targetId: 10, safe: false } });
+  const forgedRef = { ...stored.ref, artifact_location: other.ref.artifact_location, content_hash: other.ref.content_hash, byte_count: other.ref.byte_count };
+  assert.equal(readAuthoritativeEvidence(forgedRef, scope).toString("utf8"), JSON.stringify({ targetId: 9, safe: true }));
   const objectsBefore = fs.readdirSync(path.join(root, "evidence", "objects", "sha256"), { recursive: true }).length;
   assert.throws(() => storeEvidence({ scope, source: "secret_test", trust_level: "untrusted_caller", raw: { api_key: `sk-${"a".repeat(32)}` } }), /secret screening/);
   const objectsAfter = fs.readdirSync(path.join(root, "evidence", "objects", "sha256"), { recursive: true }).length;
