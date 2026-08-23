@@ -12,6 +12,7 @@ import {
   getSidecarAgentProfileState,
   type SidecarAgentProfileState
 } from "./capabilities/sidecar_agent_profile.js";
+import { assertBoundedModelEvidencePayload } from "./evidence/model_context_budget.js";
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -131,6 +132,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
   }
 
   const body = normalizeRelayRequest(rawBody);
+  assertBoundedModelEvidencePayload(body.input);
   const client = createOpenAiClient(apiKey);
   const model = body.model || resolveDesktopComputerModel();
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();

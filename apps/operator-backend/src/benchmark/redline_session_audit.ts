@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ensureWorkspaceLayout } from "../workspace.js";
+import { hydratePersistedToolOutputRecord } from "../evidence/evidence_store.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -40,7 +41,10 @@ function readJsonl(filePath: string, maxLines = 20_000): JsonObject[] {
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) rows.push(parsed as JsonObject);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const row = parsed as JsonObject;
+        rows.push(filePath.endsWith("tool_outputs.jsonl") ? hydratePersistedToolOutputRecord(row) : row);
+      }
     } catch {
       // Ignore partial/corrupt JSONL lines; run bundles are append-only.
     }

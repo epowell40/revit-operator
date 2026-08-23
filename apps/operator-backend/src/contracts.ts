@@ -1,5 +1,7 @@
 export const OPERATOR_BACKEND_CONTRACT_VERSION = "operator.backend.v1";
 
+import type { EvidenceProjectionV1, EvidenceRefV1 } from "./evidence/evidence_ref.js";
+
 export type HttpMethod = "GET" | "POST";
 
 export type ActionCall = {
@@ -53,6 +55,9 @@ export type ToolResult = {
   failure_hint?: string;
   duration_ms?: number;
   attachments?: ToolAttachment[];
+  /** Immutable raw evidence identities. Model context consumes projections, not raw payloads. */
+  evidence_refs?: EvidenceRefV1[];
+  evidence_projections?: EvidenceProjectionV1[];
 };
 
 export type UserAttachment = {

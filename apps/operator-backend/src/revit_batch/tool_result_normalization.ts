@@ -1,6 +1,8 @@
 import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import type { ActionCall, ToolResult } from "../contracts.js";
+import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
+import { storeEvidence } from "../evidence/evidence_store.js";
 
 const MAX_SESSIONS = 200;
 const MAX_ACTIONS_PER_SESSION = 1_000;
@@ -22,7 +24,13 @@ function canonicalPlannedAction(value: unknown): ActionCall | null {
     action_id: actionId,
     method,
     path: actionPath,
-    ...(Object.prototype.hasOwnProperty.call(row, "body") ? { body: row.body } : {})
+    ...(Object.prototype.hasOwnProperty.call(row, "body") ? { body: row.body } : {}),
+    ...(typeof row.assignment_id === "string" ? { assignment_id: clipped(row.assignment_id, 240) } : {}),
+    ...(typeof row.attempt_id === "string" ? { attempt_id: clipped(row.attempt_id, 240) } : {}),
+    ...(typeof row.assignment_run_id === "string" ? { assignment_run_id: clipped(row.assignment_run_id, 240) } : {}),
+    ...(typeof row.assignment_generation === "number" && Number.isSafeInteger(row.assignment_generation) && row.assignment_generation >= 0 ? { assignment_generation: row.assignment_generation } : {}),
+    ...(typeof row.action_signature === "string" ? { action_signature: clipped(row.action_signature, 240) } : {}),
+    ...(typeof row.target_fingerprint === "string" ? { target_fingerprint: clipped(row.target_fingerprint, 240) } : {})
   };
 }
 
@@ -112,7 +120,7 @@ export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unk
       }
     }
 
-    out.push(compactIncomingToolResult({
+    const rawToolResult: ToolResult = {
       action_id: actionId,
       method,
       path: actionPath,
@@ -130,7 +138,60 @@ export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unk
       ...(typeof row.failure_hint === "string" ? { failure_hint: row.failure_hint } : {}),
       ...(typeof row.duration_ms === "number" ? { duration_ms: row.duration_ms } : {}),
       ...(Array.isArray(row.attachments) ? { attachments: row.attachments } : {})
-    }));
+    };
+    const scope = {
+      session_id: sessionId,
+      assignment_id: serverAction?.assignment_id ?? null,
+      run_id: serverAction?.assignment_run_id ?? null,
+      attempt_id: serverAction?.attempt_id ?? null,
+      generation: serverAction?.assignment_generation ?? null
+    };
+    const attachmentEvidence = (rawToolResult.attachments ?? []).flatMap((attachment, index) => {
+      if (attachment.kind !== "image" || typeof attachment.data_base64 !== "string") return [];
+      const bytes = Buffer.from(attachment.data_base64, "base64");
+      if (bytes.length === 0) return [];
+      const image = storeEvidence({
+        scope,
+        source: `revit_visual_capture:${method}:${actionPath}:${index}`,
+        media_type: attachment.mime,
+        trust_level: "host_observed",
+        target_scope: [serverAction?.target_fingerprint ?? ""].filter(Boolean),
+        bounded_summary: `Visual capture ${index + 1} for ${method} ${actionPath}.`,
+        verification_relevance: "supporting",
+        raw: bytes
+      }, getEvidenceContextBudget().item_bytes);
+      return [image];
+    });
+    const durableToolResult = {
+      ...rawToolResult,
+      ...(rawToolResult.attachments ? {
+        attachments: rawToolResult.attachments.map((attachment, index) => ({
+          ...attachment,
+          data_base64: undefined,
+          ...(attachmentEvidence[index] ? {
+            evidence_id: attachmentEvidence[index].ref.evidence_id,
+            content_hash: attachmentEvidence[index].ref.content_hash
+          } : {})
+        }))
+      } : {})
+    };
+    const stored = storeEvidence({
+      scope,
+      source: `revit_tool_result:${method}:${actionPath}`,
+      media_type: "application/json",
+      trust_level: "host_observed",
+      target_scope: [serverAction?.target_fingerprint ?? ""].filter(Boolean),
+      bounded_summary: `${method} ${actionPath} ${rawToolResult.status}; full native result retained.`,
+      verification_relevance: requestEffect === "apply" ? "required" : "supporting",
+      relationships: attachmentEvidence.map(item => ({ evidence_id: item.ref.evidence_id, relation: "capture_for" as const })),
+      raw: durableToolResult
+    }, getEvidenceContextBudget().item_bytes);
+    const compacted = compactIncomingToolResult(rawToolResult);
+    out.push({
+      ...compacted,
+      evidence_refs: [stored.ref, ...attachmentEvidence.map(item => item.ref)],
+      evidence_projections: [stored.projection, ...attachmentEvidence.map(item => item.projection)]
+    });
   }
   return out;
 }

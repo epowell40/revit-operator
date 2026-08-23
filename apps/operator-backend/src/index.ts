@@ -51,6 +51,8 @@ import { resolveAecTaskIntentHttp } from "./aec_task_intent_http.js";
 import { tryCreateRedlineAnalyzeEvidence } from "./redline/redline_analyze_evidence.js";
 import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
+import { readEvidenceTelemetrySummary, retrieveEvidence, storeEvidence } from "./evidence/evidence_store.js";
+import { getEvidenceContextBudget } from "./evidence/model_context_budget.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
 import { addProjectStandard, readProjectProfile } from "./memory/project_profile.js";
 import { handleRequirementsHttpRoute } from "./memory/requirements_http_routes.js";
@@ -1792,6 +1794,53 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, 200, {
         ok: true,
         ...getDesktopComputerConfig()
+      });
+    }
+
+    if (req.method === "POST" && url.pathname === "/evidence/store") {
+      try {
+        const body = await readJson(req, 32_000_000) as any;
+        const raw = typeof body?.raw_base64 === "string"
+          ? Buffer.from(body.raw_base64, "base64")
+          : Object.prototype.hasOwnProperty.call(body ?? {}, "raw_json")
+            ? body.raw_json
+            : typeof body?.raw_text === "string"
+              ? body.raw_text
+              : undefined;
+        if (raw === undefined) return writeJson(res, 400, { error: "raw_json, raw_text, or raw_base64 is required." });
+        const stored = storeEvidence({
+          scope: body.scope,
+          source: body.source,
+          media_type: body.media_type,
+          trust_level: body.trust_level,
+          target_scope: body.target_scope,
+          bounded_summary: body.bounded_summary,
+          verification_relevance: body.verification_relevance,
+          relationships: body.relationships,
+          raw
+        }, getEvidenceContextBudget().item_bytes);
+        return writeJson(res, 201, { ok: true, ...stored });
+      } catch (error) {
+        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/evidence/retrieve") {
+      try {
+        const body = await readJson(req, 100_000);
+        return writeJson(res, 200, { ok: true, result: retrieveEvidence(body as any) });
+      } catch (error) {
+        return writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    if (req.method === "GET" && url.pathname === "/evidence/telemetry") {
+      return writeJson(res, 200, {
+        ok: true,
+        summary: readEvidenceTelemetrySummary({
+          ...(url.searchParams.get("session_id") ? { session_id: url.searchParams.get("session_id")! } : {}),
+          ...(url.searchParams.has("assignment_id") ? { assignment_id: url.searchParams.get("assignment_id") } : {})
+        })
       });
     }
 

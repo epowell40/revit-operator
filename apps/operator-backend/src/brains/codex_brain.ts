@@ -54,6 +54,9 @@ import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSucce
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
+import { assembleBoundedEvidenceContext, getEvidenceContextBudget, modelEvidenceEnvelope } from "../evidence/model_context_budget.js";
+import { storeEvidence } from "../evidence/evidence_store.js";
+import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -280,7 +283,7 @@ function summarizeResultJsonForCodex(r: ToolResult): string | null {
   }
 }
 
-function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): string {
+function formatToolResultsForCodex(toolResults: ToolResult[] | undefined, telemetry?: { session_id: string; assignment_id?: string | null; model_call_id?: string | null }): string {
   const list = Array.isArray(toolResults) ? toolResults : [];
   if (list.length === 0) return "";
 
@@ -298,6 +301,16 @@ function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): strin
     lines.push(head);
     const failureCode = typeof r.failure_code === "string" ? r.failure_code.trim() : "";
     if (failureCode) lines.push(`  - failure_code: ${failureCode}`);
+
+    const projections = Array.isArray(r.evidence_projections) ? r.evidence_projections : [];
+    if (projections.length > 0) {
+      const bounded = telemetry
+        ? assembleBoundedEvidenceContext({ projections, ...telemetry, source: "codex_tool_results" })
+        : { projections, omitted: 0 };
+      for (const projection of bounded.projections) lines.push(`  - evidence: ${JSON.stringify(projection)}`);
+      if (bounded.omitted > 0) lines.push(`  - evidence_budget: ${bounded.omitted} projection(s) omitted; retrieve a named evidence_id with a focused selector if needed.`);
+      continue;
+    }
 
     const atts = Array.isArray(r.attachments) ? r.attachments : [];
     const imgs = atts.filter(a => a && typeof a === "object" && (a as any).kind === "image");
@@ -328,7 +341,7 @@ export function formatToolResultsForCodexForTest(toolResults: ToolResult[] | und
 function formatCertifiedCodexContinuation(req: ChatRequest): string {
   return [
     formatCodexRequestEnvelope(req),
-    formatToolResultsForCodex(req.tool_results),
+    formatToolResultsForCodex(req.tool_results, { session_id: req.session_id }),
     "Continue from the certified context and the recorded pre-dispatch limitation. Provide a terminal evidence answer without requesting tools."
   ].filter(Boolean).join("\n\n");
 }
@@ -384,12 +397,19 @@ function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, tex
 
 export function adaptMcpToolCallResultToDynamicResponse(
   result: any,
-  context?: { tool?: unknown; arguments?: unknown }
+  context?: { tool?: unknown; arguments?: unknown; projections?: EvidenceProjectionV1[] }
 ): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
   const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
   const content = Array.isArray(result?.content) ? result.content : [];
+  if (context?.projections?.length) {
+    contentItems.push({
+      type: "inputText",
+      text: JSON.stringify(modelEvidenceEnvelope(context.projections))
+    });
+  }
   for (const item of content) {
     if (item?.type === "text" && typeof item.text === "string") {
+      if (context?.projections?.length) continue;
       contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
       continue;
     }
@@ -456,7 +476,50 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
       const rawResult = await runtime.callTool(params.tool, params.arguments ?? {});
       recordTeammateMcpResult(runtime, teammateGate, rawResult);
       const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
-      return adaptMcpToolCallResultToDynamicResponse(result, { tool: params.tool, arguments: params.arguments });
+      const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId) || `codex_dynamic_${String(params.turnId || "unbound").replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 160)}`;
+      const imageEvidence = (Array.isArray(result?.content) ? result.content : []).flatMap((item: any, index: number) => {
+        if (item?.type !== "image" || typeof item.data !== "string" || typeof item.mimeType !== "string") return [];
+        const image = storeEvidence({
+          scope: { session_id: sessionId },
+          source: `codex_dynamic_visual:${params.tool}:${index}`,
+          media_type: item.mimeType,
+          trust_level: "host_observed",
+          bounded_summary: `Visual evidence ${index + 1} from ${params.tool}.`,
+          verification_relevance: "supporting",
+          raw: Buffer.from(item.data, "base64")
+        }, getEvidenceContextBudget().item_bytes);
+        return [image];
+      });
+      let imageIndex = 0;
+      const durableResult = {
+        ...result,
+        ...(Array.isArray(result?.content) ? {
+          content: result.content.map((item: any) => {
+            if (item?.type !== "image" || typeof item.data !== "string") return item;
+            const image = imageEvidence[imageIndex++];
+            return {
+              ...item,
+              data: undefined,
+              ...(image ? { evidence_id: image.ref.evidence_id, content_hash: image.ref.content_hash } : {})
+            };
+          })
+        } : {})
+      };
+      const stored = storeEvidence({
+        scope: { session_id: sessionId },
+        source: `codex_dynamic_mcp:${params.tool}`,
+        media_type: "application/json",
+        trust_level: "host_observed",
+        bounded_summary: `Dynamic MCP ${params.tool} result; complete output retained.`,
+        verification_relevance: params.tool === "revit_call_tool" ? "required" : "supporting",
+        relationships: imageEvidence.map((item: { ref: { evidence_id: string } }) => ({ evidence_id: item.ref.evidence_id, relation: "capture_for" as const })),
+        raw: durableResult
+      }, getEvidenceContextBudget().item_bytes);
+      return adaptMcpToolCallResultToDynamicResponse(result, {
+        tool: params.tool,
+        arguments: params.arguments,
+        projections: [stored.projection, ...imageEvidence.map((item: { projection: EvidenceProjectionV1 }) => item.projection)]
+      });
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true });
       return {
@@ -717,7 +780,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             const requestEnvelope = formatCodexRequestEnvelope(req);
             if (requestEnvelope) blocks.push(requestEnvelope);
             if (text.trim()) blocks.push(`USER:\n${text}`);
-            const tr = formatToolResultsForCodex(req.tool_results as any);
+            const tr = formatToolResultsForCodex(req.tool_results as any, { session_id: req.session_id });
             if (tr) blocks.push(tr);
             return blocks.join("\n\n");
           })(),
