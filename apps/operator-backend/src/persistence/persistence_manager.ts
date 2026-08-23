@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { OPERATOR_BACKEND_CONTRACT_VERSION, type ActionCall, type ChatResponse, type ToolResult, type UserAttachment } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { atomicAppendJsonlLine } from "./jsonl.js";
+import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
+import { storeEvidence } from "../evidence/evidence_store.js";
 
 export type RunBundlePaths = {
   sessionDir: string;
@@ -351,6 +353,34 @@ export class PersistenceManager {
 
   appendToolOutput(sessionId: string, record: ToolOutputRecord): void {
     const p = this.ensureSession(sessionId);
+    if (record.kind === "mcp.tool_result" && record.result !== undefined) {
+      const stored = storeEvidence({
+        scope: { session_id: sessionId },
+        source: `run_bundle:mcp:${record.server || "unknown"}:${record.tool}`,
+        media_type: "application/json",
+        trust_level: "host_observed",
+        bounded_summary: `MCP ${record.tool} ${record.status || "completed"}; raw output retained once.`,
+        verification_relevance: "supporting",
+        raw: record.result
+      }, getEvidenceContextBudget().item_bytes);
+      atomicAppendJsonlLine(p.toolOutputsPath, {
+        ...record,
+        result: undefined,
+        attachments: undefined,
+        evidence_refs: [stored.ref],
+        evidence_projections: [stored.projection]
+      });
+      return;
+    }
+    if (record.kind === "revit.result" && record.tool_result.evidence_refs?.length) {
+      const projectedToolResult = {
+        ...record.tool_result,
+        result_json: undefined,
+        attachments: undefined
+      };
+      atomicAppendJsonlLine(p.toolOutputsPath, { ...record, tool_result: projectedToolResult });
+      return;
+    }
     atomicAppendJsonlLine(p.toolOutputsPath, record);
   }
 

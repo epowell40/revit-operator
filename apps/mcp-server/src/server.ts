@@ -64,6 +64,7 @@ import {
   recordExecutionStrategyEvidence
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
+import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -121,6 +122,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_plan_semantic_mep_route",
   "operator_runtime_probe",
   "operator_discover_capabilities",
+  "operator_retrieve_evidence",
   "operator_record_execution_strategy",
   "print_sheets",
   "read_excel",
@@ -946,6 +948,47 @@ server.tool("revit_tool_registry", "List/search Revit HTTP primitives from the b
       };
     } catch (e) {
       return { isError: true, content: [{ type: "text", text: String(e) }] };
+    }
+  }
+);
+
+server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Never use this to request all evidence.",
+  {
+    evidenceId: z.string().describe("Named ev1_ evidence identity from a model-facing projection."),
+    sessionId: z.string().describe("Current session identity."),
+    assignmentId: z.string().nullable().optional(),
+    runId: z.string().nullable().optional(),
+    attemptId: z.string().nullable().optional(),
+    purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
+    fields: z.array(z.string()).max(64).optional(),
+    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).optional(),
+    textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).optional(),
+    targetSubset: z.array(z.string()).max(64).optional(),
+    image: z.boolean().optional(),
+    maxBytes: z.number().int().min(64).max(1_048_576).optional()
+  },
+  async (args) => {
+    try {
+      const result = await createOperatorBackendClient().retrieveEvidence({
+        schema: "revit-operator.evidence-retrieval.v1",
+        evidence_id: args.evidenceId,
+        scope: {
+          session_id: args.sessionId,
+          assignment_id: args.assignmentId ?? null,
+          run_id: args.runId ?? null,
+          attempt_id: args.attemptId ?? null
+        },
+        purpose: args.purpose,
+        ...(args.fields ? { fields: args.fields } : {}),
+        ...(args.itemRange ? { item_range: args.itemRange } : {}),
+        ...(args.textRange ? { text_range: args.textRange } : {}),
+        ...(args.targetSubset ? { target_subset: args.targetSubset } : {}),
+        ...(args.image !== undefined ? { image: args.image } : {}),
+        ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
     }
   }
 );

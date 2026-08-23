@@ -51,6 +51,7 @@ import { resolveAecTaskIntentHttp } from "./aec_task_intent_http.js";
 import { tryCreateRedlineAnalyzeEvidence } from "./redline/redline_analyze_evidence.js";
 import { analyzeRedlinePackageWithGemini } from "./vision/gemini_redline_package.js";
 import { buildEvidencePack } from "./evidence/evidence_pack.js";
+import { handleEvidenceHttpRoute } from "./evidence/evidence_http_routes.js";
 import { maybePersistAutoTurnMemory } from "./memory/auto_turn_memory.js";
 import { addProjectStandard, readProjectProfile } from "./memory/project_profile.js";
 import { handleRequirementsHttpRoute } from "./memory/requirements_http_routes.js";
@@ -1794,6 +1795,8 @@ const server = http.createServer(async (req, res) => {
         ...getDesktopComputerConfig()
       });
     }
+
+    if (await handleEvidenceHttpRoute(req, res, url)) return;
 
     if (req.method === "POST" && url.pathname === "/desktop/computer/respond") {
       try {

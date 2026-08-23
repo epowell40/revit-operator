@@ -9,6 +9,8 @@ import {
   getDesktopComputerProviderErrorReceipt,
   relayDesktopComputerResponse
 } from "../src/desktop_computer.js";
+import { storeEvidence } from "../src/evidence/evidence_store.js";
+import { modelEvidenceEnvelope } from "../src/evidence/model_context_budget.js";
 
 async function listen(server: http.Server): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
@@ -76,15 +78,21 @@ test("desktop relay preserves outer-model usage for Luna at literal max", { conc
   assert.ok(address && typeof address === "object");
   const previous = {
     key: process.env.OPERATOR_OPENAI_API_KEY,
-    baseUrl: process.env.OPERATOR_OPENAI_BASE_URL
+    baseUrl: process.env.OPERATOR_OPENAI_BASE_URL,
+    workspace: process.env.OPERATOR_WORKSPACE_ROOT
   };
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-desktop-evidence-"));
   try {
     process.env.OPERATOR_OPENAI_API_KEY = "test-key";
     process.env.OPERATOR_OPENAI_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.OPERATOR_WORKSPACE_ROOT = workspace;
+    const scope = { session_id: "desktop-session", assignment_id: "desktop-assignment" };
+    const stored = storeEvidence({ scope, source: "desktop-test", trust_level: "host_observed", raw: { count: 509, rows: "x".repeat(20_000) } });
     const result = await relayDesktopComputerResponse({
       model: "gpt-5.6-luna",
       reasoning_effort: "max",
-      input: "test input"
+      input: [{ type: "function_call_output", call_id: "tool-call", output: JSON.stringify(modelEvidenceEnvelope([stored.projection])) }],
+      evidence_scope: scope
     });
 
     assert.equal(requestBody.model, "gpt-5.6-luna");
@@ -99,12 +107,22 @@ test("desktop relay preserves outer-model usage for Luna at literal max", { conc
       reasoning_output_tokens: 34,
       total_tokens: 265
     });
+    const telemetry = fs.readFileSync(path.join(workspace, "evidence", "telemetry.jsonl"), "utf8")
+      .trim().split(/\r?\n/).map(line => JSON.parse(line));
+    const modelEvent = telemetry.find(event => event.source === "desktop_computer_model_context");
+    assert.equal(modelEvent.model_call_id, "resp_desktop_luna");
+    assert.equal(modelEvent.assignment_id, scope.assignment_id);
+    assert.ok(modelEvent.projected_bytes_sent > 0);
+    assert.ok(modelEvent.duplicate_bytes_avoided > 0);
   } finally {
     if (previous.key === undefined) delete process.env.OPERATOR_OPENAI_API_KEY;
     else process.env.OPERATOR_OPENAI_API_KEY = previous.key;
     if (previous.baseUrl === undefined) delete process.env.OPERATOR_OPENAI_BASE_URL;
     else process.env.OPERATOR_OPENAI_BASE_URL = previous.baseUrl;
+    if (previous.workspace === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous.workspace;
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
 

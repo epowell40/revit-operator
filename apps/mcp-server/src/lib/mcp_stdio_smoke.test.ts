@@ -26,6 +26,7 @@ const certifiedSafeNonRevitAliases = [
   "operator_discover_capabilities",
   "operator_plan_semantic_mep_route",
   "operator_record_execution_strategy",
+  "operator_retrieve_evidence",
   "operator_runtime_probe",
   "print_sheets",
   "read_excel",
@@ -223,7 +224,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 129, "Exact development laboratory mode must preserve the complete catalog plus bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 130, "Exact development laboratory mode must preserve the complete catalog plus evidence retrieval, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 110, "Exact development laboratory mode must preserve all Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
@@ -416,7 +417,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 129, "Laboratory mode must preserve the complete catalog plus bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
+  assert.equal(tools.tools.length, 130, "Laboratory mode must preserve the complete catalog plus evidence retrieval, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
   assert.equal([...names].filter(name => name.startsWith("revit_")).length, 110, "Laboratory mode must preserve all revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
@@ -424,6 +425,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "operator_runtime_probe",
     "operator_plan_semantic_mep_route",
     "operator_record_execution_strategy",
+    "operator_retrieve_evidence",
     "operator_run_dynamic_revit_program",
     "fire_damper_audit",
     "validate_ies_files",

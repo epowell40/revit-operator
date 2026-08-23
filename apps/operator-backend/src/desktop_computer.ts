@@ -12,6 +12,8 @@ import {
   getSidecarAgentProfileState,
   type SidecarAgentProfileState
 } from "./capabilities/sidecar_agent_profile.js";
+import { assertBoundedModelEvidencePayload, type ModelEvidencePayloadUsage } from "./evidence/model_context_budget.js";
+import { appendEvidenceTelemetry } from "./evidence/evidence_store.js";
 
 export type DesktopComputerRelayRequest = {
   model?: string;
@@ -20,6 +22,7 @@ export type DesktopComputerRelayRequest = {
   tools?: unknown[];
   input: unknown;
   previous_response_id?: string;
+  evidence_scope?: { session_id: string; assignment_id?: string | null };
 };
 
 type DesktopComputerRelayResponse = {
@@ -85,6 +88,15 @@ function normalizeRelayRequest(value: unknown): DesktopComputerRelayRequest {
   if (reasoningEffort && !isReasoningEffort(reasoningEffort)) {
     throw new Error("reasoning_effort must be none, low, medium, high, xhigh, or max.");
   }
+  const rawEvidenceScope = body.evidence_scope && typeof body.evidence_scope === "object" && !Array.isArray(body.evidence_scope)
+    ? body.evidence_scope as Record<string, unknown>
+    : null;
+  const sessionId = typeof rawEvidenceScope?.session_id === "string" ? rawEvidenceScope.session_id.trim() : "";
+  const assignmentId = typeof rawEvidenceScope?.assignment_id === "string" ? rawEvidenceScope.assignment_id.trim() : "";
+  if (rawEvidenceScope && (!/^[A-Za-z0-9._:-]{1,240}$/.test(sessionId)
+      || (assignmentId && !/^[A-Za-z0-9._:-]{1,240}$/.test(assignmentId)))) {
+    throw new Error("evidence_scope must contain bounded session and optional Assignment identifiers.");
+  }
 
   return {
     model: model || undefined,
@@ -92,9 +104,31 @@ function normalizeRelayRequest(value: unknown): DesktopComputerRelayRequest {
     instructions: typeof body.instructions === "string" ? body.instructions : undefined,
     tools: Array.isArray(body.tools) ? body.tools : undefined,
     input,
+    evidence_scope: rawEvidenceScope ? { session_id: sessionId, assignment_id: assignmentId || null } : undefined,
     previous_response_id:
       typeof body.previous_response_id === "string" ? body.previous_response_id.trim() || undefined : undefined
   };
+}
+
+function recordDesktopEvidenceUsage(
+  usage: ModelEvidencePayloadUsage,
+  scope: DesktopComputerRelayRequest["evidence_scope"],
+  receipt: ModelCallReceipt
+): void {
+  if (!scope || usage.projection_count === 0) return;
+  appendEvidenceTelemetry({
+    session_id: scope.session_id,
+    assignment_id: scope.assignment_id ?? null,
+    model_call_id: receipt.call_id,
+    source: "desktop_computer_model_context",
+    raw_evidence_bytes_produced: 0,
+    unique_evidence_bytes_stored: 0,
+    projected_bytes_sent: usage.projected_bytes,
+    duplicate_bytes_avoided: Math.max(0, usage.referenced_raw_bytes - usage.projected_bytes),
+    evidence_items_expanded: 0,
+    budget_events: 0,
+    estimated_model_tokens_avoided: Math.floor(Math.max(0, usage.referenced_raw_bytes - usage.projected_bytes) / 4)
+  });
 }
 
 function extractOutputText(response: any): string {
@@ -131,6 +165,7 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
   }
 
   const body = normalizeRelayRequest(rawBody);
+  const evidenceUsage = assertBoundedModelEvidencePayload(body.input);
   const client = createOpenAiClient(apiKey);
   const model = body.model || resolveDesktopComputerModel();
   const reasoningEffort = body.reasoning_effort || resolveDesktopComputerReasoningEffort();
@@ -155,15 +190,17 @@ export async function relayDesktopComputerResponse(rawBody: unknown): Promise<De
       duration_ms: Date.now() - startedMs,
       error
     });
+    recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
     throw new DesktopComputerProviderError(receipt, error);
   }
-
-  return simplifyRelayResponse(response, createOpenAiModelCallReceipt({
+  const receipt = createOpenAiModelCallReceipt({
     route: "desktop_computer",
     requested_model: model,
     reasoning_effort: reasoningEffort,
     started_at_utc: startedAtUtc,
     duration_ms: Date.now() - startedMs,
     response
-  }));
+  });
+  recordDesktopEvidenceUsage(evidenceUsage, body.evidence_scope, receipt);
+  return simplifyRelayResponse(response, receipt);
 }

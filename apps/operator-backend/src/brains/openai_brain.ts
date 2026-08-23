@@ -71,6 +71,7 @@ import {
   type ReasoningEffort,
   type SpeedRouteKind
 } from "../speed_config.js";
+import { assembleBoundedEvidenceContext } from "../evidence/model_context_budget.js";
 import {
   appendRedlineFastPathCandidateDiagnostic,
   buildRedlineFastPathDiagnosticsText,
@@ -19252,23 +19253,36 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
     for (const r of toolResults) lines.push(summarizeToolResult(r));
     lines.push("Tool outputs are persisted in run bundles and SQLite; request specific follow-up reads instead of replaying full payloads.");
     lines.push("");
-    lines.push("Tool results (reduced JSON; key IDs/fields only):");
-    const projectedToolResults = projectToolResultsForPrompt(toolResults) as any[];
-    const spatialLocateResults = projectedToolResults.filter(entry =>
-      entry?.path === "/revit/locate-elements" &&
-      (entry?.result?.spatialResolution === "geometry" || entry?.result?.spatialResolution === "geometry_with_nearest")
-    );
-    const ordinaryToolResults = projectedToolResults.filter(entry => !spatialLocateResults.includes(entry));
-    if (ordinaryToolResults.length > 0) {
-      lines.push(truncateJson(ordinaryToolResults, speedSettings.context_diet && !speedSettings.verbose_tool_results ? 2200 : 4500));
-    }
-    if (spatialLocateResults.length > 0) {
-      const spatialBlock = buildBoundedSpatialLocatePromptBlock(spatialLocateResults, 250000);
-      lines.push("");
-      lines.push(spatialBlock.complete
-        ? "Spatial locate results (complete bounded per-instance JSON; do not drop tail devices):"
-        : "Spatial locate results (explicitly incomplete bounded JSON; honor omission metadata and issue focused follow-up batches before claiming completeness):");
-      lines.push(spatialBlock.json);
+    const durableEvidenceProjections = toolResults.flatMap(result => result.evidence_projections ?? []);
+    if (durableEvidenceProjections.length > 0) {
+      const bounded = assembleBoundedEvidenceContext({
+        projections: durableEvidenceProjections,
+        session_id: req.session_id,
+        model_call_id: req.message_id,
+        source: "legacy_agent_tool_results"
+      });
+      lines.push("Tool evidence projections (raw evidence is retained by evidence_id):");
+      lines.push(JSON.stringify(bounded.projections, null, 2));
+      if (bounded.omitted > 0) lines.push(`${bounded.omitted} projection(s) omitted by the evidence request budget; request a named focused retrieval if required.`);
+    } else {
+      lines.push("Tool results (legacy reduced JSON; key IDs/fields only):");
+      const projectedToolResults = projectToolResultsForPrompt(toolResults) as any[];
+      const spatialLocateResults = projectedToolResults.filter(entry =>
+        entry?.path === "/revit/locate-elements" &&
+        (entry?.result?.spatialResolution === "geometry" || entry?.result?.spatialResolution === "geometry_with_nearest")
+      );
+      const ordinaryToolResults = projectedToolResults.filter(entry => !spatialLocateResults.includes(entry));
+      if (ordinaryToolResults.length > 0) {
+        lines.push(truncateJson(ordinaryToolResults, speedSettings.context_diet && !speedSettings.verbose_tool_results ? 2200 : 4500));
+      }
+      if (spatialLocateResults.length > 0) {
+        const spatialBlock = buildBoundedSpatialLocatePromptBlock(spatialLocateResults, 250000);
+        lines.push("");
+        lines.push(spatialBlock.complete
+          ? "Spatial locate results (complete bounded per-instance JSON; do not drop tail devices):"
+          : "Spatial locate results (explicitly incomplete bounded JSON; honor omission metadata and issue focused follow-up batches before claiming completeness):");
+        lines.push(spatialBlock.json);
+      }
     }
     const hints = buildToolLoopHints(toolResults);
     if (hints.length > 0) {

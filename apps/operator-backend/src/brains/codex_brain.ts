@@ -29,7 +29,7 @@ import {
   type RequirementsReceipt
 } from "../memory/requirements_store.js";
 import { getPinnedGoal } from "../session_store.js";
-import { compactIncomingToolResult, compactParameterReadResultForPrompt } from "../tool_result_compaction.js";
+import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
 import { createAutoGoalTurnObserver, findInterruptedAutoGoalForSession } from "../goals/auto_goal_runtime.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
@@ -54,6 +54,10 @@ import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSucce
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
+import { assembleBoundedEvidenceContext, getEvidenceContextBudget } from "../evidence/model_context_budget.js";
+import { storeEvidence } from "../evidence/evidence_store.js";
+import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
+import { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -78,6 +82,7 @@ const activeCodexTurns = new Map<string, ActiveCodexTurn>();
 export { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 export { formatCodexRequestEnvelope } from "./codex_turn_profile.js";
 export { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
+export { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
 export { assertCertifiedMcpServerStatus };
 
 function codexTurnAbortKey(sessionId: string, messageId: string): string {
@@ -280,7 +285,7 @@ function summarizeResultJsonForCodex(r: ToolResult): string | null {
   }
 }
 
-function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): string {
+function formatToolResultsForCodex(toolResults: ToolResult[] | undefined, telemetry?: { session_id: string; assignment_id?: string | null; model_call_id?: string | null }): string {
   const list = Array.isArray(toolResults) ? toolResults : [];
   if (list.length === 0) return "";
 
@@ -298,6 +303,16 @@ function formatToolResultsForCodex(toolResults: ToolResult[] | undefined): strin
     lines.push(head);
     const failureCode = typeof r.failure_code === "string" ? r.failure_code.trim() : "";
     if (failureCode) lines.push(`  - failure_code: ${failureCode}`);
+
+    const projections = Array.isArray(r.evidence_projections) ? r.evidence_projections : [];
+    if (projections.length > 0) {
+      const bounded = telemetry
+        ? assembleBoundedEvidenceContext({ projections, ...telemetry, source: "codex_tool_results" })
+        : { projections, omitted: 0 };
+      for (const projection of bounded.projections) lines.push(`  - evidence: ${JSON.stringify(projection)}`);
+      if (bounded.omitted > 0) lines.push(`  - evidence_budget: ${bounded.omitted} projection(s) omitted; retrieve a named evidence_id with a focused selector if needed.`);
+      continue;
+    }
 
     const atts = Array.isArray(r.attachments) ? r.attachments : [];
     const imgs = atts.filter(a => a && typeof a === "object" && (a as any).kind === "image");
@@ -328,7 +343,7 @@ export function formatToolResultsForCodexForTest(toolResults: ToolResult[] | und
 function formatCertifiedCodexContinuation(req: ChatRequest): string {
   return [
     formatCodexRequestEnvelope(req),
-    formatToolResultsForCodex(req.tool_results),
+    formatToolResultsForCodex(req.tool_results, { session_id: req.session_id, model_call_id: req.message_id }),
     "Continue from the certified context and the recorded pre-dispatch limitation. Provide a terminal evidence answer without requesting tools."
   ].filter(Boolean).join("\n\n");
 }
@@ -345,70 +360,6 @@ function developerInstructions(): string {
     "Revit execution rule: never issue multiple Revit model calls in one tool batch when a later call depends on an earlier result. Execute one call, inspect its result, then issue the next call only if still needed. The host enforces bounded Revit work per turn: at most 64 admitted Revit calls and 16 discovery calls; a successful identical discovery call is not admitted again, and an identical failed discovery may be tried only once more. If a host attempt budget is exhausted, stop calling tools and report the exact blocker and strongest completed evidence.";
   if (!lib) return executionRule;
   return [executionRule, "Reference docs (read-only; may be truncated):", lib].join("\n\n");
-}
-
-function parseToolArguments(value: unknown): any {
-  if (typeof value !== "string") return value && typeof value === "object" ? value : {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, text: string): string {
-  if (typeof tool !== "string" || tool.trim() !== "revit_call_tool") return text;
-  const args = parseToolArguments(rawArguments);
-  const path = typeof args.path === "string" ? args.path.trim().toLowerCase() : "";
-  if (path !== "/revit/get-parameters") return text;
-  try {
-    const parsed = JSON.parse(text);
-    const body = parseToolArguments(args.body);
-    const requestedNames = Array.isArray(body.names)
-      ? body.names.filter((name: unknown): name is string => typeof name === "string" && Boolean(name.trim()))
-      : [];
-    const requestedElementCount = Array.isArray(body.elementIds) ? body.elementIds.length : 0;
-    const maxEvidence = requestedNames.length > 0 && requestedElementCount > 0
-      ? Math.max(16, Math.min(100, requestedNames.length * requestedElementCount))
-      : 16;
-    return JSON.stringify(compactParameterReadResultForPrompt(parsed, {
-      maxEvidence,
-      maxElementIds: 64,
-      preferredParameterNames: requestedNames
-    }), null, 2);
-  } catch {
-    return text;
-  }
-}
-
-export function adaptMcpToolCallResultToDynamicResponse(
-  result: any,
-  context?: { tool?: unknown; arguments?: unknown }
-): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
-  const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
-  const content = Array.isArray(result?.content) ? result.content : [];
-  for (const item of content) {
-    if (item?.type === "text" && typeof item.text === "string") {
-      contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
-      continue;
-    }
-    if (item?.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string") {
-      contentItems.push({ type: "inputImage", imageUrl: `data:${item.mimeType};base64,${item.data}` });
-      continue;
-    }
-    try {
-      contentItems.push({ type: "inputText", text: JSON.stringify(item) });
-    } catch {
-      contentItems.push({ type: "inputText", text: String(item) });
-    }
-  }
-  if (contentItems.length === 0 && result?.structuredContent !== undefined) {
-    const text = JSON.stringify(result.structuredContent);
-    contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, text) });
-  }
-  if (contentItems.length === 0) contentItems.push({ type: "inputText", text: result?.isError ? "MCP tool failed without an error body." : "MCP tool completed without output." });
-  return { contentItems, success: result?.isError !== true };
 }
 
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
@@ -456,7 +407,58 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
       const rawResult = await runtime.callTool(params.tool, params.arguments ?? {});
       recordTeammateMcpResult(runtime, teammateGate, rawResult);
       const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
-      return adaptMcpToolCallResultToDynamicResponse(result, { tool: params.tool, arguments: params.arguments });
+      const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId) || `codex_dynamic_${String(params.turnId || "unbound").replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 160)}`;
+      const imageEvidence = (Array.isArray(result?.content) ? result.content : []).flatMap((item: any, index: number) => {
+        if (item?.type !== "image" || typeof item.data !== "string" || typeof item.mimeType !== "string") return [];
+        const image = storeEvidence({
+          scope: { session_id: sessionId },
+          source: `codex_dynamic_visual:${params.tool}:${index}`,
+          media_type: item.mimeType,
+          trust_level: "host_observed",
+          bounded_summary: `Visual evidence ${index + 1} from ${params.tool}.`,
+          verification_relevance: "supporting",
+          raw: Buffer.from(item.data, "base64")
+        }, getEvidenceContextBudget().item_bytes);
+        return [image];
+      });
+      let imageIndex = 0;
+      const durableResult = {
+        ...result,
+        ...(Array.isArray(result?.content) ? {
+          content: result.content.map((item: any) => {
+            if (item?.type !== "image" || typeof item.data !== "string") return item;
+            const image = imageEvidence[imageIndex++];
+            return {
+              ...item,
+              data: undefined,
+              ...(image ? { evidence_id: image.ref.evidence_id, content_hash: image.ref.content_hash } : {})
+            };
+          })
+        } : {})
+      };
+      const stored = storeEvidence({
+        scope: { session_id: sessionId },
+        source: `codex_dynamic_mcp:${params.tool}`,
+        media_type: "application/json",
+        trust_level: "host_observed",
+        bounded_summary: `Dynamic MCP ${params.tool} result; complete output retained.`,
+        verification_relevance: params.tool === "revit_call_tool" ? "required" : "supporting",
+        relationships: imageEvidence.map((item: { ref: { evidence_id: string } }) => ({ evidence_id: item.ref.evidence_id, relation: "capture_for" as const })),
+        raw: durableResult
+      }, getEvidenceContextBudget().item_bytes);
+      const context = assembleBoundedEvidenceContext({
+        projections: [stored.projection, ...imageEvidence.map((item: { projection: EvidenceProjectionV1 }) => item.projection)],
+        session_id: sessionId,
+        model_call_id: typeof params.turnId === "string" ? params.turnId : null,
+        source: `codex_dynamic_context:${params.tool}`,
+        budget: getEvidenceContextBudget()
+      });
+      return adaptMcpToolCallResultToDynamicResponse(result, {
+        tool: params.tool,
+        arguments: params.arguments,
+        projections: context.projections,
+        omitted: context.omitted
+      });
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true });
       return {
@@ -717,7 +719,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             const requestEnvelope = formatCodexRequestEnvelope(req);
             if (requestEnvelope) blocks.push(requestEnvelope);
             if (text.trim()) blocks.push(`USER:\n${text}`);
-            const tr = formatToolResultsForCodex(req.tool_results as any);
+            const tr = formatToolResultsForCodex(req.tool_results as any, { session_id: req.session_id, model_call_id: req.message_id });
             if (tr) blocks.push(tr);
             return blocks.join("\n\n");
           })(),
