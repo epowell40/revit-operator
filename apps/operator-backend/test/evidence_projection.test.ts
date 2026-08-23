@@ -140,7 +140,10 @@ test("model request assembly enforces item and aggregate budgets with explicit o
   assert.ok(result.omitted > 0);
   assert.ok(result.projections.length < projections.length);
   const valid = JSON.stringify(modelEvidenceEnvelope(result.projections, result.omitted));
-  assert.doesNotThrow(() => assertBoundedModelEvidencePayload([{ type: "function_call_output", output: valid }], { item_bytes: 1_500, request_bytes: 4_000 }));
+  const usage = assertBoundedModelEvidencePayload([{ type: "function_call_output", output: valid }], { item_bytes: 1_500, request_bytes: 4_000 });
+  assert.equal(usage.projection_count, result.projections.length);
+  assert.equal(usage.referenced_raw_bytes, result.projections.reduce((sum, projection) => sum + projection.byte_count, 0));
+  assert.equal(usage.projected_bytes, Buffer.byteLength(valid));
   const smuggled = JSON.stringify({ ...modelEvidenceEnvelope(result.projections, result.omitted), raw: "x".repeat(6_000) });
   assert.throws(() => assertBoundedModelEvidencePayload([{ type: "function_call_output", output: smuggled }], { item_bytes: 1_500, request_bytes: 12_000 }), /store it and send an EvidenceRef/);
 }));

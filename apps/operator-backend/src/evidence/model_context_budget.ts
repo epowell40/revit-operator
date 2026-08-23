@@ -51,8 +51,16 @@ export function assembleBoundedEvidenceContext(input: {
   return { projections: selected, bytes, omitted };
 }
 
-export function assertBoundedModelEvidencePayload(input: unknown, budget = getEvidenceContextBudget()): void {
+export type ModelEvidencePayloadUsage = {
+  projected_bytes: number;
+  referenced_raw_bytes: number;
+  projection_count: number;
+};
+
+export function assertBoundedModelEvidencePayload(input: unknown, budget = getEvidenceContextBudget()): ModelEvidencePayloadUsage {
   let totalEvidenceBytes = 0;
+  let referencedRawBytes = 0;
+  let projectionCount = 0;
   const queue: unknown[] = [input];
   const seen = new Set<object>();
   while (queue.length > 0) {
@@ -85,11 +93,19 @@ export function assertBoundedModelEvidencePayload(input: unknown, budget = getEv
       if (bytes > budget.item_bytes && !isEvidenceProjection) {
         throw new Error(`Raw function_call_output exceeds the ${budget.item_bytes}-byte evidence item budget; store it and send an EvidenceRef projection.`);
       }
-      if (isEvidenceProjection) totalEvidenceBytes += bytes;
+      if (isEvidenceProjection) {
+        totalEvidenceBytes += bytes;
+        projectionCount += projections.length;
+        referencedRawBytes += projections.reduce((sum, projection) => {
+          const byteCount = Number((projection as Record<string, unknown>).byte_count);
+          return sum + (Number.isSafeInteger(byteCount) && byteCount >= 0 ? byteCount : 0);
+        }, 0);
+      }
     }
     for (const child of Object.values(row)) if (child && typeof child === "object") queue.push(child);
   }
   if (totalEvidenceBytes > budget.request_bytes) throw new Error(`Projected evidence exceeds the ${budget.request_bytes}-byte model-request budget.`);
+  return { projected_bytes: totalEvidenceBytes, referenced_raw_bytes: referencedRawBytes, projection_count: projectionCount };
 }
 
 export function modelEvidenceEnvelope(projections: EvidenceProjectionV1[], omitted = 0): {

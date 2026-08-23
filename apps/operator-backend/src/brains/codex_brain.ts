@@ -343,7 +343,7 @@ export function formatToolResultsForCodexForTest(toolResults: ToolResult[] | und
 function formatCertifiedCodexContinuation(req: ChatRequest): string {
   return [
     formatCodexRequestEnvelope(req),
-    formatToolResultsForCodex(req.tool_results, { session_id: req.session_id }),
+    formatToolResultsForCodex(req.tool_results, { session_id: req.session_id, model_call_id: req.message_id }),
     "Continue from the certified context and the recorded pre-dispatch limitation. Provide a terminal evidence answer without requesting tools."
   ].filter(Boolean).join("\n\n");
 }
@@ -449,6 +449,7 @@ export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, req
       const context = assembleBoundedEvidenceContext({
         projections: [stored.projection, ...imageEvidence.map((item: { projection: EvidenceProjectionV1 }) => item.projection)],
         session_id: sessionId,
+        model_call_id: typeof params.turnId === "string" ? params.turnId : null,
         source: `codex_dynamic_context:${params.tool}`,
         budget: getEvidenceContextBudget()
       });
@@ -718,7 +719,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             const requestEnvelope = formatCodexRequestEnvelope(req);
             if (requestEnvelope) blocks.push(requestEnvelope);
             if (text.trim()) blocks.push(`USER:\n${text}`);
-            const tr = formatToolResultsForCodex(req.tool_results as any, { session_id: req.session_id });
+            const tr = formatToolResultsForCodex(req.tool_results as any, { session_id: req.session_id, model_call_id: req.message_id });
             if (tr) blocks.push(tr);
             return blocks.join("\n\n");
           })(),

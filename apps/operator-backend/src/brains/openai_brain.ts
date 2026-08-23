@@ -19258,6 +19258,7 @@ async function buildPrompt(req: ChatRequest, lane?: { route: SpeedRouteKind; rea
       const bounded = assembleBoundedEvidenceContext({
         projections: durableEvidenceProjections,
         session_id: req.session_id,
+        model_call_id: req.message_id,
         source: "legacy_agent_tool_results"
       });
       lines.push("Tool evidence projections (raw evidence is retained by evidence_id):");
