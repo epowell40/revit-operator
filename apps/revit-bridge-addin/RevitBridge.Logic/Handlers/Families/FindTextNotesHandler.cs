@@ -25,6 +25,8 @@ namespace RevitBridge.Logic.Handlers
             public string? contains { get; set; }
             public string? regex { get; set; }
             public long? viewId { get; set; }
+            public long? elementId { get; set; }
+            public List<long>? elementIds { get; set; }
             public int? max { get; set; }
         }
 
@@ -58,6 +60,13 @@ namespace RevitBridge.Logic.Handlers
             var containsNorm = NormalizeForSearch(contains);
             var rx = (p.regex ?? "").Trim();
             var max = p.max.HasValue && p.max.Value > 0 ? Math.Min(p.max.Value, MaximumResultCount) : DefaultResultCount;
+            var requestedElementIds = new HashSet<long>((p.elementIds ?? new List<long>())
+                .Concat(p.elementId.HasValue ? new[] { p.elementId.Value } : Array.Empty<long>())
+                .Where(value => value > 0));
+            if (requestedElementIds.Count > MaximumResultCount)
+                throw new InvalidOperationException($"find-text-notes elementIds is bounded to {MaximumResultCount} exact targets.");
+            if (requestedElementIds.Count > 0)
+                max = Math.Max(max, requestedElementIds.Count);
 
             Regex? regex = null;
             if (!string.IsNullOrWhiteSpace(rx))
@@ -84,6 +93,8 @@ namespace RevitBridge.Logic.Handlers
             foreach (var tn in textNotes)
             {
                 if (tn == null) continue;
+                var textNoteId = RevitBridge.Common.ElementIdCompat.GetValue(tn.Id);
+                if (requestedElementIds.Count > 0 && !requestedElementIds.Contains(textNoteId)) continue;
                 var t = tn.Text ?? "";
                 var textBytes = Encoding.UTF8.GetByteCount(t);
                 if (textBytes > MaximumTextUtf8Bytes) throw new InvalidOperationException("TextNote text exceeds the bounded exact-output limit.");
@@ -94,7 +105,7 @@ namespace RevitBridge.Logic.Handlers
                 if (ok && regex != null && !regex.IsMatch(tNorm)) ok = false;
                 if (!ok) continue;
 
-                elementIds.Add(RevitBridge.Common.ElementIdCompat.GetValue(tn.Id));
+                elementIds.Add(textNoteId);
                 if (textSamples.Count < 20) textSamples.Add(t.Length > 200 ? t.Substring(0, 200) : t);
 
                 var ownerViewId = SafeGetOwnerViewId(tn);
@@ -134,6 +145,9 @@ namespace RevitBridge.Logic.Handlers
                 familyDocumentId,
                 familyName,
                 documentTitle = SafeDocTitle(targetDoc),
+                requestedElementIds = requestedElementIds.OrderBy(value => value).ToArray(),
+                exactElementFilterApplied = requestedElementIds.Count > 0,
+                itemsComplete = requestedElementIds.Count > 0 || items.Count < max,
                 elementIds,
                 textSamples,
                 items

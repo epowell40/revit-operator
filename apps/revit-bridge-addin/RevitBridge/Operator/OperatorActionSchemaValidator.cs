@@ -9357,7 +9357,7 @@ namespace RevitBridge.Operator
 
             if (string.Equals(path, "/revit/find-text-notes", StringComparison.OrdinalIgnoreCase))
             {
-                // { docId?: string, familyDocumentId?: string, textContains?: string, contains?: string, regex?: string, viewId?: number, max?: number }
+                // { docId?: string, familyDocumentId?: string, elementId?: number, elementIds?: number[], textContains?: string, contains?: string, regex?: string, viewId?: number, max?: number }
                 if (!IsNullOrObject(body, out var obj) || !obj.HasValue)
                 {
                     error = "find-text-notes body must be an object.";
@@ -9369,6 +9369,8 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalString(obj.Value, "contains", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "regex", maxLen: 200, out error)) return false;
                 if (!ValidateOptionalLong(obj.Value, "viewId", out error)) return false;
+                if (!ValidateOptionalLong(obj.Value, "elementId", out error)) return false;
+                if (!ValidateOptionalLongArray(obj.Value, "elementIds", maxCount: 500, out error)) return false;
                 if (!ValidateOptionalInt(obj.Value, "max", out error)) return false;
                 if (obj.Value.TryGetProperty("max", out var findTextMaximum) && findTextMaximum.ValueKind != JsonValueKind.Null &&
                     (!findTextMaximum.TryGetInt32(out var findTextMaximumValue) || findTextMaximumValue < 1 || findTextMaximumValue > 500))

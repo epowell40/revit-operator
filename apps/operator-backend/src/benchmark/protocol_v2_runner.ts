@@ -32,6 +32,22 @@ function records(value: unknown): JsonRecord[] {
   return Array.isArray(value) ? value.map(record).filter((entry) => Object.keys(entry).length > 0) : [];
 }
 
+function workPacketStatusMatchesTerminal(packet: JsonRecord, assignment: JsonRecord): boolean {
+  const status = String(packet.status || "");
+  const control = record(assignment.control_plane);
+  const terminal = String(control.terminal_state || "");
+  const attempts = records(control.attempts);
+  const hasUnknown = attempts.some(attempt => String(record(attempt.effect).state || "") === "unknown");
+  if (status === "verified_complete" || status === "verified_no_op") {
+    return ["verified", "complete"].includes(terminal) && !hasUnknown;
+  }
+  if (status === "blocked_truthfully" || status === "awaiting_clarification") return terminal === "blocked";
+  if (status === "failed") return terminal === "failed" || terminal === "canceled";
+  if (status === "complete_with_issues") return terminal !== "open";
+  if (status === "rolled_back") return terminal !== "open";
+  return false;
+}
+
 export function loadBenchmarkRunEnvelopeDraftV2(filePath: string): BenchmarkRunEnvelopeDraftV2 {
   const draft = readJsonFile<BenchmarkRunEnvelopeDraftV2>(path.resolve(filePath));
   validateBenchmarkRunEnvelopeDraftV2(draft);
@@ -90,13 +106,15 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     }
     const packetBundle = record(toolResults.durable_work_packets);
     const packets = records(packetBundle.packets);
-    if (packetBundle.schema !== "revit-operator.benchmark-work-packets/v1" || packets.length === 0
-        || packets.some(packet => !String(packet.packet_id || "").trim() || !String(packet.packet_hash || "").trim()
-          || !verifyVerifiedWorkPacketHash(packet as unknown as VerifiedWorkPacketV1))) {
+    if (packetBundle.schema !== "revit-operator.benchmark-work-packets/v1" || packets.length === 0) {
       throw new Error(`Benchmark Protocol V2 is missing a complete Verified Work Packet for ${caseId}.`);
     }
-    const terminalAssignments = assignmentRows.filter(row => ["verified", "complete"].includes(String(record(row.control_plane).terminal_state || "")));
-    const packetBound = packets.some(packet => {
+    if (packets.some(packet => !String(packet.packet_id || "").trim() || !String(packet.packet_hash || "").trim()
+      || !verifyVerifiedWorkPacketHash(packet as unknown as VerifiedWorkPacketV1))) {
+      throw new Error(`Benchmark Protocol V2 Verified Work Packet hash is invalid for ${caseId}.`);
+    }
+    const terminalAssignments = assignmentRows.filter(row => String(record(row.control_plane).terminal_state || "") !== "open");
+    const exactBindings = packets.flatMap(packet => {
       const identity = record(packet.identity);
       const assignment = terminalAssignments.find(row => {
         const assignmentId = String(row.id || row.source_record_id || "").replace(/^goal:/, "");
@@ -104,9 +122,12 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         return identity.assignment_id === assignmentId && identity.run_id === control.run_id
           && identity.generation === control.generation;
       });
-      return Boolean(assignment) && ["verified_complete", "verified_no_op"].includes(String(packet.status || ""));
+      return assignment ? [{ packet, assignment }] : [];
     });
-    if (!packetBound) throw new Error(`Benchmark Protocol V2 Verified Work Packet is stale, cross-run, or contradicts canonical completion for ${caseId}.`);
+    if (exactBindings.length === 0) throw new Error(`Benchmark Protocol V2 Verified Work Packet has a stale or cross-run binding for ${caseId}.`);
+    if (!exactBindings.some(({ packet, assignment }) => workPacketStatusMatchesTerminal(packet, assignment))) {
+      throw new Error(`Benchmark Protocol V2 Verified Work Packet status contradicts canonical Assignment truth for ${caseId}.`);
+    }
   }
 }
 
@@ -115,7 +136,10 @@ function finalizationFailureDetails(message: string): {
 } {
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
   if (/settlement still in flight/i.test(message)) return { code: "assignment_settlement_in_flight", stage: "settlement_barrier", missing: ["settled_revit_receipt"], telemetry: "still_in_flight" };
-  if (/Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };
+  if (/missing a complete Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };
+  if (/Work Packet hash is invalid/i.test(message)) return { code: "invalid_work_packet_hash", stage: "work_packet", missing: [], telemetry: "conflicting_or_quarantined" };
+  if (/Work Packet has a stale or cross-run binding/i.test(message)) return { code: "stale_work_packet_binding", stage: "work_packet", missing: [], telemetry: "conflicting_or_quarantined" };
+  if (/Work Packet status contradicts/i.test(message)) return { code: "work_packet_truth_conflict", stage: "work_packet", missing: [], telemetry: "conflicting_or_quarantined" };
   if (/Revit receipts|action-attempt receipt|canonical read receipt|dispatched-action receipts/i.test(message)) return { code: "missing_revit_receipt", stage: "revit_receipts", missing: ["revit_receipt"], telemetry: "missing" };
   if (/manifest|corpus hash|case .*hash|ENOENT/i.test(message)) return { code: "path_or_manifest_resolution_failure", stage: "bound_inputs", missing: ["bound_manifest"], telemetry: "collection_failed" };
   if (/evaluator|oracle/i.test(message)) return { code: "evaluator_exception", stage: "evaluation", missing: [], telemetry: "complete" };

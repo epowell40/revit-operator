@@ -103,7 +103,7 @@ function canonicalAttempt(overrides: JsonRecord = {}): JsonRecord {
   };
 }
 
-function assignmentProjection(attempts: JsonRecord[]): JsonRecord {
+function assignmentProjection(attempts: JsonRecord[], terminalState = "verified"): JsonRecord {
   return {
     assignments: [{
       id: "assignment-1",
@@ -112,14 +112,18 @@ function assignmentProjection(attempts: JsonRecord[]): JsonRecord {
         assignment_id: "assignment-1",
         run_id: "assignment-run-1",
         generation: 1,
-        terminal_state: "verified",
+        terminal_state: terminalState,
         attempts
       }
     }]
   };
 }
 
-function verifiedPacket(requestedEffect: "read" | "preview" | "apply" = "apply"): JsonRecord {
+function verifiedPacket(
+  requestedEffect: "read" | "preview" | "apply" = "apply",
+  status = "verified_complete",
+  statusReason = "Canonical verification passed."
+): JsonRecord {
   const body = {
     schema: "revit-operator.verified-work-packet/v1",
     packet_version: 1,
@@ -132,8 +136,8 @@ function verifiedPacket(requestedEffect: "read" | "preview" | "apply" = "apply")
       normalized_user_request: "Complete the test request.", requested_effect: requestedEffect,
       scope: [], exclusions: [], constraints: [], authorization_envelope: null
     },
-    status: "verified_complete",
-    status_reason: "Canonical verification passed.",
+    status,
+    status_reason: statusReason,
     grounded_targets: [], actions: [], acceptance_criteria: [], collateral_checks: [], artifacts: [], issues: [],
     rollback: {
       available: null, authority_or_transaction_identity: null, affected_target_identities: [],
@@ -400,6 +404,47 @@ test("canonical attempt effect accessor is backward compatible but rejects confl
   assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "unknown" }), null);
 });
 
+test("Protocol V2 accepts an exact-bound valid failure packet as measurable but non-promotable truth", () => {
+  const testCase = benchmarkCase();
+  const attempt = canonicalAttempt({
+    effect: { state: "unknown", authority: "native_host", reason: "native_settlement_missing" },
+    evidence_refs: ["evidence:unknown-effect"]
+  });
+  const trace = traceFor(testCase, { attempts: [attempt] });
+  const projection = assignmentProjection([attempt], "canceled");
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_projection = projection;
+  const raw = toolResults.raw_sidecar_response as JsonRecord;
+  raw.assignment_projection = projection;
+  const packet = verifiedPacket("apply", "complete_with_issues", "unknown_effect_requires_reconciliation");
+  toolResults.durable_work_packets = {
+    schema: "revit-operator.benchmark-work-packets/v1", packets: [packet], failures: []
+  };
+  toolResults.raw_sidecar_response_sha256 = sha256Value(raw);
+
+  assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [testCase.case_id]));
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "benchmark-v2-valid-failure-packet-"));
+  const draftPath = path.join(tmp, "draft.json");
+  const legacyPath = path.join(tmp, "legacy.json");
+  const outputPath = path.join(tmp, "out", "raw-report.json");
+  fs.writeFileSync(draftPath, JSON.stringify(envelopeDraft(testCase)), "utf8");
+  fs.writeFileSync(legacyPath, JSON.stringify({
+    run_id: "run-v2", generated_at: FINISH, suite_timing: { finished_at_utc: FINISH },
+    model_call_telemetry: { by_route_model_effort: [{ route: "codex_agent", model: "gpt-5.6-sol", reasoning_effort: "medium", call_count: 1 }] },
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }), "utf8");
+  const published = writeProtocolV2ReportFromFlight({ draftPath, legacyReportPath: legacyPath, outputPath, cases: [testCase] });
+  assert.equal(fs.existsSync(published.json_path), true);
+  assert.equal(fs.existsSync(path.join(path.dirname(outputPath), "finalization-failure.json")), false);
+  assert.notEqual(published.report.cases[0]?.delivery_verdict, "verified_committed_completion");
+  assert.notEqual(published.report.cases[0]?.delivery_verdict, "first_pass_verified");
+});
+
 test("Protocol V2 preserves typed failure artifacts and a timeout with recovered receipts can finalize", () => {
   const testCase = benchmarkCase();
   const publish = (name: string, mutate: (legacy: any, draft: any) => void) => {
@@ -422,6 +467,28 @@ test("Protocol V2 preserves typed failure artifacts and a timeout with recovered
   const failures: Array<[string, (legacy: any, draft: any) => void, string]> = [
     ["revit", legacy => { legacy.task_traces[0].tool_results.durable_tool_evidence = {}; }, "missing_revit_receipt"],
     ["packet", legacy => { legacy.task_traces[0].tool_results.durable_work_packets = { schema: "revit-operator.benchmark-work-packets/v1", packets: [], failures: [{ error: "blocked" }] }; }, "incomplete_work_packet"],
+    ["packet-hash", legacy => {
+      legacy.task_traces[0].tool_results.durable_work_packets.packets[0].packet_hash = `sha256:${"0".repeat(64)}`;
+    }, "invalid_work_packet_hash"],
+    ["packet-binding", legacy => {
+      const packet = legacy.task_traces[0].tool_results.durable_work_packets.packets[0];
+      packet.identity.run_id = "another-run";
+      const { packet_id: _id, packet_hash: _hash, ...body } = packet;
+      const hash = sha256Value(body);
+      packet.packet_id = `vwp1_${Buffer.from(hash, "hex").toString("base64url").slice(0, 32)}`;
+      packet.packet_hash = `sha256:${hash}`;
+    }, "stale_work_packet_binding"],
+    ["packet-truth", legacy => {
+      const projection = legacy.task_traces[0].tool_results.durable_assignment_projection;
+      projection.assignments[0].control_plane.terminal_state = "canceled";
+      legacy.task_traces[0].tool_results.raw_sidecar_response.assignment_projection = projection;
+      const packet = legacy.task_traces[0].tool_results.durable_work_packets.packets[0];
+      const { packet_id: _id, packet_hash: _hash, ...body } = packet;
+      const hash = sha256Value(body);
+      packet.packet_id = `vwp1_${Buffer.from(hash, "hex").toString("base64url").slice(0, 32)}`;
+      packet.packet_hash = `sha256:${hash}`;
+      legacy.task_traces[0].tool_results.raw_sidecar_response_sha256 = sha256Value(legacy.task_traces[0].tool_results.raw_sidecar_response);
+    }, "work_packet_truth_conflict"],
     ["inflight", legacy => {
       const control = legacy.task_traces[0].tool_results.durable_assignment_projection.assignments[0].control_plane;
       control.in_flight_count = 1;

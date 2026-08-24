@@ -70,6 +70,55 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void NativeNotStartedTransactionIsAuthoritativeNoEffect()
+        {
+            var noEffect = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                transaction = new { status = "not_started", committed = false, modified_element_ids = new long[0] }
+            }, "apply", "POST", "/revit/replace-text-note");
+
+            Assert.Equal("none", noEffect.EffectState);
+            Assert.Equal("native_transaction", noEffect.EffectAuthority);
+            Assert.Equal("native_transaction_not_started", noEffect.EffectReason);
+        }
+
+        [Fact]
+        public void TextNoteTransactionReceiptFactoriesPreserveCommittedRollbackAndNoEffectTruth()
+        {
+            var committed = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { 42L })
+            }, "apply", "POST", "/revit/replace-text-note");
+            var preview = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 42L })
+            }, "preview", "POST", "/revit/replace-text-note");
+            var unchanged = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                transaction = OperatorNativeTransactionReceipt.NotStarted(new[] { 42L })
+            }, "apply", "POST", "/revit/set-text-note-text");
+
+            Assert.Equal("applied", committed.EffectState);
+            Assert.Equal("none", preview.EffectState);
+            Assert.Equal("none", unchanged.EffectState);
+            Assert.Contains("element_id:42", committed.AffectedTargetIdentities);
+        }
+
+        [Theory]
+        [InlineData("committed", false)]
+        [InlineData("rolled_back", true)]
+        [InlineData("pending", false)]
+        public void ContradictoryOrUnrecognizedTransactionSettlementRemainsUnknown(string status, bool committed)
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                transaction = new { status, committed, modified_element_ids = new[] { 42L } }
+            }, "apply", "POST", "/revit/replace-text-note");
+
+            Assert.Equal("unknown", settlement.EffectState);
+        }
+
+        [Fact]
         public void AttachedEnvelopeCarriesAssignmentFenceAndCannotBeSpoofedByHandler()
         {
             var attached = OperatorAttemptSuccessfulSettlement.Attach(

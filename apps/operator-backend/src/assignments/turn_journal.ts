@@ -78,12 +78,24 @@ function targetIdentities(value: unknown, out: string[] = [], depth = 0): string
     for (const child of value) targetIdentities(child, out, depth + 1);
   } else if (typeof value === "object") {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (/^(?:ids?|elementids?|element_ids?)$/i.test(key)
-        || /(?:^|_)(?:element|target|view|sheet|schedule|family|type|room|document)(?:_?ids?|_?names?|_?numbers?)$/i.test(key)) {
+      const normalizedKey = key.replace(/[-_]/g, "").toLowerCase();
+      const kind = /^(?:id|ids|elementid|elementids|textnoteid|textnoteids|targetid|targetids)$/.test(normalizedKey)
+        ? "element_id"
+        : /^viewids?$/.test(normalizedKey) ? "view_id"
+          : /^sheetids?$/.test(normalizedKey) ? "sheet_id"
+            : /^scheduleids?$/.test(normalizedKey) ? "schedule_id"
+              : /^familyids?$/.test(normalizedKey) ? "family_id"
+                : /^typeids?$/.test(normalizedKey) ? "type_id"
+                  : /^roomids?$/.test(normalizedKey) ? "room_id"
+                    : /^documentids?$/.test(normalizedKey) ? "document_id"
+                      : /(?:element|target|view|sheet|schedule|family|type|room|document)(?:id|ids|name|names|number|numbers)$/.test(normalizedKey)
+                        ? normalizedKey.replace(/(?:id|ids|name|names|number|numbers)$/, "_identity")
+                        : null;
+      if (kind) {
         const values = Array.isArray(child) ? child : [child];
         for (const candidate of values) {
           if ((typeof candidate === "string" || typeof candidate === "number") && `${candidate}`.trim()) {
-            const identity = `${key}:${`${candidate}`.trim()}`;
+            const identity = `${kind}:${`${candidate}`.trim()}`;
             if (!out.includes(identity)) out.push(identity);
           }
         }
