@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createOperatorBackendClient, EVIDENCE_RETRIEVE_PATH, SEMANTIC_MEP_ROUTE_PLAN_PATH } from "./operatorBackendClient.js";
+import { createOperatorBackendClient, EVIDENCE_RETRIEVE_PATH, READ_COMPLETION_CLAIM_PATH, SEMANTIC_MEP_ROUTE_PLAN_PATH } from "./operatorBackendClient.js";
 
 test("semantic MEP backend client uses only the fixed authenticated planner path", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -54,6 +54,27 @@ test("evidence backend client uses the fixed authenticated focused-retrieval pat
   };
   await client.retrieveEvidence(request);
   assert.equal(calls[0]?.url, `http://self-hosted.example:7007${EVIDENCE_RETRIEVE_PATH}`);
+  assert.equal(new Headers(calls[0]?.init?.headers).get("x-operator-token"), "operator-test-token");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), request);
+});
+
+test("read-completion backend client uses the fixed authenticated canonical claim path", async () => {
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const client = createOperatorBackendClient({
+    baseUrl: "http://self-hosted.example:7007/",
+    token: "operator-test-token",
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ ok: true, claim_id: "claim-1", status: "pending" }), { status: 202 });
+    }
+  });
+  const request = {
+    schema: "revit-operator.assignment-read-completion-claim/v1",
+    assignment_id: "assignment-a", run_id: "run-a", generation: 1, session_id: "session-a",
+    criteria: [], result: { kind: "inventory", assertions: [] }
+  };
+  await client.submitReadCompletionClaim(request);
+  assert.equal(calls[0]?.url, `http://self-hosted.example:7007${READ_COMPLETION_CLAIM_PATH}`);
   assert.equal(new Headers(calls[0]?.init?.headers).get("x-operator-token"), "operator-test-token");
   assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), request);
 });

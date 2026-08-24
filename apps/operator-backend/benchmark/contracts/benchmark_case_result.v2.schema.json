@@ -15,7 +15,7 @@
     "original_evaluator_verdict": { "$ref": "#/$defs/judgment" },
     "current_evaluator_verdict": { "$ref": "#/$defs/judgment" },
     "presentation_verdict": { "$ref": "#/$defs/judgment" },
-    "delivery_verdict": { "enum": ["verified_committed_completion", "first_pass_verified", "recovered_verified", "verified_noop", "truthful_fixture_blocker", "truthful_ambiguity_blocker", "genuine_product_limitation_blocker", "avoidable_clarification", "execution_failure", "verification_evidence_failure", "infrastructure_harness_failure", "false_completion", "collateral_or_unauthorized_mutation", "safe_readiness_only", "not_run"] },
+    "delivery_verdict": { "enum": ["verified_committed_completion", "first_pass_verified", "recovered_verified", "verified_noop", "verified_read_completion", "truthful_fixture_blocker", "truthful_ambiguity_blocker", "genuine_product_limitation_blocker", "avoidable_clarification", "execution_failure", "verification_evidence_failure", "infrastructure_harness_failure", "false_completion", "collateral_or_unauthorized_mutation", "safe_readiness_only", "not_run"] },
     "stages": { "type": "array", "minItems": 11, "maxItems": 11, "items": { "$ref": "#/$defs/stage" } },
     "first_failed_or_uncertain_stage": { "oneOf": [{ "$ref": "#/$defs/stage_name" }, { "type": "null" }] },
     "primary_failure_cause": { "oneOf": [{ "$ref": "#/$defs/failure" }, { "type": "null" }] },

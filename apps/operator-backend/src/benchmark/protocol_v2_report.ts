@@ -83,6 +83,7 @@ export function summarizeBenchmarkLanesV2(cases: readonly BenchmarkCaseResultV2[
       first_pass_verified: firstPass,
       recovered_verified: recovered,
       verified_noop: count("verified_noop"),
+      verified_read_completion: count("verified_read_completion"),
       truthful_fixture_blocker: count("truthful_fixture_blocker"),
       truthful_ambiguity_blocker: count("truthful_ambiguity_blocker"),
       genuine_product_limitation_blocker: count("genuine_product_limitation_blocker"),
@@ -120,11 +121,11 @@ export function benchmarkProtocolV2Markdown(report: BenchmarkRawReportV2): strin
     "",
     "Accepted and safe previews are deliberately excluded from the primary delivered-labor rate.",
     "",
-    "| Lane | Cases | Verified committed | First pass | Recovered | Verified no-op | Fixture blocker | Ambiguity blocker | Product limit | Avoidable clarification | Execution fail | Verification fail | Infra fail | False completion | Collateral | Delivered rate | Release blocked |",
-    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"
+    "| Lane | Cases | Verified committed | First pass | Recovered | Verified no-op | Verified read | Fixture blocker | Ambiguity blocker | Product limit | Avoidable clarification | Execution fail | Verification fail | Infra fail | False completion | Collateral | Delivered rate | Release blocked |",
+    "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"
   ];
   for (const lane of lanes) {
-    lines.push(`| ${lane.lane} | ${lane.case_count} | ${lane.verified_committed_completion} | ${lane.first_pass_verified} | ${lane.recovered_verified} | ${lane.verified_noop} | ${lane.truthful_fixture_blocker} | ${lane.truthful_ambiguity_blocker} | ${lane.genuine_product_limitation_blocker} | ${lane.avoidable_clarification} | ${lane.execution_failure} | ${lane.verification_evidence_failure} | ${lane.infrastructure_harness_failure} | ${lane.false_completion} | ${lane.collateral_or_unauthorized_mutation} | ${(lane.primary_delivered_labor_rate * 100).toFixed(1)}% | ${lane.release_blocked ? "YES" : "no"} |`);
+    lines.push(`| ${lane.lane} | ${lane.case_count} | ${lane.verified_committed_completion} | ${lane.first_pass_verified} | ${lane.recovered_verified} | ${lane.verified_noop} | ${lane.verified_read_completion} | ${lane.truthful_fixture_blocker} | ${lane.truthful_ambiguity_blocker} | ${lane.genuine_product_limitation_blocker} | ${lane.avoidable_clarification} | ${lane.execution_failure} | ${lane.verification_evidence_failure} | ${lane.infrastructure_harness_failure} | ${lane.false_completion} | ${lane.collateral_or_unauthorized_mutation} | ${(lane.primary_delivered_labor_rate * 100).toFixed(1)}% | ${lane.release_blocked ? "YES" : "no"} |`);
   }
   lines.push("", "## Efficiency by lane", "",
     "| Lane | Median completion | p95 completion | Model calls | Revit calls | Repeated no-progress calls | Tokens / verified task | Estimated cost / verified task | Human interventions |",

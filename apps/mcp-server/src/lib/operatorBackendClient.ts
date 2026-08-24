@@ -2,6 +2,7 @@ import { getOrCreateOperatorToken } from "./workspace.js";
 
 export const SEMANTIC_MEP_ROUTE_PLAN_PATH = "/tools/mep/semantic-route-plan";
 export const EVIDENCE_RETRIEVE_PATH = "/evidence/retrieve";
+export const READ_COMPLETION_CLAIM_PATH = "/api/assignments/read-completion-claims";
 
 export type SemanticMepRoutePlanInput = {
   userText: string;
@@ -27,6 +28,23 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
   const fetchImpl = options.fetchImpl ?? fetch;
 
   return {
+    async submitReadCompletionClaim(input: unknown): Promise<unknown> {
+      const token = options.token ?? getOrCreateOperatorToken();
+      const response = await fetchImpl(`${baseUrl}${READ_COMPLETION_CLAIM_PATH}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "X-Operator-Token": token } : {})
+        },
+        body: JSON.stringify(input)
+      });
+      if (!response.ok) {
+        let details = "";
+        try { details = await response.text(); } catch {}
+        throw new Error(`Operator read-completion claim responded with status ${response.status}${details ? `: ${details}` : ""}`);
+      }
+      return await response.json();
+    },
     async retrieveEvidence(input: unknown): Promise<unknown> {
       const token = options.token ?? getOrCreateOperatorToken();
       const response = await fetchImpl(`${baseUrl}${EVIDENCE_RETRIEVE_PATH}`, {

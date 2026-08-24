@@ -20,6 +20,13 @@ Assistant prose is never parsed to decide packet status. Caller-reported
 receipts remain caller-reported. Cross-Assignment, missing, or stale evidence
 is retained as an issue and cannot support a verified claim.
 
+For authoritative read completion, acceptance-criterion observations include
+the canonical structured-result digest, assertion IDs, and supporting
+EvidenceRef IDs. The action table retains the exact native read attempts,
+receipts, and immutable evidence references. This makes the read result
+auditable without copying the raw payload into the packet or trusting the
+assistant's wording.
+
 ## Status rules
 
 - `verified_complete` requires the existing canonical verification allowed for

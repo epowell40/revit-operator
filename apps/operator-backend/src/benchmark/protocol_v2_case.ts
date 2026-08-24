@@ -76,7 +76,7 @@ function assistantText(trace: JsonRecord): string {
 
 function effectTruth(trace: JsonRecord, testCase: GeneralRevitCapabilityCase): BenchmarkExecutionTruthV2 {
   const rows = canonicalAttempts(trace);
-  const actionAttempts = rows.filter(({ attempt }) => String(attempt.purpose || "action") !== "verification");
+  const actionAttempts = rows.filter(({ attempt }) => String(attempt.purpose || "action") === "action");
   const selected = [...actionAttempts].reverse().find(({ attempt }) => String(record(attempt.effect).state || "") === "applied")
     ?? [...actionAttempts].reverse().find(({ attempt }) => String(record(attempt.effect).state || "") === "unknown")
     ?? actionAttempts.at(-1);
@@ -137,6 +137,16 @@ function stage(stage: BenchmarkStageNameV2, status: BenchmarkStageStatusV2, reas
   return { stage, status, reason, evidence_refs: evidenceRefs };
 }
 
+function hasAuthoritativeCanonicalRead(trace: JsonRecord): boolean {
+  const durable = record(record(trace.tool_results).durable_tool_evidence);
+  return records(durable.canonical_attempt_receipts).some(receipt => receipt.requested_effect === "read"
+    && receipt.dispatch_state === "acknowledged" && receipt.effect_state === "none"
+    && ["native_host", "native_receipt", "target_readback", "independent_verifier"].includes(String(receipt.effect_authority || ""))
+    && Array.isArray(receipt.receipt_refs) && receipt.receipt_refs.length > 0
+    && Array.isArray(receipt.evidence_refs) && receipt.evidence_refs.length > 0
+    && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
+}
+
 function presentationStatus(trace: JsonRecord, truth: BenchmarkExecutionTruthV2, evaluation: GeneralRevitEvaluation): BenchmarkStageV2 {
   const text = assistantText(trace);
   const claimsCompletion = /\b(?:done|completed|successfully|created|updated|changed|placed|applied|verified)\b/i.test(text)
@@ -168,7 +178,9 @@ function stagesFor(
   const expectedObserved = evaluation.expected_path_observed;
   const previewRequired = truth.requested_effect === "preview";
   const verificationBasis = evaluation.verification_basis;
-  const readback = evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis);
+  const readback = truth.requested_effect === "read"
+    ? hasAuthoritativeCanonicalRead(trace)
+    : evaluation.verified && !["none", "generic_structured_receipt", "durable_server_validation"].includes(verificationBasis);
   const admissionRejected = canonicalAttempts(trace).some(({ attempt }) => String(record(attempt.admission).state) === "rejected");
   const substantiveError = String(record(trace.errors_retries_recoveries).error || "").trim();
   const semanticStatus: BenchmarkStageStatusV2 = evaluation.answer_assertion_passed === false ? "fail"
@@ -243,6 +255,10 @@ function deliveryVerdict(
     ? "truthful_ambiguity_blocker" : "avoidable_clarification";
   if (evaluation.tier === "refused") return "genuine_product_limitation_blocker";
   if (truth.requested_effect === "apply" && truth.effect_state === "none" && evaluation.verified) return "verified_noop";
+  if (truth.requested_effect === "read" && truth.effect_state === "none" && evaluation.verified
+      && stages.find((entry) => entry.stage === "postcondition_read_back")?.status === "pass") {
+    return "verified_read_completion";
+  }
   if (truth.effect_state === "applied" && evaluation.verified) {
     const recovered = canonicalAttempts(trace).some(({ attempt }) => Boolean(attempt.retry_of_attempt_id || attempt.reconciliation_of_attempt_id));
     return recovered ? "recovered_verified" : "first_pass_verified";
@@ -287,7 +303,9 @@ export function buildBenchmarkCaseResultV2(args: {
   const efficiency = record(args.trace.efficiency);
   const modelSummary = record(efficiency.model_call_summary);
   const toolCalls = records(args.trace.tool_calls);
-  const revitCalls = toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/")).length;
+  const canonicalRevitCalls = records(record(record(args.trace.tool_results).durable_tool_evidence).canonical_attempt_receipts)
+    .filter((entry) => String(entry.path || "").startsWith("/revit/")).length;
+  const revitCalls = Math.max(toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/")).length, canonicalRevitCalls);
   const evaluatorVersion = args.evaluatorVersion || GENERAL_REVIT_EVALUATOR_V2;
   const presentation = stages.at(-1)!;
   return {

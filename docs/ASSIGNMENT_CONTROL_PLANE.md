@@ -120,6 +120,31 @@ receipts count against the resource budget but cannot independently terminalize
 semantic stagnation. All terminal requests pass through the bounded,
 event-driven settlement barrier. See [Asynchronous settlement barrier](ASYNC_SETTLEMENT_BARRIER.md).
 
+## Canonical read completion
+
+Settled read actions establish native facts; they do not by themselves prove
+that the user's task was answered. A read-only Assignment completes through the
+versioned `revit-operator.assignment-read-completion-claim/v1` handoff:
+
+1. `operator_submit_read_completion` submits the exact Assignment, run,
+   generation, criteria, action attempts, receipts, EvidenceRefs, and bounded
+   deterministic result assertions.
+2. The claim is durably journaled while its non-Revit tool lease is active.
+3. At the next quiescent turn boundary, the canonical validator reopens the
+   immutable evidence and evaluates the assertions. It checks current binding,
+   authoritative read settlement, complete criteria coverage, requested result
+   shape, evidence scope/trust, contradictions, and absence of apply/unknown
+   effects.
+4. Only an accepted claim permits terminal reason
+   `authoritative_read_completed`. The normal terminal projection then
+   synchronizes Goal lifecycle and persists the Work Packet.
+
+Claim submission is not verification authority. Quiescence, discovery,
+EvidenceRef expansion, provider receipts, and assistant prose cannot substitute
+for the validator. A claim made before quiescence remains pending and may be
+validated after the existing settlement barrier resolves; there is no polling
+or grace delay.
+
 ## Dependency boundary
 
 Production exposes generic Assignment, native settlement, and Dynamic Runtime

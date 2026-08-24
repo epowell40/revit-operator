@@ -27,7 +27,7 @@ export type TeammateTurnContract = {
   document_signature: string | null;
 };
 
-export type TeammateMcpEffect = "read" | "evidence_read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
+export type TeammateMcpEffect = "read" | "evidence_read" | "completion_claim" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
 export type TeammatePendingCall = { effect: TeammateMcpEffect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
 type Effect = TeammateMcpEffect;
 type PendingCall = TeammatePendingCall;
@@ -522,6 +522,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // read. It neither calls Revit nor creates fresh verification truth, so it
   // must not enter typed-Revit tool discovery or consume the Revit budget.
   if (tool === "operator_retrieve_evidence") return call("evidence_read");
+  if (tool === "operator_submit_read_completion") return call("completion_claim");
   if (tool === "web_fetch_evidence") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
     return call("read");
@@ -670,7 +671,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   // Opening the first document is the one exact mutation that must be able to
   // establish live document context. All ordinary reads, navigation, previews,
   // and model writes remain fail-closed until a document identity is live.
-  if (call.effect !== "discovery" && call.effect !== "evidence_read"
+  if (call.effect !== "discovery" && call.effect !== "evidence_read" && call.effect !== "completion_claim"
       && contract.context_state !== "live" && !isContextFreeDocumentBootstrapCall(call)) {
     return "live_revit_context_required";
   }
