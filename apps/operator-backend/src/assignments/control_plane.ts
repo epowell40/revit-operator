@@ -241,6 +241,16 @@ function authority(value: unknown): AssignmentEffectAuthority | null {
   return allowed.includes(value as AssignmentEffectAuthority) ? value as AssignmentEffectAuthority : null;
 }
 
+function effectAuthorityRank(value: AssignmentEffectAuthority): number {
+  if (value === "independent_verifier") return 6;
+  if (value === "target_readback") return 5;
+  if (["native_host", "native_transaction", "native_receipt", "native_rollback"].includes(value)) return 4;
+  if (value === "dispatch_transport" || value === "worker") return 3;
+  if (["admission_policy", "schema_validator", "write_grant", "transport_pre_dispatch"].includes(value)) return 2;
+  if (value === "caller_report") return 1;
+  return 0;
+}
+
 function retryDelta(value: unknown): AssignmentRetryDelta | null {
   const allowed: AssignmentRetryDelta[] = [
     "corrected_schema", "corrected_confirmation", "new_target_evidence", "changed_plan",
@@ -356,19 +366,34 @@ function applyEffect(attempt: AssignmentAttemptRecord, data: Record<string, unkn
   if (!source) return "A recognized effect_authority is required.";
   const authorityError = effectAuthorityError(state, source, data);
   if (authorityError) return authorityError;
-  if (attempt.effect.state === "applied" && state !== "applied") return "An applied effect cannot be downgraded.";
   const effectiveState = state === "applied" && source === "caller_report" ? "unknown" : state;
+  const currentRank = effectAuthorityRank(attempt.effect.authority);
+  const incomingRank = effectAuthorityRank(source);
+  if (attempt.requested_effect !== "apply" && effectiveState === "applied") {
+    return `A ${attempt.requested_effect} attempt cannot establish a persistent applied effect.`;
+  }
+  if (incomingRank < currentRank) {
+    return `A lower-authority ${source} effect cannot alter ${attempt.effect.authority} effect truth.`;
+  }
+  if (attempt.effect.state === "applied" && effectiveState !== "applied") return "An applied effect cannot be downgraded.";
+  if (attempt.effect.state === "unknown" && effectiveState !== "unknown" && incomingRank < 4) {
+    return `Only authoritative native settlement or target-bound verification may resolve an unknown effect.`;
+  }
+  if (attempt.effect.state !== effectiveState && (currentRank >= 4 || incomingRank === currentRank)) {
+    return `Conflicting ${source} effect truth cannot replace ${attempt.effect.authority} ${attempt.effect.state}.`;
+  }
+  attempt.affected_target_identities = [...new Set([
+    ...attempt.affected_target_identities,
+    ...strings(data.affected_target_identities)
+  ])];
+  attempt.receipt_refs = [...new Set([...attempt.receipt_refs, ...strings(data.receipt_refs)])];
+  attempt.evidence_refs = [...new Set([...attempt.evidence_refs, ...strings(data.evidence_refs)])];
   attempt.effect = {
     state: effectiveState,
     reason: string(data.reason) || (effectiveState === "unknown" ? "effect_not_authoritatively_settled" : `effect_${effectiveState}`),
     authority: effectiveState === "unknown" && source === "caller_report" ? "caller_report" : source,
     authority_id: string(data.authority_id) || null
   };
-  attempt.affected_target_identities = strings(data.affected_target_identities).length
-    ? strings(data.affected_target_identities)
-    : attempt.affected_target_identities;
-  attempt.receipt_refs = [...new Set([...attempt.receipt_refs, ...strings(data.receipt_refs)])];
-  attempt.evidence_refs = [...new Set([...attempt.evidence_refs, ...strings(data.evidence_refs)])];
   return null;
 }
 
@@ -613,33 +638,68 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
   if (event.kind === "admission_recorded") {
     const state = data.admission_state;
     if (state !== "admitted" && state !== "rejected") return "admission_state must be admitted or rejected.";
-    attempt.admission = { state, reason: string(data.reason) || null, authority: string(data.authority) || null };
+    if (attempt.terminal_state !== "active") return "A terminal attempt cannot accept a later admission callback.";
+    if (attempt.admission.state !== "pending") {
+      return attempt.admission.state === state
+        ? null
+        : `Admission cannot change from ${attempt.admission.state} to ${state}.`;
+    }
     if (state === "rejected") {
-      attempt.effect = { state: "none", reason: string(data.reason) || "admission_rejected", authority: authority(data.effect_authority) ?? "admission_policy", authority_id: string(data.authority_id) || null };
+      const error = applyEffect(attempt, {
+        ...data,
+        effect_state: "none",
+        effect_authority: authority(data.effect_authority) ?? "admission_policy",
+        reason: string(data.reason) || "admission_rejected"
+      });
+      if (error) return error;
+      attempt.admission = { state, reason: string(data.reason) || null, authority: string(data.authority) || null };
       attempt.terminal_state = "settled";
       attempt.lease.state = "failed_before_dispatch";
       attempt.lease.settled_at = event.occurred_at;
+    } else {
+      attempt.admission = { state, reason: string(data.reason) || null, authority: string(data.authority) || null };
     }
     return null;
   }
   if (event.kind === "dispatch_recorded") {
     const state = data.dispatch_state;
     if (!["dispatched", "acknowledged", "failed", "not_dispatched"].includes(String(state))) return "A recognized dispatch_state is required.";
+    if (attempt.terminal_state !== "active") return "A terminal attempt cannot accept a later dispatch callback.";
+    if (attempt.dispatch.state === "acknowledged" && state !== "acknowledged") {
+      return `Acknowledged dispatch cannot change to ${state}.`;
+    }
+    if (attempt.dispatch.state === "dispatched" && state === "not_dispatched") {
+      return "A dispatched attempt cannot later be classified not_dispatched.";
+    }
     const dispatchMayHaveOccurred = attempt.dispatch.state === "dispatched"
       || attempt.dispatch.state === "acknowledged"
       || data.dispatch_may_have_occurred === true;
+    let effectError: string | null = null;
+    if (attempt.requested_effect === "apply" && (state === "dispatched" || state === "acknowledged")) {
+      effectError = applyEffect(attempt, {
+        effect_state: "unknown", effect_authority: "dispatch_transport",
+        reason: "dispatch_occurred_effect_unsettled", authority_id: string(data.dispatch_id) || null
+      });
+    } else if (state === "failed" && attempt.requested_effect === "apply" && dispatchMayHaveOccurred) {
+      effectError = applyEffect(attempt, {
+        effect_state: "unknown", effect_authority: "dispatch_transport",
+        reason: string(data.reason) || "dispatch_may_have_occurred", authority_id: string(data.dispatch_id) || null
+      });
+    } else if (state === "failed" || state === "not_dispatched") {
+      effectError = applyEffect(attempt, {
+        effect_state: "none",
+        effect_authority: dispatchMayHaveOccurred ? "dispatch_transport" : "transport_pre_dispatch",
+        reason: string(data.reason) || (dispatchMayHaveOccurred ? "dispatch_failed_after_handoff" : "dispatch_did_not_occur"),
+        authority_id: string(data.dispatch_id) || null
+      });
+    }
+    if (effectError) return effectError;
     attempt.dispatch = { state: state as AssignmentAttemptRecord["dispatch"]["state"], reason: string(data.reason) || null, dispatch_id: string(data.dispatch_id) || null };
     if (state === "dispatched" || state === "acknowledged") {
       attempt.lease.state = "dispatched";
       attempt.lease.dispatch_at = attempt.lease.dispatch_at ?? event.occurred_at;
     }
-    if (attempt.requested_effect === "apply" && (state === "dispatched" || state === "acknowledged")) {
-      attempt.effect = { state: "unknown", reason: "dispatch_occurred_effect_unsettled", authority: "dispatch_transport", authority_id: attempt.dispatch.dispatch_id };
-    }
-    if (state === "failed" && attempt.requested_effect === "apply" && dispatchMayHaveOccurred) {
-      attempt.effect = { state: "unknown", reason: string(data.reason) || "dispatch_may_have_occurred", authority: "dispatch_transport", authority_id: attempt.dispatch.dispatch_id };
-    } else if (state === "failed" || state === "not_dispatched") {
-      attempt.effect = { state: "none", reason: string(data.reason) || "dispatch_did_not_occur", authority: "transport_pre_dispatch", authority_id: attempt.dispatch.dispatch_id };
+    if (state === "failed" || state === "not_dispatched") {
       attempt.terminal_state = "settled";
       attempt.lease.state = "failed_before_dispatch";
       attempt.lease.settled_at = event.occurred_at;
@@ -762,7 +822,7 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
 }
 
 export function reduceAssignmentControlPlane(assignmentId: string, events: readonly AssignmentAttemptEvent[]): AssignmentReduceResult {
-  const projection = initialProjection(assignmentId);
+  let projection = initialProjection(assignmentId);
   const acceptedEventIds: string[] = [];
   const rejected: AssignmentReduceResult["rejected"] = [];
   const seen = new Set<string>();
@@ -774,11 +834,13 @@ export function reduceAssignmentControlPlane(assignmentId: string, events: reado
       rejected.push({ event, reason: fenced });
       continue;
     }
-    const semantic = applyAcceptedEvent(projection, event);
+    const candidate = JSON.parse(JSON.stringify(projection)) as AssignmentControlPlaneProjection;
+    const semantic = applyAcceptedEvent(candidate, event);
     if (semantic) {
       rejected.push({ event, reason: semantic });
       continue;
     }
+    projection = candidate;
     acceptedEventIds.push(event.event_id);
     projection.last_event_at = event.occurred_at;
     refreshDerived(projection);

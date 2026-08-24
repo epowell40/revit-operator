@@ -300,6 +300,170 @@ test("assistant prose cannot override effect truth", () => {
   assert.match(result.rejected.at(-1)?.reason ?? "", /not an effect authority/);
 });
 
+test("failing-before: lower-authority duplicate read settlement cannot erase native authority", () => {
+  const result = projection([
+    runStarted(),
+    openAttempt({ attemptId: "attempt-read-authority", effect: "read", purpose: "action" }),
+    attemptEvent("admission_recorded", "attempt-read-authority", {
+      admission_state: "admitted",
+      authority: "operator_backend_action_policy"
+    }),
+    attemptEvent("dispatch_recorded", "attempt-read-authority", {
+      dispatch_state: "acknowledged",
+      dispatch_id: "native-read",
+      dispatch_may_have_occurred: true
+    }),
+    attemptEvent("effect_recorded", "attempt-read-authority", {
+      effect_state: "none",
+      effect_authority: "native_host",
+      authority_id: "native-receipt-1",
+      reason: "read_has_no_persistent_effect",
+      receipt_refs: ["native:read-1"]
+    }),
+    attemptEvent("effect_recorded", "attempt-read-authority", {
+      effect_state: "none",
+      effect_authority: "admission_policy",
+      reason: "read_contract_has_no_persistent_effect",
+      receipt_refs: ["outer:read-1"]
+    })
+  ]);
+  const attempt = result.projection.attempts[0]!;
+  assert.equal(attempt.effect.authority, "native_host");
+  assert.equal(attempt.effect.authority_id, "native-receipt-1");
+  assert.deepEqual(attempt.receipt_refs, ["native:read-1"]);
+  assert.match(result.rejected.at(-1)?.reason ?? "", /lower-authority admission_policy effect/);
+});
+
+test("lower-authority effect reports cannot cross states or contaminate authoritative facts", () => {
+  const nativeAppliedThenCaller = projection([
+    runStarted(), openAttempt(),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "applied", effect_authority: "native_transaction", authority_id: "tx-1",
+      affected_target_identities: ["element:101"], receipt_refs: ["native:tx-1"]
+    }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "applied", effect_authority: "caller_report", authority_id: "caller-1",
+      affected_target_identities: ["element:forged"], receipt_refs: ["caller:forged"], evidence_refs: ["evidence:forged"]
+    })
+  ]);
+  const applied = nativeAppliedThenCaller.projection.attempts[0]!;
+  assert.equal(applied.effect.state, "applied");
+  assert.equal(applied.effect.authority, "native_transaction");
+  assert.deepEqual(applied.affected_target_identities, ["element:101"]);
+  assert.deepEqual(applied.receipt_refs, ["native:tx-1"]);
+  assert.deepEqual(applied.evidence_refs, []);
+  assert.match(nativeAppliedThenCaller.rejected.at(-1)?.reason ?? "", /lower-authority caller_report effect/);
+
+  const nativeNoneThenCallerUnknown = projection([
+    runStarted(), openAttempt({ effect: "read" }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "native_host", receipt_refs: ["native:read-1"]
+    }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "unknown", effect_authority: "caller_report", receipt_refs: ["caller:unknown"]
+    })
+  ]);
+  assert.equal(nativeNoneThenCallerUnknown.projection.attempts[0]?.effect.state, "none");
+  assert.equal(nativeNoneThenCallerUnknown.projection.attempts[0]?.effect.authority, "native_host");
+  assert.deepEqual(nativeNoneThenCallerUnknown.projection.attempts[0]?.receipt_refs, ["native:read-1"]);
+  assert.match(nativeNoneThenCallerUnknown.rejected.at(-1)?.reason ?? "", /lower-authority caller_report effect/);
+});
+
+test("lower-authority duplicate cannot prematurely settle an attempt awaiting evidence", () => {
+  const result = projection([
+    runStarted(), openAttempt({ effect: "read" }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "native_host", receipt_refs: ["native:read-1"],
+      settlement_pending_evidence: true
+    }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "caller_report", receipt_refs: ["caller:read-1"]
+    })
+  ]);
+  assert.equal(result.projection.attempts[0]?.terminal_state, "active");
+  assert.equal(result.projection.in_flight_count, 1);
+  assert.deepEqual(result.projection.attempts[0]?.receipt_refs, ["native:read-1"]);
+  assert.match(result.rejected.at(-1)?.reason ?? "", /lower-authority caller_report effect/);
+});
+
+test("terminal native settlement rejects late admission and dispatch callbacks without mutation", () => {
+  const nativeApplied = projection([
+    ...appliedEvents(),
+    attemptEvent("admission_recorded", "attempt-1", {
+      admission_state: "rejected", authority: "policy", reason: "late_rejection"
+    }),
+    attemptEvent("dispatch_recorded", "attempt-1", {
+      dispatch_state: "failed", dispatch_may_have_occurred: false, reason: "late_transport_failure"
+    })
+  ]);
+  const attempt = nativeApplied.projection.attempts[0]!;
+  assert.equal(attempt.admission.state, "admitted");
+  assert.equal(attempt.dispatch.state, "dispatched");
+  assert.equal(attempt.effect.state, "applied");
+  assert.equal(attempt.effect.authority, "native_receipt");
+  assert.deepEqual(attempt.receipt_refs, ["receipt:1"]);
+  assert.equal(nativeApplied.rejected.length, 2);
+  assert.match(nativeApplied.rejected[0]!.reason, /terminal attempt/);
+  assert.match(nativeApplied.rejected[1]!.reason, /terminal attempt/);
+});
+
+test("authoritative read settlement rejects a late dispatch callback", () => {
+  const events = [
+    runStarted(), openAttempt({ effect: "read" }),
+    attemptEvent("admission_recorded", "attempt-1", { admission_state: "admitted", authority: "policy" }),
+    attemptEvent("dispatch_recorded", "attempt-1", { dispatch_state: "acknowledged", dispatch_id: "native-read" }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "native_host", receipt_refs: ["native:read"]
+    }),
+    attemptEvent("dispatch_recorded", "attempt-1", { dispatch_state: "failed", reason: "late_failure" })
+  ];
+  const result = projection(events);
+  assert.equal(result.projection.attempts[0]!.dispatch.state, "acknowledged");
+  assert.equal(result.projection.attempts[0]!.effect.authority, "native_host");
+  assert.match(result.rejected.at(-1)!.reason, /terminal attempt/);
+});
+
+test("equal-rank and post-native contradictory effect reports are quarantined", () => {
+  const equalRank = projection([
+    runStarted(), openAttempt(),
+    attemptEvent("dispatch_recorded", "attempt-1", { dispatch_state: "dispatched" }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "applied", effect_authority: "native_receipt", receipt_refs: ["native:applied"]
+    }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "native_host", receipt_refs: ["native:none"]
+    })
+  ]);
+  assert.equal(equalRank.projection.attempts[0]!.effect.state, "applied");
+  assert.deepEqual(equalRank.projection.attempts[0]!.receipt_refs, ["native:applied"]);
+  assert.match(equalRank.rejected.at(-1)!.reason, /cannot be downgraded|Conflicting/);
+
+  const postNative = projection([
+    runStarted(), openAttempt({ effect: "read" }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "native_host", receipt_refs: ["native:read"]
+    }),
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "unknown", effect_authority: "target_readback", evidence_refs: ["evidence:contradiction"]
+    })
+  ]);
+  assert.equal(postNative.projection.attempts[0]!.effect.state, "none");
+  assert.deepEqual(postNative.projection.attempts[0]!.evidence_refs, []);
+  assert.match(postNative.rejected.at(-1)!.reason, /Conflicting/);
+});
+
+test("rejected events leave the canonical projection byte-for-byte unchanged", () => {
+  const base = appliedEvents();
+  const accepted = projection(base).projection;
+  const rejected = projection([
+    ...base,
+    attemptEvent("effect_recorded", "attempt-1", {
+      effect_state: "none", effect_authority: "caller_report", evidence_refs: ["evidence:forged"]
+    })
+  ]).projection;
+  assert.deepEqual(rejected, accepted);
+});
+
 test("caller-reported applied receipt remains unknown until independently verified", () => {
   const result = projection([
     runStarted(), openAttempt(),
@@ -310,7 +474,9 @@ test("caller-reported applied receipt remains unknown until independently verifi
     })
   ]);
   assert.equal(result.projection.attempts[0]?.effect.state, "unknown");
-  assert.deepEqual(result.projection.attempts[0]?.receipt_refs, ["caller:receipt"]);
+  assert.deepEqual(result.projection.attempts[0]?.receipt_refs, []);
+  assert.deepEqual(result.rejected.at(-1)?.event.data.receipt_refs, ["caller:receipt"]);
+  assert.match(result.rejected.at(-1)?.reason ?? "", /lower-authority caller_report effect/);
 });
 
 test("a verified no-op requires a fresh second target observation", () => {

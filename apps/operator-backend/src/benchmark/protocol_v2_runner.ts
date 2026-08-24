@@ -20,6 +20,7 @@ import type {
   BenchmarkRunEnvelopeDraftV2,
   BenchmarkRunEnvelopeV2
 } from "./protocol_v2_types.js";
+import { canonicalAttemptRequestedEffect } from "./durable_tool_evidence.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -79,7 +80,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     }
     const expectedEffect = String(trace.execution_expected_effect || "");
     if (evaluation.dispatched === true && expectedEffect === "read") {
-      const validRead = canonicalReceipts.some(receipt => receipt.requested_effect === "read"
+      const validRead = canonicalReceipts.some(receipt => canonicalAttemptRequestedEffect(receipt) === "read"
         && receipt.dispatch_state === "acknowledged" && receipt.effect_state === "none"
         && ["native_host", "native_receipt", "target_readback", "independent_verifier"].includes(String(receipt.effect_authority || ""))
         && Array.isArray(receipt.receipt_refs) && receipt.receipt_refs.length > 0
