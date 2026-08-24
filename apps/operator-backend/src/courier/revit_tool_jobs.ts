@@ -850,6 +850,35 @@ function enumerateCandidateJobs(): RevitToolJob[] {
   return enumerateActiveJobs(root, readJob);
 }
 
+/** Exact read-only restart lookup; multiple matches remain inconclusive. */
+export function findRevitToolJobsForAttemptSettlement(input: {
+  session_id: string;
+  method: "GET" | "POST";
+  path: string;
+  opened_at: string;
+  deadline_at: string;
+}): RevitToolJob[] {
+  const sessionId = safeContextIdentity(input.session_id, "session_id");
+  const method = input.method;
+  const route = `${input.path || ""}`.trim().toLowerCase();
+  const opened = Date.parse(input.opened_at);
+  const deadline = Date.parse(input.deadline_at);
+  if (!route.startsWith("/revit/") || !Number.isFinite(opened) || !Number.isFinite(deadline) || deadline < opened) {
+    throw new Error("Assignment courier recovery binding is invalid.");
+  }
+  const root = jobsRoot();
+  return fs.readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => readJob(entry.name))
+    .filter((job): job is RevitToolJob => {
+      if (!job) return false;
+      const created = Date.parse(job.created_at);
+      return job.session_id === sessionId && job.method === method && job.path.toLowerCase() === route
+        && Number.isFinite(created) && created >= opened && created <= deadline;
+    })
+    .sort((left, right) => `${left.created_at}|${left.id}`.localeCompare(`${right.created_at}|${right.id}`));
+}
+
 export function isRevitCourierContextFreeJob(job: Pick<RevitToolJob, "method" | "path">): boolean {
   const method = `${job?.method || ""}`.trim().toUpperCase();
   const jobPath = `${job?.path || ""}`.trim().toLowerCase();

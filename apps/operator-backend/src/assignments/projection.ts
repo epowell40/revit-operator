@@ -403,10 +403,12 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
   const steps = goalSteps(goal.work_items);
   const evidence = goalEvidence(goal);
   const workBudget = object(goal.work_budget);
+  const controlPlaneLog = normalizeAssignmentControlPlane(goal.assignment_control_plane);
   const controlPlane = reduceAssignmentControlPlane(
     goal.id,
-    normalizeAssignmentControlPlane(goal.assignment_control_plane).events
+    controlPlaneLog.events
   ).projection;
+  controlPlane.late_receipt_count += controlPlaneLog.quarantined_events.filter(entry => entry.event.kind === "late_receipt_recorded").length;
   const hasCanonicalTruth = controlPlane.last_event_at !== null;
   const criteria = goal.completion_audit?.criteria_results.map(result => ({
     criterion: result.criterion,
@@ -493,7 +495,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     history: historyFromGoal(goal),
     created_at: goal.created_at,
     updated_at: goal.updated_at,
-    finished_at: goal.status === "complete" || goal.status === "canceled" || goal.status === "failed" || goalLifecycle(goal) === "complete_with_issues" ? goal.updated_at : null
+    finished_at: goal.finished_at ?? (goal.status === "complete" || goal.status === "canceled" || goal.status === "failed" || goalLifecycle(goal) === "complete_with_issues" ? goal.updated_at : null)
   };
 }
 

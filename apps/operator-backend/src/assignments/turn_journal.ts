@@ -17,7 +17,7 @@ import {
 import { appendAssignmentEvent, beginAssignmentRun } from "./control_plane_store.js";
 import { nativeSettlementMatchesAttempt, parseNativeAttemptSettlement } from "./native_attempt_settlement.js";
 
-type JournalContext = {
+export type JournalContext = {
   assignmentId: string;
   runId: string;
   generation: number;
@@ -93,7 +93,7 @@ function targetIdentities(value: unknown, out: string[] = [], depth = 0): string
   return out;
 }
 
-function currentContext(sessionId: string): JournalContext | null {
+export function currentAssignmentJournalContext(sessionId: string): JournalContext | null {
   const goal = getActiveGoalForSession(sessionId);
   if (!goal) return null;
   const projection = reduceAssignmentControlPlane(
@@ -114,7 +114,7 @@ export function ensureAssignmentRunForTurn(
   actor: string,
   startNewGeneration: boolean
 ): JournalContext | null {
-  const existing = currentContext(sessionId);
+  const existing = currentAssignmentJournalContext(sessionId);
   if (existing && !startNewGeneration) return existing;
   const goal = getActiveGoalForSession(sessionId);
   if (!goal) return null;
@@ -126,7 +126,11 @@ export function ensureAssignmentRunForTurn(
     runId: begun.projection.run_id!,
     generation: begun.projection.generation,
     projection: begun.projection
-  } : currentContext(sessionId);
+  } : currentAssignmentJournalContext(sessionId);
+}
+
+function currentContext(sessionId: string): JournalContext | null {
+  return currentAssignmentJournalContext(sessionId);
 }
 
 function canonicalEvent(
@@ -165,15 +169,21 @@ function retryRelation(context: JournalContext, action: ActionCall, signature: s
   return { retry_of_attempt_id: prior.attempt_id, retry_delta: retryDelta };
 }
 
-export function journalAssignmentActions(sessionId: string, actions: readonly ActionCall[], actor: string): AssignmentControlPlaneProjection | null {
+export function journalAssignmentActions(
+  sessionId: string,
+  actions: readonly ActionCall[],
+  actor: string,
+  options: { lease?: Record<string, unknown>; tool_identity?: string } = {}
+): AssignmentControlPlaneProjection | null {
   let context = currentContext(sessionId);
   if (!context) return null;
   const goal = getActiveGoalForSession(sessionId);
   const documentFingerprint = goal?.work_budget?.document_fingerprint ?? null;
   for (const action of actions) {
     const effect = actionEffect(action);
+    const toolIdentity = options.tool_identity?.trim() || "outer_action";
     const signature = action.action_signature?.trim() || assignmentActionSignature({
-      requested_effect: effect, action_path: action.path, tool_identity: "outer_action", request: action.body ?? null
+      requested_effect: effect, action_path: action.path, tool_identity: toolIdentity, request: action.body ?? null
     });
     const target = action.target_fingerprint?.trim() || targetFingerprint(action, documentFingerprint);
     action.request_effect = effect;
@@ -194,12 +204,14 @@ export function journalAssignmentActions(sessionId: string, actions: readonly Ac
       purpose,
       requested_effect: effect,
       action_path: action.path,
-      tool_identity: "outer_action",
+      tool_identity: toolIdentity,
       action_signature: signature,
       target_fingerprint: target,
       target_identities: targetIdentities(action.body),
       expected_postconditions: [],
       reconciliation_of_attempt_id: relation,
+      canonical_method: action.method,
+      ...options.lease,
       ...retry
     }, { action, purpose, relation, retry }));
     context = { ...context, projection: opened.projection };
@@ -208,6 +220,13 @@ export function journalAssignmentActions(sessionId: string, actions: readonly Ac
       admission_state: "admitted", authority: "operator_backend_action_policy"
     }, { action_id: action.action_id, admitted: true }));
     context = { ...context, projection: admitted.projection };
+    if (opened.accepted && options.lease) {
+      const leased = appendAssignmentEvent(context.assignmentId, canonicalEvent(context, "lease_recorded", action.action_id, actor, {
+        lease_state: "admitted",
+        ...options.lease
+      }, { action_id: action.action_id, lease: options.lease }));
+      context = { ...context, projection: leased.projection };
+    }
     if (purpose === "reconciliation") {
       const started = appendAssignmentEvent(context.assignmentId, canonicalEvent(context, "reconciliation_started", action.action_id, actor, {}, {
         action_id: action.action_id, relation
@@ -298,7 +317,7 @@ export function journalAssignmentToolResults(
   sessionId: string,
   results: readonly ToolResult[],
   actor: string,
-  options: { trustNativeSettlement?: boolean } = {}
+  options: { trustNativeSettlement?: boolean; deferTerminal?: boolean; transportBoundAttemptId?: string } = {}
 ): AssignmentControlPlaneProjection | null {
   let context = currentContext(sessionId);
   if (!context) return null;
@@ -323,7 +342,9 @@ export function journalAssignmentToolResults(
       attempt = context.projection.attempts.find(candidate => candidate.attempt_id === canonicalAttemptId);
     }
     if (!attempt) continue;
-    if (nativeSettlement?.attempt_id && nativeSettlement.attempt_id !== attempt.attempt_id) {
+    const nativeAttemptConflict = Boolean(nativeSettlement?.attempt_id && nativeSettlement.attempt_id !== attempt.attempt_id);
+    const hostLocalAttemptTransportBound = nativeAttemptConflict && options.transportBoundAttemptId === attempt.attempt_id;
+    if (nativeAttemptConflict) {
       quarantineResult(context, result, actor, "native_settlement_attempt_binding_conflict");
       context = currentContext(sessionId) ?? context;
     }
@@ -352,7 +373,10 @@ export function journalAssignmentToolResults(
     const trustedNativeSettlement = options.trustNativeSettlement !== false && nativeSettlement && nativeSettlementMatchesAttempt({
       settlement: nativeSettlement,
       assignment_id: context.assignmentId,
-      attempt_id: attempt.attempt_id,
+      // Only the app-server's captured request/result promise may bind an older
+      // host-local native attempt identity to the already-open canonical
+      // attempt. Ordinary result journaling cannot opt into cross-attempt trust.
+      attempt_id: hostLocalAttemptTransportBound ? nativeSettlement.attempt_id! : attempt.attempt_id,
       run_id: attempt.run_id,
       generation: attempt.generation,
       requested_effect: attempt.requested_effect,
@@ -382,18 +406,32 @@ export function journalAssignmentToolResults(
         authority_id: trustedNativeSettlement.attempt_id ?? result.action_id,
         affected_target_identities: trustedNativeSettlement.affected_target_identities,
         receipt_refs: [...trustedNativeSettlement.receipt_refs, receiptRef(result)],
-        evidence_refs: trustedNativeSettlement.evidence_refs
+        evidence_refs: trustedNativeSettlement.evidence_refs,
+        settlement_pending_evidence: options.deferTerminal === true
       }, { result, native_settlement: trustedNativeSettlement }));
       context = { ...context, projection: nativeEffect.projection };
+      if (!options.deferTerminal && trustedNativeSettlement.effect_state !== "unknown") {
+        const terminal = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "attempt_terminal", attempt.attempt_id, actor, {
+          lease_state: "settled", reason: "native_result_settled"
+        }, { result, terminal: true }));
+        context = { ...context, projection: terminal.projection };
+      }
       continue;
     }
     if (didNotDispatch) {
       const rejected = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", attempt.attempt_id, actor, {
         effect_state: "none", effect_authority: preDispatchAuthority(result),
         reason: result.failure_code ?? result.failure_kind ?? result.error ?? "rejected_before_dispatch",
-        receipt_refs: [receiptRef(result)]
+        receipt_refs: [receiptRef(result)],
+        settlement_pending_evidence: options.deferTerminal === true
       }, { result, effect: "none" }));
       context = { ...context, projection: rejected.projection };
+      if (!options.deferTerminal) {
+        const terminal = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "attempt_terminal", attempt.attempt_id, actor, {
+          lease_state: "settled", reason: "pre_dispatch_failure_settled"
+        }, { result, terminal: true }));
+        context = { ...context, projection: terminal.projection };
+      }
       continue;
     }
     const uncertain = result.outcome_unknown === true || result.reconciliation_required === true
@@ -408,9 +446,16 @@ export function journalAssignmentToolResults(
       reason: effectState === "unknown"
         ? result.status === "done" ? "caller_report_requires_independent_settlement" : "dispatch_outcome_unresolved"
         : "read_contract_has_no_persistent_effect",
-      receipt_refs: [receiptRef(result)]
+      receipt_refs: [receiptRef(result)],
+      settlement_pending_evidence: options.deferTerminal === true
     }, { result, effect: effectState }));
     context = { ...context, projection: effect.projection };
+    if (!options.deferTerminal && effectState !== "unknown") {
+      const terminal = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "attempt_terminal", attempt.attempt_id, actor, {
+        lease_state: "settled", reason: "tool_result_settled"
+      }, { result, terminal: true }));
+      context = { ...context, projection: terminal.projection };
+    }
   }
   return context.projection;
 }
@@ -452,11 +497,16 @@ export function journalAssignmentToolObservation(
   actionId: string,
   requestedEffect?: AssignmentRequestedEffect
 ): AssignmentControlPlaneProjection | null {
+  const context = currentContext(sessionId);
+  const alreadyOpened = context?.projection.attempts.find(attempt =>
+    attempt.attempt_id === actionId
+    || attempt.lease.mcp_tool_call_id === actionId
+    || attempt.lease.app_server_request_id === actionId);
   const nativeAttemptId = parseNativeAttemptSettlement(observation.result ?? observation.output)?.attempt_id;
-  const canonicalActionId = nativeAttemptId || actionId;
+  const canonicalActionId = alreadyOpened?.attempt_id || nativeAttemptId || actionId;
   const action = observationAction(observation, canonicalActionId, requestedEffect);
   if (!action) return currentContext(sessionId)?.projection ?? null;
-  journalAssignmentActions(sessionId, [action], actor);
+  if (!alreadyOpened) journalAssignmentActions(sessionId, [action], actor);
   const envelope = classifyOutcomeEnvelope(observation.result ?? observation.output);
   return journalAssignmentToolResults(sessionId, [{
     action_id: action.action_id,

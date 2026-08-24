@@ -7,7 +7,7 @@
     "schema", "finalization_status", "promotion_eligible", "failure_code",
     "failing_stage", "missing_receipt_classes", "conflicting_receipt_classes",
     "source_flight", "envelope_draft", "evaluator_version", "case_stage_vectors",
-    "work_packets", "telemetry_completeness", "error", "generated_at", "artifact_sha256"
+    "work_packets", "telemetry_completeness", "receipt_diagnostics", "error", "generated_at", "artifact_sha256"
   ],
   "properties": {
     "schema": { "const": "revit-operator.benchmark-finalization-failure/v2" },
@@ -48,7 +48,18 @@
       "additionalProperties": false
     },
     "telemetry_completeness": {
-      "enum": ["complete", "provider_contract_unobservable", "collection_failed", "missing", "conflicting_or_quarantined"]
+      "enum": ["complete", "provider_contract_unobservable", "collection_failed", "missing", "still_in_flight", "timed_out", "conflicting_or_quarantined"]
+    },
+    "receipt_diagnostics": {
+      "type": "object",
+      "required": ["status", "in_flight_attempt_ids", "next_in_flight_deadline", "late_receipt_count"],
+      "properties": {
+        "status": { "enum": ["complete", "still_in_flight", "timed_out", "collection_failed", "conflicting_or_quarantined", "truly_absent"] },
+        "in_flight_attempt_ids": { "type": "array", "items": { "type": "string" } },
+        "next_in_flight_deadline": { "type": ["string", "null"] },
+        "late_receipt_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
     },
     "error": { "type": "string", "minLength": 1 },
     "generated_at": { "type": "string", "minLength": 1 },

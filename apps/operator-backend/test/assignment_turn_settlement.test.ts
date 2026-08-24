@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { createGoal } from "../src/goals/service.js";
-import { ensureAssignmentRunForTurn, journalAssignmentActions, journalAssignmentToolResults } from "../src/assignments/turn_journal.js";
+import { currentAssignmentJournalContext, ensureAssignmentRunForTurn, journalAssignmentActions, journalAssignmentToolResults } from "../src/assignments/turn_journal.js";
 import { recordAssignmentTurnProgress, settleAssignmentTurn } from "../src/assignments/turn_settlement.js";
 import { assignmentModelReceiptObserver } from "../src/assignments/model_call_budget.js";
 
@@ -133,6 +133,10 @@ test("production turn watchdog diagnoses, switches, then terminates repeated no 
     journalAssignmentActions("settlement-session", [{
       action_id: "discover-1", method: "POST", path: "/revit/tool-search", body: { query: "same" }
     }], "outer");
+    journalAssignmentToolResults("settlement-session", [{
+      action_id: "discover-1", method: "POST", path: "/revit/tool-search", request_effect: "read",
+      status: "done", request_dispatched: true, result_json: { ok: true, tools: [] }
+    }], "outer");
     assert.equal(recordAssignmentTurnProgress("settlement-session", "turn-1")?.progress.decision, "continue");
     assert.equal(recordAssignmentTurnProgress("settlement-session", "turn-2")?.progress.decision, "diagnose");
     assert.equal(recordAssignmentTurnProgress("settlement-session", "turn-3")?.progress.decision, "switch_tool_family");
@@ -157,6 +161,7 @@ test("nested provider receipts share the Assignment watchdog budget", () => {
         tokens: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 2 }
       });
     }
-    assert.equal(terminal, 1);
+    assert.equal(terminal, 0);
+    assert.equal(currentAssignmentJournalContext("settlement-session")?.projection.provider_call_count, 4);
   });
 });

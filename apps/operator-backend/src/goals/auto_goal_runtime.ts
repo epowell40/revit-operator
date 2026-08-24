@@ -8,6 +8,7 @@ import {
   appendTrustedServerGoalValidation,
   getActiveGoalForSession,
   getCurrentGoalForSession,
+  getGoal,
   markAgentGoalBlocked,
   markAgentGoalComplete,
   requestGoalCompletionAudit,
@@ -920,7 +921,7 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
       }
     });
   }
-  if (reportBoundToActiveRun && canonical.projection) {
+  if (reportBoundToActiveRun && canonical.projection?.terminal_state === "open") {
     canonical = settleAssignmentTurn(sessionId, requestedEffect);
   }
 
@@ -928,6 +929,14 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
   // below. Once a run exists, the reducer exclusively owns terminal truth.
   if (canonical.projection) {
     const assistantSummary = `${input.assistant_summary || input.reason || "Operator Desktop reported its turn result."}`.trim().slice(0, 3000);
+    if (canonical.completed && reportBoundToActiveRun && input.outcome === "complete") {
+      // The accepted canonical terminal event has already synchronized and
+      // packetized the Goal. Do not reopen that immutable record merely to add
+      // legacy Sidecar progress, validation, or prose-derived completion data.
+      const terminalGoal = getGoal(goal.id);
+      if (!terminalGoal) throw new Error("Canonical terminal Assignment could not be reloaded.");
+      return terminalGoal;
+    }
     goal = appendGoalEvidence(goal.id, {
       summary: `Operator Desktop reported '${input.outcome}' using '${verificationKind}'.`,
       details: {
@@ -971,49 +980,6 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
       }
     } else if (input.outcome !== "complete") {
       throw new Error("outcome must be complete or blocked.");
-    }
-
-    if (canonical.completed && reportBoundToActiveRun && input.outcome === "complete") {
-      const evidenceRefs = [...new Set(projection.attempts.flatMap(attempt => [
-        ...attempt.receipt_refs, ...attempt.evidence_refs, ...attempt.verification.evidence_refs
-      ]))];
-      goal = appendGoalProgress(sessionId, {
-        summary: assistantSummary,
-        work_item: {
-          id: "sidecar.requested-work", title: "Complete and verify the requested work",
-          status: "complete", result_summary: assistantSummary
-        }
-      });
-      const validationRefs: string[] = [];
-      for (const criterion of goal.acceptance_criteria) {
-        const validated = appendTrustedServerGoalValidation(goal.id, {
-          criterion,
-          validator_id: `canonical-assignment:${projection.run_id}:${projection.generation}`,
-          method: `Canonical attempt/effect projection reached ${projection.terminal_state}; exact target-bound evidence: ${evidenceRefs.join(", ") || "durable canonical events"}.`,
-          status: "pass"
-        });
-        const entry = validated.validation_log.at(-1);
-        if (entry) validationRefs.push(`validation:${entry.id}`);
-      }
-      goal = updateGoal(goal.id, {
-        current_phase: "complete",
-        current_step: "Canonical Assignment verification settled",
-        progress_summary: assistantSummary,
-        work_budget: {
-          ...(goal.work_budget ?? {}), completion_mode: `successful_${requestedEffect}`,
-          terminal_reason: projection.terminal_reason ?? "canonical_assignment_verified",
-          latest_authoritative_outcome: "succeeded", reported_failed_tool_count: failedTools
-        }
-      });
-      return markAgentGoalComplete(sessionId, {
-        source: "canonical_assignment_control_plane",
-        assignment_run_id: projection.run_id,
-        assignment_generation: projection.generation,
-        criteria_results: goal.acceptance_criteria.map((criterion, index) => ({
-          criterion, status: "pass", evidence_refs: validationRefs[index] ? [validationRefs[index]] : evidenceRefs
-        })),
-        evidence_summary: `Canonical effect and exact verification truth settled independently of the Sidecar response wording. ${assistantSummary}`
-      });
     }
 
     const unresolvedReason = !reportBoundToActiveRun

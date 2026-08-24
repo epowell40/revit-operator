@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { handleCodexServerRequest } from "../src/brains/codex_brain.js";
+import { ensureAssignmentRunForTurn } from "../src/assignments/turn_journal.js";
 import { RevitToolParallelGuard } from "../src/codex/revit_tool_parallel_guard.js";
 import { setRevitToolQuarantine } from "../src/codex/revit_tool_contract_memory.js";
+import { createGoal } from "../src/goals/service.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 
@@ -49,7 +51,10 @@ test("scopes active calls by turn and ignores other tools", () => {
   first.release();
 });
 
-test("app-server handler rejects a duplicate before dispatching it to the MCP runtime", async () => {
+test("app-server handler rejects a duplicate before dispatching it to the MCP runtime", { concurrency: false }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-tool-parallel-handler-"));
+  const previousWorkspace = process.env.OPERATOR_WORKSPACE_ROOT;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
   let resolveFirst!: (value: unknown) => void;
   let runtimeCalls = 0;
   const firstResult = new Promise<unknown>(resolve => { resolveFirst = resolve; });
@@ -71,6 +76,15 @@ test("app-server handler rejects a duplicate before dispatching it to the MCP ru
     context: { revit: { source: { live: true }, process_id: 42, document: { title: "Test", path: "C:\\test.rvt" } } }
   });
   try {
+    createGoal({
+      title: "Parallel guard",
+      objective: "Preview tags without duplicate execution.",
+      acceptance_criteria: ["At most one identical route is active."],
+      status: "active",
+      related_session_id: "session-1",
+      work_budget: { mode: "auto_goal", requested_effect: "preview", document_fingerprint: "test-document" }
+    });
+    ensureAssignmentRunForTurn("session-1", "run:parallel-guard", "test", true);
     const first = handleCodexServerRequest(runtime as any, request as any);
     await Promise.resolve();
     const duplicate = await handleCodexServerRequest(runtime as any, request as any) as any;
@@ -84,6 +98,9 @@ test("app-server handler rejects a duplicate before dispatching it to the MCP ru
     assert.equal(completed.success, true);
   } finally {
     endTeammateLoopOwner(teammateLease);
+    if (previousWorkspace === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousWorkspace;
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
