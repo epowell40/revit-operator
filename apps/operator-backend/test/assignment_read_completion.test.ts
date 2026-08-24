@@ -197,6 +197,32 @@ test("passing-after: retained q01-shaped settled reads cross the evidence-backed
   });
 });
 
+test("a stale-generation completion claim is rejected before evidence validation", () => {
+  workspace(() => {
+    const sessionId = "read-completion-stale-generation";
+    const { goal, run } = createReadAssignment(sessionId);
+    assert.throws(() => submitReadCompletionClaim({
+      schema: "revit-operator.assignment-read-completion-claim/v1",
+      assignment_id: goal.id,
+      run_id: run.runId,
+      generation: run.generation + 1,
+      session_id: sessionId,
+      criteria: [{ criterion: goal.acceptance_criteria[0]!, assertion_ids: ["stale"] }],
+      result: {
+        kind: "inventory",
+        assertions: [{
+          assertion_id: "stale",
+          attempt_id: "attempt-stale",
+          evidence_id: `ev1_${"a".repeat(32)}`,
+          operation: "field_equals",
+          path: "count",
+          expected: 1
+        }]
+      }
+    }, "read-completion-test"), /read_completion_claim_binding_mismatch/);
+  });
+});
+
 test("one authoritative action read and one complete structured claim terminalize exactly once", () => {
   workspace(() => {
     const sessionId = "read-completion-single";

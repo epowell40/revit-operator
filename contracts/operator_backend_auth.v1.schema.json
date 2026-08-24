@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://revitoperator.dev/contracts/operator_backend_auth.v1.schema.json",
+  "title": "Operator backend authentication envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "mode", "credential", "allowed_origin"],
+  "properties": {
+    "schema": { "const": "revit-operator.operator-backend-auth/v1" },
+    "mode": { "enum": ["shared_token", "principal_jwt"] },
+    "credential": { "type": "string", "minLength": 1, "maxLength": 32768 },
+    "allowed_origin": { "type": "string", "format": "uri", "maxLength": 2048 }
+  }
+}

@@ -1,4 +1,10 @@
-import { getOrCreateOperatorToken } from "./workspace.js";
+import {
+  buildOperatorBackendAuthHeaders,
+  redactOperatorBackendAuthText,
+  resolveOperatorBackendAuth,
+  type OperatorBackendAuthMode,
+  type OperatorBackendAuthV1
+} from "./operatorBackendAuth.js";
 
 export const SEMANTIC_MEP_ROUTE_PLAN_PATH = "/tools/mep/semantic-route-plan";
 export const EVIDENCE_RETRIEVE_PATH = "/evidence/retrieve";
@@ -15,7 +21,10 @@ export type SemanticMepRoutePlanInput = {
 export type OperatorBackendClientOptions = {
   baseUrl?: string;
   token?: string;
+  authMode?: OperatorBackendAuthMode;
+  auth?: OperatorBackendAuthV1;
   fetchImpl?: typeof fetch;
+  env?: NodeJS.ProcessEnv;
 };
 
 function configuredBaseUrl(): string {
@@ -27,64 +36,43 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
   if (!/^https?:\/\//i.test(baseUrl)) throw new Error("OPERATOR_API_BASE_URL must be an http(s) URL.");
   const fetchImpl = options.fetchImpl ?? fetch;
 
+  async function post(path: string, body: unknown, label: string): Promise<unknown> {
+    const targetUrl = `${baseUrl}${path}`;
+    const auth = resolveOperatorBackendAuth({
+      auth: options.auth,
+      authMode: options.authMode,
+      token: options.token,
+      baseUrl,
+      env: options.env
+    });
+    const response = await fetchImpl(targetUrl, {
+      method: "POST",
+      headers: buildOperatorBackendAuthHeaders(auth, targetUrl),
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      let details = "";
+      try { details = redactOperatorBackendAuthText(await response.text(), auth); } catch {}
+      throw new Error(`${label} responded with status ${response.status}${details ? `: ${details}` : ""}`);
+    }
+    return await response.json();
+  }
+
   return {
     async submitReadCompletionClaim(input: unknown): Promise<unknown> {
-      const token = options.token ?? getOrCreateOperatorToken();
-      const response = await fetchImpl(`${baseUrl}${READ_COMPLETION_CLAIM_PATH}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "X-Operator-Token": token } : {})
-        },
-        body: JSON.stringify(input)
-      });
-      if (!response.ok) {
-        let details = "";
-        try { details = await response.text(); } catch {}
-        throw new Error(`Operator read-completion claim responded with status ${response.status}${details ? `: ${details}` : ""}`);
-      }
-      return await response.json();
+      return await post(READ_COMPLETION_CLAIM_PATH, input, "Operator read-completion claim");
     },
     async retrieveEvidence(input: unknown): Promise<unknown> {
-      const token = options.token ?? getOrCreateOperatorToken();
-      const response = await fetchImpl(`${baseUrl}${EVIDENCE_RETRIEVE_PATH}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "X-Operator-Token": token } : {})
-        },
-        body: JSON.stringify(input)
-      });
-      if (!response.ok) {
-        let details = "";
-        try { details = await response.text(); } catch {}
-        throw new Error(`Operator evidence retrieval responded with status ${response.status}${details ? `: ${details}` : ""}`);
-      }
-      return await response.json();
+      return await post(EVIDENCE_RETRIEVE_PATH, input, "Operator evidence retrieval");
     },
     async planSemanticMepRoute(input: SemanticMepRoutePlanInput): Promise<unknown> {
-      const token = options.token ?? getOrCreateOperatorToken();
-      const response = await fetchImpl(`${baseUrl}${SEMANTIC_MEP_ROUTE_PLAN_PATH}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { "X-Operator-Token": token } : {})
-        },
-        body: JSON.stringify({
+      return await post(SEMANTIC_MEP_ROUTE_PLAN_PATH, {
           user_text: input.userText,
           ...(input.viewId === undefined ? {} : { view_id: input.viewId }),
           ...(input.roomNumber === undefined ? {} : { room_number: input.roomNumber }),
           ...(input.levelName === undefined ? {} : { level_name: input.levelName }),
           ...(input.toolResults === undefined ? {} : { tool_results: input.toolResults })
-        })
-      });
-
-      if (!response.ok) {
-        let details = "";
-        try { details = await response.text(); } catch { /* ignore */ }
-        throw new Error(`Operator backend responded with status ${response.status}${details ? `: ${details}` : ""}`);
-      }
-      return await response.json();
+        }, "Operator backend");
     }
   };
 }

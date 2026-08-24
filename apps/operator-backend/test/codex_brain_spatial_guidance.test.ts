@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import {
   __testOnlyTrackCodexBrainTurnAbort,
   assertCertifiedMcpServerStatus,
@@ -42,6 +44,20 @@ test("certified Codex threads are isolated from MCP and Revit turn runtimes", ()
   assert.equal(normal.sandbox, "workspace-write");
   assert.equal(normal.dynamicToolMode, "revit_runtime");
   assert.equal(normal.startRevitTurnRuntime, true);
+});
+
+test("executable Codex turns bind backend auth before provider start and clean the lease", () => {
+  const source = fs.readFileSync(path.join(process.cwd(), "src", "brains", "codex_brain.ts"), "utf8");
+  const start = source.indexOf("export async function decideCodexStreaming");
+  const end = source.indexOf("\nexport ", start + 10);
+  const body = source.slice(start, end > start ? end : undefined);
+  const authGuard = body.indexOf("if (threadProfile.startRevitTurnRuntime && !backendAuth)");
+  const leaseOpen = body.indexOf("beginBackendAuthLease(req.session_id, backendAuth!)");
+  const providerStart = body.indexOf("return await activeClient.startTurn({");
+  const leaseCleanup = body.lastIndexOf("endBackendAuthLease(backendAuthLease)");
+  assert.ok(authGuard >= 0 && authGuard < providerStart, "missing auth must stop before provider call 1");
+  assert.ok(leaseOpen > authGuard && leaseOpen < providerStart, "the turn-scoped auth lease must open before provider call 1");
+  assert.ok(leaseCleanup > providerStart, "the credential lease must be removed during turn cleanup");
 });
 
 test("Codex persisted profile keys remain disjoint for adversarial session strings", () => {

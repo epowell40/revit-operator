@@ -1083,7 +1083,10 @@ const server = http.createServer(async (req, res) => {
       return res.end(html);
     }
 
-    const requestContext = auth.principal ? { principal: auth.principal } : {};
+    const requestContext = {
+      ...(auth.principal ? { principal: auth.principal } : {}),
+      ...(auth.backend_auth ? { operator_backend_auth: auth.backend_auth } : {})
+    };
     return await runWithRequestContext(requestContext, async () => {
     // Principal mode initializes only the authenticated request's scoped workspace root.
     ensureWorkspaceLayout();

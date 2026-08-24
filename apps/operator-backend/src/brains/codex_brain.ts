@@ -53,6 +53,8 @@ import { assembleBoundedEvidenceContext } from "../evidence/model_context_budget
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
 import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
+import { getRequestOperatorBackendAuth } from "../request_context.js";
+import type { OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -498,6 +500,7 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
   const threadProfile = getCodexThreadStartProfileForTest(req);
   const agentSettings = resolveAgentModelSettings(req.context);
+  const requestBackendAuth = getRequestOperatorBackendAuth();
   const certifiedDirect = threadProfile.certified;
   let courierTarget: ReturnType<typeof revitCourierTargetFromContext> | undefined;
   if (!certifiedDirect) {
@@ -647,6 +650,13 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   const mcpRuntime = threadProfile.startRevitTurnRuntime ? mcpRuntimesByWorkspace.get(workspaceRoot) : null;
   if (threadProfile.startRevitTurnRuntime && !mcpRuntime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+  const backendAuth = threadProfile.startRevitTurnRuntime ? requestBackendAuth : undefined;
+  if (threadProfile.startRevitTurnRuntime && !backendAuth) {
+    const message = "Authenticated Operator backend transport is unavailable. I stopped before the provider or any Revit tool was called.";
+    cb.onDone?.(message);
+    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+  }
+  let backendAuthLease: OperatorBackendAuthLease | null = null;
   let teammateContext: ReturnType<typeof beginTeammateLoopOwner> | null = null;
   let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
@@ -655,6 +665,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   const agentTurnStartedMs = Date.now();
   try {
     if (threadProfile.startRevitTurnRuntime) {
+      backendAuthLease = mcpRuntime!.beginBackendAuthLease(req.session_id, backendAuth!);
       teammateContext = beginTeammateLoopOwner(mcpRuntime!, req);
       courierContext = beginRevitCourierTurnContext({
         session_id: req.session_id,
@@ -688,6 +699,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       });
     }
   } catch (error) {
+    mcpRuntime?.endBackendAuthLease(backendAuthLease);
+    backendAuthLease = null;
     endTeammateLoopOwner(teammateContext);
     teammateContext = null;
     endRevitCourierTurnContext(courierContext);
@@ -698,6 +711,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   const turnId = typeof start?.turn?.id === "string" ? start.turn.id : "";
   if (!turnId) {
+    mcpRuntime?.endBackendAuthLease(backendAuthLease);
+    backendAuthLease = null;
     endTeammateLoopOwner(teammateContext);
     teammateContext = null;
     endRevitCourierTurnContext(courierContext);
@@ -705,6 +720,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     endRequirementsPlanningLease(requirementsLease);
     throw new Error("Codex turn/start did not return a turn id.");
   }
+  if (backendAuthLease) mcpRuntime!.bindBackendAuthLeaseTurn(backendAuthLease, turnId);
   if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.start", { thread_id: threadId, turn_id: turnId });
@@ -1037,6 +1053,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       activeCodexTurns.delete(activeTurnKey);
     }
     assignmentBudgetInterrupt = null;
+    mcpRuntime?.endBackendAuthLease(backendAuthLease);
+    backendAuthLease = null;
     endRequirementsPlanningLease(requirementsLease);
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
     endTeammateLoopOwner(teammateContext);
