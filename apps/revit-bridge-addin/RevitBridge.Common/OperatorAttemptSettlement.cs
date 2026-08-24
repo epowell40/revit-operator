@@ -193,8 +193,14 @@ namespace RevitBridge.Common
                 var applied = OperatorAttemptSettlement.Applied(method, path, "certified_native_apply_receipt", "native_receipt", receiptRefs: new[] { receiptRef });
                 return applied;
             }
-            if (TryTransactionSettlement(root, out var committed, out var affected))
+            if (TryTransactionSettlement(root, out var transactionStatus, out var committed, out var affected))
             {
+                if (transactionStatus == "not_started")
+                {
+                    var noEffect = OperatorAttemptSettlement.None(effect, method, path, "native_transaction_not_started", "native_transaction", requestDispatched: true);
+                    noEffect.AffectedTargetIdentities = affected;
+                    return noEffect;
+                }
                 if (!committed)
                 {
                     var preview = OperatorAttemptSettlement.None(effect, method, path, "verified_native_rollback", "native_rollback", requestDispatched: true);
@@ -225,16 +231,17 @@ namespace RevitBridge.Common
                 JsonSerializer.Deserialize<object>(root.GetRawText())!);
         }
 
-        private static bool TryTransactionSettlement(JsonElement root, out bool committed, out IReadOnlyList<string> affected)
+        private static bool TryTransactionSettlement(JsonElement root, out string status, out bool committed, out IReadOnlyList<string> affected)
         {
+            status = "";
             committed = false;
             affected = Array.Empty<string>();
             if (root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("transaction", out var transaction)
                 || transaction.ValueKind != JsonValueKind.Object
                 || !transaction.TryGetProperty("status", out var statusValue)) return false;
-            var status = (statusValue.GetString() ?? "").Trim().ToLowerInvariant();
-            if (status != "committed" && status != "rolled_back" && status != "rolledback") return false;
+            status = (statusValue.GetString() ?? "").Trim().ToLowerInvariant();
+            if (status != "committed" && status != "rolled_back" && status != "rolledback" && status != "not_started") return false;
             if (transaction.TryGetProperty("committed", out var committedValue)
                 && (committedValue.ValueKind != JsonValueKind.True && committedValue.ValueKind != JsonValueKind.False)) return false;
             committed = status == "committed";

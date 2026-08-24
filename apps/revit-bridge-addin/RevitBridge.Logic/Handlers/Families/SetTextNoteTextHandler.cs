@@ -75,6 +75,8 @@ namespace RevitBridge.Logic.Handlers
                 }
             }
 
+            var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted(new[] { p.textNoteId });
+
             if ((apply && changed) || expectedOldText != null)
             {
                 using (var tx = new Transaction(targetDoc, "Operator Set TextNote Text"))
@@ -88,7 +90,10 @@ namespace RevitBridge.Logic.Handlers
                     // while retaining the raw `before` value in the receipt.
                     if (expectedOldText != null && !string.Equals(TextNoteTextCanonicalizer.Normalize(before), expectedOldText, StringComparison.Ordinal))
                     {
-                        tx.RollBack();
+                        var rollbackStatus = tx.RollBack();
+                        transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
+                            ? OperatorNativeTransactionReceipt.RolledBack(new[] { p.textNoteId })
+                            : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), new[] { p.textNoteId });
                         return Task.FromResult<object>(new
                         {
                             ok = false,
@@ -105,13 +110,26 @@ namespace RevitBridge.Logic.Handlers
                             expectedOldText,
                             actualText = before,
                             changed = false,
+                            transaction = transactionReceipt,
                             requiredConfirm,
                             confirmReceived
                         });
                     }
-                    if (apply && changed) tn.Text = nextText;
-                    if (apply) tx.Commit();
-                    else tx.RollBack();
+                    if (apply && changed)
+                    {
+                        tn.Text = nextText;
+                        var commitStatus = tx.Commit();
+                        transactionReceipt = commitStatus == TransactionStatus.Committed
+                            ? OperatorNativeTransactionReceipt.Committed(new[] { p.textNoteId })
+                            : OperatorNativeTransactionReceipt.Unknown(commitStatus.ToString(), new[] { p.textNoteId });
+                    }
+                    else
+                    {
+                        var rollbackStatus = tx.RollBack();
+                        transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
+                            ? OperatorNativeTransactionReceipt.RolledBack(new[] { p.textNoteId })
+                            : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), new[] { p.textNoteId });
+                    }
                 }
             }
 
@@ -131,6 +149,7 @@ namespace RevitBridge.Logic.Handlers
                 text = apply ? nextText : before,
                 normalizedText = TextNoteTextCanonicalizer.Normalize(apply ? nextText : before),
                 changed,
+                transaction = transactionReceipt,
                 requiredConfirm,
                 confirmReceived
             });

@@ -336,7 +336,8 @@ function refreshDerived(projection: AssignmentControlPlaneProjection): void {
   projection.apply_opportunity_consumed = projection.attempts.some(attempt =>
     attempt.requested_effect === "apply" && (attempt.effect.state === "unknown" || attempt.effect.state === "applied"));
   projection.unresolved_unknown_attempt_ids = projection.attempts
-    .filter(attempt => attempt.requested_effect === "apply" && attempt.effect.state === "unknown")
+    .filter(attempt => (attempt.requested_effect === "preview" || attempt.requested_effect === "apply")
+      && attempt.effect.state === "unknown")
     .map(attempt => attempt.attempt_id);
   const inFlight = projection.attempts.filter(attempt =>
     attempt.generation === projection.generation && attempt.terminal_state === "active");
@@ -417,7 +418,6 @@ function applyProgress(projection: AssignmentControlPlaneProjection, data: Recor
   };
   const fingerprint = assignmentProgressFingerprint(projection.generation, normalized);
   if (!projection.quiescent) {
-    projection.progress.fingerprint = fingerprint;
     projection.progress.decision = "continue";
     projection.progress.reason = "progress_in_flight";
     return null;

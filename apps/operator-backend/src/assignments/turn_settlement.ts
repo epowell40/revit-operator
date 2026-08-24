@@ -320,7 +320,8 @@ export function recordAssignmentTurnProgress(sessionId: string, turnId: string):
   if (!state || state.projection.terminal_state !== "open") return state?.projection ?? null;
   let projection = state.projection;
   const goal = getActiveGoalForSession(sessionId);
-  const previous = [...state.events].reverse().find(event => event.kind === "progress_recorded");
+  const previous = [...state.events].reverse().find(event =>
+    event.kind === "progress_recorded" && event.data?.snapshot && typeof event.data.snapshot === "object");
   const prior = previous?.data?.snapshot && typeof previous.data.snapshot === "object"
     ? previous.data.snapshot as Record<string, unknown> : {};
   const attempts = projection.attempts.filter(attempt => attempt.generation === projection.generation);

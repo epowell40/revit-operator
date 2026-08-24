@@ -295,11 +295,27 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("location = Point(coord)", handler);
             Assert.Contains("boundingBox", handler);
             Assert.Contains("TimeSpan.FromMilliseconds(250)", handler);
+            Assert.Contains("public long? elementId", handler);
+            Assert.Contains("public List<long>? elementIds", handler);
+            Assert.Contains("requestedElementIds.Contains", handler);
+            Assert.Contains("itemsComplete = requestedElementIds.Count > 0 || items.Count < max", handler);
 
             var schema = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs");
             Assert.Contains("find-text-notes max must be between 1 and 500", schema);
+            Assert.Contains("ValidateOptionalLong(obj.Value, \"elementId\"", schema);
+            Assert.Contains("ValidateOptionalLongArray(obj.Value, \"elementIds\", maxCount: 500", schema);
             var risk = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs");
             Assert.Contains("\"/revit/find-text-notes\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", risk);
+        }
+
+        [Fact]
+        public void TextNoteMutationHandlersEmitTheNormalizedNativeTransactionSettlementContract()
+        {
+            var setHandler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "SetTextNoteTextHandler.cs");
+            var replaceHandler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "ReplaceTextNoteHandler.cs");
+            Assert.Contains("OperatorNativeTransactionReceipt", setHandler);
+            Assert.Contains("transaction = transactionReceipt", setHandler);
+            Assert.Contains("new SetTextNoteTextHandler().Handle", replaceHandler);
         }
 
         [Fact]

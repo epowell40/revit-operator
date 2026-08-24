@@ -181,6 +181,24 @@ test("unknown cannot automatically retry or open another action", () => {
   assert.equal(result.projection.attempts.length, 1);
 });
 
+test("unknown preview effect must reconcile before apply", () => {
+  const result = projection([
+    runStarted(),
+    openAttempt({ attemptId: "preview-1", effect: "preview" }),
+    attemptEvent("admission_recorded", "preview-1", { admission_state: "admitted", authority: "policy" }),
+    attemptEvent("dispatch_recorded", "preview-1", { dispatch_state: "dispatched", dispatch_id: "preview-job" }),
+    attemptEvent("effect_recorded", "preview-1", {
+      effect_state: "unknown", effect_authority: "native_host", reason: "rollback_not_proven"
+    }),
+    openAttempt({ attemptId: "apply-1", effect: "apply" })
+  ]);
+
+  assert.deepEqual(result.projection.unresolved_unknown_attempt_ids, ["preview-1"]);
+  assert.match(result.rejected.at(-1)?.reason ?? "", /must be reconciled/);
+  assert.equal(result.projection.attempts.some(attempt => attempt.attempt_id === "apply-1"), false);
+  assert.equal(result.projection.apply_opportunity_consumed, false);
+});
+
 function unresolvedWithReconciliation(): AssignmentAttemptEvent[] {
   return [
     runStarted(), openAttempt(),

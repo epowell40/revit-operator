@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { createGoal, getGoal } from "../src/goals/service.js";
 import {
+  currentAssignmentJournalContext,
   ensureAssignmentRunForTurn,
   journalAssignmentActions,
   journalAssignmentToolObservation,
@@ -150,6 +151,63 @@ test("unknown effect only admits an exact-target reconciliation read", () => {
     assert.equal(reconciliation?.attempts.at(-1)?.purpose, "reconciliation");
     assert.equal(reconciliation?.attempts.at(-1)?.reconciliation_of_attempt_id, "apply-1");
     assert.equal(reconciliation?.phase, "reconciling");
+  });
+});
+
+test("element identity aliases bind one exact target for reconciliation", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:element-aliases", "outer_chat", true);
+    journalAssignmentActions("session-journal", [{
+      action_id: "apply-alias", method: "POST", path: "/revit/replace-text-note",
+      request_effect: "apply", body: { elementId: 101, newText: "Current", apply: true }
+    }], "codex");
+    journalAssignmentToolResults("session-journal", [{
+      action_id: "apply-alias", method: "POST", path: "/revit/replace-text-note",
+      request_effect: "apply", status: "failed", request_dispatched: true,
+      outcome_unknown: true, reconciliation_required: true, error: "timeout"
+    }], "operator_desktop");
+
+    const reconciled = journalAssignmentActions("session-journal", [{
+      action_id: "read-alias", method: "POST", path: "/revit/find-text-notes",
+      request_effect: "read", body: { elementIds: [101] }
+    }], "codex");
+    assert.equal(reconciled?.attempts.at(-1)?.purpose, "reconciliation");
+    assert.equal(reconciled?.attempts.at(-1)?.reconciliation_of_attempt_id, "apply-alias");
+    assert.equal(reconciled?.attempts[0]?.target_fingerprint, reconciled?.attempts.at(-1)?.target_fingerprint);
+    assert.deepEqual(reconciled?.attempts.at(-1)?.target_identities, ["element_id:101"]);
+  });
+});
+
+test("singular, plural, typed, and snake-case element aliases project one stable identity without conflating other targets", () => {
+  withWorkspace(() => {
+    activeGoal();
+    ensureAssignmentRunForTurn("session-journal", "chat:all-element-aliases", "outer_chat", true);
+    const bodies = [
+      { id: 101 }, { ids: [101] }, { elementId: 101 }, { elementIds: [101] },
+      { element_ids: [101] }, { textNoteId: 101 }, { targetId: 101 }
+    ];
+    for (const [index, body] of bodies.entries()) {
+      journalAssignmentActions("session-journal", [{
+        action_id: `alias-${index}`, method: "POST", path: "/revit/find-text-notes",
+        request_effect: "read", body
+      }], "alias-test");
+    }
+    journalAssignmentActions("session-journal", [{
+      action_id: "different-element", method: "POST", path: "/revit/find-text-notes",
+      request_effect: "read", body: { elementId: 102 }
+    }, {
+      action_id: "different-view", method: "POST", path: "/revit/find-text-notes",
+      request_effect: "read", body: { viewId: 101 }
+    }], "alias-test");
+
+    const attempts = currentAssignmentJournalContext("session-journal")!.projection.attempts;
+    const equivalent = attempts.slice(0, bodies.length);
+    assert.equal(new Set(equivalent.map(attempt => attempt.target_fingerprint)).size, 1);
+    assert.ok(equivalent.every(attempt => attempt.target_identities.length === 1 && attempt.target_identities[0] === "element_id:101"));
+    assert.notEqual(attempts.at(-2)?.target_fingerprint, equivalent[0]?.target_fingerprint);
+    assert.notEqual(attempts.at(-1)?.target_fingerprint, equivalent[0]?.target_fingerprint);
+    assert.deepEqual(attempts.at(-1)?.target_identities, ["view_id:101"]);
   });
 });
 

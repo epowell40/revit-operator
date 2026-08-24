@@ -261,6 +261,67 @@ test("raw provider receipts count resource use but cannot consume semantic watch
   });
 });
 
+test("settled identical tool boundaries enforce semantic stagnation before the absolute provider cap", { concurrency: false }, async () => {
+  await workspace(async () => {
+    const sessionId = "settled-tool-stagnation";
+    const { goal, run } = assignment(sessionId, "read");
+    let runtimeCalls = 0;
+    const runtime = { callTool: async () => {
+      runtimeCalls += 1;
+      return { content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        count: 1,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          assignment_id: run.assignmentId,
+          attempt_id: `native-stagnation-${runtimeCalls}`,
+          run_id: run.runId,
+          generation: run.generation,
+          requested_effect: "read",
+          method: "POST",
+          path: "/revit/schedules",
+          request_dispatched: true,
+          effect_state: "none",
+          effect_reason: "read_has_no_persistent_effect",
+          effect_authority: "native_host",
+          affected_target_identities: [],
+          receipt_refs: [`courier:stagnation-${runtimeCalls}`],
+          evidence_refs: []
+        }
+      }) }] };
+    } };
+    const teammate = owner(runtime, sessionId, "read");
+    try {
+      for (let index = 0; index < 6 && projection(goal.id).terminal_state === "open"; index += 1) {
+        await handleCodexServerRequest(runtime as any, {
+          id: `request:stagnation:${index}`,
+          method: "item/tool/call",
+          params: {
+            namespace: "revit_operator", turnId: "turn:stagnation", callId: `call:stagnation:${index}`,
+            tool: "revit_call_tool", arguments: { method: "POST", path: "/revit/schedules", body: { action: "list" } }
+          }
+        } as any);
+      }
+      const current = projection(goal.id);
+      assert.equal(current.quiescent, true);
+      assert.equal(current.terminal_state, "blocked", JSON.stringify({
+        progress: current.progress,
+        progress_events: normalizeAssignmentControlPlane(getGoal(goal.id)?.assignment_control_plane).events
+          .filter(event => event.kind === "progress_recorded").map(event => event.data),
+        attempts: current.attempts.map(attempt => ({
+          action_signature: attempt.action_signature, target_fingerprint: attempt.target_fingerprint,
+          effect: attempt.effect, evidence_refs: attempt.evidence_refs
+        }))
+      }));
+      assert.equal(current.terminal_reason, "repeated_identical_no_progress");
+      assert.ok(runtimeCalls <= 4, `expected bounded semantic termination, observed ${runtimeCalls} tool calls`);
+      assert.ok(current.provider_call_count < ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT);
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
 test("a true post-terminal result is retained as a linked incident and never reopens the original packet", { concurrency: false }, async () => {
   await workspace(async () => {
     const sessionId = "post-terminal-late";

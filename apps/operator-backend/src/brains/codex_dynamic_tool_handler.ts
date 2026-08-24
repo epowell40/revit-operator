@@ -26,6 +26,7 @@ import {
   settleAssignmentToolEvidence,
   type AssignmentToolLease
 } from "../assignments/async_tool_settlement.js";
+import { recordAssignmentTurnProgress } from "../assignments/turn_settlement.js";
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -145,6 +146,16 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       budget: getEvidenceContextBudget()
     });
     settleAssignmentToolEvidence(assignmentLease, [stored.ref, ...imageEvidence.map((item: { ref: EvidenceRefV1 }) => item.ref)]);
+    const progress = recordAssignmentTurnProgress(sessionId, `${String(params.turnId || "turn")}:tool:${assignmentLease.attempt_id}`);
+    if (progress && progress.terminal_state !== "open") {
+      return {
+        contentItems: [{
+          type: "inputText",
+          text: `[assignment_${progress.terminal_state}] Canonical Assignment terminated at a quiescent tool boundary: ${progress.terminal_reason || "bounded_no_progress"}.`
+        }],
+        success: false
+      };
+    }
     return adaptMcpToolCallResultToDynamicResponse(result, {
       tool: params.tool,
       arguments: params.arguments,
