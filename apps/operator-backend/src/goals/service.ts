@@ -145,6 +145,7 @@ export type GoalRecord = {
   non_goals: string[];
   created_at: string;
   updated_at: string;
+  finished_at?: string | null;
   status: GoalStatus;
   priority?: string | null;
   created_by?: string | null;
@@ -720,6 +721,7 @@ function normalizeLoadedGoal(goal: GoalRecord): GoalRecord {
   return {
     ...goal,
     revision: Number.isInteger(goal.revision) ? goal.revision : 0,
+    finished_at: typeof goal.finished_at === "string" ? goal.finished_at : null,
     work_items: Array.isArray(goal.work_items) ? normalizeWorkItems(goal.work_items) : [],
     assumptions: Array.isArray(goal.assumptions) ? normalizeAssumptions(goal.assumptions) : [],
     assignment_control_plane: normalizeAssignmentControlPlane(goal.assignment_control_plane)
@@ -764,6 +766,7 @@ export function createGoal(input: GoalCreateInput): GoalRecord {
     non_goals: asStringList(input.non_goals ?? input.nonGoals, 40, 1200),
     created_at: createdAt,
     updated_at: createdAt,
+    finished_at: null,
     status,
     priority: clip(input.priority, 80) || null,
     created_by: clip(input.created_by ?? input.createdBy, 180) || null,

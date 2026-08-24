@@ -27,8 +27,10 @@ export type TeammateTurnContract = {
   document_signature: string | null;
 };
 
-type Effect = "read" | "evidence_read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
-type PendingCall = { effect: Effect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
+export type TeammateMcpEffect = "read" | "evidence_read" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
+export type TeammatePendingCall = { effect: TeammateMcpEffect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
+type Effect = TeammateMcpEffect;
+type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
 
 type TeammateLoopState = {

@@ -203,7 +203,13 @@ export type BenchmarkFinalizationFailureV2 = {
   evaluator_version: string | null;
   case_stage_vectors: Array<{ case_id: string; stages: unknown[]; first_failed_or_uncertain_stage: string | null }>;
   work_packets: { generated_case_ids: string[]; missing_case_ids: string[] };
-  telemetry_completeness: "complete" | "provider_contract_unobservable" | "collection_failed" | "missing" | "conflicting_or_quarantined";
+  telemetry_completeness: "complete" | "provider_contract_unobservable" | "collection_failed" | "missing" | "still_in_flight" | "timed_out" | "conflicting_or_quarantined";
+  receipt_diagnostics: {
+    status: "complete" | "still_in_flight" | "timed_out" | "collection_failed" | "conflicting_or_quarantined" | "truly_absent";
+    in_flight_attempt_ids: string[];
+    next_in_flight_deadline: string | null;
+    late_receipt_count: number;
+  };
   error: string;
   generated_at: string;
   artifact_sha256: string;

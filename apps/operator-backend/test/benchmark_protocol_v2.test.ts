@@ -262,6 +262,13 @@ test("Protocol V2 preserves typed failure artifacts and a timeout with recovered
   const failures: Array<[string, (legacy: any, draft: any) => void, string]> = [
     ["revit", legacy => { legacy.task_traces[0].tool_results.durable_tool_evidence = {}; }, "missing_revit_receipt"],
     ["packet", legacy => { legacy.task_traces[0].tool_results.durable_work_packets = { schema: "revit-operator.benchmark-work-packets/v1", packets: [], failures: [{ error: "blocked" }] }; }, "incomplete_work_packet"],
+    ["inflight", legacy => {
+      const control = legacy.task_traces[0].tool_results.durable_assignment_projection.assignments[0].control_plane;
+      control.in_flight_count = 1;
+      control.in_flight_attempt_ids = ["attempt-in-flight"];
+      control.next_in_flight_deadline = "2026-08-22T12:05:00.000Z";
+      control.quiescent = false;
+    }, "assignment_settlement_in_flight"],
     ["evaluator", (_legacy, draft) => { draft.evaluator_version = ""; }, "evaluator_exception"]
   ];
   for (const [name, mutate, expectedCode] of failures) {
@@ -272,6 +279,12 @@ test("Protocol V2 preserves typed failure artifacts and a timeout with recovered
     const failure = JSON.parse(fs.readFileSync(path.join(path.dirname(value.outputPath), "finalization-failure.json"), "utf8"));
     assert.equal(failure.failure_code, expectedCode);
     assert.equal(failure.promotion_eligible, false);
+    if (name === "revit") assert.equal(failure.telemetry_completeness, "missing");
+    if (name === "inflight") {
+      assert.equal(failure.telemetry_completeness, "still_in_flight");
+      assert.equal(failure.receipt_diagnostics.status, "still_in_flight");
+      assert.deepEqual(failure.receipt_diagnostics.in_flight_attempt_ids, ["attempt-in-flight"]);
+    }
   }
   const missingPath = publish("path", () => {});
   fs.rmSync(missingPath.draftPath);

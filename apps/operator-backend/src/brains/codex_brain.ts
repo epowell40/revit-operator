@@ -7,11 +7,8 @@ import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js"
 import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
-import { RevitToolParallelGuard } from "../codex/revit_tool_parallel_guard.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
 import {
-  filterQuarantinedToolSearchResult,
-  findActiveToolQuarantine,
   formatRevitToolContractMemoryForPrompt,
   recordRevitToolOutcome
 } from "../codex/revit_tool_contract_memory.js";
@@ -30,8 +27,8 @@ import {
 } from "../memory/requirements_store.js";
 import { getPinnedGoal } from "../session_store.js";
 import { compactIncomingToolResult } from "../tool_result_compaction.js";
-import { formatActiveGoalContext, getActiveGoalForSession } from "../goals/service.js";
-import { createAutoGoalTurnObserver, findInterruptedAutoGoalForSession } from "../goals/auto_goal_runtime.js";
+import { formatActiveGoalContext, getActiveGoalForSession, getGoal } from "../goals/service.js";
+import { createAutoGoalTurnObserver } from "../goals/auto_goal_runtime.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
 import { AGENT_RESPONSE_STYLE_LINES } from "../agent_response_policy.js";
 import { mayInjectUnscopedLegacyMemory } from "../revit_context_policy.js";
@@ -42,10 +39,7 @@ import {
   beginTeammateLoopOwner,
   bindTeammateLoopOwnerTurn,
   endTeammateLoopOwner,
-  guardTeammateMcpCall,
   reconcileTeammateReceiptWithAssistant,
-  recordTeammateMcpResult,
-  teammateLoopSessionIdForOwner,
   teammateLoopReceiptForLease
 } from "../teammate_loop_runtime.js";
 import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
@@ -55,10 +49,10 @@ import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
-import { assembleBoundedEvidenceContext, getEvidenceContextBudget } from "../evidence/model_context_budget.js";
-import { storeEvidence } from "../evidence/evidence_store.js";
-import type { EvidenceProjectionV1 } from "../evidence/evidence_ref.js";
-import { adaptMcpToolCallResultToDynamicResponse } from "./codex_dynamic_result_adapter.js";
+import { assembleBoundedEvidenceContext } from "../evidence/model_context_budget.js";
+import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
+import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
+import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -70,7 +64,6 @@ export { getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from
 
 const clientsByProfile = new Map<string, CodexAppServer>();
 const mcpRuntimesByWorkspace = new Map<string, CodexMcpToolRuntime>();
-const revitToolParallelGuard = new RevitToolParallelGuard();
 const lastPermissionSignatureBySession = new Map<string, string>();
 type ActiveCodexTurn = {
   abortController: AbortController;
@@ -364,112 +357,7 @@ function developerInstructions(): string {
 }
 
 export async function handleCodexServerRequest(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
-  if (request.method === "item/tool/call") {
-    const params = request.params ?? {};
-    const interruptedAssignment = findInterruptedAutoGoalForSession(teammateLoopSessionIdForOwner(runtime, params.turnId));
-    if (interruptedAssignment) {
-      return {
-        contentItems: [{
-          type: "inputText",
-          text: `[assignment_${interruptedAssignment.status}] Assignment ${interruptedAssignment.id} is ${interruptedAssignment.status}; no further tool dispatch is allowed until it is explicitly resumed.`
-        }],
-        success: false
-      };
-    }
-    const namespace = typeof params.namespace === "string" ? params.namespace : "";
-    if (namespace !== "revit_operator" && !namespace.startsWith("mcp__")) {
-      return { contentItems: [{ type: "inputText", text: `Unsupported dynamic tool namespace: ${namespace || "(none)"}` }], success: false };
-    }
-    const server = namespace === "revit_operator" ? namespace : namespace.slice("mcp__".length);
-    if (server !== "revit_operator") {
-      return { contentItems: [{ type: "inputText", text: `Unsupported MCP server namespace: ${namespace}` }], success: false };
-    }
-    const quarantine = findActiveToolQuarantine(params.tool, params.arguments);
-    if (quarantine) {
-      const label = quarantine.method && quarantine.path ? `${quarantine.method} ${quarantine.path}` : quarantine.tool ?? "tool";
-      return {
-        contentItems: [{
-          type: "inputText",
-          text: `[revit_tool_quarantined] ${label} is retained but unavailable for autonomous execution: ${quarantine.reason}. Inspect current tool docs/evidence and use another primitive or clear the quarantine after a regression-tested repair.`
-        }],
-        success: false
-      };
-    }
-    const lease = revitToolParallelGuard.tryAcquire(params);
-    if (!lease.accepted) {
-      return { contentItems: [{ type: "inputText", text: lease.message ?? "Concurrent dependent Revit call blocked." }], success: false };
-    }
-    const teammateGate = guardTeammateMcpCall(runtime, params);
-    if (!teammateGate.allowed) {
-      lease.release();
-      return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
-    }
-    try {
-      const rawResult = await runtime.callTool(params.tool, params.arguments ?? {});
-      recordTeammateMcpResult(runtime, teammateGate, rawResult);
-      const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
-      const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId) || `codex_dynamic_${String(params.turnId || "unbound").replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 160)}`;
-      const imageEvidence = (Array.isArray(result?.content) ? result.content : []).flatMap((item: any, index: number) => {
-        if (item?.type !== "image" || typeof item.data !== "string" || typeof item.mimeType !== "string") return [];
-        const image = storeEvidence({
-          scope: { session_id: sessionId },
-          source: `codex_dynamic_visual:${params.tool}:${index}`,
-          media_type: item.mimeType,
-          trust_level: "host_observed",
-          bounded_summary: `Visual evidence ${index + 1} from ${params.tool}.`,
-          verification_relevance: "supporting",
-          raw: Buffer.from(item.data, "base64")
-        }, getEvidenceContextBudget().item_bytes);
-        return [image];
-      });
-      let imageIndex = 0;
-      const durableResult = {
-        ...result,
-        ...(Array.isArray(result?.content) ? {
-          content: result.content.map((item: any) => {
-            if (item?.type !== "image" || typeof item.data !== "string") return item;
-            const image = imageEvidence[imageIndex++];
-            return {
-              ...item,
-              data: undefined,
-              ...(image ? { evidence_id: image.ref.evidence_id, content_hash: image.ref.content_hash } : {})
-            };
-          })
-        } : {})
-      };
-      const stored = storeEvidence({
-        scope: { session_id: sessionId },
-        source: `codex_dynamic_mcp:${params.tool}`,
-        media_type: "application/json",
-        trust_level: "host_observed",
-        bounded_summary: `Dynamic MCP ${params.tool} result; complete output retained.`,
-        verification_relevance: params.tool === "revit_call_tool" ? "required" : "supporting",
-        relationships: imageEvidence.map((item: { ref: { evidence_id: string } }) => ({ evidence_id: item.ref.evidence_id, relation: "capture_for" as const })),
-        raw: durableResult
-      }, getEvidenceContextBudget().item_bytes);
-      const context = assembleBoundedEvidenceContext({
-        projections: [stored.projection, ...imageEvidence.map((item: { projection: EvidenceProjectionV1 }) => item.projection)],
-        session_id: sessionId,
-        model_call_id: typeof params.turnId === "string" ? params.turnId : null,
-        source: `codex_dynamic_context:${params.tool}`,
-        budget: getEvidenceContextBudget()
-      });
-      return adaptMcpToolCallResultToDynamicResponse(result, {
-        tool: params.tool,
-        arguments: params.arguments,
-        projections: context.projections,
-        omitted: context.omitted
-      });
-    } catch (error) {
-      recordTeammateMcpResult(runtime, teammateGate, { isError: true });
-      return {
-        contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }],
-        success: false
-      };
-    } finally {
-      lease.release();
-    }
-  }
+  if (request.method === "item/tool/call") return await handleCodexDynamicToolCall(runtime, request);
   if (request.method === "item/commandExecution/requestApproval" || request.method === "item/fileChange/requestApproval") return { decision: "decline" };
   if (request.method === "mcpServer/elicitation/request") return { action: "decline", content: null, _meta: null };
   if (request.method === "item/tool/requestUserInput") return { answers: {} };
@@ -1108,6 +996,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (cb.abortSignal?.aborted) forwardExternalAbort();
   else cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
   let turnCancelled = false;
+  const assignmentIdForTurn = getActiveGoalForSession(req.session_id)?.id ?? null;
   try {
     const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
@@ -1124,7 +1013,21 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     });
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
   } catch (error) {
-    if (!activeTurnAbort.signal.aborted) throw error;
+    if (!activeTurnAbort.signal.aborted) {
+      if (assignmentIdForTurn && /timed?\s*out|timeout|deadline/i.test(error instanceof Error ? error.message : String(error))) {
+        await requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
+        const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
+        if (drained.terminal_state === "open") {
+          const requested = `${getGoal(assignmentIdForTurn)?.work_budget?.requested_effect ?? "read"}`;
+          const effect = requested === "apply" || requested === "preview" ? requested : "read";
+          const settled = settleAssignmentTurn(req.session_id, effect, teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined);
+          if (!settled.completed && settled.projection?.terminal_state === "open") {
+            requestAssignmentTerminal(assignmentIdForTurn, "blocked", "provider_timeout_after_in_flight_settlement");
+          }
+        }
+      }
+      throw error;
+    }
     turnCancelled = true;
   } finally {
     unsubscribe();
@@ -1142,6 +1045,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   if (turnCancelled) {
+    if (assignmentIdForTurn) {
+      cancelAssignmentInFlight(assignmentIdForTurn);
+      const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
+      if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
+    }
     const budgetMessage = assignmentBudgetTerminated
       ? "The canonical Assignment watchdog terminated repeated provider work that produced no new grounded target, verified fact, plan, action, model-state change, or terminal reason."
       : "";

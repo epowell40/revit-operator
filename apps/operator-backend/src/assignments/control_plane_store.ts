@@ -8,6 +8,7 @@ import {
 } from "./control_plane.js";
 import { getGoal, mutateGoalRecord, type GoalRecord } from "../goals/service.js";
 import { persistVerifiedWorkPacket } from "../work_packets/store.js";
+import { notifyAssignmentSettlement } from "./settlement_signal.js";
 
 export type AssignmentEventAppendResult = {
   goal: GoalRecord;
@@ -50,10 +51,29 @@ export function appendAssignmentEvent(goalId: string, event: AssignmentAttemptEv
       accepted = controlPlane.events.some(candidate => candidate.event_id === event.event_id);
       quarantinedReason = accepted ? null : "Duplicate quarantined event.";
     }
+    const acceptedProjection = reduceAssignmentControlPlane(current.id, controlPlane.events).projection;
+    if (accepted && acceptedProjection.terminal_state !== "open") {
+      const status = acceptedProjection.terminal_state === "verified" || acceptedProjection.terminal_state === "complete"
+        ? "complete"
+        : acceptedProjection.terminal_state === "canceled" ? "canceled"
+          : acceptedProjection.terminal_state === "failed" ? "failed" : "blocked";
+      return {
+        ...current,
+        status,
+        current_phase: "settled",
+        current_step: null,
+        finished_at: event.occurred_at,
+        progress_summary: acceptedProjection.terminal_reason ?? `Assignment ${status}.`,
+        ...(status === "blocked" ? { blocker: acceptedProjection.terminal_reason ?? current.blocker ?? "Blocked." } : {}),
+        ...(status === "failed" ? { error: acceptedProjection.terminal_reason ?? current.error ?? "Assignment failed." } : {}),
+        assignment_control_plane: controlPlane
+      };
+    }
     return { ...current, assignment_control_plane: controlPlane };
   });
   const controlPlane = normalizeAssignmentControlPlane(goal.assignment_control_plane);
   const projection = reduceAssignmentControlPlane(goal.id, controlPlane.events).projection;
+  notifyAssignmentSettlement(projection);
   if (projection.terminal_state !== "open") persistVerifiedWorkPacket(goal);
   return {
     goal,

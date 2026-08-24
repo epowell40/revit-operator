@@ -58,6 +58,14 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const evaluation = record(record(trace.verification_results).evaluation);
     const rawHash = String(toolResults.raw_sidecar_response_sha256 || "");
     const assignmentProjection = record(toolResults.durable_assignment_projection);
+    const assignmentRows = records(assignmentProjection.assignments);
+    const activeControls = assignmentRows.map(row => record(row.control_plane)).filter(control =>
+      Number(control.in_flight_count || 0) > 0 || control.quiescent === false);
+    if (activeControls.length > 0) {
+      const ids = activeControls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
+      const deadline = activeControls.map(control => String(control.next_in_flight_deadline || "")).filter(Boolean).sort()[0] ?? "unknown";
+      throw new Error(`Benchmark Protocol V2 settlement still in flight for ${caseId}: attempts=${ids.join(",") || "unknown"}; deadline=${deadline}.`);
+    }
     const durableEvidence = record(toolResults.durable_tool_evidence);
     if (!/^[a-f0-9]{64}$/i.test(rawHash) || !Array.isArray(assignmentProjection.assignments)
       || durableEvidence.schema !== "revit-operator.benchmark-durable-tool-evidence/v1") {
@@ -82,8 +90,9 @@ function finalizationFailureDetails(message: string): {
   code: string; stage: string; missing: string[]; telemetry: BenchmarkFinalizationFailureV2["telemetry_completeness"];
 } {
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
-  if (/Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "complete" };
-  if (/Revit receipts|action-attempt receipt|dispatched-action receipts/i.test(message)) return { code: "missing_revit_receipt", stage: "revit_receipts", missing: ["revit_receipt"], telemetry: "complete" };
+  if (/settlement still in flight/i.test(message)) return { code: "assignment_settlement_in_flight", stage: "settlement_barrier", missing: ["settled_revit_receipt"], telemetry: "still_in_flight" };
+  if (/Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };
+  if (/Revit receipts|action-attempt receipt|dispatched-action receipts/i.test(message)) return { code: "missing_revit_receipt", stage: "revit_receipts", missing: ["revit_receipt"], telemetry: "missing" };
   if (/manifest|corpus hash|case .*hash|ENOENT/i.test(message)) return { code: "path_or_manifest_resolution_failure", stage: "bound_inputs", missing: ["bound_manifest"], telemetry: "collection_failed" };
   if (/evaluator|oracle/i.test(message)) return { code: "evaluator_exception", stage: "evaluation", missing: [], telemetry: "complete" };
   return { code: "finalization_exception", stage: "finalization", missing: [], telemetry: "collection_failed" };
@@ -114,6 +123,16 @@ function bestEffortFailureArtifact(args: {
       first_failed_or_uncertain_stage: String(record(trace.protocol_v2_partial).first_failed_or_uncertain_stage || "").trim() || null
     };
   });
+  const controls = traces.flatMap(trace => records(record(record(trace.tool_results).durable_assignment_projection).assignments)
+    .map(row => record(row.control_plane)));
+  const inFlightAttemptIds = controls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
+  const nextDeadline = controls.map(control => String(control.next_in_flight_deadline || "")).filter(Boolean).sort()[0] ?? null;
+  const lateReceiptCount = controls.reduce((total, control) => total + Number(control.late_receipt_count || 0), 0);
+  const receiptStatus: BenchmarkFinalizationFailureV2["receipt_diagnostics"]["status"] = details.telemetry === "still_in_flight" ? "still_in_flight"
+    : details.telemetry === "timed_out" ? "timed_out"
+      : details.telemetry === "conflicting_or_quarantined" ? "conflicting_or_quarantined"
+        : details.telemetry === "collection_failed" ? "collection_failed"
+          : details.missing.length > 0 ? "truly_absent" : "complete";
   const base = {
     schema: BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA,
     finalization_status: "failed" as const,
@@ -136,6 +155,12 @@ function bestEffortFailureArtifact(args: {
     case_stage_vectors: caseStageVectors,
     work_packets: { generated_case_ids: [...new Set(generated)], missing_case_ids: [...new Set(missing)] },
     telemetry_completeness: details.telemetry,
+    receipt_diagnostics: {
+      status: receiptStatus,
+      in_flight_attempt_ids: [...new Set(inFlightAttemptIds)],
+      next_in_flight_deadline: nextDeadline,
+      late_receipt_count: lateReceiptCount
+    },
     error: message.slice(0, 2_000),
     generated_at: new Date().toISOString()
   };

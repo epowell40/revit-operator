@@ -11,6 +11,18 @@ export type AssignmentAttemptPurpose = "action" | "verification" | "reconciliati
 export type AssignmentTerminalState = "open" | "verified" | "complete" | "blocked" | "failed" | "canceled";
 export type AssignmentVerificationState = "not_requested" | "pending" | "passed" | "failed" | "inconclusive";
 export type AssignmentProgressDecision = "continue" | "diagnose" | "switch_tool_family" | "terminate";
+export type AssignmentAttemptLeaseState =
+  | "admitted"
+  | "dispatching"
+  | "dispatched"
+  | "retaining_evidence"
+  | "settled"
+  | "failed_before_dispatch"
+  | "timed_out_read"
+  | "effect_unknown"
+  | "canceled_before_dispatch"
+  | "canceled_after_dispatch"
+  | "quarantined_late";
 
 export type AssignmentEffectAuthority =
   | "control_plane"
@@ -65,6 +77,27 @@ export type AssignmentAttemptRecord = {
   created_at: string;
   updated_at: string;
   terminal_state: "active" | "settled" | "reconciled" | "superseded";
+  lease: {
+    state: AssignmentAttemptLeaseState;
+    provider_turn_id: string | null;
+    provider_call_id: string | null;
+    app_server_request_id: string | null;
+    mcp_tool_call_id: string | null;
+    native_correlation_id: string | null;
+    tool_namespace: string | null;
+    typed_alias: string | null;
+    canonical_method: "GET" | "POST";
+    opened_at: string;
+    dispatch_at: string | null;
+    deadline_at: string;
+    evidence_retention_started_at: string | null;
+    evidence_retention_settled_at: string | null;
+    provider_receipt_at: string | null;
+    result_received_at: string | null;
+    receipt_lateness_ms: number | null;
+    evidence_retention_duration_ms: number | null;
+    settled_at: string | null;
+  };
 };
 
 export type AssignmentProgressInput = {
@@ -100,11 +133,14 @@ export type AssignmentAttemptEvent = {
     | "attempt_opened"
     | "admission_recorded"
     | "dispatch_recorded"
+    | "lease_recorded"
     | "effect_recorded"
     | "verification_recorded"
     | "reconciliation_started"
     | "reconciliation_resolved"
     | "attempt_terminal"
+    | "provider_call_recorded"
+    | "late_receipt_recorded"
     | "progress_recorded"
     | "assignment_terminal";
   occurred_at: string;
@@ -130,6 +166,14 @@ export type AssignmentControlPlaneProjection = {
   apply_opportunity_consumed: boolean;
   unresolved_unknown_attempt_ids: string[];
   active_verification_attempt_id: string | null;
+  in_flight_attempt_ids: string[];
+  in_flight_count: number;
+  next_in_flight_deadline: string | null;
+  quiescent: boolean;
+  settlement_barrier_reason: string | null;
+  provider_call_ids: string[];
+  provider_call_count: number;
+  late_receipt_count: number;
   progress: {
     fingerprint: string | null;
     repeated_no_progress_count: number;
@@ -197,6 +241,14 @@ function initialProjection(assignmentId: string): AssignmentControlPlaneProjecti
     apply_opportunity_consumed: false,
     unresolved_unknown_attempt_ids: [],
     active_verification_attempt_id: null,
+    in_flight_attempt_ids: [],
+    in_flight_count: 0,
+    next_in_flight_deadline: null,
+    quiescent: true,
+    settlement_barrier_reason: null,
+    provider_call_ids: [],
+    provider_call_count: 0,
+    late_receipt_count: 0,
     progress: {
       fingerprint: null,
       repeated_no_progress_count: 0,
@@ -246,6 +298,13 @@ function refreshDerived(projection: AssignmentControlPlaneProjection): void {
   projection.unresolved_unknown_attempt_ids = projection.attempts
     .filter(attempt => attempt.requested_effect === "apply" && attempt.effect.state === "unknown")
     .map(attempt => attempt.attempt_id);
+  const inFlight = projection.attempts.filter(attempt =>
+    attempt.generation === projection.generation && attempt.terminal_state === "active");
+  projection.in_flight_attempt_ids = inFlight.map(attempt => attempt.attempt_id);
+  projection.in_flight_count = inFlight.length;
+  projection.quiescent = inFlight.length === 0;
+  projection.next_in_flight_deadline = inFlight.map(attempt => attempt.lease.deadline_at).filter(Boolean).sort()[0] ?? null;
+  projection.settlement_barrier_reason = inFlight.length ? "assignment_settlement_deferred_in_flight" : null;
 }
 
 function effectAuthorityError(state: AssignmentEffectState, source: AssignmentEffectAuthority, data: Record<string, unknown>): string | null {
@@ -302,6 +361,12 @@ function applyProgress(projection: AssignmentControlPlaneProjection, data: Recor
     progress_markers: Array.isArray(input.progress_markers) ? input.progress_markers as AssignmentProgressInput["progress_markers"] : []
   };
   const fingerprint = assignmentProgressFingerprint(projection.generation, normalized);
+  if (!projection.quiescent) {
+    projection.progress.fingerprint = fingerprint;
+    projection.progress.decision = "continue";
+    projection.progress.reason = "progress_in_flight";
+    return null;
+  }
   const madeProgress = normalized.progress_markers.length > 0;
   const repeated = !madeProgress && projection.progress.fingerprint === fingerprint;
   projection.progress.fingerprint = fingerprint;
@@ -377,6 +442,9 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
         if (retryOf !== priorSame.attempt_id || !delta) return "A repeated apply requires its prior attempt and a material retry delta.";
       }
     }
+    const parsedDeadline = Date.parse(string(data.deadline_at));
+    const fallbackDeadline = Date.parse(event.occurred_at) + 240_000;
+    const deadlineAt = new Date(Number.isFinite(parsedDeadline) ? parsedDeadline : fallbackDeadline).toISOString();
     projection.attempts.push({
       schema: ASSIGNMENT_ATTEMPT_SCHEMA,
       assignment_id: projection.assignment_id,
@@ -404,13 +472,49 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
       created_at: event.occurred_at,
       updated_at: event.occurred_at,
       terminal_state: "active"
+      ,lease: {
+        state: "admitted",
+        provider_turn_id: string(data.provider_turn_id) || null,
+        provider_call_id: string(data.provider_call_id) || null,
+        app_server_request_id: string(data.app_server_request_id) || null,
+        mcp_tool_call_id: string(data.mcp_tool_call_id) || null,
+        native_correlation_id: string(data.native_correlation_id) || null,
+        tool_namespace: string(data.tool_namespace) || null,
+        typed_alias: string(data.typed_alias) || null,
+        canonical_method: string(data.canonical_method).toUpperCase() === "GET" ? "GET" : "POST",
+        opened_at: event.occurred_at,
+        dispatch_at: null,
+        deadline_at: deadlineAt,
+        evidence_retention_started_at: null,
+        evidence_retention_settled_at: null,
+        provider_receipt_at: null,
+        result_received_at: null,
+        receipt_lateness_ms: null,
+        evidence_retention_duration_ms: null,
+        settled_at: null
+      }
     });
     projection.phase = attemptPurpose === "verification" ? "verifying" : attemptPurpose === "reconciliation" ? "reconciling" : "executing";
     if (attemptPurpose === "verification") projection.active_verification_attempt_id = event.attempt_id;
     return null;
   }
   if (event.kind === "progress_recorded") return applyProgress(projection, data);
+  if (event.kind === "provider_call_recorded") {
+    const callId = string(data.call_id);
+    if (!callId) return "provider_call_recorded requires call_id.";
+    if (!projection.provider_call_ids.includes(callId)) projection.provider_call_ids.push(callId);
+    projection.provider_call_count = projection.provider_call_ids.length;
+    for (const active of projection.attempts.filter(candidate => candidate.generation === projection.generation && candidate.terminal_state === "active")) {
+      active.lease.provider_receipt_at = active.lease.provider_receipt_at ?? event.occurred_at;
+    }
+    return null;
+  }
+  if (event.kind === "late_receipt_recorded") {
+    projection.late_receipt_count += 1;
+    return null;
+  }
   if (event.kind === "assignment_terminal") {
+    if (!projection.quiescent) return `assignment_settlement_deferred_in_flight:${projection.in_flight_attempt_ids.join(",")}:${projection.next_in_flight_deadline ?? "unknown_deadline"}`;
     const state = data.terminal_state;
     if (!["verified", "complete", "blocked", "failed", "canceled"].includes(String(state))) return "A recognized terminal_state is required.";
     projection.terminal_state = state as AssignmentTerminalState;
@@ -428,6 +532,8 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     if (state === "rejected") {
       attempt.effect = { state: "none", reason: string(data.reason) || "admission_rejected", authority: authority(data.effect_authority) ?? "admission_policy", authority_id: string(data.authority_id) || null };
       attempt.terminal_state = "settled";
+      attempt.lease.state = "failed_before_dispatch";
+      attempt.lease.settled_at = event.occurred_at;
     }
     return null;
   }
@@ -438,6 +544,10 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
       || attempt.dispatch.state === "acknowledged"
       || data.dispatch_may_have_occurred === true;
     attempt.dispatch = { state: state as AssignmentAttemptRecord["dispatch"]["state"], reason: string(data.reason) || null, dispatch_id: string(data.dispatch_id) || null };
+    if (state === "dispatched" || state === "acknowledged") {
+      attempt.lease.state = "dispatched";
+      attempt.lease.dispatch_at = attempt.lease.dispatch_at ?? event.occurred_at;
+    }
     if (attempt.requested_effect === "apply" && (state === "dispatched" || state === "acknowledged")) {
       attempt.effect = { state: "unknown", reason: "dispatch_occurred_effect_unsettled", authority: "dispatch_transport", authority_id: attempt.dispatch.dispatch_id };
     }
@@ -446,6 +556,45 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     } else if (state === "failed" || state === "not_dispatched") {
       attempt.effect = { state: "none", reason: string(data.reason) || "dispatch_did_not_occur", authority: "transport_pre_dispatch", authority_id: attempt.dispatch.dispatch_id };
       attempt.terminal_state = "settled";
+      attempt.lease.state = "failed_before_dispatch";
+      attempt.lease.settled_at = event.occurred_at;
+    }
+    return null;
+  }
+  if (event.kind === "lease_recorded") {
+    const state = data.lease_state;
+    const allowed: AssignmentAttemptLeaseState[] = [
+      "admitted", "dispatching", "dispatched", "retaining_evidence", "settled",
+      "failed_before_dispatch", "timed_out_read", "effect_unknown",
+      "canceled_before_dispatch", "canceled_after_dispatch", "quarantined_late"
+    ];
+    if (!allowed.includes(state as AssignmentAttemptLeaseState)) return "A recognized lease_state is required.";
+    attempt.lease.state = state as AssignmentAttemptLeaseState;
+    attempt.lease.provider_turn_id = string(data.provider_turn_id) || attempt.lease.provider_turn_id;
+    attempt.lease.provider_call_id = string(data.provider_call_id) || attempt.lease.provider_call_id;
+    attempt.lease.app_server_request_id = string(data.app_server_request_id) || attempt.lease.app_server_request_id;
+    attempt.lease.mcp_tool_call_id = string(data.mcp_tool_call_id) || attempt.lease.mcp_tool_call_id;
+    attempt.lease.native_correlation_id = string(data.native_correlation_id) || attempt.lease.native_correlation_id;
+    if (string(data.canonical_method).toUpperCase() === "GET" || string(data.canonical_method).toUpperCase() === "POST") {
+      attempt.lease.canonical_method = string(data.canonical_method).toUpperCase() as "GET" | "POST";
+    }
+    if (state === "dispatching" || state === "dispatched") attempt.lease.dispatch_at = attempt.lease.dispatch_at ?? event.occurred_at;
+    if (state === "retaining_evidence") attempt.lease.evidence_retention_started_at = event.occurred_at;
+    if (state === "retaining_evidence") {
+      attempt.lease.result_received_at = attempt.lease.result_received_at ?? event.occurred_at;
+      const providerAt = Date.parse(attempt.lease.provider_receipt_at ?? "");
+      const resultAt = Date.parse(attempt.lease.result_received_at);
+      attempt.lease.receipt_lateness_ms = Number.isFinite(providerAt) && Number.isFinite(resultAt) ? Math.max(0, resultAt - providerAt) : null;
+    }
+    if (data.evidence_retention_settled === true) {
+      attempt.lease.evidence_retention_settled_at = event.occurred_at;
+      const start = Date.parse(attempt.lease.evidence_retention_started_at ?? "");
+      const end = Date.parse(event.occurred_at);
+      attempt.lease.evidence_retention_duration_ms = Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : null;
+    }
+    if (["settled", "failed_before_dispatch", "timed_out_read", "effect_unknown", "canceled_before_dispatch", "quarantined_late"].includes(String(state))) {
+      attempt.terminal_state = "settled";
+      attempt.lease.settled_at = event.occurred_at;
     }
     return null;
   }
@@ -453,10 +602,14 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     const error = applyEffect(attempt, data);
     if (error) return error;
     if (attempt.effect.state === "applied") {
-      attempt.terminal_state = "settled";
       projection.phase = "verifying";
-    } else if (attempt.effect.state === "none") {
+    } else if (attempt.effect.state === "unknown") {
+      attempt.lease.state = "effect_unknown";
+    }
+    if (attempt.effect.state !== "unknown" && data.settlement_pending_evidence !== true) {
       attempt.terminal_state = "settled";
+      attempt.lease.state = "settled";
+      attempt.lease.settled_at = event.occurred_at;
     }
     return null;
   }
@@ -467,8 +620,13 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     if (attempt.target_fingerprint !== applied.target_fingerprint) return "Verification target does not match the applied attempt.";
     const state = data.verification_state;
     if (!["passed", "failed", "inconclusive"].includes(String(state))) return "A recognized verification_state is required.";
+    const otherActive = projection.attempts.some(candidate => candidate.attempt_id !== attempt.attempt_id
+      && candidate.generation === projection.generation && candidate.terminal_state === "active");
+    if (otherActive) return "Verification cannot terminally settle while other current-generation work is in flight.";
     attempt.verification = { state: state as AssignmentVerificationState, reason: string(data.reason) || null, evidence_refs: strings(data.evidence_refs) };
     attempt.terminal_state = "settled";
+    attempt.lease.state = "settled";
+    attempt.lease.settled_at = event.occurred_at;
     if (state === "passed") {
       projection.terminal_state = "verified";
       projection.terminal_reason = "exact_postconditions_verified";
@@ -498,12 +656,21 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     attempt.effect = { state: "none", reason: "reconciliation_is_read_only", authority: "target_readback", authority_id: string(data.authority_id) || null };
     attempt.evidence_refs = [...new Set([...attempt.evidence_refs, ...strings(data.evidence_refs)])];
     attempt.terminal_state = "reconciled";
+    attempt.lease.state = "settled";
+    attempt.lease.settled_at = event.occurred_at;
     original.terminal_state = "reconciled";
+    original.lease.state = "settled";
+    original.lease.settled_at = event.occurred_at;
     projection.phase = resolved === "applied" ? "verifying" : resolved === "unknown" ? "reconciling" : "planning";
     return null;
   }
   if (event.kind === "attempt_terminal") {
+    if (attempt.effect.state === "unknown") return "An unknown-effect attempt requires reconciliation before terminal settlement.";
     attempt.terminal_state = "settled";
+    attempt.lease.state = data.lease_state === "timed_out_read" ? "timed_out_read"
+      : data.lease_state === "canceled_before_dispatch" ? "canceled_before_dispatch"
+        : data.lease_state === "quarantined_late" ? "quarantined_late" : "settled";
+    attempt.lease.settled_at = event.occurred_at;
     return null;
   }
   return "Unsupported event kind.";

@@ -1865,8 +1865,9 @@ test("canonical Sidecar settlement completes only from a bound native rollback p
       evidence: { function_tools: [] }
     });
     assert.equal(settled.status, "complete");
-    assert.equal(settled.validation_log.length, 1);
-    assert.match(JSON.stringify(settled.completion_audit), /Canonical effect and exact verification truth/);
+    assert.equal(settled.current_phase, "settled");
+    assert.ok(settled.finished_at);
+    assert.match(JSON.stringify(settled.assignment_control_plane), /native_rollback_preview_verified/);
   });
 });
 

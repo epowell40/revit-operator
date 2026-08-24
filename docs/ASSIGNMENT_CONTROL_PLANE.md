@@ -113,6 +113,13 @@ stream and enter the canonical model when their next run starts. Active unknown
 or applied effects survive run supersession and continue to constrain the new
 generation.
 
+Admitted asynchronous tool execution is represented by a durable lease on the
+canonical attempt. The projection is non-quiescent until native settlement,
+receipt and EvidenceRef retention, and attempt settlement complete. Raw provider
+receipts count against the resource budget but cannot independently terminalize
+semantic stagnation. All terminal requests pass through the bounded,
+event-driven settlement barrier. See [Asynchronous settlement barrier](ASYNC_SETTLEMENT_BARRIER.md).
+
 ## Dependency boundary
 
 Production exposes generic Assignment, native settlement, and Dynamic Runtime
