@@ -123,6 +123,7 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_runtime_probe",
   "operator_discover_capabilities",
   "operator_retrieve_evidence",
+  "operator_submit_read_completion",
   "operator_record_execution_strategy",
   "print_sheets",
   "read_excel",
@@ -987,6 +988,67 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
         ...(args.targetSubset ? { target_subset: args.targetSubset } : {}),
         ...(args.image !== undefined ? { image: args.image } : {}),
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+    }
+  }
+);
+
+const readCompletionAssertionSchema = z.object({
+  assertionId: z.string().min(1).max(160),
+  attemptId: z.string().min(1).max(300),
+  evidenceId: z.string().regex(/^ev1_[A-Za-z0-9_-]{32}$/),
+  operation: z.enum(["field_equals", "array_count", "group_count"]),
+  path: z.string().min(1).max(500),
+  expected: z.unknown().optional(),
+  expectedCount: z.number().int().min(0).max(2_000_000).optional(),
+  groupBy: z.array(z.string().min(1).max(500)).min(1).max(8).optional(),
+  expectedTotal: z.number().int().min(0).max(2_000_000).optional(),
+  expectedGroups: z.array(z.object({
+    values: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])),
+    count: z.number().int().min(0).max(2_000_000)
+  })).min(1).max(2_000).optional()
+});
+
+server.tool("operator_submit_read_completion", "Submit a task-level read-completion claim for canonical validation. Use only after authoritative read EvidenceRefs support every active Assignment acceptance criterion; this tool requests settlement and never creates Revit truth.",
+  {
+    assignmentId: z.string().min(1).max(240),
+    runId: z.string().min(1).max(240),
+    generation: z.number().int().min(1).max(1_000_000),
+    sessionId: z.string().min(1).max(180),
+    resultKind: z.enum(["inventory", "lookup", "artifact", "target_result", "structured_read"]),
+    criteria: z.array(z.object({
+      criterion: z.string().min(1).max(1_200).describe("Exact criterion text from ACTIVE GOAL CONTEXT."),
+      assertionIds: z.array(z.string().min(1).max(160)).min(1).max(64)
+    })).min(1).max(80),
+    assertions: z.array(readCompletionAssertionSchema).min(1).max(64)
+  },
+  async (args) => {
+    try {
+      const result = await createOperatorBackendClient().submitReadCompletionClaim({
+        schema: "revit-operator.assignment-read-completion-claim/v1",
+        assignment_id: args.assignmentId,
+        run_id: args.runId,
+        generation: args.generation,
+        session_id: args.sessionId,
+        criteria: args.criteria.map(item => ({ criterion: item.criterion, assertion_ids: item.assertionIds })),
+        result: {
+          kind: args.resultKind,
+          assertions: args.assertions.map(assertion => ({
+            assertion_id: assertion.assertionId,
+            attempt_id: assertion.attemptId,
+            evidence_id: assertion.evidenceId,
+            operation: assertion.operation,
+            path: assertion.path,
+            ...(assertion.expected !== undefined ? { expected: assertion.expected } : {}),
+            ...(assertion.expectedCount !== undefined ? { expected_count: assertion.expectedCount } : {}),
+            ...(assertion.groupBy ? { group_by: assertion.groupBy } : {}),
+            ...(assertion.expectedTotal !== undefined ? { expected_total: assertion.expectedTotal } : {}),
+            ...(assertion.expectedGroups ? { expected_groups: assertion.expectedGroups } : {})
+          }))
+        }
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {

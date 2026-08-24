@@ -166,3 +166,19 @@ negative case, and one unrelated regression case. Validate the cohort with
 `benchmark:protocol-v2 -- validate-repair-cohort --input <file>`. Production
 runtime code must not reference case IDs; the existing benchmark/runtime
 architecture boundary gate enforces that one-way dependency.
+
+## Canonical read finalization
+
+For read-only cases, current-bound canonical attempt receipts are the primary
+Revit receipt class. A compiled/direct-delegate flight may legitimately have an
+empty legacy outer `tool_calls` list when nested MCP calls are fully represented
+by canonical receipts. Protocol V2 requires each successful canonical read to
+show acknowledged dispatch, effect `none`, accepted native/readback authority,
+receipt and EvidenceRef identities, terminal Assignment truth, and an
+authentic hash-valid Work Packet bound to the same Assignment/run/generation.
+
+Missing mutation receipts are not reported for a read Assignment that has those
+authoritative read receipts. Conversely, a caller result, assistant answer,
+unbound packet, open Assignment, missing EvidenceRef, or incomplete packet hash
+still fails closed. Verified read completion is reported separately from
+committed delivered labor; it does not increase the committed-labor rate.

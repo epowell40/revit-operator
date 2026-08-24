@@ -57,6 +57,7 @@ export const BENCHMARK_DELIVERY_VERDICTS = [
   "first_pass_verified",
   "recovered_verified",
   "verified_noop",
+  "verified_read_completion",
   "truthful_fixture_blocker",
   "truthful_ambiguity_blocker",
   "genuine_product_limitation_blocker",
@@ -241,6 +242,7 @@ export type BenchmarkLaneMetricsV2 = {
   first_pass_verified: number;
   recovered_verified: number;
   verified_noop: number;
+  verified_read_completion: number;
   truthful_fixture_blocker: number;
   truthful_ambiguity_blocker: number;
   genuine_product_limitation_blocker: number;

@@ -117,6 +117,43 @@ function assignmentProjection(attempts: JsonRecord[]): JsonRecord {
   };
 }
 
+function verifiedPacket(requestedEffect: "read" | "preview" | "apply" = "apply"): JsonRecord {
+  const body = {
+    schema: "revit-operator.verified-work-packet/v1",
+    packet_version: 1,
+    parent_packet_id: null,
+    identity: {
+      assignment_id: "assignment-1", run_id: "assignment-run-1", generation: 1,
+      project_document_fingerprint: "fixture", created_at: FINISH, source_release_identity: "test-release"
+    },
+    assignment: {
+      normalized_user_request: "Complete the test request.", requested_effect: requestedEffect,
+      scope: [], exclusions: [], constraints: [], authorization_envelope: null
+    },
+    status: "verified_complete",
+    status_reason: "Canonical verification passed.",
+    grounded_targets: [], actions: [], acceptance_criteria: [], collateral_checks: [], artifacts: [], issues: [],
+    rollback: {
+      available: null, authority_or_transaction_identity: null, affected_target_identities: [],
+      completed: false, evidence_references: []
+    },
+    performance: {
+      elapsed_ms: 1, model_calls: 1, revit_calls: 1, input_tokens: 1, output_tokens: 1,
+      total_tokens: 2, estimated_cost_usd: 0.01, telemetry_complete: true, human_intervention: false
+    },
+    trust_presentation: {
+      overall: "independently_verified", agent_reported: "agent", native_execution_evidence: "native",
+      independently_verified: "verified", uncertain_or_missing: "uncertain"
+    }
+  };
+  const hash = sha256Value(body);
+  return {
+    ...body,
+    packet_id: `vwp1_${Buffer.from(hash, "hex").toString("base64url").slice(0, 32)}`,
+    packet_hash: `sha256:${hash}`
+  };
+}
+
 function traceFor(testCase: GeneralRevitCapabilityCase, args: {
   assistant?: string;
   attempts?: JsonRecord[];
@@ -125,7 +162,8 @@ function traceFor(testCase: GeneralRevitCapabilityCase, args: {
   actionRows?: JsonRecord[];
   mutationRequested?: boolean;
 } = {}): JsonRecord {
-  const projection = assignmentProjection(args.attempts ?? [canonicalAttempt()]);
+  const projectedAttempts = args.attempts ?? [canonicalAttempt()];
+  const projection = assignmentProjection(projectedAttempts);
   const actionRows = args.actionRows ?? [{
     path: testCase.dispatch_any_of[0], request_effect: testCase.expected_effect,
     request_dispatched: true, status: "success", receipt: { artifact: "receipt.json", readback: { ok: true } }
@@ -140,11 +178,25 @@ function traceFor(testCase: GeneralRevitCapabilityCase, args: {
   const evaluation = args.evaluation ?? evaluateGeneralRevitCapabilityAttempt(testCase, raw);
   const durableEvidence = {
     schema: "revit-operator.benchmark-durable-tool-evidence/v1",
-    canonical_attempt_receipts: [{ attempt_id: "attempt-1", requested_effect: testCase.expected_effect }]
+    canonical_attempt_receipts: projectedAttempts.map(attempt => ({
+      schema: "revit-operator.benchmark-canonical-attempt-receipt/v1",
+      goal_id: "assignment-1",
+      assignment_run_id: "assignment-run-1",
+      assignment_generation: 1,
+      assignment_terminal_state: "verified",
+      attempt_id: attempt.attempt_id,
+      path: testCase.dispatch_any_of[0],
+      requested_effect: attempt.requested_effect,
+      dispatch_state: (attempt.dispatch as JsonRecord)?.state,
+      effect_state: (attempt.effect as JsonRecord)?.state,
+      effect_authority: (attempt.effect as JsonRecord)?.authority,
+      receipt_refs: attempt.receipt_refs,
+      evidence_refs: attempt.evidence_refs
+    }))
   };
   const durableWorkPackets = {
     schema: "revit-operator.benchmark-work-packets/v1",
-    packets: [{ packet_id: "packet-1", packet_hash: sha256Value({ packet: 1 }) }],
+    packets: [verifiedPacket(testCase.expected_effect)],
     failures: []
   };
   return {
@@ -238,6 +290,42 @@ test("failed Protocol V2 finalization publishes one immutable auditable failure 
     draftPath, legacyReportPath: legacyPath, outputPath, cases: [testCase]
   }), /immutable failure publication failed|Immutable envelope draft already exists/);
   assert.equal(JSON.parse(fs.readFileSync(failurePath, "utf8")).artifact_sha256, failure.artifact_sha256);
+});
+
+test("Protocol V2 accepts current-bound canonical read receipts when the legacy outer tool list is empty", () => {
+  const readCase = benchmarkCase({
+    case_id: "t02_protocol_read",
+    operation_family: "inventory",
+    prompt: "Count the requested category and group the result.",
+    probe_prompt: "Count the requested category and group the result without editing.",
+    capability_paths: ["/revit/schedules"],
+    dispatch_any_of: ["/revit/schedules"],
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const trace = traceFor(readCase, {
+    attempts: [canonicalAttempt({
+      requested_effect: "read",
+      effect: { state: "none", authority: "native_host", reason: "read_has_no_persistent_effect" },
+      affected_target_identities: []
+    })],
+    actionRows: [{
+      path: "/revit/schedules", request_effect: "read", request_dispatched: true,
+      status: "success", receipt: { count: 2 }
+    }]
+  });
+  trace.tool_calls = [];
+  assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id]));
+  const packet = ((trace.tool_results as JsonRecord).durable_work_packets as JsonRecord).packets as JsonRecord[];
+  packet[0]!.packet_hash = `sha256:${"0".repeat(64)}`;
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /Verified Work Packet/);
 });
 
 test("Protocol V2 preserves typed failure artifacts and a timeout with recovered receipts can finalize", () => {

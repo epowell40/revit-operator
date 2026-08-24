@@ -9,6 +9,7 @@ import {
   assignmentActionSignature,
   normalizeAssignmentControlPlane,
   reduceAssignmentControlPlane,
+  type AssignmentAttemptPurpose,
   type AssignmentAttemptEvent,
   type AssignmentControlPlaneProjection,
   type AssignmentRequestedEffect,
@@ -173,7 +174,7 @@ export function journalAssignmentActions(
   sessionId: string,
   actions: readonly ActionCall[],
   actor: string,
-  options: { lease?: Record<string, unknown>; tool_identity?: string } = {}
+  options: { lease?: Record<string, unknown>; tool_identity?: string; purpose?: AssignmentAttemptPurpose } = {}
 ): AssignmentControlPlaneProjection | null {
   let context = currentContext(sessionId);
   if (!context) return null;
@@ -198,7 +199,11 @@ export function journalAssignmentActions(
       context!.projection.unresolved_unknown_attempt_ids.includes(attempt.attempt_id) && attempt.target_fingerprint === target);
     const applied = [...context.projection.attempts].reverse().find(attempt =>
       attempt.effect.state === "applied" && attempt.target_fingerprint === target);
-    const purpose = effect === "read" && unknown ? "reconciliation" : effect === "read" && applied ? "verification" : "action";
+    const purpose = effect === "read" && unknown
+      ? "reconciliation"
+      : effect === "read" && applied
+        ? "verification"
+        : options.purpose ?? "action";
     const relation = unknown?.attempt_id ?? applied?.attempt_id ?? null;
     const opened = appendAssignmentEvent(context.assignmentId, canonicalEvent(context, "attempt_opened", action.action_id, actor, {
       purpose,

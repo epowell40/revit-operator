@@ -1338,6 +1338,28 @@ test("bounded EvidenceRef retrieval is a first-class non-Revit read with no tool
   }
 });
 
+test("read-completion claims are first-class non-Revit settlement requests", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const input = request("Count the selected category and report the authoritative result. Do not edit the model.");
+  input.context = {};
+  const lease = beginTeammateLoopOwner(owner, input);
+  try {
+    const claim = guardTeammateMcpCall(owner, {
+      tool: "operator_submit_read_completion",
+      arguments: {
+        assignmentId: "assignment-read", runId: "run-read", generation: 1, sessionId: "session-read",
+        resultKind: "inventory", criteria: [], assertions: []
+      }
+    });
+    assert.equal(claim.allowed, true);
+    assert.equal(claim.call?.effect, "completion_claim");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("retained evidence stays readable after Revit context loss and cannot verify a fresh mutation", () => {
   __testOnlyResetTeammateLoopState();
   const disconnectedOwner = {};

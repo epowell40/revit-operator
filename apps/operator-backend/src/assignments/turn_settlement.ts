@@ -13,6 +13,7 @@ import {
   type AssignmentRequestedEffect
 } from "./control_plane.js";
 import { appendAssignmentEvent } from "./control_plane_store.js";
+import { validateLatestReadCompletionClaim } from "./read_completion.js";
 
 type TeammateReceipt = NonNullable<ChatResponse["teammate_loop_receipt"]>;
 
@@ -225,15 +226,22 @@ export function settleAssignmentTurn(
       && attempt.effect.state === "none" && attempt.effect.authority === "native_rollback" && attempt.receipt_refs.length > 0);
     if (rollback) projection = terminalEvent(projection, "complete", "native_rollback_preview_verified");
   }
-  if (projection.terminal_state === "open" && requestedEffect === "read" && readCompletion(projection).length > 0) {
-    projection = terminalEvent(projection, "complete", "authoritative_read_completed");
+  let readCompletionReason: string | null = null;
+  if (projection.terminal_state === "open" && requestedEffect === "read") {
+    const validation = validateLatestReadCompletionClaim(sessionId);
+    projection = validation.projection;
+    readCompletionReason = validation.reason;
+    if (validation.accepted && projection.terminal_state === "open") {
+      projection = terminalEvent(projection, "complete", "authoritative_read_completed");
+    }
   }
   const completed = projection.terminal_state === "complete" || projection.terminal_state === "verified";
   const successfulTools = projection.attempts.filter(attempt => attempt.dispatch.state === "acknowledged"
     && attempt.receipt_refs.length > 0).length;
   return {
     projection, completed, verified_noop: verifiedNoop, successful_tools: successfulTools,
-    reason: projection.terminal_reason ?? (projection.unresolved_unknown_attempt_ids.length ? "effect_reconciliation_required" : "canonical_completion_not_established")
+    reason: projection.terminal_reason ?? readCompletionReason
+      ?? (projection.unresolved_unknown_attempt_ids.length ? "effect_reconciliation_required" : "canonical_completion_not_established")
   };
 }
 

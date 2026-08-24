@@ -1154,7 +1154,7 @@ const server = http.createServer(async (req, res) => {
       return writeJson(res, 200, { ok: true, result: runDemoReadinessCheck(profile) });
     }
 
-    if (handleAssignmentHttpRoute(req, res, url, sessionId => sessionAccessAllowed(res, sessionId, auth.principal))) return;
+    if (await handleAssignmentHttpRoute(req, res, url, sessionId => sessionAccessAllowed(res, sessionId, auth.principal))) return;
 
     if (req.method === "GET" && url.pathname === "/api/goals") {
       const limit = Math.max(1, Math.min(100, Number.parseInt(url.searchParams.get("limit") || "50", 10) || 50));

@@ -475,7 +475,7 @@ function successfulTeammatePreviewReceiptCount(receipt?: AutoGoalTeammateReceipt
 function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
   const server = (observation.server ?? "").trim().toLowerCase();
   const tool = observation.tool.trim().toLowerCase();
-  if (tool === "operator_retrieve_evidence") return false;
+  if (tool === "operator_retrieve_evidence" || tool === "operator_submit_read_completion") return false;
   return server === "revit_operator" || server.startsWith("mcp__revit_operator") || tool.startsWith("revit_");
 }
 

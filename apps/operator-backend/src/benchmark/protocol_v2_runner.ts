@@ -11,6 +11,8 @@ import { sha256File, sha256Value } from "./protocol_v2_hash.js";
 import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
 import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
+import { verifyVerifiedWorkPacketHash } from "../work_packets/generator.js";
+import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import type {
   BenchmarkLaneV2,
   BenchmarkFinalizationFailureV2,
@@ -71,18 +73,39 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       || durableEvidence.schema !== "revit-operator.benchmark-durable-tool-evidence/v1") {
       throw new Error(`Benchmark Protocol V2 is missing canonical Revit receipts for ${caseId}.`);
     }
-    if (evaluation.dispatched === true && records(durableEvidence.canonical_attempt_receipts).length === 0) {
+    const canonicalReceipts = records(durableEvidence.canonical_attempt_receipts);
+    if (evaluation.dispatched === true && canonicalReceipts.length === 0) {
       throw new Error(`Benchmark Protocol V2 has no canonical action-attempt receipt for dispatched case ${caseId}.`);
     }
-    if (evaluation.dispatched === true && records(trace.tool_calls).length === 0) {
-      throw new Error(`Benchmark Protocol V2 has incomplete dispatched-action receipts for ${caseId}.`);
+    const expectedEffect = String(trace.execution_expected_effect || "");
+    if (evaluation.dispatched === true && expectedEffect === "read") {
+      const validRead = canonicalReceipts.some(receipt => receipt.requested_effect === "read"
+        && receipt.dispatch_state === "acknowledged" && receipt.effect_state === "none"
+        && ["native_host", "native_receipt", "target_readback", "independent_verifier"].includes(String(receipt.effect_authority || ""))
+        && Array.isArray(receipt.receipt_refs) && receipt.receipt_refs.length > 0
+        && Array.isArray(receipt.evidence_refs) && receipt.evidence_refs.length > 0
+        && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
+      if (!validRead) throw new Error(`Benchmark Protocol V2 has no authoritative canonical read receipt for ${caseId}.`);
     }
     const packetBundle = record(toolResults.durable_work_packets);
     const packets = records(packetBundle.packets);
     if (packetBundle.schema !== "revit-operator.benchmark-work-packets/v1" || packets.length === 0
-        || packets.some(packet => !String(packet.packet_id || "").trim() || !String(packet.packet_hash || "").trim())) {
+        || packets.some(packet => !String(packet.packet_id || "").trim() || !String(packet.packet_hash || "").trim()
+          || !verifyVerifiedWorkPacketHash(packet as unknown as VerifiedWorkPacketV1))) {
       throw new Error(`Benchmark Protocol V2 is missing a complete Verified Work Packet for ${caseId}.`);
     }
+    const terminalAssignments = assignmentRows.filter(row => ["verified", "complete"].includes(String(record(row.control_plane).terminal_state || "")));
+    const packetBound = packets.some(packet => {
+      const identity = record(packet.identity);
+      const assignment = terminalAssignments.find(row => {
+        const assignmentId = String(row.id || row.source_record_id || "").replace(/^goal:/, "");
+        const control = record(row.control_plane);
+        return identity.assignment_id === assignmentId && identity.run_id === control.run_id
+          && identity.generation === control.generation;
+      });
+      return Boolean(assignment) && ["verified_complete", "verified_no_op"].includes(String(packet.status || ""));
+    });
+    if (!packetBound) throw new Error(`Benchmark Protocol V2 Verified Work Packet is stale, cross-run, or contradicts canonical completion for ${caseId}.`);
   }
 }
 
@@ -92,7 +115,7 @@ function finalizationFailureDetails(message: string): {
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
   if (/settlement still in flight/i.test(message)) return { code: "assignment_settlement_in_flight", stage: "settlement_barrier", missing: ["settled_revit_receipt"], telemetry: "still_in_flight" };
   if (/Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };
-  if (/Revit receipts|action-attempt receipt|dispatched-action receipts/i.test(message)) return { code: "missing_revit_receipt", stage: "revit_receipts", missing: ["revit_receipt"], telemetry: "missing" };
+  if (/Revit receipts|action-attempt receipt|canonical read receipt|dispatched-action receipts/i.test(message)) return { code: "missing_revit_receipt", stage: "revit_receipts", missing: ["revit_receipt"], telemetry: "missing" };
   if (/manifest|corpus hash|case .*hash|ENOENT/i.test(message)) return { code: "path_or_manifest_resolution_failure", stage: "bound_inputs", missing: ["bound_manifest"], telemetry: "collection_failed" };
   if (/evaluator|oracle/i.test(message)) return { code: "evaluator_exception", stage: "evaluation", missing: [], telemetry: "complete" };
   return { code: "finalization_exception", stage: "finalization", missing: [], telemetry: "collection_failed" };

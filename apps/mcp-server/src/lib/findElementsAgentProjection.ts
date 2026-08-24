@@ -517,6 +517,9 @@ export function projectFindElementsResultForAgent(value: unknown): unknown {
   return {
     _agent_projection: true,
     projection: "find-elements-spatial-candidates",
+    ...(asObject(root.canonical_attempt_settlement)
+      ? { canonical_attempt_settlement: root.canonical_attempt_settlement }
+      : {}),
     spatialDuplicateCandidates: summary,
     routeCurveCandidates: routeSummary,
     annotationLayoutCandidates: annotationSummary,

@@ -27,6 +27,7 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "operator_runtime_probe",
   "operator_discover_capabilities",
   "operator_record_execution_strategy",
+  "operator_submit_read_completion",
   "revit_ping",
   "revit_get_context",
   "revit_open_model",

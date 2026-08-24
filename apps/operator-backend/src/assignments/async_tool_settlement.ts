@@ -5,6 +5,7 @@ import type { EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import type { EvidenceTrustLevel } from "../evidence/evidence_ref.js";
 import { storeEvidence } from "../evidence/evidence_store.js";
 import type { TeammateMcpGate, TeammateMcpEffect } from "../teammate_loop_runtime.js";
+import { loadTrustedToolExposurePolicy } from "../capabilities/trusted_tool_exposure_policy.js";
 import {
   ASSIGNMENT_ATTEMPT_EVENT_SCHEMA,
   normalizeAssignmentControlPlane,
@@ -75,8 +76,26 @@ function operationTimeoutMs(): number {
 
 function requestedEffect(effect: TeammateMcpEffect): AssignmentRequestedEffect {
   if (effect === "preview" || effect === "apply") return effect;
-  if (["read", "evidence_read", "navigation", "discovery"].includes(effect)) return "read";
+  if (["read", "evidence_read", "navigation", "discovery", "completion_claim"].includes(effect)) return "read";
   throw new Error("assignment_tool_effect_unclassified");
+}
+
+function attemptPurpose(effect: TeammateMcpEffect) {
+  if (effect === "discovery" || effect === "evidence_read" || effect === "navigation" || effect === "completion_claim") return effect;
+  return "action" as const;
+}
+
+function trustedTypedRoute(tool: string): { method: "GET" | "POST"; path: string } | null {
+  if (!/^revit_[a-z0-9_]+$/.test(tool)) return null;
+  try {
+    const matches = loadTrustedToolExposurePolicy().policy.records
+      .filter(record => record.typed_mcp_aliases.includes(tool))
+      .map(record => ({ method: record.method, path: record.path }));
+    const unique = [...new Map(matches.map(match => [`${match.method} ${match.path}`, match])).values()];
+    return unique.length === 1 ? unique[0] as { method: "GET" | "POST"; path: string } : null;
+  } catch {
+    return null;
+  }
 }
 
 function observedPath(gate: TeammateMcpGate): string {
@@ -96,10 +115,11 @@ function actionFor(tool: string, argsValue: unknown, gate: TeammateMcpGate, atte
       request_effect: requestedEffect(gate.call!.effect)
     };
   }
-  const path = observedPath(gate);
+  const route = trustedTypedRoute(tool);
+  const path = route?.path ?? observedPath(gate);
   return {
     action_id: attemptId,
-    method: "POST",
+    method: route?.method ?? "POST",
     path: path.startsWith("/revit/") ? path : `/mcp/${tool}`,
     body: argsValue,
     request_effect: requestedEffect(gate.call!.effect)
@@ -190,6 +210,7 @@ export function openAssignmentToolLease(input: {
   };
   const projection = journalAssignmentActions(input.session_id, [action], "codex_app_server", {
     tool_identity: tool,
+    purpose: attemptPurpose(input.gate.call.effect),
     lease: {
       provider_turn_id: providerTurnId,
       provider_call_id: providerCallId,

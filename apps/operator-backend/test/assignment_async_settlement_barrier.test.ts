@@ -25,6 +25,7 @@ import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_lo
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { settleAssignmentTurn } from "../src/assignments/turn_settlement.js";
+import { submitReadCompletionClaim } from "../src/assignments/read_completion.js";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
 
@@ -192,6 +193,28 @@ test("passing-after: exact q01 ordering cannot terminalize 316 ms before its adm
         assignment_bound_evidence_refs: 1
       });
       assert.equal(boundRefs[0]?.trust_level, "authoritative_native");
+      submitReadCompletionClaim({
+        schema: "revit-operator.assignment-read-completion-claim/v1",
+        assignment_id: goal.id,
+        run_id: run.runId,
+        generation: run.generation,
+        session_id: sessionId,
+        criteria: [{
+          criterion: "The exact admitted result is retained and verified.",
+          assertion_ids: ["q01-count"]
+        }],
+        result: {
+          kind: "inventory",
+          assertions: [{
+            assertion_id: "q01-count",
+            attempt_id: afterNativeResult.attempts[0]!.attempt_id,
+            evidence_id: `${boundRefs[0]!.evidence_id}`,
+            operation: "field_equals",
+            path: "count",
+            expected: 509
+          }]
+        }
+      }, "async-settlement-test");
       assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
       const terminalGoal = getGoal(goal.id)!;
       assert.equal(terminalGoal.status, "complete");
@@ -317,8 +340,8 @@ test("existing fencing baseline: duplicate delivery is idempotent and stale/post
     assert.equal(afterDuplicate.attempts.length, 1);
 
     appendAssignmentEvent(goal.id, event(goal.id, run.runId, run.generation, "assignment_terminal", null, {
-      terminal_state: "complete",
-      reason: "authoritative_read_completed"
+      terminal_state: "blocked",
+      reason: "test_terminal_fence"
     }));
     const beforeLate = projection(goal.id);
     journalAssignmentToolResults(sessionId, [{ ...result, result_json: { ok: true, count: 510 } }], "late-result");

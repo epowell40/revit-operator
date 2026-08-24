@@ -7,7 +7,15 @@ export const ASSIGNMENT_PROJECTION_V2_SCHEMA = "revit-operator.assignment-contro
 
 export type AssignmentRequestedEffect = "read" | "preview" | "apply";
 export type AssignmentEffectState = "none" | "unknown" | "applied";
-export type AssignmentAttemptPurpose = "action" | "verification" | "reconciliation" | "rollback";
+export type AssignmentAttemptPurpose =
+  | "action"
+  | "discovery"
+  | "evidence_read"
+  | "navigation"
+  | "completion_claim"
+  | "verification"
+  | "reconciliation"
+  | "rollback";
 export type AssignmentTerminalState = "open" | "verified" | "complete" | "blocked" | "failed" | "canceled";
 export type AssignmentVerificationState = "not_requested" | "pending" | "passed" | "failed" | "inconclusive";
 export type AssignmentProgressDecision = "continue" | "diagnose" | "switch_tool_family" | "terminate";
@@ -142,6 +150,8 @@ export type AssignmentAttemptEvent = {
     | "provider_call_recorded"
     | "late_receipt_recorded"
     | "progress_recorded"
+    | "read_completion_claimed"
+    | "read_completion_validated"
     | "assignment_terminal";
   occurred_at: string;
   actor: string;
@@ -174,6 +184,15 @@ export type AssignmentControlPlaneProjection = {
   provider_call_ids: string[];
   provider_call_count: number;
   late_receipt_count: number;
+  read_completion: {
+    claim_id: string | null;
+    status: "none" | "pending" | "accepted" | "rejected";
+    reason: string | null;
+    result_digest: string | null;
+    supporting_attempt_ids: string[];
+    supporting_receipt_refs: string[];
+    supporting_evidence_refs: string[];
+  };
   progress: {
     fingerprint: string | null;
     repeated_no_progress_count: number;
@@ -208,7 +227,9 @@ function requestedEffect(value: unknown): AssignmentRequestedEffect | null {
 }
 
 function purpose(value: unknown): AssignmentAttemptPurpose {
-  return value === "verification" || value === "reconciliation" || value === "rollback" ? value : "action";
+  return value === "discovery" || value === "evidence_read" || value === "navigation"
+    || value === "completion_claim" || value === "verification" || value === "reconciliation"
+    || value === "rollback" ? value : "action";
 }
 
 function authority(value: unknown): AssignmentEffectAuthority | null {
@@ -249,6 +270,15 @@ function initialProjection(assignmentId: string): AssignmentControlPlaneProjecti
     provider_call_ids: [],
     provider_call_count: 0,
     late_receipt_count: 0,
+    read_completion: {
+      claim_id: null,
+      status: "none",
+      reason: null,
+      result_digest: null,
+      supporting_attempt_ids: [],
+      supporting_receipt_refs: [],
+      supporting_evidence_refs: []
+    },
     progress: {
       fingerprint: null,
       repeated_no_progress_count: 0,
@@ -513,10 +543,65 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     projection.late_receipt_count += 1;
     return null;
   }
+  if (event.kind === "read_completion_claimed") {
+    const claimId = string(data.claim_id);
+    if (!claimId) return "read_completion_claimed requires claim_id.";
+    projection.read_completion = {
+      claim_id: claimId,
+      status: "pending",
+      reason: null,
+      result_digest: string(data.result_digest) || null,
+      supporting_attempt_ids: strings(data.supporting_attempt_ids),
+      supporting_receipt_refs: strings(data.supporting_receipt_refs),
+      supporting_evidence_refs: strings(data.supporting_evidence_refs)
+    };
+    return null;
+  }
+  if (event.kind === "read_completion_validated") {
+    const claimId = string(data.claim_id);
+    if (!claimId || claimId !== projection.read_completion.claim_id) {
+      return "read_completion_validated must reference the latest completion claim.";
+    }
+    const accepted = data.accepted === true;
+    if (accepted) {
+      if (event.actor !== "canonical_read_completion_validator") return "Only the canonical read-completion validator may accept a claim.";
+      if (!projection.quiescent) return "A read-completion claim cannot be accepted before Assignment quiescence.";
+      const support = strings(data.supporting_attempt_ids);
+      if (support.length < 1) return "Accepted read completion requires supporting attempts.";
+      for (const attemptId of support) {
+        const supporting = projection.attempts.find(candidate => candidate.attempt_id === attemptId);
+        if (!supporting || supporting.generation !== projection.generation || supporting.purpose !== "action"
+            || supporting.requested_effect !== "read" || supporting.admission.state !== "admitted"
+            || supporting.dispatch.state !== "acknowledged" || supporting.terminal_state !== "settled"
+            || supporting.effect.state !== "none" || supporting.receipt_refs.length < 1
+            || supporting.evidence_refs.length < 1
+            || !["native_host", "native_receipt", "target_readback", "independent_verifier"].includes(supporting.effect.authority)) {
+          return "Accepted read completion references an ineligible supporting attempt.";
+        }
+      }
+    }
+    projection.read_completion = {
+      ...projection.read_completion,
+      status: accepted ? "accepted" : "rejected",
+      reason: string(data.reason) || null,
+      result_digest: string(data.result_digest) || projection.read_completion.result_digest,
+      supporting_attempt_ids: strings(data.supporting_attempt_ids).length
+        ? strings(data.supporting_attempt_ids) : projection.read_completion.supporting_attempt_ids,
+      supporting_receipt_refs: strings(data.supporting_receipt_refs).length
+        ? strings(data.supporting_receipt_refs) : projection.read_completion.supporting_receipt_refs,
+      supporting_evidence_refs: strings(data.supporting_evidence_refs).length
+        ? strings(data.supporting_evidence_refs) : projection.read_completion.supporting_evidence_refs
+    };
+    return null;
+  }
   if (event.kind === "assignment_terminal") {
     if (!projection.quiescent) return `assignment_settlement_deferred_in_flight:${projection.in_flight_attempt_ids.join(",")}:${projection.next_in_flight_deadline ?? "unknown_deadline"}`;
     const state = data.terminal_state;
     if (!["verified", "complete", "blocked", "failed", "canceled"].includes(String(state))) return "A recognized terminal_state is required.";
+    if (state === "complete" && string(data.reason) === "authoritative_read_completed"
+        && projection.read_completion.status !== "accepted") {
+      return "Authoritative read completion requires an accepted canonical completion claim.";
+    }
     projection.terminal_state = state as AssignmentTerminalState;
     projection.terminal_reason = string(data.reason) || null;
     projection.phase = "settled";
