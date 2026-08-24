@@ -34,7 +34,7 @@ function childDiagnostics(child: ChildProcess): string {
   return `exitCode=${String(child.exitCode)} signalCode=${String(child.signalCode)} stderrTail=${stderr || "<empty>"}`;
 }
 
-function signJwt(userId: string, secret: string, tenantId = "tenant-shared", roles = ["user"]): string {
+function signJwt(userId: string, secret: string, tenantId = "tenant-shared", roles = ["user"], expiresInSeconds = 300): string {
   const now = Math.floor(Date.now() / 1000);
   const headerPart = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" }), "utf8").toString("base64url");
   const payloadPart = Buffer.from(JSON.stringify({
@@ -43,7 +43,7 @@ function signJwt(userId: string, secret: string, tenantId = "tenant-shared", rol
     tenant_id: tenantId,
     roles,
     iat: now - 5,
-    exp: now + 300
+    exp: now + expiresInSeconds
   }), "utf8").toString("base64url");
   const signature = createHmac("sha256", secret).update(`${headerPart}.${payloadPart}`).digest("base64url");
   return `${headerPart}.${payloadPart}.${signature}`;
@@ -162,6 +162,8 @@ test("generic JWT mode resolves a tenant principal while shared-token no-princip
     if (authenticated.ok) {
       assert.equal(authenticated.principal?.user_id, "alice");
       assert.equal(authenticated.principal?.tenant_id, "tenant-shared");
+      assert.equal(authenticated.backend_auth?.mode, "principal_jwt");
+      assert.equal(authenticated.backend_auth?.credential, token);
     }
 
     const missing = authenticateRequest({ headers: {} } as any, { mode: "principal_jwt", requireAuth: true, sharedToken: "" });
@@ -180,6 +182,55 @@ test("generic JWT mode resolves a tenant principal while shared-token no-princip
     else process.env.OPERATOR_JWT_ISSUER = previousIssuer;
     if (previousAudience === undefined) delete process.env.OPERATOR_JWT_AUDIENCE;
     else process.env.OPERATOR_JWT_AUDIENCE = previousAudience;
+  }
+});
+
+test("authenticated backend transport preserves the declared mode and fails closed for invalid principal credentials", () => {
+  const previousSecret = process.env.OPERATOR_JWT_SECRET;
+  const previousBase = process.env.OPERATOR_API_BASE_URL;
+  try {
+    process.env.OPERATOR_JWT_SECRET = "internal-backend-auth-secret";
+    process.env.OPERATOR_API_BASE_URL = "https://operator.example/path-is-not-authority";
+    const valid = signJwt("alice", process.env.OPERATOR_JWT_SECRET);
+    const principal = authenticateRequest(
+      { headers: { authorization: `Bearer ${valid}`, "x-operator-token": "must-not-win" } } as any,
+      { mode: "principal_jwt", requireAuth: true, sharedToken: "must-not-win" }
+    );
+    assert.equal(principal.ok, true);
+    if (principal.ok) {
+      assert.equal(principal.backend_auth?.mode, "principal_jwt");
+      assert.equal(principal.backend_auth?.credential, valid);
+      assert.equal(principal.backend_auth?.allowed_origin, "https://operator.example");
+    }
+
+    const shared = authenticateRequest(
+      { headers: { authorization: `Bearer ${valid}`, "x-operator-token": "local-token" } } as any,
+      { mode: "shared_token", requireAuth: true, sharedToken: "local-token" }
+    );
+    assert.equal(shared.ok, true);
+    if (shared.ok) {
+      assert.equal(shared.backend_auth?.mode, "shared_token");
+      assert.equal(shared.backend_auth?.credential, "local-token");
+    }
+
+    const malformed = authenticateRequest(
+      { headers: { authorization: "Bearer malformed" } } as any,
+      { mode: "principal_jwt", requireAuth: true, sharedToken: "" }
+    );
+    assert.equal(malformed.ok, false);
+    if (!malformed.ok) assert.match(malformed.error, /invalid bearer token format/i);
+
+    const expired = authenticateRequest(
+      { headers: { authorization: `Bearer ${signJwt("alice", process.env.OPERATOR_JWT_SECRET, "tenant-shared", ["user"], -120)}` } } as any,
+      { mode: "principal_jwt", requireAuth: true, sharedToken: "" }
+    );
+    assert.equal(expired.ok, false);
+    if (!expired.ok) assert.match(expired.error, /expired/i);
+  } finally {
+    if (previousSecret === undefined) delete process.env.OPERATOR_JWT_SECRET;
+    else process.env.OPERATOR_JWT_SECRET = previousSecret;
+    if (previousBase === undefined) delete process.env.OPERATOR_API_BASE_URL;
+    else process.env.OPERATOR_API_BASE_URL = previousBase;
   }
 });
 
@@ -413,6 +464,30 @@ test("goal endpoints authenticate generic JWT callers and isolate principals, wo
   };
   assert.equal(sidecarStart.assignment_run.run_id, "sidecar-run-alice");
   assert.equal(sidecarStart.assignment_run.generation, 1);
+  const foreignPrincipalCompletion = await fetch(`${base}/api/assignments/read-completion-claims`, {
+    method: "POST",
+    headers: headers(bobAuth),
+    body: JSON.stringify({
+      schema: "revit-operator.assignment-read-completion-claim/v1",
+      assignment_id: sidecarStart.assignment_run.assignment_id,
+      run_id: sidecarStart.assignment_run.run_id,
+      generation: sidecarStart.assignment_run.generation,
+      session_id: sidecarSession,
+      criteria: [{ criterion: "The task is complete.", assertion_ids: ["foreign"] }],
+      result: {
+        kind: "inventory",
+        assertions: [{
+          assertion_id: "foreign",
+          attempt_id: "foreign-attempt",
+          evidence_id: `ev1_${"f".repeat(32)}`,
+          operation: "field_equals",
+          path: "count",
+          expected: 1
+        }]
+      }
+    })
+  });
+  assert.equal(foreignPrincipalCompletion.status, 403);
   const boundChat = await fetch(`${base}/chat`, {
     method: "POST",
     headers: headers(aliceAuth),

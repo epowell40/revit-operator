@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
+import type { OperatorBackendAuthV1 } from "./operator_backend_auth.js";
 
 export type RequestPrincipal = {
   sub: string;
@@ -16,6 +17,7 @@ export type RequestPrincipal = {
 
 export type RequestContext = {
   principal?: RequestPrincipal;
+  operator_backend_auth?: OperatorBackendAuthV1;
 };
 
 const requestContextStorage = new AsyncLocalStorage<RequestContext>();
@@ -64,4 +66,8 @@ export function getRequestContext(): RequestContext | undefined {
 
 export function getRequestPrincipal(): RequestPrincipal | undefined {
   return requestContextStorage.getStore()?.principal;
+}
+
+export function getRequestOperatorBackendAuth(): OperatorBackendAuthV1 | undefined {
+  return requestContextStorage.getStore()?.operator_backend_auth;
 }

@@ -6,6 +6,10 @@ The durable raw-evidence and bounded model-context boundary is documented in
 Settled Assignment review and customer-facing completion claims are defined by
 the deterministic [Verified Work Packet](VERIFIED_WORK_PACKET.md).
 
+Request-scoped shared-token and principal-JWT propagation for trusted
+MCP-to-backend calls is defined by the
+[authenticated internal backend transport](AUTHENTICATED_BACKEND_TRANSPORT.md).
+
 Revit Operator is organized around a local Revit bridge, backend orchestration layer, skill runtime, and operator UI.
 
 The public core should expose generic interfaces and local/self-host implementations. Hosted BIMTools implementations belong in the private overlay repo.

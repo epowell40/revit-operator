@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { operatorBackendAuthRequestMeta, type OperatorBackendAuthV1 } from "../operator_backend_auth.js";
+import { OperatorBackendAuthLeaseRegistry, type OperatorBackendAuthLease } from "./operator_backend_auth_lease.js";
 
 function stringEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
@@ -50,6 +52,7 @@ export class CodexMcpToolRuntime {
   private starting: Promise<void> | null = null;
   private stderrTail = "";
   private dynamicNamespace: unknown | null = null;
+  private readonly backendAuthLeases = new OperatorBackendAuthLeaseRegistry();
 
   constructor(private readonly opts: {
     backendCwd: string;
@@ -98,14 +101,31 @@ export class CodexMcpToolRuntime {
     }
   }
 
-  async callTool(tool: string, args: unknown): Promise<any> {
+  beginBackendAuthLease(sessionId: string, auth: OperatorBackendAuthV1): OperatorBackendAuthLease {
+    return this.backendAuthLeases.begin(sessionId, auth);
+  }
+
+  bindBackendAuthLeaseTurn(lease: OperatorBackendAuthLease, turnId: string): void {
+    this.backendAuthLeases.bindTurn(lease, turnId);
+  }
+
+  endBackendAuthLease(lease: OperatorBackendAuthLease | null): void {
+    this.backendAuthLeases.end(lease);
+  }
+
+  async callTool(tool: string, args: unknown, binding?: { turnId?: unknown; sessionId?: unknown }): Promise<any> {
     await this.ensureStarted();
     const client = this.client;
     if (!client) throw new Error("Revit Operator MCP runtime is not connected.");
     const timeout = toolTimeoutMs(this.opts.spawnEnv);
     try {
+      const auth = this.backendAuthLeases.resolve(binding?.turnId, binding?.sessionId);
       return await client.callTool(
-        { name: tool, arguments: args && typeof args === "object" ? args as Record<string, unknown> : {} },
+        {
+          name: tool,
+          arguments: args && typeof args === "object" ? args as Record<string, unknown> : {},
+          _meta: operatorBackendAuthRequestMeta(auth)
+        },
         undefined,
         { timeout, maxTotalTimeout: timeout }
       );
@@ -145,9 +165,12 @@ export class CodexMcpToolRuntime {
     this.client = null;
     this.transport = null;
     this.dynamicNamespace = null;
+    this.backendAuthLeases.clear();
     void (async () => {
       try { await client?.close(); } catch {}
       try { await transport?.close(); } catch {}
     })();
   }
 }
+
+export type { OperatorBackendAuthLease } from "./operator_backend_auth_lease.js";

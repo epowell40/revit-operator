@@ -65,6 +65,7 @@ import {
 } from "./lib/executionStrategyEvidence.js";
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
+import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -166,8 +167,8 @@ function bindDynamicToolExposure(name: string, registeredTool: any): any {
 
 const originalTool = server.tool.bind(server);
 (server as any).tool = (name: string, description: string, inputSchema: any, handler: (args: any) => Promise<any>) => {
-  const registeredTool = originalTool(name, description, inputSchema, async (args: any) => {
-    return await runWithRevitToolAlias(name, async () => {
+  const registeredTool = originalTool(name, description, inputSchema, async (args: any, extra: any) => {
+    return await runWithOperatorBackendAuth(extra?._meta, async () => await runWithRevitToolAlias(name, async () => {
       const startedAt = Date.now();
       auditLog("tool.call", { name, args: summarize(args) as any });
       try {
@@ -187,15 +188,15 @@ const originalTool = server.tool.bind(server);
         auditLog("tool.result", { name, ok: false, duration_ms: durationMs, error: String(e) });
         throw e;
       }
-    });
+    }));
   });
   return bindDynamicToolExposure(name, registeredTool);
 };
 
 const originalRegisterTool = server.registerTool.bind(server) as any;
 (server as any).registerTool = (name: string, config: any, handler: (args: unknown) => Promise<unknown>) => {
-  const registeredTool = originalRegisterTool(name, config, async (args: unknown) =>
-    await runWithRevitToolAlias(name, async () => await handler(args))
+  const registeredTool = originalRegisterTool(name, config, async (args: unknown, extra: any) =>
+    await runWithOperatorBackendAuth(extra?._meta, async () => await runWithRevitToolAlias(name, async () => await handler(args)))
   );
   return bindDynamicToolExposure(name, registeredTool);
 };

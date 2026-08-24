@@ -2,11 +2,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type http from "node:http";
 import type { RequestPrincipal } from "./request_context.js";
 import { isHostedRuntime } from "./runtime_mode.js";
+import { createOperatorBackendAuth, type OperatorBackendAuthV1 } from "./operator_backend_auth.js";
 
 export type OperatorAuthMode = "shared_token" | "principal_jwt";
 
 export type RequestAuthResult =
-  | { ok: true; mode: OperatorAuthMode; principal?: RequestPrincipal }
+  | { ok: true; mode: OperatorAuthMode; principal?: RequestPrincipal; backend_auth?: OperatorBackendAuthV1 }
   | { ok: false; mode: OperatorAuthMode; status: number; error: string };
 
 const UNAUTHENTICATED_PRINCIPAL_ROUTES = new Set(["GET /health"]);
@@ -199,7 +200,7 @@ export function authenticateRequest(
     if (!got || got !== opts.sharedToken) {
       return { ok: false, mode: opts.mode, status: 401, error: "Unauthorized (missing/invalid X-Operator-Token)." };
     }
-    return { ok: true, mode: opts.mode };
+    return { ok: true, mode: opts.mode, backend_auth: createOperatorBackendAuth("shared_token", got) };
   }
 
   const match = getHeader(req, "authorization").match(/^Bearer\s+(.+)$/i);
@@ -209,5 +210,10 @@ export function authenticateRequest(
   }
   const verified = verifyBearerJwtHs256(token);
   if (!verified.ok) return { ok: false, mode: opts.mode, status: verified.status, error: verified.error };
-  return { ok: true, mode: opts.mode, principal: verified.principal };
+  return {
+    ok: true,
+    mode: opts.mode,
+    principal: verified.principal,
+    backend_auth: createOperatorBackendAuth("principal_jwt", token)
+  };
 }

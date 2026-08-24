@@ -85,7 +85,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   let dispatched = false;
   try {
     markAssignmentToolDispatching(assignmentLease);
-    const pendingResult = runtime.callTool(params.tool, params.arguments ?? {});
+    const pendingResult = runtime.callTool(params.tool, params.arguments ?? {}, { turnId: params.turnId, sessionId });
     markAssignmentToolDispatched(assignmentLease);
     dispatched = true;
     rawResult = await pendingResult;

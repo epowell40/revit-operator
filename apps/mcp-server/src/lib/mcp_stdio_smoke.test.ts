@@ -571,6 +571,129 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(backendRequests, 0, "Invalid semantic planner controls must be rejected before any backend fetch.");
 });
 
+test("compiled MCP forwards a request-scoped principal JWT to completion without model or audit leakage", async (t) => {
+  const credential = "compiled-stdio-principal-jwt";
+  const requests: Array<{ path: string; authorization: string; shared: string; body: string }> = [];
+  const backend = http.createServer(async (req, res) => {
+    const body = await new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      req.on("data", chunk => chunks.push(Buffer.from(chunk)));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+      req.on("error", reject);
+    });
+    requests.push({
+      path: new URL(req.url ?? "/", origin).pathname,
+      authorization: String(req.headers.authorization ?? ""),
+      shared: String(req.headers["x-operator-token"] ?? ""),
+      body
+    });
+    if (req.headers.authorization !== `Bearer ${credential}`) {
+      res.statusCode = 401;
+      res.end(JSON.stringify({ error: "Unauthorized (missing/invalid Authorization: Bearer token)." }));
+      return;
+    }
+    res.statusCode = 202;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: true, claim_id: "claim-compiled", status: "accepted" }));
+  });
+  const port = await listen(backend);
+  const origin = `http://127.0.0.1:${port}`;
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "revit-operator-mcp-principal-stdio-"));
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(process.cwd(), "dist", "server.js")],
+    cwd: process.cwd(),
+    env: {
+      ...env,
+      OPERATOR_API_BASE_URL: origin,
+      OPERATOR_AUTH_MODE: "principal_jwt",
+      OPERATOR_TOKEN: "shared-token-must-not-be-used",
+      OPERATOR_WORKSPACE_ROOT: workspace,
+      REVIT_OPERATOR_MODE: "development",
+      OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
+    },
+    stderr: "pipe"
+  });
+  const stderr: string[] = [];
+  transport.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk.toString("utf8")));
+  const client = new Client({ name: "principal-auth-stdio-test", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => {
+    try { await client.close(); } catch {}
+    try { await transport.close(); } catch {}
+    await closeServer(backend);
+    fs.rmSync(workspace, { recursive: true, force: true });
+  });
+  await withTimeout(client.connect(transport), "connecting principal auth MCP stdio");
+
+  const authMeta = {
+    "revit-operator/backend-auth": {
+      schema: "revit-operator.operator-backend-auth/v1",
+      mode: "principal_jwt",
+      credential,
+      allowed_origin: origin
+    }
+  };
+  const result = await withTimeout(client.callTool({
+    name: "operator_submit_read_completion",
+    arguments: {
+      assignmentId: "assignment-a",
+      runId: "run-a",
+      generation: 1,
+      sessionId: "session-a",
+      resultKind: "inventory",
+      criteria: [{ criterion: "Return the requested inventory.", assertionIds: ["inventory"] }],
+      assertions: [{
+        assertionId: "inventory",
+        attemptId: "attempt-a",
+        evidenceId: `ev1_${"a".repeat(32)}`,
+        operation: "array_count",
+        path: "items",
+        expectedCount: 1
+      }]
+    },
+    _meta: authMeta
+  }), "submitting principal-authenticated completion through compiled MCP");
+
+  assert.equal((result as any).isError, undefined, stderr.join(""));
+  const evidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"b".repeat(32)}`,
+      sessionId: "session-a",
+      assignmentId: "assignment-a",
+      runId: "run-a",
+      generation: 1,
+      purpose: "Read one exact inventory count.",
+      fields: ["count"],
+      maxBytes: 4096
+    },
+    _meta: authMeta
+  }), "retrieving principal-authenticated evidence through compiled MCP");
+  assert.equal((evidence as any).isError, undefined, stderr.join(""));
+  const semantic = await withTimeout(client.callTool({
+    name: "operator_plan_semantic_mep_route",
+    arguments: { userText: "Route one bounded branch." },
+    _meta: authMeta
+  }), "planning a principal-authenticated semantic route through compiled MCP");
+  assert.equal((semantic as any).isError, undefined, stderr.join(""));
+
+  assert.deepEqual(requests.map(request => request.path), [
+    "/api/assignments/read-completion-claims",
+    "/evidence/retrieve",
+    "/tools/mep/semantic-route-plan"
+  ]);
+  for (const request of requests) {
+    assert.equal(request.authorization, `Bearer ${credential}`);
+    assert.equal(request.shared, "");
+    assert.doesNotMatch(request.body, new RegExp(credential));
+  }
+  const auditPath = path.join(workspace, "logs", "mcp-server-audit.jsonl");
+  assert.equal(fs.existsSync(auditPath), true);
+  assert.doesNotMatch(fs.readFileSync(auditPath, "utf8"), new RegExp(credential));
+  assert.doesNotMatch(stderr.join(""), new RegExp(credential));
+});
+
 test("MCP stdio certified mode keeps diagnostics available and blocks every Revit route before bridge dispatch", async (t) => {
   let bridgeRequests = 0;
   const bridge = http.createServer((_req, res) => {
