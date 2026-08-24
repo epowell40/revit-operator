@@ -403,6 +403,7 @@ export function journalAssignmentToolResults(
       reason: result.error ?? result.failure_code ?? (result.status === "done" ? "tool_result_returned" : "tool_result_failed")
     }, { result, canonical_attempt_id: attempt.attempt_id }));
     context = { ...context, projection: dispatch.projection };
+    if (!dispatch.accepted) continue;
     if (trustedNativeSettlement) {
       const nativeEffect = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "effect_recorded", attempt.attempt_id, actor, {
         effect_state: trustedNativeSettlement.effect_state,
@@ -415,6 +416,7 @@ export function journalAssignmentToolResults(
         settlement_pending_evidence: options.deferTerminal === true
       }, { result, native_settlement: trustedNativeSettlement }));
       context = { ...context, projection: nativeEffect.projection };
+      if (!nativeEffect.accepted) continue;
       if (!options.deferTerminal && trustedNativeSettlement.effect_state !== "unknown") {
         const terminal = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "attempt_terminal", attempt.attempt_id, actor, {
           lease_state: "settled", reason: "native_result_settled"
@@ -431,6 +433,7 @@ export function journalAssignmentToolResults(
         settlement_pending_evidence: options.deferTerminal === true
       }, { result, effect: "none" }));
       context = { ...context, projection: rejected.projection };
+      if (!rejected.accepted) continue;
       if (!options.deferTerminal) {
         const terminal = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "attempt_terminal", attempt.attempt_id, actor, {
           lease_state: "settled", reason: "pre_dispatch_failure_settled"
@@ -455,6 +458,7 @@ export function journalAssignmentToolResults(
       settlement_pending_evidence: options.deferTerminal === true
     }, { result, effect: effectState }));
     context = { ...context, projection: effect.projection };
+    if (!effect.accepted) continue;
     if (!options.deferTerminal && effectState !== "unknown") {
       const terminal = appendAssignmentEvent(context.assignmentId, canonicalEvent(attemptContext, "attempt_terminal", attempt.attempt_id, actor, {
         lease_state: "settled", reason: "tool_result_settled"

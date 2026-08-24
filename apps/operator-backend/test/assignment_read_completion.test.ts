@@ -197,6 +197,319 @@ test("passing-after: retained q01-shaped settled reads cross the evidence-backed
   });
 });
 
+test("failing-before: an authenticated completion claim accepts explicit MCP envelopes and camelCase grouping fields", () => {
+  workspace(() => {
+    const sessionId = "read-completion-live-envelope-camel-case";
+    createReadAssignment(
+      sessionId,
+      "read",
+      "Count all air devices and break the total down by family and type from live Revit evidence."
+    );
+    const items = [
+      { familyName: "Family A", typeName: "Type 1" },
+      { familyName: "Family B", typeName: "Type 2" }
+    ];
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      content: [{ type: "text", text: JSON.stringify({ count: 2, itemsComplete: true, items }) }]
+    }, true)!;
+    submitClaim(sessionId, [
+      {
+        assertion_id: "inventory-total",
+        attempt_id: "inventory-read",
+        evidence_id: evidenceId,
+        operation: "field_equals",
+        path: "content[0].text.count",
+        expected: 2
+      },
+      {
+        assertion_id: "inventory-groups",
+        attempt_id: "inventory-read",
+        evidence_id: evidenceId,
+        operation: "group_count",
+        path: "content[0].text.items",
+        group_by: ["familyName", "typeName"],
+        expected_total: 2,
+        expected_groups: [
+          { values: ["Family A", "Type 1"], count: 1 },
+          { values: ["Family B", "Type 2"], count: 1 }
+        ]
+      }
+    ]);
+
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, true);
+    assert.equal(settled.projection?.terminal_reason, "authoritative_read_completed");
+  });
+});
+
+for (const variant of [
+  {
+    name: "snake_case",
+    groupBy: ["family_name", "type_name"],
+    items: [
+      { family_name: "Family A", type_name: "Type 1" },
+      { family_name: "Family B", type_name: "Type 2" }
+    ]
+  },
+  {
+    name: "nested objects",
+    groupBy: ["family.name", "type.name"],
+    items: [
+      { family: { name: "Family A" }, type: { name: "Type 1" } },
+      { family: { name: "Family B" }, type: { name: "Type 2" } }
+    ]
+  },
+  {
+    name: "hyphenated fields",
+    groupBy: ["family-name", "type-name"],
+    items: [
+      { "family-name": "Family A", "type-name": "Type 1" },
+      { "family-name": "Family B", "type-name": "Type 2" }
+    ]
+  }
+]) test(`neighbor: grouped read completion recognizes ${variant.name} family/type selectors`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-group-selector-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", "Count the devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      count: 2,
+      items: variant.items
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "inventory-groups",
+      attempt_id: "inventory-read",
+      evidence_id: evidenceId,
+      operation: "group_count",
+      path: "items",
+      group_by: variant.groupBy,
+      expected_total: 2,
+      expected_groups: [
+        { values: ["Family A", "Type 1"], count: 1 },
+        { values: ["Family B", "Type 2"], count: 1 }
+      ]
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+test("negative: unrelated grouping fields do not satisfy a requested family/type breakdown", () => {
+  workspace(() => {
+    const sessionId = "read-completion-unrelated-group-selector";
+    createReadAssignment(sessionId, "read", "Count the devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      count: 1,
+      items: [{ label: "Family A", name: "Type 1" }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "inventory-groups",
+      attempt_id: "inventory-read",
+      evidence_id: evidenceId,
+      operation: "group_count",
+      path: "items",
+      group_by: ["label", "name"],
+      expected_total: 1,
+      expected_groups: [{ values: ["Family A", "Type 1"], count: 1 }]
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_criteria_incomplete");
+  });
+});
+
+for (const variant of [
+  {
+    name: "split dimensions across assertions",
+    assertions: [
+      { id: "families", fields: ["familyName"], groups: [{ values: ["Family A"], count: 1 }] },
+      { id: "types", fields: ["typeName"], groups: [{ values: ["Type 1"], count: 1 }] }
+    ],
+    items: [{ familyName: "Family A", typeName: "Type 1" }]
+  },
+  {
+    name: "combined familyType field",
+    assertions: [{ id: "combined", fields: ["familyType"], groups: [{ values: ["Family A: Type 1"], count: 1 }] }],
+    items: [{ familyType: "Family A: Type 1" }]
+  },
+  {
+    name: "misleading qualified fields",
+    assertions: [{ id: "misleading", fields: ["not_family", "previous_type"], groups: [{ values: ["Family A", "Type 1"], count: 1 }] }],
+    items: [{ not_family: "Family A", previous_type: "Type 1" }]
+  }
+]) test(`negative: ${variant.name} cannot establish a joint family/type breakdown`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-group-negative-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", "Count the devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", { items: variant.items }, true)!;
+    submitClaim(sessionId, variant.assertions.map(assertion => ({
+      assertion_id: assertion.id,
+      attempt_id: "inventory-read",
+      evidence_id: evidenceId,
+      operation: "group_count" as const,
+      path: "items",
+      group_by: assertion.fields,
+      expected_total: 1,
+      expected_groups: assertion.groups
+    })));
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_criteria_incomplete");
+  });
+});
+
+test("ambiguous MCP-shaped objects with shadowing domain fields fail closed", () => {
+  workspace(() => {
+    const sessionId = "read-completion-envelope-shadow";
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", {
+      count: 99,
+      content: [{ type: "text", text: JSON.stringify({ count: 4 }) }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "count", expected: 4
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_result_not_supported");
+  });
+});
+
+test("MCP error envelopes cannot authenticate convincing result prose", () => {
+  workspace(() => {
+    const sessionId = "read-completion-envelope-error";
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", {
+      isError: true,
+      content: [{ type: "text", text: JSON.stringify({ count: 4 }) }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "content[0].text.count", expected: 4
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, false);
+  });
+});
+
+for (const variant of [
+  { name: "agree", structured: { count: 4 }, text: { count: 4 }, complete: true },
+  { name: "disagree", structured: { count: 4 }, text: { count: 9 }, complete: false }
+]) test(`structured and textual MCP envelope facts ${variant.name}`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-envelope-${variant.name}`;
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", {
+      structuredContent: variant.structured,
+      content: [{ type: "text", text: JSON.stringify(variant.text) }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "count", expected: 4
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, variant.complete);
+  });
+});
+
+test("ordinary domain objects retain explicit content arrays without MCP reinterpretation", () => {
+  workspace(() => {
+    const sessionId = "read-completion-domain-content";
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", {
+      count: 1, content: [{ count: 4 }], domain: "schedule"
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "content.0.count", expected: 4
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+for (const variant of [
+  { name: "plural family and type", request: "Count devices and group them by families and types.", fields: ["familyName", "typeName"], complete: true },
+  { name: "category with descriptive labels", request: "Count devices by category and include family/type labels.", fields: ["categoryName"], complete: true },
+  { name: "family excluding host", request: "Count devices by family, excluding host.", fields: ["familyName"], complete: true },
+  { name: "unexpected extra dimension", request: "Count devices by family.", fields: ["familyName", "typeName"], complete: false }
+]) test(`grouping intent parser handles ${variant.name}`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-grouping-intent-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", variant.request);
+    const item = { familyName: "Family A", typeName: "Type 1", categoryName: "Device" };
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", { items: [item] }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "groups", attempt_id: "inventory-read", evidence_id: evidenceId,
+      operation: "group_count", path: "items", group_by: variant.fields,
+      expected_total: 1,
+      expected_groups: [{ values: variant.fields.map(field => item[field as keyof typeof item]), count: 1 }]
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, variant.complete);
+  });
+});
+
+for (const variant of [
+  { name: "malformed JSON", content: [{ type: "text", text: "{not-json" }] },
+  { name: "multiple content items", content: [{ type: "text", text: "{\"count\":4}" }, { type: "text", text: "{\"count\":4}" }] }
+]) test(`malformed MCP envelope variant ${variant.name} remains incomplete`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-envelope-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", { content: variant.content }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "content[0].text.count", expected: 4
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_result_not_supported");
+  });
+});
+
+test("unrelated regression: a count-only lookup can use an explicit MCP envelope path", () => {
+  workspace(() => {
+    const sessionId = "read-completion-envelope-count-only";
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", {
+      content: [{ type: "text", text: JSON.stringify({ count: 4 }) }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count",
+      attempt_id: "count-read",
+      evidence_id: evidenceId,
+      operation: "field_equals",
+      path: "content[0].text.count",
+      expected: 4
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+test("unsafe non-numeric bracket selectors remain rejected before validation", () => {
+  workspace(() => {
+    const sessionId = "read-completion-unsafe-bracket-selector";
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", { count: 4 }, true)!;
+    assert.throws(() => submitClaim(sessionId, [{
+      assertion_id: "count",
+      attempt_id: "count-read",
+      evidence_id: evidenceId,
+      operation: "field_equals",
+      path: "content[constructor].count",
+      expected: 4
+    }]), /read_completion_assertion_0_path_invalid/);
+  });
+});
+
+test("excessive numeric indexes remain rejected before evidence traversal", () => {
+  workspace(() => {
+    const sessionId = "read-completion-excessive-index";
+    createReadAssignment(sessionId, "read", "Return the total count from live Revit evidence.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", { count: 4 }, true)!;
+    assert.throws(() => submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "content[999999999].text.count", expected: 4
+    }]), /read_completion_assertion_0_path_invalid/);
+  });
+});
+
 test("a stale-generation completion claim is rejected before evidence validation", () => {
   workspace(() => {
     const sessionId = "read-completion-stale-generation";

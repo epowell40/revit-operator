@@ -484,7 +484,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/control_plane.ts",
-      "sha256": "sha256:a22821d047e1da2b15c0a2b39e799743cc1f639b8f87234e7902b5f7e51809c1"
+      "sha256": "sha256:ef37d464a96078dd84dbdcf7d80677e55d5c23d116d902f94b5d9c2d15307791"
     },
     {
       "path": "apps/operator-backend/src/assignments/control_plane_store.ts",
@@ -516,7 +516,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/read_completion.ts",
-      "sha256": "sha256:8cc03c46be2716305667830d776ce6e1b709fd31b41965f83b131d8c27119010"
+      "sha256": "sha256:3759b17a6f4af81fa8471548cec9b5ef2afce574057d26c2c15bfeed39a5de5b"
     },
     {
       "path": "apps/operator-backend/src/assignments/settlement_barrier.ts",
@@ -528,7 +528,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_journal.ts",
-      "sha256": "sha256:d21b3a2ff2abd167745ba4f50e4867b5804e027ebae5fb7cf75d85201f76adae"
+      "sha256": "sha256:dcbf939ce1bb6db544d07c053e280337896c2bd43c9b72aa34824fc2ce1f28b5"
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_preparation.ts",
@@ -588,7 +588,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/durable_tool_evidence.ts",
-      "sha256": "sha256:e0f2a2b9606c36ff033c18ec7a485f34bb3af35a8c639fb2de7d7cc118b25011"
+      "sha256": "sha256:e4f1209a6c0357850610cfe07dacb51c216fdbc1ea5cda403481dfef5f4e6440"
     },
     {
       "path": "apps/operator-backend/src/benchmark/environment.ts",
@@ -676,7 +676,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_case.ts",
-      "sha256": "sha256:fd67d9ad974b43a7436e3e33334e21053bf04c0814ec9254ce3d64a01ca94757"
+      "sha256": "sha256:f6c45df40055001ba76d24d7a22ed8622f2b288483afdc07f510fbe63c03d031"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_compare.ts",
@@ -712,7 +712,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:822b8f4f328f9dbb289a2897005d1699666b16629d171c70b4ecdf0baf6ec611"
+      "sha256": "sha256:55105c46db6275475235ddbd01d01a17966990ef292f1db5f041067048e1e276"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
@@ -2537,7 +2537,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_control_plane.test.ts",
-      "sha256": "sha256:1bc9ec59dc7c3193a13cda65be30308c3e9d3d80920340eff10affc9f0129029"
+      "sha256": "sha256:ff87fc17a4f6728563d1e2d8d8977c8f63afa93c2f554575a40fb1a3b51a0d99"
     },
     {
       "path": "apps/operator-backend/test/assignment_endpoint.test.ts",
@@ -2549,11 +2549,11 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_read_completion.test.ts",
-      "sha256": "sha256:86f7e3a8c5fe957bcbfe4faa6bda8d52f54dd557f11f6a6125d7e88c7bca8189"
+      "sha256": "sha256:ed042c7f1f14a92ac655ff2d79d8c595e660ab49baf30dc096f9e23acd70838d"
     },
     {
       "path": "apps/operator-backend/test/assignment_turn_journal.test.ts",
-      "sha256": "sha256:49b7fe50b820a7d6d0c32e2c53fe53fad417d06ae2dd72297e99b831d1ccac3e"
+      "sha256": "sha256:1e92928d7fbb34deb1496453333faa146e2e199b690fc33851629a7c5f0577c1"
     },
     {
       "path": "apps/operator-backend/test/assignment_turn_settlement.test.ts",
@@ -2585,7 +2585,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:d2d83831544f2f7ff456e672d687c9ec83d8f37fe2ae16f0b6bec8c763282953"
+      "sha256": "sha256:2de0effb2269591e4c61cd630080aa6459c434d9401020ab2fcd17644f8b7777"
     },
     {
       "path": "apps/operator-backend/test/benchmark_report.test.ts",
@@ -5505,7 +5505,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:299f36a6f483bb70e9e3a0fb9e33f0b25dd68f2c3ade97f81bb6a18e17a15e2c",
+  "inputs_hash": "sha256:ea4d35858a9bc1ec7ddb0d6e6680041400bbb52fac454d6bbd835839f36ed7d6",
   "result": {
     "passed": true,
     "checks": [

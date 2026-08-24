@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +11,7 @@ import {
   type GeneralRevitEvaluation
 } from "../src/benchmark/general_revit_capability_acceptance.js";
 import { buildBenchmarkCaseResultV2 } from "../src/benchmark/protocol_v2_case.js";
+import { canonicalAttemptRequestedEffect, loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
 import { assertReleaseCanaryInvocationV2, RELEASE_CANARY_CASE_IDS_V2, selectReleaseCanaryCasesV2 } from "../src/benchmark/protocol_v2_canary.js";
 import { compareBenchmarkExactRerunsV2 } from "../src/benchmark/protocol_v2_compare.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "../src/benchmark/protocol_v2_envelope.js";
@@ -292,7 +294,7 @@ test("failed Protocol V2 finalization publishes one immutable auditable failure 
   assert.equal(JSON.parse(fs.readFileSync(failurePath, "utf8")).artifact_sha256, failure.artifact_sha256);
 });
 
-test("Protocol V2 accepts current-bound canonical read receipts when the legacy outer tool list is empty", () => {
+test("Protocol V2 consumes the real durable projector's canonical read receipt when the legacy outer tool list is empty", async () => {
   const readCase = benchmarkCase({
     case_id: "t02_protocol_read",
     operation_family: "inventory",
@@ -304,28 +306,98 @@ test("Protocol V2 accepts current-bound canonical read receipts when the legacy 
     production_expected_effect: "read",
     probe_expected_effect: "read"
   });
-  const trace = traceFor(readCase, {
-    attempts: [canonicalAttempt({
+  const attempts = [canonicalAttempt({
       requested_effect: "read",
+      action_path: "/revit/schedules",
+      tool_identity: "revit_list_schedules",
       effect: { state: "none", authority: "native_host", reason: "read_has_no_persistent_effect" },
       affected_target_identities: []
-    })],
+    })];
+  const durableProjection = {
+    assignments: [{
+      id: "assignment-1",
+      source_kind: "goal",
+      source_record_id: "assignment-1",
+      source_user_request: readCase.prompt,
+      objective: readCase.prompt,
+      created_at: START,
+      target: { session_id: "suite-session-v2" },
+      control_plane: {
+        schema: "revit-operator.assignment-control-plane-projection/v1",
+        assignment_id: "assignment-1",
+        run_id: "assignment-run-1",
+        generation: 1,
+        terminal_state: "complete",
+        attempts
+      }
+    }]
+  };
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(request.url?.startsWith("/api/notifications")
+      ? JSON.stringify({ notifications: [], next_after_id: 0 })
+      : JSON.stringify({ goal: { action_log: [] } }));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  let durableEvidence: JsonRecord;
+  try {
+    durableEvidence = await loadDurableToolEvidence(
+      `http://127.0.0.1:${address.port}`,
+      durableProjection,
+      readCase.prompt,
+      { session_id: "suite-session-v2", started_at: START }
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+  const receipts = durableEvidence.canonical_attempt_receipts as JsonRecord[];
+  assert.equal(receipts.length, 1);
+  assert.equal(receipts[0]!.requested_effect, "read");
+  assert.equal(Object.prototype.hasOwnProperty.call(receipts[0]!, "request_effect"), false);
+
+  const trace = traceFor(readCase, {
+    attempts,
     actionRows: [{
       path: "/revit/schedules", request_effect: "read", request_dispatched: true,
       status: "success", receipt: { count: 2 }
     }]
   });
   trace.tool_calls = [];
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_projection = durableProjection;
+  toolResults.durable_tool_evidence = durableEvidence;
+  const raw = toolResults.raw_sidecar_response as JsonRecord;
+  raw.assignment_projection = durableProjection;
+  raw.durable_tool_evidence = durableEvidence;
+  toolResults.raw_sidecar_response_sha256 = sha256Value(raw);
   assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({
     model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
     task_traces: [trace]
   }, [readCase.case_id]));
+  const result = buildBenchmarkCaseResultV2({
+    runId: "run-v2", lane: "controlled_capability", testCase: readCase, trace,
+    rawTraceRef: "trace.json", judgedAt: FINISH
+  });
+  assert.equal(result.execution_truth.requested_effect, "read");
+  assert.equal(result.execution_truth.effect_state, "none");
+  assert.equal(result.execution_truth.authority, "native_host");
+  assert.equal(result.stages.find(stage => stage.stage === "postcondition_read_back")?.status, "pass");
   const packet = ((trace.tool_results as JsonRecord).durable_work_packets as JsonRecord).packets as JsonRecord[];
   packet[0]!.packet_hash = `sha256:${"0".repeat(64)}`;
   assert.throws(() => assertCompleteProtocolV2Receipts({
     model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
     task_traces: [trace]
   }, [readCase.case_id]), /Verified Work Packet/);
+});
+
+test("canonical attempt effect accessor is backward compatible but rejects conflicting dual fields", () => {
+  assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "read" }), "read");
+  assert.equal(canonicalAttemptRequestedEffect({ request_effect: "read" }), "read");
+  assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "read", request_effect: "read" }), "read");
+  assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "read", request_effect: "apply" }), null);
+  assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "unknown" }), null);
 });
 
 test("Protocol V2 preserves typed failure artifacts and a timeout with recovered receipts can finalize", () => {

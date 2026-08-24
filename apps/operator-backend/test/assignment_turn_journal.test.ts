@@ -50,7 +50,8 @@ test("request-level journal covers any planner and keeps caller apply success un
     }], "operator_desktop");
     assert.equal(settled?.attempts[0]?.effect.state, "unknown");
     assert.deepEqual(settled?.unresolved_unknown_attempt_ids, ["action-1"]);
-    assert.equal(getGoal(goal.id)?.assignment_control_plane?.events.length, 5);
+    assert.equal(getGoal(goal.id)?.assignment_control_plane?.events.length, 4);
+    assert.equal(getGoal(goal.id)?.assignment_control_plane?.quarantined_events.length, 1);
   });
 });
 
@@ -165,7 +166,8 @@ test("a late outer callback is fenced by the attempt's original generation", () 
       request_dispatched: true, result_json: { status: "Moved", rolledBack: false }
     }], "late_sidecar");
     const persisted = getGoal(goal.id)!;
-    assert.equal(persisted.assignment_control_plane?.quarantined_events.length, 2);
+    assert.equal(persisted.assignment_control_plane?.quarantined_events.length, 1);
+    assert.match(persisted.assignment_control_plane?.quarantined_events[0]?.reason ?? "", /stale or superseded/);
     const old = persisted.assignment_control_plane?.events.find(entry => entry.attempt_id === "old-action" && entry.kind === "attempt_opened");
     assert.equal(old?.generation, 1);
   });
@@ -218,6 +220,7 @@ test("a native settlement bound to another attempt cannot alter canonical truth"
     }], "operator_desktop");
 
     assert.equal(settled?.attempts[0]?.effect.state, "unknown");
-    assert.equal(settled?.attempts[0]?.effect.authority, "caller_report");
+    assert.equal(settled?.attempts[0]?.effect.authority, "dispatch_transport");
+    assert.equal(settled?.attempts[0]?.effect.reason, "dispatch_occurred_effect_unsettled");
   });
 });

@@ -110,11 +110,17 @@ function digest(value: unknown): string {
 
 function safePath(value: unknown, label: string): string {
   const path = text(value, 500);
-  if (!path || path.includes("..") || /[\\\u0000]/.test(path)
-      || path.split(".").some(segment => !segment || segment === "__proto__" || segment === "prototype" || segment === "constructor")) {
+  const normalized = path.replace(/^\$\.?/, "").replace(/\[(\d+)\]/g, (_match, index: string) => {
+    if (!/^\d{1,7}$/.test(index) || Number(index) > 2_000_000) throw new Error(`${label}_invalid`);
+    return `.${Number(index)}`;
+  }).replace(/^\./, "");
+  if (!normalized || normalized.includes("..") || /[\\\[\]\x00-\x1f\x7f]/.test(normalized)
+      || normalized.split(".").some(segment => !segment
+        || (/^\d+$/.test(segment) && Number(segment) > 2_000_000)
+        || segment === "__proto__" || segment === "prototype" || segment === "constructor")) {
     throw new Error(`${label}_invalid`);
   }
-  return path.replace(/^\$\.?/, "");
+  return normalized;
 }
 
 function positiveInteger(value: unknown, label: string, max = Number.MAX_SAFE_INTEGER): number {
@@ -298,38 +304,72 @@ function latestClaim(goal: GoalRecord): ReadCompletionClaimV1 | null {
   return claim.schema === READ_COMPLETION_CLAIM_SCHEMA ? claim as unknown as ReadCompletionClaimV1 : null;
 }
 
-function decodeEnvelope(value: unknown): unknown {
+function isMcpContentEnvelope(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  const allowed = new Set(["content", "structuredContent", "isError", "_meta"]);
+  if (Object.keys(row).some(key => !allowed.has(key)) || !Array.isArray(row.content)) return false;
+  return row.content.every(item => {
+    const content = record(item);
+    return typeof content.type === "string"
+      && Object.keys(content).every(key => ["type", "text", "annotations", "_meta"].includes(key));
+  });
+}
+
+function decodeJsonText(value: unknown): unknown {
   let current = value;
-  for (let depth = 0; depth < 8; depth += 1) {
-    if (typeof current === "string") {
-      const source = current.trim();
-      if (!source || (!source.startsWith("{") && !source.startsWith("["))) break;
-      try { current = JSON.parse(source); continue; } catch { break; }
-    }
-    const row = record(current);
-    const content = Array.isArray(row.content) ? row.content : [];
-    if (content.length === 1) {
-      const item = record(content[0]);
-      const nested = typeof item.text === "string" ? item.text.trim() : "";
-      if (nested.startsWith("{") || nested.startsWith("[")) {
-        try { current = JSON.parse(nested); continue; } catch {}
-      }
-    }
-    break;
+  for (let depth = 0; depth < 8 && typeof current === "string"; depth += 1) {
+    const source = current.trim();
+    if (!source || (!source.startsWith("{") && !source.startsWith("["))) break;
+    try { current = JSON.parse(source); } catch { break; }
   }
   return current;
 }
 
+function selectionRoot(root: unknown, path: string): unknown {
+  if (!isMcpContentEnvelope(root)) return root;
+  const envelope = root as Record<string, unknown>;
+  if (envelope.isError === true || (envelope.isError !== undefined && typeof envelope.isError !== "boolean")) return undefined;
+  const content = envelope.content as unknown[];
+  if (content.length !== 1) return undefined;
+  const item = record(content[0]);
+  if (item.type !== "text" || typeof item.text !== "string") return undefined;
+  const decodedText = decodeJsonText(item.text);
+  const textHasStructuredJson = decodedText !== item.text;
+  const hasStructuredContent = Object.prototype.hasOwnProperty.call(envelope, "structuredContent");
+  const structuredContent = envelope.structuredContent;
+  if (hasStructuredContent && (!structuredContent || typeof structuredContent !== "object")) return undefined;
+  if (hasStructuredContent && textHasStructuredJson && !equivalent(structuredContent, decodedText)) return undefined;
+  const explicitContentPath = path === "content.0.text" || path.startsWith("content.0.text.");
+  if (explicitContentPath) return root;
+  if (hasStructuredContent) return structuredContent;
+  return textHasStructuredJson ? decodedText : undefined;
+}
+
 function selected(root: unknown, path: string): unknown {
-  let value = decodeEnvelope(root);
+  let value = selectionRoot(root, path);
+  if (value === undefined) return undefined;
+  const explicitJsonTextPath = path === "content.0.text" || path.startsWith("content.0.text.");
   for (const segment of path.split(".")) {
-    value = decodeEnvelope(value);
-    if (Array.isArray(value) && /^\d+$/.test(segment)) value = value[Number(segment)];
-    else if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, segment)) {
-      value = (value as Record<string, unknown>)[segment];
-    } else return undefined;
+    let selectedSegment = false;
+    for (let decodeAttempt = 0; decodeAttempt < 2 && !selectedSegment; decodeAttempt += 1) {
+      if (Array.isArray(value) && /^\d+$/.test(segment)) {
+        value = value[Number(segment)];
+        selectedSegment = true;
+      } else if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, segment)) {
+        value = (value as Record<string, unknown>)[segment];
+        selectedSegment = true;
+      } else if (explicitJsonTextPath) {
+        const decoded = decodeJsonText(value);
+        if (decoded === value) return undefined;
+        value = decoded;
+      } else {
+        return undefined;
+      }
+    }
+    if (!selectedSegment) return undefined;
   }
-  return decodeEnvelope(value);
+  return explicitJsonTextPath ? decodeJsonText(value) : value;
 }
 
 function equivalent(left: unknown, right: unknown): boolean {
@@ -383,9 +423,13 @@ function attemptReason(attempt: AssignmentAttemptRecord | undefined): string | n
 
 function taskShapeReason(goal: GoalRecord, claim: ReadCompletionClaimV1): string | null {
   const request = `${goal.work_budget?.source_user_request ?? goal.objective}`.toLowerCase();
+  const normalizedRequest = request.replace(/\bfamilies\b/g, "family").replace(/\btypes\b/g, "type")
+    .replace(/\bcategories\b/g, "category").replace(/\blevels\b/g, "level")
+    .replace(/\bsystems\b/g, "system").replace(/\bcircuits\b/g, "circuit")
+    .replace(/\brooms\b/g, "room").replace(/\bspaces\b/g, "space").replace(/\bhosts\b/g, "host");
   const assertions = claim.result.assertions;
   const requiresCount = /\b(?:count|how many|total)\b/.test(request);
-  const requiresGrouping = /\b(?:break\s*down|breakdown|group(?:ed|ing)?|by\s+(?:family|type|category|level|system|circuit|room|space|host))\b/.test(request);
+  const requiresGrouping = /\b(?:break\s*down|breakdown|group(?:ed|ing)?|by\s+(?:family|type|category|level|system|circuit|room|space|host))\b/.test(normalizedRequest);
   if (requiresCount && !assertions.some(assertion => assertion.operation === "array_count"
       || assertion.operation === "group_count"
       || (assertion.operation === "field_equals" && /(?:^|\.)(?:count|total|total_count|totalcount)$/i.test(assertion.path)))) {
@@ -394,12 +438,28 @@ function taskShapeReason(goal: GoalRecord, claim: ReadCompletionClaimV1): string
   if (requiresGrouping && !assertions.some(assertion => assertion.operation === "group_count")) {
     return "read_completion_criteria_incomplete";
   }
+  const groupingClauses = [...normalizedRequest.matchAll(/\b(?:by|per)\s+([^.;]{1,160})/g)]
+    .map(match => match[1]!.split(/\b(?:from|using|with|including|include|excluding|exclude|where|showing|show|returning|return|reporting|report)\b/)[0]!.trim());
   const requestedDimensions = ["family", "type", "category", "level", "system", "circuit", "room", "space", "host"]
-    .filter(dimension => new RegExp(`\\b(?:by|per|group(?:ed)? by|break\\s*down by)?\\s*${dimension}\\b`, "i").test(request));
+    .filter(dimension => groupingClauses.some(clause => new RegExp(`\\b${dimension}\\b`, "i").test(clause)));
   if (requiresGrouping && requestedDimensions.length > 0) {
-    const groupingFields = assertions.filter(assertion => assertion.operation === "group_count")
-      .flatMap(assertion => assertion.group_by ?? []).map(field => field.split(".").at(-1)!.toLowerCase());
-    if (requestedDimensions.some(dimension => !groupingFields.some(field => field === dimension || field.endsWith(`_${dimension}`)))) {
+    const genericSelectorTokens = new Set(["name", "id", "identity", "value", "key", "label", "number", "code"]);
+    const selectorDimension = (field: string): string | null => {
+      const tokens = field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase()
+        .split(/[^a-z0-9]+/).filter(Boolean)
+        .map(token => token === "families" ? "family" : token === "types" ? "type" : token);
+      const dimensions = requestedDimensions.filter(dimension => tokens.includes(dimension));
+      if (dimensions.length !== 1) return null;
+      return tokens.every(token => token === dimensions[0] || genericSelectorTokens.has(token)) ? dimensions[0] : null;
+    };
+    const completeGrouping = assertions.filter(assertion => assertion.operation === "group_count")
+      .some(assertion => {
+        const mapped = (assertion.group_by ?? []).map(selectorDimension);
+        const dimensions = new Set(mapped.filter(Boolean));
+        return mapped.every(Boolean) && dimensions.size === requestedDimensions.length
+          && requestedDimensions.every(dimension => dimensions.has(dimension));
+      });
+    if (!completeGrouping) {
       return "read_completion_criteria_incomplete";
     }
   }
@@ -409,7 +469,9 @@ function taskShapeReason(goal: GoalRecord, claim: ReadCompletionClaimV1): string
 function assertionContradiction(claim: ReadCompletionClaimV1): boolean {
   const expectedByKey = new Map<string, string>();
   for (const assertion of claim.result.assertions) {
-    const key = `${assertion.operation}:${assertion.path}`;
+    const key = assertion.operation === "group_count"
+      ? `${assertion.operation}:${assertion.path}:${JSON.stringify(assertion.group_by ?? [])}`
+      : `${assertion.operation}:${assertion.path}`;
     const expected = digest(assertion.operation === "field_equals" ? assertion.expected
       : assertion.operation === "array_count" ? assertion.expected_count
         : { total: assertion.expected_total, group_by: assertion.group_by, groups: assertion.expected_groups });

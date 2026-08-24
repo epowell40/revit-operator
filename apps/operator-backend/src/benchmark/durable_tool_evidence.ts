@@ -151,13 +151,21 @@ export function verifiedSessionMutationPaths(evidence: JsonRecord): Set<string> 
     const row = asRecord(value);
     const path = canonicalBenchmarkRevitPath(String(row.path || ""));
     const valid = row.schema === "revit-operator.benchmark-canonical-attempt-receipt/v1"
-      && row.requested_effect === "apply" && row.effect_state === "applied"
+      && canonicalAttemptRequestedEffect(row) === "apply" && row.effect_state === "applied"
       && ["native_transaction", "native_receipt", "target_readback"].includes(String(row.effect_authority || ""))
       && row.canonical_verified === true
       && !!String(row.goal_id || "").trim() && !!String(row.attempt_id || "").trim();
     if (valid && path) paths.add(path);
   }
   return paths;
+}
+
+export function canonicalAttemptRequestedEffect(row: JsonRecord): "read" | "preview" | "apply" | null {
+  const canonical = String(row.requested_effect || "").trim();
+  const legacy = String(row.request_effect || "").trim();
+  if (canonical && legacy && canonical !== legacy) return null;
+  const value = canonical || legacy;
+  return value === "read" || value === "preview" || value === "apply" ? value : null;
 }
 
 function canonicalRevitToolPath(server: string, toolName: string): string {
@@ -378,7 +386,7 @@ export async function loadDurableToolEvidence(
         attempt_id: String(attempt.attempt_id || "") || null,
         path: path || null,
         tool: String(attempt.tool_identity || "") || null,
-        request_effect: requestedEffect || null,
+        requested_effect: requestedEffect || null,
         action_signature: String(attempt.action_signature || "") || null,
         target_fingerprint: String(attempt.target_fingerprint || "") || null,
         dispatch_state: dispatch.state || null,
