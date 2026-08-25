@@ -55,6 +55,7 @@ import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
 import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
 import { getRequestOperatorBackendAuth } from "../request_context.js";
 import type { OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
+import { canonicalAssignmentOutcomeForBinding } from "../assignments/outcome_handoff.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -1126,6 +1127,15 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   hasAuthoritativeWebEvidence = webSettlement.satisfied;
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
+  const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
+    && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
+    ? canonicalAssignmentOutcomeForBinding({
+        session_id: req.session_id,
+        assignment_id: req.assignment_id,
+        assignment_run_id: req.assignment_run_id,
+        assignment_generation: Number(req.assignment_generation)
+      })
+    : null;
   cb.onDone?.(assistantText);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.completed", {
@@ -1146,6 +1156,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     assistant_message: assistantText || "",
     actions: [],
     model_call_receipts: modelTelemetry.receipts,
+    ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {}),
     ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})
   };

@@ -135,11 +135,15 @@ test("Codex, OpenAI, and external provider prompts all include the per-turn team
 test("Codex settles the durable Assignment before publishing turn completion", () => {
   const codexBrain = readRepoFile("operator-backend/src/brains/codex_brain.ts");
   const settlement = codexBrain.lastIndexOf("assignmentObserver.finish(turnId, assistantText, teammateReceipt);");
+  const outcome = codexBrain.lastIndexOf("canonicalAssignmentOutcomeForBinding({");
   const completion = codexBrain.lastIndexOf("cb.onDone?.(assistantText);");
 
   assert.notEqual(settlement, -1);
+  assert.notEqual(outcome, -1);
   assert.notEqual(completion, -1);
-  assert.ok(settlement < completion, "Assignment settlement must precede the response completion signal");
+  assert.ok(settlement < outcome, "Assignment settlement must precede the authenticated outcome projection");
+  assert.ok(outcome < completion, "The authenticated outcome must be captured before the response completion signal");
+  assert.match(codexBrain, /canonical_assignment_outcome: canonicalAssignmentOutcome/);
 });
 
 test("pre-model redline routing uses async recovery bridge", () => {
