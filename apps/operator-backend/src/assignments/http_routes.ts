@@ -1,7 +1,15 @@
 import type http from "node:http";
 import { readJson, writeJson } from "../http.js";
 import { handleVerifiedWorkPacketHttpRoute } from "../work_packets/http_routes.js";
+import { handleWorkReturnHttpRoute } from "../work_returns/http_routes.js";
 import { submitReadCompletionClaim, type ReadCompletionClaimInput } from "./read_completion.js";
+import {
+  requestAssignmentClarification,
+  resolveAssignmentClarification,
+  type AssignmentClarificationRequestInput,
+  type AssignmentClarificationResponseInput
+} from "./interaction.js";
+import { submitNoopCompletionClaim, type NoopCompletionClaimInput } from "./noop_completion.js";
 import { ASSIGNMENT_PROJECTION_SCHEMA, getAssignmentProjection, listAssignmentProjections } from "./projection.js";
 
 export async function handleAssignmentHttpRoute(
@@ -11,6 +19,55 @@ export async function handleAssignmentHttpRoute(
   authorizeSession: (sessionId: string) => boolean
 ): Promise<boolean> {
   if (handleVerifiedWorkPacketHttpRoute(req, res, url, authorizeSession)) return true;
+  if (handleWorkReturnHttpRoute(req, res, url, authorizeSession)) return true;
+  if (req.method === "POST" && url.pathname === "/api/assignments/clarifications") {
+    try {
+      const body = await readJson(req, 128_000) as AssignmentClarificationRequestInput | null;
+      const sessionId = typeof body?.session_id === "string" ? body.session_id.trim().slice(0, 180) : "";
+      if (!sessionId) {
+        writeJson(res, 400, { error: "session_id is required." });
+        return true;
+      }
+      if (!authorizeSession(sessionId)) return true;
+      const requested = requestAssignmentClarification(body!, "operator_request_clarification");
+      writeJson(res, 202, {
+        ok: true,
+        clarification: requested.clarification,
+        outcome_state: requested.projection.outcome_state,
+        assignment_id: requested.projection.assignment_id,
+        run_id: requested.projection.run_id,
+        generation: requested.projection.generation
+      });
+    } catch (error) {
+      writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/clarification-responses") {
+    try {
+      const body = await readJson(req, 128_000) as AssignmentClarificationResponseInput | null;
+      const sessionId = typeof body?.session_id === "string" ? body.session_id.trim().slice(0, 180) : "";
+      if (!sessionId) {
+        writeJson(res, 400, { error: "session_id is required." });
+        return true;
+      }
+      if (!authorizeSession(sessionId)) return true;
+      const resolved = resolveAssignmentClarification(body!, "authenticated_user");
+      writeJson(res, 200, {
+        ok: true,
+        clarification_id: resolved.clarification.clarification_id,
+        response_digest: resolved.clarification.response_digest,
+        idempotent: resolved.idempotent,
+        outcome_state: resolved.projection.outcome_state,
+        assignment_id: resolved.projection.assignment_id,
+        run_id: resolved.projection.run_id,
+        generation: resolved.projection.generation
+      });
+    } catch (error) {
+      writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
   if (req.method === "POST" && url.pathname === "/api/assignments/read-completion-claims") {
     try {
       const body = await readJson(req, 128_000) as ReadCompletionClaimInput | null;
@@ -27,6 +84,29 @@ export async function handleAssignmentHttpRoute(
         result_digest: submitted.claim.result_digest,
         status: submitted.projection.read_completion.status,
         note: "The claim is pending canonical validation at the next quiescent Assignment boundary."
+      });
+    } catch (error) {
+      writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/noop-completion-claims") {
+    try {
+      const body = await readJson(req, 128_000) as NoopCompletionClaimInput | null;
+      const sessionId = typeof body?.session_id === "string" ? body.session_id.trim().slice(0, 180) : "";
+      if (!sessionId) {
+        writeJson(res, 400, { error: "session_id is required." });
+        return true;
+      }
+      if (!authorizeSession(sessionId)) return true;
+      const submitted = submitNoopCompletionClaim(body!);
+      writeJson(res, submitted.accepted ? 202 : 409, {
+        ok: submitted.accepted,
+        status: submitted.projection.noop_completion.status,
+        reason: submitted.reason,
+        assignment_id: submitted.projection.assignment_id,
+        run_id: submitted.projection.run_id,
+        generation: submitted.projection.generation
       });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });

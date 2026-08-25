@@ -13,14 +13,13 @@ import {
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
-import { settleTimedOutComputerRun } from "../benchmark/computer_run_settlement.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
   revitHealthDocumentTitle,
   waitForExactRevitFixtureHealth,
   type ExactRevitFixtureHealthResult
 } from "../benchmark/revit_fixture_readiness.js";
-import { localProcessIsAlive, localRevitProcessGuardTarget,
+import { localRevitProcessGuardTarget,
   type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
 import { aggregateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
   modelTelemetryCaseCoverage, requestedComputerAgentConfig, requestedVsObservedComputerAgent,
@@ -30,13 +29,12 @@ import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/g
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
+import { executeGeneralRevitComputerTurn, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
+import { benchmarkInteractionCaseV1, benchmarkInteractionTraceV1, loadBenchmarkInteractionManifestV1,
+  type BenchmarkInteractionCaseV1, type BenchmarkInteractionManifestV1 } from "../benchmark/protocol_v2_interaction.js";
 import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
-import {
-  baselineCaseDeltas,
-  computerPerformanceSummary,
-  groupedMultiSummary,
-  groupedSummary
-} from "../benchmark/general_revit_trace_reporting.js";
+import { baselineCaseDeltas, computerPerformanceSummary, groupedMultiSummary,
+  groupedSummary } from "../benchmark/general_revit_trace_reporting.js";
 
 type JsonRecord = Record<string, unknown>;
 const SMOKE_CASE_IDS = new Set([
@@ -541,101 +539,47 @@ async function runComputerCase(
   baseUrl: string,
   testCase: GeneralRevitCapabilityCase,
   processGuard: LocalRevitProcessGuardTarget | null,
-  speedSettings: JsonRecord | null
+  speedSettings: JsonRecord | null,
+  interaction: BenchmarkInteractionCaseV1 | null,
+  directVariant: boolean
 ): Promise<{ attempt: JsonRecord; sessionId: string }> {
   const timeoutMs = Number.parseInt(flag("--timeout-ms", "600000"), 10) || 600_000;
   await waitForComputerIdle(baseUrl, Math.min(timeoutMs, 60_000), `Case ${testCase.case_id}`);
   await requestJson(baseUrl, "/api/computer/reset", { method: "POST", body: "{}" }, 30_000);
-  let runResponse: JsonRecord = {};
-  let transportError = "";
-  const messageId = id(`capability-${testCase.case_id}`);
-  try {
-    runResponse = await requestJson(baseUrl, "/api/computer/run", {
-      method: "POST",
-      body: JSON.stringify({
-        prompt: process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt,
-        message_id: messageId,
-        ...(speedSettings ? {
-          speed_settings: speedSettings,
-          outer_model: speedSettings.outer_model,
-          outer_reasoning_effort: speedSettings.outer_reasoning_effort
-        } : {})
-      })
-    }, Math.min(timeoutMs, 30_000));
-  } catch (error) {
-    transportError = error instanceof Error ? error.message : String(error);
-  }
-  const pollingDeadline = Date.now() + timeoutMs;
-  let state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
-  let contextLossSettlement: JsonRecord | null = null;
-  while (state.running === true && Date.now() < pollingDeadline) {
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-    if (processGuard && !localProcessIsAlive(processGuard.processId)) {
-      const contextLossError = [
-        `The exact local Revit process ${processGuard.processId} exited or was replaced while case ${testCase.case_id} was running.`,
-        processGuard.documentTitle ? `Expected document '${processGuard.documentTitle}'.` : "",
-        processGuard.executorId ? `Expected executor '${processGuard.executorId}'.` : "",
-        "The benchmark stopped its own Operator turn instead of waiting for courier deadlines or grading a different Revit process."
-      ].filter(Boolean).join(" ");
-      transportError = transportError ? `${transportError} ${contextLossError}` : contextLossError;
-      contextLossSettlement = await settleTimedOutComputerRun({
-        initialState: state,
-        stopRun: async () => {
-          await requestJson(baseUrl, "/api/computer/stop", { method: "POST" }, 10_000);
-        },
-        readState: () => requestJson(baseUrl, "/api/computer/state", {}, 5_000),
-        settleTimeoutMs: 30_000,
-        pollIntervalMs: 250
+  const basePrompt = process.argv.includes("--apply") ? testCase.prompt : testCase.probe_prompt;
+  const firstPrompt = directVariant ? interaction!.direct_variant!.candidate_visible_user_text : basePrompt;
+  const first = await executeGeneralRevitComputerTurn({
+    baseUrl, caseId: testCase.case_id, prompt: firstPrompt, messageId: id(`capability-${testCase.case_id}-turn-1`), processGuard, speedSettings,
+    timeoutMs, requestJson, recoverTimedOutModelTelemetry
+  });
+  const firstAssistant = assistantTextFromComputerState(first.state);
+  let finalTurn = first;
+  let clarificationId = "";
+  if (interaction && !directVariant) {
+    const clarification = pendingComputerClarification(first.state);
+    clarificationId = String(clarification.clarification_id || clarification.id || "").trim();
+    if (!clarificationId) {
+      first.transportError = first.transportError
+        ? `${first.transportError} Interactive case did not expose a structured pending clarification.`
+        : "Interactive case did not expose a structured pending clarification; candidate-visible user input was not supplied.";
+    } else {
+      finalTurn = await executeGeneralRevitComputerTurn({
+        baseUrl,
+        caseId: testCase.case_id,
+        prompt: interaction.clarification_response.candidate_visible_user_text,
+        messageId: id(`capability-${testCase.case_id}-turn-2`),
+        processGuard,
+        speedSettings,
+        timeoutMs,
+        requestJson,
+        recoverTimedOutModelTelemetry,
+        clarificationResponse: { clarification_id: clarificationId, supplied_values: interaction.clarification_response.supplied_values }
       });
-      state = asRecord(contextLossSettlement.state);
-      if (state.running === true) {
-        throw new Error(
-          `${contextLossError} The stopped Operator turn did not become idle; `
-          + "the benchmark is stopping instead of contaminating later cases."
-        );
-      }
-      break;
-    }
-    state = await requestJson(baseUrl, "/api/computer/state", {}, 30_000);
-  }
-  let timeoutSettlement: JsonRecord | null = null;
-  if (state.running === true) {
-    if (!transportError) transportError = `Computer run exceeded ${timeoutMs}ms.`;
-    timeoutSettlement = await settleTimedOutComputerRun({
-      initialState: state,
-      stopRun: async () => {
-        await requestJson(baseUrl, "/api/computer/stop", { method: "POST" }, 10_000);
-      },
-      readState: () => requestJson(baseUrl, "/api/computer/state", {}, 5_000),
-      settleTimeoutMs: 30_000,
-      pollIntervalMs: 250
-    });
-    state = asRecord(timeoutSettlement.state);
-    if (state.running === true) {
-      throw new Error(
-        `Case ${testCase.case_id} exceeded ${timeoutMs}ms and the timed-out Operator run did not become idle; `
-        + "the benchmark is stopping instead of contaminating later cases with live-context contention."
-      );
     }
   }
-  let modelTelemetryRecovery: JsonRecord | null = null;
-  if ((timeoutSettlement || contextLossSettlement)
-    && modelCallReceiptsFromSources(state).length === 0) {
-    try {
-      modelTelemetryRecovery = await recoverTimedOutModelTelemetry(baseUrl, state);
-      const recoveredReceipts = modelCallReceiptsFromSources(modelTelemetryRecovery);
-      if (recoveredReceipts.length > 0) {
-        state = { ...state, modelCallReceipts: recoveredReceipts };
-      }
-    } catch (error) {
-      modelTelemetryRecovery = {
-        status: "error",
-        error: error instanceof Error ? error.message : String(error),
-        model_call_receipts: []
-      };
-    }
-  }
-  const ownsObservedRun = computerStateHasMessage(state, messageId);
+  const state = finalTurn.state;
+  let transportError = [first.transportError, finalTurn === first ? "" : finalTurn.transportError].filter(Boolean).join(" ");
+  const ownsObservedRun = computerStateHasMessage(state, finalTurn.messageId);
   if (!ownsObservedRun) {
     transportError = transportError
       ? `${transportError} The final computer state did not contain this case's message id.`
@@ -650,11 +594,11 @@ async function runComputerCase(
   const receiptSucceeded = successfulActions.length > 0;
   const stateError = String(state.error || "").trim();
   const attempt = {
-    ...runResponse,
+    ...finalTurn.runResponse,
     // Transport success and requested-effect success are separate facts. The
     // evaluator below owns effect truth because it can also inspect the durable
     // assignment and recognize a server-verified no-op without inventing a write.
-    ok: transportError === "" && stateError === "" && runResponse.ok !== false,
+    ok: transportError === "" && stateError === "" && finalTurn.runResponse.ok !== false,
     assistant_message: assistantTextFromComputerState(state),
     error: transportError || stateError || null,
     effect_state: applySucceeded ? "apply_dispatched" : receiptSucceeded ? "read_only_dispatched" : "not_dispatched",
@@ -667,15 +611,28 @@ async function runComputerCase(
       receipt: action.receipt
     })),
     ...(teammateLoopReceipt ? { teammate_loop_receipt: teammateLoopReceipt } : {}),
-    harness_timeout_settlement: timeoutSettlement,
-    harness_context_loss_settlement: contextLossSettlement,
-    harness_model_telemetry_recovery: modelTelemetryRecovery,
+    harness_timeout_settlement: finalTurn.timeoutSettlement,
+    harness_context_loss_settlement: finalTurn.contextLossSettlement,
+    harness_model_telemetry_recovery: finalTurn.modelTelemetryRecovery,
+    protocol_v2_interaction: interaction ? benchmarkInteractionTraceV1({
+      interaction, directVariant, firstMessageId: first.messageId, firstPrompt, firstAssistant,
+      finalMessageId: finalTurn.messageId, finalAssistant: assistantTextFromComputerState(state), clarificationId
+    }) : undefined,
     computer_state: state
   };
   return { attempt, sessionId: String(state.backendSessionId || "").trim() };
 }
 
-async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, suiteContext: JsonRecord, corpusTaskTypes: string[], preferredFixture: string, preferredDocumentTitle: string): Promise<JsonRecord> {
+async function runCase(
+  baseUrl: string,
+  testCase: GeneralRevitCapabilityCase,
+  suiteContext: JsonRecord,
+  corpusTaskTypes: string[],
+  preferredFixture: string,
+  preferredDocumentTitle: string,
+  interaction: BenchmarkInteractionCaseV1 | null,
+  directVariant: boolean
+): Promise<JsonRecord> {
   const startedAt = nowIso();
   const startedMs = Date.now();
   const applyRequested = suiteContext.apply_requested === true;
@@ -705,7 +662,9 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       baseUrl,
       testCase,
       localRevitProcessGuardTarget(baseUrl, initialState),
-      speedSettings
+      speedSettings,
+      interaction,
+      directVariant
     );
     attempt = computerResult.attempt;
     sessionId = computerResult.sessionId;
@@ -826,6 +785,9 @@ async function runCase(baseUrl: string, testCase: GeneralRevitCapabilityCase, su
       evaluation
     },
     human_corrections: [],
+    ...(asRecord(attempt.protocol_v2_interaction).transformation_id
+      ? { protocol_v2_interaction: attempt.protocol_v2_interaction }
+      : {}),
     final_model_state: finalState,
     success_failure_score: {
       tier: evaluation.tier,
@@ -855,7 +817,7 @@ async function main(): Promise<void> {
     console.log([
       "General Revit capability acceptance runner",
       "",
-      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--case ID[,ID] | --release-canary] [--protocol-v2-envelope FILE --lane controlled_capability|ambient_context|safe_readiness|committed_apply] [--sidecar URL] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
+      "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--case ID[,ID] | --release-canary] [--protocol-v2-envelope FILE --lane controlled_capability|ambient_context|safe_readiness|committed_apply] [--interaction-manifest FILE] [--direct-variant] [--sidecar URL] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
       "The corpus is representative regression coverage, not a capability allowlist. By default every case uses the same General Agent computer lane as the Operator UI and sends the non-mutating probe_prompt; --apply sends and scores the production mutation. --legacy-chat is retained only for transport diagnostics and does not represent the product General Agent. Each completed case is durably checkpointed, and --resume continues an interrupted run. --rescore-only requires --resume and rebuilds reports from recorded flight data without contacting Sidecar or Revit. Use --allow-corpus-drift only with --rescore-only to audit historical traces against the current compatible case IDs and truth policy."
     ].join("\n"));
@@ -866,6 +828,15 @@ async function main(): Promise<void> {
   const externalHoldoutPath = flag("--external-holdout");
   const protocolInputs = loadGeneralRevitProtocolInputsV2(externalHoldoutPath);
   const { corpus, fixtureConfig, externalHoldout } = protocolInputs;
+  const interactionManifestPath = flag("--interaction-manifest");
+  const interactionManifest: BenchmarkInteractionManifestV1 | null = interactionManifestPath
+    ? loadBenchmarkInteractionManifestV1(interactionManifestPath)
+    : null;
+  const interactionManifestSha256 = interactionManifestPath
+    ? crypto.createHash("sha256").update(fs.readFileSync(path.resolve(interactionManifestPath))).digest("hex")
+    : "";
+  const directVariant = process.argv.includes("--direct-variant");
+  if (directVariant && !interactionManifest) throw new Error("--direct-variant requires --interaction-manifest.");
   const requestedFixture = flag("--fixture").trim().toLowerCase();
   const orchestrateFixtures = process.argv.includes("--orchestrate-fixtures");
   if (requestedFixture && orchestrateFixtures) throw new Error("Use either --fixture or --orchestrate-fixtures, not both.");
@@ -873,6 +844,7 @@ async function main(): Promise<void> {
     throw new Error(`Unknown General Revit sample fixture '${requestedFixture}'.`);
   }
   const applyRequested = process.argv.includes("--apply");
+  if (directVariant && !applyRequested) throw new Error("--direct-variant requires the committed --apply lane.");
   if (process.argv.includes("--isolate-cases") && process.argv.includes("--reuse-fixture-state")) {
     throw new Error("Use either --isolate-cases or --reuse-fixture-state, not both.");
   }
@@ -893,6 +865,14 @@ async function main(): Promise<void> {
       - fixtureOrder.indexOf(generalRevitFixtureForCase(fixtureConfig, right.case_id)));
   }
   if (selected.length === 0) throw new Error("No cases matched the requested filters.");
+  const unknownInteractionCases = interactionManifest?.cases
+    .filter(entry => !corpus.cases.some(candidate => candidate.case_id === entry.source_case_id))
+    .map(entry => entry.source_case_id) ?? [];
+  if (unknownInteractionCases.length > 0) throw new Error(`Interaction manifest references unknown source case(s): ${unknownInteractionCases.join(", ")}.`);
+  if (directVariant) {
+    const unavailable = selected.filter(entry => !benchmarkInteractionCaseV1(interactionManifest, entry.case_id)?.direct_variant);
+    if (unavailable.length > 0) throw new Error(`Direct variant is unavailable for selected case(s): ${unavailable.map(entry => entry.case_id).join(", ")}.`);
+  }
   if (process.argv.includes("--list-cases")) {
     console.log(JSON.stringify(selected.map((entry) => ({
       case_id: entry.case_id,
@@ -920,6 +900,13 @@ async function main(): Promise<void> {
     legacyProtocol: process.argv.includes("--legacy-protocol-v1"), proposedRunId: runId, applyRequested,
     requestedFixture, orchestrateFixtures, laneFlag: flag("--lane"), inputs: protocolInputs });
   const protocolDraft = protocolRun.draft;
+  const boundInteractionHash = String(protocolDraft?.feature_flags.benchmark_interaction_manifest_sha256 || "").trim();
+  if (protocolDraft && interactionManifest && boundInteractionHash !== interactionManifestSha256) {
+    throw new Error("Protocol V2 envelope does not bind the exact benchmark interaction manifest hash.");
+  }
+  if (protocolDraft && !interactionManifest && boundInteractionHash) {
+    throw new Error("Protocol V2 envelope requires the bound benchmark interaction manifest.");
+  }
   runId = protocolRun.runId;
   const explicitOutput = flag("--output");
   const outputDir = flag("--output-dir");
@@ -989,6 +976,17 @@ async function main(): Promise<void> {
       readiness_attempts: fixturePreflightAttempts
     } : null,
     apply_requested: applyRequested,
+    benchmark_interaction: interactionManifest ? {
+      schema: interactionManifest.schema,
+      manifest_id: interactionManifest.manifest_id,
+      manifest_sha256: interactionManifestSha256,
+      selected_interactive_case_ids: selected.filter(entry => benchmarkInteractionCaseV1(interactionManifest, entry.case_id)).map(entry => entry.case_id),
+      execution_mode: directVariant ? "direct_variant" : "interactive_when_configured",
+      evaluator_oracle_hashes: Object.fromEntries(selected.flatMap(entry => {
+        const interaction = benchmarkInteractionCaseV1(interactionManifest, entry.case_id);
+        return interaction ? [[entry.case_id, interaction.evaluator_oracle.sha256]] : [];
+      }))
+    } : null,
     fixture_isolation: {
       enabled: isolateCases,
       policy: isolateCases
@@ -1089,7 +1087,9 @@ async function main(): Promise<void> {
       suiteContext,
       corpusTaskTypesByCase.get(testCase.case_id) || [],
       preferredFixture,
-      fixtureConfig.fixtures[preferredFixture].document_title
+      fixtureConfig.fixtures[preferredFixture].document_title,
+      benchmarkInteractionCaseV1(interactionManifest, testCase.case_id),
+      directVariant
     ));
     writeJsonFile(checkpointOutput, {
       schema: "revit-operator.general-revit-capability-checkpoint/v1",

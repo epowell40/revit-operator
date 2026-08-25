@@ -279,10 +279,74 @@ function runtimeVerdict(trace: JsonRecord): string {
   return terminals.at(-1) || String(record(trace.success_failure_score).tier || "unknown");
 }
 
+function assignmentOutcome(trace: JsonRecord): BenchmarkCaseResultV2["assignment_outcome"] {
+  const assignments = records(record(record(trace.tool_results).durable_assignment_projection).assignments);
+  const latest = assignments.at(-1);
+  const control = record(latest?.control_plane);
+  const outcome = String(control.outcome_state || "");
+  if (["active", "awaiting_user_input", "awaiting_user_review", "complete", "complete_with_issues", "verified_noop", "blocked", "failed"].includes(outcome)) {
+    return outcome as BenchmarkCaseResultV2["assignment_outcome"];
+  }
+  const terminal = String(control.terminal_state || "");
+  if (terminal === "verified" || terminal === "complete") return "complete";
+  if (terminal === "blocked") return "blocked";
+  if (terminal === "failed" || terminal === "canceled") return "failed";
+  return "unknown";
+}
+
+function transformedIdentity(args: {
+  sourceCase: GeneralRevitCapabilityCase;
+  executionCase: GeneralRevitCapabilityCase;
+  trace: JsonRecord;
+  transformationId?: string;
+  transformationVersion?: string;
+}) {
+  const interaction = record(args.trace.protocol_v2_interaction);
+  const rawTurns = records(interaction.turns);
+  const turns = (rawTurns.length ? rawTurns : [{
+    turn_id: `${args.executionCase.case_id}:turn:1`, sequence: 1, role: "user", content: args.executionCase.prompt
+  }]).map((row, index) => {
+    const role = ["user", "assistant", "tool"].includes(String(row.role)) ? String(row.role) as "user" | "assistant" | "tool" : "user";
+    const candidateVisible = role === "user" ? String(row.candidate_visible_input ?? row.content ?? "") : "";
+    const contentHash = String(row.content_sha256 || "").match(/^[a-f0-9]{64}$/i)?.[0]
+      ?? sha256Value(row.content ?? candidateVisible);
+    return {
+      turn_id: String(row.turn_id || `${args.executionCase.case_id}:turn:${index + 1}`),
+      sequence: Number.isSafeInteger(row.sequence) ? Number(row.sequence) : index + 1,
+      role,
+      candidate_visible_input_sha256: role === "user" ? sha256Value(candidateVisible) : null,
+      content_sha256: contentHash,
+      clarification_id: String(row.clarification_id || "").trim() || null,
+      assignment_outcome: ["active", "awaiting_user_input", "awaiting_user_review", "complete", "complete_with_issues", "verified_noop", "blocked", "failed", "unknown"]
+        .includes(String(row.assignment_outcome || ""))
+        ? String(row.assignment_outcome) as BenchmarkCaseResultV2["assignment_outcome"]
+        : null
+    };
+  });
+  return {
+    source_case_sha256: sha256Value(args.sourceCase),
+    execution_case_sha256: sha256Value(args.executionCase),
+    transformation_id: String(interaction.transformation_id || args.transformationId || "identity"),
+    transformation_version: String(interaction.transformation_version || args.transformationVersion || "v1"),
+    conversation_sequence_sha256: sha256Value(turns),
+    candidate_visible_input_sha256: sha256Value(turns.filter(turn => turn.role === "user").map(turn => turn.candidate_visible_input_sha256)),
+    evaluator_oracle_sha256: /^[a-f0-9]{64}$/i.test(String(interaction.evaluator_oracle_sha256 || ""))
+      ? String(interaction.evaluator_oracle_sha256).toLowerCase()
+      : sha256Value({
+        answer_assertions: args.sourceCase.answer_assertions ?? null,
+        fixture_blocker_assertions: args.sourceCase.fixture_blocker_assertions ?? null
+      }),
+    turns
+  };
+}
+
 export function buildBenchmarkCaseResultV2(args: {
   runId: string;
   lane: BenchmarkLaneV2;
   testCase: GeneralRevitCapabilityCase;
+  sourceCase?: GeneralRevitCapabilityCase;
+  transformationId?: string;
+  transformationVersion?: string;
   trace: JsonRecord;
   rawTraceRef: string;
   judgedAt: string;
@@ -300,7 +364,7 @@ export function buildBenchmarkCaseResultV2(args: {
   }
   const first = stages.find((entry) => entry.status === "fail" || entry.status === "uncertain")?.stage ?? null;
   const causes = failureCauses(stages, truth, evaluatedCurrent, args.trace);
-  const delivery = deliveryVerdict(args.lane, args.testCase, truth, evaluatedCurrent, stages, causes, args.trace);
+  let delivery = deliveryVerdict(args.lane, args.testCase, truth, evaluatedCurrent, stages, causes, args.trace);
   const efficiency = record(args.trace.efficiency);
   const modelSummary = record(efficiency.model_call_summary);
   const toolCalls = records(args.trace.tool_calls);
@@ -309,11 +373,24 @@ export function buildBenchmarkCaseResultV2(args: {
   const revitCalls = Math.max(toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/")).length, canonicalRevitCalls);
   const evaluatorVersion = args.evaluatorVersion || GENERAL_REVIT_EVALUATOR_V2;
   const presentation = stages.at(-1)!;
+  const identity = transformedIdentity({
+    sourceCase: args.sourceCase ?? args.testCase,
+    executionCase: args.testCase,
+    trace: args.trace,
+    transformationId: args.transformationId,
+    transformationVersion: args.transformationVersion
+  });
+  const outcome = assignmentOutcome(args.trace);
+  if (outcome === "awaiting_user_input" || outcome === "awaiting_user_review" || outcome === "complete_with_issues") {
+    delivery = outcome;
+  }
   return {
     schema: BENCHMARK_CASE_RESULT_V2_SCHEMA,
     run_id: args.runId,
     case_id: args.testCase.case_id,
-    case_sha256: sha256Value(args.testCase),
+    case_sha256: identity.source_case_sha256,
+    ...identity,
+    assignment_outcome: outcome,
     lane: args.lane,
     execution_truth: truth,
     original_runtime_verdict: { version: String(args.trace.schema || "runtime-recorded"), verdict: runtimeVerdict(args.trace), judged_at: args.judgedAt, reasons: [] },

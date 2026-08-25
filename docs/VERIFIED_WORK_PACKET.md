@@ -65,3 +65,8 @@ Use `?format=markdown` for the customer-readable rendering. The route reuses
 the existing operator-token and principal/session authorization boundary.
 Artifact locations are not anonymously published; EvidenceRef expansion keeps
 its existing scope, path, secret-screening, and byte-limit enforcement.
+
+The concise customer-facing companion is the deterministic Work Return defined
+in [`INTERACTIVE_ASSIGNMENTS.md`](INTERACTIVE_ASSIGNMENTS.md). It surfaces the
+primary work product, retained partial work, open items, and focused question;
+it does not replace this packet's audit detail or create completion truth.

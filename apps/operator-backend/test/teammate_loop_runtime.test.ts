@@ -1360,6 +1360,30 @@ test("read-completion claims are first-class non-Revit settlement requests", () 
   }
 });
 
+test("structured clarification is a first-class interaction even for material ambiguity", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const input = request("Replace the selected note with the current issue wording without creating a duplicate.");
+  input.context = {};
+  const lease = beginTeammateLoopOwner(owner, input);
+  try {
+    const clarification = guardTeammateMcpCall(owner, {
+      tool: "operator_request_clarification",
+      arguments: {
+        assignmentId: "assignment-note", runId: "run-note", generation: 1, sessionId: "session-note",
+        missingFields: ["replacement_text"],
+        question: "What exact replacement wording should I use?",
+        reason: "desired_postcondition_missing"
+      }
+    });
+    assert.equal(clarification.allowed, true);
+    assert.equal(clarification.call?.effect, "interaction");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("retained evidence stays readable after Revit context loss and cannot verify a fresh mutation", () => {
   __testOnlyResetTeammateLoopState();
   const disconnectedOwner = {};

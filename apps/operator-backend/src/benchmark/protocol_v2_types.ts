@@ -58,6 +58,9 @@ export const BENCHMARK_DELIVERY_VERDICTS = [
   "recovered_verified",
   "verified_noop",
   "verified_read_completion",
+  "awaiting_user_input",
+  "awaiting_user_review",
+  "complete_with_issues",
   "truthful_fixture_blocker",
   "truthful_ambiguity_blocker",
   "genuine_product_limitation_blocker",
@@ -156,7 +159,25 @@ export type BenchmarkCaseResultV2 = {
   schema: typeof BENCHMARK_CASE_RESULT_V2_SCHEMA;
   run_id: string;
   case_id: string;
+  /** Immutable source-corpus case hash. `case_sha256` is retained as its V2 compatibility alias. */
   case_sha256: string;
+  source_case_sha256: string;
+  execution_case_sha256: string;
+  transformation_id: string;
+  transformation_version: string;
+  conversation_sequence_sha256: string;
+  candidate_visible_input_sha256: string;
+  evaluator_oracle_sha256: string;
+  turns: Array<{
+    turn_id: string;
+    sequence: number;
+    role: "user" | "assistant" | "tool";
+    candidate_visible_input_sha256: string | null;
+    content_sha256: string;
+    clarification_id: string | null;
+    assignment_outcome: "active" | "awaiting_user_input" | "awaiting_user_review" | "complete" | "complete_with_issues" | "verified_noop" | "blocked" | "failed" | "unknown" | null;
+  }>;
+  assignment_outcome: "active" | "awaiting_user_input" | "awaiting_user_review" | "complete" | "complete_with_issues" | "verified_noop" | "blocked" | "failed" | "unknown";
   lane: BenchmarkLaneV2;
   execution_truth: BenchmarkExecutionTruthV2;
   original_runtime_verdict: BenchmarkJudgmentV2;
@@ -243,6 +264,9 @@ export type BenchmarkLaneMetricsV2 = {
   recovered_verified: number;
   verified_noop: number;
   verified_read_completion: number;
+  awaiting_user_input: number;
+  awaiting_user_review: number;
+  complete_with_issues: number;
   truthful_fixture_blocker: number;
   truthful_ambiguity_blocker: number;
   genuine_product_limitation_blocker: number;

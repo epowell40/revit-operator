@@ -134,4 +134,84 @@ test("assignment endpoints expose an authenticated read-only Goal/Task projectio
 
   const missing = await fetch(`${base}/api/assignments/goal%3Amissing`, { headers });
   assert.equal(missing.status, 404);
+
+  const interactionSession = "assignment-interaction-http-session";
+  const interactionResponse = await fetch(`${base}/api/agent-goal`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      session_id: interactionSession,
+      title: "Replace selected note",
+      objective: "Replace the outdated selected note with the current issue wording without creating a duplicate.",
+      acceptance_criteria: ["Replace the selected note in place.", "Create no duplicate note."],
+      requested_effect: "apply",
+      work_budget: {
+        requested_effect: "apply",
+        source_user_request: "Replace the outdated selected note with the current issue wording without creating a duplicate."
+      },
+      start_assignment_run: true,
+      assignment_run_id: "http-interaction-run",
+      assignment_run_actor: "assignment_endpoint_test"
+    })
+  });
+  assert.equal(interactionResponse.status, 200);
+  const interaction = await interactionResponse.json() as {
+    goal: { id: string };
+    assignment_run: { assignment_id: string; run_id: string; generation: number };
+  };
+  assert.equal(interaction.assignment_run.assignment_id, interaction.goal.id);
+
+  const clarificationResponse = await fetch(`${base}/api/assignments/clarifications`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      schema: "revit-operator.assignment-clarification/v1",
+      assignment_id: interaction.goal.id,
+      run_id: interaction.assignment_run.run_id,
+      generation: interaction.assignment_run.generation,
+      session_id: interactionSession,
+      missing_fields: ["replacement_text"],
+      question: "What exact replacement wording should I use?",
+      reason: "desired_postcondition_missing",
+      completed_work: ["Grounded the selected TextNote."],
+      affected_subtasks: ["replace-selected-note"],
+      primary_artifact_refs: ["revit-element:1478627"],
+      criterion_states: [{
+        criterion: "Replace the selected note in place.",
+        state: "needs_input",
+        reason: "Exact replacement wording is required."
+      }]
+    })
+  });
+  assert.equal(clarificationResponse.status, 202);
+  const clarification = await clarificationResponse.json() as { clarification: { clarification_id: string }; outcome_state: string };
+  assert.equal(clarification.outcome_state, "awaiting_user_input");
+
+  const workReturnPath = `/api/assignments/${encodeURIComponent(`goal:${interaction.goal.id}`)}/work-return`;
+  assert.equal((await fetch(`${base}${workReturnPath}`)).status, 401);
+  const workReturnResponse = await fetch(`${base}${workReturnPath}`, { headers });
+  assert.equal(workReturnResponse.status, 200);
+  const workReturn = await workReturnResponse.json() as { work_return: { status: string; question: string | null; clarification_id: string | null } };
+  assert.equal(workReturn.work_return.status, "awaiting_user_input");
+  assert.equal(workReturn.work_return.clarification_id, clarification.clarification.clarification_id);
+  assert.equal(workReturn.work_return.question, "What exact replacement wording should I use?");
+
+  const resumeResponse = await fetch(`${base}/api/assignments/clarification-responses`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      schema: "revit-operator.assignment-clarification-response/v1",
+      clarification_id: clarification.clarification.clarification_id,
+      assignment_id: interaction.goal.id,
+      run_id: interaction.assignment_run.run_id,
+      generation: interaction.assignment_run.generation,
+      session_id: interactionSession,
+      response: "Use Current Issue Wording.",
+      supplied_values: { replacement_text: "Current Issue Wording" }
+    })
+  });
+  assert.equal(resumeResponse.status, 200);
+  const resumed = await resumeResponse.json() as { assignment_id: string; run_id: string; generation: number; outcome_state: string };
+  assert.deepEqual({ assignment_id: resumed.assignment_id, run_id: resumed.run_id, generation: resumed.generation }, interaction.assignment_run);
+  assert.equal(resumed.outcome_state, "active");
 });
