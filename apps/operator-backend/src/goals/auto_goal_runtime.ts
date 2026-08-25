@@ -851,7 +851,10 @@ function sidecarReportedActionReceipts(evidence: unknown): Array<Record<string, 
       step: Number.isSafeInteger(row.step) && row.step >= 0 ? row.step : null,
       result_evidence_sha256: resultEvidenceSha256,
       result_evidence_bytes: reportedEvidenceBytes ?? computed?.bytes ?? null,
-      result_evidence_hash_source: /^(?:sha256:)?[a-f0-9]{64}$/.test(declaredDigest) ? "reported_digest" : computed ? "backend_digest_of_reported_result" : null
+      result_evidence_hash_source: /^(?:sha256:)?[a-f0-9]{64}$/.test(declaredDigest) ? "reported_digest" : computed ? "backend_digest_of_reported_result" : null,
+      settlement_role: tool_name === "delegate_revit_task" || path === "/chat"
+        ? "controller"
+        : path.startsWith("/revit/") ? "revit_action" : "supporting_evidence"
     };
     return [{ ...receipt, receipt_sha256: sha256Json(receipt)?.sha256 ?? null }];
   });
@@ -887,7 +890,7 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
     && input.assignment_generation === canonical.projection.generation
   );
   for (const receipt of sidecarReportedActionReceipts(input.evidence)) {
-    if (reportBoundToActiveRun && canonical.projection) {
+    if (reportBoundToActiveRun && canonical.projection && receipt.settlement_role === "revit_action") {
       const actionId = `${receipt.call_id || receipt.receipt_sha256 || ""}`.trim().slice(0, 240);
       const actionPath = `${receipt.path || ""}`.trim();
       const actionMethod = receipt.method === "GET" ? "GET" : "POST";

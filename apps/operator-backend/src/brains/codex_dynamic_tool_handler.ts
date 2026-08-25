@@ -27,6 +27,8 @@ import {
   type AssignmentToolLease
 } from "../assignments/async_tool_settlement.js";
 import { recordAssignmentTurnProgress } from "../assignments/turn_settlement.js";
+import { currentAssignmentJournalContext } from "../assignments/turn_journal.js";
+import { bindCanonicalAssignmentToolArguments } from "../assignments/tool_argument_binding.js";
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -61,21 +63,46 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       success: false
     };
   }
-  const parallel = parallelGuard.tryAcquire(params);
+  const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId)
+    || `codex_dynamic_${String(params.turnId || "unbound").replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 160)}`;
+  const journalContext = currentAssignmentJournalContext(sessionId);
+  if (!journalContext) {
+    return {
+      contentItems: [{ type: "inputText", text: "[assignment_settlement_blocked] No current canonical Assignment binding exists for this tool call." }],
+      success: false
+    };
+  }
+  if (journalContext.projection.terminal_state !== "open") {
+    return {
+      contentItems: [{
+        type: "inputText",
+        text: `[assignment_${journalContext.projection.terminal_state}] Canonical Assignment is already terminal; no further tool dispatch is allowed.`
+      }],
+      success: false
+    };
+  }
+  const boundArguments = bindCanonicalAssignmentToolArguments(params.tool, params.arguments ?? {}, {
+    session_id: sessionId,
+    assignment_id: journalContext.assignmentId,
+    run_id: journalContext.runId,
+    generation: journalContext.generation
+  });
+  const boundParams = { ...params, arguments: boundArguments.arguments };
+  const boundRequest = { ...request, params: boundParams };
+  const parallel = parallelGuard.tryAcquire(boundParams);
   if (!parallel.accepted) {
     return { contentItems: [{ type: "inputText", text: parallel.message ?? "Concurrent dependent Revit call blocked." }], success: false };
   }
-  const teammateGate = guardTeammateMcpCall(runtime, params);
+  const teammateGate = guardTeammateMcpCall(runtime, boundParams);
   if (!teammateGate.allowed) {
     parallel.release();
     return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
   }
-  const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId)
-    || `codex_dynamic_${String(params.turnId || "unbound").replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 160)}`;
   let assignmentLease: AssignmentToolLease;
   try {
-    assignmentLease = openAssignmentToolLease({ session_id: sessionId, request, gate: teammateGate });
+    assignmentLease = openAssignmentToolLease({ session_id: sessionId, request: boundRequest, gate: teammateGate });
   } catch (error) {
+    recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: "canonical_attempt_open_failed" });
     parallel.release();
     return {
       contentItems: [{ type: "inputText", text: `[assignment_settlement_blocked] ${error instanceof Error ? error.message : String(error)}` }],
@@ -86,7 +113,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   let dispatched = false;
   try {
     markAssignmentToolDispatching(assignmentLease);
-    const pendingResult = runtime.callTool(params.tool, params.arguments ?? {}, { turnId: params.turnId, sessionId });
+    const pendingResult = runtime.callTool(params.tool, boundArguments.arguments, { turnId: params.turnId, sessionId });
     markAssignmentToolDispatched(assignmentLease);
     dispatched = true;
     rawResult = await pendingResult;
@@ -158,7 +185,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     }
     return adaptMcpToolCallResultToDynamicResponse(result, {
       tool: params.tool,
-      arguments: params.arguments,
+      arguments: boundArguments.arguments,
       projections: context.projections,
       omitted: context.omitted
     });

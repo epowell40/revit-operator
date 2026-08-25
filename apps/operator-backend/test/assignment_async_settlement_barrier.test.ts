@@ -21,7 +21,12 @@ import {
   journalAssignmentToolResults
 } from "../src/assignments/turn_journal.js";
 import { createGoal, getGoal } from "../src/goals/service.js";
-import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
+import {
+  beginTeammateLoopOwner,
+  endTeammateLoopOwner,
+  guardTeammateMcpCall,
+  recordTeammateMcpResult
+} from "../src/teammate_loop_runtime.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { settleAssignmentTurn } from "../src/assignments/turn_settlement.js";
@@ -221,6 +226,178 @@ test("passing-after: exact q01 ordering cannot terminalize 316 ms before its adm
       assert.equal(terminalGoal.current_phase, "settled");
       assert.match(terminalGoal.finished_at ?? "", /^\d{4}-\d{2}-\d{2}T/);
       assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("host binding replaces model-guessed clarification scope before MCP dispatch", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "ps1_clarification-principal-session";
+    const { goal, run } = createAssignment(sessionId, "apply");
+    const calls: Array<{ tool: string; args: Record<string, unknown> }> = [];
+    const runtime = {
+      callTool: async (tool: string, args: Record<string, unknown>) => {
+        calls.push({ tool, args });
+        return {
+          content: [{ type: "text", text: JSON.stringify({
+            ok: true,
+            clarification_id: "clarification-1",
+            assignment_id: goal.id,
+            run_id: run.runId,
+            generation: run.generation,
+            status: "awaiting_user_input"
+          }) }]
+        };
+      }
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "clarification-message",
+      user_text: "Replace the selected note after obtaining the exact replacement wording.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Disposable", path: "C:\\Disposable.rvt" } } }
+    });
+    try {
+      await handleCodexServerRequest(runtime as any, {
+        id: "app-request-clarification",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator",
+          threadId: "thread-clarification",
+          turnId: "turn-clarification",
+          callId: "tool-call-clarification",
+          tool: "operator_request_clarification",
+          arguments: {
+            assignmentId: goal.id,
+            runId: run.runId,
+            generation: run.generation,
+            sessionId: run.runId.replace(/^sidecar:/, ""),
+            missingFields: ["replacementText"],
+            question: "What exact wording should replace the selected note?",
+            reason: "required_input_missing"
+          }
+        }
+      } as any);
+
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]?.tool, "operator_request_clarification");
+      assert.deepEqual({
+        assignmentId: calls[0]?.args.assignmentId,
+        runId: calls[0]?.args.runId,
+        generation: calls[0]?.args.generation,
+        sessionId: calls[0]?.args.sessionId
+      }, {
+        assignmentId: goal.id,
+        runId: run.runId,
+        generation: run.generation,
+        sessionId
+      });
+      const after = projection(goal.id);
+      assert.equal(after.apply_opportunity_consumed, false);
+      assert.equal(after.unresolved_unknown_attempt_ids.length, 0);
+      assert.equal(after.in_flight_count, 0);
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("missing canonical binding blocks before teammate-gate registration or runtime dispatch", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "missing-binding-session";
+    let runtimeCalls = 0;
+    const runtime = { callTool: async () => { runtimeCalls += 1; return { content: [] }; } };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "missing-binding-message",
+      user_text: "Replace the selected note after asking me for the exact wording.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Disposable", path: "C:\\Disposable.rvt" } } }
+    });
+    const params = {
+      namespace: "revit_operator",
+      turnId: "turn-missing-binding",
+      callId: "call-missing-binding",
+      tool: "operator_request_clarification",
+      arguments: {
+        assignmentId: "model-guessed-assignment",
+        runId: "model-guessed-run",
+        generation: 1,
+        sessionId: "model-guessed-session",
+        missingFields: ["replacementText"],
+        question: "What wording should I use?",
+        reason: "required_input_missing"
+      }
+    };
+    try {
+      const blocked = await handleCodexServerRequest(runtime as any, {
+        id: "request-missing-binding",
+        method: "item/tool/call",
+        params
+      } as any) as any;
+      assert.equal(blocked.success, false);
+      assert.match(JSON.stringify(blocked), /No current canonical Assignment binding/);
+      assert.equal(runtimeCalls, 0);
+
+      const firstGate = guardTeammateMcpCall(runtime, params);
+      assert.equal(firstGate.allowed, true);
+      assert.match(firstGate.call?.path ?? "", /^mcp:1\|/);
+      recordTeammateMcpResult(runtime, firstGate, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("canonical terminal truth blocks before teammate-gate registration", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "terminal-drift-session";
+    const { goal, run } = createAssignment(sessionId, "apply");
+    appendAssignmentEvent(goal.id, event(goal.id, run.runId, run.generation, "assignment_terminal", null, {
+      terminal_state: "blocked",
+      reason: "test_terminal_before_dispatch"
+    }));
+    assert.equal(getGoal(goal.id)?.status, "blocked");
+    let runtimeCalls = 0;
+    const runtime = { callTool: async () => { runtimeCalls += 1; return { content: [] }; } };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "terminal-drift-message",
+      user_text: "Replace the selected note after asking me for exact wording.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Disposable", path: "C:\\Disposable.rvt" } } }
+    });
+    const params = {
+      namespace: "revit_operator",
+      turnId: "turn-terminal-drift",
+      callId: "call-terminal-drift",
+      tool: "operator_request_clarification",
+      arguments: {
+        assignmentId: goal.id,
+        runId: run.runId,
+        generation: run.generation,
+        sessionId,
+        missingFields: ["replacementText"],
+        question: "What wording should I use?",
+        reason: "required_input_missing"
+      }
+    };
+    try {
+      const blocked = await handleCodexServerRequest(runtime as any, {
+        id: "request-terminal-drift",
+        method: "item/tool/call",
+        params
+      } as any) as any;
+      assert.equal(blocked.success, false);
+      assert.match(JSON.stringify(blocked), /Assignment .* is blocked|already terminal/);
+      assert.equal(runtimeCalls, 0);
+
+      const firstGate = guardTeammateMcpCall(runtime, params);
+      assert.equal(firstGate.allowed, true);
+      assert.match(firstGate.call?.path ?? "", /^mcp:1\|/);
+      recordTeammateMcpResult(runtime, firstGate, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
     } finally {
       endTeammateLoopOwner(teammate);
     }
