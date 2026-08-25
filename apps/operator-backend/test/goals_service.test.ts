@@ -32,6 +32,7 @@ import { classifyAutoGoalRequest } from "../src/goals/auto_goal.js";
 import { completeAutoGoalFromValidatedTurn, createAutoGoalTurnObserver, findInterruptedAutoGoalForSession, recordAutoGoalToolObservation, settleSidecarComputerGoal, supersedeBlockedAutoGoalForFreshRequest } from "../src/goals/auto_goal_runtime.js";
 import { reconcileTeammateReceiptWithAssistant } from "../src/teammate_loop_runtime.js";
 import { ensureAssignmentRunForTurn, journalAssignmentActions, journalAssignmentToolResults } from "../src/assignments/turn_journal.js";
+import { normalizeAssignmentControlPlane, reduceAssignmentControlPlane } from "../src/assignments/control_plane.js";
 import {
   createDefaultLocalGoalEvidenceAuthority,
   createLocalGoalEvidenceAuthority,
@@ -1897,6 +1898,62 @@ test("bound Sidecar action reports journal through the canonical contract but ca
     assert.match(JSON.stringify(projection), /reported-apply-1/);
     assert.match(JSON.stringify(projection), /caller_report_requires_independent_settlement/);
     assert.equal(settled.completion_audit?.complete, false);
+  });
+});
+
+test("a Sidecar delegate controller receipt never becomes a canonical Revit mutation attempt", () => {
+  withWorkspace(() => {
+    const goal = setAgentGoal("session-sidecar-controller", {
+      title: "Update one note", objective: "Update one note after obtaining required wording.",
+      acceptance_criteria: ["The note is updated in place."],
+      work_budget: { mode: "sidecar_computer", source: "operator_desktop", requested_effect: "apply" },
+      work_items: [{ id: "sidecar.requested-work", title: "Complete and verify the requested work", status: "in_progress" }]
+    });
+    const run = ensureAssignmentRunForTurn("session-sidecar-controller", "sidecar-run-controller", "operator_desktop", true)!;
+    journalAssignmentActions("session-sidecar-controller", [{
+      action_id: "nested-note-read", method: "POST", path: "/revit/find-text-notes", request_effect: "read",
+      body: { selected_only: true }
+    }], "codex_app_server");
+    journalAssignmentToolResults("session-sidecar-controller", [{
+      action_id: "nested-note-read", method: "POST", path: "/revit/find-text-notes", request_effect: "read",
+      status: "done", request_dispatched: true,
+      result_json: { ok: true, notes: [{ element_id: 1478627, text: "Chase for Electrical Conduit" }] }
+    }], "mcp_runtime");
+
+    const settled = settleSidecarComputerGoal("session-sidecar-controller", {
+      outcome: "complete", turn_id: "sidecar-turn-controller", assistant_summary: "I need the exact replacement wording.",
+      assignment_run_id: run.runId, assignment_generation: run.generation,
+      evidence: { function_tools: [
+        {
+          tool_name: "delegate_revit_task", call_id: "controller-call-1", method: "POST", path: "/chat",
+          status: "success", request_effect: "apply", request_dispatched: true,
+          result: { ok: true, teammate_loop_receipt: { turn_kind: "mutation", apply_action_id: null } }
+        },
+        {
+          tool_name: "operator_request_clarification", call_id: "support-call-1", method: "POST", path: "/assignments/clarifications",
+          status: "success", request_effect: "read", request_dispatched: true,
+          result: { ok: true, status: "awaiting_user_input" }
+        }
+      ] }
+    });
+
+    const durable = getGoal(goal.id)!;
+    const projection = reduceAssignmentControlPlane(
+      goal.id,
+      normalizeAssignmentControlPlane(durable.assignment_control_plane).events
+    ).projection;
+    assert.equal(settled.status, "active");
+    assert.equal(projection.apply_opportunity_consumed, false);
+    assert.equal(projection.unresolved_unknown_attempt_ids.length, 0);
+    assert.equal(projection.attempts.length, 1);
+    assert.equal(projection.attempts[0]?.action_path, "/revit/find-text-notes");
+    assert.equal(projection.attempts[0]?.requested_effect, "read");
+    assert.equal(projection.attempts[0]?.effect.state, "none");
+    assert.ok((projection.attempts[0]?.receipt_refs.length ?? 0) > 0);
+    assert.equal(projection.attempts.some((attempt) => attempt.action_path === "/chat"), false);
+    assert.equal(projection.attempts.some((attempt) => attempt.action_path === "/assignments/clarifications"), false);
+    assert.match(JSON.stringify(getGoal(goal.id)?.action_log), /delegate_revit_task \/chat success/);
+    assert.match(JSON.stringify(getGoal(goal.id)?.action_log), /operator_request_clarification \/assignments\/clarifications success/);
   });
 });
 
