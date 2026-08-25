@@ -50,6 +50,150 @@ test("509-air-device inventory is projected under budget and remains byte-for-by
   assert.equal(page.complete, false);
 }));
 
+test("certified MCP JSON text projects a complete bounded identity inventory instead of hiding it as opaque text", { concurrency: false }, () => withWorkspace(() => {
+  const items = [
+    { elementId: 101, category: "Air Terminals", familyName: "Supply Diffuser", typeName: "12 x 12" },
+    { elementId: 102, category: "Air Terminals", familyName: "Supply Diffuser", typeName: "12 x 12" },
+    { elementId: 103, category: "Air Terminals", familyName: "Return Grille", typeName: "16 x 4" },
+    { elementId: 104, category: "Air Terminals", familyName: "Return Grille", typeName: "16 x 4" },
+    { elementId: 105, category: "Air Terminals", familyName: "Exhaust Cap", typeName: "4 DIA" }
+  ];
+  const raw = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({ status: "Ok", count: items.length, itemsComplete: true, scanCapReached: false, items })
+    }]
+  };
+  const stored = storeEvidence({
+    scope,
+    source: "codex_dynamic_mcp:revit_call_tool",
+    media_type: "application/json",
+    trust_level: "authoritative_native",
+    raw
+  }, 4_096);
+
+  assert.equal(stored.projection.key_counts["inventory.total"], 5);
+  assert.equal(stored.projection.key_counts["inventory.identity_rows"], 5);
+  assert.equal(stored.projection.key_counts["inventory.family_type::Supply Diffuser | 12 x 12"], 2);
+  assert.equal(stored.projection.key_counts["inventory.family_type::Return Grille | 16 x 4"], 2);
+  assert.equal(stored.projection.key_counts["inventory.family_type::Exhaust Cap | 4 DIA"], 1);
+  assert.equal(stored.projection.key_facts["inventory.complete"], true);
+  assert.equal(stored.projection.key_facts["inventory.grouping"], "family_name + type_name");
+  assert.ok(stored.projection.projected_bytes <= 4_096);
+  const fields = retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "confirm the complete native inventory count",
+    fields: ["payload.count", "payload.itemsComplete"],
+    max_bytes: 1_024
+  });
+  assert.deepEqual(fields.selection, { "payload.count": 5, "payload.itemsComplete": true });
+  const rows = retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "inspect two family and type identity rows",
+    item_range: { path: "payload.items", start: 1, count: 2 },
+    max_bytes: 2_048
+  });
+  assert.deepEqual(rows.selection, items.slice(1, 3));
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString("utf8")), raw);
+}));
+
+test("nested inventory projection normalizes snake-case identity fields", { concurrency: false }, () => withWorkspace(() => {
+  const raw = { content: [{ type: "text", text: JSON.stringify({
+    count: 3,
+    itemsComplete: true,
+    items: [
+      { element_id: 1, category_name: "Mechanical Equipment", family_name: "Fan Coil", type_name: "Small" },
+      { element_id: 2, category_name: "Mechanical Equipment", family_name: "Fan Coil", type_name: "Small" },
+      { element_id: 3, category_name: "Mechanical Equipment", family_name: "Fan Coil", type_name: "Large" }
+    ]
+  }) }] };
+  const projection = storeEvidence({ scope, source: "neighbor:snake-case-inventory", trust_level: "authoritative_native", raw }).projection;
+  assert.equal(projection.key_counts["inventory.family_type::Fan Coil | Small"], 2);
+  assert.equal(projection.key_counts["inventory.family_type::Fan Coil | Large"], 1);
+  assert.equal(projection.key_counts["inventory.category::Mechanical Equipment"], 3);
+  assert.equal(projection.key_facts["inventory.complete"], true);
+}));
+
+test("structured-content and direct element inventories project equivalent typed family/type counts", { concurrency: false }, () => withWorkspace(() => {
+  const payload = {
+    count: 4,
+    truncated: false,
+    elements: [
+      { id: 1, category: "Doors", family: "Single Flush", type: "36 x 84" },
+      { id: 2, category: "Doors", family: "Single Flush", type: "36 x 84" },
+      { id: 3, category: "Doors", family: "Double Flush", type: "72 x 84" },
+      { id: 4, category: "Doors", family: "Double Flush", type: "72 x 84" }
+    ]
+  };
+  const direct = storeEvidence({ scope, source: "neighbor:direct-inventory", trust_level: "authoritative_native", raw: payload }).projection;
+  const structured = storeEvidence({ scope, source: "neighbor:structured-content", trust_level: "authoritative_native", raw: {
+    structuredContent: JSON.stringify(payload)
+  } }).projection;
+  for (const projection of [direct, structured]) {
+    assert.equal(projection.key_counts["inventory.total"], 4);
+    assert.equal(projection.key_counts["inventory.family_type::Single Flush | 36 x 84"], 2);
+    assert.equal(projection.key_counts["inventory.family_type::Double Flush | 72 x 84"], 2);
+    assert.equal(projection.key_facts["inventory.complete"], true);
+  }
+}));
+
+test("incomplete nested inventory exposes useful counts without claiming completeness", { concurrency: false }, () => withWorkspace(() => {
+  const raw = { content: [{ type: "text", text: JSON.stringify({
+    count: 12,
+    itemsComplete: false,
+    scanCapReached: true,
+    items: [
+      { elementId: 1, category: "Lighting Fixtures", familyName: "Pendant", typeName: "Round" },
+      { elementId: 2, category: "Lighting Fixtures", familyName: "Pendant", typeName: "Round" }
+    ]
+  }) }] };
+  const projection = storeEvidence({ scope, source: "negative:partial-inventory", trust_level: "authoritative_native", raw }).projection;
+  assert.equal(projection.key_counts["inventory.total"], 12);
+  assert.equal(projection.key_counts["inventory.identity_rows"], 2);
+  assert.equal(projection.key_facts["inventory.complete"], false);
+}));
+
+test("ordinary prose and malformed JSON remain opaque and cannot manufacture inventory truth", { concurrency: false }, () => withWorkspace(() => {
+  for (const [index, text] of ["509 devices in seven groups", '{"count":509,"items":['].entries()) {
+    const projection = storeEvidence({ scope, source: `unrelated:opaque-text-${index}`, trust_level: "host_observed", raw: {
+      content: [{ type: "text", text }]
+    } }).projection;
+    assert.equal(projection.key_counts["inventory.total"], undefined);
+    assert.equal(projection.key_facts["inventory.complete"], undefined);
+  }
+}));
+
+test("MCP errors and contradictory structured payloads cannot manufacture projected or retrievable inventory truth", { concurrency: false }, () => withWorkspace(() => {
+  const convincing = { count: 2, itemsComplete: true, items: [
+    { elementId: 1, familyName: "Forged", typeName: "A" },
+    { elementId: 2, familyName: "Forged", typeName: "A" }
+  ] };
+  const inputs = [
+    { isError: true, content: [{ type: "text", text: JSON.stringify(convincing) }] },
+    { structuredContent: convincing, content: [{ type: "text", text: JSON.stringify({ ...convincing, count: 999 }) }] },
+    { content: [
+      { type: "text", text: JSON.stringify(convincing) },
+      { type: "text", text: JSON.stringify(convincing) }
+    ] },
+    { payload: convincing, content: [{ type: "text", text: "not structured JSON" }] }
+  ];
+  for (const [index, raw] of inputs.entries()) {
+    const stored = storeEvidence({ scope, source: `negative:mcp-envelope-${index}`, trust_level: "host_observed", raw });
+    assert.equal(stored.projection.key_counts["inventory.total"], undefined);
+    assert.equal(stored.projection.key_facts["inventory.complete"], undefined);
+    const focused = retrieveEvidence({
+      evidence_id: stored.ref.evidence_id,
+      scope,
+      purpose: "confirm that a conflicting MCP envelope has no selectable payload",
+      fields: ["payload.count"],
+      max_bytes: 512
+    });
+    assert.deepEqual(focused.selection, { "payload.count": null });
+  }
+}));
+
 test("large Dynamic Revit and nested delegated receipts retain raw evidence while exposing compact facts", { concurrency: false }, () => withWorkspace(() => {
   const dynamic = {
     schema: "dynamic-revit.evidence.v1",
