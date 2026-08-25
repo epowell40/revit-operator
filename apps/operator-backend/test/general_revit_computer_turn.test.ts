@@ -1,9 +1,72 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  bindComputerClarificationResponse,
   executeGeneralRevitComputerTurn,
+  modelCallReceiptsFromComputerTurns,
   pendingComputerClarification
 } from "../src/benchmark/general_revit_computer_turn.js";
+
+test("single candidate-visible value binds to the one canonical missing field", () => {
+  assert.deepEqual(bindComputerClarificationResponse(
+    { clarification_id: "clarification-1", missing_fields: ["replacementText"] },
+    { replacement_text: "Approved wording" }
+  ), {
+    clarification_id: "clarification-1",
+    supplied_values: { replacementText: "Approved wording" }
+  });
+});
+
+test("clarification binding preserves exact keys and fails closed on ambiguous shapes", () => {
+  assert.deepEqual(bindComputerClarificationResponse(
+    { clarification_id: "clarification-1", missing_fields: ["replacement_text"] },
+    { replacement_text: "Approved wording" }
+  ).supplied_values, { replacement_text: "Approved wording" });
+  assert.throws(() => bindComputerClarificationResponse(
+    { clarification_id: "clarification-1", missing_fields: ["first", "second"] },
+    { value: "ambiguous" }
+  ), /fields_mismatch/);
+  assert.throws(() => bindComputerClarificationResponse(
+    { clarification_id: "clarification-1", missing_fields: ["replacementText"] },
+    { first: "one", second: "two" }
+  ), /fields_mismatch/);
+  assert.throws(() => bindComputerClarificationResponse(
+    { clarification_id: "clarification-1", missing_fields: ["replacementText"] },
+    {}
+  ), /fields_mismatch/);
+});
+
+test("interactive receipt aggregation preserves failed-later-turn telemetry and deduplicates overlap", () => {
+  const first = {
+    state: { modelCallReceipts: [
+      { provider: "openai", call_id: "call-1", model: "gpt-5.6-sol", tokens: { total_tokens: 11 } },
+      { provider: "openai", call_id: "call-2", model: "gpt-5.6-sol", tokens: { total_tokens: 13 } }
+    ] },
+    runResponse: {},
+    modelTelemetryRecovery: null
+  };
+  const failedSecond = {
+    state: { error: "assignment_clarification_response_fields_mismatch", modelCallReceipts: [] },
+    runResponse: { ok: false },
+    modelTelemetryRecovery: null
+  };
+  assert.deepEqual(
+    modelCallReceiptsFromComputerTurns([first, failedSecond]).map(receipt => receipt.call_id),
+    ["call-1", "call-2"]
+  );
+
+  const successfulSecond = {
+    state: { modelCallReceipts: [
+      { provider: "openai", call_id: "call-2", response_id: "response-2" },
+      { provider: "openai", call_id: "call-3", model: "gpt-5.6-sol", tokens: { total_tokens: 17 } }
+    ] },
+    runResponse: {},
+    modelTelemetryRecovery: null
+  };
+  const aggregated = modelCallReceiptsFromComputerTurns([first, successfulSecond]);
+  assert.deepEqual(aggregated.map(receipt => receipt.call_id), ["call-1", "call-2", "call-3"]);
+  assert.equal(aggregated[1]?.response_id, "response-2");
+});
 
 test("computer continuation sends only the bound candidate-visible clarification response", async () => {
   const requests: Array<{ pathname: string; body: Record<string, unknown> }> = [];

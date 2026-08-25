@@ -29,7 +29,7 @@ import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/g
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
-import { executeGeneralRevitComputerTurn, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
+import { bindComputerClarificationResponse, executeGeneralRevitComputerTurn, modelCallReceiptsFromComputerTurns, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
 import { benchmarkInteractionCaseV1, benchmarkInteractionTraceV1, loadBenchmarkInteractionManifestV1,
   type BenchmarkInteractionCaseV1, type BenchmarkInteractionManifestV1 } from "../benchmark/protocol_v2_interaction.js";
 import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
@@ -563,21 +563,20 @@ async function runComputerCase(
         ? `${first.transportError} Interactive case did not expose a structured pending clarification.`
         : "Interactive case did not expose a structured pending clarification; candidate-visible user input was not supplied.";
     } else {
-      finalTurn = await executeGeneralRevitComputerTurn({
-        baseUrl,
-        caseId: testCase.case_id,
-        prompt: interaction.clarification_response.candidate_visible_user_text,
-        messageId: id(`capability-${testCase.case_id}-turn-2`),
-        processGuard,
-        speedSettings,
-        timeoutMs,
-        requestJson,
-        recoverTimedOutModelTelemetry,
-        clarificationResponse: { clarification_id: clarificationId, supplied_values: interaction.clarification_response.supplied_values }
-      });
+      try {
+        finalTurn = await executeGeneralRevitComputerTurn({
+          baseUrl, caseId: testCase.case_id,
+          prompt: interaction.clarification_response.candidate_visible_user_text, messageId: id(`capability-${testCase.case_id}-turn-2`),
+          processGuard, speedSettings, timeoutMs, requestJson, recoverTimedOutModelTelemetry,
+          clarificationResponse: bindComputerClarificationResponse(clarification, interaction.clarification_response.supplied_values)
+        });
+      } catch (error) {
+        first.transportError = [first.transportError, error instanceof Error ? error.message : String(error)].filter(Boolean).join(" ");
+      }
     }
   }
-  const state = finalTurn.state;
+  const turns = finalTurn === first ? [first] : [first, finalTurn]; const interactionModelCallReceipts = modelCallReceiptsFromComputerTurns(turns);
+  const state = interactionModelCallReceipts.length > 0 ? { ...finalTurn.state, modelCallReceipts: interactionModelCallReceipts } : finalTurn.state;
   let transportError = [first.transportError, finalTurn === first ? "" : finalTurn.transportError].filter(Boolean).join(" ");
   const ownsObservedRun = computerStateHasMessage(state, finalTurn.messageId);
   if (!ownsObservedRun) {
@@ -614,6 +613,7 @@ async function runComputerCase(
     harness_timeout_settlement: finalTurn.timeoutSettlement,
     harness_context_loss_settlement: finalTurn.contextLossSettlement,
     harness_model_telemetry_recovery: finalTurn.modelTelemetryRecovery,
+    model_call_receipts: interactionModelCallReceipts,
     protocol_v2_interaction: interaction ? benchmarkInteractionTraceV1({
       interaction, directVariant, firstMessageId: first.messageId, firstPrompt, firstAssistant,
       finalMessageId: finalTurn.messageId, finalAssistant: assistantTextFromComputerState(state), clarificationId
