@@ -158,6 +158,32 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     runId, sourceHash, evidence, evidenceSha256, iteration, prior: activeCheckpoint?.receipt ?? null
   }) : null;
   if (committedCheckpoint !== null) fs.writeFileSync(path.join(runRoot, "checkpoint.json"), JSON.stringify(committedCheckpoint, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  const canonicalAttemptSettlement = executionStatus === "completed" ? {
+    schema: "revit-operator.native-attempt-settlement.v1" as const,
+    assignment_id: null,
+    attempt_id: null,
+    run_id: null,
+    generation: null,
+    requested_effect: input.mode,
+    method: "POST",
+    path: "/mcp/operator_run_dynamic_revit_program",
+    action_signature: null,
+    target_fingerprint: null,
+    request_dispatched: true,
+    effect_state: input.mode === "apply" ? "applied" as const : "none" as const,
+    effect_reason: input.mode === "apply"
+      ? "trusted_dynamic_runtime_committed_checkpoint"
+      : "trusted_dynamic_runtime_preview_noncommit",
+    effect_authority: input.mode === "apply" ? "native_receipt" as const : "native_rollback" as const,
+    affected_target_identities: [],
+    receipt_refs: [
+      `dynamic-run:${runId}`,
+      `dynamic-evidence:${evidenceSha256}`,
+      ...(committedCheckpoint ? [`dynamic-checkpoint:${committedCheckpoint.checkpoint_sha256}`] : [])
+    ],
+    evidence_refs: [`dynamic-evidence:${evidenceSha256}`],
+    settled_at_utc: new Date().toISOString()
+  } : null;
   return {
     schema: DYNAMIC_REVIT_PROGRAM_RUN_V1, run_id: runId, requested_mode: input.mode,
     execution_status: executionStatus, execution_ok: executionStatus === "completed",
@@ -167,6 +193,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     diagnostics: structuredDiagnostics,
     iteration,
     checkpoint: committedCheckpoint,
+    ...(canonicalAttemptSettlement ? { canonical_attempt_settlement: canonicalAttemptSettlement } : {}),
     verification: {
       evidence_sha256: evidenceSha256,
       iteration_chain_verified: true,

@@ -80,7 +80,13 @@ event contract and consumes the same reducer projection.
 - Planning: Codex, deterministic, semantic, or Dynamic Runtime planner.
 - Authorization/admission: existing backend and native policies, journaled on the
   attempt.
-- Dispatch: MCP/desktop/native transport, journaled before settlement.
+- Dispatch: controller-to-MCP handoff keeps the lease in flight but does not by
+  itself prove native Revit dispatch. The bound tool result or native/courier
+  receipt establishes authoritative dispatch. In particular, an authenticated
+  MCP JSON-RPC `-32602` argument rejection is `none` under schema-validator
+  authority and may permit a materially corrected retry; an ordinary MCP tool
+  error after handoff remains conservative unless a bound native settlement
+  says otherwise.
 - Receipt creation: native host or Dynamic Runtime; callers may only report
   integrity evidence.
 - Effect classification: canonical reducer from admitted authority events.

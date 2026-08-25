@@ -91,11 +91,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.test.ts",
-      "sha256": "sha256:b102a83e8893636aadc77d13c66e44103e7bbae4daad3192d94ea9e077607022"
+      "sha256": "sha256:86fecfb0e3f466c9a137ba28e21787fcc2770c727779676903e64a5a088b0496"
     },
     {
       "path": "apps/mcp-server/src/lib/dynamicRevitProgramRunner.ts",
-      "sha256": "sha256:7a9297ff7cb89ee9d26d5ac90669997baf6295b3011a8503bc2ca9da86449d5a"
+      "sha256": "sha256:0a243962b9dd5b28e8cd7b19cd4272d66f117c78c9713455de2221d3e93a9c2e"
     },
     {
       "path": "apps/mcp-server/src/lib/epic0437DiscardArchive.test.ts",
@@ -480,7 +480,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/async_tool_settlement.ts",
-      "sha256": "sha256:b5524d15342cbdf1b6984ea252947def3903c2bfa4dfe64a22639eb2d4004c63"
+      "sha256": "sha256:4c9fabf1da8ceb80329837ec6a8e975b6a3a1055728d5d27fa8be8f757076e40"
     },
     {
       "path": "apps/operator-backend/src/assignments/control_plane.ts",
@@ -501,6 +501,10 @@
     {
       "path": "apps/operator-backend/src/assignments/interaction.ts",
       "sha256": "sha256:864330e5b6b33923c9853f10786a12987a00140623ce6391451a690757354ccc"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/mcp_result_disposition.ts",
+      "sha256": "sha256:36b3017c56cedcb157631c05b714de7c545439a604a4aadf450834d24c5723bf"
     },
     {
       "path": "apps/operator-backend/src/assignments/model_call_budget.ts",
@@ -876,7 +880,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:d28fb05781dee3b192726065fac37f7575ac5a2c17a82534c2df242be669864e"
+      "sha256": "sha256:5495b764386c3553f410513010105bfa3bef8400e4955dd53b281599960b42f8"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -2586,6 +2590,10 @@
     {
       "path": "apps/operator-backend/test/assignment_interaction.test.ts",
       "sha256": "sha256:89833050da695b85bedf150a272a12a4f9c6dd6cd471e733b49f1ae6402fd7f9"
+    },
+    {
+      "path": "apps/operator-backend/test/assignment_mcp_error_settlement.test.ts",
+      "sha256": "sha256:d33d3663dda1b56ca18934292edf5fb22a6f4ab7cd4046b71313d941bcc07009"
     },
     {
       "path": "apps/operator-backend/test/assignment_noop_completion.test.ts",
@@ -5573,7 +5581,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:a048b405e30ea5ede8391fa9b11d79b52c04ec8adc78a6648625cd78ce9e496b",
+  "inputs_hash": "sha256:67605704af0f01d158cdaa2a75e08580f2b6f5004c2f64675c550b5caed0bbf4",
   "result": {
     "passed": true,
     "checks": [

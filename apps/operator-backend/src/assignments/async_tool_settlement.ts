@@ -24,6 +24,7 @@ import {
   journalAssignmentToolResults,
   type JournalContext
 } from "./turn_journal.js";
+import { classifyMcpResultDisposition } from "./mcp_result_disposition.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -245,16 +246,16 @@ export function markAssignmentToolDispatching(lease: AssignmentToolLease): void 
   appendLease(lease, "dispatching");
 }
 
-export function markAssignmentToolDispatched(lease: AssignmentToolLease): void {
-  appendAssignmentEvent(lease.assignment_id, event(lease, "dispatch_recorded", {
-    dispatch_state: "dispatched",
-    dispatch_id: lease.mcp_tool_call_id ?? lease.app_server_request_id,
-    dispatch_may_have_occurred: true,
-    reason: "mcp_runtime_accepted"
-  }, { dispatch: "mcp_runtime_accepted" }));
+export function markAssignmentMcpRuntimeAccepted(lease: AssignmentToolLease): void {
+  // The MCP client accepting a request proves controller handoff, not native
+  // Revit dispatch. Keep the lease active while awaiting the result; the
+  // result/native receipt records authoritative dispatch. If the promise is
+  // lost, the timeout path remains conservative for preview/apply.
+  appendLease(lease, "dispatching", { mcp_runtime_handoff: "accepted", native_dispatch_unsettled: true });
 }
 
-function toolResult(lease: AssignmentToolLease, rawResult: unknown, success: boolean, error?: unknown): ToolResult {
+function toolResult(lease: AssignmentToolLease, rawResult: unknown, success: boolean, error?: unknown, requestDispatched = true,
+  failure?: { failure_code: string | null; failure_kind: string | null; reason: string | null }): ToolResult {
   return {
     action_id: lease.attempt_id,
     method: lease.method,
@@ -264,9 +265,13 @@ function toolResult(lease: AssignmentToolLease, rawResult: unknown, success: boo
     assignment_run_id: lease.run_id,
     assignment_generation: lease.generation,
     status: success ? "done" : "failed",
-    request_dispatched: true,
+    request_dispatched: requestDispatched,
     result_json: rawResult,
-    ...(success ? {} : { error: error instanceof Error ? error.message : `${error ?? "tool_call_failed"}` })
+    ...(success ? {} : {
+      error: failure?.reason ?? (error instanceof Error ? error.message : `${error ?? "tool_call_failed"}`),
+      ...(failure?.failure_code ? { failure_code: failure.failure_code } : {}),
+      ...(failure?.failure_kind ? { failure_kind: failure.failure_kind } : {})
+    })
   };
 }
 
@@ -296,9 +301,17 @@ export function recordAssignmentToolNativeResult(lease: AssignmentToolLease, raw
   const goal = getGoal(lease.assignment_id);
   const durable = goal ? reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection : null;
   if (!durable || durable.terminal_state !== "open") throw new Error("assignment_tool_result_arrived_post_terminal");
+  const disposition = classifyMcpResultDisposition(rawResult);
   const projection = journalAssignmentToolResults(
     lease.session_id,
-    [toolResult(lease, rawResult, true)],
+    [toolResult(
+      lease,
+      rawResult,
+      !disposition.is_error,
+      disposition.reason,
+      !disposition.proven_before_native_dispatch,
+      disposition
+    )],
     "codex_app_server:tool_result",
     { deferTerminal: true, transportBoundAttemptId: lease.attempt_id }
   );

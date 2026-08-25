@@ -18,7 +18,7 @@ import {
   failAssignmentEvidenceRetention,
   failAssignmentToolAfterDispatch,
   failAssignmentToolBeforeDispatch,
-  markAssignmentToolDispatched,
+  markAssignmentMcpRuntimeAccepted,
   markAssignmentToolDispatching,
   openAssignmentToolLease,
   quarantineLateAssignmentToolResult,
@@ -114,7 +114,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   try {
     markAssignmentToolDispatching(assignmentLease);
     const pendingResult = runtime.callTool(params.tool, boundArguments.arguments, { turnId: params.turnId, sessionId });
-    markAssignmentToolDispatched(assignmentLease);
+    markAssignmentMcpRuntimeAccepted(assignmentLease);
     dispatched = true;
     rawResult = await pendingResult;
     recordTeammateMcpResult(runtime, teammateGate, rawResult);
