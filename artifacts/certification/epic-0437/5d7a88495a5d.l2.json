@@ -540,7 +540,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/tool_argument_binding.ts",
-      "sha256": "sha256:20f33834ebcc2272555024f1537d57fe8fa771cba6db1457293da83031134985"
+      "sha256": "sha256:ea48d33a4222ed3848ab85d97e72a98562748064e4ad46d82460d3f2c6a4ec9b"
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_journal.ts",
@@ -5573,7 +5573,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:472302bdbba5c66c758f2e11a1fcc322bef681389684a0ae02926d2855829e9f",
+  "inputs_hash": "sha256:a048b405e30ea5ede8391fa9b11d79b52c04ec8adc78a6648625cd78ce9e496b",
   "result": {
     "passed": true,
     "checks": [
