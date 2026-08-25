@@ -860,6 +860,12 @@ test("auto goal classifier creates assignments for live Revit work", () => {
   assert.ok(airCount.signals.includes("live Revit model work"));
   assert.equal(airCount.requestedEffect, "read");
 
+  const noWriteConstrainedAirCount = classifyAutoGoalRequest(
+    "Count all air devices in the project and break the total down by family and type. You may inspect an existing air-device schedule. Do not change the model."
+  );
+  assert.equal(noWriteConstrainedAirCount.shouldStart, true);
+  assert.equal(noWriteConstrainedAirCount.requestedEffect, "read");
+
   const delegatedAirCount = classifyAutoGoalRequest(
     "Inspect the open Revit model and count all HVAC air terminal diffusers. Break the total out by family/type and report the selection criteria used."
   );
