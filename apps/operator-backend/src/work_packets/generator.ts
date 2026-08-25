@@ -412,11 +412,16 @@ function baseIssues(
   return issues;
 }
 
-function requestedEffect(attempts: AssignmentAttemptRecord[], workBudget: JsonMap): AssignmentRequestedEffect | null {
-  const canonicalAttempt = [...attempts].reverse().find(attempt => attempt.purpose === "action");
-  if (canonicalAttempt) return canonicalAttempt.requested_effect;
+function requestedEffect(
+  attempts: AssignmentAttemptRecord[],
+  workBudget: JsonMap,
+  canonicalRequestedEffect?: AssignmentRequestedEffect | null
+): AssignmentRequestedEffect | null {
+  if (canonicalRequestedEffect) return canonicalRequestedEffect;
   const requested = text(workBudget.requested_effect).toLowerCase();
-  return requested === "read" || requested === "preview" || requested === "apply" ? requested : null;
+  if (requested === "read" || requested === "preview" || requested === "apply") return requested;
+  const canonicalAttempt = [...attempts].find(attempt => attempt.purpose === "action");
+  return canonicalAttempt?.requested_effect ?? null;
 }
 
 function determineStatus(input: {
@@ -430,7 +435,13 @@ function determineStatus(input: {
   actions: VerifiedWorkAction[];
   workBudget: JsonMap;
 }): { status: VerifiedWorkPacketStatus; reason: string } {
-  const rollback = input.attempts.find(attempt => attempt.purpose === "rollback" && attempt.effect.state === "none" && attempt.effect.authority === "native_rollback");
+  const priorApplied = input.attempts.some(attempt => attempt.purpose !== "rollback" && attempt.effect.state === "applied");
+  const rollback = input.attempts.find(attempt => attempt.purpose === "rollback" && (
+    (!priorApplied && attempt.effect.state === "none" && attempt.effect.authority === "native_rollback")
+    || (priorApplied && attempt.effect.state === "applied" && input.attempts.some(verification =>
+      verification.purpose === "verification" && verification.reconciliation_of_attempt_id === attempt.attempt_id
+      && verification.verification.state === "passed"))
+  ));
   if (rollback) return { status: "rolled_back", reason: "canonical_native_rollback_completed" };
   const clarification = ["ambiguity", "clarification", "missing_user_context"].includes(text(input.workBudget.blocker_kind).toLowerCase())
     || input.workBudget.requires_user_input === true;
@@ -468,7 +479,12 @@ function determineStatus(input: {
 
 function rollback(attempts: AssignmentAttemptRecord[], workBudget: JsonMap, resolver: EvidenceResolver): VerifiedWorkPacketV1["rollback"] {
   const attemptsRollback = attempts.filter(attempt => attempt.purpose === "rollback");
-  const completed = [...attemptsRollback].reverse().find(attempt => attempt.effect.state === "none" && attempt.effect.authority === "native_rollback");
+  const priorApplied = attempts.some(attempt => attempt.purpose !== "rollback" && attempt.effect.state === "applied");
+  const completed = [...attemptsRollback].reverse().find(attempt => priorApplied
+    ? attempt.effect.state === "applied" && attempts.some(verification =>
+      verification.purpose === "verification" && verification.reconciliation_of_attempt_id === attempt.attempt_id
+      && verification.verification.state === "passed")
+    : attempt.effect.state === "none" && attempt.effect.authority === "native_rollback");
   const latest = completed ?? attemptsRollback.at(-1);
   return {
     available: completed || attemptsRollback.length ? true : typeof workBudget.rollback_available === "boolean" ? workBudget.rollback_available : null,
@@ -511,7 +527,7 @@ function packetBody(goal: GoalRecord, parentPacketId: string | null): Omit<Verif
   const criterionRows = acceptanceCriteria(goal, workBudget, resolver);
   const collateralRows = collateralChecks(workBudget, resolver);
   const actionRows = actions(projection.attempts, resolver);
-  const effect = requestedEffect(projection.attempts, workBudget);
+  const effect = requestedEffect(projection.attempts, workBudget, projection.requested_effect);
   const settledAt = projection.last_event_at && projection.terminal_state !== "open" ? projection.last_event_at : goal.updated_at;
   const derivedStatus = determineStatus({
     goal, requestedEffect: effect, attempts: projection.attempts,

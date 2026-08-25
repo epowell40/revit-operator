@@ -125,6 +125,17 @@ export type GoalWorkItem = {
   blocker: string | null;
   result_summary: string | null;
   updated_at: string;
+  execution_class?: "independent_safe_to_keep" | "coupled_atomic" | "analysis_or_advisory";
+  atomic_group_id?: string | null;
+  independently_useful?: boolean;
+  safe_to_retain?: boolean;
+  rollback_scope?: "none" | "work_unit" | "atomic_group" | "assignment";
+  verification_method?: string | null;
+  unresolved_decision_variables?: string[];
+  deviation_envelope?: JsonMap | null;
+  acceptance_criteria?: string[];
+  attempt_ids?: string[];
+  primary_artifact_refs?: string[];
 };
 
 export type GoalAssumption = {
@@ -370,6 +381,13 @@ function normalizeWorkItems(value: unknown): GoalWorkItem[] {
     seen.add(id);
     const title = clip(obj.title ?? obj.summary, 500);
     if (!title) throw new Error(`work_items[${index}].title is required.`);
+    const executionClass = clip(obj.execution_class ?? obj.executionClass, 80).toLowerCase();
+    const normalizedClass = ["independent_safe_to_keep", "coupled_atomic", "analysis_or_advisory"].includes(executionClass)
+      ? executionClass as GoalWorkItem["execution_class"] : "analysis_or_advisory";
+    const rollbackScope = clip(obj.rollback_scope ?? obj.rollbackScope, 80).toLowerCase();
+    const normalizedRollback = ["none", "work_unit", "atomic_group", "assignment"].includes(rollbackScope)
+      ? rollbackScope as GoalWorkItem["rollback_scope"]
+      : normalizedClass === "coupled_atomic" ? "atomic_group" : "none";
     return {
       id,
       title,
@@ -380,7 +398,18 @@ function normalizeWorkItems(value: unknown): GoalWorkItem[] {
       evidence_refs: asStringList(obj.evidence_refs ?? obj.evidenceRefs, 80, 500),
       blocker: clip(obj.blocker, 1000) || null,
       result_summary: clip(obj.result_summary ?? obj.resultSummary, 2000) || null,
-      updated_at: clip(obj.updated_at ?? obj.updatedAt, 80) || nowIso()
+      updated_at: clip(obj.updated_at ?? obj.updatedAt, 80) || nowIso(),
+      execution_class: normalizedClass,
+      atomic_group_id: clip(obj.atomic_group_id ?? obj.atomicGroupId, 160) || null,
+      independently_useful: typeof obj.independently_useful === "boolean" ? obj.independently_useful : normalizedClass === "independent_safe_to_keep",
+      safe_to_retain: typeof obj.safe_to_retain === "boolean" ? obj.safe_to_retain : normalizedClass !== "coupled_atomic",
+      rollback_scope: normalizedRollback,
+      verification_method: clip(obj.verification_method ?? obj.verificationMethod, 500) || null,
+      unresolved_decision_variables: asStringList(obj.unresolved_decision_variables ?? obj.unresolvedDecisionVariables, 40, 160),
+      deviation_envelope: asJsonMap(obj.deviation_envelope ?? obj.deviationEnvelope),
+      acceptance_criteria: asStringList(obj.acceptance_criteria ?? obj.acceptanceCriteria, 80, 1200),
+      attempt_ids: asStringList(obj.attempt_ids ?? obj.attemptIds, 80, 300),
+      primary_artifact_refs: asStringList(obj.primary_artifact_refs ?? obj.primaryArtifactRefs, 80, 500)
     };
   });
 }
@@ -1121,6 +1150,8 @@ export function formatActiveGoalContext(goal: GoalRecord | null): string {
     return `- ${item.id} [${item.status}] ${item.title}${dependencies}${blocker}`;
   });
   const assumptions = (goal.assumptions ?? []).filter(item => item.status === "proposed" || item.status === "accepted").slice(-12).map(item => `- ${item.id} [${item.status}] ${item.statement}${item.basis ? ` (basis: ${item.basis})` : ""}`);
+  const resolvedClarifications = control.clarifications.filter(item => item.status === "resolved").slice(-4).map(item =>
+    `- ${item.clarification_id}: ${JSON.stringify(item.supplied_values)}`);
   return [
     "ACTIVE GOAL CONTEXT (active_goal_context):",
     `id: ${goal.id}`,
@@ -1133,7 +1164,8 @@ export function formatActiveGoalContext(goal: GoalRecord | null): string {
     `current_step: ${goal.current_step || "(unset)"}`,
     `progress_summary: ${goal.progress_summary || "(empty)"}`,
     `blocker: ${goal.blocker || "(none)"}`,
-    `canonical_control_plane: generation=${control.generation} run_id=${control.run_id ?? "(none)"} phase=${control.phase} terminal=${control.terminal_state}`,
+    `canonical_control_plane: generation=${control.generation} run_id=${control.run_id ?? "(none)"} phase=${control.phase} outcome=${control.outcome_state} terminal=${control.terminal_state}`,
+    `resolved_user_input:\n${resolvedClarifications.length ? resolvedClarifications.join("\n") : "- (none)"}`,
     `canonical_unknown_attempts: ${control.unresolved_unknown_attempt_ids.join(", ") || "(none)"}`,
     `canonical_progress_decision: ${control.progress.decision}${control.progress.reason ? ` (${control.progress.reason})` : ""}`,
     `canonical_recent_attempts:\n${recentAttempts.length ? recentAttempts.join("\n") : "- (none)"}`,

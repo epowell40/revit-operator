@@ -11,12 +11,23 @@ export type AssignmentAttemptPurpose =
   | "action"
   | "discovery"
   | "evidence_read"
+  | "interaction"
   | "navigation"
   | "completion_claim"
   | "verification"
   | "reconciliation"
   | "rollback";
 export type AssignmentTerminalState = "open" | "verified" | "complete" | "blocked" | "failed" | "canceled";
+export type AssignmentOutcomeState =
+  | "active"
+  | "awaiting_user_input"
+  | "awaiting_user_review"
+  | "complete"
+  | "complete_with_issues"
+  | "verified_noop"
+  | "blocked"
+  | "failed";
+export type AssignmentCriterionState = "pass" | "partial" | "needs_input" | "needs_review" | "failed" | "not_applicable" | "uncertain";
 export type AssignmentVerificationState = "not_requested" | "pending" | "passed" | "failed" | "inconclusive";
 export type AssignmentProgressDecision = "continue" | "diagnose" | "switch_tool_family" | "terminate";
 export type AssignmentAttemptLeaseState =
@@ -108,6 +119,39 @@ export type AssignmentAttemptRecord = {
   };
 };
 
+export type AssignmentClarificationRecord = {
+  schema: "revit-operator.assignment-clarification/v1";
+  clarification_id: string;
+  assignment_id: string;
+  run_id: string;
+  generation: number;
+  missing_fields: string[];
+  question: string;
+  reason: string;
+  completed_work: string[];
+  affected_subtasks: string[];
+  options: Array<{ id: string; label: string }>;
+  recommended_default: string | null;
+  primary_artifact_refs: string[];
+  created_at: string;
+  status: "pending" | "resolved" | "superseded";
+  resolved_at: string | null;
+  response_digest: string | null;
+  supplied_values: Record<string, unknown>;
+  criterion_states: AssignmentCriterionRecord[];
+};
+
+export type AssignmentCriterionRecord = {
+  criterion_id: string;
+  criterion: string;
+  state: AssignmentCriterionState;
+  reason: string;
+  evidence_refs: string[];
+  work_unit_ids: string[];
+  updated_at: string;
+  updated_by: string;
+};
+
 export type AssignmentProgressInput = {
   unresolved_acceptance_criteria: string[];
   grounded_targets: string[];
@@ -152,6 +196,14 @@ export type AssignmentAttemptEvent = {
     | "progress_recorded"
     | "read_completion_claimed"
     | "read_completion_validated"
+    | "clarification_requested"
+    | "clarification_resolved"
+    | "review_requested"
+    | "review_resolved"
+    | "criterion_recorded"
+    | "primary_artifact_recorded"
+    | "noop_completion_claimed"
+    | "noop_completion_validated"
     | "assignment_terminal";
   occurred_at: string;
   actor: string;
@@ -169,6 +221,7 @@ export type AssignmentControlPlaneProjection = {
   assignment_id: string;
   run_id: string | null;
   generation: number;
+  requested_effect: AssignmentRequestedEffect | null;
   phase: "idle" | "planning" | "executing" | "verifying" | "reconciling" | "settled";
   terminal_state: AssignmentTerminalState;
   terminal_reason: string | null;
@@ -184,6 +237,21 @@ export type AssignmentControlPlaneProjection = {
   provider_call_ids: string[];
   provider_call_count: number;
   late_receipt_count: number;
+  outcome_state: AssignmentOutcomeState;
+  clarifications: AssignmentClarificationRecord[];
+  pending_clarification_id: string | null;
+  pending_review_id: string | null;
+  criteria: AssignmentCriterionRecord[];
+  primary_artifact_refs: string[];
+  noop_completion: {
+    claim_id: string | null;
+    status: "none" | "pending" | "accepted" | "rejected";
+    reason: string | null;
+    target_fingerprint: string | null;
+    desired_value_digest: string | null;
+    supporting_attempt_ids: string[];
+    supporting_evidence_refs: string[];
+  };
   read_completion: {
     claim_id: string | null;
     status: "none" | "pending" | "accepted" | "rejected";
@@ -228,7 +296,7 @@ function requestedEffect(value: unknown): AssignmentRequestedEffect | null {
 
 function purpose(value: unknown): AssignmentAttemptPurpose {
   return value === "discovery" || value === "evidence_read" || value === "navigation"
-    || value === "completion_claim" || value === "verification" || value === "reconciliation"
+    || value === "interaction" || value === "completion_claim" || value === "verification" || value === "reconciliation"
     || value === "rollback" ? value : "action";
 }
 
@@ -265,6 +333,7 @@ function initialProjection(assignmentId: string): AssignmentControlPlaneProjecti
     assignment_id: assignmentId,
     run_id: null,
     generation: 0,
+    requested_effect: null,
     phase: "idle",
     terminal_state: "open",
     terminal_reason: null,
@@ -280,6 +349,21 @@ function initialProjection(assignmentId: string): AssignmentControlPlaneProjecti
     provider_call_ids: [],
     provider_call_count: 0,
     late_receipt_count: 0,
+    outcome_state: "active",
+    clarifications: [],
+    pending_clarification_id: null,
+    pending_review_id: null,
+    criteria: [],
+    primary_artifact_refs: [],
+    noop_completion: {
+      claim_id: null,
+      status: "none",
+      reason: null,
+      target_fingerprint: null,
+      desired_value_digest: null,
+      supporting_attempt_ids: [],
+      supporting_evidence_refs: []
+    },
     read_completion: {
       claim_id: null,
       status: "none",
@@ -467,8 +551,10 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
       .forEach(attempt => { attempt.terminal_state = "superseded"; });
     projection.run_id = event.run_id;
     projection.generation = event.generation;
+    projection.requested_effect = requestedEffect(data.requested_effect) ?? projection.requested_effect;
     projection.phase = "planning";
     projection.progress = { fingerprint: null, repeated_no_progress_count: 0, diagnosis_used: false, tool_family_switch_used: false, decision: "continue", reason: null };
+    projection.outcome_state = "active";
     return null;
   }
   if (event.kind === "run_superseded") {
@@ -477,6 +563,8 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
     return null;
   }
   if (event.kind === "attempt_opened") {
+    if (projection.pending_clarification_id) return "Assignment is awaiting user input; no new tool attempt may open.";
+    if (projection.pending_review_id) return "Assignment is awaiting user review; no new tool attempt may open.";
     if (!event.attempt_id || projection.attempts.some(attempt => attempt.attempt_id === event.attempt_id)) return "attempt_id must be new and non-empty.";
     const effect = requestedEffect(data.requested_effect);
     if (!effect) return "requested_effect must be read, preview, or apply.";
@@ -555,6 +643,8 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
   }
   if (event.kind === "progress_recorded") return applyProgress(projection, data);
   if (event.kind === "provider_call_recorded") {
+    if (projection.pending_clarification_id) return "Assignment is awaiting user input; no new provider call may begin.";
+    if (projection.pending_review_id) return "Assignment is awaiting user review; no new provider call may begin.";
     const callId = string(data.call_id);
     if (!callId) return "provider_call_recorded requires call_id.";
     if (!projection.provider_call_ids.includes(callId)) projection.provider_call_ids.push(callId);
@@ -566,6 +656,161 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
   }
   if (event.kind === "late_receipt_recorded") {
     projection.late_receipt_count += 1;
+    return null;
+  }
+  if (event.kind === "clarification_requested") {
+    const clarificationId = string(data.clarification_id);
+    const missingFields = strings(data.missing_fields);
+    const question = string(data.question);
+    if (!clarificationId || !question || missingFields.length < 1) {
+      return "clarification_requested requires clarification_id, missing_fields, and question.";
+    }
+    if (projection.pending_clarification_id) return "An unresolved clarification already exists.";
+    if (projection.pending_review_id) return "A clarification cannot be requested while user review is pending.";
+    if (projection.unresolved_unknown_attempt_ids.length) return "A clarification cannot pause an unresolved unknown effect.";
+    const activeAttempts = projection.attempts.filter(candidate => candidate.generation === projection.generation && candidate.terminal_state === "active");
+    if (activeAttempts.some(candidate => candidate.purpose !== "interaction") || activeAttempts.length > 1) {
+      return "A clarification cannot be requested while executable work remains in flight.";
+    }
+    const options = Array.isArray(data.options) ? data.options.flatMap(value => {
+      const option = record(value);
+      const id = string(option.id);
+      const label = string(option.label);
+      return id && label ? [{ id, label }] : [];
+    }).slice(0, 12) : [];
+    const criterionStates = Array.isArray(data.criterion_states) ? data.criterion_states.flatMap(value => {
+      const criterion = record(value);
+      const criterionId = string(criterion.criterion_id);
+      const statement = string(criterion.criterion);
+      const state = string(criterion.state) as AssignmentCriterionState;
+      const allowed: AssignmentCriterionState[] = ["pass", "partial", "needs_input", "needs_review", "failed", "not_applicable", "uncertain"];
+      return criterionId && statement && allowed.includes(state) ? [{
+        criterion_id: criterionId,
+        criterion: statement,
+        state,
+        reason: string(criterion.reason),
+        evidence_refs: strings(criterion.evidence_refs),
+        work_unit_ids: strings(criterion.work_unit_ids),
+        updated_at: event.occurred_at,
+        updated_by: event.actor
+      }] : [];
+    }) : [];
+    projection.clarifications.push({
+      schema: "revit-operator.assignment-clarification/v1",
+      clarification_id: clarificationId,
+      assignment_id: projection.assignment_id,
+      run_id: projection.run_id ?? "",
+      generation: projection.generation,
+      missing_fields: missingFields,
+      question,
+      reason: string(data.reason) || "required_input_missing",
+      completed_work: strings(data.completed_work),
+      affected_subtasks: strings(data.affected_subtasks),
+      options,
+      recommended_default: string(data.recommended_default) || null,
+      primary_artifact_refs: strings(data.primary_artifact_refs),
+      created_at: event.occurred_at,
+      status: "pending",
+      resolved_at: null,
+      response_digest: null,
+      supplied_values: {},
+      criterion_states: criterionStates
+    });
+    for (const criterion of criterionStates) {
+      const index = projection.criteria.findIndex(item => item.criterion_id === criterion.criterion_id);
+      if (index >= 0) projection.criteria[index] = criterion;
+      else projection.criteria.push(criterion);
+    }
+    projection.pending_clarification_id = clarificationId;
+    projection.primary_artifact_refs = [...new Set([...projection.primary_artifact_refs, ...strings(data.primary_artifact_refs)])];
+    projection.outcome_state = "awaiting_user_input";
+    return null;
+  }
+  if (event.kind === "clarification_resolved") {
+    const clarificationId = string(data.clarification_id);
+    const clarification = projection.clarifications.find(item => item.clarification_id === clarificationId);
+    if (!clarification || clarification.status !== "pending" || projection.pending_clarification_id !== clarificationId) {
+      return "clarification_resolved must reference the current pending clarification.";
+    }
+    const responseDigest = string(data.response_digest);
+    if (!responseDigest) return "clarification_resolved requires response_digest.";
+    clarification.status = "resolved";
+    clarification.resolved_at = event.occurred_at;
+    clarification.response_digest = responseDigest;
+    clarification.supplied_values = record(data.supplied_values);
+    projection.pending_clarification_id = null;
+    projection.outcome_state = "active";
+    return null;
+  }
+  if (event.kind === "review_requested") {
+    const reviewId = string(data.review_id);
+    if (!reviewId) return "review_requested requires review_id.";
+    if (projection.pending_clarification_id || projection.pending_review_id) return "Only one user interaction may be pending.";
+    if (!projection.quiescent || projection.unresolved_unknown_attempt_ids.length) return "User review requires quiescent, settled work.";
+    projection.pending_review_id = reviewId;
+    projection.outcome_state = "awaiting_user_review";
+    return null;
+  }
+  if (event.kind === "review_resolved") {
+    const reviewId = string(data.review_id);
+    if (!reviewId || reviewId !== projection.pending_review_id) return "review_resolved must reference the pending review.";
+    projection.pending_review_id = null;
+    projection.outcome_state = "active";
+    return null;
+  }
+  if (event.kind === "criterion_recorded") {
+    const criterionId = string(data.criterion_id);
+    const criterion = string(data.criterion);
+    const state = string(data.state) as AssignmentCriterionState;
+    const allowed: AssignmentCriterionState[] = ["pass", "partial", "needs_input", "needs_review", "failed", "not_applicable", "uncertain"];
+    if (!criterionId || !criterion || !allowed.includes(state)) return "criterion_recorded requires a criterion_id, criterion, and recognized state.";
+    const next: AssignmentCriterionRecord = {
+      criterion_id: criterionId,
+      criterion,
+      state,
+      reason: string(data.reason),
+      evidence_refs: strings(data.evidence_refs),
+      work_unit_ids: strings(data.work_unit_ids),
+      updated_at: event.occurred_at,
+      updated_by: event.actor
+    };
+    const index = projection.criteria.findIndex(item => item.criterion_id === criterionId);
+    if (index >= 0) projection.criteria[index] = next;
+    else projection.criteria.push(next);
+    return null;
+  }
+  if (event.kind === "primary_artifact_recorded") {
+    const refs = strings(data.primary_artifact_refs);
+    if (!refs.length) return "primary_artifact_recorded requires at least one artifact reference.";
+    projection.primary_artifact_refs = [...new Set([...projection.primary_artifact_refs, ...refs])];
+    return null;
+  }
+  if (event.kind === "noop_completion_claimed") {
+    const claimId = string(data.claim_id);
+    if (!claimId) return "noop_completion_claimed requires claim_id.";
+    if (projection.noop_completion.status === "accepted") return "An accepted no-op completion claim is immutable.";
+    projection.noop_completion = {
+      claim_id: claimId,
+      status: "pending",
+      reason: null,
+      target_fingerprint: string(data.target_fingerprint) || null,
+      desired_value_digest: string(data.desired_value_digest) || null,
+      supporting_attempt_ids: strings(data.supporting_attempt_ids),
+      supporting_evidence_refs: strings(data.supporting_evidence_refs)
+    };
+    return null;
+  }
+  if (event.kind === "noop_completion_validated") {
+    const claimId = string(data.claim_id);
+    if (!claimId || claimId !== projection.noop_completion.claim_id) return "noop_completion_validated must reference the latest no-op claim.";
+    if (data.accepted === true && event.actor !== "canonical_noop_completion_validator") {
+      return "Only the canonical no-op validator may accept a claim.";
+    }
+    projection.noop_completion = {
+      ...projection.noop_completion,
+      status: data.accepted === true ? "accepted" : "rejected",
+      reason: string(data.reason) || null
+    };
     return null;
   }
   if (event.kind === "read_completion_claimed") {
@@ -621,15 +866,25 @@ function applyAcceptedEvent(projection: AssignmentControlPlaneProjection, event:
   }
   if (event.kind === "assignment_terminal") {
     if (!projection.quiescent) return `assignment_settlement_deferred_in_flight:${projection.in_flight_attempt_ids.join(",")}:${projection.next_in_flight_deadline ?? "unknown_deadline"}`;
+    if (projection.pending_clarification_id) return "assignment_settlement_deferred_awaiting_user_input";
+    if (projection.pending_review_id) return "assignment_settlement_deferred_awaiting_user_review";
     const state = data.terminal_state;
     if (!["verified", "complete", "blocked", "failed", "canceled"].includes(String(state))) return "A recognized terminal_state is required.";
     if (state === "complete" && string(data.reason) === "authoritative_read_completed"
         && projection.read_completion.status !== "accepted") {
       return "Authoritative read completion requires an accepted canonical completion claim.";
     }
+    if (state === "complete" && string(data.reason) === "verified_noop_two_fresh_target_observations"
+        && projection.noop_completion.status !== "accepted") {
+      return "Verified no-op completion requires an accepted desired-state equivalence claim.";
+    }
     projection.terminal_state = state as AssignmentTerminalState;
     projection.terminal_reason = string(data.reason) || null;
     projection.phase = "settled";
+    projection.outcome_state = state === "complete" && string(data.reason) === "verified_noop_two_fresh_target_observations"
+      ? "verified_noop"
+      : state === "verified" || state === "complete" ? "complete"
+        : state === "blocked" ? "blocked" : "failed";
     return null;
   }
   const attempt = attemptFor(projection, event);

@@ -41,6 +41,20 @@ The finalizer adds `observed_provider_routes`, `completed_at`, and
 canonical, recursively key-sorted JSON. The original manifest hash uses the
 exact manifest bytes.
 
+Interactive or otherwise transformed cases additionally preserve the immutable
+`source_case_sha256`, distinct `execution_case_sha256`, transformation ID and
+version, conversation-sequence hash, candidate-visible-input hash, protected
+evaluator-oracle hash, and hash-bound turn identities. The source envelope never
+changes identity merely because an execution adapter adds an authenticated user
+answer. Candidate-visible input and evaluator-only truth remain separate.
+
+The outcome taxonomy includes the nonterminal interaction checkpoints
+`awaiting_user_input` and `awaiting_user_review`, plus
+`complete_with_issues`. These are reported truthfully and cannot be promoted to
+full completion. A clarification-only benchmark may define awaiting input as its
+intended terminal measurement; an ordinary delivery case must resume and reach
+its final contractual outcome.
+
 ## Stage vector and failure causes
 
 Every case contains this ordered stage vector:

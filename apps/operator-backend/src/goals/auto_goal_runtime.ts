@@ -475,7 +475,8 @@ function successfulTeammatePreviewReceiptCount(receipt?: AutoGoalTeammateReceipt
 function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
   const server = (observation.server ?? "").trim().toLowerCase();
   const tool = observation.tool.trim().toLowerCase();
-  if (tool === "operator_retrieve_evidence" || tool === "operator_submit_read_completion") return false;
+  if (tool === "operator_retrieve_evidence" || tool === "operator_request_clarification"
+      || tool === "operator_submit_noop_completion" || tool === "operator_submit_read_completion") return false;
   return server === "revit_operator" || server.startsWith("mcp__revit_operator") || tool.startsWith("revit_");
 }
 
@@ -857,7 +858,7 @@ function sidecarReportedActionReceipts(evidence: unknown): Array<Record<string, 
 }
 
 function activeSidecarComputerGoal(sessionId: string) {
-  const goal = getActiveGoalForSession(sessionId);
+  const goal = getCurrentGoalForSession(sessionId);
   return goal?.work_budget?.mode === "sidecar_computer"
     && goal.work_budget?.source === "operator_desktop"
     ? goal
@@ -929,6 +930,14 @@ export function settleSidecarComputerGoal(sessionId: string, input: SidecarCompu
   // below. Once a run exists, the reducer exclusively owns terminal truth.
   if (canonical.projection) {
     const assistantSummary = `${input.assistant_summary || input.reason || "Operator Desktop reported its turn result."}`.trim().slice(0, 3000);
+    if (canonical.projection.pending_clarification_id) {
+      // The durable clarification event is the authoritative turn outcome.
+      // Keep the Goal paused and resumable; caller prose cannot convert it to
+      // completion, no-op, or a terminal blocker.
+      const awaiting = getGoal(goal.id);
+      if (!awaiting) throw new Error("Awaiting-input Assignment could not be reloaded.");
+      return awaiting;
+    }
     if (canonical.completed && reportBoundToActiveRun && input.outcome === "complete") {
       // The accepted canonical terminal event has already synchronized and
       // packetized the Goal. Do not reopen that immutable record merely to add

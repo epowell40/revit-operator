@@ -62,14 +62,21 @@ test("benchmark defaults to the product General Agent surface and labels legacy 
   assert.match(runner, /summary_by_verification_basis:/);
   assert.match(runner, /verification_basis/);
   assert.match(runner, /async function waitForComputerIdle/);
-  assert.match(runner, /computerStateHasMessage\(state, messageId\)/);
+  assert.match(runner, /computerStateHasMessage\(state, finalTurn\.messageId\)/);
   assert.match(runner, /refusing to grade another runner's state/);
-  assert.match(runner, /settleTimedOutComputerRun/);
-  assert.match(runner, /the benchmark is stopping instead of contaminating later cases with live-context contention/);
+  const computerTurn = fs.readFileSync(
+    path.resolve(process.cwd(), "src/benchmark/general_revit_computer_turn.ts"),
+    "utf8"
+  );
+  assert.match(runner, /executeGeneralRevitComputerTurn/);
+  assert.match(computerTurn, /settleTimedOutComputerRun/);
+  assert.match(computerTurn, /the benchmark is stopping instead of contaminating later cases with live-context contention/);
   assert.match(runner, /localRevitProcessGuardTarget\(baseUrl, initialState\)/);
   assert.match(runner, /harness_context_loss_settlement:/);
-  assert.match(runner, /stopped its own Operator turn instead of waiting for courier deadlines/);
+  assert.match(computerTurn, /stopped its own Operator turn instead of waiting for courier deadlines/);
   assert.match(runner, /--legacy-chat is retained only for transport diagnostics/);
+  assert.match(runner, /Interactive case did not expose a structured pending clarification/);
+  assert.match(computerTurn, /benchmark-authenticated-clarification-response\/v1/);
   assert.doesNotMatch(runner, /const useComputer = process\.argv\.includes\("--ui"\)/);
 });
 

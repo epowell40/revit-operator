@@ -38,6 +38,7 @@ export function isTeammateDiscoveryPath(path: string): boolean { return DISCOVER
 export function isTeammateDiscoveryTool(tool: string): boolean { return DISCOVERY_TOOLS.has(tool); }
 
 export function gateTeammateLoopAttempt(budget: TeammateLoopAttemptBudget, effect: string, signature: string): string | null {
+  if (effect === "interaction") return null;
   if (effect === "evidence_read") {
     if (budget.evidence >= MAX_EVIDENCE_RETRIEVAL_ATTEMPTS) return "evidence_retrieval_attempt_budget_exhausted";
     if ((budget.evidence_by_signature.get(signature) ?? 0) >= MAX_EVIDENCE_RETRIEVAL_ATTEMPTS_PER_SIGNATURE) {
@@ -54,6 +55,7 @@ export function gateTeammateLoopAttempt(budget: TeammateLoopAttemptBudget, effec
 }
 
 export function registerTeammateLoopAttempt(budget: TeammateLoopAttemptBudget, effect: string, signature: string): void {
+  if (effect === "interaction") return;
   if (effect === "evidence_read") {
     budget.evidence += 1;
     budget.evidence_by_signature.set(signature, (budget.evidence_by_signature.get(signature) ?? 0) + 1);

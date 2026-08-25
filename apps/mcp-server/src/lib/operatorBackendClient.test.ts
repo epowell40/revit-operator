@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createOperatorBackendClient, EVIDENCE_RETRIEVE_PATH, READ_COMPLETION_CLAIM_PATH, SEMANTIC_MEP_ROUTE_PLAN_PATH } from "./operatorBackendClient.js";
+import {
+  ASSIGNMENT_CLARIFICATION_PATH,
+  createOperatorBackendClient,
+  EVIDENCE_RETRIEVE_PATH,
+  NOOP_COMPLETION_CLAIM_PATH,
+  READ_COMPLETION_CLAIM_PATH,
+  SEMANTIC_MEP_ROUTE_PLAN_PATH
+} from "./operatorBackendClient.js";
 import {
   OPERATOR_BACKEND_AUTH_V1,
   OperatorBackendAuthError,
@@ -119,7 +126,7 @@ test("hosted principal-JWT completion reaches the canonical endpoint with Bearer
   assert.equal(headers.has("x-operator-token"), false);
 });
 
-test("one auth abstraction applies principal JWT to evidence and semantic backend calls", async () => {
+test("one auth abstraction applies principal JWT to interaction, evidence, completion, and semantic backend calls", async () => {
   const calls: Array<{ url: string; headers: Headers }> = [];
   const client = createOperatorBackendClient({
     baseUrl: "https://operator.example",
@@ -130,9 +137,16 @@ test("one auth abstraction applies principal JWT to evidence and semantic backen
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     }
   });
+  await client.requestAssignmentClarification({ assignment_id: "assignment-a" });
   await client.retrieveEvidence({ evidence_id: `ev1_${"b".repeat(32)}` });
+  await client.submitNoopCompletionClaim({ assignment_id: "assignment-a" });
   await client.planSemanticMepRoute({ userText: "Route one bounded branch." });
-  assert.deepEqual(calls.map(call => new URL(call.url).pathname), [EVIDENCE_RETRIEVE_PATH, SEMANTIC_MEP_ROUTE_PLAN_PATH]);
+  assert.deepEqual(calls.map(call => new URL(call.url).pathname), [
+    ASSIGNMENT_CLARIFICATION_PATH,
+    EVIDENCE_RETRIEVE_PATH,
+    NOOP_COMPLETION_CLAIM_PATH,
+    SEMANTIC_MEP_ROUTE_PLAN_PATH
+  ]);
   for (const call of calls) {
     assert.equal(call.headers.get("authorization"), "Bearer principal-token");
     assert.equal(call.headers.has("x-operator-token"), false);

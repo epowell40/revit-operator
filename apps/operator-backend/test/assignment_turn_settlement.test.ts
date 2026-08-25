@@ -8,6 +8,8 @@ import { createGoal } from "../src/goals/service.js";
 import { currentAssignmentJournalContext, ensureAssignmentRunForTurn, journalAssignmentActions, journalAssignmentToolResults } from "../src/assignments/turn_journal.js";
 import { recordAssignmentTurnProgress, settleAssignmentTurn } from "../src/assignments/turn_settlement.js";
 import { assignmentModelReceiptObserver } from "../src/assignments/model_call_budget.js";
+import { ASSIGNMENT_ATTEMPT_EVENT_SCHEMA } from "../src/assignments/control_plane.js";
+import { appendAssignmentEvent } from "../src/assignments/control_plane_store.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -120,10 +122,67 @@ test("verified no-op requires two fresh observations of the same target", () => 
     verificationRead("read-1");
     assert.equal(settleAssignmentTurn("settlement-session", "apply").completed, false);
     verificationRead("read-2");
+    const context = currentAssignmentJournalContext("settlement-session")!;
+    const target = context.projection.attempts.find(attempt => attempt.attempt_id === "read-2")!.target_fingerprint;
+    const base = {
+      schema: ASSIGNMENT_ATTEMPT_EVENT_SCHEMA,
+      assignment_id: context.assignmentId,
+      run_id: context.runId,
+      generation: context.generation,
+      attempt_id: null,
+      occurred_at: new Date().toISOString()
+    } as const;
+    appendAssignmentEvent(context.assignmentId, {
+      ...base,
+      event_id: "noop-claim-test",
+      kind: "noop_completion_claimed",
+      actor: "test",
+      data: {
+        claim_id: "noop-claim",
+        target_fingerprint: target,
+        desired_value_digest: `sha256:${"d".repeat(64)}`,
+        supporting_attempt_ids: ["read-1", "read-2"],
+        supporting_evidence_refs: ["observation:1", "observation:2"]
+      }
+    });
+    appendAssignmentEvent(context.assignmentId, {
+      ...base,
+      event_id: "noop-validate-test",
+      kind: "noop_completion_validated",
+      actor: "canonical_noop_completion_validator",
+      data: { claim_id: "noop-claim", accepted: true, reason: "noop_equivalence_proven" }
+    });
     const settled = settleAssignmentTurn("settlement-session", "apply");
     assert.equal(settled.completed, true);
     assert.equal(settled.verified_noop, true);
     assert.equal(settled.projection?.terminal_reason, "verified_noop_two_fresh_target_observations");
+  });
+});
+
+test("an underspecified mutation cannot become a verified no-op from two target reads", () => {
+  workspace(() => {
+    createGoal({
+      title: "Replace selected note",
+      objective: "Replace the outdated selected note with the current issue wording without creating a duplicate.",
+      acceptance_criteria: ["The selected note contains the supplied replacement wording."],
+      status: "active",
+      related_session_id: "settlement-session",
+      work_budget: {
+        mode: "auto_goal",
+        requested_effect: "apply",
+        missing_required_fields: ["replacement_text"]
+      }
+    });
+    ensureAssignmentRunForTurn("settlement-session", "run-1", "test", true);
+    verificationRead("read-current-text-1");
+    verificationRead("read-current-text-2");
+
+    const settled = settleAssignmentTurn("settlement-session", "apply");
+
+    assert.equal(settled.completed, false);
+    assert.equal(settled.verified_noop, false);
+    assert.equal(settled.projection?.terminal_state, "open");
+    assert.equal(settled.reason, "desired_postcondition_missing");
   });
 });
 

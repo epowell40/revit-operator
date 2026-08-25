@@ -265,7 +265,14 @@ test("collateral mutation blocks completion and native rollback is explicit", ()
   assert.equal(collateralPacket.issues.some(issue => issue.kind === "collateral_mutation"), true);
 
   sequence = 0;
-  const events = [run(), opened("apply-1", "apply"), admitted("apply-1"), dispatched("apply-1"), effect("apply-1", "applied", "native_transaction", "transaction_committed"), opened("rollback-1", "apply", { purpose: "rollback", path: "/revit/rollback", target: "sha256:target-101" }), admitted("rollback-1"), dispatched("rollback-1"), effect("rollback-1", "none", "native_rollback", "rollback_completed"), terminal("complete", "rollback_completed")];
+  const events = [
+    run(), opened("apply-1", "apply"), admitted("apply-1"), dispatched("apply-1"), effect("apply-1", "applied", "native_transaction", "transaction_committed"),
+    opened("rollback-1", "apply", { purpose: "rollback", path: "/revit/rollback", target: "sha256:target-101" }), admitted("rollback-1"), dispatched("rollback-1"),
+    effect("rollback-1", "applied", "native_transaction", "compensating_transaction_committed"),
+    opened("verify-rollback", "read", { purpose: "verification", reconciliationOf: "rollback-1" }), admitted("verify-rollback"), dispatched("verify-rollback"),
+    event("verification_recorded", "verify-rollback", { verification_state: "passed", applied_attempt_id: "rollback-1", evidence_refs: ["verification:rollback-1"] }),
+    terminal("complete", "rollback_completed")
+  ];
   const rollbackPacket = generateVerifiedWorkPacket(goal(events, { auditPass: false }));
   assert.equal(rollbackPacket.status, "rolled_back");
   assert.equal(rollbackPacket.rollback.completed, true);

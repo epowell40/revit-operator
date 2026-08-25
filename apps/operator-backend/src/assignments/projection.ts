@@ -475,7 +475,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     execution: {
       substrate: text(workBudget.execution_substrate ?? workBudget.mode) || null,
       requested_effect: hasCanonicalTruth
-        ? [...controlPlane.attempts].reverse().find(attempt => attempt.purpose === "action")?.requested_effect ?? null
+        ? controlPlane.requested_effect
         : ["read", "preview", "apply"].includes(text(workBudget.requested_effect).toLowerCase())
           ? text(workBudget.requested_effect).toLowerCase() as "read" | "preview" | "apply"
           : null,

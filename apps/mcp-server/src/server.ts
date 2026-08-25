@@ -124,6 +124,8 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_runtime_probe",
   "operator_discover_capabilities",
   "operator_retrieve_evidence",
+  "operator_request_clarification",
+  "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "operator_record_execution_strategy",
   "print_sheets",
@@ -1012,6 +1014,113 @@ const readCompletionAssertionSchema = z.object({
     count: z.number().int().min(0).max(2_000_000)
   })).min(1).max(2_000).optional()
 });
+
+server.tool("operator_request_clarification", "Pause the current Assignment with one durable, focused request for execution-critical user input. Use after retaining safe completed work; this never completes the Assignment and never establishes Revit truth.",
+  {
+    assignmentId: z.string().min(1).max(240),
+    runId: z.string().min(1).max(240),
+    generation: z.number().int().min(1).max(1_000_000),
+    sessionId: z.string().min(1).max(180),
+    missingFields: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,159}$/)).min(1).max(32),
+    question: z.string().min(1).max(1_200),
+    reason: z.string().min(1).max(1_000),
+    completedWork: z.array(z.string().min(1).max(1_000)).max(80).optional(),
+    affectedSubtasks: z.array(z.string().min(1).max(240)).max(80).optional(),
+    options: z.array(z.object({
+      id: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,159}$/),
+      label: z.string().min(1).max(500)
+    })).max(12).optional(),
+    recommendedDefault: z.string().min(1).max(160).nullable().optional(),
+    primaryArtifactRefs: z.array(z.string().min(1).max(500)).max(80).optional(),
+    criterionStates: z.array(z.object({
+      criterion: z.string().min(1).max(1_200),
+      state: z.enum(["partial", "needs_input", "needs_review", "uncertain"]),
+      reason: z.string().max(1_000).optional(),
+      evidenceRefs: z.array(z.string().min(1).max(500)).max(80).optional(),
+      workUnitIds: z.array(z.string().min(1).max(160)).max(80).optional()
+    })).max(80).optional()
+  },
+  async (args) => {
+    try {
+      const result = await createOperatorBackendClient().requestAssignmentClarification({
+        schema: "revit-operator.assignment-clarification/v1",
+        assignment_id: args.assignmentId,
+        run_id: args.runId,
+        generation: args.generation,
+        session_id: args.sessionId,
+        missing_fields: args.missingFields,
+        question: args.question,
+        reason: args.reason,
+        ...(args.completedWork ? { completed_work: args.completedWork } : {}),
+        ...(args.affectedSubtasks ? { affected_subtasks: args.affectedSubtasks } : {}),
+        ...(args.options ? { options: args.options } : {}),
+        ...(args.recommendedDefault !== undefined ? { recommended_default: args.recommendedDefault } : {}),
+        ...(args.primaryArtifactRefs ? { primary_artifact_refs: args.primaryArtifactRefs } : {}),
+        ...(args.criterionStates ? { criterion_states: args.criterionStates.map(item => ({
+          criterion: item.criterion,
+          state: item.state,
+          ...(item.reason ? { reason: item.reason } : {}),
+          ...(item.evidenceRefs ? { evidence_refs: item.evidenceRefs } : {}),
+          ...(item.workUnitIds ? { work_unit_ids: item.workUnitIds } : {})
+        })) } : {})
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+    }
+  }
+);
+
+server.tool("operator_submit_noop_completion", "Request verified no-op settlement for a fully specified mutation whose exact desired target state is already present. Requires two fresh authoritative exact-target observations and criterion-bound assertions; missing desired input is never a no-op.",
+  {
+    assignmentId: z.string().min(1).max(240),
+    runId: z.string().min(1).max(240),
+    generation: z.number().int().min(1).max(1_000_000),
+    sessionId: z.string().min(1).max(180),
+    targetIdentity: z.string().min(1).max(500),
+    targetFingerprint: z.string().min(1).max(500),
+    desiredPostcondition: z.object({ fieldPath: z.string().min(1).max(500), expectedValue: z.union([z.string(), z.number(), z.boolean(), z.null()]) }),
+    desiredSource: z.union([
+      z.object({ kind: z.literal("user_request"), exactText: z.string().min(1).max(5_000) }),
+      z.object({ kind: z.literal("clarification"), clarificationId: z.string().min(1).max(240), field: z.string().min(1).max(160) })
+    ]),
+    assertions: z.array(z.object({
+      assertionId: z.string().min(1).max(160), attemptId: z.string().min(1).max(300), evidenceId: z.string().regex(/^ev1_[A-Za-z0-9_-]{32}$/),
+      operation: z.enum(["field_equals", "array_count"]), path: z.string().min(1).max(500),
+      expected: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(), expectedCount: z.number().int().min(0).max(2_000_000).optional()
+    })).min(2).max(64),
+    criteria: z.array(z.object({
+      criterion: z.string().min(1).max(1_200), assertionIds: z.array(z.string().min(1).max(160)).min(1).max(64)
+    })).min(1).max(80)
+  },
+  async (args) => {
+    try {
+      const result = await createOperatorBackendClient().submitNoopCompletionClaim({
+        schema: "revit-operator.assignment-noop-completion-claim/v1",
+        assignment_id: args.assignmentId,
+        run_id: args.runId,
+        generation: args.generation,
+        session_id: args.sessionId,
+        target_identity: args.targetIdentity,
+        target_fingerprint: args.targetFingerprint,
+        desired_postcondition: { field_path: args.desiredPostcondition.fieldPath, expected_value: args.desiredPostcondition.expectedValue },
+        desired_source: args.desiredSource.kind === "user_request"
+          ? { kind: "user_request", exact_text: args.desiredSource.exactText }
+          : { kind: "clarification", clarification_id: args.desiredSource.clarificationId, field: args.desiredSource.field },
+        assertions: args.assertions.map(assertion => ({
+          assertion_id: assertion.assertionId, attempt_id: assertion.attemptId, evidence_id: assertion.evidenceId,
+          operation: assertion.operation, path: assertion.path,
+          ...(assertion.expected !== undefined ? { expected: assertion.expected } : {}),
+          ...(assertion.expectedCount !== undefined ? { expected_count: assertion.expectedCount } : {})
+        })),
+        criteria: args.criteria.map(criterion => ({ criterion: criterion.criterion, assertion_ids: criterion.assertionIds }))
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+    }
+  }
+);
 
 server.tool("operator_submit_read_completion", "Submit a task-level read-completion claim for canonical validation. Use only after authoritative read EvidenceRefs support every active Assignment acceptance criterion; this tool requests settlement and never creates Revit truth.",
   {

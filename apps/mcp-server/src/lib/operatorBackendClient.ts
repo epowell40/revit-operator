@@ -9,6 +9,8 @@ import {
 export const SEMANTIC_MEP_ROUTE_PLAN_PATH = "/tools/mep/semantic-route-plan";
 export const EVIDENCE_RETRIEVE_PATH = "/evidence/retrieve";
 export const READ_COMPLETION_CLAIM_PATH = "/api/assignments/read-completion-claims";
+export const ASSIGNMENT_CLARIFICATION_PATH = "/api/assignments/clarifications";
+export const NOOP_COMPLETION_CLAIM_PATH = "/api/assignments/noop-completion-claims";
 
 export type SemanticMepRoutePlanInput = {
   userText: string;
@@ -59,6 +61,12 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
   }
 
   return {
+    async requestAssignmentClarification(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_CLARIFICATION_PATH, input, "Operator Assignment clarification");
+    },
+    async submitNoopCompletionClaim(input: unknown): Promise<unknown> {
+      return await post(NOOP_COMPLETION_CLAIM_PATH, input, "Operator no-op completion claim");
+    },
     async submitReadCompletionClaim(input: unknown): Promise<unknown> {
       return await post(READ_COMPLETION_CLAIM_PATH, input, "Operator read-completion claim");
     },

@@ -29,6 +29,16 @@ export function validateBenchmarkCaseResultV2(value: BenchmarkCaseResultV2): voi
   if (!/^[a-f0-9]{64}$/i.test(value.case_sha256) || !/^[a-f0-9]{64}$/i.test(value.raw_trace_sha256)) {
     throw new Error(`Case ${value.case_id} has incomplete immutable hashes.`);
   }
+  const transformed = value as BenchmarkCaseResultV2 & Partial<Pick<BenchmarkCaseResultV2,
+    "source_case_sha256" | "execution_case_sha256" | "conversation_sequence_sha256" | "candidate_visible_input_sha256" | "evaluator_oracle_sha256">>;
+  const identityHashes = [transformed.source_case_sha256, transformed.execution_case_sha256,
+    transformed.conversation_sequence_sha256, transformed.candidate_visible_input_sha256, transformed.evaluator_oracle_sha256];
+  if (identityHashes.some(hash => hash !== undefined) && identityHashes.some(hash => !/^[a-f0-9]{64}$/i.test(String(hash || "")))) {
+    throw new Error(`Case ${value.case_id} has an incomplete transformed-case identity.`);
+  }
+  if (transformed.source_case_sha256 && transformed.source_case_sha256 !== value.case_sha256) {
+    throw new Error(`Case ${value.case_id} source-case compatibility hash is inconsistent.`);
+  }
   if (value.stages.length !== 11) throw new Error(`Case ${value.case_id} must contain exactly eleven protocol stages.`);
   const first = value.stages.find((entry) => entry.status === "fail" || entry.status === "uncertain")?.stage ?? null;
   if (first !== value.first_failed_or_uncertain_stage) throw new Error(`Case ${value.case_id} first-failure stage is inconsistent.`);
@@ -47,7 +57,9 @@ export function buildBenchmarkRawReportV2(
   for (const result of cases) {
     validateBenchmarkCaseResultV2(result);
     if (result.run_id !== envelope.identity.run_id) throw new Error(`Case ${result.case_id} is bound to another run.`);
-    if (envelope.corpus.case_hashes[result.case_id] !== result.case_sha256) throw new Error(`Case ${result.case_id} hash is not bound to the run envelope.`);
+    if (envelope.corpus.case_hashes[result.case_id] !== (result.source_case_sha256 || result.case_sha256)) {
+      throw new Error(`Case ${result.case_id} source hash is not bound to the run envelope.`);
+    }
   }
   const unsigned = { schema: BENCHMARK_RAW_REPORT_V2_SCHEMA, envelope, cases, generated_at: generatedAt };
   return { ...unsigned, report_sha256: sha256Value(unsigned) };
@@ -84,6 +96,9 @@ export function summarizeBenchmarkLanesV2(cases: readonly BenchmarkCaseResultV2[
       recovered_verified: recovered,
       verified_noop: count("verified_noop"),
       verified_read_completion: count("verified_read_completion"),
+      awaiting_user_input: count("awaiting_user_input"),
+      awaiting_user_review: count("awaiting_user_review"),
+      complete_with_issues: count("complete_with_issues"),
       truthful_fixture_blocker: count("truthful_fixture_blocker"),
       truthful_ambiguity_blocker: count("truthful_ambiguity_blocker"),
       genuine_product_limitation_blocker: count("genuine_product_limitation_blocker"),
@@ -135,7 +150,7 @@ export function benchmarkProtocolV2Markdown(report: BenchmarkRawReportV2): strin
   }
   lines.push("", "## Cases", "", "| Case | Lane | Execution truth | Original evaluator | Current evaluator | Presentation | Delivery | First failed/uncertain stage | Primary cause |", "|---|---|---|---|---|---|---|---|---|");
   for (const result of report.cases) {
-    lines.push(`| ${result.case_id} | ${result.lane} | ${result.execution_truth.effect_state} | ${result.original_evaluator_verdict.verdict} | ${result.current_evaluator_verdict.verdict} | ${result.presentation_verdict.verdict} | ${result.delivery_verdict} | ${result.first_failed_or_uncertain_stage ?? "none"} | ${result.primary_failure_cause ?? "none"} |`);
+    lines.push(`| ${result.case_id} | ${result.lane} | ${result.execution_truth.effect_state}/${result.assignment_outcome ?? "unknown"} | ${result.original_evaluator_verdict.verdict} | ${result.current_evaluator_verdict.verdict} | ${result.presentation_verdict.verdict} | ${result.delivery_verdict} | ${result.first_failed_or_uncertain_stage ?? "none"} | ${result.primary_failure_cause ?? "none"} |`);
   }
   lines.push("", "False verified completion and unauthorized/collateral mutation are release-blocking categories.", "");
   return lines.join("\n");

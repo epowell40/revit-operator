@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ChatResponse } from "../contracts.js";
-import { getActiveGoalForSession } from "../goals/service.js";
+import { getActiveGoalForSession, getCurrentGoalForSession } from "../goals/service.js";
 import {
   ASSIGNMENT_ATTEMPT_EVENT_SCHEMA,
   assignmentActionSignature,
@@ -58,7 +58,7 @@ function eventFor(
 }
 
 function current(sessionId: string): { projection: AssignmentControlPlaneProjection; events: AssignmentAttemptEvent[] } | null {
-  const goal = getActiveGoalForSession(sessionId);
+  const goal = getCurrentGoalForSession(sessionId);
   if (!goal) return null;
   const events = normalizeAssignmentControlPlane(goal.assignment_control_plane).events;
   return { projection: reduceAssignmentControlPlane(goal.id, events).projection, events };
@@ -188,9 +188,15 @@ function readCompletion(projection: AssignmentControlPlaneProjection): Assignmen
 }
 
 function settleVerifiedNoop(projection: AssignmentControlPlaneProjection): { projection: AssignmentControlPlaneProjection; verified: boolean } {
+  if (projection.noop_completion.status !== "accepted" || !projection.noop_completion.target_fingerprint) {
+    return { projection, verified: false };
+  }
   const reads = readCompletion(projection);
   for (const latest of [...reads].reverse()) {
-    const sameTarget = reads.filter(attempt => attempt.target_fingerprint === latest.target_fingerprint);
+    if (latest.target_fingerprint !== projection.noop_completion.target_fingerprint
+        || !projection.noop_completion.supporting_attempt_ids.includes(latest.attempt_id)) continue;
+    const sameTarget = reads.filter(attempt => attempt.target_fingerprint === latest.target_fingerprint
+      && projection.noop_completion.supporting_attempt_ids.includes(attempt.attempt_id));
     const refs = [...new Set(sameTarget.flatMap(attempt => attempt.receipt_refs))];
     if (sameTarget.length < 2 || refs.length < 2) continue;
     projection = append(projection, "effect_recorded", latest.attempt_id, {
@@ -215,11 +221,18 @@ export function settleAssignmentTurn(
   }
   let projection = settleTeammateReceipt(state.projection, teammateReceipt);
   let verifiedNoop = false;
+  let noopReason: string | null = null;
   if (projection.terminal_state === "open" && requestedEffect === "apply"
       && !projection.attempts.some(attempt => attempt.requested_effect === "apply")) {
-    const noop = settleVerifiedNoop(projection);
-    projection = noop.projection;
-    verifiedNoop = noop.verified;
+    if (projection.pending_clarification_id) noopReason = "required_input_missing";
+    else if (projection.noop_completion.status === "accepted") {
+      const noop = settleVerifiedNoop(projection);
+      projection = noop.projection;
+      verifiedNoop = noop.verified;
+      if (!verifiedNoop) noopReason = "noop_equivalence_not_proven";
+    } else {
+      noopReason = projection.noop_completion.reason ?? "desired_postcondition_missing";
+    }
   }
   if (projection.terminal_state === "open" && requestedEffect === "preview") {
     const rollback = [...projection.attempts].reverse().find(attempt => attempt.requested_effect === "preview"
@@ -240,7 +253,7 @@ export function settleAssignmentTurn(
     && attempt.receipt_refs.length > 0).length;
   return {
     projection, completed, verified_noop: verifiedNoop, successful_tools: successfulTools,
-    reason: projection.terminal_reason ?? readCompletionReason
+    reason: projection.terminal_reason ?? noopReason ?? readCompletionReason
       ?? (projection.unresolved_unknown_attempt_ids.length ? "effect_reconciliation_required" : "canonical_completion_not_established")
   };
 }

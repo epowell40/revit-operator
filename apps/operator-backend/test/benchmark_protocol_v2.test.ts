@@ -706,8 +706,36 @@ test("exact rerun comparison permits release revisions to change but rejects cas
   const driftPath = path.join(tmp, "drift.json");
   const driftCase = structuredClone(secondCase);
   driftCase.case_sha256 = "e".repeat(64);
+  driftCase.source_case_sha256 = "e".repeat(64);
   writeBenchmarkRawReportV2(driftPath, buildBenchmarkRawReportV2(driftEnvelope, [driftCase], secondFinish));
   assert.throws(() => compareBenchmarkExactRerunsV2(firstPath, driftPath), /corpus and case hashes drift/);
+});
+
+test("transformed execution identity preserves the source case hash and binds interactive turns separately", () => {
+  const sourceCase = benchmarkCase();
+  const executionCase = { ...sourceCase, expected_effect: sourceCase.expected_effect === "apply" ? "preview" as const : "apply" as const };
+  const trace = traceFor(executionCase) as Record<string, unknown>;
+  trace.protocol_v2_interaction = {
+    transformation_id: "interactive_clarification",
+    transformation_version: "v1",
+    turns: [
+      { turn_id: "turn-1", sequence: 1, role: "user", content: sourceCase.prompt },
+      { turn_id: "turn-2", sequence: 2, role: "user", clarification_id: "clar-1", candidate_visible_input: "Use Current issue wording." }
+    ]
+  };
+  const result = buildBenchmarkCaseResultV2({
+    runId: "run-interactive", lane: "committed_apply", testCase: executionCase, sourceCase,
+    transformationId: "interactive_clarification", transformationVersion: "v1",
+    trace, rawTraceRef: "trace#interactive", judgedAt: FINISH
+  });
+  assert.equal(result.case_sha256, sha256Value(sourceCase));
+  assert.equal(result.source_case_sha256, sha256Value(sourceCase));
+  assert.equal(result.execution_case_sha256, sha256Value(executionCase));
+  assert.notEqual(result.source_case_sha256, result.execution_case_sha256);
+  assert.equal(result.turns.length, 2);
+  assert.equal(result.turns[1]?.clarification_id, "clar-1");
+  assert.equal(JSON.stringify(result).includes("Current issue wording"), false);
+  validateBenchmarkProtocolV2Contract("case_result", result);
 });
 
 test("external hidden holdout stays external and exposes only a redacted descriptor", () => {

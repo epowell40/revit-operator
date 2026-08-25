@@ -250,11 +250,15 @@ export function buildProtocolV2ReportFromFlight(args: {
   const judgedAt = String(args.legacyReport.generated_at || completedAt);
   const results = traces.map((trace) => {
     const caseId = String(trace.case_id || "");
-    const testCase = generalRevitExecutionCase(byId.get(caseId)!, applyRequested);
+    const sourceCase = byId.get(caseId)!;
+    const testCase = generalRevitExecutionCase(sourceCase, applyRequested);
     return buildBenchmarkCaseResultV2({
       runId: envelope.identity.run_id,
       lane: envelope.execution_lane,
       testCase,
+      sourceCase,
+      transformationId: sha256Value(sourceCase) === sha256Value(testCase) ? "identity" : "general_revit_execution_effect",
+      transformationVersion: "v1",
       trace,
       rawTraceRef: `${path.resolve(args.legacyReportRef)}#task_traces/${caseId}`,
       judgedAt,

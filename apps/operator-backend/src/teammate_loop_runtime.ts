@@ -27,7 +27,7 @@ export type TeammateTurnContract = {
   document_signature: string | null;
 };
 
-export type TeammateMcpEffect = "read" | "evidence_read" | "completion_claim" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
+export type TeammateMcpEffect = "read" | "evidence_read" | "interaction" | "completion_claim" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
 export type TeammatePendingCall = { effect: TeammateMcpEffect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
 type Effect = TeammateMcpEffect;
 type PendingCall = TeammatePendingCall;
@@ -522,6 +522,8 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // read. It neither calls Revit nor creates fresh verification truth, so it
   // must not enter typed-Revit tool discovery or consume the Revit budget.
   if (tool === "operator_retrieve_evidence") return call("evidence_read");
+  if (tool === "operator_request_clarification") return call("interaction");
+  if (tool === "operator_submit_noop_completion") return call("completion_claim");
   if (tool === "operator_submit_read_completion") return call("completion_claim");
   if (tool === "web_fetch_evidence") return call("read");
   if (/^revit_(?:ping|get_|list_|query_|find_|search_|tool_|write_grant_status|resolve_|trace_|measure_|analyze_|audit_|quantify_|capture_|export_|native_api_(?:ops|policy|catalog|search)|transaction_validate)/.test(tool)) {
@@ -663,6 +665,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
+  if (call.effect === "interaction") return null;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   if (attemptBudgetReason) return attemptBudgetReason;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";

@@ -2,6 +2,10 @@
 
 Status: canonical production contract, version 1
 
+Durable clarification, resumable awaiting states, progressive work units,
+verified no-op claims, and concise Work Returns are defined in
+[`INTERACTIVE_ASSIGNMENTS.md`](INTERACTIVE_ASSIGNMENTS.md).
+
 The existing durable Goal record is the Assignment ledger. `goal.json` stores an
 `assignment_control_plane` event stream; no second database or parallel
 settlement record exists. The pure reducer in

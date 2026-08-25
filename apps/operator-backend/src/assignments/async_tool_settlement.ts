@@ -76,12 +76,12 @@ function operationTimeoutMs(): number {
 
 function requestedEffect(effect: TeammateMcpEffect): AssignmentRequestedEffect {
   if (effect === "preview" || effect === "apply") return effect;
-  if (["read", "evidence_read", "navigation", "discovery", "completion_claim"].includes(effect)) return "read";
+  if (["read", "evidence_read", "interaction", "navigation", "discovery", "completion_claim"].includes(effect)) return "read";
   throw new Error("assignment_tool_effect_unclassified");
 }
 
 function attemptPurpose(effect: TeammateMcpEffect) {
-  if (effect === "discovery" || effect === "evidence_read" || effect === "navigation" || effect === "completion_claim") return effect;
+  if (effect === "discovery" || effect === "evidence_read" || effect === "interaction" || effect === "navigation" || effect === "completion_claim") return effect;
   return "action" as const;
 }
 

@@ -9,6 +9,7 @@ import {
 import { getGoal, mutateGoalRecord, type GoalRecord } from "../goals/service.js";
 import { persistVerifiedWorkPacket } from "../work_packets/store.js";
 import { notifyAssignmentSettlement } from "./settlement_signal.js";
+import { persistWorkReturn } from "../work_returns/store.js";
 
 export type AssignmentEventAppendResult = {
   goal: GoalRecord;
@@ -69,12 +70,42 @@ export function appendAssignmentEvent(goalId: string, event: AssignmentAttemptEv
         assignment_control_plane: controlPlane
       };
     }
+    if (accepted && acceptedProjection.outcome_state === "awaiting_user_input") {
+      const pending = acceptedProjection.clarifications.find(item => item.clarification_id === acceptedProjection.pending_clarification_id);
+      return {
+        ...current,
+        status: "paused",
+        current_phase: "awaiting_user_input",
+        current_step: pending?.question ?? "Awaiting required user input.",
+        progress_summary: pending?.completed_work.length
+          ? `Awaiting user input after retaining ${pending.completed_work.length} completed work item(s).`
+          : "Awaiting required user input; the Assignment remains resumable.",
+        blocker: null,
+        finished_at: null,
+        assignment_control_plane: controlPlane
+      };
+    }
+    if (accepted && event.kind === "clarification_resolved") {
+      return {
+        ...current,
+        status: "active",
+        current_phase: "planning",
+        current_step: "Resume from the resolved clarification.",
+        progress_summary: "Authenticated user input was bound to the existing Assignment; completed work remains retained.",
+        blocker: null,
+        finished_at: null,
+        assignment_control_plane: controlPlane
+      };
+    }
     return { ...current, assignment_control_plane: controlPlane };
   });
   const controlPlane = normalizeAssignmentControlPlane(goal.assignment_control_plane);
   const projection = reduceAssignmentControlPlane(goal.id, controlPlane.events).projection;
   notifyAssignmentSettlement(projection);
   if (projection.terminal_state !== "open") persistVerifiedWorkPacket(goal);
+  if (accepted && (event.kind === "clarification_requested" || event.kind === "clarification_resolved" || event.kind === "assignment_terminal")) {
+    try { persistWorkReturn(goal); } catch { /* Audit-artifact failure must not rewrite canonical model truth. */ }
+  }
   return {
     goal,
     projection,
@@ -97,6 +128,11 @@ export function beginAssignmentRun(goalId: string, runId: string, actor: string)
     kind: "run_started",
     occurred_at: new Date().toISOString(),
     actor: bounded(actor, 160) || "operator-backend",
-    data: { previous_run_id: projection.run_id }
+    data: {
+      previous_run_id: projection.run_id,
+      requested_effect: ["read", "preview", "apply"].includes(String(goal.work_budget?.requested_effect || ""))
+        ? goal.work_budget?.requested_effect
+        : projection.requested_effect
+    }
   });
 }
