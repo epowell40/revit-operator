@@ -400,7 +400,8 @@ export function journalAssignmentToolResults(
       method: result.method,
       path: attempt.action_path,
       action_signature: attempt.action_signature,
-      target_fingerprint: attempt.target_fingerprint
+      target_fingerprint: attempt.target_fingerprint,
+      transport_bound_typed_native_route: hostLocalAttemptTransportBound && attempt.action_path.startsWith("/mcp/revit_")
     }) ? nativeSettlement : null;
     const didNotDispatch = trustedNativeSettlement
       ? !trustedNativeSettlement.request_dispatched
