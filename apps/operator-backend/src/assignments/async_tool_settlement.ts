@@ -19,6 +19,7 @@ import { getGoal } from "../goals/service.js";
 import { findRevitToolJobsForAttemptSettlement, readRevitToolJobTerminalOutcome } from "../courier/revit_tool_jobs.js";
 import { settleAssignmentExpiredWork } from "./settlement_barrier.js";
 import {
+  assignmentJournalContextForBinding,
   currentAssignmentJournalContext,
   journalAssignmentActions,
   journalAssignmentToolResults,
@@ -162,6 +163,22 @@ function currentBoundContext(sessionId: string): JournalContext {
   const context = currentAssignmentJournalContext(sessionId);
   if (!context || context.projection.terminal_state !== "open") throw new Error("assignment_tool_call_binding_required");
   return context;
+}
+
+function capturedLeaseContext(lease: AssignmentToolLease): JournalContext | null {
+  return assignmentJournalContextForBinding(lease.session_id, {
+    assignmentId: lease.assignment_id,
+    runId: lease.run_id,
+    generation: lease.generation
+  });
+}
+
+function capturedLeaseBinding(lease: AssignmentToolLease) {
+  return {
+    assignmentId: lease.assignment_id,
+    runId: lease.run_id,
+    generation: lease.generation
+  };
 }
 
 export function openAssignmentToolLease(input: {
@@ -313,7 +330,11 @@ export function recordAssignmentToolNativeResult(lease: AssignmentToolLease, raw
       disposition
     )],
     "codex_app_server:tool_result",
-    { deferTerminal: true, transportBoundAttemptId: lease.attempt_id }
+    {
+      deferTerminal: true,
+      transportBoundAttemptId: lease.attempt_id,
+      binding: capturedLeaseBinding(lease)
+    }
   );
   const attempt = projection?.attempts.find(candidate => candidate.attempt_id === lease.attempt_id);
   if (!attempt) throw new Error("assignment_tool_result_binding_failed");
@@ -365,7 +386,7 @@ export function quarantineLateAssignmentToolResult(lease: AssignmentToolLease, r
 }
 
 export function settleAssignmentToolEvidence(lease: AssignmentToolLease, evidence: readonly EvidenceRefV1[]): AssignmentControlPlaneProjection {
-  const context = currentAssignmentJournalContext(lease.session_id);
+  const context = capturedLeaseContext(lease);
   const attempt = context?.projection.attempts.find(candidate => candidate.attempt_id === lease.attempt_id);
   if (!attempt) throw new Error("assignment_tool_attempt_missing_during_evidence_settlement");
   const evidenceRefs = evidence.map(item => item.evidence_id);
@@ -383,7 +404,7 @@ export function settleAssignmentToolEvidence(lease: AssignmentToolLease, evidenc
     evidence_retention_settled: true,
     evidence_refs: evidenceRefs
   });
-  if (attempt.effect.state === "unknown") return currentAssignmentJournalContext(lease.session_id)!.projection;
+  if (attempt.effect.state === "unknown") return capturedLeaseContext(lease)!.projection;
   return appendAssignmentEvent(lease.assignment_id, event(lease, "attempt_terminal", {
     lease_state: "settled",
     reason: "result_receipt_and_evidence_retained",
@@ -396,7 +417,10 @@ export function failAssignmentToolBeforeDispatch(lease: AssignmentToolLease, err
   journalAssignmentToolResults(lease.session_id, [{
     ...toolResult(lease, { ok: false, error: reason }, false, error),
     request_dispatched: false
-  }], "codex_app_server:pre_dispatch_failure", { deferTerminal: true });
+  }], "codex_app_server:pre_dispatch_failure", {
+    deferTerminal: true,
+    binding: capturedLeaseBinding(lease)
+  });
   return appendLease(lease, "failed_before_dispatch", { reason });
 }
 
@@ -406,7 +430,7 @@ export function failAssignmentToolAfterDispatch(lease: AssignmentToolLease, erro
     lease.session_id,
     [toolResult(lease, { ok: false, error: reason }, false, error)],
     "codex_app_server:post_dispatch_failure",
-    { deferTerminal: true }
+    { deferTerminal: true, binding: capturedLeaseBinding(lease) }
   );
   const attempt = projection?.attempts.find(candidate => candidate.attempt_id === lease.attempt_id);
   if (attempt?.effect.state === "unknown") return appendLease(lease, "effect_unknown", { reason });
@@ -417,7 +441,7 @@ export function failAssignmentToolAfterDispatch(lease: AssignmentToolLease, erro
 
 export function failAssignmentEvidenceRetention(lease: AssignmentToolLease, error: unknown): AssignmentControlPlaneProjection {
   const reason = error instanceof Error ? error.message : `${error ?? "evidence_retention_failed"}`;
-  const context = currentAssignmentJournalContext(lease.session_id);
+  const context = capturedLeaseContext(lease);
   const attempt = context?.projection.attempts.find(candidate => candidate.attempt_id === lease.attempt_id);
   if (!attempt) throw new Error("assignment_tool_attempt_missing_after_evidence_failure");
   if (attempt.effect.state === "unknown") return appendLease(lease, "effect_unknown", { reason, evidence_retention_failed: true });
@@ -438,7 +462,7 @@ export function assignmentEvidenceScope(lease: AssignmentToolLease) {
 }
 
 export function assignmentToolEvidenceTrust(lease: AssignmentToolLease): EvidenceTrustLevel {
-  const attempt = currentAssignmentJournalContext(lease.session_id)?.projection.attempts
+  const attempt = capturedLeaseContext(lease)?.projection.attempts
     .find(candidate => candidate.attempt_id === lease.attempt_id);
   if (attempt?.effect.authority === "target_readback") return "authoritative_readback";
   if (attempt && ["native_host", "native_transaction", "native_receipt", "native_rollback"].includes(attempt.effect.authority)) {

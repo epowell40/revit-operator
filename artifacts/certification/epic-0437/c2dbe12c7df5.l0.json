@@ -480,7 +480,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/async_tool_settlement.ts",
-      "sha256": "sha256:4c9fabf1da8ceb80329837ec6a8e975b6a3a1055728d5d27fa8be8f757076e40"
+      "sha256": "sha256:ff2ba0d791b247bde56e5b03ef14124f819cdfd90634889bc57f50eff90b4313"
     },
     {
       "path": "apps/operator-backend/src/assignments/control_plane.ts",
@@ -548,7 +548,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_journal.ts",
-      "sha256": "sha256:bf92f5d1cdcdc59d5d75b2359d4a6a0ab7012f1db5acdbbdaedeae4ee560166e"
+      "sha256": "sha256:79cfde6e0fae68f70705dc0d2203b928f8991522a88b72fb4c04e29a9363b2b4"
     },
     {
       "path": "apps/operator-backend/src/assignments/turn_preparation.ts",
@@ -2573,7 +2573,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_async_settlement_barrier.test.ts",
-      "sha256": "sha256:1bb86f327d43df97fa68fbe2552c3de9a85d373879337b75ce517c93e4b6b5d9"
+      "sha256": "sha256:0613e3caa18a138047c9f7fb346fc9da54deec6af542302e93fc1077ffe859b9"
     },
     {
       "path": "apps/operator-backend/test/assignment_async_settlement_matrix.test.ts",
@@ -5585,7 +5585,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:0c81550bb6fa25a979badd9e3a526a2bf38ca454c75532fcd5df60f08066334a",
+  "inputs_hash": "sha256:24a031f9029f1c4fe1f62f3a04cd131e095afc406fd465d4366695e8f4e5676e",
   "result": {
     "passed": true,
     "checks": [

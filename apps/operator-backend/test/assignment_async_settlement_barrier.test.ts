@@ -31,6 +31,10 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { settleAssignmentTurn } from "../src/assignments/turn_settlement.js";
 import { submitReadCompletionClaim } from "../src/assignments/read_completion.js";
+import {
+  ASSIGNMENT_CLARIFICATION_SCHEMA,
+  requestAssignmentClarification
+} from "../src/assignments/interaction.js";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
 
@@ -301,6 +305,156 @@ test("host binding replaces model-guessed clarification scope before MCP dispatc
     } finally {
       endTeammateLoopOwner(teammate);
     }
+  });
+});
+
+test("clarification result settles its captured attempt after the Assignment pauses", { concurrency: false }, async () => {
+  await withWorkspace(async root => {
+    const sessionId = "clarification-pauses-before-result-settlement";
+    const { goal, run } = createAssignment(sessionId, "apply");
+    const runtime = {
+      callTool: async (_tool: string, args: Record<string, unknown>) => {
+        const requested = requestAssignmentClarification({
+          schema: ASSIGNMENT_CLARIFICATION_SCHEMA,
+          assignment_id: String(args.assignmentId),
+          run_id: String(args.runId),
+          generation: Number(args.generation),
+          session_id: String(args.sessionId),
+          missing_fields: ["newText"],
+          question: "What exact wording should replace the selected note?",
+          reason: "required_input_missing",
+          completed_work: ["Grounded the selected TextNote and observed its current wording."]
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify({
+            ok: true,
+            clarification_id: requested.clarification.clarification_id,
+            assignment_id: requested.projection.assignment_id,
+            run_id: requested.projection.run_id,
+            generation: requested.projection.generation,
+            status: "awaiting_user_input"
+          }) }]
+        };
+      }
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "clarification-pauses-message",
+      user_text: "Replace the selected note after obtaining the exact replacement wording.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Disposable", path: "C:\\Disposable.rvt" } } }
+    });
+    try {
+      const response = await handleCodexServerRequest(runtime as any, {
+        id: "app-request-clarification-pauses",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator",
+          threadId: "thread-clarification-pauses",
+          turnId: "turn-clarification-pauses",
+          callId: "tool-call-clarification-pauses",
+          tool: "operator_request_clarification",
+          arguments: {
+            assignmentId: "model-guessed-assignment",
+            runId: "model-guessed-run",
+            generation: 99,
+            sessionId: "model-guessed-session",
+            missingFields: ["newText"],
+            question: "What exact wording should replace the selected note?",
+            reason: "required_input_missing"
+          }
+        }
+      } as any) as any;
+
+      const persisted = getGoal(goal.id)!;
+      const after = projection(goal.id);
+      const attempt = after.attempts.find(candidate => candidate.lease.mcp_tool_call_id === "tool-call-clarification-pauses");
+      const boundRefs = evidenceRefs(root).filter(ref => ref.assignment_id === goal.id && ref.run_id === run.runId);
+      assert.equal(response.success, true);
+      assert.equal(persisted.status, "paused");
+      assert.equal(persisted.current_phase, "awaiting_user_input");
+      assert.equal(after.pending_clarification_id?.startsWith("clar_"), true);
+      assert.equal(attempt?.terminal_state, "settled");
+      assert.equal(attempt?.effect.state, "none");
+      assert.equal(attempt?.receipt_refs.length, 1);
+      assert.equal(attempt?.evidence_refs.length, 1);
+      assert.equal(after.in_flight_count, 0);
+      assert.equal(boundRefs.length, 1);
+      assert.equal(after.apply_opportunity_consumed, false);
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("captured paused binding cannot drift to another active Assignment in the same session", { concurrency: false }, async () => {
+  await withWorkspace(() => {
+    const sessionId = "paused-binding-no-drift";
+    const { goal: pausedGoal, run: pausedRun } = createAssignment(sessionId, "apply");
+    journalAssignmentActions(sessionId, [{
+      action_id: "attempt:paused-interaction",
+      method: "POST",
+      path: "/mcp/operator_request_clarification",
+      request_effect: "read",
+      body: { missingFields: ["newText"] }
+    }], "test", { purpose: "interaction" });
+    requestAssignmentClarification({
+      schema: ASSIGNMENT_CLARIFICATION_SCHEMA,
+      assignment_id: pausedGoal.id,
+      run_id: pausedRun.runId,
+      generation: pausedRun.generation,
+      session_id: sessionId,
+      missing_fields: ["newText"],
+      question: "What exact wording should replace the selected note?",
+      reason: "required_input_missing"
+    });
+    const otherGoal = createGoal({
+      title: "Unrelated current work",
+      objective: "Remain untouched by the paused result.",
+      acceptance_criteria: ["No cross-Assignment settlement occurs."],
+      status: "active",
+      related_session_id: sessionId,
+      work_budget: { mode: "auto_goal", requested_effect: "read" }
+    });
+    const otherRun = ensureAssignmentRunForTurn(sessionId, "run:unrelated-current", "test", true)!;
+    assert.equal(otherRun.assignmentId, otherGoal.id);
+
+    const settled = journalAssignmentToolResults(sessionId, [{
+      action_id: "attempt:paused-interaction",
+      method: "POST",
+      path: "/mcp/operator_request_clarification",
+      request_effect: "read",
+      assignment_id: pausedGoal.id,
+      assignment_run_id: pausedRun.runId,
+      assignment_generation: pausedRun.generation,
+      status: "done",
+      request_dispatched: true,
+      result_json: { ok: true, status: "awaiting_user_input" }
+    }], "captured-result", {
+      binding: {
+        assignmentId: pausedGoal.id,
+        runId: pausedRun.runId,
+        generation: pausedRun.generation
+      }
+    });
+
+    assert.equal(settled?.attempts[0]?.terminal_state, "settled");
+    assert.equal(projection(pausedGoal.id).attempts[0]?.effect.state, "none");
+    assert.equal(projection(otherGoal.id).attempts.length, 0);
+    assert.equal(journalAssignmentToolResults(sessionId, [], "stale", {
+      binding: {
+        assignmentId: pausedGoal.id,
+        runId: pausedRun.runId,
+        generation: pausedRun.generation + 1
+      }
+    }), null);
+    assert.equal(journalAssignmentToolResults("foreign-session", [], "foreign", {
+      binding: {
+        assignmentId: pausedGoal.id,
+        runId: pausedRun.runId,
+        generation: pausedRun.generation
+      }
+    }), null);
   });
 });
 
