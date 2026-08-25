@@ -30,6 +30,10 @@ test("dynamic runner supports authenticated hosted execution, remains bounded, a
     assert.equal(result.execution_ok, true); assert.equal((result.evidence as any).taskDirectory, "opaque:trusted-task");
     assert.equal(result.checkpoint?.checkpoint_index, 1);
     assert.equal(result.checkpoint?.document_fingerprint, documentFingerprint);
+    assert.ok(result.canonical_attempt_settlement);
+    assert.equal(result.canonical_attempt_settlement!.requested_effect, "apply");
+    assert.equal(result.canonical_attempt_settlement!.effect_state, "applied");
+    assert.equal(result.canonical_attempt_settlement!.effect_authority, "native_receipt");
     const hosted = await runDynamicRevitProgram({ source: "public class HostedProgram {}", mode: "preview" },
       { ...env, REVIT_OPERATOR_MODE: "hosted" }, async (_file, args) => {
         const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
@@ -41,6 +45,12 @@ test("dynamic runner supports authenticated hosted execution, remains bounded, a
       });
     assert.equal(hosted.execution_ok, true);
     assert.equal(hosted.requested_mode, "preview");
+    assert.ok(hosted.canonical_attempt_settlement);
+    assert.equal(hosted.canonical_attempt_settlement!.schema, "revit-operator.native-attempt-settlement.v1");
+    assert.equal(hosted.canonical_attempt_settlement!.requested_effect, "preview");
+    assert.equal(hosted.canonical_attempt_settlement!.effect_state, "none");
+    assert.equal(hosted.canonical_attempt_settlement!.effect_authority, "native_rollback");
+    assert.equal(hosted.canonical_attempt_settlement!.request_dispatched, true);
     await assert.rejects(() => runDynamicRevitProgram({ source: "x".repeat(128_001), mode: "preview" }, env), /128,000/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
