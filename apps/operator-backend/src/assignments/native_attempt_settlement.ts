@@ -110,15 +110,31 @@ export function nativeSettlementMatchesAttempt(input: {
   path: string;
   action_signature: string;
   target_fingerprint: string;
+  /**
+   * The app-server may open a typed MCP attempt before the alias's concrete
+   * native route is known. The captured call/result promise is then the
+   * authority that binds the returned native settlement to that exact
+   * attempt. This exception is deliberately limited to an /mcp/ typed-alias
+   * placeholder resolving to a native /revit/ route; ordinary callers cannot
+   * use it to substitute one native route for another.
+   */
+  transport_bound_typed_native_route?: boolean;
 }): boolean {
   const settlement = input.settlement;
+  const inputPath = canonicalRevitActionPath(input.path);
+  const settlementPath = canonicalRevitActionPath(settlement.path);
+  const pathMatches = !settlement.path
+    || settlementPath === inputPath
+    || (input.transport_bound_typed_native_route === true
+      && inputPath.startsWith("/mcp/revit_")
+      && settlementPath.startsWith("/revit/"));
   return (!settlement.assignment_id || settlement.assignment_id === input.assignment_id)
     && (!settlement.attempt_id || settlement.attempt_id === input.attempt_id)
     && (!settlement.run_id || settlement.run_id === input.run_id)
     && (settlement.generation === null || settlement.generation === input.generation)
     && settlement.requested_effect === input.requested_effect
     && (!settlement.method || settlement.method === input.method.toUpperCase())
-    && (!settlement.path || canonicalRevitActionPath(settlement.path) === canonicalRevitActionPath(input.path))
+    && pathMatches
     && (!settlement.action_signature || settlement.action_signature === input.action_signature)
     && (!settlement.target_fingerprint || settlement.target_fingerprint === input.target_fingerprint);
 }
