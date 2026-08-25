@@ -3,7 +3,7 @@ import type { ActionCall, ToolResult } from "../contracts.js";
 import type { AutoGoalToolObservation } from "../goals/auto_goal_runtime.js";
 import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope } from "../outcome_envelope.js";
-import { getActiveGoalForSession } from "../goals/service.js";
+import { getActiveGoalForSession, getGoal } from "../goals/service.js";
 import {
   ASSIGNMENT_ATTEMPT_EVENT_SCHEMA,
   assignmentActionSignature,
@@ -24,6 +24,8 @@ export type JournalContext = {
   generation: number;
   projection: AssignmentControlPlaneProjection;
 };
+
+export type AssignmentJournalBinding = Pick<JournalContext, "assignmentId" | "runId" | "generation">;
 
 const TARGET_CONTROL_KEYS = new Set([
   "apply", "confirm", "confirmation", "dryRun", "dry_run", "preview", "requestEffect", "request_effect",
@@ -146,6 +148,31 @@ function currentContext(sessionId: string): JournalContext | null {
   return currentAssignmentJournalContext(sessionId);
 }
 
+/**
+ * Resolves the exact durable Assignment captured by an admitted operation.
+ * Unlike the ordinary session lookup, this remains valid while the source Goal
+ * is paused for clarification. It never falls back to another active Goal.
+ */
+export function assignmentJournalContextForBinding(
+  sessionId: string,
+  binding: AssignmentJournalBinding
+): JournalContext | null {
+  const goal = getGoal(binding.assignmentId);
+  if (!goal || goal.related_session_id !== sessionId) return null;
+  const projection = reduceAssignmentControlPlane(
+    goal.id,
+    normalizeAssignmentControlPlane(goal.assignment_control_plane).events
+  ).projection;
+  if (projection.terminal_state !== "open" || projection.run_id !== binding.runId
+      || projection.generation !== binding.generation) return null;
+  return {
+    assignmentId: goal.id,
+    runId: projection.run_id,
+    generation: projection.generation,
+    projection
+  };
+}
+
 function canonicalEvent(
   context: JournalContext,
   kind: AssignmentAttemptEvent["kind"],
@@ -186,11 +213,18 @@ export function journalAssignmentActions(
   sessionId: string,
   actions: readonly ActionCall[],
   actor: string,
-  options: { lease?: Record<string, unknown>; tool_identity?: string; purpose?: AssignmentAttemptPurpose } = {}
+  options: {
+    lease?: Record<string, unknown>;
+    tool_identity?: string;
+    purpose?: AssignmentAttemptPurpose;
+    binding?: AssignmentJournalBinding;
+  } = {}
 ): AssignmentControlPlaneProjection | null {
-  let context = currentContext(sessionId);
+  let context = options.binding
+    ? assignmentJournalContextForBinding(sessionId, options.binding)
+    : currentContext(sessionId);
   if (!context) return null;
-  const goal = getActiveGoalForSession(sessionId);
+  const goal = options.binding ? getGoal(context.assignmentId) : getActiveGoalForSession(sessionId);
   const documentFingerprint = goal?.work_budget?.document_fingerprint ?? null;
   for (const action of actions) {
     const effect = actionEffect(action);
@@ -278,10 +312,7 @@ export function assignmentRunForBinding(
   runId: string,
   generation: number
 ): JournalContext | null {
-  const context = currentContext(sessionId);
-  if (!context || context.assignmentId !== assignmentId || context.runId !== runId
-      || context.generation !== generation || context.projection.terminal_state !== "open") return null;
-  return context;
+  return assignmentJournalContextForBinding(sessionId, { assignmentId, runId, generation });
 }
 
 function settlementBindingMatches(context: JournalContext, settlement: NonNullable<ReturnType<typeof parseNativeAttemptSettlement>>): boolean {
@@ -334,28 +365,38 @@ export function journalAssignmentToolResults(
   sessionId: string,
   results: readonly ToolResult[],
   actor: string,
-  options: { trustNativeSettlement?: boolean; deferTerminal?: boolean; transportBoundAttemptId?: string } = {}
+  options: {
+    trustNativeSettlement?: boolean;
+    deferTerminal?: boolean;
+    transportBoundAttemptId?: string;
+    binding?: AssignmentJournalBinding;
+  } = {}
 ): AssignmentControlPlaneProjection | null {
-  let context = currentContext(sessionId);
+  const refresh = () => options.binding
+    ? assignmentJournalContextForBinding(sessionId, options.binding)
+    : currentContext(sessionId);
+  let context = refresh();
   if (!context) return null;
   for (const result of results) {
     const nativeSettlement = parseNativeAttemptSettlement(result.result_json);
     if (!resultBindingMatches(context, result)) {
       quarantineResult(context, result, actor, "tool_result_assignment_binding_mismatch");
-      context = currentContext(sessionId) ?? context;
+      context = refresh() ?? context;
       continue;
     }
     if (nativeSettlement && !settlementBindingMatches(context, nativeSettlement)) {
       quarantineResult(context, result, actor, "native_settlement_assignment_binding_mismatch");
-      context = currentContext(sessionId) ?? context;
+      context = refresh() ?? context;
       continue;
     }
     let attempt = context.projection.attempts.find(candidate => candidate.attempt_id === result.action_id);
     const canonicalAttemptId = attempt?.attempt_id || nativeSettlement?.attempt_id || result.action_id;
     if (!attempt) attempt = context.projection.attempts.find(candidate => candidate.attempt_id === canonicalAttemptId);
     if (!attempt) {
-      journalAssignmentActions(sessionId, [recoveredAction(context, result, nativeSettlement)], `${actor}:recovered_action`);
-      context = currentContext(sessionId) ?? context;
+      journalAssignmentActions(sessionId, [recoveredAction(context, result, nativeSettlement)], `${actor}:recovered_action`, {
+        ...(options.binding ? { binding: options.binding } : {})
+      });
+      context = refresh() ?? context;
       attempt = context.projection.attempts.find(candidate => candidate.attempt_id === canonicalAttemptId);
     }
     if (!attempt) continue;
@@ -363,18 +404,18 @@ export function journalAssignmentToolResults(
     const hostLocalAttemptTransportBound = nativeAttemptConflict && options.transportBoundAttemptId === attempt.attempt_id;
     if (nativeAttemptConflict) {
       quarantineResult(context, result, actor, "native_settlement_attempt_binding_conflict");
-      context = currentContext(sessionId) ?? context;
+      context = refresh() ?? context;
     }
     if (nativeSettlement && nativeSettlement.requested_effect !== attempt.requested_effect) {
       quarantineResult(context, result, actor, "native_settlement_requested_effect_conflict");
-      context = currentContext(sessionId) ?? context;
+      context = refresh() ?? context;
       continue;
     }
     if (result.request_effect && result.request_effect !== attempt.requested_effect) {
       // Preserve the lower-authority contradiction without allowing it to
       // rewrite the original planned action or a bound native settlement.
       quarantineResult(context, result, actor, "tool_result_requested_effect_conflict_ignored");
-      context = currentContext(sessionId) ?? context;
+      context = refresh() ?? context;
     }
     const attemptContext: JournalContext = {
       ...context,
