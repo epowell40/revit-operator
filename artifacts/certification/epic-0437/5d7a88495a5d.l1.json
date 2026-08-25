@@ -876,7 +876,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:063d8642b195380cc45f4357f7b1f8aba115d5d5335ef68abd93dee14b01a4f5"
+      "sha256": "sha256:0928553efddac6be4941185ea302417df0a0ded0455d19da5c0e0fc8a42dc49a"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -1637,7 +1637,7 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_projection.ts",
-      "sha256": "sha256:c69435e03eed7f4bc7d517d74725e8ae90b7e9f68b4409d1e0abd72e40336784"
+      "sha256": "sha256:fcc5feabf1398327b82320a5159a1b4c6ddc1d89fe8f08a8df7e2a2424ce7d2e"
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_ref.ts",
@@ -1645,11 +1645,15 @@
     },
     {
       "path": "apps/operator-backend/src/evidence/evidence_store.ts",
-      "sha256": "sha256:fa340bf7499e4184314e042293c60fb23f0f4b03d588a60258493d316d54516b"
+      "sha256": "sha256:d6964d4283d02c2850602301aca51c1362b488741db8e9e0c64f771c4c2b41dd"
     },
     {
       "path": "apps/operator-backend/src/evidence/model_context_budget.ts",
       "sha256": "sha256:7dd9df5395a858322ff827b6f44b58a34123a2861f34bb9137179fafc3a033b2"
+    },
+    {
+      "path": "apps/operator-backend/src/evidence/structured_payload.ts",
+      "sha256": "sha256:a9d6e17e60c544f087627038bc75de33f448a4aba07995a631fa9681d8b8eea9"
     },
     {
       "path": "apps/operator-backend/src/execution_strategy.ts",
@@ -2693,7 +2697,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:1b1ed82cd3af4a116350184eea90427a628e243c2746a1b003a928e9db7b706a"
+      "sha256": "sha256:c006481909d6022a5aea5abb666ab43da4a5090bdd055767b10a8627c5fea1c0"
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_lifecycle.test.ts",
@@ -2781,7 +2785,7 @@
     },
     {
       "path": "apps/operator-backend/test/evidence_projection.test.ts",
-      "sha256": "sha256:ca47b619f4057d97e0e516fd7b64b5da6046f17c9ab50c6c419a9c6ecfc54dfc"
+      "sha256": "sha256:391a7b0e1dba5970f0a98600fd446296cf4fb6d2ad7c619e991006475f9a7d44"
     },
     {
       "path": "apps/operator-backend/test/execution_strategy.test.ts",
@@ -5593,7 +5597,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:928b3d4aaa3e780cc83bb1a172b61ff785b63d49e8507953323891970e85fa3a",
+  "inputs_hash": "sha256:a337c44e1e6eaedad3bf2706200df7c150d3babccae9bcdb6e88301ba6232006",
   "result": {
     "passed": true,
     "checks": [

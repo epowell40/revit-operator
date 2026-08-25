@@ -15,6 +15,7 @@ import {
   type EvidenceTelemetryEventV1
 } from "./evidence_ref.js";
 import { extractDeterministicEvidenceFacts, projectEvidence } from "./evidence_projection.js";
+import { extractMcpStructuredPayload } from "./structured_payload.js";
 
 const SAFE_ID = /^[A-Za-z0-9._:-]{1,240}$/;
 const STRONG_SECRET_PATTERNS = [
@@ -330,6 +331,17 @@ function selectPath(root: unknown, dottedPath: string): unknown {
   return value;
 }
 
+function retrievalRoot(value: unknown): unknown {
+  const row = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  if (!row) return value;
+  const looksLikeMcpEnvelope = Array.isArray(row.content)
+    || Object.prototype.hasOwnProperty.call(row, "structuredContent");
+  if (!looksLikeMcpEnvelope) return value;
+  const structured = extractMcpStructuredPayload(value);
+  const { payload: _untrustedPayload, ...envelope } = row;
+  return structured ? { ...envelope, payload: structured.payload } : envelope;
+}
+
 function filterTargets(value: unknown, targets: Set<string>): unknown {
   if (Array.isArray(value)) return value.filter(item => {
     const text = JSON.stringify(item);
@@ -350,6 +362,7 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   let selection: unknown;
   let complete = false;
   const parsed = parseRaw(bytes, ref.media_type);
+  const selectable = retrievalRoot(parsed);
   if (request.image === true) {
     if (!ref.media_type.startsWith("image/")) throw new Error("Selected evidence is not an image.");
     if (bytes.length > maxBytes) throw new Error("Selected image exceeds the authorized retrieval byte limit.");
@@ -361,7 +374,7 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     selection = bytes.subarray(start, Math.min(bytes.length, start + length)).toString("utf8");
     complete = start === 0 && length >= bytes.length;
   } else if (request.item_range) {
-    const array = selectPath(parsed, request.item_range.path);
+    const array = selectPath(selectable, request.item_range.path);
     if (!Array.isArray(array)) throw new Error("item_range.path must select an array.");
     const start = Math.max(0, Math.trunc(request.item_range.start));
     const count = Math.max(1, Math.min(Math.trunc(request.item_range.count), 256));
@@ -369,9 +382,9 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
     complete = start === 0 && count >= array.length;
   } else if (Array.isArray(request.fields) && request.fields.length > 0) {
     if (request.fields.length > 64) throw new Error("At most 64 typed fields may be retrieved.");
-    selection = Object.fromEntries(request.fields.map(field => [field, selectPath(parsed, field)]));
+    selection = Object.fromEntries(request.fields.map(field => [field, selectPath(selectable, field)]));
   } else if (Array.isArray(request.target_subset) && request.target_subset.length > 0) {
-    selection = filterTargets(parsed, new Set(request.target_subset.map(target => safeBounded(target, 160, "target_subset", true))));
+    selection = filterTargets(selectable, new Set(request.target_subset.map(target => safeBounded(target, 160, "target_subset", true))));
   } else {
     throw new Error("Focused retrieval requires fields, item_range, text_range, target_subset, or image selection.");
   }
