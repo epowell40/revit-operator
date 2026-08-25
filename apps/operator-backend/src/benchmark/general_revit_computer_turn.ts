@@ -15,6 +15,14 @@ export type GeneralRevitComputerTurnResult = {
   messageId: string;
 };
 
+export type ComputerClarificationResponse = {
+  clarification_id: string;
+  supplied_values: Record<string, string | number | boolean | null>;
+};
+
+type ComputerTurnTelemetrySource = Pick<GeneralRevitComputerTurnResult,
+  "state" | "runResponse" | "modelTelemetryRecovery">;
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
@@ -27,6 +35,55 @@ export function pendingComputerClarification(state: JsonRecord): JsonRecord {
   return {};
 }
 
+/**
+ * Bind candidate-visible structured input to the canonical clarification shape.
+ * A one-field interaction is unambiguous even when the external manifest and
+ * the controller use different safe naming conventions. Multi-field or
+ * otherwise ambiguous responses remain fail-closed.
+ */
+export function bindComputerClarificationResponse(
+  pendingValue: unknown,
+  suppliedValue: unknown
+): ComputerClarificationResponse {
+  const pending = record(pendingValue);
+  const clarificationId = String(pending.clarification_id || pending.id || "").trim();
+  const missingFields = Array.isArray(pending.missing_fields)
+    ? pending.missing_fields
+      .map(value => typeof value === "string" ? value.trim() : "")
+      .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index)
+    : [];
+  const supplied = record(suppliedValue);
+  const suppliedKeys = Object.keys(supplied);
+  if (!clarificationId || missingFields.length === 0) {
+    throw new Error("benchmark_clarification_response_binding_missing");
+  }
+  const exact = suppliedKeys.length === missingFields.length
+    && suppliedKeys.every(key => missingFields.includes(key));
+  if (exact) {
+    return {
+      clarification_id: clarificationId,
+      supplied_values: Object.fromEntries(missingFields.map(field => [field, supplied[field]])) as ComputerClarificationResponse["supplied_values"]
+    };
+  }
+  if (missingFields.length === 1 && suppliedKeys.length === 1) {
+    return {
+      clarification_id: clarificationId,
+      supplied_values: { [missingFields[0]!]: supplied[suppliedKeys[0]!] } as ComputerClarificationResponse["supplied_values"]
+    };
+  }
+  throw new Error("benchmark_clarification_response_fields_mismatch");
+}
+
+export function modelCallReceiptsFromComputerTurns(
+  turns: ComputerTurnTelemetrySource[]
+): JsonRecord[] {
+  return modelCallReceiptsFromSources(...turns.flatMap(turn => [
+    turn.runResponse,
+    turn.state,
+    turn.modelTelemetryRecovery
+  ]));
+}
+
 export async function executeGeneralRevitComputerTurn(args: {
   baseUrl: string;
   caseId: string;
@@ -37,7 +94,7 @@ export async function executeGeneralRevitComputerTurn(args: {
   timeoutMs: number;
   requestJson: RequestJson;
   recoverTimedOutModelTelemetry: (baseUrl: string, state: JsonRecord) => Promise<JsonRecord>;
-  clarificationResponse?: { clarification_id: string; supplied_values: Record<string, string | number | boolean | null> };
+  clarificationResponse?: ComputerClarificationResponse;
 }): Promise<GeneralRevitComputerTurnResult> {
   let runResponse: JsonRecord = {};
   let transportError = "";
