@@ -519,6 +519,10 @@
       "sha256": "sha256:e6c6597ad521e12bbe78318fbff602d163e7dc5b279de19c3153ca0bb26415d7"
     },
     {
+      "path": "apps/operator-backend/src/assignments/outcome_handoff.ts",
+      "sha256": "sha256:8f65c75c70dbbea83edc225e6a200734863247d8b6cd9feb54c8fe69b12857bd"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/progressive_delivery.ts",
       "sha256": "sha256:7b35f3529bfa5f1e6502b821c34e96faa1d3b72b79499e89c11db4c5cf96fde0"
     },
@@ -872,7 +876,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:76b5a416f0f741df3dc07c5be0b1cdee59227f67007abc917a88cbda735f0b5a"
+      "sha256": "sha256:063d8642b195380cc45f4357f7b1f8aba115d5d5335ef68abd93dee14b01a4f5"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -1461,7 +1465,7 @@
     },
     {
       "path": "apps/operator-backend/src/contracts.ts",
-      "sha256": "sha256:423255e0df03739fe2c0ce472cf53cfaf0de06a9c2698eaf8cf1836355d3b219"
+      "sha256": "sha256:df0f1b05c6d535e4a3e156e610c01c47831597df60e0bf9277c58824ae4c7c02"
     },
     {
       "path": "apps/operator-backend/src/courier/active_job_index.ts",
@@ -2561,7 +2565,7 @@
     },
     {
       "path": "apps/operator-backend/test/agent_response_policy.test.ts",
-      "sha256": "sha256:bdc5de65778cb41996c4400bb6c99e354519dba5f3f2643acbd4470e99ba6483"
+      "sha256": "sha256:729ab26e36d85302e38692d95195e7ece099507635973ec1c43efb3e17e1c93d"
     },
     {
       "path": "apps/operator-backend/test/allowlist.test.ts",
@@ -2598,6 +2602,10 @@
     {
       "path": "apps/operator-backend/test/assignment_noop_completion.test.ts",
       "sha256": "sha256:119b8ec67738b43c8be33ed6847c89f60b58fce47a650926cfe761e96688a157"
+    },
+    {
+      "path": "apps/operator-backend/test/assignment_outcome_handoff.test.ts",
+      "sha256": "sha256:0bf4b370d74dfc46ce0cd20496b08d5c2528863c66cfffb4af0471da8e7fce04"
     },
     {
       "path": "apps/operator-backend/test/assignment_projection.test.ts",
@@ -5585,7 +5593,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:24a031f9029f1c4fe1f62f3a04cd131e095afc406fd465d4366695e8f4e5676e",
+  "inputs_hash": "sha256:d9571752c095ec4d4a2f68c45149193e2acb6125b4923c0011a5892b278deb6c",
   "result": {
     "passed": true,
     "checks": [

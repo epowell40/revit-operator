@@ -123,12 +123,40 @@ export type ModelCallReceipt = {
   turn_id?: string;
 };
 
+/**
+ * Bounded authenticated handoff of canonical Assignment truth established by
+ * the same `/chat` request. This is a projection of the durable control plane,
+ * not a second settlement record and never carries credentials or raw evidence.
+ */
+export type CanonicalAssignmentOutcomeV1 = {
+  schema: "revit-operator.canonical-assignment-outcome/v1";
+  assignment_id: string;
+  run_id: string;
+  generation: number;
+  session_id: string;
+  requested_effect: "read" | "preview" | "apply" | null;
+  outcome_state: "active" | "awaiting_user_input" | "awaiting_user_review" | "complete" | "complete_with_issues" | "verified_noop" | "blocked" | "failed";
+  terminal_state: "open" | "verified" | "complete" | "blocked" | "failed" | "canceled";
+  terminal_reason: string | null;
+  quiescent: boolean;
+  pending_clarification: {
+    clarification_id: string;
+    question: string;
+    missing_fields: string[];
+  } | null;
+  pending_review_id: string | null;
+  last_event_at: string | null;
+  authority: "canonical_assignment_control_plane";
+};
+
 export type ChatResponse = {
   version: typeof OPERATOR_BACKEND_CONTRACT_VERSION;
   assistant_message: string;
   actions: ActionCall[];
   /** Provider-call metadata only. Never contains prompts or model output. */
   model_call_receipts?: ModelCallReceipt[];
+  /** Exact authenticated Assignment outcome after the inner turn settles. */
+  canonical_assignment_outcome?: CanonicalAssignmentOutcomeV1;
   execution_strategy_evidence?: {
     schema: "revit-operator.execution-strategy-evidence.v1";
     selected_substrate: "typed_capability" | "typed_capability_composition" | "dynamic_revit_program";
