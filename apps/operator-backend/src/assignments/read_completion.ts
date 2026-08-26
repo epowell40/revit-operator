@@ -342,8 +342,13 @@ function selectionRoot(root: unknown, path: string): unknown {
   if (hasStructuredContent && textHasStructuredJson && !equivalent(structuredContent, decodedText)) return undefined;
   const explicitContentPath = path === "content.0.text" || path.startsWith("content.0.text.");
   if (explicitContentPath) return root;
-  if (hasStructuredContent) return structuredContent;
-  return textHasStructuredJson ? decodedText : undefined;
+  const payload = hasStructuredContent ? structuredContent : textHasStructuredJson ? decodedText : undefined;
+  if (payload === undefined) return undefined;
+  // EvidenceProjection and focused retrieval deliberately expose an MCP
+  // result's authenticated structured value below `payload`. Accept that
+  // same deterministic namespace during canonical verification while keeping
+  // direct payload-relative selectors compatible with earlier claims.
+  return path === "payload" || path.startsWith("payload.") ? { payload } : payload;
 }
 
 function selected(root: unknown, path: string): unknown {
