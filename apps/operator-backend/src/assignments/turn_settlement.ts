@@ -14,6 +14,7 @@ import {
 } from "./control_plane.js";
 import { appendAssignmentEvent } from "./control_plane_store.js";
 import { validateLatestReadCompletionClaim } from "./read_completion.js";
+import { ASSIGNMENT_CLARIFICATION_SCHEMA, requestAssignmentClarification } from "./interaction.js";
 
 type TeammateReceipt = NonNullable<ChatResponse["teammate_loop_receipt"]>;
 
@@ -209,6 +210,43 @@ function settleVerifiedNoop(projection: AssignmentControlPlaneProjection): { pro
   return { projection, verified: false };
 }
 
+function settleMissingInputClarification(
+  sessionId: string,
+  projection: AssignmentControlPlaneProjection,
+  requestedEffect: AssignmentRequestedEffect,
+  receipt?: TeammateReceipt | null
+): AssignmentControlPlaneProjection {
+  if (requestedEffect !== "apply" || projection.terminal_state !== "open"
+      || projection.pending_clarification_id || projection.attempts.some(attempt => attempt.requested_effect === "apply")) {
+    return projection;
+  }
+  const missingFields = [...new Set((receipt?.missing_required_inputs ?? [])
+    .map(value => `${value || ""}`.trim())
+    .filter(Boolean))].slice(0, 32);
+  if (!missingFields.length) return projection;
+  const question = missingFields.length === 1 && missingFields[0] === "replacement_text"
+    ? "What exact replacement wording should I use?"
+    : `What exact value should I use for ${missingFields.join(", ")}?`;
+  const completedWork = projection.attempts
+    .filter(attempt => attempt.requested_effect === "read" && attempt.dispatch.state === "acknowledged")
+    .flatMap(attempt => attempt.target_identities.length
+      ? [`Grounded ${attempt.target_identities.join(", ")}.`]
+      : [])
+    .slice(-8);
+  return requestAssignmentClarification({
+    schema: ASSIGNMENT_CLARIFICATION_SCHEMA,
+    assignment_id: projection.assignment_id,
+    run_id: projection.run_id ?? "",
+    generation: projection.generation,
+    session_id: sessionId,
+    missing_fields: missingFields,
+    question,
+    reason: "desired_postcondition_missing",
+    completed_work: completedWork,
+    affected_subtasks: ["Apply and verify the requested mutation after the missing value is supplied."]
+  }, "assignment_turn_missing_input_guard").projection;
+}
+
 export function settleAssignmentTurn(
   sessionId: string,
   requestedEffect: AssignmentRequestedEffect,
@@ -220,6 +258,7 @@ export function settleAssignmentTurn(
     return { projection: null, completed: false, verified_noop: false, successful_tools: 0, reason: "canonical_run_not_started" };
   }
   let projection = settleTeammateReceipt(state.projection, teammateReceipt);
+  projection = settleMissingInputClarification(sessionId, projection, requestedEffect, teammateReceipt);
   let verifiedNoop = false;
   let noopReason: string | null = null;
   if (projection.terminal_state === "open" && requestedEffect === "apply"

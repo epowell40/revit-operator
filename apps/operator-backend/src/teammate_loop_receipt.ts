@@ -4,7 +4,7 @@ type TeammateReceipt = NonNullable<ChatResponse["teammate_loop_receipt"]>;
 export type SuccessfulPreviewReceipt = NonNullable<TeammateReceipt["preview_receipts"]>[number];
 
 type TeammateReceiptState = {
-  contract: Pick<TeammateReceipt, "turn_kind" | "context_state" | "stage">;
+  contract: Pick<TeammateReceipt, "turn_kind" | "context_state" | "stage"> & { required_user_inputs: string[] };
   preview_action_ids: string[];
   preview_receipts: SuccessfulPreviewReceipt[];
   apply_action_id: string | null;
@@ -23,6 +23,7 @@ export function successfulPreviewReceipt(actionId: string, path: string, evidenc
 
 export function buildTeammateLoopReceipt(state: TeammateReceiptState): TeammateReceipt {
   const previewReceipts = state.preview_receipts.slice(-8);
+  const missingRequiredInputs = [...new Set(state.contract.required_user_inputs)].slice(0, 32);
   return {
     schema: "revit-operator.teammate-loop-receipt.v1",
     turn_kind: state.contract.turn_kind,
@@ -40,6 +41,7 @@ export function buildTeammateLoopReceipt(state: TeammateReceiptState): TeammateR
     verification_mode: state.verification_mode,
     verification_action_id: state.verification_action_id,
     verification_evidence_sha256: state.verification_evidence_sha256,
-    blocked_reason: state.blocked_reason
+    blocked_reason: state.blocked_reason,
+    ...(missingRequiredInputs.length > 0 ? { missing_required_inputs: missingRequiredInputs } : {})
   };
 }

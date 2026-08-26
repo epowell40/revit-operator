@@ -136,6 +136,51 @@ test("missing mutation input creates a durable nonterminal clarification and nev
   assert.equal(settled.reason, "required_input_missing");
 }));
 
+test("a host-detected opaque mutation input creates the clarification even when the model only returns", () => workspace(() => {
+  const sessionId = "interaction-host-guard";
+  const { goal } = assignment(sessionId);
+  journalAssignmentActions(sessionId, [{
+    action_id: "ground-note", method: "POST", path: "/revit/find-text-notes", request_effect: "read",
+    body: { selected_only: true, elementIds: [1478627] }
+  }], "test");
+  journalAssignmentToolResults(sessionId, [{
+    action_id: "ground-note", method: "POST", path: "/revit/find-text-notes", request_effect: "read",
+    status: "done", request_dispatched: true,
+    result_json: { canonical_attempt_settlement: {
+      schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "ground-note", requested_effect: "read",
+      method: "POST", path: "/revit/find-text-notes", request_dispatched: true, effect_state: "none",
+      effect_reason: "read_has_no_persistent_effect", effect_authority: "native_host",
+      affected_target_identities: ["element_id:1478627"], receipt_refs: ["native:ground-note"]
+    } }
+  }], "test");
+
+  const settled = settleAssignmentTurn(sessionId, "apply", {
+    schema: "revit-operator.teammate-loop-receipt.v1",
+    turn_kind: "mutation", context_state: "live", stage: "clarify",
+    preview_action_ids: [], preview_receipts: [], apply_action_id: null,
+    verification_action_ids: [], apply_attempts: 0, verified: false,
+    verification_mode: "none", verification_action_id: null,
+    verification_evidence_sha256: null,
+    blocked_reason: "desired_postcondition_missing_authenticated_user_input",
+    missing_required_inputs: ["replacement_text"]
+  });
+
+  assert.equal(settled.completed, false);
+  assert.equal(settled.verified_noop, false);
+  assert.equal(settled.reason, "required_input_missing");
+  assert.equal(settled.projection?.terminal_state, "open");
+  assert.equal(settled.projection?.outcome_state, "awaiting_user_input");
+  assert.equal(settled.projection?.clarifications.length, 1);
+  assert.equal(settled.projection?.clarifications[0]?.question, "What exact replacement wording should I use?");
+  assert.deepEqual(settled.projection?.clarifications[0]?.missing_fields, ["replacement_text"]);
+  assert.equal(settled.projection?.attempts.some(attempt => attempt.requested_effect === "apply"), false);
+  assert.equal(getGoal(goal.id)?.status, "paused");
+  const workReturn = listWorkReturns(goal.id).at(-1)!;
+  assert.equal(workReturn.status, "awaiting_user_input");
+  assert.equal(workReturn.clarification_id, settled.projection?.pending_clarification_id);
+  assert.equal(verifyWorkReturnHash(workReturn), true);
+}));
+
 test("authenticated response resumes the same Assignment, run, and generation after restart", () => workspace(() => {
   const { goal, run } = runWithRequestContext({ principal }, () => assignment("principal-session", principal.user_id));
   const requested = runWithRequestContext({ principal }, () => requestInput(goal.id, run.runId, run.generation, "principal-session"));

@@ -82,7 +82,12 @@ function requestedEffect(effect: TeammateMcpEffect): AssignmentRequestedEffect {
   throw new Error("assignment_tool_effect_unclassified");
 }
 
-function attemptPurpose(effect: TeammateMcpEffect) {
+function attemptPurpose(effect: TeammateMcpEffect, projection: AssignmentControlPlaneProjection) {
+  const currentAttempts = projection.attempts.filter(attempt => attempt.generation === projection.generation);
+  if (["read", "navigation", "evidence_read"].includes(effect)) {
+    if (projection.unresolved_unknown_attempt_ids.length > 0) return "reconciliation" as const;
+    if (currentAttempts.some(attempt => attempt.effect.state === "applied")) return "verification" as const;
+  }
   if (effect === "discovery" || effect === "evidence_read" || effect === "interaction" || effect === "navigation" || effect === "completion_claim") return effect;
   return "action" as const;
 }
@@ -228,7 +233,7 @@ export function openAssignmentToolLease(input: {
   };
   const projection = journalAssignmentActions(input.session_id, [action], "codex_app_server", {
     tool_identity: tool,
-    purpose: attemptPurpose(input.gate.call.effect),
+    purpose: attemptPurpose(input.gate.call.effect, context.projection),
     lease: {
       provider_turn_id: providerTurnId,
       provider_call_id: providerCallId,
