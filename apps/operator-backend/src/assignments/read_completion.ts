@@ -19,6 +19,7 @@ import {
   type AssignmentControlPlaneProjection
 } from "./control_plane.js";
 import { appendAssignmentEvent } from "./control_plane_store.js";
+import { groupingSelectorsCoverRequestedDimensions } from "./read_completion_grouping.js";
 
 export const READ_COMPLETION_CLAIM_SCHEMA = "revit-operator.assignment-read-completion-claim/v1" as const;
 
@@ -476,22 +477,8 @@ function taskShapeReason(goal: GoalRecord, claim: ReadCompletionClaimV1): string
   const requestedDimensions = ["family", "type", "category", "level", "system", "circuit", "room", "space", "host"]
     .filter(dimension => groupingClauses.some(clause => new RegExp(`\\b${dimension}\\b`, "i").test(clause)));
   if (requiresGrouping && requestedDimensions.length > 0) {
-    const genericSelectorTokens = new Set(["name", "id", "identity", "value", "key", "label", "number", "code"]);
-    const selectorDimension = (field: string): string | null => {
-      const tokens = field.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase()
-        .split(/[^a-z0-9]+/).filter(Boolean)
-        .map(token => token === "families" ? "family" : token === "types" ? "type" : token);
-      const dimensions = requestedDimensions.filter(dimension => tokens.includes(dimension));
-      if (dimensions.length !== 1) return null;
-      return tokens.every(token => token === dimensions[0] || genericSelectorTokens.has(token)) ? dimensions[0] : null;
-    };
     const completeGrouping = assertions.filter(assertion => assertion.operation === "group_count")
-      .some(assertion => {
-        const mapped = (assertion.group_by ?? []).map(selectorDimension);
-        const dimensions = new Set(mapped.filter(Boolean));
-        return mapped.every(Boolean) && dimensions.size === requestedDimensions.length
-          && requestedDimensions.every(dimension => dimensions.has(dimension));
-      });
+      .some(assertion => groupingSelectorsCoverRequestedDimensions(assertion.group_by ?? [], requestedDimensions));
     if (!completeGrouping) {
       return "read_completion_criteria_incomplete";
     }
