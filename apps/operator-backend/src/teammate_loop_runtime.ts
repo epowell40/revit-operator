@@ -528,11 +528,11 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const expected_values = expectedValues(args, operation !== "create");
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation, raw_body: args });
   if (isTeammateDiscoveryTool(tool)) return call("discovery");
-  // Durable EvidenceRef expansion is an explicitly certified, bounded host
-  // read. It neither calls Revit nor creates fresh verification truth, so it
-  // must not enter typed-Revit tool discovery or consume the Revit budget.
+  // Durable EvidenceRef expansion is a bounded certified host read. It neither
+  // calls Revit nor creates fresh truth or consumes the Revit discovery budget.
   if (tool === "operator_retrieve_evidence") return call("evidence_read");
   if (tool === "operator_request_clarification") return call("interaction");
+  if (tool === "operator_request_assignment_input") return call("interaction"); if (tool === "operator_evaluate_assignment_criteria") return call("completion_claim");
   if (tool === "operator_submit_noop_completion") return call("completion_claim");
   if (tool === "operator_submit_read_completion") return call("completion_claim");
   if (tool === "web_fetch_evidence") return call("read");

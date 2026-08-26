@@ -33,6 +33,38 @@ foreach ($file in $domainFiles) {
   }
 }
 
+# The registry is the reviewed inventory of authoritative effect/outcome fields.
+# These declaration checks make introducing another mutable owner an explicit
+# architecture change instead of an unnoticed TypeScript addition.
+$requestedEffectDeclarations = @($domainFiles | ForEach-Object {
+  $relative = $_.FullName.Substring($domainRoot.Length).TrimStart('\', '/').Replace('\', '/')
+  $count = @([regex]::Matches((Get-Content -Raw -LiteralPath $_.FullName), '(?m)^\s*requested_effect\??\s*:')).Count
+  if ($count -gt 0) { [pscustomobject]@{ Path = $relative; Count = $count } }
+})
+$expectedRequestedEffect = @{
+  'assignment_spec.ts' = 2
+  'operation.ts' = 1
+}
+foreach ($declaration in $requestedEffectDeclarations) {
+  if (-not $expectedRequestedEffect.ContainsKey($declaration.Path) -or $expectedRequestedEffect[$declaration.Path] -ne $declaration.Count) {
+    $violations.Add("$($declaration.Path) introduces an unreviewed authoritative requested_effect declaration")
+  }
+}
+foreach ($expectedPath in $expectedRequestedEffect.Keys) {
+  if (-not ($requestedEffectDeclarations | Where-Object { $_.Path -eq $expectedPath })) {
+    $violations.Add("$expectedPath no longer contains the reviewed requested_effect declarations")
+  }
+}
+
+$outcomeDeclarations = @($domainFiles | ForEach-Object {
+  $relative = $_.FullName.Substring($domainRoot.Length).TrimStart('\', '/').Replace('\', '/')
+  $count = @([regex]::Matches((Get-Content -Raw -LiteralPath $_.FullName), '(?m)^\s*outcome\??\s*:')).Count
+  if ($count -gt 0) { [pscustomobject]@{ Path = $relative; Count = $count } }
+})
+if ($outcomeDeclarations.Count -ne 1 -or $outcomeDeclarations[0].Path -ne 'snapshot.ts' -or $outcomeDeclarations[0].Count -ne 1) {
+  $violations.Add("AssignmentSnapshotV2.outcome must remain the only independently stored Assignment outcome field")
+}
+
 $backendSource = Join-Path $RepoRoot "apps/operator-backend/src"
 $projectionRoots = @("work_returns", "work_packets", "benchmark")
 foreach ($projectionRoot in $projectionRoots) {

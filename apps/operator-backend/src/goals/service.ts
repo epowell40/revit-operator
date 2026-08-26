@@ -16,6 +16,8 @@ import {
   type AssignmentControlPlaneLog
 } from "../assignments/control_plane.js";
 import { persistVerifiedWorkPacket } from "../work_packets/store.js";
+import type { AssignmentKernelJournalRecordV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { formatAssignmentKernelV2GoalContext } from "./assignment_kernel_v2_prompt.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -179,6 +181,7 @@ export type GoalRecord = {
   error?: string | null;
   blocker?: string | null;
   assignment_control_plane?: AssignmentControlPlaneLog;
+  assignment_kernel_v2?: AssignmentKernelJournalRecordV2;
 };
 
 export type GoalCreateInput = {
@@ -1137,7 +1140,10 @@ export function markAgentGoalComplete(sessionId: string, evidence?: unknown): Go
 }
 
 export function formatActiveGoalContext(goal: GoalRecord | null): string {
-  if (!goal || goal.status !== "active") return "";
+  if (!goal) return "";
+  const kernelV2 = formatAssignmentKernelV2GoalContext(goal);
+  if (kernelV2 !== null) return kernelV2;
+  if (goal.status !== "active") return "";
   const control = reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection;
   const recentAttempts = control.attempts.slice(-8).map(attempt =>
     `- ${attempt.attempt_id} [${attempt.purpose}/${attempt.requested_effect}] ${attempt.action_path} effect=${attempt.effect.state} authority=${attempt.effect.authority} verification=${attempt.verification.state}`);

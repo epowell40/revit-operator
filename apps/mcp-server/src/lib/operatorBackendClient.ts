@@ -11,6 +11,9 @@ export const EVIDENCE_RETRIEVE_PATH = "/evidence/retrieve";
 export const READ_COMPLETION_CLAIM_PATH = "/api/assignments/read-completion-claims";
 export const ASSIGNMENT_CLARIFICATION_PATH = "/api/assignments/clarifications";
 export const NOOP_COMPLETION_CLAIM_PATH = "/api/assignments/noop-completion-claims";
+export const ASSIGNMENT_V2_CRITERIA_PATH = "/api/assignments/v2/criteria/evaluate";
+export const ASSIGNMENT_V2_CLARIFICATION_PATH = "/api/assignments/v2/clarifications";
+export const ASSIGNMENT_V2_INPUT_PATH = "/api/assignments/v2/inputs";
 
 export type SemanticMepRoutePlanInput = {
   userText: string;
@@ -69,6 +72,15 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
     },
     async submitReadCompletionClaim(input: unknown): Promise<unknown> {
       return await post(READ_COMPLETION_CLAIM_PATH, input, "Operator read-completion claim");
+    },
+    async evaluateAssignmentCriteriaV2(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_V2_CRITERIA_PATH, input, "Operator V2 criterion evaluation");
+    },
+    async requestAssignmentInputV2(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_V2_CLARIFICATION_PATH, input, "Operator V2 clarification");
+    },
+    async supplyAssignmentInputV2(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_V2_INPUT_PATH, input, "Operator V2 input response");
     },
     async retrieveEvidence(input: unknown): Promise<unknown> {
       return await post(EVIDENCE_RETRIEVE_PATH, input, "Operator evidence retrieval");

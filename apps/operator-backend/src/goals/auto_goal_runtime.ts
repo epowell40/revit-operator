@@ -477,7 +477,9 @@ function isLiveRevitObservation(observation: AutoGoalToolObservation): boolean {
   const server = (observation.server ?? "").trim().toLowerCase();
   const tool = observation.tool.trim().toLowerCase();
   if (tool === "operator_retrieve_evidence" || tool === "operator_request_clarification"
-      || tool === "operator_submit_noop_completion" || tool === "operator_submit_read_completion") return false;
+      || tool === "operator_request_assignment_input"
+      || tool === "operator_submit_noop_completion" || tool === "operator_submit_read_completion"
+      || tool === "operator_evaluate_assignment_criteria") return false;
   return server === "revit_operator" || server.startsWith("mcp__revit_operator") || tool.startsWith("revit_");
 }
 

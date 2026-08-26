@@ -13,8 +13,17 @@ export interface AssignmentSnapshotV2 {
   current_binding: AssignmentBindingV2;
   input_values: Readonly<Record<InputVariableIdV2, unknown>>;
   pending_input_variable_ids: readonly InputVariableIdV2[];
+  clarifications: Readonly<Record<string, Readonly<{
+    clarification_id: string;
+    variable_id: InputVariableIdV2;
+    question: string;
+    requested_at: string;
+    resolved_at?: string;
+  }>>>;
   work_unit_states: Readonly<Record<WorkUnitIdV2, AssignmentWorkUnitStateV2>>;
   pending_review_ids: readonly string[];
+  provider_call_ids: readonly string[];
+  provider_budget_exhausted: boolean;
   operations: Readonly<Record<OperationIdV2, OperationV2>>;
   observations: Readonly<Record<ObservationIdV2, ObservationV2>>;
   criteria: Readonly<Record<CriterionIdV2, CriterionEvaluationV2>>;

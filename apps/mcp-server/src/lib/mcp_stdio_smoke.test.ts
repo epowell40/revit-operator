@@ -24,6 +24,8 @@ const certifiedSafeNonRevitAliases = [
   "check_photometrics",
   "fire_damper_audit",
   "operator_discover_capabilities",
+  "operator_evaluate_assignment_criteria",
+  "operator_request_assignment_input",
   "operator_plan_semantic_mep_route",
   "operator_record_execution_strategy",
   "operator_request_clarification",
@@ -227,7 +229,7 @@ test("MCP tools/list opens the legacy catalog only for exact raw development lab
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
   });
-  assert.equal(laboratoryNames.length, 133, "Exact development laboratory mode must preserve the complete catalog plus clarification, evidence retrieval, canonical read/no-op completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
+  assert.equal(laboratoryNames.length, 135, "Exact development laboratory mode must preserve the complete catalog plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, laboratory SafeRead, and bounded move-family aliases.");
   assert.equal(laboratoryNames.filter(name => name.startsWith("revit_")).length, 110, "Exact development laboratory mode must preserve all Revit aliases plus observation, target readback, laboratory SafeRead, and the bounded move-family alias.");
   assert.equal(laboratoryNames.includes("revit_observe_model"), true, "Laboratory mode must expose the typed spatial observation alias.");
   assert.equal(laboratoryNames.includes("operator_record_execution_strategy"), true, "Laboratory mode must expose non-authorizing strategy evidence.");
@@ -420,7 +422,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
 
   const tools = await withTimeout(client.listTools(), "listing MCP tools");
   const names = new Set(tools.tools.map((tool) => tool.name));
-  assert.equal(tools.tools.length, 133, "Laboratory mode must preserve the complete catalog plus clarification, evidence retrieval, canonical read/no-op completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
+  assert.equal(tools.tools.length, 135, "Laboratory mode must preserve the complete catalog plus V2 criterion evaluation, trusted-binding input request, legacy clarification, evidence retrieval, legacy completion, bootstrap discovery, strategy evidence, Dynamic Runtime, observation, target readback, SafeRead, and bounded move-family aliases.");
   assert.equal([...names].filter(name => name.startsWith("revit_")).length, 110, "Laboratory mode must preserve all revit_ aliases plus observation, target readback, SafeRead, and the bounded move-family alias.");
   assert.equal(names.has("revit_observe_model"), true, "Laboratory tools/list must include the typed spatial observation alias.");
   assert.equal(names.has("titleblock_update_text"), true, "Laboratory mode must preserve the legacy non-revit bridge alias.");
@@ -429,6 +431,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
     "operator_plan_semantic_mep_route",
     "operator_record_execution_strategy",
     "operator_request_clarification",
+    "operator_evaluate_assignment_criteria",
+    "operator_request_assignment_input",
     "operator_retrieve_evidence",
     "operator_submit_noop_completion",
     "operator_submit_read_completion",
@@ -454,6 +458,14 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
   const getParametersTool = tools.tools.find(tool => tool.name === "revit_get_parameters");
   const schedulesTool = tools.tools.find(tool => tool.name === "revit_list_schedules");
+  const v2CriteriaTool = tools.tools.find(tool => tool.name === "operator_evaluate_assignment_criteria");
+  const v2InputTool = tools.tools.find(tool => tool.name === "operator_request_assignment_input");
+  for (const tool of [v2CriteriaTool, v2InputTool]) {
+    const properties = (tool?.inputSchema as any)?.properties ?? {};
+    for (const lifecycleField of ["assignmentId", "runId", "generation", "sessionId", "principalId"]) {
+      assert.equal(Object.hasOwn(properties, lifecycleField), false, `${tool?.name} must receive ${lifecycleField} only from trusted request metadata.`);
+    }
+  }
   assert.deepEqual((sheetTool?.inputSchema as any)?.properties?.action?.enum, ["list", "count"]);
   assert.deepEqual((safeReadTool?.inputSchema as any)?.properties, {});
   assert.equal((safeReadTool?.inputSchema as any)?.additionalProperties, false);

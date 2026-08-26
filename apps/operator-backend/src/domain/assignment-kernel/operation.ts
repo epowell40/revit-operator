@@ -39,13 +39,16 @@ export interface OperationV2 {
   result?: OperationResultV2;
   observation_ids: readonly ObservationIdV2[];
   verification_operation_ids: readonly OperationIdV2[];
+  verification_of_operation_id?: OperationIdV2;
   retry_of_operation_id?: OperationIdV2;
   retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered";
   reconciliation_of_operation_id?: OperationIdV2;
   opened_at: string;
   dispatched_at?: string;
+  dispatch_authority?: "mcp" | "backend" | "native" | "dynamic_runtime" | "courier";
   deadline_at: string;
   settled_at?: string;
+  observation_retention_error?: string;
 }
 
 export type NativeTransactionStateV2 = "not_applicable" | "committed" | "rolled_back" | "unknown";

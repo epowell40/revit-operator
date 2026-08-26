@@ -159,7 +159,8 @@ import {
 } from "./assignments/turn_journal.js";
 import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.js";
 import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
-import { prepareAssignmentTurn } from "./assignments/turn_preparation.js";
+import { bindPreparedAssignmentToRequest, prepareAssignmentTurn } from "./assignments/turn_preparation.js";
+import { startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1193,12 +1194,10 @@ const server = http.createServer(async (req, res) => {
         });
         const requestedRunId = trimText((body as any)?.assignment_run_id ?? (body as any)?.assignmentRunId, 200);
         const assignmentRun = (body as any)?.start_assignment_run === true
-          ? ensureAssignmentRunForTurn(
-              sessionId,
-              requestedRunId || `external:${randomUUID()}`,
-              trimText((body as any)?.assignment_run_actor, 160) || "external_assignment_controller",
-              false
-            )
+          ? startExternalAssignmentRun({
+              sessionId, goal, requestedRunId,
+              actor: trimText((body as any)?.assignment_run_actor, 160) || "external_assignment_controller"
+            })
           : null;
         appendNotification(sessionId, "goal.set", `Goal set: ${goal.title}`, { goal_id: goal.id, status: goal.status });
         return writeJson(res, 200, {
@@ -1208,7 +1207,8 @@ const server = http.createServer(async (req, res) => {
             assignment_run: {
               assignment_id: assignmentRun.assignmentId,
               run_id: assignmentRun.runId,
-              generation: assignmentRun.generation
+              generation: assignmentRun.generation,
+              kernel_version: assignmentRun.kernelVersion
             }
           } : {})
         });
@@ -2102,6 +2102,7 @@ const server = http.createServer(async (req, res) => {
           goal_id: goal.id, status: goal.status, signals
         })
       });
+      const boundCanonicalRequest = bindPreparedAssignmentToRequest(canonicalRequest, assignmentBinding);
 
       // Phase 1 journaling: user turn received (even if this is a tool-loop continuation).
       try {
@@ -2124,9 +2125,9 @@ const server = http.createServer(async (req, res) => {
           // ignore
         }
       }
-      const macroResp = isDirectBrainRouteRequest(canonicalRequest)
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isDirectBrainRouteRequest(boundCanonicalRequest)
         ? null
-        : maybeHandleMacroSkill(canonicalRequest);
+        : maybeHandleMacroSkill(boundCanonicalRequest);
 
       let streamClosed = false;
       const send = (event: string, data: unknown) => {
@@ -2279,7 +2280,7 @@ const server = http.createServer(async (req, res) => {
         }, 5_000);
 
         const decision = await decideStreaming(
-          canonicalRequest,
+          boundCanonicalRequest,
           {
             abortSignal: streamAbort.signal,
             onDelta: delta => {
@@ -2294,7 +2295,7 @@ const server = http.createServer(async (req, res) => {
             }
           }
         );
-        journalAssignmentActions(parsed.session_id, decision.actions, "outer_stream_decision");
+        if (assignmentBinding?.kernelVersion !== 2) journalAssignmentActions(parsed.session_id, decision.actions, "outer_stream_decision");
         if (heartbeat) {
           clearInterval(heartbeat);
           heartbeat = null;
@@ -2358,7 +2359,7 @@ const server = http.createServer(async (req, res) => {
           heartbeat = null;
         }
         if (streamAbort.signal.aborted || streamClosed) {
-          if (assignmentBinding) {
+          if (assignmentBinding?.kernelVersion === 1) {
             settleAssignmentProviderFailure(
               parsed.session_id, assignmentBinding.assignmentId, assignmentBinding.runId,
               assignmentBinding.generation, "provider_turn_interrupted_or_stream_closed"
@@ -2511,9 +2512,10 @@ const server = http.createServer(async (req, res) => {
         user_attachments: userAttachments,
         context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked })
       };
-      const macroResp = isDirectBrainRouteRequest(brainRequest)
+      const boundBrainRequest = bindPreparedAssignmentToRequest(brainRequest, assignmentBinding);
+      const macroResp = assignmentBinding?.kernelVersion === 2 || isDirectBrainRouteRequest(boundBrainRequest)
         ? null
-        : maybeHandleMacroSkill(brainRequest);
+        : maybeHandleMacroSkill(boundBrainRequest);
       if (macroResp) {
         macroResp.actions = applyEnvironmentPolicyToActions(macroResp.actions);
         journalAssignmentActions(parsed.session_id, macroResp.actions, "outer_chat_macro");
@@ -2620,14 +2622,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        const decision = await decide({
-          ...(parsed as ChatRequest),
-          context: withServerContext(parsed.context, { dev_agent_unlocked: devUnlocked }),
-          user_text: userTextWithAttachments,
-          tool_results: toolResults,
-          user_attachments: userAttachments
-        });
-        journalAssignmentActions(parsed.session_id, decision.actions, "outer_chat_decision");
+        const decision = await decide(boundBrainRequest);
+        if (assignmentBinding?.kernelVersion !== 2) journalAssignmentActions(parsed.session_id, decision.actions, "outer_chat_decision");
         appendMessage(parsed.session_id, { role: "assistant", text: decision.assistant_message });
         try {
           appendEvent(parsed.session_id, "assistant", "actions", { actions: decision.actions });
@@ -2687,7 +2683,7 @@ const server = http.createServer(async (req, res) => {
         return resp;
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
-        if (assignmentBinding) {
+        if (assignmentBinding?.kernelVersion === 1) {
           settleAssignmentProviderFailure(
             parsed.session_id, assignmentBinding.assignmentId, assignmentBinding.runId,
             assignmentBinding.generation, message

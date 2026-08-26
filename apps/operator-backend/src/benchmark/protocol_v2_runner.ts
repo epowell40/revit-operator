@@ -34,6 +34,20 @@ function records(value: unknown): JsonRecord[] {
 
 function workPacketStatusMatchesTerminal(packet: JsonRecord, assignment: JsonRecord): boolean {
   const status = String(packet.status || "");
+  const kernel = record(assignment.assignment_snapshot_v2);
+  if (kernel.schema === "revit-operator.assignment-snapshot/v2") {
+    const outcome = String(kernel.outcome || "");
+    const terminal = kernel.terminal === true;
+    const hasUnknown = records(kernel.unresolved_unknown_operation_ids).length > 0
+      || (Array.isArray(kernel.unresolved_unknown_operation_ids) && kernel.unresolved_unknown_operation_ids.length > 0);
+    if (status === "verified_complete") return terminal && outcome === "complete" && !hasUnknown;
+    if (status === "verified_no_op") return terminal && outcome === "verified_noop" && !hasUnknown;
+    if (status === "complete_with_issues") return terminal && outcome === "complete_with_issues";
+    if (status === "blocked_truthfully" || status === "awaiting_clarification") return terminal && outcome === "blocked";
+    if (status === "failed") return terminal && outcome === "failed";
+    if (status === "rolled_back") return terminal;
+    return false;
+  }
   const control = record(assignment.control_plane);
   const terminal = String(control.terminal_state || "");
   const attempts = records(control.attempts);
@@ -80,8 +94,12 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const assignmentRows = records(assignmentProjection.assignments);
     const activeControls = assignmentRows.map(row => record(row.control_plane)).filter(control =>
       Number(control.in_flight_count || 0) > 0 || control.quiescent === false);
-    if (activeControls.length > 0) {
+    const activeKernels = assignmentRows.map(row => record(row.assignment_snapshot_v2))
+      .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2"
+        && (kernel.quiescent === false || (Array.isArray(kernel.in_flight_operation_ids) && kernel.in_flight_operation_ids.length > 0)));
+    if (activeControls.length > 0 || activeKernels.length > 0) {
       const ids = activeControls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
+      ids.push(...activeKernels.flatMap(kernel => Array.isArray(kernel.in_flight_operation_ids) ? kernel.in_flight_operation_ids : []).map(String));
       const deadline = activeControls.map(control => String(control.next_in_flight_deadline || "")).filter(Boolean).sort()[0] ?? "unknown";
       throw new Error(`Benchmark Protocol V2 settlement still in flight for ${caseId}: attempts=${ids.join(",") || "unknown"}; deadline=${deadline}.`);
     }
@@ -91,7 +109,8 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       throw new Error(`Benchmark Protocol V2 is missing canonical Revit receipts for ${caseId}.`);
     }
     const canonicalReceipts = records(durableEvidence.canonical_attempt_receipts);
-    if (evaluation.dispatched === true && canonicalReceipts.length === 0) {
+    const kernelOperations = assignmentRows.flatMap(row => Object.values(record(record(row.assignment_snapshot_v2).operations)).map(record));
+    if (evaluation.dispatched === true && canonicalReceipts.length === 0 && kernelOperations.length === 0) {
       throw new Error(`Benchmark Protocol V2 has no canonical action-attempt receipt for dispatched case ${caseId}.`);
     }
     const expectedEffect = String(trace.execution_expected_effect || "");
@@ -102,7 +121,18 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         && Array.isArray(receipt.receipt_refs) && receipt.receipt_refs.length > 0
         && Array.isArray(receipt.evidence_refs) && receipt.evidence_refs.length > 0
         && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
-      if (!validRead) throw new Error(`Benchmark Protocol V2 has no authoritative canonical read receipt for ${caseId}.`);
+      const validKernelRead = assignmentRows.some(row => {
+        const kernel = record(row.assignment_snapshot_v2);
+        if (kernel.schema !== "revit-operator.assignment-snapshot/v2" || kernel.terminal !== true) return false;
+        const observations = record(kernel.observations);
+        return Object.values(record(kernel.operations)).map(record).some(operation =>
+          operation.requested_effect === "read" && operation.dispatch_state === "dispatched"
+          && operation.dispatch_authority === "native" && operation.persistent_effect === "none"
+          && operation.settlement_state === "settled" && String(record(operation.result).receipt_id || "").length > 0
+          && Array.isArray(operation.observation_ids) && operation.observation_ids.length > 0
+          && operation.observation_ids.every(id => Object.hasOwn(observations, String(id))));
+      });
+      if (!validRead && !validKernelRead) throw new Error(`Benchmark Protocol V2 has no authoritative canonical read receipt for ${caseId}.`);
     }
     const packetBundle = record(toolResults.durable_work_packets);
     const packets = records(packetBundle.packets);
@@ -113,14 +143,20 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       || !verifyVerifiedWorkPacketHash(packet as unknown as VerifiedWorkPacketV1))) {
       throw new Error(`Benchmark Protocol V2 Verified Work Packet hash is invalid for ${caseId}.`);
     }
-    const terminalAssignments = assignmentRows.filter(row => String(record(row.control_plane).terminal_state || "") !== "open");
+    const terminalAssignments = assignmentRows.filter(row => {
+      const kernel = record(row.assignment_snapshot_v2);
+      return kernel.schema === "revit-operator.assignment-snapshot/v2"
+        ? kernel.terminal === true
+        : String(record(row.control_plane).terminal_state || "") !== "open";
+    });
     const exactBindings = packets.flatMap(packet => {
       const identity = record(packet.identity);
       const assignment = terminalAssignments.find(row => {
         const assignmentId = String(row.id || row.source_record_id || "").replace(/^goal:/, "");
-        const control = record(row.control_plane);
-        return identity.assignment_id === assignmentId && identity.run_id === control.run_id
-          && identity.generation === control.generation;
+        const kernel = record(row.assignment_snapshot_v2);
+        const binding = kernel.schema === "revit-operator.assignment-snapshot/v2" ? record(kernel.current_binding) : record(row.control_plane);
+        return identity.assignment_id === assignmentId && identity.run_id === binding.run_id
+          && identity.generation === binding.generation;
       });
       return assignment ? [{ packet, assignment }] : [];
     });
@@ -171,9 +207,12 @@ function bestEffortFailureArtifact(args: {
       first_failed_or_uncertain_stage: String(record(trace.protocol_v2_partial).first_failed_or_uncertain_stage || "").trim() || null
     };
   });
-  const controls = traces.flatMap(trace => records(record(record(trace.tool_results).durable_assignment_projection).assignments)
-    .map(row => record(row.control_plane)));
+  const assignmentRows = traces.flatMap(trace => records(record(record(trace.tool_results).durable_assignment_projection).assignments));
+  const controls = assignmentRows.map(row => record(row.control_plane));
+  const kernels = assignmentRows.map(row => record(row.assignment_snapshot_v2))
+    .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2");
   const inFlightAttemptIds = controls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
+  inFlightAttemptIds.push(...kernels.flatMap(kernel => Array.isArray(kernel.in_flight_operation_ids) ? kernel.in_flight_operation_ids : []).map(String));
   const nextDeadline = controls.map(control => String(control.next_in_flight_deadline || "")).filter(Boolean).sort()[0] ?? null;
   const lateReceiptCount = controls.reduce((total, control) => total + Number(control.late_receipt_count || 0), 0);
   const receiptStatus: BenchmarkFinalizationFailureV2["receipt_diagnostics"]["status"] = details.telemetry === "still_in_flight" ? "still_in_flight"

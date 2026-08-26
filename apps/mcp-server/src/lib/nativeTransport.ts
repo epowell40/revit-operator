@@ -295,6 +295,7 @@ export async function callNativeTransport(input: {
   laboratoryPolicyBinding?: LaboratoryPolicyBinding;
   laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
   requestId?: string;
+  onDispatch?: (requestId: string) => void;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<NativeTransportResult> {
@@ -322,6 +323,7 @@ export async function callNativeTransport(input: {
 
   let response: Response;
   try {
+    input.onDispatch?.(request.requestId);
     response = await fetch(`${receipt.url}${NATIVE_TRANSPORT_PATH}`, {
       method: "POST",
       signal: input.signal,

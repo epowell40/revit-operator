@@ -51,6 +51,8 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
   kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, operation.binding), "operation_binding_mismatch", "Operation binding is not current.");
   kernelAssertV2(!snapshot.operations[operation.operation_id], "operation_duplicate", "Operation identity already exists.");
+  kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0 || operation.purpose === "reconciliation",
+    "operation_unknown_effect_requires_reconciliation", "Unknown-effect work must be reconciled before another ordinary operation is admitted.");
   const workUnit = snapshot.spec.work_units.find((candidate) => candidate.work_unit_id === operation.work_unit_id);
   kernelAssertV2(workUnit, "operation_work_unit_unknown", "Operation work unit is not in AssignmentSpecV2.");
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
@@ -64,6 +66,22 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   } else {
     kernelAssertV2(!operation.retry_basis, "operation_retry_basis_unbound", "Retry basis requires a predecessor operation.");
   }
+  if (operation.purpose === "verification") {
+    const subject = operation.verification_of_operation_id
+      ? snapshot.operations[operation.verification_of_operation_id]
+      : undefined;
+    kernelAssertV2(subject?.requested_effect === "apply"
+      && subject.persistent_effect === "applied"
+      && subject.settlement_state === "settled",
+    "operation_verification_subject_invalid", "Verification must bind to one settled applied operation.");
+    kernelAssertV2(Boolean(operation.target.target_id)
+      && operation.target.target_id === subject.target.target_id
+      && operation.target.document_fingerprint === subject.target.document_fingerprint,
+    "operation_verification_target_mismatch", "Verification must inspect the exact applied target in the same document.");
+  } else {
+    kernelAssertV2(!operation.verification_of_operation_id,
+      "operation_verification_relation_unbound", "Only a verification operation may cite an applied operation.");
+  }
   kernelAssertV2(operation.admission_state === "admitted" && operation.dispatch_state === "not_dispatched", "operation_admission_shape_invalid", "A newly admitted operation must not already claim dispatch.");
   kernelAssertV2(operation.persistent_effect === "none" && operation.settlement_state === "open" && !operation.settled_at && !operation.result, "operation_admission_effect_invalid", "A newly admitted operation cannot claim a result, persistent effect, or settlement.");
 }
@@ -73,6 +91,10 @@ function validateResult(operation: OperationV2, result: OperationResultV2): void
   kernelAssertV2(sameAssignmentBindingV2(operation.binding, result.binding), "operation_result_binding_mismatch", "Result binding is incorrect.");
   if (result.status === "failed_before_dispatch") {
     kernelAssertV2(result.dispatch_state === "not_dispatched" && result.persistent_effect === "none", "operation_result_predispatch_invalid", "Pre-dispatch failure must prove no effect.");
+  } else if (result.dispatch_state === "dispatching") {
+    kernelAssertV2(operation.dispatch_state === "dispatching", "operation_result_dispatch_unproven", "An indeterminate dispatch result requires an operation at the MCP dispatch boundary.");
+    kernelAssertV2(result.status !== "succeeded" && result.persistent_effect === (operation.requested_effect === "apply" ? "unknown" : "none"),
+      "operation_result_dispatch_indeterminate_invalid", "Indeterminate dispatch may be unknown only for apply and cannot claim success.");
   } else {
     kernelAssertV2(operation.dispatch_state === "dispatched" && result.dispatch_state === "dispatched", "operation_result_dispatch_unproven", "A post-dispatch result requires an explicit native dispatch event.");
   }
@@ -98,6 +120,21 @@ function mergeEvaluation(previous: CriterionEvaluationV2 | undefined, next: Crit
     supporting_facts: [...previous.supporting_facts, ...next.supporting_facts],
     reason: `Conflicting authoritative criterion evaluations: ${previous.status} versus ${next.status}.`
   };
+}
+
+function projectWorkUnitCriteria(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 {
+  const states = { ...snapshot.work_unit_states };
+  for (const unit of snapshot.spec.work_units) {
+    if (unit.criterion_ids.length === 0) continue;
+    const evaluations = unit.criterion_ids.map(id => snapshot.criteria[id]).filter(Boolean);
+    if (evaluations.length !== unit.criterion_ids.length) continue;
+    if (evaluations.every(row => row!.status === "pass" || row!.status === "not_applicable")) {
+      states[unit.work_unit_id] = "complete";
+    } else if (unit.safe_to_retain && evaluations.some(row => row!.status === "pass" || row!.status === "partial")) {
+      states[unit.work_unit_id] = "retained";
+    }
+  }
+  return { ...snapshot, work_unit_states: states };
 }
 
 function validateCriterionEvaluation(snapshot: AssignmentSnapshotV2, evaluation: CriterionEvaluationV2): void {
@@ -140,8 +177,10 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       current_binding: structuredClone(event.binding),
       input_values: inputValues,
       pending_input_variable_ids: event.spec.input_variables.filter((input) => input.required && input.value_state !== "known").map((input) => input.variable_id).sort(),
+      clarifications: {},
       work_unit_states: Object.fromEntries(event.spec.work_units.map((unit) => [unit.work_unit_id, "pending"])),
       pending_review_ids: [],
+      provider_call_ids: [], provider_budget_exhausted: false,
       operations: {}, observations: {}, criteria: {}, outcome: "active", terminal: false,
       in_flight_operation_ids: [], unresolved_unknown_operation_ids: [], quiescent: true
     });
@@ -179,7 +218,14 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(input, "input_variable_unknown", "Input variable is not in AssignmentSpecV2.");
         kernelAssertV2(!state.clarificationByVariable.has(event.variable_id), "input_clarification_already_pending", "Input variable already has an unresolved clarification.");
         state.clarificationByVariable.set(event.variable_id, event.clarification_id);
-        snapshot = { ...snapshot, pending_input_variable_ids: [...new Set([...snapshot.pending_input_variable_ids, event.variable_id])].sort() };
+        snapshot = {
+          ...snapshot,
+          pending_input_variable_ids: [...new Set([...snapshot.pending_input_variable_ids, event.variable_id])].sort(),
+          clarifications: { ...snapshot.clarifications, [event.clarification_id]: {
+            clarification_id: event.clarification_id, variable_id: event.variable_id,
+            question: event.question, requested_at: event.occurred_at
+          } }
+        };
         break;
       }
       case "input_supplied":
@@ -188,18 +234,57 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         snapshot = {
           ...snapshot,
           input_values: { ...snapshot.input_values, [event.variable_id]: structuredClone(event.value) },
-          pending_input_variable_ids: snapshot.pending_input_variable_ids.filter((id) => id !== event.variable_id)
+          pending_input_variable_ids: snapshot.pending_input_variable_ids.filter((id) => id !== event.variable_id),
+          clarifications: {
+            ...snapshot.clarifications,
+            [event.clarification_id]: { ...snapshot.clarifications[event.clarification_id]!, resolved_at: event.occurred_at }
+          }
         };
+        break;
+      case "provider_call_recorded":
+        kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider-call telemetry requires a stable call identity.");
+        snapshot = { ...snapshot, provider_call_ids: [...new Set([...snapshot.provider_call_ids, event.call_id])].sort() };
+        break;
+      case "provider_budget_exhausted":
+        kernelAssertV2(event.limit > 0 && snapshot.provider_call_ids.length >= event.limit,
+          "provider_budget_exhaustion_invalid", "Provider budget exhaustion requires the durable call count to reach the configured limit.");
+        snapshot = { ...snapshot, provider_budget_exhausted: true };
         break;
       case "operation_admitted":
         validateOperationAdmission(snapshot, event.operation);
-        snapshot = { ...snapshot, operations: { ...snapshot.operations, [event.operation.operation_id]: structuredClone(event.operation) } };
+        snapshot = {
+          ...snapshot,
+          operations: { ...snapshot.operations, [event.operation.operation_id]: structuredClone(event.operation) },
+          work_unit_states: { ...snapshot.work_unit_states, [event.operation.work_unit_id]: "active" }
+        };
         break;
+      case "operation_dispatch_started": {
+        const operation = snapshot.operations[event.operation_id];
+        kernelAssertV2(operation && operation.settlement_state === "open" && operation.dispatch_state === "not_dispatched", "operation_dispatch_start_invalid", "Dispatch start requires one newly admitted operation.");
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
+          ...operation, dispatch_state: "dispatching", settlement_state: "awaiting_result"
+        } } };
+        break;
+      }
       case "native_dispatch_recorded": {
         const operation = snapshot.operations[event.operation_id];
-        kernelAssertV2(operation && operation.settlement_state === "open", "operation_dispatch_invalid", "Dispatch requires one newly admitted operation.");
+        kernelAssertV2(operation && operation.settlement_state !== "settled"
+          && (operation.dispatch_state === "not_dispatched" || operation.dispatch_state === "dispatching"),
+        "operation_dispatch_invalid", "Native dispatch requires one admitted, unsettled operation.");
         const persistentEffect = operation.requested_effect === "read" ? "none" : "unknown";
-        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: { ...operation, dispatch_state: "dispatched", persistent_effect: persistentEffect, settlement_state: "awaiting_result", dispatched_at: event.occurred_at } } };
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: { ...operation, dispatch_state: "dispatched", dispatch_authority: "native", persistent_effect: persistentEffect, settlement_state: "awaiting_result", dispatched_at: event.occurred_at } } };
+        break;
+      }
+      case "operation_dispatch_recorded": {
+        const operation = snapshot.operations[event.operation_id];
+        kernelAssertV2(operation && operation.settlement_state !== "settled"
+          && (operation.dispatch_state === "not_dispatched" || operation.dispatch_state === "dispatching"),
+        "operation_dispatch_invalid", "Operation dispatch requires one admitted, unsettled operation.");
+        kernelAssertV2(operation.requested_effect === "read", "operation_non_native_mutation_dispatch_forbidden", "A mutation cannot establish dispatch without native or dynamic-runtime authority.");
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
+          ...operation, dispatch_state: "dispatched", dispatch_authority: event.authority,
+          persistent_effect: "none", settlement_state: "awaiting_result", dispatched_at: event.occurred_at
+        } } };
         break;
       }
       case "operation_result_recorded": {
@@ -224,16 +309,53 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(operation.result.authority === event.observation.authority, "observation_authority_mismatch", "Observation authority must match the exact native result authority.");
         kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, event.observation.binding), "observation_binding_mismatch", "Observation binding is not current.");
         kernelAssertV2(!snapshot.observations[event.observation.observation_id], "observation_duplicate", "Observation identity already exists.");
+        const settledOperation = {
+          ...operation,
+          settlement_state: "settled" as const,
+          settled_at: event.occurred_at,
+          observation_ids: [...operation.observation_ids, event.observation.observation_id]
+        };
+        const operations = { ...snapshot.operations, [operation.operation_id]: settledOperation };
+        if (operation.verification_of_operation_id) {
+          const subject = operations[operation.verification_of_operation_id];
+          kernelAssertV2(subject, "operation_verification_subject_missing", "Verification subject disappeared before settlement.");
+          operations[subject.operation_id] = {
+            ...subject,
+            verification_operation_ids: [...new Set([...subject.verification_operation_ids, operation.operation_id])].sort()
+          };
+        }
         snapshot = {
           ...snapshot,
           observations: { ...snapshot.observations, [event.observation.observation_id]: structuredClone(event.observation) },
-          operations: { ...snapshot.operations, [operation.operation_id]: { ...operation, settlement_state: "settled", settled_at: event.occurred_at, observation_ids: [...operation.observation_ids, event.observation.observation_id] } }
+          operations,
+          work_unit_states: {
+            ...snapshot.work_unit_states,
+            ...(snapshot.spec.work_units.find(unit => unit.work_unit_id === operation.work_unit_id)?.independently_useful
+              ? { [operation.work_unit_id]: "retained" as const }
+              : {})
+          }
         };
+        break;
+      }
+      case "observation_retention_failed": {
+        const operation = snapshot.operations[event.operation_id];
+        kernelAssertV2(operation && operation.settlement_state === "retaining_observation" && operation.result,
+          "observation_retention_operation_invalid", "Observation-retention failure requires an operation awaiting authoritative retention.");
+        kernelAssertV2(event.error_code.trim().length > 0, "observation_retention_error_missing", "Observation-retention failure requires a bounded error code.");
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
+          ...operation,
+          settlement_state: "settled",
+          settled_at: event.occurred_at,
+          observation_retention_error: event.error_code.slice(0, 240)
+        } } };
         break;
       }
       case "criterion_evaluated": {
         validateCriterionEvaluation(snapshot, event.evaluation);
-        snapshot = { ...snapshot, criteria: { ...snapshot.criteria, [event.evaluation.criterion_id]: mergeEvaluation(snapshot.criteria[event.evaluation.criterion_id], structuredClone(event.evaluation)) } };
+        snapshot = projectWorkUnitCriteria({
+          ...snapshot,
+          criteria: { ...snapshot.criteria, [event.evaluation.criterion_id]: mergeEvaluation(snapshot.criteria[event.evaluation.criterion_id], structuredClone(event.evaluation)) }
+        });
         break;
       }
       case "review_requested":

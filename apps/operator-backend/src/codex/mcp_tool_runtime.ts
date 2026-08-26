@@ -4,6 +4,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { operatorBackendAuthRequestMeta, type OperatorBackendAuthV1 } from "../operator_backend_auth.js";
 import { OperatorBackendAuthLeaseRegistry, type OperatorBackendAuthLease } from "./operator_backend_auth_lease.js";
+import { AssignmentKernelTurnLeaseRegistryV2, type AssignmentKernelTurnLeaseV2 } from "./assignment_kernel_v2_lease.js";
+import type { AssignmentKernelTurnBindingV2 } from "../assignments/assignment_kernel_v2_factory.js";
+import type { AssignmentKernelOperationLeaseV2 } from "../assignments/assignment_kernel_v2_execution.js";
+
+export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
+export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
 
 function stringEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
@@ -30,6 +36,8 @@ export const EAGER_OPERATOR_MCP_TOOLS = new Set([
   "operator_discover_capabilities",
   "operator_record_execution_strategy",
   "operator_request_clarification",
+  "operator_request_assignment_input",
+  "operator_evaluate_assignment_criteria",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "revit_ping",
@@ -55,6 +63,7 @@ export class CodexMcpToolRuntime {
   private stderrTail = "";
   private dynamicNamespace: unknown | null = null;
   private readonly backendAuthLeases = new OperatorBackendAuthLeaseRegistry();
+  private readonly assignmentKernelV2Leases = new AssignmentKernelTurnLeaseRegistryV2();
 
   constructor(private readonly opts: {
     backendCwd: string;
@@ -115,18 +124,49 @@ export class CodexMcpToolRuntime {
     this.backendAuthLeases.end(lease);
   }
 
-  async callTool(tool: string, args: unknown, binding?: { turnId?: unknown; sessionId?: unknown }): Promise<any> {
+  beginAssignmentKernelV2Lease(binding: AssignmentKernelTurnBindingV2): AssignmentKernelTurnLeaseV2 {
+    return this.assignmentKernelV2Leases.begin(binding);
+  }
+
+  bindAssignmentKernelV2LeaseTurn(lease: AssignmentKernelTurnLeaseV2, turnId: string): void {
+    this.assignmentKernelV2Leases.bindTurn(lease, turnId);
+  }
+
+  endAssignmentKernelV2Lease(lease: AssignmentKernelTurnLeaseV2 | null): void {
+    this.assignmentKernelV2Leases.end(lease);
+  }
+
+  assignmentKernelV2Binding(turnId: unknown, sessionId: unknown): AssignmentKernelTurnBindingV2 | null {
+    return this.assignmentKernelV2Leases.resolve(turnId, sessionId);
+  }
+
+  async callTool(tool: string, args: unknown, binding?: {
+    turnId?: unknown;
+    sessionId?: unknown;
+    assignmentKernelV2?: AssignmentKernelOperationLeaseV2;
+    assignmentKernelV2Binding?: AssignmentKernelTurnBindingV2;
+    onMcpAccepted?: () => void;
+  }): Promise<any> {
     await this.ensureStarted();
     const client = this.client;
     if (!client) throw new Error("Revit Operator MCP runtime is not connected.");
     const timeout = toolTimeoutMs(this.opts.spawnEnv);
     try {
       const auth = this.backendAuthLeases.resolve(binding?.turnId, binding?.sessionId);
+      const authMeta = operatorBackendAuthRequestMeta(auth);
+      const meta = {
+        ...authMeta,
+        ...(binding?.assignmentKernelV2 ? { [ASSIGNMENT_KERNEL_V2_META_KEY]: structuredClone(binding.assignmentKernelV2) } : {}),
+        ...(binding?.assignmentKernelV2Binding ? {
+          [ASSIGNMENT_KERNEL_V2_BINDING_META_KEY]: structuredClone(binding.assignmentKernelV2Binding)
+        } : {})
+      };
+      binding?.onMcpAccepted?.();
       return await client.callTool(
         {
           name: tool,
           arguments: args && typeof args === "object" ? args as Record<string, unknown> : {},
-          _meta: operatorBackendAuthRequestMeta(auth)
+          _meta: meta
         },
         undefined,
         { timeout, maxTotalTimeout: timeout }
@@ -168,6 +208,7 @@ export class CodexMcpToolRuntime {
     this.transport = null;
     this.dynamicNamespace = null;
     this.backendAuthLeases.clear();
+    this.assignmentKernelV2Leases.clear();
     void (async () => {
       try { await client?.close(); } catch {}
       try { await transport?.close(); } catch {}
@@ -176,3 +217,4 @@ export class CodexMcpToolRuntime {
 }
 
 export type { OperatorBackendAuthLease } from "./operator_backend_auth_lease.js";
+export type { AssignmentKernelTurnLeaseV2 } from "./assignment_kernel_v2_lease.js";
