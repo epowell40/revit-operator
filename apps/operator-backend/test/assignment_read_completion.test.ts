@@ -1044,6 +1044,103 @@ test("contradictory structured assertions cannot complete even when each cites a
   });
 });
 
+test("failing-before: identical payload selectors on independently scoped Revit reads are not contradictory", () => {
+  workspace(() => {
+    const sessionId = "read-completion-independent-payload-scopes";
+    createReadAssignment(sessionId, "read", "Count the requested devices by family and type and record the available schedules.");
+    const inventoryItems = [
+      { familyName: "Family A", typeName: "Type 1" },
+      { familyName: "Family A", typeName: "Type 1" },
+      { familyName: "Family B", typeName: "Type 2" }
+    ];
+    const scheduleItems = [{ name: "Equipment" }, { name: "Spaces" }];
+    const inventoryEvidence = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      payload: { items: inventoryItems }
+    }, true)!;
+    const scheduleEvidence = journalRead(sessionId, "schedule-read", "/revit/schedules", {
+      payload: { items: scheduleItems }
+    }, true)!;
+    submitClaim(sessionId, [
+      {
+        assertion_id: "inventory-total", attempt_id: "inventory-read", evidence_id: inventoryEvidence,
+        operation: "array_count", path: "payload.items", expected_count: 3
+      },
+      {
+        assertion_id: "inventory-groups", attempt_id: "inventory-read", evidence_id: inventoryEvidence,
+        operation: "group_count", path: "payload.items", group_by: ["familyName", "typeName"], expected_total: 3,
+        expected_groups: [
+          { values: ["Family A", "Type 1"], count: 2 },
+          { values: ["Family B", "Type 2"], count: 1 }
+        ]
+      },
+      {
+        assertion_id: "schedule-total", attempt_id: "schedule-read", evidence_id: scheduleEvidence,
+        operation: "array_count", path: "payload.items", expected_count: 2
+      }
+    ]);
+
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, true);
+    assert.equal(settled.projection?.terminal_reason, "authoritative_read_completed");
+  });
+});
+
+test("failing-before: equal field selectors on independently scoped read routes may report different facts", () => {
+  workspace(() => {
+    const sessionId = "read-completion-independent-field-scopes";
+    createReadAssignment(sessionId, "read", "Return the requested view and sheet inventory facts.");
+    const viewEvidence = journalRead(sessionId, "view-read", "/revit/views", { payload: { count: 4 } }, true)!;
+    const sheetEvidence = journalRead(sessionId, "sheet-read", "/revit/sheets", { payload: { count: 2 } }, true)!;
+    submitClaim(sessionId, [
+      { assertion_id: "view-count", attempt_id: "view-read", evidence_id: viewEvidence, operation: "field_equals", path: "payload.count", expected: 4 },
+      { assertion_id: "sheet-count", attempt_id: "sheet-read", evidence_id: sheetEvidence, operation: "field_equals", path: "payload.count", expected: 2 }
+    ]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+test("failing-before: independently scoped nested array selectors do not collide", () => {
+  workspace(() => {
+    const sessionId = "read-completion-independent-nested-scopes";
+    createReadAssignment(sessionId, "read", "Return the requested level and system inventories.");
+    const levelEvidence = journalRead(sessionId, "level-read", "/revit/levels", { payload: { result: { items: [1] } } }, true)!;
+    const systemEvidence = journalRead(sessionId, "system-read", "/revit/systems", { payload: { result: { items: [1, 2, 3] } } }, true)!;
+    submitClaim(sessionId, [
+      { assertion_id: "level-count", attempt_id: "level-read", evidence_id: levelEvidence, operation: "array_count", path: "payload.result.items", expected_count: 1 },
+      { assertion_id: "system-count", attempt_id: "system-read", evidence_id: systemEvidence, operation: "array_count", path: "payload.result.items", expected_count: 3 }
+    ]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+test("same authoritative evidence scope with incompatible expected values remains contradictory", () => {
+  workspace(() => {
+    const sessionId = "read-completion-same-evidence-conflict";
+    createReadAssignment(sessionId, "read", "Return the requested total count.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", { payload: { count: 2 } }, true)!;
+    submitClaim(sessionId, [
+      { assertion_id: "count-a", attempt_id: "count-read", evidence_id: evidenceId, operation: "field_equals", path: "payload.count", expected: 2 },
+      { assertion_id: "count-b", attempt_id: "count-read", evidence_id: evidenceId, operation: "field_equals", path: "payload.count", expected: 3 }
+    ]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_conflicting_evidence");
+  });
+});
+
+test("unrelated single-source authoritative lookup completion remains unchanged", () => {
+  workspace(() => {
+    const sessionId = "read-completion-unrelated-single-source";
+    createReadAssignment(sessionId, "read", "Return the requested lookup result.");
+    const evidenceId = journalRead(sessionId, "lookup-read", "/revit/get-context", { payload: { value: 42 } }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "lookup-value", attempt_id: "lookup-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "payload.value", expected: 42
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
 test("assistant-like failure wording cannot erase authoritative structured completion", () => {
   workspace(() => {
     const sessionId = "read-completion-prose-contradiction";

@@ -19,6 +19,7 @@ import {
   type AssignmentControlPlaneProjection
 } from "./control_plane.js";
 import { appendAssignmentEvent } from "./control_plane_store.js";
+import { readCompletionAssertionComparisonKey } from "./read_completion_assertion_scope.js";
 import { groupingSelectorsCoverRequestedDimensions } from "./read_completion_grouping.js";
 
 export const READ_COMPLETION_CLAIM_SCHEMA = "revit-operator.assignment-read-completion-claim/v1" as const;
@@ -486,12 +487,10 @@ function taskShapeReason(goal: GoalRecord, claim: ReadCompletionClaimV1): string
   return null;
 }
 
-function assertionContradiction(claim: ReadCompletionClaimV1): boolean {
+function assertionContradiction(claim: ReadCompletionClaimV1, attempts: AssignmentAttemptRecord[]): boolean {
   const expectedByKey = new Map<string, string>();
   for (const assertion of claim.result.assertions) {
-    const key = assertion.operation === "group_count"
-      ? `${assertion.operation}:${assertion.path}:${JSON.stringify(assertion.group_by ?? [])}`
-      : `${assertion.operation}:${assertion.path}`;
+    const key = readCompletionAssertionComparisonKey(assertion, attempts);
     const expected = digest(assertion.operation === "field_equals" ? assertion.expected
       : assertion.operation === "array_count" ? assertion.expected_count
         : { total: assertion.expected_total, group_by: assertion.group_by, groups: assertion.expected_groups });
@@ -628,7 +627,7 @@ export function validateLatestReadCompletionClaim(sessionId: string): ReadComple
   }
   if (current.unresolved_unknown_attempt_ids.length > 0) return reject(goal, claim, "read_completion_unknown_effect");
   if (current.attempts.some(attempt => attempt.requested_effect === "apply")) return reject(goal, claim, "read_completion_unexpected_apply");
-  if (assertionContradiction(claim)) return reject(goal, claim, "read_completion_conflicting_evidence");
+  if (assertionContradiction(claim, current.attempts)) return reject(goal, claim, "read_completion_conflicting_evidence");
   const taskShape = taskShapeReason(goal, claim);
   if (taskShape) return reject(goal, claim, taskShape);
   const log = normalizeAssignmentControlPlane(goal.assignment_control_plane);
