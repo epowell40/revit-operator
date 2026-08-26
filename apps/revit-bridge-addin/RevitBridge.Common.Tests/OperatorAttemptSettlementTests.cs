@@ -27,6 +27,25 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void CorrectableTextConfirmationRejectionIsNoEffectAndRetryable()
+        {
+            var failure = OperatorCourierFailureClassifier.Classify(
+                new OperatorToolUserErrorException(
+                    "TextNote edit requires typed confirmation.",
+                    "bulk_confirm_required",
+                    requiredConfirm: "APPLY 1 TEXT NOTE CHANGE",
+                    confirmReceived: ""));
+            var settlement = OperatorAttemptFailureSettlement.FromFailure(
+                failure, "apply", "POST", "/revit/replace-text-note");
+
+            Assert.True(failure.Retryable);
+            Assert.False(settlement.RequestDispatched);
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("schema_validator", settlement.EffectAuthority);
+            Assert.Equal("bulk_confirm_required", settlement.EffectReason);
+        }
+
+        [Fact]
         public void PostDispatchTimeoutIsUnknownAndNotRetryable()
         {
             var failure = OperatorCourierFailureClassifier.Classify(
