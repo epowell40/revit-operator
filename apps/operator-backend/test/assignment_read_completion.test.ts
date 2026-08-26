@@ -242,6 +242,121 @@ test("failing-before: an authenticated completion claim accepts explicit MCP env
   });
 });
 
+test("failing-before: a model-facing payload selector resolves the exact authoritative MCP payload", () => {
+  workspace(() => {
+    const sessionId = "read-completion-mcp-payload-selector";
+    createReadAssignment(
+      sessionId,
+      "read",
+      "Count all air devices and break the total down by family and type from live Revit evidence."
+    );
+    const items = [
+      { familyName: "Family A", typeName: "Type 1" },
+      { familyName: "Family B", typeName: "Type 2" }
+    ];
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      content: [{ type: "text", text: JSON.stringify({ count: 2, itemsComplete: true, items }) }]
+    }, true)!;
+    submitClaim(sessionId, [
+      {
+        assertion_id: "inventory-total",
+        attempt_id: "inventory-read",
+        evidence_id: evidenceId,
+        operation: "array_count",
+        path: "payload.items",
+        expected_count: 2
+      },
+      {
+        assertion_id: "inventory-groups",
+        attempt_id: "inventory-read",
+        evidence_id: evidenceId,
+        operation: "group_count",
+        path: "payload.items",
+        group_by: ["familyName", "typeName"],
+        expected_total: 2,
+        expected_groups: [
+          { values: ["Family A", "Type 1"], count: 1 },
+          { values: ["Family B", "Type 2"], count: 1 }
+        ]
+      }
+    ]);
+
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, true);
+    assert.equal(settled.projection?.terminal_reason, "authoritative_read_completed");
+  });
+});
+
+for (const variant of [
+  {
+    name: "matching structured and textual payloads",
+    raw: {
+      structuredContent: { count: 2, items: [{ family_name: "Family A", type_name: "Type 1" }, { family_name: "Family B", type_name: "Type 2" }] },
+      content: [{ type: "text", text: JSON.stringify({ count: 2, items: [{ family_name: "Family A", type_name: "Type 1" }, { family_name: "Family B", type_name: "Type 2" }] }) }]
+    }
+  },
+  {
+    name: "snake fields selected through camel aliases",
+    raw: {
+      content: [{ type: "text", text: JSON.stringify({ count: 2, items: [{ family_name: "Family A", type_name: "Type 1" }, { family_name: "Family B", type_name: "Type 2" }] }) }]
+    }
+  },
+  {
+    name: "camel fields selected through snake aliases",
+    raw: {
+      content: [{ type: "text", text: JSON.stringify({ count: 2, items: [{ familyName: "Family A", typeName: "Type 1" }, { familyName: "Family B", typeName: "Type 2" }] }) }]
+    }
+  }
+]) test(`neighbor: model-facing payload namespace resolves ${variant.name}`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-payload-neighbor-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", "Count devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", variant.raw, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "groups", attempt_id: "inventory-read", evidence_id: evidenceId,
+      operation: "group_count", path: "payload.items", group_by: variant.name.includes("camel fields")
+        ? ["family_name", "type_name"] : ["familyName", "typeName"],
+      expected_total: 2,
+      expected_groups: [
+        { values: ["Family A", "Type 1"], count: 1 },
+        { values: ["Family B", "Type 2"], count: 1 }
+      ]
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+test("negative: a model-facing payload selector rejects conflicting MCP channels", () => {
+  workspace(() => {
+    const sessionId = "read-completion-payload-channel-conflict";
+    createReadAssignment(sessionId, "read", "Return the authoritative result count.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", {
+      structuredContent: { count: 2 },
+      content: [{ type: "text", text: JSON.stringify({ count: 3 }) }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "payload.count", expected: 2
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_result_not_supported");
+  });
+});
+
+test("unrelated regression: a non-MCP domain payload remains directly selectable", () => {
+  workspace(() => {
+    const sessionId = "read-completion-domain-payload";
+    createReadAssignment(sessionId, "read", "Return the authoritative result count.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", { payload: { count: 2 }, domain: "schedule" }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count", attempt_id: "count-read", evidence_id: evidenceId,
+      operation: "field_equals", path: "payload.count", expected: 2
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
 for (const variant of [
   {
     name: "snake_case",
