@@ -70,12 +70,14 @@ namespace RevitBridge.Handlers
             var excludedCount = exclude.Count;
             var effectiveChanges = excludedCount > 0 ? changes.Where(x => !exclude.Contains(x.elementId)).ToList() : changes;
             var effectiveCount = effectiveChanges.Count;
+            var targetElementIds = effectiveChanges.Select(x => x.elementId).Distinct().OrderBy(x => x).ToList();
 
             var diffs = new List<object>(capacity: Math.Min(2048, changes.Count));
             var changedCount = 0;
             var changedElementIds = new HashSet<long>();
             var titleblockHits = new Dictionary<long, HashSet<string>>();
             var appliedTargets = new List<AppliedTarget>();
+            var transactionReceipt = OperatorNativeTransactionReceipt.NotStarted(targetElementIds);
 
             using (Transaction trans = new Transaction(doc, "Set Parameters"))
             {
@@ -103,7 +105,10 @@ namespace RevitBridge.Handlers
                 }
                 if (preconditionFailures.Count > 0)
                 {
-                    trans.RollBack();
+                    var rollbackStatus = trans.RollBack();
+                    transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
+                        ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
+                        : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), targetElementIds);
                     return Task.FromResult<object>(new
                     {
                         status = "Precondition Failed",
@@ -122,6 +127,7 @@ namespace RevitBridge.Handlers
                         unresolvedElementIds = Array.Empty<long>(),
                         verification = Array.Empty<object>(),
                         diffs = preconditionFailures,
+                        transaction = transactionReceipt,
                         requiredConfirm,
                         confirmReceived
                     });
@@ -221,8 +227,20 @@ namespace RevitBridge.Handlers
                     }
                 }
 
-                if (apply) trans.Commit();
-                else trans.RollBack();
+                if (apply && changedCount > 0)
+                {
+                    var commitStatus = trans.Commit();
+                    transactionReceipt = commitStatus == TransactionStatus.Committed
+                        ? OperatorNativeTransactionReceipt.Committed(changedElementIds)
+                        : OperatorNativeTransactionReceipt.Unknown(commitStatus.ToString(), targetElementIds);
+                }
+                else
+                {
+                    var rollbackStatus = trans.RollBack();
+                    transactionReceipt = rollbackStatus == TransactionStatus.RolledBack
+                        ? OperatorNativeTransactionReceipt.RolledBack(targetElementIds)
+                        : OperatorNativeTransactionReceipt.Unknown(rollbackStatus.ToString(), targetElementIds);
+                }
             }
 
             if (apply && changedCount > 0)
@@ -348,6 +366,7 @@ namespace RevitBridge.Handlers
                 unresolvedElementIds = unresolvedIds,
                 verification,
                 diffs,
+                transaction = transactionReceipt,
                 requiredConfirm,
                 confirmReceived,
                 titleblockImpacts
