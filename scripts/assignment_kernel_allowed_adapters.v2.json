@@ -1,0 +1,58 @@
+{
+  "schema": "revit-operator.assignment-kernel-allowed-adapters/v2",
+  "domain_root": "apps/operator-backend/src/domain/assignment-kernel",
+  "allowed_semantic_adapters": [
+    {
+      "kind": "external_input_edge",
+      "allowed_roots": [
+        "apps/operator-backend/src/codex",
+        "apps/operator-backend/src/assignments",
+        "apps/mcp-server/src"
+      ]
+    },
+    {
+      "kind": "native_result_edge",
+      "allowed_roots": [
+        "apps/operator-backend/src/execution_truth",
+        "apps/operator-backend/src/dynamic_runtime",
+        "apps/operator-backend/src/courier"
+      ]
+    },
+    {
+      "kind": "legacy_v1_read_adapter",
+      "allowed_roots": [
+        "apps/operator-backend/src/assignments"
+      ]
+    },
+    {
+      "kind": "presentation_projection",
+      "allowed_roots": [
+        "apps/operator-backend/src/work_returns",
+        "apps/operator-backend/src/work_packets",
+        "apps/operator-backend/src/benchmark"
+      ]
+    }
+  ],
+  "authoritative_requested_effect_fields": [
+    "assignment_spec.ts:AssignmentSpecV2.requested_effect",
+    "assignment_spec.ts:AssignmentWorkUnitSpecV2.requested_effect",
+    "operation.ts:OperationV2.requested_effect"
+  ],
+  "authoritative_outcome_fields": [
+    "snapshot.ts:AssignmentSnapshotV2.outcome"
+  ],
+  "forbidden_domain_tokens": [
+    "@modelcontextprotocol",
+    "IncomingMessage",
+    "ServerResponse",
+    "Codex",
+    "Sidecar",
+    "EvidenceProjection",
+    "VerifiedWorkPacket",
+    "ProtocolV2",
+    "/revit/",
+    "/mcp/",
+    "benchmark case",
+    "fixture"
+  ]
+}

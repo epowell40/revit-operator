@@ -20,3 +20,9 @@ Assignment execution, effect, retry, reconciliation, verification, and terminal
 truth are defined by the [Assignment control plane](ASSIGNMENT_CONTROL_PLANE.md).
 All execution substrates must use that contract rather than maintaining an
 independent settlement interpretation.
+
+The consolidation target for new versioned Assignments is the
+[Assignment Kernel V2](ASSIGNMENT_KERNEL_V2.md). Its event journal is the only
+mutable lifecycle truth; transports and customer/benchmark surfaces are edge
+adapters or read-only projections. V2 remains default-off until the staged
+migration and historical replay gates are complete.
