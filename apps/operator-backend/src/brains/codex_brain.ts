@@ -1086,6 +1086,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   assistantText = assistantText || assistantDeltas;
   teammateReceipt = reconcileTeammateReceiptWithAssistant(teammateReceipt, assistantText);
+  const missingRequiredInputs = teammateReceipt?.missing_required_inputs ?? [];
+  if (missingRequiredInputs.length > 0
+      && (teammateReceipt?.apply_attempts ?? 0) === 0) {
+    const question = missingRequiredInputs.length === 1 && missingRequiredInputs[0] === "replacement_text"
+      ? "What exact replacement wording should I use?"
+      : `What exact value should I use for ${missingRequiredInputs.join(", ")}?`;
+    assistantText = `I did not preview or apply an opaque value that was not bound to your authenticated request.\n\n${question}`;
+  }
   if (teammateReceipt?.blocked_reason === "requested_preview_operation_not_completed") {
     assistantText = `${assistantText}\n\nI cannot claim the requested Revit preview is complete because the host received only discovery or configuration evidence, not a matching noncommitting create/duplicate-view operation.`.trim();
   }

@@ -236,6 +236,91 @@ test("passing-after: exact q01 ordering cannot terminalize 316 ms before its adm
   });
 });
 
+test("post-apply target readback opens as canonical verification instead of failing attempt admission", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "async-post-apply-readback";
+    const { goal, run } = createAssignment(sessionId, "apply");
+    const replacement = "ISSUE 04 - COORDINATION SET";
+    let runtimeCalls = 0;
+    const runtime = {
+      callTool: async (_tool: unknown, argsValue: unknown) => {
+        runtimeCalls += 1;
+        const args = argsValue as { path?: string; body?: Record<string, unknown> };
+        const apply = args.path === "/revit/replace-text-note" && args.body?.apply === true;
+        return { content: [{ type: "text", text: JSON.stringify({
+          ok: true,
+          textNoteId: 1478627,
+          ownerViewId: 1363433,
+          text: replacement,
+          canonical_attempt_settlement: {
+            schema: "revit-operator.native-attempt-settlement.v1",
+            assignment_id: run.assignmentId,
+            attempt_id: apply ? "native-post-apply" : "native-post-readback",
+            run_id: run.runId,
+            generation: run.generation,
+            requested_effect: apply ? "apply" : "read",
+            method: "POST",
+            path: args.path,
+            request_dispatched: true,
+            effect_state: apply ? "applied" : "none",
+            effect_reason: apply ? "native_transaction_committed" : "read_has_no_persistent_effect",
+            effect_authority: apply ? "native_transaction" : "native_host",
+            affected_target_identities: ["element_id:1478627"],
+            receipt_refs: [apply ? "courier:post-apply" : "courier:post-readback"],
+            evidence_refs: [],
+            settled_at_utc: new Date().toISOString()
+          }
+        }) }] };
+      }
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "post-apply-message",
+      user_text: `Replace the selected note with ${replacement}.`,
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      const applyResult = await handleCodexServerRequest(runtime as any, {
+        id: "post-apply-request",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator", threadId: "thread-post-apply", turnId: "turn-post-apply",
+          callId: "call-post-apply", tool: "revit_call_tool",
+          arguments: {
+            method: "POST", path: "/revit/replace-text-note",
+            body: { elementId: 1478627, expectedOldText: "OLD", newText: replacement, dryRun: false, apply: true }
+          }
+        }
+      } as any) as { success?: boolean };
+      assert.equal(applyResult.success, true);
+      assert.equal(projection(goal.id).attempts.some(attempt => attempt.effect.state === "applied"), true);
+
+      const readbackResult = await handleCodexServerRequest(runtime as any, {
+        id: "post-readback-request",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator", threadId: "thread-post-apply", turnId: "turn-post-apply",
+          callId: "call-post-readback", tool: "revit_call_tool",
+          arguments: {
+            method: "POST", path: "/revit/find-text-notes",
+            body: { viewId: 1363433, elementIds: [1478627], contains: replacement }
+          }
+        }
+      } as any) as { success?: boolean; contentItems?: Array<{ text?: string }> };
+      assert.equal(readbackResult.success, true, readbackResult.contentItems?.map(item => item.text).join("\n"));
+      assert.equal(runtimeCalls, 2);
+      const readback = projection(goal.id).attempts.find(attempt => attempt.action_path === "/revit/find-text-notes");
+      assert.equal(readback?.purpose, "verification");
+      assert.equal(readback?.requested_effect, "read");
+      assert.equal(readback?.effect.state, "none");
+      assert.equal(readback?.terminal_state, "settled");
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
 test("host binding replaces model-guessed clarification scope before MCP dispatch", { concurrency: false }, async () => {
   await withWorkspace(async () => {
     const sessionId = "ps1_clarification-principal-session";

@@ -238,6 +238,7 @@ export type ChatResponse = {
     verification_action_id: string | null;
     verification_evidence_sha256: string | null;
     blocked_reason: string | null;
+    missing_required_inputs?: string[];
   };
   aec_query_receipt?: {
     schema: "revit-operator.aec-query-receipt.v1";

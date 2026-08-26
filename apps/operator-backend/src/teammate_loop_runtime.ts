@@ -6,6 +6,7 @@ import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, has
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
+import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -23,12 +24,13 @@ export type TeammateTurnContract = {
   preview_required: boolean;
   max_apply_attempts: 32;
   verification_required: boolean;
+  required_user_inputs: string[];
   user_text_sha256: string;
   document_signature: string | null;
 };
 
 export type TeammateMcpEffect = "read" | "evidence_read" | "interaction" | "completion_claim" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
-export type TeammatePendingCall = { effect: TeammateMcpEffect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string };
+export type TeammatePendingCall = { effect: TeammateMcpEffect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string; raw_body: unknown };
 type Effect = TeammateMcpEffect;
 type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
@@ -67,6 +69,7 @@ type TeammateLoopState = {
   attempt_budget: TeammateLoopAttemptBudget;
   blocked_reason: string | null;
   active_host_version_year: string;
+  authoritative_user_text: string;
 };
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
@@ -290,8 +293,11 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
   const noWrite = hasNoWriteAuthority(text);
   const authorized = writeAuthorized(text, turnKind, noWrite);
   const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind);
+  const requiredUserInputs = turnKind === "mutation" ? missingOpaqueMutationInputs(text) : [];
   const stage: TeammateLoopStage = ambiguity === "material"
     ? "clarify"
+    : requiredUserInputs.length > 0 && identity.state === "live"
+      ? "ground"
     : identity.state === "missing" || identity.state === "invalid"
       ? "ground"
       : turnKind === "conversation" ? "answer" : previewRequired || turnKind === "mutation" ? "preview" : "discover";
@@ -307,6 +313,7 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
     preview_required: previewRequired,
     max_apply_attempts: 32,
     verification_required: turnKind === "mutation",
+    required_user_inputs: requiredUserInputs,
     user_text_sha256: sha256(text),
     document_signature: identity.signature
   };
@@ -326,11 +333,14 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
     preview_required: contract.preview_required,
     max_apply_attempts: contract.max_apply_attempts,
     verification_required: contract.verification_required,
+    ...(contract.required_user_inputs.length > 0 ? { required_user_inputs: contract.required_user_inputs } : {}),
     user_text_sha256: contract.user_text_sha256,
     document_signature: contract.document_signature
   };
   const rules = contract.turn_kind === "conversation"
     ? "Answer naturally; do not call Revit for a conceptual answer."
+    : contract.required_user_inputs.length > 0
+      ? `Use read-only Revit calls to ground the exact target and current state, then call operator_request_clarification with missingFields=${JSON.stringify(contract.required_user_inputs)} and one concise question. Do not preview or apply an opaque value that is not bound to authenticated user input.`
     : contract.ambiguity === "material"
       ? "Paraphrase the likely intent and ask one focused question; take no Revit action."
       : contract.preview_required && contract.no_write
@@ -449,7 +459,7 @@ function expectedValues(value: unknown, includeIdentityRenames = true): string[]
     const normalizedParent = parent.replace(/[^a-z0-9]/gi, "").toLowerCase();
     const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
     const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedKey);
-    const assignedValue = ["value", "newvalue", "replaceto", "targetvalue"].includes(normalizedKey);
+    const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedKey);
     if (normalizedParent === "parameters" || (!valueIsPredicate && (identityRename || assignedValue))) {
       values.add(JSON.stringify(node));
     }
@@ -490,7 +500,7 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   const target_tokens = targetTokens(normalizedBody);
   const operation = operationFor(path, normalizedBody);
   const expected_values = expectedValues(normalizedBody, operation !== "create");
-  const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation });
+  const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation, raw_body: normalizedBody });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (isTeammateDiscoveryPath(path)) return call("discovery");
   if (methodName === "GET") return call("read");
@@ -516,7 +526,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   const target_tokens = targetTokens(args);
   const operation = operationFor(tool, args);
   const expected_values = expectedValues(args, operation !== "create");
-  const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation });
+  const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation, raw_body: args });
   if (isTeammateDiscoveryTool(tool)) return call("discovery");
   // Durable EvidenceRef expansion is an explicitly certified, bounded host
   // read. It neither calls Revit nor creates fresh verification truth, so it
@@ -643,7 +653,8 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     documented_tool_routes: new Map(),
     attempt_budget: newTeammateLoopAttemptBudget(),
     blocked_reason: null,
-    active_host_version_year: activeHostVersionYear(req.context)
+    active_host_version_year: activeHostVersionYear(req.context),
+    authoritative_user_text: incomingText
   };
   statesByTurn.set(key, state);
   return state;
@@ -666,6 +677,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
+  const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   if (attemptBudgetReason) return attemptBudgetReason;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
@@ -1154,8 +1166,12 @@ export function guardTeammateMcpCall(owner: object, params: { tool?: unknown; ar
   const reason = gateCall(state, call);
   if (reason) {
     state.blocked_reason = reason;
-    state.contract.stage = "blocked";
-    return { allowed: false, message: `[teammate_loop_blocked] ${reason.replace(/_/g, " ")}.`, call, state };
+    const needsInput = reason.startsWith("desired_postcondition_");
+    state.contract.stage = needsInput ? "clarify" : "blocked";
+    const remedy = needsInput
+      ? " Grounding reads remain available. Call operator_request_clarification with missingFields=[\"replacement_text\"] and ask for the exact replacement wording; do not preview or apply a guessed value."
+      : "";
+    return { allowed: false, message: `[teammate_loop_blocked] ${reason.replace(/_/g, " ")}.${remedy}`, call, state };
   }
   const actionId = `mcp:${state.pending.size + state.preview_action_ids.length + state.apply_attempts + state.verification_action_ids.length + 1}`;
   registerPending(state, actionId, call);

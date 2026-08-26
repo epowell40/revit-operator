@@ -40,6 +40,7 @@ export type AutoGoalTeammateReceipt = {
   verified?: boolean | null;
   apply_attempts?: number | null;
   blocked_reason?: string | null;
+  missing_required_inputs?: string[] | null;
   apply_action_id?: string | null;
   verification_action_id?: string | null;
   verification_evidence_sha256?: string | null;
