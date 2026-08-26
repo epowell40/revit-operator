@@ -432,7 +432,7 @@
     },
     {
       "path": "apps/operator-backend/package.json",
-      "sha256": "sha256:bafe30969c2608b431e1ee9c8e2bf9dbeff0755f1ad263d91d3c0e4bfa3e0394"
+      "sha256": "sha256:6e8c0acc76e8cf0c0a123b815fc9f7fdffa0a325fb626571652ba0956267bb89"
     },
     {
       "path": "apps/operator-backend/src/action_path_mutability.ts",
@@ -1588,6 +1588,42 @@
       "sha256": "sha256:686ada9ed4f7ccabb7138055cfa8a16730eef59600487bf0784c12866758699a"
     },
     {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/assignment_spec.ts",
+      "sha256": "sha256:26c2f82359793e1b2e1f601c4fdf0fab8ec9991c1f14db353d71a7ddd45497c2"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/criteria.ts",
+      "sha256": "sha256:dffc91d91484a8295441c1706a2a1d9dbe2bf09f3a28e34ab44e60202368df85"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/events.ts",
+      "sha256": "sha256:9a9ea06e390ffc783c01578e2eaa7b69459f95ad6cfa09cae7c7fe8d5b841453"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/feature_flag.ts",
+      "sha256": "sha256:19ad10cf26ff523a400b72a9d3eee55199fd60a5f91b0cd714c1c18b4433b149"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/identity.ts",
+      "sha256": "sha256:99da41503f4cc510f8b763da2e28ae046b3a46b126033b31ffd9395aac1392ee"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/index.ts",
+      "sha256": "sha256:bdf05143433f2dc91deeb84ce94b75c9b5247dd7556245ad32f2971176d6b18f"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/observation.ts",
+      "sha256": "sha256:2ada7dbea129c2ef0a5dcb601ec79993a1713aa3576ce19f0a829563bf2b0c21"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/operation.ts",
+      "sha256": "sha256:160ce0ea8583f4265d537f5f759fd22e669b0d5f5b4ae1d5a80da54a5488e13e"
+    },
+    {
+      "path": "apps/operator-backend/src/domain/assignment-kernel/snapshot.ts",
+      "sha256": "sha256:26d5cddf28ab32790345f2c88b50ff99bd98597e406492eebc2b262629c7418e"
+    },
+    {
       "path": "apps/operator-backend/src/dynamic_runtime/admission.ts",
       "sha256": "sha256:7bc2d435ee43773d1e566a4e79d42adaea5d7a1ce24e86749c76e74c2700dc97"
     },
@@ -2612,6 +2648,10 @@
       "sha256": "sha256:d1ea06a62d332559391bc1529617ee85bb3d2f043f434df06020f15a6c3bcbcb"
     },
     {
+      "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
+      "sha256": "sha256:460cbcb2a7be8054209a0240ef6d8014404b30277e8a3c419a58b6ca491fed87"
+    },
+    {
       "path": "apps/operator-backend/test/assignment_mcp_error_settlement.test.ts",
       "sha256": "sha256:d33d3663dda1b56ca18934292edf5fb22a6f4ab7cd4046b71313d941bcc07009"
     },
@@ -3082,6 +3122,10 @@
     {
       "path": "apps/operator-backend/test/feedback_store.test.ts",
       "sha256": "sha256:aa28602df3d97e62dd5f351a5ffe369ca82245ed98bf02336ab449d29f520fa8"
+    },
+    {
+      "path": "apps/operator-backend/test/fixtures/assignment-kernel-v2/epic0455_failure_shapes.json",
+      "sha256": "sha256:d125c359a51fc3c1b6b1fa57f247a3434411abb524e49e7d6b70bf3133869ff7"
     },
     {
       "path": "apps/operator-backend/test/fixtures/codex_app_server_fixture.js",
@@ -5613,7 +5657,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:99872e138f8fb8675cfb8c86f621024ad4806c45be8705a6117adb9cc79e46f1",
+  "inputs_hash": "sha256:9477dad292b4c62dcd2697237a895f94f2bfaeeb6dae1caab3ec76fcd0d79a4e",
   "result": {
     "passed": true,
     "checks": [

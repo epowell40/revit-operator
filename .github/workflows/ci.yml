@@ -32,6 +32,9 @@ jobs:
       - name: Backend module size ratchet
         shell: pwsh
         run: ./scripts/check_backend_module_size.ps1
+      - name: Assignment Kernel V2 boundary
+        shell: pwsh
+        run: ./scripts/check_assignment_kernel_boundary.ps1
 
   backend:
     name: Backend Build/Test/Contracts

@@ -1,0 +1,25 @@
+{
+  "schema": "revit-operator.assignment-kernel-historical-replay/v1",
+  "source": "EPIC-0455 immutable candidate corpus",
+  "scenarios": [
+    { "id": "candidate-01-host-binding", "shape": "foreign_model_owned_lifecycle_binding", "invariant": "trusted_host_binding_only", "expected_domain_result": "reject_foreign_binding" },
+    { "id": "candidate-01-controller-receipt", "shape": "controller_receipt_mistaken_for_native_operation", "invariant": "native_result_authority_is_explicit", "expected_domain_result": "no_native_effect_claim" },
+    { "id": "candidate-02-pre-native-rejection", "shape": "pre_native_mcp_rejection", "invariant": "pre_dispatch_rejection_is_none", "expected_domain_result": "settled_none" },
+    { "id": "candidate-03-transport-identity", "shape": "typed_alias_native_route_mismatch", "invariant": "operation_id_is_transport_invariant", "expected_domain_result": "same_operation" },
+    { "id": "candidate-04-paused-goal", "shape": "settlement_after_goal_pause", "invariant": "captured_binding_survives_pause", "expected_domain_result": "settle_captured_assignment" },
+    { "id": "candidate-05-response-loss", "shape": "response_loss_after_durable_settlement", "invariant": "snapshot_reread_recovers_truth", "expected_domain_result": "same_snapshot" },
+    { "id": "candidate-05-earlier-turn", "shape": "earlier_turn_telemetry_retention", "invariant": "journal_projection_spans_turns", "expected_domain_result": "same_snapshot" },
+    { "id": "candidate-06-input-alias", "shape": "clarification_field_spelling", "invariant": "stable_input_variable_id", "expected_domain_result": "same_variable" },
+    { "id": "candidate-07-mcp-text", "shape": "structured_json_inside_mcp_text", "invariant": "unwrap_once_at_transport_edge", "expected_domain_result": "same_operation_result" },
+    { "id": "candidate-08-no-write", "shape": "informational_no_write_classification", "invariant": "requested_effect_assigned_once", "expected_domain_result": "read_not_preview" },
+    { "id": "candidate-09-package", "shape": "missing_packaged_dependency", "invariant": "generated_transitive_package_graph", "expected_domain_result": "build_rejects_missing_import" },
+    { "id": "candidate-10-field-style", "shape": "camel_snake_hyphen_source_fields", "invariant": "normalize_once_to_semantic_facts", "expected_domain_result": "same_observation" },
+    { "id": "candidate-11-payload-root", "shape": "synthetic_payload_namespace", "invariant": "single_payload_interpretation", "expected_domain_result": "same_observation" },
+    { "id": "candidate-12-desired-state", "shape": "ambiguous_desired_state_mutation", "invariant": "unknown_desired_state_needs_input", "expected_domain_result": "awaiting_user_input" },
+    { "id": "candidate-12-verification-read", "shape": "post_apply_verification_read", "invariant": "verification_purpose_is_explicit", "expected_domain_result": "verification_not_new_work" },
+    { "id": "candidate-13-native-result", "shape": "native_handler_missing_normalized_result", "invariant": "every_native_outcome_is_operation_result", "expected_domain_result": "reject_unsettleable_transport" },
+    { "id": "candidate-14-grouping", "shape": "semantic_grouping_alias", "invariant": "criteria_use_semantic_fact_ids", "expected_domain_result": "same_observation" },
+    { "id": "candidate-15-relative-selector", "shape": "identical_relative_selectors_different_evidence", "invariant": "fact_identity_includes_observation_scope", "expected_domain_result": "distinct_facts" },
+    { "id": "candidate-16-confirmation", "shape": "pre_native_confirmation_rejection", "invariant": "pre_dispatch_rejection_is_none", "expected_domain_result": "settled_none" }
+  ]
+}
