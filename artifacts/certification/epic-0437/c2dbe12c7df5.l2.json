@@ -536,7 +536,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/read_completion.ts",
-      "sha256": "sha256:3759b17a6f4af81fa8471548cec9b5ef2afce574057d26c2c15bfeed39a5de5b"
+      "sha256": "sha256:d59af7fa368a15eee6524f6b959b1a61abb565333d814e7a3bc6a02a7f533dcb"
     },
     {
       "path": "apps/operator-backend/src/assignments/settlement_barrier.ts",
@@ -2617,7 +2617,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_read_completion.test.ts",
-      "sha256": "sha256:ed042c7f1f14a92ac655ff2d79d8c595e660ab49baf30dc096f9e23acd70838d"
+      "sha256": "sha256:ed7337b081a1b55c450eb9a492f39a9da40418abac91e94a6ed052af10701545"
     },
     {
       "path": "apps/operator-backend/test/assignment_tool_binding.test.ts",
@@ -5597,7 +5597,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:c121baa93ab9b05baf372b474344f9fb5ea944bec2252fbfed3f6d3b77856324",
+  "inputs_hash": "sha256:6968bb7d0757095587371bdf0fb8bc362dfdb0d4d848241292b0a3203de51125",
   "result": {
     "passed": true,
     "checks": [

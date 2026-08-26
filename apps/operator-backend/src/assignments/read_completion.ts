@@ -347,7 +347,11 @@ function selectionRoot(root: unknown, path: string): unknown {
 }
 
 function selected(root: unknown, path: string): unknown {
-  let value = selectionRoot(root, path);
+  return selectPath(selectionRoot(root, path), path);
+}
+
+function selectPath(root: unknown, path: string): unknown {
+  let value = root;
   if (value === undefined) return undefined;
   const explicitJsonTextPath = path === "content.0.text" || path.startsWith("content.0.text.");
   for (const segment of path.split(".")) {
@@ -357,8 +361,23 @@ function selected(root: unknown, path: string): unknown {
         value = value[Number(segment)];
         selectedSegment = true;
       } else if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, segment)) {
-        value = (value as Record<string, unknown>)[segment];
-        selectedSegment = true;
+        const row = value as Record<string, unknown>;
+        const exact = row[segment];
+        const aliases = fieldStyleAliases(segment)
+          .filter(alias => Object.prototype.hasOwnProperty.call(row, alias))
+          .map(alias => row[alias]);
+        if (aliases.every(alias => equivalent(alias, exact))) {
+          value = exact;
+          selectedSegment = true;
+        } else return undefined;
+      } else if (value && typeof value === "object") {
+        const aliases = fieldStyleAliases(segment)
+          .filter(alias => Object.prototype.hasOwnProperty.call(value as Record<string, unknown>, alias))
+          .map(alias => (value as Record<string, unknown>)[alias]);
+        if (aliases.length > 0 && aliases.every(alias => equivalent(alias, aliases[0]))) {
+          value = aliases[0];
+          selectedSegment = true;
+        }
       } else if (explicitJsonTextPath) {
         const decoded = decodeJsonText(value);
         if (decoded === value) return undefined;
@@ -370,6 +389,15 @@ function selected(root: unknown, path: string): unknown {
     if (!selectedSegment) return undefined;
   }
   return explicitJsonTextPath ? decodeJsonText(value) : value;
+}
+
+function fieldStyleAliases(segment: string): string[] {
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,120}$/.test(segment)) return [];
+  const words = segment.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[_\-\s]+/).filter(Boolean);
+  if (words.length < 2) return [];
+  const lower = words.map(word => word.toLowerCase());
+  const camel = lower[0] + lower.slice(1).map(word => word[0]!.toUpperCase() + word.slice(1)).join("");
+  return [...new Set([camel, lower.join("_"), lower.join("-")])].filter(alias => alias !== segment);
 }
 
 function equivalent(left: unknown, right: unknown): boolean {
