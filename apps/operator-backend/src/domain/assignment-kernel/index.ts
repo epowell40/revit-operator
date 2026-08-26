@@ -9,5 +9,8 @@ export * from "./identity.js";
 export * from "./observation.js";
 export * from "./operation.js";
 export * from "./outcome.js";
+export * from "./payload_provenance.js";
+export * from "./progress/contracts.js";
+export * from "./progress/replay.js";
 export * from "./reducer.js";
 export * from "./snapshot.js";
