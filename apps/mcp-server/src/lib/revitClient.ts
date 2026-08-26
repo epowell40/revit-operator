@@ -25,6 +25,11 @@ import {
 import { createCertificationEnvelope, type FamilyCertificationEnvelope } from "./certifiedExecutionEnvelope.js";
 import type { LaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
 import type { LaboratoryMoveEvidenceAdmission } from "./laboratoryMoveEvidence.js";
+import {
+  markAssignmentKernelNativeRequestDispatchingV2,
+  recordAssignmentKernelNativeResultV2,
+  reserveAssignmentKernelNativeRequestV2
+} from "./assignmentKernelV2.js";
 
 // Use localhost or environment variable
 export const REVIT_BRIDGE_URL = process.env.REVIT_BRIDGE_URL || "http://localhost:5000";
@@ -273,6 +278,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         ? body
         : JSON.stringify(body);
   const transportBody = familyAdmission ? serializedBody : body;
+  const kernelNativeRequestId = reserveAssignmentKernelNativeRequestV2(upperMethod, path);
 
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") {
@@ -289,7 +295,9 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     const result = await callRevitViaCourier<T>(path, upperMethod, transportBody, {
       certifiedAdmission,
       laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
-      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission
+      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
+      canonicalOperationId: kernelNativeRequestId ? `opv2_${kernelNativeRequestId}` : undefined,
+      onPublished: kernelNativeRequestId ? () => markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequestId) : undefined
     });
     if (options.certifiedMoveOneAdmission) {
       try {
@@ -307,6 +315,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         });
       }
     }
+    recordAssignmentKernelNativeResultV2(upperMethod, path, result, kernelNativeRequestId);
     return result;
   }
   if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
@@ -334,9 +343,9 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
-    const certifiedDirectDispatchId = !laboratoryBypass && options.certifiedMoveOneAdmission
+    const certifiedDirectDispatchId = kernelNativeRequestId ?? (!laboratoryBypass && options.certifiedMoveOneAdmission
       ? randomBytes(16).toString("hex")
-      : undefined;
+      : undefined);
 
     try {
       if (!laboratoryBypass || protectedLaboratoryEvidence) {
@@ -370,6 +379,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           } : undefined,
           laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
           requestId: certifiedDirectDispatchId,
+          onDispatch: kernelNativeRequestId ? () => markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequestId) : undefined,
           signal: controller.signal
         });
         return {
@@ -400,6 +410,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         };
       }
 
+      markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequestId);
       const response = await fetch(`${bridgeUrl()}${path}`, {
         method: upperMethod,
         signal: controller.signal,
@@ -407,6 +418,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           "Content-Type": "application/json",
           ...(token ? { "X-Operator-Token": token } : {}),
           ...(writeGrant ? { "X-Operator-Write-Grant": writeGrant } : {}),
+          ...(kernelNativeRequestId ? { "X-Operator-Correlation-Id": kernelNativeRequestId } : {}),
         },
         ...(serializedBody === undefined ? {} : { body: serializedBody }),
       });
@@ -513,6 +525,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     if (response.laboratoryEvidenceContext && parsed && typeof parsed === "object") {
       laboratoryEvidenceContexts.set(parsed as object, response.laboratoryEvidenceContext);
     }
+    recordAssignmentKernelNativeResultV2(upperMethod, path, parsed, kernelNativeRequestId);
     return parsed;
   } catch (error) {
     const outcomeUnknown = mutating;

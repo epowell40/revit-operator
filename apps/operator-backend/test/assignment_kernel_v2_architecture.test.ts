@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -20,6 +20,8 @@ interface ReplayScenario {
   shape: string;
   invariant: string;
   expected_domain_result: string;
+  regression?: { path: string; test: string };
+  private_regression_id?: string;
 }
 
 interface ReplayCorpus {
@@ -84,5 +86,68 @@ test("historical replay corpus covers every EPIC-0455 candidate and required fai
     assert.ok(scenario.shape.length > 4);
     assert.ok(scenario.invariant.length > 4);
     assert.ok(scenario.expected_domain_result.length > 4);
+    if (scenario.regression) {
+      const regressionPath = path.resolve(process.cwd(), scenario.regression.path);
+      assert.equal(existsSync(regressionPath), true, `${scenario.id}: missing executable regression ${scenario.regression.path}`);
+      const source = readFileSync(regressionPath, "utf8");
+      assert.ok(source.includes(`test("${scenario.regression.test}"`), `${scenario.id}: missing executable test '${scenario.regression.test}'`);
+    } else {
+      assert.match(scenario.private_regression_id ?? "", /^sidecar-/, `${scenario.id}: every historical shape must bind an executable public or private regression`);
+    }
   }
+});
+
+function sourceFiles(root: string): string[] {
+  return readdirSync(root, { withFileTypes: true }).flatMap(entry => {
+    const absolute = path.join(root, entry.name);
+    return entry.isDirectory() ? sourceFiles(absolute) : entry.name.endsWith(".ts") ? [absolute] : [];
+  });
+}
+
+test("the transport-independent domain imports no edge, route, evidence-projection, packet, or benchmark types", () => {
+  const root = path.join(process.cwd(), "src", "domain", "assignment-kernel");
+  for (const file of sourceFiles(root)) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*(?:mcp|http|sidecar|revit|work_packets|work_returns|benchmark|evidence_projection)[^"']*["']/i, file);
+    assert.doesNotMatch(source, /(?:route|path)_string/i, file);
+  }
+});
+
+test("the machine-readable adapter registry is bounded to the four admitted edge/projection classes", () => {
+  const registryPath = path.join(process.cwd(), "architecture", "assignment-kernel-v2-adapters.v1.json");
+  const registry = JSON.parse(readFileSync(registryPath, "utf8")) as { schema: string; allowed_adapters: Array<{ id: string; class: string; paths: string[] }> };
+  assert.equal(registry.schema, "revit-operator.assignment-kernel-adapter-registry/v1");
+  assert.deepEqual(new Set(registry.allowed_adapters.map(item => item.class)), new Set([
+    "external_input", "native_result", "legacy_read_projection", "presentation"
+  ]));
+  for (const adapter of registry.allowed_adapters) {
+    assert.ok(adapter.id.length > 4);
+    assert.ok(adapter.paths.length > 0);
+    for (const relative of adapter.paths) assert.equal(existsSync(path.resolve(process.cwd(), relative)), true, `${adapter.id}: ${relative}`);
+  }
+});
+
+test("V2 projections cannot write journal events and V2 completion has no specialized assertion DSL", () => {
+  for (const relative of [
+    "src/assignments/projection.ts",
+    "src/work_packets/assignment_kernel_v2_generator.ts",
+    "src/work_returns/assignment_kernel_v2_generator.ts",
+    "src/benchmark/canonical_assignment_truth.ts",
+    "src/benchmark/protocol_v2_runner.ts"
+  ]) {
+    const source = readFileSync(path.join(process.cwd(), relative), "utf8");
+    assert.doesNotMatch(source, /append(?:Current)?AssignmentKernelEventV2|mutateGoalRecord/, relative);
+  }
+  const lifecycle = readFileSync(path.join(process.cwd(), "src/assignments/assignment_kernel_v2_lifecycle.ts"), "utf8");
+  assert.doesNotMatch(lifecycle, /read_completion|noop_completion|assertion.*path|json.*selector/i);
+  const evaluator = readFileSync(path.join(process.cwd(), "src/domain/assignment-kernel/criterion_evaluator.ts"), "utf8");
+  assert.doesNotMatch(evaluator, /EvidenceProjection|evidence_projection|payload\.items|content\[0\]/);
+});
+
+test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {
+  const source = readFileSync(path.join(process.cwd(), "src/assignments/assignment_kernel_v2_execution.ts"), "utf8");
+  const identity = /const operationId = `opv2_\$\{stableHash\(\{([\s\S]*?)\}\)\}`;/.exec(source)?.[1] ?? "";
+  assert.ok(identity.includes("assignment_id"));
+  assert.ok(identity.includes("controller_request_id"));
+  assert.doesNotMatch(identity, /path|route|alias/i);
 });

@@ -395,14 +395,47 @@ test("criterion events reject untrusted evaluators and incomplete semantic suppo
 });
 
 test("apply completion requires a committed native result and task-level criterion support", () => {
-  const journal = createJournal(spec("apply"));
+  const assignmentSpec: AssignmentSpecV2 = {
+    ...spec("apply"),
+    work_units: [
+      ...spec("apply").work_units,
+      { ...spec("read").work_units[0], work_unit_id: "work-verification" }
+    ]
+  };
+  const journal = createJournal(assignmentSpec);
   journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-apply" }));
   retainResult(journal, { total: 1 }, "apply");
   assert.equal(journal.snapshot().operations["operation-1"].persistent_effect, "applied");
   assert.equal(journal.snapshot().outcome, "active");
-  const completed = journal.append(event(journal, { event_type: "criterion_evaluated", evaluation: passingEvaluation("execution") }));
+  const verification = {
+    ...operation("read", "verification"),
+    operation_id: "operation-verification",
+    work_unit_id: "work-verification",
+    verification_of_operation_id: "operation-1"
+  };
+  journal.append(event(journal, { event_type: "operation_admitted", operation: verification }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: verification.operation_id }));
+  const raw = { total: 1 };
+  const verificationResult = {
+    ...result(raw), result_id: "result-verification", operation_id: verification.operation_id
+  };
+  journal.append(event(journal, { event_type: "operation_result_recorded", result: verificationResult }));
+  const verificationObservation = observationFromOperationResultV2({
+    result: verificationResult, expected_binding: binding, observation_id: "observation-verification",
+    raw_payload_ref: "evidence://sha256/verification", raw_payload: raw, registry: registry()
+  });
+  journal.append(event(journal, { event_type: "observation_retained", observation: verificationObservation }));
+  const completed = journal.append(event(journal, {
+    event_type: "criterion_evaluated",
+    evaluation: {
+      ...passingEvaluation("execution"),
+      supporting_operation_ids: [verification.operation_id],
+      supporting_facts: [{ observation_id: verificationObservation.observation_id, fact_id: "result.total" }]
+    }
+  }));
   assert.equal(completed.outcome, "complete");
+  assert.deepEqual(completed.operations["operation-1"].verification_operation_ids, [verification.operation_id]);
 });
 
 test("apply timeout remains nonquiescent until target-bound reconciliation", () => {
@@ -444,6 +477,31 @@ test("read timeout settles effect none but cannot claim the missing answer", () 
   assert.equal(settled.outcome, "active");
 });
 
+test("native truth survives observation-retention failure and the operation becomes quiescent without completing", () => {
+  const journal = createJournal();
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
+  journal.append(event(journal, { event_type: "operation_dispatch_started", operation_id: "operation-1" }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-1" }));
+  const nativeResult = result({ total: 509 });
+  const retaining = journal.append(event(journal, { event_type: "operation_result_recorded", result: nativeResult }));
+  assert.equal(retaining.operations["operation-1"]!.settlement_state, "retaining_observation");
+  assert.equal(retaining.quiescent, false);
+
+  const settled = journal.append(event(journal, {
+    event_type: "observation_retention_failed",
+    operation_id: "operation-1",
+    error_code: "evidence_store_unavailable"
+  }));
+  assert.equal(settled.operations["operation-1"]!.settlement_state, "settled");
+  assert.equal(settled.operations["operation-1"]!.observation_retention_error, "evidence_store_unavailable");
+  assert.equal(settled.operations["operation-1"]!.result?.receipt_id, "receipt-1");
+  assert.equal(settled.quiescent, true);
+  assert.equal(Object.keys(settled.observations).length, 0);
+  assert.equal(settled.criteria["criterion-result"], undefined);
+  assert.equal(settled.outcome, "active");
+  assert.equal(settled.terminal, false);
+});
+
 test("run supersession fences old events and preserves the same Assignment identity", () => {
   const journal = createJournal(spec("apply", true));
   journal.append(event(journal, { event_type: "input_requested", variable_id: "replacement_text", clarification_id: "clarification-1", question: "What exact replacement text should be used?" }));
@@ -473,7 +531,7 @@ test("verified no-op is derived from authenticated desired-state equivalence, no
     work_units: [{ ...spec("read").work_units[0], input_variable_ids: ["replacement_text"] }]
   };
   const journal = createJournal(assignmentSpec);
-  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("read", "verification") }));
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("read", "discovery") }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
   const raw = { text: "Current wording" };
   const nativeResult = { ...result(raw), result_schema_id: "note-result/v1" };
@@ -513,7 +571,7 @@ test("independent completed work remains retained while another work unit needs 
   const evaluation = { ...passingEvaluation(), criterion_id: "criterion-complete", supporting_operation_ids: ["operation-complete"], supporting_facts: [{ observation_id: "observation-complete", fact_id: "result.total" }] };
   const projected = journal.append(event(journal, { event_type: "criterion_evaluated", evaluation }));
   assert.equal(projected.outcome, "awaiting_user_input");
-  assert.equal(projected.work_unit_states["work-complete"], "retained");
+  assert.equal(projected.work_unit_states["work-complete"], "complete");
   assert.equal(projected.operations["operation-complete"].persistent_effect, "none");
 });
 

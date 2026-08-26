@@ -40,6 +40,13 @@ through a legacy adapter; new V2 Assignments will write only the V2 journal.
    never by reconstructing state from a response-specific handoff.
 10. V2 is disabled unless `OPERATOR_ASSIGNMENT_KERNEL_V2` is explicitly `1`,
     `true`, or `enabled`.
+11. A trusted external controller starts either V1 or V2, never both. When V2
+    is enabled, `/api/agent-goal` creates the V2 journal before returning the
+    run binding and leaves the legacy control-plane event list untouched.
+12. A committed apply is not task completion. It must be followed by a
+    successful retained verification Observation linked to the exact applied
+    operation and canonical target before an apply Assignment can derive
+    `complete`.
 
 ## Target flow
 
@@ -73,6 +80,17 @@ contradictory values for the same fact identity and produces `uncertain`.
 Desired-state equivalence is an ordinary criterion basis: it requires known
 stable input variables and explicit fact-to-variable comparisons. It is not a
 second no-op proof language.
+
+A one-criterion trusted Assignment may use the bounded `result.available`
+fallback. A multi-criterion Assignment must provide an explicit
+`assignment_kernel_v2_criteria` semantic-fact contract at the trusted creation
+edge. This prevents one generic success flag from silently satisfying several
+materially different requirements.
+
+Opaque mutation input detection also runs once at the trusted AssignmentSpec
+edge. Missing values become stable input variables (for example,
+`replacement_text`) before provider inference; they are not guessed or added
+later by a transport controller.
 
 The result adapter unwraps only reviewed, explicit transport envelopes. It does
 not recursively search result JSON. External field spelling and clarification

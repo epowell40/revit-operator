@@ -199,6 +199,8 @@ export type RevitCourierCallOptions = {
   certifiedAdmission?: CertifiedCourierAdmission;
   laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
   laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
+  canonicalOperationId?: string;
+  onPublished?: (jobId: string) => void;
 };
 
 function timeoutMs(): number {
@@ -825,9 +827,15 @@ export async function callRevitViaCourier<T>(
       effect_hash: generalDecision.effectHash
     })
     : undefined;
-  const idempotencyKey = envelope && rawBody
-    ? v2IdempotencyKey(context, normalizedMethod, revitPath, rawBody, envelope)
-    : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson, laboratoryDiscriminator);
+  const canonicalOperationId = options.canonicalOperationId;
+  if (canonicalOperationId !== undefined && !/^opv2_[0-9a-f]{64}$/.test(canonicalOperationId)) {
+    throw new Error("V2 courier operation identity is invalid.");
+  }
+  const idempotencyKey = canonicalOperationId
+    ? canonicalOperationId.slice("opv2_".length)
+    : envelope && rawBody
+      ? v2IdempotencyKey(context, normalizedMethod, revitPath, rawBody, envelope)
+      : legacyIdempotencyKey(context, normalizedMethod, revitPath, legacyBodyJson, laboratoryDiscriminator);
   // A stable job id makes a transport retry resume the same durable operation instead of publishing a duplicate write.
   const id = idempotencyKey;
   const laboratoryEvidence = options.laboratoryEvidenceDispatch
@@ -878,6 +886,7 @@ export async function callRevitViaCourier<T>(
       : { turn_token: context.token ?? null }),
     correlation_id: id,
     idempotency_key: idempotencyKey,
+    ...(canonicalOperationId ? { assignment_operation_id: canonicalOperationId } : {}),
     method: normalizedMethod,
     path: revitPath,
     target_executor_id: context.target_executor_id ?? null,
@@ -894,6 +903,10 @@ export async function callRevitViaCourier<T>(
     status: "pending",
     claim: null
   });
+  if ((job.assignment_operation_id ?? null) !== (canonicalOperationId ?? null)) {
+    throw new Error("Revit courier operation binding does not match the canonical Assignment operation.");
+  }
+  options.onPublished?.(id);
 
   const persistedExpiry = Date.parse(job.expires_at ?? "");
   const deadline = Number.isFinite(persistedExpiry) ? Math.min(now + durationMs, persistedExpiry) : now + durationMs;

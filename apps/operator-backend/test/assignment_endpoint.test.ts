@@ -212,6 +212,13 @@ test("assignment endpoints expose an authenticated read-only Goal/Task projectio
   });
   assert.equal(resumeResponse.status, 200);
   const resumed = await resumeResponse.json() as { assignment_id: string; run_id: string; generation: number; outcome_state: string };
-  assert.deepEqual({ assignment_id: resumed.assignment_id, run_id: resumed.run_id, generation: resumed.generation }, interaction.assignment_run);
+  assert.deepEqual(
+    { assignment_id: resumed.assignment_id, run_id: resumed.run_id, generation: resumed.generation },
+    {
+      assignment_id: interaction.assignment_run.assignment_id,
+      run_id: interaction.assignment_run.run_id,
+      generation: interaction.assignment_run.generation
+    }
+  );
   assert.equal(resumed.outcome_state, "active");
 });

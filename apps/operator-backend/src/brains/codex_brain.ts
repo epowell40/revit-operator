@@ -48,14 +48,21 @@ import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSucce
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
+import {
+  assignmentKernelV2ModelReceiptObserver,
+  settleAssignmentKernelProviderBudgetAtQuiescenceV2
+} from "../assignments/assignment_kernel_v2_provider_budget.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 import { assembleBoundedEvidenceContext } from "../evidence/model_context_budget.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
 import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
 import { getRequestOperatorBackendAuth } from "../request_context.js";
-import type { OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
+import type { AssignmentKernelTurnLeaseV2, OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
 import { canonicalAssignmentOutcomeForBinding } from "../assignments/outcome_handoff.js";
+import { assignmentKernelV2ForBinding } from "../assignments/assignment_kernel_v2_factory.js";
+import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { recoverAssignmentKernelOperationsV2 } from "../assignments/assignment_kernel_v2_execution.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -180,12 +187,11 @@ export function getOperatorAgentBaseInstructions(): string {
     "You are Revit Operator.",
     "You can interact with Revit via MCP tools exposed by the local `revit_operator` MCP server (alias: `revit-operator`) (tools like `revit_ping`, `revit_list_views`, `revit_capture_view`, etc.).",
     "Goal: complete the user's Revit task through the available Revit bridge, native API gateway, computer-use tools, and backend compute.",
-    "Success criteria: act when there is a safe executable path; preserve the user's intent; verify writes and file outputs with concrete post-change evidence; if blocked, report the exact blocker and the next best check.",
-    "Read Assignment: submit `operator_submit_read_completion` with bound criteria and authoritative evidence before completion.",
-    "Missing required input: call `operator_request_clarification`.",
+    "Success: use safe executable paths, preserve intent, verify writes/files with fresh evidence, and name exact blockers plus the next check.",
+    "V2 completion: call `operator_evaluate_assignment_criteria` with criterion/Observation IDs; request missing input with `operator_request_assignment_input` and stable variable IDs. The host supplies lifecycle binding. V1 uses legacy tools.",
     "After any Revit apply succeeds, the very next Revit action must be a target-bound readback, regenerate/capture, or other non-mutating verification of that exact apply. Do not search for tools, request tool docs, preview a correction, or start another apply until the first apply is verified. If a correction is needed, verify the first committed state before beginning the next bounded preview/apply stage.",
     "Bound capability discovery within a turn: reuse a known typed tool or previously documented route; search once for an operation only when no known route fits; request one tool schema only after an argument-shape rejection; and do not repeat synonymous searches or rediscover a route already returned in the same turn. Preserve successful route and schema results as working memory for later steps.",
-    "Authoritative complete inventory: cite counts; submit read completion; don't recount.",
+    "Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount.",
     ...AGENT_RESPONSE_STYLE_LINES,
     "Use markdown (short headings/bullets/code blocks when helpful) for readable Operator answers.",
     "Users will talk naturally (e.g., \"update the MEP engineers on the cover sheet to WSP\"). Infer the missing details by calling read-only tools first (resolve the sheet, locate the titleblock, inspect candidates). Do not ask the user for exact tool names or brittle JSON unless absolutely required.",
@@ -501,6 +507,15 @@ export async function decideCodex(req: ChatRequest): Promise<ChatResponse> {
 }
 
 export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks): Promise<ChatResponse> {
+  const assignmentKernelV2 = req.assignment_id && req.assignment_run_id
+    && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
+    ? assignmentKernelV2ForBinding({
+        session_id: req.session_id,
+        assignment_id: req.assignment_id,
+        run_id: req.assignment_run_id,
+        generation: Number(req.assignment_generation)
+      })
+    : null;
   const threadProfile = getCodexThreadStartProfileForTest(req);
   const agentSettings = resolveAgentModelSettings(req.context);
   const requestBackendAuth = getRequestOperatorBackendAuth();
@@ -576,7 +591,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   let activeGoalBlock = "";
   try {
-    activeGoalBlock = formatActiveGoalContext(getActiveGoalForSession(req.session_id));
+    activeGoalBlock = formatActiveGoalContext(assignmentKernelV2?.goal ?? getActiveGoalForSession(req.session_id));
   } catch {
     activeGoalBlock = "";
   }
@@ -660,6 +675,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
   }
   let backendAuthLease: OperatorBackendAuthLease | null = null;
+  let assignmentKernelV2Lease: AssignmentKernelTurnLeaseV2 | null = null;
   let teammateContext: ReturnType<typeof beginTeammateLoopOwner> | null = null;
   let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
@@ -669,6 +685,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   try {
     if (threadProfile.startRevitTurnRuntime) {
       backendAuthLease = mcpRuntime!.beginBackendAuthLease(req.session_id, backendAuth!);
+      if (assignmentKernelV2) assignmentKernelV2Lease = mcpRuntime!.beginAssignmentKernelV2Lease(assignmentKernelV2.binding);
       teammateContext = beginTeammateLoopOwner(mcpRuntime!, req);
       courierContext = beginRevitCourierTurnContext({
         session_id: req.session_id,
@@ -676,6 +693,19 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         ttl_ms: codexTurnTimeoutMs() + 60_000,
         ...courierTarget!
       });
+      if (assignmentKernelV2 && assignmentKernelV2.snapshot.in_flight_operation_ids.length > 0) {
+        const recovered = await recoverAssignmentKernelOperationsV2({
+          snapshot: assignmentKernelV2.snapshot,
+          runtime: mcpRuntime!
+        });
+        if (recovered.assignment_version !== assignmentKernelV2.snapshot.assignment_version) {
+          input.push({
+            type: "text",
+            text: `AUTHORITATIVE V2 RESTART RECOVERY:\n${formatActiveGoalContext(getGoal(recovered.spec.binding.assignment_id))}`,
+            text_elements: [] as any[]
+          });
+        }
+      }
     }
     try {
       start = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
@@ -704,6 +734,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   } catch (error) {
     mcpRuntime?.endBackendAuthLease(backendAuthLease);
     backendAuthLease = null;
+    mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
+    assignmentKernelV2Lease = null;
     endTeammateLoopOwner(teammateContext);
     teammateContext = null;
     endRevitCourierTurnContext(courierContext);
@@ -716,6 +748,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (!turnId) {
     mcpRuntime?.endBackendAuthLease(backendAuthLease);
     backendAuthLease = null;
+    mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
+    assignmentKernelV2Lease = null;
     endTeammateLoopOwner(teammateContext);
     teammateContext = null;
     endRevitCourierTurnContext(courierContext);
@@ -724,6 +758,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     throw new Error("Codex turn/start did not return a turn id.");
   }
   if (backendAuthLease) mcpRuntime!.bindBackendAuthLeaseTurn(backendAuthLease, turnId);
+  if (assignmentKernelV2Lease) mcpRuntime!.bindAssignmentKernelV2LeaseTurn(assignmentKernelV2Lease, turnId);
   if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
   try {
     appendEvent(req.session_id, "assistant", "codex.turn.start", { thread_id: threadId, turn_id: turnId });
@@ -740,14 +775,21 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     turnId,
     settings: agentSettings,
     startedAtUtc: agentTurnStartedAt,
-    onReceipt: assignmentModelReceiptObserver(req.session_id, () => {
+    onReceipt: assignmentKernelV2
+      ? assignmentKernelV2ModelReceiptObserver(assignmentKernelV2.binding, () => {
+          assignmentBudgetTerminated = true;
+          assignmentBudgetInterrupt?.();
+        })
+      : assignmentModelReceiptObserver(req.session_id, () => {
       assignmentBudgetTerminated = true;
       assignmentBudgetInterrupt?.();
-    })
+        })
   });
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
   let hasAuthoritativeWebEvidence = !webEvidenceRequirement.required;
-  const assignmentObserver = createAutoGoalTurnObserver(req.session_id);
+  const assignmentObserver = assignmentKernelV2
+    ? { observe: (_value: unknown) => {}, finish: (_turnId: string, _assistant: string, _receipt: unknown) => {} }
+    : createAutoGoalTurnObserver(req.session_id);
 
   const unsubscribe = c.onNotification(n => {
     try {
@@ -1016,7 +1058,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if (cb.abortSignal?.aborted) forwardExternalAbort();
   else cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
   let turnCancelled = false;
-  const assignmentIdForTurn = getActiveGoalForSession(req.session_id)?.id ?? null;
+  const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id ?? getActiveGoalForSession(req.session_id)?.id ?? null;
   try {
     const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
@@ -1034,7 +1076,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     turnCancelled = completion.interrupted || activeTurn.interruptRequested;
   } catch (error) {
     if (!activeTurnAbort.signal.aborted) {
-      if (assignmentIdForTurn && /timed?\s*out|timeout|deadline/i.test(error instanceof Error ? error.message : String(error))) {
+      if (!assignmentKernelV2 && assignmentIdForTurn && /timed?\s*out|timeout|deadline/i.test(error instanceof Error ? error.message : String(error))) {
         await requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
         const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
         if (drained.terminal_state === "open") {
@@ -1058,6 +1100,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     assignmentBudgetInterrupt = null;
     mcpRuntime?.endBackendAuthLease(backendAuthLease);
     backendAuthLease = null;
+    mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
+    assignmentKernelV2Lease = null;
     endRequirementsPlanningLease(requirementsLease);
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
     endTeammateLoopOwner(teammateContext);
@@ -1067,11 +1111,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
 
   if (turnCancelled) {
-    if (assignmentIdForTurn) {
+    if (!assignmentKernelV2 && assignmentIdForTurn) {
       cancelAssignmentInFlight(assignmentIdForTurn);
       const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
       if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
     }
+    if (assignmentKernelV2) settleAssignmentKernelProviderBudgetAtQuiescenceV2(assignmentKernelV2.binding);
     const budgetMessage = assignmentBudgetTerminated
       ? "The canonical Assignment watchdog terminated repeated provider work that produced no new grounded target, verified fact, plan, action, model-state change, or terminal reason."
       : "";
@@ -1136,7 +1181,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   hasAuthoritativeWebEvidence = webSettlement.satisfied;
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
-  const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
+  if (assignmentKernelV2) settleAssignmentKernelProviderBudgetAtQuiescenceV2(assignmentKernelV2.binding);
+  const canonicalAssignmentOutcome = !assignmentKernelV2 && req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({
         session_id: req.session_id,
@@ -1165,6 +1211,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     assistant_message: assistantText || "",
     actions: [],
     model_call_receipts: modelTelemetry.receipts,
+    ...(assignmentKernelV2 ? { assignment_snapshot_v2: getAssignmentKernelSnapshotV2(assignmentKernelV2.binding.assignment_id) ?? assignmentKernelV2.snapshot } : {}),
     ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {}),
     ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})

@@ -21,6 +21,7 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   }
   if (snapshot.pending_review_ids.length > 0) return "awaiting_user_review";
   if (!snapshot.quiescent || snapshot.unresolved_unknown_operation_ids.length > 0) return "active";
+  if (snapshot.provider_budget_exhausted) return "failed";
 
   const requiredSpecs = snapshot.spec.criteria.filter((criterion) => criterion.required);
   const evaluations = requiredEvaluations(snapshot);
@@ -41,9 +42,22 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   if (!evaluations.every((evaluation) => evaluation.status === "pass" || evaluation.status === "not_applicable")) return "active";
 
   if (snapshot.spec.requested_effect !== "apply") return "complete";
-  if (Object.values(snapshot.operations).some((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied")) {
+  const appliedOperations = Object.values(snapshot.operations)
+    .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");
+  const appliedAndVerified = appliedOperations.some((operation) => operation.verification_operation_ids.some((verificationId) => {
+    const verification = snapshot.operations[verificationId];
+    return verification?.verification_of_operation_id === operation.operation_id
+      && verification.requested_effect === "read"
+      && verification.purpose === "verification"
+      && verification.persistent_effect === "none"
+      && verification.settlement_state === "settled"
+      && verification.result?.status === "succeeded"
+      && verification.observation_ids.length > 0;
+  }));
+  if (appliedAndVerified) {
     return "complete";
   }
+  if (appliedOperations.length > 0) return "active";
   const equivalenceProven = evaluations.some((evaluation) => evaluation.basis === "desired_state_equivalence");
   return equivalenceProven ? "verified_noop" : "active";
 }

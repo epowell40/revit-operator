@@ -299,7 +299,7 @@ test("Codex instructions reuse known primitives before capability discovery", ()
   assert.match(instructions, /document\/model results are never satisfied from that cache/i);
   assert.match(instructions, /very next Revit action must be a target-bound readback/i);
   assert.match(instructions, /do not repeat synonymous searches/i);
-  assert.match(instructions, /Authoritative complete inventory: cite counts; submit read completion; don't recount/i);
+  assert.match(instructions, /Authoritative complete inventory: cite counts, evaluate the bound criteria from retained observations, and do not recount/i);
   assert.doesNotMatch(instructions, /call `operator_discover_capabilities` first/i);
 });
 

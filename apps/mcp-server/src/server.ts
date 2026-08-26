@@ -66,6 +66,11 @@ import {
 import { runDynamicRevitProgram } from "./lib/dynamicRevitProgramRunner.js";
 import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
+import {
+  currentAssignmentKernelV2Binding,
+  decorateAssignmentKernelMcpResultV2,
+  runWithAssignmentKernelV2
+} from "./lib/assignmentKernelV2.js";
 function redirectConsoleToStderr(): void {
   // This server communicates over stdio (JSON-RPC). Writing to stdout (even for logs)
   // can corrupt the transport and cause "Transport closed" failures.
@@ -125,6 +130,8 @@ const CERTIFIED_SAFE_NON_REVIT_TOOL_ALIASES = new Set([
   "operator_discover_capabilities",
   "operator_retrieve_evidence",
   "operator_request_clarification",
+  "operator_request_assignment_input",
+  "operator_evaluate_assignment_criteria",
   "operator_submit_noop_completion",
   "operator_submit_read_completion",
   "operator_record_execution_strategy",
@@ -167,10 +174,10 @@ function bindDynamicToolExposure(name: string, registeredTool: any): any {
   return registeredTool;
 }
 
-const originalTool = server.tool.bind(server);
+const originalTool = server.tool.bind(server) as any;
 (server as any).tool = (name: string, description: string, inputSchema: any, handler: (args: any) => Promise<any>) => {
   const registeredTool = originalTool(name, description, inputSchema, async (args: any, extra: any) => {
-    return await runWithOperatorBackendAuth(extra?._meta, async () => await runWithRevitToolAlias(name, async () => {
+    return await runWithOperatorBackendAuth(extra?._meta, async () => await runWithAssignmentKernelV2(extra?._meta, async () => await runWithRevitToolAlias(name, async () => {
       const startedAt = Date.now();
       auditLog("tool.call", { name, args: summarize(args) as any });
       try {
@@ -184,13 +191,13 @@ const originalTool = server.tool.bind(server);
           outBytes = 0;
         }
         auditLog("tool.result", { name, ok: !isError, duration_ms: durationMs, out_bytes: outBytes });
-        return result;
+        return decorateAssignmentKernelMcpResultV2(result, name);
       } catch (e) {
         const durationMs = Date.now() - startedAt;
         auditLog("tool.result", { name, ok: false, duration_ms: durationMs, error: String(e) });
         throw e;
       }
-    }));
+    })));
   });
   return bindDynamicToolExposure(name, registeredTool);
 };
@@ -198,7 +205,8 @@ const originalTool = server.tool.bind(server);
 const originalRegisterTool = server.registerTool.bind(server) as any;
 (server as any).registerTool = (name: string, config: any, handler: (args: unknown) => Promise<unknown>) => {
   const registeredTool = originalRegisterTool(name, config, async (args: unknown, extra: any) =>
-    await runWithOperatorBackendAuth(extra?._meta, async () => await runWithRevitToolAlias(name, async () => await handler(args)))
+    await runWithOperatorBackendAuth(extra?._meta, async () => await runWithAssignmentKernelV2(extra?._meta, async () => await runWithRevitToolAlias(name, async () =>
+      decorateAssignmentKernelMcpResultV2(await handler(args), name))))
   );
   return bindDynamicToolExposure(name, registeredTool);
 };
@@ -1063,6 +1071,62 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
           ...(item.evidenceRefs ? { evidence_refs: item.evidenceRefs } : {}),
           ...(item.workUnitIds ? { work_unit_ids: item.workUnitIds } : {})
         })) } : {})
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+    }
+  }
+);
+
+server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status; this tool does not accept model-authored pass/fail status or JSON selectors.",
+  {
+    claims: z.array(z.object({
+      criterionId: z.string().min(1).max(240),
+      observationIds: z.array(z.string().min(1).max(240)).min(1).max(128),
+      basis: z.enum(["observation", "desired_state_equivalence"]).optional()
+    })).min(1).max(80)
+  },
+  async (args) => {
+    try {
+      const binding = currentAssignmentKernelV2Binding();
+      if (!binding) throw new Error("assignment_kernel_v2_trusted_binding_required");
+      const result = await createOperatorBackendClient().evaluateAssignmentCriteriaV2({
+        assignment_id: binding.assignment_id,
+        run_id: binding.run_id,
+        generation: binding.generation,
+        session_id: binding.session_id,
+        claims: args.claims.map(claim => ({
+          criterion_id: claim.criterionId,
+          observation_ids: claim.observationIds,
+          ...(claim.basis ? { basis: claim.basis } : {})
+        }))
+      });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { isError: true, content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }] };
+    }
+  }
+);
+
+server.tool("operator_request_assignment_input", "Ask one focused question for stable V2 Assignment input variables. Trusted Assignment/run/session binding is injected by the host and is not accepted from model arguments.",
+  {
+    clarificationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/),
+    variableIds: z.array(z.string().regex(/^[a-z][a-z0-9_]{0,159}$/)).min(1).max(32),
+    question: z.string().min(1).max(1_200)
+  },
+  async (args) => {
+    try {
+      const binding = currentAssignmentKernelV2Binding();
+      if (!binding) throw new Error("assignment_kernel_v2_trusted_binding_required");
+      const result = await createOperatorBackendClient().requestAssignmentInputV2({
+        assignment_id: binding.assignment_id,
+        run_id: binding.run_id,
+        generation: binding.generation,
+        session_id: binding.session_id,
+        clarification_id: args.clarificationId,
+        variable_ids: args.variableIds,
+        question: args.question
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     } catch (error) {

@@ -1,0 +1,41 @@
+{
+  "schema": "revit-operator.assignment-kernel-adapter-registry/v1",
+  "allowed_adapters": [
+    {
+      "id": "external-mcp-input-edge",
+      "class": "external_input",
+      "paths": [
+        "src/assignments/assignment_kernel_v2_factory.ts",
+        "src/assignments/assignment_kernel_v2_input_adapter.ts",
+        "src/assignments/assignment_kernel_v2_execution.ts",
+        "src/assignments/assignment_kernel_v2_provider_budget.ts"
+      ]
+    },
+    {
+      "id": "native-operation-result-edge",
+      "class": "native_result",
+      "paths": [
+        "src/execution_truth/assignment_kernel_v2_result_adapter.ts",
+        "../mcp-server/src/lib/assignmentKernelV2.ts"
+      ]
+    },
+    {
+      "id": "legacy-v1-read-adapter",
+      "class": "legacy_read_projection",
+      "paths": [
+        "src/assignments/projection.ts"
+      ]
+    },
+    {
+      "id": "presentation-projections",
+      "class": "presentation",
+      "paths": [
+        "src/work_packets/assignment_kernel_v2_generator.ts",
+        "src/work_returns/assignment_kernel_v2_generator.ts",
+        "src/goals/assignment_kernel_v2_prompt.ts",
+        "src/benchmark/canonical_assignment_truth.ts",
+        "src/benchmark/protocol_v2_runner.ts"
+      ]
+    }
+  ]
+}

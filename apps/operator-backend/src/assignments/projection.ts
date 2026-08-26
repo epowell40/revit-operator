@@ -6,6 +6,8 @@ import {
   reduceAssignmentControlPlane,
   type AssignmentControlPlaneProjection
 } from "./control_plane.js";
+import { AssignmentJournalV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { normalizeAssignmentKernelJournalV2 } from "./assignment_kernel_v2_store.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -167,6 +169,12 @@ export type AssignmentProjection = {
     reconciliation_required: AssignmentTruthValue;
   };
   control_plane: AssignmentControlPlaneProjection | null;
+  /**
+   * Exact read-only V2 domain projection. This is derived exclusively from the
+   * durable Assignment journal; legacy projection fields above remain a
+   * compatibility view and must never be written back into the kernel.
+   */
+  assignment_snapshot_v2?: AssignmentSnapshotV2;
   history: Array<{ ts: string; kind: string; text: string }>;
   created_at: string;
   updated_at: string;
@@ -400,6 +408,10 @@ function historyFromGoal(goal: GoalRecord): AssignmentProjection["history"] {
 }
 
 export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
+  const kernelRecord = normalizeAssignmentKernelJournalV2(goal.assignment_kernel_v2);
+  const kernelSnapshot = kernelRecord.events.length > 0
+    ? new AssignmentJournalV2(kernelRecord.events).snapshot()
+    : null;
   const steps = goalSteps(goal.work_items);
   const evidence = goalEvidence(goal);
   const workBudget = object(goal.work_budget);
@@ -421,7 +433,7 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     ...(goal.error ? [goal.error] : []),
     ...goal.work_items.flatMap(item => item.blocker ? [item.blocker] : [])
   ]);
-  return {
+  const projection: AssignmentProjection = {
     schema: ASSIGNMENT_PROJECTION_SCHEMA,
     id: `goal:${goal.id}`,
     source_kind: "goal",
@@ -497,6 +509,8 @@ export function projectGoalAssignment(goal: GoalRecord): AssignmentProjection {
     updated_at: goal.updated_at,
     finished_at: goal.finished_at ?? (goal.status === "complete" || goal.status === "canceled" || goal.status === "failed" || goalLifecycle(goal) === "complete_with_issues" ? goal.updated_at : null)
   };
+  if (kernelSnapshot) projection.assignment_snapshot_v2 = structuredClone(kernelSnapshot);
+  return projection;
 }
 
 function taskApprovals(task: JsonMap): AssignmentProjection["approvals"] {

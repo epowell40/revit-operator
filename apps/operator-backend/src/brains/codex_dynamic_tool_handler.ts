@@ -29,6 +29,14 @@ import {
 import { recordAssignmentTurnProgress } from "../assignments/turn_settlement.js";
 import { currentAssignmentJournalContext } from "../assignments/turn_journal.js";
 import { bindCanonicalAssignmentToolArguments } from "../assignments/tool_argument_binding.js";
+import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import {
+  failAssignmentKernelOperationV2,
+  markAssignmentKernelOperationDispatchStartedV2,
+  openAssignmentKernelOperationV2,
+  settleAssignmentKernelOperationV2
+} from "../assignments/assignment_kernel_v2_execution.js";
+import { settleAssignmentKernelProviderBudgetAtQuiescenceV2 } from "../assignments/assignment_kernel_v2_provider_budget.js";
 
 const parallelGuard = new RevitToolParallelGuard();
 
@@ -65,27 +73,34 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   }
   const sessionId = teammateLoopSessionIdForOwner(runtime, params.turnId)
     || `codex_dynamic_${String(params.turnId || "unbound").replace(/[^A-Za-z0-9._:-]/g, "_").slice(0, 160)}`;
-  const journalContext = currentAssignmentJournalContext(sessionId);
-  if (!journalContext) {
+  // Keep the V2 hook additive while legacy/runtime test doubles transition.
+  // A runtime that does not expose the hook is necessarily on the V1 path.
+  const v2Binding =
+    typeof runtime.assignmentKernelV2Binding === "function"
+      ? runtime.assignmentKernelV2Binding(params.turnId, sessionId)
+      : null;
+  const v2Snapshot = v2Binding ? getAssignmentKernelSnapshotV2(v2Binding.assignment_id) : null;
+  const journalContext = v2Binding ? null : currentAssignmentJournalContext(sessionId);
+  if (!v2Snapshot && !journalContext) {
     return {
       contentItems: [{ type: "inputText", text: "[assignment_settlement_blocked] No current canonical Assignment binding exists for this tool call." }],
       success: false
     };
   }
-  if (journalContext.projection.terminal_state !== "open") {
+  if ((v2Snapshot?.terminal ?? false) || (journalContext && journalContext.projection.terminal_state !== "open")) {
     return {
       contentItems: [{
         type: "inputText",
-        text: `[assignment_${journalContext.projection.terminal_state}] Canonical Assignment is already terminal; no further tool dispatch is allowed.`
+        text: `[assignment_${v2Snapshot?.outcome ?? journalContext?.projection.terminal_state ?? "terminal"}] Canonical Assignment is already terminal; no further tool dispatch is allowed.`
       }],
       success: false
     };
   }
   const boundArguments = bindCanonicalAssignmentToolArguments(params.tool, params.arguments ?? {}, {
     session_id: sessionId,
-    assignment_id: journalContext.assignmentId,
-    run_id: journalContext.runId,
-    generation: journalContext.generation
+    assignment_id: v2Binding?.assignment_id ?? journalContext!.assignmentId,
+    run_id: v2Binding?.run_id ?? journalContext!.runId,
+    generation: v2Binding?.generation ?? journalContext!.generation
   });
   const boundParams = { ...params, arguments: boundArguments.arguments };
   const boundRequest = { ...request, params: boundParams };
@@ -97,6 +112,77 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
   if (!teammateGate.allowed) {
     parallel.release();
     return { contentItems: [{ type: "inputText", text: teammateGate.message ?? "Host teammate-loop guard blocked this Revit call." }], success: false };
+  }
+  if (v2Snapshot && v2Binding) {
+    if (teammateGate.call?.effect === "interaction" || teammateGate.call?.effect === "completion_claim") {
+      try {
+        const result = await runtime.callTool(params.tool, boundArguments.arguments, {
+          turnId: params.turnId,
+          sessionId,
+          assignmentKernelV2Binding: v2Binding
+        });
+        recordTeammateMcpResult(runtime, teammateGate, result);
+        return adaptMcpToolCallResultToDynamicResponse(result, {
+          tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0
+        });
+      } catch (error) {
+        recordTeammateMcpResult(runtime, teammateGate, { isError: true });
+        return { contentItems: [{ type: "inputText", text: error instanceof Error ? error.message : String(error) }], success: false };
+      } finally {
+        parallel.release();
+      }
+    }
+    const lease = openAssignmentKernelOperationV2({
+      snapshot: v2Snapshot,
+      controller_request_id: request.id,
+      provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
+      capability_id: String(params.tool || "unknown-capability"),
+      classified_effect: teammateGate.call?.effect ?? "unknown",
+      target_tokens: teammateGate.call?.target_tokens,
+      arguments: boundArguments.arguments
+    });
+    let accepted = false;
+    try {
+      const rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
+        turnId: params.turnId,
+        sessionId,
+        assignmentKernelV2: lease,
+        onMcpAccepted: () => {
+          markAssignmentKernelOperationDispatchStartedV2(lease);
+          accepted = true;
+        }
+      });
+      recordTeammateMcpResult(runtime, teammateGate, rawResult);
+      const settled = settleAssignmentKernelOperationV2(lease, rawResult);
+      settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
+      const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
+      const context = assembleBoundedEvidenceContext({
+        projections: [...settled.evidence_projections],
+        session_id: sessionId,
+        model_call_id: typeof params.turnId === "string" ? params.turnId : null,
+        source: `assignment_kernel_v2_context:${params.tool}`,
+        budget: getEvidenceContextBudget()
+      });
+      return adaptMcpToolCallResultToDynamicResponse(result, {
+        tool: params.tool,
+        arguments: boundArguments.arguments,
+        projections: context.projections,
+        omitted: context.omitted
+      });
+    } catch (error) {
+      recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: error instanceof Error ? error.message : String(error) });
+      const currentOperation = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];
+      if (!currentOperation || currentOperation.settlement_state !== "settled") {
+        try { failAssignmentKernelOperationV2(lease, error, accepted ? "dispatching" : "not_dispatched"); } catch {}
+      }
+      settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
+      return {
+        contentItems: [{ type: "inputText", text: `[assignment_kernel_v2_tool_failed] ${error instanceof Error ? error.message : String(error)}` }],
+        success: false
+      };
+    } finally {
+      parallel.release();
+    }
   }
   let assignmentLease: AssignmentToolLease;
   try {

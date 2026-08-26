@@ -4,6 +4,8 @@ import { normalizeAssignmentControlPlane, reduceAssignmentControlPlane } from ".
 import type { GoalRecord } from "../goals/service.js";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import { WORK_RETURN_SCHEMA, type WorkReturnV1 } from "./contract.js";
+import { AssignmentJournalV2 } from "../domain/assignment-kernel/index.js";
+import { generateWorkReturnFromKernelV2 } from "./assignment_kernel_v2_generator.js";
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
@@ -22,6 +24,11 @@ export function generateWorkReturn(
   parentWorkReturnId: string | null = null,
   packet: VerifiedWorkPacketV1 | null = null
 ): WorkReturnV1 {
+  const kernelEvents = goal.assignment_kernel_v2?.schema === "revit-operator.assignment-kernel-journal/v2"
+    && Array.isArray(goal.assignment_kernel_v2.events) ? goal.assignment_kernel_v2.events : [];
+  if (kernelEvents.length > 0) {
+    return generateWorkReturnFromKernelV2(goal, new AssignmentJournalV2(kernelEvents).snapshot(), parentWorkReturnId, packet);
+  }
   const projection = reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection;
   const pending = projection.clarifications.find(item => item.clarification_id === projection.pending_clarification_id) ?? null;
   const completed = [
