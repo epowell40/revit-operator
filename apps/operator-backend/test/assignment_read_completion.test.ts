@@ -433,6 +433,102 @@ test("negative: unrelated grouping fields do not satisfy a requested family/type
 
 for (const variant of [
   {
+    name: "live element familyName plus canonical name",
+    request: "Count the devices and group them by family and type.",
+    groupBy: ["familyName", "name"],
+    item: { familyName: "Family A", name: "Type 1" }
+  },
+  {
+    name: "snake family_name plus canonical name",
+    request: "Count the devices and group them by family and type.",
+    groupBy: ["family_name", "name"],
+    item: { family_name: "Family A", name: "Type 1" }
+  },
+  {
+    name: "nested family name plus canonical name",
+    request: "Count the devices and group them by family and type.",
+    groupBy: ["family.name", "name"],
+    item: { family: { name: "Family A" }, name: "Type 1" }
+  },
+  {
+    name: "family level plus one unambiguous canonical name",
+    request: "Count the devices and group them by family, type, and level.",
+    groupBy: ["familyName", "name", "levelName"],
+    item: { familyName: "Family A", name: "Type 1", levelName: "Level 2" }
+  }
+]) test(`candidate 14 regression: ${variant.name} preserves a complete semantic grouping`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-candidate14-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", variant.request);
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      count: 1,
+      items: [variant.item]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "inventory-groups",
+      attempt_id: "inventory-read",
+      evidence_id: evidenceId,
+      operation: "group_count",
+      path: "items",
+      group_by: variant.groupBy,
+      expected_total: 1,
+      expected_groups: [{
+        values: variant.groupBy.map(field => field === "family.name"
+          ? "Family A"
+          : field === "familyName" || field === "family_name"
+            ? "Family A"
+            : field === "levelName" ? "Level 2" : "Type 1"),
+        count: 1
+      }]
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, true);
+    assert.equal(settled.projection?.terminal_reason, "authoritative_read_completed");
+  });
+});
+
+test("candidate 14 negative: multiple generic labels cannot be guessed into family and type", () => {
+  workspace(() => {
+    const sessionId = "read-completion-candidate14-ambiguous-generic-labels";
+    createReadAssignment(sessionId, "read", "Count the devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      items: [{ name: "Family A", label: "Type 1" }]
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "inventory-groups",
+      attempt_id: "inventory-read",
+      evidence_id: evidenceId,
+      operation: "group_count",
+      path: "items",
+      group_by: ["name", "label"],
+      expected_total: 1,
+      expected_groups: [{ values: ["Family A", "Type 1"], count: 1 }]
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_criteria_incomplete");
+  });
+});
+
+test("candidate 14 unrelated regression: a count-only authoritative lookup remains complete", () => {
+  workspace(() => {
+    const sessionId = "read-completion-candidate14-count-only";
+    createReadAssignment(sessionId, "read", "Return the authoritative total count.");
+    const evidenceId = journalRead(sessionId, "count-read", "/revit/find-elements", { count: 4 }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "count",
+      attempt_id: "count-read",
+      evidence_id: evidenceId,
+      operation: "field_equals",
+      path: "count",
+      expected: 4
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+for (const variant of [
+  {
     name: "split dimensions across assertions",
     assertions: [
       { id: "families", fields: ["familyName"], groups: [{ values: ["Family A"], count: 1 }] },
