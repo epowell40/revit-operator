@@ -400,6 +400,14 @@ namespace RevitBridge.Operator
                     {
                         handlerResult = handler.Handle(app, jsonBody).GetAwaiter().GetResult();
                     }
+                    catch (OperatorToolUserErrorException)
+                    {
+                        // A structured user/admission rejection proves that the
+                        // handler did not enter a native mutation transaction.
+                        // Preserve that authoritative no-effect error instead of
+                        // laundering it into an outcome-unknown dispatch failure.
+                        throw;
+                    }
                     catch (Exception error) when (executionStart?.Phase == "apply" || laboratoryExecutionStart?.Phase == "apply")
                     {
                         throw new OperatorCertifiedFamilyOutcomeUnknownException(

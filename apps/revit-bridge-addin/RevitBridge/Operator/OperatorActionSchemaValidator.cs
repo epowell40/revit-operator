@@ -9398,6 +9398,29 @@ namespace RevitBridge.Operator
                 if (!ValidateOptionalBool(obj.Value, "dryRun", out error)) return false;
                 if (!ValidateOptionalBool(obj.Value, "apply", out error)) return false;
                 if (!ValidateOptionalString(obj.Value, "confirm", maxLen: 120, out error)) return false;
+                var apply = obj.Value.TryGetProperty("apply", out var applyValue) &&
+                            applyValue.ValueKind == JsonValueKind.True;
+                var dryRun = obj.Value.TryGetProperty("dryRun", out var dryRunValue) &&
+                             dryRunValue.ValueKind == JsonValueKind.True;
+                if (apply && !dryRun)
+                {
+                    const string expected = "APPLY 1 TEXT NOTE CHANGE";
+                    var received = obj.Value.TryGetProperty("confirm", out var confirmValue) &&
+                                   confirmValue.ValueKind == JsonValueKind.String
+                        ? confirmValue.GetString() ?? ""
+                        : "";
+                    if (!BulkConfirmUtil.EqualsNormalized(received, expected))
+                    {
+                        userError = new OperatorToolUserErrorException(
+                            message: "TextNote edit requires typed confirmation.",
+                            code: "bulk_confirm_required",
+                            requiredConfirm: expected,
+                            confirmReceived: BulkConfirmUtil.Normalize(received),
+                            hint: "Retry with confirm set to the requiredConfirm string (markdown like **...** is ok). If OPERATOR_BULK_CONFIRM_SIMPLE=1, you can also use confirm:\"yes\".");
+                        error = userError.Message;
+                        return false;
+                    }
+                }
                 return true;
             }
 

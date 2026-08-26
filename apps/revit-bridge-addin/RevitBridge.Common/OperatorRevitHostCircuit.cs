@@ -51,9 +51,10 @@ namespace RevitBridge.Common
 
             if (root is OperatorToolUserErrorException userError)
             {
+                var correctedRetryAllowed = string.Equals(userError.Code, "bulk_confirm_required", StringComparison.Ordinal);
                 var receipt = Create(root,
                     string.IsNullOrWhiteSpace(userError.Code) ? "revit_action_rejected" : userError.Code,
-                    retryable: false,
+                    retryable: correctedRetryAllowed,
                     phase: "revit_validation",
                     hostHealth: "healthy",
                     opensCircuit: false,

@@ -1790,11 +1790,12 @@ server.tool("revit_find_text_notes", "Find TextNotes in an open family doc sessi
   }
 );
 
-server.tool("revit_replace_text_note", "Replace a TextNote's text in an open family doc session (docId).",
+server.tool("revit_replace_text_note", "Replace a TextNote's text in the active project, or in an open family session when docId is supplied. Preview first; applying a change requires confirm: APPLY 1 TEXT NOTE CHANGE.",
   {
-    docId: z.string(),
+    docId: z.string().optional(),
     elementId: z.number().int(),
     newText: z.string(),
+    expectedOldText: z.string().optional(),
     dryRun: z.boolean().optional(),
     apply: z.boolean().optional(),
     confirm: z.string().optional(),

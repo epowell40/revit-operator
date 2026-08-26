@@ -82,7 +82,7 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("REPLACE", receipt.ConfirmReceived);
             Assert.Equal(1, receipt.MaxChangesPerCall);
             Assert.Equal("Retry with confirm set to requiredConfirm.", receipt.Hint);
-            Assert.False(receipt.Retryable);
+            Assert.True(receipt.Retryable);
             Assert.False(receipt.OpensCircuit);
             Assert.Equal("healthy", receipt.HostHealth);
             Assert.Equal("revit_validation", receipt.Phase);
