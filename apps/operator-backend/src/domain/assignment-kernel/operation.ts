@@ -13,6 +13,7 @@ export type OperationAdmissionStateV2 = "proposed" | "admitted" | "rejected";
 export type OperationDispatchStateV2 = "not_dispatched" | "dispatching" | "dispatched";
 export type PersistentEffectV2 = "none" | "unknown" | "applied";
 export type OperationPurposeV2 = "work" | "discovery" | "verification" | "evidence_read" | "reconciliation";
+export type OperationSettlementStateV2 = "open" | "awaiting_result" | "retaining_observation" | "settled";
 
 export interface CanonicalTargetV2 {
   target_id?: string;
@@ -34,9 +35,12 @@ export interface OperationV2 {
   admission_state: OperationAdmissionStateV2;
   dispatch_state: OperationDispatchStateV2;
   persistent_effect: PersistentEffectV2;
+  settlement_state: OperationSettlementStateV2;
+  result?: OperationResultV2;
   observation_ids: readonly ObservationIdV2[];
   verification_operation_ids: readonly OperationIdV2[];
   retry_of_operation_id?: OperationIdV2;
+  retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered";
   reconciliation_of_operation_id?: OperationIdV2;
   opened_at: string;
   dispatched_at?: string;
@@ -49,6 +53,7 @@ export type OperationResultStatusV2 = "succeeded" | "failed_before_dispatch" | "
 
 export interface OperationResultV2 {
   schema: typeof OPERATION_RESULT_V2_SCHEMA;
+  result_id: string;
   operation_id: OperationIdV2;
   binding: AssignmentBindingV2;
   status: OperationResultStatusV2;
@@ -57,6 +62,7 @@ export interface OperationResultV2 {
   native_transaction_state: NativeTransactionStateV2;
   authority: string;
   result_schema_id: string;
+  observation_required: boolean;
   raw_payload_hash?: string;
   receipt_id?: string;
   native_correlation_id?: string;

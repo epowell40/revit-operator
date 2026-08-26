@@ -1,6 +1,7 @@
 # Assignment Kernel V2
 
-Status: architecture contract; execution feature flag defaults off.
+Status: pure kernel and reviewed edge adapters implemented; execution feature
+flag defaults off.
 
 ## Decision
 
@@ -49,6 +50,34 @@ native edge -> OperationResultV2(operation_id) -> retained raw bytes
 observation edge -> ObservationV2 semantic facts -> criterion events
 pure reducer -> AssignmentSnapshotV2 -> read-only API/UI/audit projections
 ```
+
+## Settlement ordering
+
+An admitted operation is `open`, becomes `awaiting_result` only after explicit
+native dispatch, and becomes `retaining_observation` when an authoritative
+result requires durable semantic retention. It is `settled` only after the
+matching `ObservationV2` has been appended. Therefore neither response return
+nor controller acceptance can make a V2 Assignment quiescent prematurely.
+
+Pre-dispatch rejection proves effect `none`. A dispatched apply is `unknown`
+until an authoritative committed result or target-bound reconciliation settles
+it. Retry requires a settled no-effect predecessor and a typed material-change
+basis. A terminal event is rejected while any operation is unresolved.
+
+## Criterion authority
+
+Each criterion declares accepted deterministic evaluator and observation
+authorities plus stable semantic-fact requirements. A pass must cite current,
+settled operations and every required fact. The pure evaluator detects
+contradictory values for the same fact identity and produces `uncertain`.
+Desired-state equivalence is an ordinary criterion basis: it requires known
+stable input variables and explicit fact-to-variable comparisons. It is not a
+second no-op proof language.
+
+The result adapter unwraps only reviewed, explicit transport envelopes. It does
+not recursively search result JSON. External field spelling and clarification
+aliases are normalized once at their edge; lifecycle binding fields are never
+accepted from model-authored input.
 
 External spelling, transport envelopes, typed aliases, and native route names
 are normalized exactly once at their registered edge. They do not enter the
