@@ -1,6 +1,6 @@
-import type { AssignmentSpecV2 } from "./assignment_spec.js";
+import type { AssignmentSpecV2, AssignmentWorkUnitStateV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
-import type { AssignmentBindingV2, CriterionIdV2, ObservationIdV2, OperationIdV2 } from "./identity.js";
+import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, ObservationIdV2, OperationIdV2, WorkUnitIdV2 } from "./identity.js";
 import type { ObservationV2 } from "./observation.js";
 import type { OperationV2 } from "./operation.js";
 
@@ -11,6 +11,10 @@ export interface AssignmentSnapshotV2 {
   assignment_version: number;
   spec: AssignmentSpecV2;
   current_binding: AssignmentBindingV2;
+  input_values: Readonly<Record<InputVariableIdV2, unknown>>;
+  pending_input_variable_ids: readonly InputVariableIdV2[];
+  work_unit_states: Readonly<Record<WorkUnitIdV2, AssignmentWorkUnitStateV2>>;
+  pending_review_ids: readonly string[];
   operations: Readonly<Record<OperationIdV2, OperationV2>>;
   observations: Readonly<Record<ObservationIdV2, ObservationV2>>;
   criteria: Readonly<Record<CriterionIdV2, CriterionEvaluationV2>>;

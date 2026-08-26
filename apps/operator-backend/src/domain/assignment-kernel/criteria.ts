@@ -11,6 +11,7 @@ export interface CriterionFactRefV2 {
 export interface CriterionEvaluationV2 {
   criterion_id: CriterionIdV2;
   status: CriterionStatusV2;
+  basis: "observation" | "execution" | "desired_state_equivalence" | "user_input" | "policy";
   supporting_operation_ids: readonly OperationIdV2[];
   supporting_facts: readonly CriterionFactRefV2[];
   evaluator_authority: string;

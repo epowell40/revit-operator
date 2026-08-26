@@ -23,6 +23,14 @@ export interface AssignmentCriterionSpecV2 {
   requirement: string;
   required: boolean;
   semantic_fact_requirements: readonly string[];
+  accepted_evaluator_authority_ids: readonly string[];
+  accepted_observation_authority_ids: readonly string[];
+  desired_state_comparisons?: readonly {
+    fact_id: string;
+    input_variable_id: InputVariableIdV2;
+    dimensions?: Readonly<Record<string, string | number | boolean | null>>;
+    target_id?: string;
+  }[];
 }
 
 export interface AssignmentWorkUnitSpecV2 {
@@ -36,6 +44,8 @@ export interface AssignmentWorkUnitSpecV2 {
   safe_to_retain: boolean;
   rollback_scope: "none" | "operation" | "work_unit" | "assignment";
 }
+
+export type AssignmentWorkUnitStateV2 = "pending" | "active" | "complete" | "retained" | "blocked" | "failed";
 
 export interface AssignmentSpecV2 {
   schema: typeof ASSIGNMENT_SPEC_V2_SCHEMA;
