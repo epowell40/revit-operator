@@ -391,6 +391,42 @@ test("MCP error envelopes cannot authenticate convincing result prose", () => {
 });
 
 for (const variant of [
+  { name: "camel selector over snake evidence", fields: ["familyName", "typeName"], row: { family_name: "Family A", type_name: "Type 1" } },
+  { name: "snake selector over camel evidence", fields: ["family_name", "type_name"], row: { familyName: "Family A", typeName: "Type 1" } },
+  { name: "hyphen selector over snake evidence", fields: ["family-name", "type-name"], row: { family_name: "Family A", type_name: "Type 1" } }
+]) test(`authoritative read completion resolves ${variant.name}`, () => {
+  workspace(() => {
+    const sessionId = `read-completion-field-style-${variant.name.replace(/\W+/g, "-")}`;
+    createReadAssignment(sessionId, "read", "Count the devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", { payload: { items: [variant.row] } }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "inventory-groups", attempt_id: "inventory-read", evidence_id: evidenceId,
+      operation: "group_count", path: "payload.items", group_by: variant.fields, expected_total: 1,
+      expected_groups: [{ values: ["Family A", "Type 1"], count: 1 }]
+    }]);
+    assert.equal(settleAssignmentTurn(sessionId, "read").completed, true);
+  });
+});
+
+test("conflicting field-style aliases fail closed", () => {
+  workspace(() => {
+    const sessionId = "read-completion-field-style-conflict";
+    createReadAssignment(sessionId, "read", "Count the devices and group them by family and type.");
+    const evidenceId = journalRead(sessionId, "inventory-read", "/revit/find-elements", {
+      payload: { items: [{ familyName: "Family A", family_name: "Family B", typeName: "Type 1", type_name: "Type 1" }] }
+    }, true)!;
+    submitClaim(sessionId, [{
+      assertion_id: "inventory-groups", attempt_id: "inventory-read", evidence_id: evidenceId,
+      operation: "group_count", path: "payload.items", group_by: ["familyName", "typeName"], expected_total: 1,
+      expected_groups: [{ values: ["Family A", "Type 1"], count: 1 }]
+    }]);
+    const settled = settleAssignmentTurn(sessionId, "read");
+    assert.equal(settled.completed, false);
+    assert.equal(settled.reason, "read_completion_result_not_supported");
+  });
+});
+
+for (const variant of [
   { name: "agree", structured: { count: 4 }, text: { count: 4 }, complete: true },
   { name: "disagree", structured: { count: 4 }, text: { count: 9 }, complete: false }
 ]) test(`structured and textual MCP envelope facts ${variant.name}`, () => {
