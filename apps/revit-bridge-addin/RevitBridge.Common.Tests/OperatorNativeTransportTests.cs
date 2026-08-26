@@ -319,6 +319,29 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void TextNoteConfirmationIsRejectedBeforeNativeDispatchAndTheToolContractSupportsOneCorrectedRetry()
+        {
+            var validator = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionSchemaValidator.cs");
+            Assert.Contains("if (apply && !dryRun)", validator);
+            Assert.Contains("APPLY 1 TEXT NOTE CHANGE", validator);
+            Assert.Contains("BulkConfirmUtil.EqualsNormalized(received, expected)", validator);
+            Assert.Contains("code: \"bulk_confirm_required\"", validator);
+
+            var runner = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorActionRunner.cs");
+            Assert.True(
+                runner.IndexOf("OperatorActionSchemaValidator.ValidateOrThrow(action)", StringComparison.Ordinal)
+                < runner.IndexOf("_eventService.Run(app =>", StringComparison.Ordinal));
+            Assert.Contains("OperatorDispatchedMutationOutcomeUnknownException", runner);
+            Assert.DoesNotContain("catch (OperatorToolUserErrorException)", runner);
+
+            var mcp = ReadSharedSource("mcp-server", "src", "server.ts");
+            Assert.Contains("revit_replace_text_note", mcp);
+            Assert.Contains("docId: z.string().optional()", mcp);
+            Assert.Contains("expectedOldText: z.string().optional()", mcp);
+            Assert.Contains("confirm: APPLY 1 TEXT NOTE CHANGE", mcp);
+        }
+
+        [Fact]
         public void GenericSetParameterHandlerEmitsTheNormalizedNativeTransactionSettlementContract()
         {
             var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Handlers", "SetParameterHandler.cs");
