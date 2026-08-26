@@ -2637,7 +2637,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_typed_native_settlement.test.ts",
-      "sha256": "sha256:3440e42dd466591e141aa0c12bf4ed56a43d873c8d53156d711b5e491b826be0"
+      "sha256": "sha256:3982fe3a3cf089a995e32e5c34fc8718c261a421cf7534b930cf3bdfdcf81b31"
     },
     {
       "path": "apps/operator-backend/test/attachment_upload_request.test.ts",
@@ -3705,7 +3705,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorAttemptSettlementTests.cs",
-      "sha256": "sha256:9b715db9ad4189e15bd78ed94c605efd1adfbbaa53aacf3f9fda9371b805919b"
+      "sha256": "sha256:ea25ef4c783eed8cd795049b0865e0feacebb07830bc46b7b015418f291d4ef6"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorAuthTokenStoreTests.cs",
@@ -3781,7 +3781,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeTransportTests.cs",
-      "sha256": "sha256:753914472f445f7d29bbac7666551f3c5064a31fe965dd4cb292dbfd9f2c2f7c"
+      "sha256": "sha256:7a5be08aa87423ee01b72a0c2215ed70d1410db898c7796c86a60af2a44765c2"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPaneIntegrationContractTests.cs",
@@ -5414,7 +5414,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SetParameterHandler.cs",
-      "sha256": "sha256:2109e70d6e5aa147196940bc5f94fcd8817be049105765591de4c3f22c2ec6de"
+      "sha256": "sha256:214e29fb2bea8c4bf3756daf996cc5c0f98bccc89689897e6ff2d8899d065bc4"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/SheetPlacementHelper.cs",
@@ -5605,7 +5605,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:b3f121dee30cf4fffb01753ca38952ebcd68ad09452ac035fd5fdc5c1a0dfd8b",
+  "inputs_hash": "sha256:25759fa23de5b4d6fe7c9e4ca436d2949cf1c0b5da10d739ca586e738bffeaab",
   "result": {
     "passed": true,
     "checks": [
