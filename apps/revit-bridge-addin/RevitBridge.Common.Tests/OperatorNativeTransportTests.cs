@@ -319,6 +319,18 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public void GenericSetParameterHandlerEmitsTheNormalizedNativeTransactionSettlementContract()
+        {
+            var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Handlers", "SetParameterHandler.cs");
+
+            Assert.Contains("OperatorNativeTransactionReceipt.NotStarted", handler);
+            Assert.Contains("OperatorNativeTransactionReceipt.RolledBack", handler);
+            Assert.Contains("OperatorNativeTransactionReceipt.Committed", handler);
+            Assert.Contains("OperatorNativeTransactionReceipt.Unknown", handler);
+            Assert.Contains("transaction = transactionReceipt", handler);
+        }
+
+        [Fact]
         public void FindElementsByParameterSupportsBoundedPrefixAndSuffixQueriesAcrossContracts()
         {
             var handler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "MEP", "FindElementsByParameterHandler.cs");

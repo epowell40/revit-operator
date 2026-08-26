@@ -104,6 +104,82 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("element_id:42", committed.AffectedTargetIdentities);
         }
 
+        [Fact]
+        public void GenericParameterPreviewRollbackIsAuthoritativeNoEffect()
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Dry Run",
+                dryRun = true,
+                changedCount = 1,
+                transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 42L })
+            }, "preview", "POST", "/revit/set-parameter");
+
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("native_rollback", settlement.EffectAuthority);
+            Assert.Equal("verified_native_rollback", settlement.EffectReason);
+            Assert.Contains("element_id:42", settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
+        public void GenericParameterApplyCommitIsAuthoritativeApplied()
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Applied and Verified",
+                dryRun = false,
+                changedCount = 1,
+                transaction = OperatorNativeTransactionReceipt.Committed(new[] { 42L })
+            }, "apply", "POST", "/revit/set-parameter");
+
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Equal("native_transaction", settlement.EffectAuthority);
+            Assert.Contains("element_id:42", settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
+        public void GenericParameterNoChangeAndPreconditionRollbackRemainRetrySafe()
+        {
+            foreach (var response in new object[]
+            {
+                new { status = "No Change Required", transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 42L }) },
+                new { status = "Precondition Failed", transaction = OperatorNativeTransactionReceipt.RolledBack(new[] { 42L }) }
+            })
+            {
+                var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/set-parameter");
+                Assert.Equal("none", settlement.EffectState);
+                Assert.Equal("native_rollback", settlement.EffectAuthority);
+            }
+        }
+
+        [Fact]
+        public void GenericParameterMutationWithoutTransactionTruthRemainsUnknown()
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Applied and Verified",
+                dryRun = false,
+                changedCount = 1,
+                changedElementIds = new[] { 42L }
+            }, "apply", "POST", "/revit/set-parameter");
+
+            Assert.Equal("unknown", settlement.EffectState);
+            Assert.Equal("native_handler_returned_without_authoritative_settlement", settlement.EffectReason);
+        }
+
+        [Fact]
+        public void UnrelatedReadIgnoresPresentationTransactionFieldsAndRemainsNoEffect()
+        {
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(new
+            {
+                status = "Inventory Complete",
+                transaction = new { status = "committed", committed = true, modified_element_ids = new[] { 42L } }
+            }, "read", "POST", "/revit/find-text-notes");
+
+            Assert.Equal("none", settlement.EffectState);
+            Assert.Equal("read_has_no_persistent_effect", settlement.EffectReason);
+        }
+
         [Theory]
         [InlineData("committed", false)]
         [InlineData("rolled_back", true)]

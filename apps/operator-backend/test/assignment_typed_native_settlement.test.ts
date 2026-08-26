@@ -50,7 +50,8 @@ function nativeSettlement(input: {
   path: string;
   method?: "GET" | "POST";
   effect?: "none" | "unknown" | "applied";
-  authority?: "native_host" | "native_transaction";
+  authority?: "native_host" | "native_transaction" | "native_rollback";
+  requestedEffect?: "read" | "preview" | "apply";
 }) {
   return {
     schema: "revit-operator.native-attempt-settlement.v1",
@@ -58,12 +59,18 @@ function nativeSettlement(input: {
     attempt_id: input.nativeAttemptId,
     run_id: input.runId,
     generation: input.generation,
-    requested_effect: input.effect === "applied" || input.effect === "unknown" ? "apply" : "read",
+    requested_effect: input.requestedEffect ?? (input.effect === "applied" || input.effect === "unknown" ? "apply" : "read"),
     method: input.method ?? "POST",
     path: input.path,
     request_dispatched: true,
     effect_state: input.effect ?? "none",
-    effect_reason: input.effect === "applied" ? "native_transaction_committed" : input.effect === "unknown" ? "native_outcome_unknown" : "read_has_no_persistent_effect",
+    effect_reason: input.effect === "applied"
+      ? "native_transaction_committed"
+      : input.effect === "unknown"
+        ? "native_outcome_unknown"
+        : input.authority === "native_rollback"
+          ? "verified_native_rollback"
+          : "read_has_no_persistent_effect",
     effect_authority: input.authority ?? "native_host",
     affected_target_identities: [],
     receipt_refs: [`courier:${input.nativeAttemptId}`],
@@ -78,7 +85,8 @@ async function invokeTyped(input: {
   args?: Record<string, unknown>;
   requestedEffect?: "read" | "apply";
   resultEffect?: "none" | "unknown" | "applied";
-  resultAuthority?: "native_host" | "native_transaction";
+  resultAuthority?: "native_host" | "native_transaction" | "native_rollback";
+  nativeRequestedEffect?: "read" | "preview" | "apply";
   nativeMethod?: "GET" | "POST";
 }) {
   const { goal, run } = assignment(input.sessionId, input.requestedEffect ?? "read");
@@ -90,7 +98,8 @@ async function invokeTyped(input: {
     path: input.nativePath,
     method: input.nativeMethod,
     effect: input.resultEffect,
-    authority: input.resultAuthority
+    authority: input.resultAuthority,
+    requestedEffect: input.nativeRequestedEffect
   });
   const runtime = {
     callTool: async () => ({
@@ -224,5 +233,28 @@ test("transport binding does not downgrade a typed apply settlement or replay un
     });
     assert.equal(unknown.current.attempts[0]?.effect.state, "unknown");
     assert.equal(unknown.current.unresolved_unknown_attempt_ids.length, 1);
+  });
+});
+
+test("transport-bound typed parameter preview retains authoritative rollback truth", { concurrency: false }, async () => {
+  await workspace(async () => {
+    const preview = await invokeTyped({
+      sessionId: "typed-parameter-preview",
+      tool: "revit_set_parameters",
+      nativePath: "/revit/set-parameter",
+      args: { changes: [{ elementId: 42, parameterName: "Comments", value: "CURRENT" }], apply: false },
+      requestedEffect: "apply",
+      nativeRequestedEffect: "preview",
+      resultEffect: "none",
+      resultAuthority: "native_rollback"
+    });
+
+    assert.equal(preview.response.success, true, JSON.stringify(preview.response, null, 2));
+    assert.equal(preview.current.attempts.length, 1);
+    assert.equal(preview.current.attempts[0]?.requested_effect, "preview");
+    assert.equal(preview.current.attempts[0]?.effect.state, "none");
+    assert.equal(preview.current.attempts[0]?.effect.authority, "native_rollback");
+    assert.equal(preview.current.unresolved_unknown_attempt_ids.length, 0);
+    assert.equal(preview.current.apply_opportunity_consumed, false);
   });
 });
