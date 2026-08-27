@@ -80,9 +80,10 @@ The EPIC-0457 controller is a pure reducer-side decision owner. It evaluates
 qualifying observations before admitting another reasoning turn, waits for
 durably recorded provider calls and operations, prioritizes reconciliation,
 requests authenticated input/review, and derives a truthful blocked or terminal
-decision when no justified work remains. Store-level integration exposes the
-same decision and deterministic criterion handoff without switching the live
-provider loop yet; that switch is a separate edge-integration change.
+decision when no justified work remains. The live Codex edge now consults this
+decision before starting a turn, injects only the admitted gap/criterion scope,
+and stops the active turn when post-tool progression derives terminal,
+clarification, review, or blocker truth.
 
 Provider calls have a durable lifecycle ledger (`admitted`, `dispatched`,
 `response_started`, `usage_received`, `completed`, and downstream
@@ -91,6 +92,15 @@ exact gaps, criteria, and expected information. Provider completion—not the
 survival of a downstream response socket—ends provider work for Assignment
 quiescence. Late telemetry can enrich a completed call without regressing or
 rewriting its completion.
+
+The app-server raw completion edge persists a compact completed lifecycle in
+one journal event, including the distinct stage timestamps and exact usage.
+This avoids converting one provider receipt into several expensive Goal-store
+writes while preserving the same ledger semantics. A provider receipt never
+creates semantic progress by itself. A no-tool response is judged only at the
+quiescent turn checkpoint; a tool response is judged after the operation and
+Observation settle. Either receipt/Observation ordering reaches the same
+criterion evaluation without a grace-period timer.
 
 Operations carry `advances_criterion_ids` and `resolves_gap_ids`; admission
 fails when neither points to currently unresolved Assignment work. Equivalent

@@ -21,6 +21,7 @@ export interface ProviderUsageV2 {
 export interface ProviderCallV2 {
   schema: typeof PROVIDER_CALL_V2_SCHEMA;
   call_id: string;
+  controller_turn_id?: string;
   binding: AssignmentBindingV2;
   state: ProviderCallStateV2;
   provider: string;
@@ -39,4 +40,3 @@ export interface ProviderCallV2 {
   success?: boolean;
   error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
 }
-
