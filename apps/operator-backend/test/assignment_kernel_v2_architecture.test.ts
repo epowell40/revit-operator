@@ -122,6 +122,30 @@ test("EPIC-0456 progression replay names every frozen liveness failure family", 
   }
 });
 
+test("EPIC-0457 Candidate 1 replay assigns every authoritative request one immutable operation owner", () => {
+  const file = path.join(process.cwd(), "test", "fixtures", "assignment-kernel-v2", "epic0457_candidate1_operation_ownership.json");
+  const corpus = JSON.parse(readFileSync(file, "utf8")) as {
+    schema: string;
+    source_summary: { provider_calls: number; parent_route: string; hidden_prerequisite_route: string };
+    operation_tree: {
+      parent: { operation_id: string; settlement_rule: string };
+      children: Array<{ operation_id: string; role: string; settlement_rule: string }>;
+    };
+    invariants: string[];
+  };
+  assert.equal(corpus.schema, "revit-operator.assignment-operation-ownership-replay/v1");
+  assert.equal(corpus.source_summary.provider_calls, 51);
+  assert.equal(corpus.source_summary.parent_route, "POST /revit/quantify");
+  assert.equal(corpus.source_summary.hidden_prerequisite_route, "GET /revit/tool-registry");
+  const operationIds = [corpus.operation_tree.parent.operation_id, ...corpus.operation_tree.children.map(child => child.operation_id)];
+  assert.equal(new Set(operationIds).size, operationIds.length);
+  assert.ok(corpus.operation_tree.children.some(child => child.role === "prerequisite"));
+  assert.ok(corpus.operation_tree.children.every(child => child.settlement_rule.includes(child.operation_id)));
+  assert.match(corpus.operation_tree.parent.settlement_rule, /exact_operation_id/);
+  assert.ok(corpus.invariants.includes("child_result_never_settles_parent"));
+  assert.ok(corpus.invariants.includes("v2_publication_uses_snapshot_and_provider_ledger_without_v1_projection"));
+});
+
 test("canonical progression decision and epoch contracts have one domain owner", () => {
   const root = path.join(process.cwd(), "src");
   const declarations = sourceFiles(root).filter((file) => /export type ProgressDecisionV2|export interface ProgressEpochV2/.test(readFileSync(file, "utf8")));
@@ -183,4 +207,17 @@ test("OperationV2 identity does not incorporate MCP aliases or route/path string
   assert.ok(identity.includes("assignment_id"));
   assert.ok(identity.includes("controller_request_id"));
   assert.doesNotMatch(identity, /path|route|alias/i);
+});
+
+test("V2 publication and benchmark truth consume the canonical snapshot and provider ledger directly", () => {
+  const publication = readFileSync(path.join(process.cwd(), "src/assignments/assignment_kernel_v2_publication.ts"), "utf8");
+  assert.match(publication, /AssignmentSnapshotV2/);
+  assert.match(publication, /provider_ledger/);
+  const publicationImports = [...publication.matchAll(/from\s+["'][^"']+["']/g)].map(match => match[0]).join("\n");
+  assert.doesNotMatch(publicationImports, /GoalRecord|AssignmentProjection|durable_assignment_projection|chat_response/i);
+
+  const protocol = readFileSync(path.join(process.cwd(), "src/benchmark/protocol_v2_kernel.ts"), "utf8");
+  assert.match(protocol, /durable_assignment_kernel_v2/);
+  assert.match(protocol, /Historical V1 report compatibility only/);
+  assert.match(protocol, /return direct\.length > 0 \? direct : legacyKernelPublicationsV2/);
 });

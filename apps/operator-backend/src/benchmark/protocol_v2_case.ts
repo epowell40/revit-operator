@@ -18,6 +18,7 @@ import {
   type BenchmarkStageV2
 } from "./protocol_v2_types.js";
 import { canonicalAttemptRequestedEffect } from "./durable_tool_evidence.js";
+import { kernelPublicationsV2 } from "./protocol_v2_kernel.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -35,6 +36,17 @@ function strings(value: unknown): string[] {
 
 function number(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function kernelSnapshots(trace: JsonRecord): JsonRecord[] {
+  return kernelPublicationsV2(record(trace.tool_results)).map((publication) => record(publication.snapshot));
+}
+
+function kernelOperations(trace: JsonRecord): Array<{ assignmentId: string; operation: JsonRecord }> {
+  return kernelSnapshots(trace).flatMap((snapshot) => {
+    const assignmentId = String(record(snapshot.current_binding).assignment_id || "");
+    return Object.values(record(snapshot.operations)).map((operation) => ({ assignmentId, operation: record(operation) }));
+  });
 }
 
 function canonicalAttempts(trace: JsonRecord): Array<{ assignmentId: string; attempt: JsonRecord }> {
@@ -63,6 +75,15 @@ function rawAttempt(trace: JsonRecord): JsonRecord {
 }
 
 function repeatedNoProgressCalls(trace: JsonRecord): number {
+  const kernels = kernelSnapshots(trace);
+  if (kernels.length > 0) {
+    return kernels.reduce((maximum, kernel) => {
+      const epochs = records(kernel.progress_epochs);
+      const repeated = [...epochs].reverse().findIndex((epoch) => epoch.genuine_progress === true);
+      const count = repeated < 0 ? epochs.length : repeated;
+      return Math.max(maximum, count);
+    }, 0);
+  }
   const projection = record(record(trace.tool_results).durable_assignment_projection);
   return records(projection.assignments).reduce((maximum, assignment) => {
     const repeated = Number(record(record(assignment.control_plane).progress).repeated_no_progress_count || 0);
@@ -76,6 +97,49 @@ function assistantText(trace: JsonRecord): string {
 }
 
 function effectTruth(trace: JsonRecord, testCase: GeneralRevitCapabilityCase): BenchmarkExecutionTruthV2 {
+  const v2Rows = kernelOperations(trace);
+  if (v2Rows.length > 0) {
+    // Native truth may belong to an explicit child of a typed/controller
+    // operation. Prefer authoritative native work operations; controller
+    // parents and prerequisites remain visible but cannot impersonate them.
+    const nativeRows = v2Rows.filter(({ operation }) => operation.purpose === "work"
+      && String(record(operation.result).authority || "").startsWith("native"));
+    const actionRows = nativeRows.length > 0 ? nativeRows : v2Rows.filter(({ operation }) =>
+      operation.purpose === "work" && (operation.operation_role ?? "root") === "root");
+    const selected = [...actionRows].reverse().find(({ operation }) => operation.persistent_effect === "applied")
+      ?? [...actionRows].reverse().find(({ operation }) => operation.persistent_effect === "unknown")
+      ?? actionRows.at(-1);
+    const effectState = selected?.operation.persistent_effect === "applied" || selected?.operation.persistent_effect === "unknown"
+      ? selected.operation.persistent_effect as "applied" | "unknown" : "none";
+    const result = record(selected?.operation.result);
+    const dispatched = selected?.operation.dispatch_state === "dispatched";
+    const mutationRequested = record(trace.user_intent).mutation_requested === true;
+    const collateral = rawAttempt(trace).collateral_mutation === true
+      || record(trace.model_state_changes).collateral_mutation === true
+      || record(trace.model_state_changes).unauthorized_mutation === true;
+    return {
+      requested_effect: String(trace.execution_expected_effect || testCase.expected_effect) as BenchmarkExecutionTruthV2["requested_effect"],
+      effect_state: effectState,
+      authority: String(result.authority || (effectState === "none" ? "canonical_no_effect" : "assignment_kernel_v2")),
+      dispatched,
+      assignment_id: selected?.assignmentId || null,
+      attempt_ids: actionRows.map(({ operation }) => String(operation.operation_id || "")).filter(Boolean),
+      target_identities: [...new Set(actionRows.flatMap(({ operation }) => {
+        const target = record(operation.target);
+        return String(target.target_id || "").trim() ? [String(target.target_id)] : [];
+      }))],
+      affected_target_identities: [],
+      evidence_refs: actionRows.flatMap(({ operation }) => {
+        const operationResult = record(operation.result);
+        return [
+          ...(String(operationResult.receipt_id || "").trim()
+            ? [{ kind: "receipt", ref: String(operationResult.receipt_id), authority: String(operationResult.authority || "") }] : []),
+          ...strings(operation.observation_ids).map((ref) => ({ kind: "evidence", ref, authority: String(operationResult.authority || "") }))
+        ];
+      }),
+      collateral_or_unauthorized_mutation: (!mutationRequested && effectState === "applied") || collateral
+    };
+  }
   const rows = canonicalAttempts(trace);
   const actionAttempts = rows.filter(({ attempt }) => String(attempt.purpose || "action") === "action");
   const selected = [...actionAttempts].reverse().find(({ attempt }) => String(record(attempt.effect).state || "") === "applied")
@@ -139,6 +203,17 @@ function stage(stage: BenchmarkStageNameV2, status: BenchmarkStageStatusV2, reas
 }
 
 function hasAuthoritativeCanonicalRead(trace: JsonRecord): boolean {
+  const kernels = kernelSnapshots(trace);
+  if (kernels.length > 0) {
+    return kernels.some((kernel) => kernel.terminal === true
+      && Object.values(record(kernel.operations)).map(record).some((operation) =>
+        operation.requested_effect === "read"
+          && operation.dispatch_state === "dispatched"
+          && operation.persistent_effect === "none"
+          && operation.settlement_state === "settled"
+          && String(record(operation.result).receipt_id || "").length > 0
+          && strings(operation.observation_ids).every((id) => Object.hasOwn(record(kernel.observations), id))));
+  }
   const durable = record(record(trace.tool_results).durable_tool_evidence);
   return records(durable.canonical_attempt_receipts).some(receipt => canonicalAttemptRequestedEffect(receipt) === "read"
     && receipt.dispatch_state === "acknowledged" && receipt.effect_state === "none"
@@ -274,12 +349,25 @@ function runtimeVerdict(trace: JsonRecord): string {
   const attempt = rawAttempt(trace);
   if (attempt.outcome_unknown === true || attempt.reconciliation_required === true) return "unknown";
   if (attempt.ok === false) return "failed";
+  const kernels = kernelSnapshots(trace);
+  if (kernels.length > 0) {
+    const latest = kernels.at(-1)!;
+    return latest.terminal === true ? String(latest.outcome || "unknown") : "active";
+  }
   const assignments = records(record(record(trace.tool_results).durable_assignment_projection).assignments);
   const terminals = assignments.map((entry) => String(record(entry.control_plane).terminal_state || entry.phase || "")).filter(Boolean);
   return terminals.at(-1) || String(record(trace.success_failure_score).tier || "unknown");
 }
 
 function assignmentOutcome(trace: JsonRecord): BenchmarkCaseResultV2["assignment_outcome"] {
+  const kernels = kernelSnapshots(trace);
+  if (kernels.length > 0) {
+    const outcome = String(kernels.at(-1)!.outcome || "");
+    if (["active", "awaiting_user_input", "awaiting_user_review", "complete", "complete_with_issues", "verified_noop", "blocked", "failed"].includes(outcome)) {
+      return outcome as BenchmarkCaseResultV2["assignment_outcome"];
+    }
+    return "unknown";
+  }
   const assignments = records(record(record(trace.tool_results).durable_assignment_projection).assignments);
   const latest = assignments.at(-1);
   const control = record(latest?.control_plane);

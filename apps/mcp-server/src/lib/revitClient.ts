@@ -26,9 +26,10 @@ import { createCertificationEnvelope, type FamilyCertificationEnvelope } from ".
 import type { LaboratoryEvidenceDispatch } from "./laboratoryEvidenceDispatch.js";
 import type { LaboratoryMoveEvidenceAdmission } from "./laboratoryMoveEvidence.js";
 import {
+  beginAssignmentKernelNativeRequestV2,
   markAssignmentKernelNativeRequestDispatchingV2,
+  recordAssignmentKernelNativeFailureV2,
   recordAssignmentKernelNativeResultV2,
-  reserveAssignmentKernelNativeRequestV2
 } from "./assignmentKernelV2.js";
 
 // Use localhost or environment variable
@@ -202,6 +203,8 @@ export type RevitCallOptions = {
   laboratoryEvidenceDispatch?: LaboratoryEvidenceDispatch;
   /** Distinct evidence-only wrapper capability; never production authority. */
   laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
+  /** Explicit nested kernel role for a native prerequisite or child action. */
+  assignmentOperationRole?: "prerequisite" | "child";
 };
 
 const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
@@ -278,7 +281,10 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         ? body
         : JSON.stringify(body);
   const transportBody = familyAdmission ? serializedBody : body;
-  const kernelNativeRequestId = reserveAssignmentKernelNativeRequestV2(upperMethod, path);
+  const kernelNativeRequest = await beginAssignmentKernelNativeRequestV2(upperMethod, path, transportBody, {
+    ...(options.assignmentOperationRole ? { operation_role: options.assignmentOperationRole } : {}),
+    classified_effect: revitRouteEffect(path, upperMethod, body)
+  });
 
   const transport = (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase();
   if (transport === "courier") {
@@ -289,16 +295,22 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       channel: options.channel ?? "typed_mcp",
       workflow: options.workflow,
       certifiedMoveOneAdmission: options.certifiedMoveOneAdmission,
-      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission?.request
-      , laboratoryEvidence: options.laboratoryEvidenceDispatch !== undefined
+      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission?.request,
+      laboratoryEvidence: options.laboratoryEvidenceDispatch !== undefined
     });
-    const result = await callRevitViaCourier<T>(path, upperMethod, transportBody, {
-      certifiedAdmission,
-      laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
-      laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
-      canonicalOperationId: kernelNativeRequestId ? `opv2_${kernelNativeRequestId}` : undefined,
-      onPublished: kernelNativeRequestId ? () => markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequestId) : undefined
-    });
+    await markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequest);
+    let result: T;
+    try {
+      result = await callRevitViaCourier<T>(path, upperMethod, transportBody, {
+        certifiedAdmission,
+        laboratoryEvidenceDispatch: options.laboratoryEvidenceDispatch,
+        laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
+        canonicalOperationId: kernelNativeRequest?.operation_id
+      });
+    } catch (error) {
+      await recordAssignmentKernelNativeFailureV2(kernelNativeRequest, error);
+      throw error;
+    }
     if (options.certifiedMoveOneAdmission) {
       try {
         if (!result || typeof result !== "object") throw new Error("Certified courier returned a non-object result.");
@@ -315,7 +327,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         });
       }
     }
-    recordAssignmentKernelNativeResultV2(upperMethod, path, result, kernelNativeRequestId);
+    await recordAssignmentKernelNativeResultV2(upperMethod, path, result, kernelNativeRequest);
     return result;
   }
   if (transport !== "direct") throw new Error(`Unsupported OPERATOR_REVIT_TRANSPORT: ${transport}`);
@@ -343,7 +355,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
-    const certifiedDirectDispatchId = kernelNativeRequestId ?? (!laboratoryBypass && options.certifiedMoveOneAdmission
+    const certifiedDirectDispatchId = kernelNativeRequest?.operation_id ?? (!laboratoryBypass && options.certifiedMoveOneAdmission
       ? randomBytes(16).toString("hex")
       : undefined);
 
@@ -361,6 +373,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
             certifiedMoveOneAdmission: options.certifiedMoveOneAdmission
           }) as FamilyCertificationEnvelope
           : undefined;
+        await markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequest);
         const result = await callNativeTransport({
           operatorToken: token,
           method: upperMethod,
@@ -379,7 +392,6 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           } : undefined,
           laboratoryMoveEvidenceAdmission: options.laboratoryMoveEvidenceAdmission,
           requestId: certifiedDirectDispatchId,
-          onDispatch: kernelNativeRequestId ? () => markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequestId) : undefined,
           signal: controller.signal
         });
         return {
@@ -410,7 +422,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         };
       }
 
-      markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequestId);
+      await markAssignmentKernelNativeRequestDispatchingV2(kernelNativeRequest);
       const response = await fetch(`${bridgeUrl()}${path}`, {
         method: upperMethod,
         signal: controller.signal,
@@ -418,7 +430,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           "Content-Type": "application/json",
           ...(token ? { "X-Operator-Token": token } : {}),
           ...(writeGrant ? { "X-Operator-Write-Grant": writeGrant } : {}),
-          ...(kernelNativeRequestId ? { "X-Operator-Correlation-Id": kernelNativeRequestId } : {}),
+          ...(kernelNativeRequest ? { "X-Operator-Correlation-Id": kernelNativeRequest.operation_id } : {}),
         },
         ...(serializedBody === undefined ? {} : { body: serializedBody }),
       });
@@ -483,7 +495,13 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     }
   };
 
-  const response = await doFetch();
+  let response: Awaited<ReturnType<typeof doFetch>>;
+  try {
+    response = await doFetch();
+  } catch (error) {
+    await recordAssignmentKernelNativeFailureV2(kernelNativeRequest, error);
+    throw error;
+  }
   if (!response.ok) {
     let details = "";
     let detailsReadFailed = false;
@@ -501,7 +519,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
         ? ": response body was unavailable or incomplete"
         : "";
 
-    throw new RevitBridgeCallError({
+    const bridgeError = new RevitBridgeCallError({
       code: "revit_bridge_http_error",
       transportCode: "revit_bridge_http_error",
       message: `${upperMethod} ${path} received HTTP ${response.status}${detailSuffix}`,
@@ -513,6 +531,8 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       correlationId: response.certifiedExecutionContext?.dispatchId,
       bridgeDetails,
     });
+    await recordAssignmentKernelNativeFailureV2(kernelNativeRequest, bridgeError);
+    throw bridgeError;
   }
   try {
     const parsed = JSON.parse(await response.text()) as T;
@@ -525,11 +545,11 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     if (response.laboratoryEvidenceContext && parsed && typeof parsed === "object") {
       laboratoryEvidenceContexts.set(parsed as object, response.laboratoryEvidenceContext);
     }
-    recordAssignmentKernelNativeResultV2(upperMethod, path, parsed, kernelNativeRequestId);
+    await recordAssignmentKernelNativeResultV2(upperMethod, path, parsed, kernelNativeRequest);
     return parsed;
   } catch (error) {
     const outcomeUnknown = mutating;
-    throw new RevitBridgeCallError({
+    const bridgeError = new RevitBridgeCallError({
       code: "revit_bridge_invalid_response",
       message: `${upperMethod} ${path} returned an invalid or incomplete JSON response.${outcomeUnknown ? " The request may already have completed; reconcile its outcome in Revit before any retry." : ""}`,
       retryable: !outcomeUnknown,
@@ -539,5 +559,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       correlationId: response.certifiedExecutionContext?.dispatchId,
       cause: error,
     });
+    await recordAssignmentKernelNativeFailureV2(kernelNativeRequest, bridgeError);
+    throw bridgeError;
   }
 }

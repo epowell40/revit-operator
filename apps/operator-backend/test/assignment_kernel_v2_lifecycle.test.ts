@@ -60,7 +60,7 @@ function setup(effect: "read" | "apply" = "read", requiredInputs: string[] = [])
   return { goal, binding, snapshot: getAssignmentKernelSnapshotV2(goal.id)! };
 }
 
-function resultEnvelope(operationId: string, binding: any, payload: unknown) {
+function resultEnvelope(operationId: string, binding: any, requestIdentity: any, payload: unknown) {
   const hash = createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex");
   return {
     content: [{ type: "text", text: "bounded projection" }],
@@ -80,6 +80,7 @@ function resultEnvelope(operationId: string, binding: any, payload: unknown) {
         observation_required: true,
         raw_payload_hash: hash,
         receipt_id: `receipt-${operationId}`,
+        request_identity: requestIdentity,
         completed_at: "2026-08-26T18:00:01.000Z"
       },
       observation: {
@@ -102,7 +103,9 @@ function settleRead(goalId: string) {
     arguments: { category: "Air Terminals" }
   });
   markAssignmentKernelOperationDispatchStartedV2(lease);
-  const settled = settleAssignmentKernelOperationV2(lease, resultEnvelope(lease.operation_id, lease.binding, { total: 509 }));
+  const settled = settleAssignmentKernelOperationV2(lease, resultEnvelope(
+    lease.operation_id, lease.binding, lease.request_identity, { total: 509 }
+  ));
   return { lease, settled };
 }
 

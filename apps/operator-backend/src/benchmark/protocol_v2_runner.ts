@@ -21,6 +21,11 @@ import type {
   BenchmarkRunEnvelopeV2
 } from "./protocol_v2_types.js";
 import { canonicalAttemptRequestedEffect } from "./durable_tool_evidence.js";
+import {
+  assignmentRowFromKernelPublicationV2,
+  directKernelPublicationsV2,
+  kernelPublicationsV2
+} from "./protocol_v2_kernel.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -79,11 +84,17 @@ export function observedProviderRoutesV2(legacyReport: JsonRecord): BenchmarkRun
 }
 
 export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selectedCaseIds: readonly string[]): void {
-  const telemetry = record(legacyReport.model_telemetry_coverage);
-  if (telemetry.complete !== true || Number(telemetry.cases_with_model_receipts || 0) !== selectedCaseIds.length) {
-    throw new Error("Benchmark Protocol V2 fails closed on incomplete provider telemetry.");
-  }
   const traces = records(legacyReport.task_traces);
+  const allDirect = selectedCaseIds.every((caseId) => {
+    const trace = traces.find((entry) => entry.case_id === caseId);
+    return trace ? directKernelPublicationsV2(record(trace.tool_results)).length > 0 : false;
+  });
+  if (!allDirect) {
+    const telemetry = record(legacyReport.model_telemetry_coverage);
+    if (telemetry.complete !== true || Number(telemetry.cases_with_model_receipts || 0) !== selectedCaseIds.length) {
+      throw new Error("Benchmark Protocol V2 fails closed on incomplete provider telemetry.");
+    }
+  }
   for (const caseId of selectedCaseIds) {
     const trace = traces.find((entry) => entry.case_id === caseId);
     if (!trace) throw new Error(`Benchmark Protocol V2 is missing the raw trace for ${caseId}.`);
@@ -92,9 +103,23 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const rawHash = String(toolResults.raw_sidecar_response_sha256 || "");
     const assignmentProjection = record(toolResults.durable_assignment_projection);
     const assignmentRows = records(assignmentProjection.assignments);
+    const directPublications = directKernelPublicationsV2(toolResults);
+    const publications = kernelPublicationsV2(toolResults);
+    const v2AssignmentRows = publications.map(assignmentRowFromKernelPublicationV2);
+    if (directPublications.length > 0) {
+      for (const publication of directPublications) {
+        const ledger = record(publication.provider_ledger);
+        const callIds = Array.isArray(ledger.call_ids) ? ledger.call_ids.map(String) : [];
+        const calls = record(ledger.calls);
+        const inFlight = Array.isArray(ledger.in_flight_call_ids) ? ledger.in_flight_call_ids.map(String) : [];
+        if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => record(calls[id]).state !== "completed")) {
+          throw new Error(`Benchmark Protocol V2 fails closed on incomplete provider telemetry for ${caseId}.`);
+        }
+      }
+    }
     const activeControls = assignmentRows.map(row => record(row.control_plane)).filter(control =>
       Number(control.in_flight_count || 0) > 0 || control.quiescent === false);
-    const activeKernels = assignmentRows.map(row => record(row.assignment_snapshot_v2))
+    const activeKernels = publications.map(row => record(row.snapshot))
       .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2"
         && (kernel.quiescent === false || (Array.isArray(kernel.in_flight_operation_ids) && kernel.in_flight_operation_ids.length > 0)));
     if (activeControls.length > 0 || activeKernels.length > 0) {
@@ -104,12 +129,13 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       throw new Error(`Benchmark Protocol V2 settlement still in flight for ${caseId}: attempts=${ids.join(",") || "unknown"}; deadline=${deadline}.`);
     }
     const durableEvidence = record(toolResults.durable_tool_evidence);
-    if (!/^[a-f0-9]{64}$/i.test(rawHash) || !Array.isArray(assignmentProjection.assignments)
+    if (!/^[a-f0-9]{64}$/i.test(rawHash)
+      || (publications.length === 0 && !Array.isArray(assignmentProjection.assignments))
       || durableEvidence.schema !== "revit-operator.benchmark-durable-tool-evidence/v1") {
       throw new Error(`Benchmark Protocol V2 is missing canonical Revit receipts for ${caseId}.`);
     }
     const canonicalReceipts = records(durableEvidence.canonical_attempt_receipts);
-    const kernelOperations = assignmentRows.flatMap(row => Object.values(record(record(row.assignment_snapshot_v2).operations)).map(record));
+    const kernelOperations = publications.flatMap(row => Object.values(record(record(row.snapshot).operations)).map(record));
     if (evaluation.dispatched === true && canonicalReceipts.length === 0 && kernelOperations.length === 0) {
       throw new Error(`Benchmark Protocol V2 has no canonical action-attempt receipt for dispatched case ${caseId}.`);
     }
@@ -121,8 +147,8 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         && Array.isArray(receipt.receipt_refs) && receipt.receipt_refs.length > 0
         && Array.isArray(receipt.evidence_refs) && receipt.evidence_refs.length > 0
         && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
-      const validKernelRead = assignmentRows.some(row => {
-        const kernel = record(row.assignment_snapshot_v2);
+      const validKernelRead = publications.some(row => {
+        const kernel = record(row.snapshot);
         if (kernel.schema !== "revit-operator.assignment-snapshot/v2" || kernel.terminal !== true) return false;
         const observations = record(kernel.observations);
         return Object.values(record(kernel.operations)).map(record).some(operation =>
@@ -143,7 +169,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       || !verifyVerifiedWorkPacketHash(packet as unknown as VerifiedWorkPacketV1))) {
       throw new Error(`Benchmark Protocol V2 Verified Work Packet hash is invalid for ${caseId}.`);
     }
-    const terminalAssignments = assignmentRows.filter(row => {
+    const terminalAssignments = [...v2AssignmentRows, ...assignmentRows].filter(row => {
       const kernel = record(row.assignment_snapshot_v2);
       return kernel.schema === "revit-operator.assignment-snapshot/v2"
         ? kernel.terminal === true
@@ -209,7 +235,9 @@ function bestEffortFailureArtifact(args: {
   });
   const assignmentRows = traces.flatMap(trace => records(record(record(trace.tool_results).durable_assignment_projection).assignments));
   const controls = assignmentRows.map(row => record(row.control_plane));
-  const kernels = assignmentRows.map(row => record(row.assignment_snapshot_v2))
+  const directKernels = traces.flatMap(trace => directKernelPublicationsV2(record(trace.tool_results)))
+    .map(publication => record(publication.snapshot));
+  const kernels = (directKernels.length > 0 ? directKernels : assignmentRows.map(row => record(row.assignment_snapshot_v2)))
     .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2");
   const inFlightAttemptIds = controls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
   inFlightAttemptIds.push(...kernels.flatMap(kernel => Array.isArray(kernel.in_flight_operation_ids) ? kernel.in_flight_operation_ids : []).map(String));

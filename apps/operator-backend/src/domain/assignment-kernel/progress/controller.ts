@@ -186,7 +186,10 @@ export function operationProgressIdentityV2(operation: OperationV2): string {
     target: operation.target,
     input: operation.input,
     advances_criterion_ids: [...operation.advances_criterion_ids].sort(),
-    resolves_gap_ids: [...operation.resolves_gap_ids].sort()
+    resolves_gap_ids: [...operation.resolves_gap_ids].sort(),
+    operation_role: operation.operation_role ?? "root",
+    parent_operation_id: operation.parent_operation_id ?? null,
+    request_identity: operation.request_identity ?? null
   });
 }
 

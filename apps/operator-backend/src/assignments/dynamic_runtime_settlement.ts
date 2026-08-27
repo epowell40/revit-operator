@@ -4,9 +4,63 @@ import { getActiveGoalForSession } from "../goals/service.js";
 import type { ProviderDynamicProgramV1 } from "../dynamic_runtime/provider_dynamic_program.js";
 import { journalAssignmentActions, journalAssignmentToolResults } from "./turn_journal.js";
 import { settleAssignmentTurn } from "./turn_settlement.js";
+import {
+  ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+  failAssignmentKernelOperationV2,
+  markAssignmentKernelOperationDispatchStartedV2,
+  openAssignmentKernelOperationV2,
+  settleAssignmentKernelOperationV2,
+  type AssignmentKernelOperationLeaseV2
+} from "./assignment_kernel_v2_execution.js";
+import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
+import { OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2 } from "../domain/assignment-kernel/index.js";
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+}
+
+function canonicalDigest(value: unknown): string {
+  return createHash("sha256").update(canonicalJsonV2(value), "utf8").digest("hex");
+}
+
+export function openProviderDynamicRuntimeOperationV2(
+  req: ChatRequest,
+  program: ProviderDynamicProgramV1
+): AssignmentKernelOperationLeaseV2 | null {
+  if (!req.assignment_id || !req.assignment_run_id || !req.assignment_generation) return null;
+  const snapshot = getAssignmentKernelSnapshotV2(req.assignment_id);
+  if (!snapshot
+      || snapshot.current_binding.run_id !== req.assignment_run_id
+      || snapshot.current_binding.generation !== req.assignment_generation
+      || snapshot.current_binding.session_id !== req.session_id) {
+    throw new Error("assignment_kernel_v2_dynamic_runtime_binding_invalid");
+  }
+  return openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: `dynamic:${req.message_id}`,
+    provider_turn_id: req.message_id,
+    capability_id: "dynamic_revit_program",
+    classified_effect: program.apply ? "apply" : "preview",
+    arguments: {
+      program_schema: program.schema,
+      source_sha256: digest(program.source),
+      category: program.category,
+      parameters: program.parameters,
+      limit: program.limit,
+      apply: program.apply
+    }
+  });
+}
+
+export function markProviderDynamicRuntimeDispatchingV2(lease: AssignmentKernelOperationLeaseV2 | null): void {
+  if (lease) markAssignmentKernelOperationDispatchStartedV2(lease);
+}
+
+export function failProviderDynamicRuntimeOperationV2(
+  lease: AssignmentKernelOperationLeaseV2 | null,
+  error: unknown
+): void {
+  if (lease) failAssignmentKernelOperationV2(lease, error, "dispatching");
 }
 
 /** Projects the trusted Dynamic Runtime supervisor receipt through the same
@@ -14,10 +68,57 @@ function digest(value: unknown): string {
 export function journalProviderDynamicRuntimeSettlement(
   req: ChatRequest,
   program: ProviderDynamicProgramV1,
-  response: ChatResponse
+  response: ChatResponse,
+  v2Lease: AssignmentKernelOperationLeaseV2 | null = null
 ): void {
   const receipt = response.dynamic_program_execution_receipt;
   if (!receipt) return;
+  if (v2Lease) {
+    const completed = receipt.status === "completed";
+    const persistentEffect = completed && program.apply ? "applied"
+      : receipt.outcome_unknown && program.apply ? "unknown" : "none";
+    const dispatchState = receipt.request_dispatched ? "dispatched" : "not_dispatched";
+    const result = {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: `resultv2_${digest({ operation_id: v2Lease.operation_id, receipt })}`,
+      operation_id: v2Lease.operation_id,
+      binding: v2Lease.binding,
+      status: completed ? "succeeded" : receipt.request_dispatched ? "failed_after_dispatch" : "failed_before_dispatch",
+      dispatch_state: dispatchState,
+      persistent_effect: persistentEffect,
+      native_transaction_state: persistentEffect === "applied" ? "committed"
+        : v2Lease.requested_effect === "preview" && completed ? "rolled_back"
+          : persistentEffect === "unknown" ? "unknown" : "not_applicable",
+      authority: "dynamic-runtime",
+      result_schema_id: "operator-dynamic-runtime/provider-program/v2",
+      observation_required: completed,
+      ...(completed ? { raw_payload_hash: canonicalDigest(response) } : {}),
+      ...(receipt.evidence_sha256 ? { receipt_id: `dynamic-evidence:${receipt.evidence_sha256}` } : {}),
+      request_identity: v2Lease.request_identity,
+      completed_at: new Date().toISOString(),
+      ...(!completed ? { error_code: receipt.failure || "dynamic_runtime_not_completed" } : {})
+    };
+    settleAssignmentKernelOperationV2(v2Lease, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: result,
+        ...(completed ? {
+          observation: {
+            raw_payload: response,
+            semantic_facts: [
+              { fact_id: "result.available", value: true },
+              { fact_id: "dynamic_runtime.status", value: receipt.status },
+              ...(receipt.evidence_sha256 ? [{ fact_id: "dynamic_runtime.evidence_hash", value: receipt.evidence_sha256 }] : [])
+            ],
+            target_scope: {},
+            verification_relevance: ["task_result"]
+          }
+        } : {})
+      }
+    });
+    return;
+  }
   const goal = getActiveGoalForSession(req.session_id);
   const declared = `${goal?.work_budget?.requested_effect || ""}`;
   const requestedEffect: "read" | "preview" | "apply" = program.apply ? "apply" : declared === "preview" ? "preview" : "read";

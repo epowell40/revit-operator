@@ -31,11 +31,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:782a109ab3c2d628fbbb1295fe416678a6152440790384371206b6e2fe5b4cd7"
+      "sha256": "sha256:e72b7d5a0d4fabddd0daa29df9bcf3dc9adf78066b37c37e6852bf5f689d0cc3"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
-      "sha256": "sha256:3b8c5bbe33700711f22da1e19fd9d8fb47886da118480d79a60f69e5f5513d21"
+      "sha256": "sha256:96bdeaa370a7a033cb55fc7cff28ebdf47f09b71f264550be409c7e9bb0b44a0"
     },
     {
       "path": "apps/mcp-server/src/lib/audit.ts",
@@ -215,7 +215,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/operatorBackendClient.ts",
-      "sha256": "sha256:5844fc8e6b5667191db4c2c91af81b7092f0c310971bd5b533947310158583e9"
+      "sha256": "sha256:7bd70406e5f015ae1eee56f4b71b9f1a73aa6c5d54ce68e655826421bc6d56dc"
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.test.ts",
@@ -223,7 +223,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.ts",
-      "sha256": "sha256:8e959b959e884a02444ce56e0eb5eadb80a7ad1b0618622e96bae29326ea53a1"
+      "sha256": "sha256:3fe46779e7db9566fa04e957d303b834f3230f1f857a225771c9e15b779a558d"
     },
     {
       "path": "apps/mcp-server/src/lib/revitCourier.test.ts",
@@ -344,7 +344,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:2c7fe24d26100ad18d3f8b50309e8f2dc6e04e563bf53d0a1eec818e15dc8a7f"
+      "sha256": "sha256:fc00043f4a4eea26603ca95532501beb12ba40515d0386e652c74ec8f98da2b2"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -488,7 +488,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:dc8b1c8394223df90ef0602edf391f08099c49040c0da58381a55063bfa7a48c"
+      "sha256": "sha256:f7ab766a684b70f3c95d74c08f64bf9ac20f3c66820173fd2d7b955736477c95"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_factory.ts",
@@ -511,6 +511,10 @@
       "sha256": "sha256:9a7ee983532784675e546b75daf8994b4b6f6ff5ff279e9f0c5eb2f2e940cd89"
     },
     {
+      "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_publication.ts",
+      "sha256": "sha256:4ed92c12901c575dcfff998364e99252229e0ec6c5ab5a809eea898e6e40c4a0"
+    },
+    {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_store.ts",
       "sha256": "sha256:b398e7e6129566c8d473eb57a61c891be723126a8f064e8bae05d4176ebdd62f"
     },
@@ -528,7 +532,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts",
-      "sha256": "sha256:010cc34c5d06f3ddb3913cfc981b7c5900953e4e244785051f6c3d35a0e7c3a6"
+      "sha256": "sha256:406b7805e91d54a7fe42ebef40796dba8a0c7a92a19dd72cb7da2409cef42513"
     },
     {
       "path": "apps/operator-backend/src/assignments/external_assignment_start.ts",
@@ -536,7 +540,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/http_routes.ts",
-      "sha256": "sha256:1d469df5d9cfd68f3e6ee8dd73fd96f5f2531d12effb4651b8a583f60135e687"
+      "sha256": "sha256:c4a2e176852a92af9e617d1982fde19617a845b10a14bd646f18ff49a5d9fafe"
     },
     {
       "path": "apps/operator-backend/src/assignments/interaction.ts",
@@ -752,7 +756,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_case.ts",
-      "sha256": "sha256:668904031477a432f336b77cd051961ec7c9cad6293b081713655ebd74937302"
+      "sha256": "sha256:aa2039b37b003c4efda8224da797d59ef51698fea8c8c1daadfacd4391dec921"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_compare.ts",
@@ -779,6 +783,10 @@
       "sha256": "sha256:518f8dc0b0314b21bec4f09634ed919e35270cede408cec3fe034bce531b1c9b"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_kernel.ts",
+      "sha256": "sha256:b0802de0adf6176738e9312d89a446cc7052860e654a64721b58e5b313634710"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_maintenance.ts",
       "sha256": "sha256:1f6d3b6f384cf6ab3eec0905eee8cb84ea90b14b5a88c695661f7715cbfb9fc2"
     },
@@ -792,7 +800,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:c5375f088f758145e7cd2ae203f7afdd91f5a463e19f85fd1d0446929727f4fa"
+      "sha256": "sha256:c7522126aa4ba4c175a11d54fe14e499ef74bbdbbb0e5b999f4f208b283989c9"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
@@ -1681,7 +1689,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/operation.ts",
-      "sha256": "sha256:40b5360c7c9cf9a9ec23ed006790efdb801146d818ba5ee0f1232e25e0822d66"
+      "sha256": "sha256:4fa096da40180f163db438684670c5040aa7fb547f115050244ad462b1e284df"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/outcome.ts",
@@ -1697,7 +1705,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/controller.ts",
-      "sha256": "sha256:328b94cfb16ae8308bd76cac2dd54632301b6792c2bdf3b8da38b73173ad63bb"
+      "sha256": "sha256:02a146e017ca29e665e3e78e5feccc6ec5ed6e78cbf3292a95d5ee5a552372ba"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/provider_call.ts",
@@ -1713,11 +1721,11 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/reducer.ts",
-      "sha256": "sha256:05efc265573c060dba99ffc998c34ebf9e99922cb07eea8980b204b31e89b28f"
+      "sha256": "sha256:2c743e8d4cd81a891608ca838e3dcfd2006ec3eede21ba2ac135b2268cbb8b7d"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/snapshot.ts",
-      "sha256": "sha256:6ae093584f8f6a4df25ac88bbf614ea0a40323222b90edba6eedb095c3496ab2"
+      "sha256": "sha256:7ab4fe960f00c85801cd7a871734e9117bb83e60fa93d3857a2bbd167feb653b"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/admission.ts",
@@ -1741,7 +1749,7 @@
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/provider_dynamic_program.ts",
-      "sha256": "sha256:139aa41a55ee61589570839ba78632d302b85a6f9e1e387edb54f9a93c452817"
+      "sha256": "sha256:b333046b284921256a5025058490d965d674620615e74211fccd144c56547e15"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/provider_supervisor_evidence.md",
@@ -2769,19 +2777,19 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2.test.ts",
-      "sha256": "sha256:b7a1947cf31968d8a8226798217d31ed28173b38ff8c7eb16eb599fb71698bee"
+      "sha256": "sha256:339c04d2476f1da491c6550d4c6663af371bca4f5d14f4e7e027a34343d35cbb"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:04106d82d744bdb5154f0bca54c050a9dee66723e9607806c056788f4fda7a64"
+      "sha256": "sha256:7c86d22dd03a5094bc91d555b2de5f847727852c2820fe748c4a28a9cbdf3545"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:158cc4f134625e5f5021e90a720fbe456eacec70dc7c3a1c6e235ae9a5611021"
+      "sha256": "sha256:e4986ae6a78703df53508ff71a0689131aa1b9f616893c9ac0b875f7ad6ac92b"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:7ce2b2aacb617f86f9e845921500a3a9ceb142194adea37cdbd80842a55ae167"
+      "sha256": "sha256:5f219877a3c3b6344983f224dd19c53523449f201e50c805e3ab5c16bd1ae977"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_contracts.test.ts",
@@ -2790,6 +2798,10 @@
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_controller.test.ts",
       "sha256": "sha256:bb1aa7c79bcc1d8ae5ce3bb9a04bbd1a7d16029e901a257994ae4f2a8ba61551"
+    },
+    {
+      "path": "apps/operator-backend/test/assignment_kernel_v2_publication.test.ts",
+      "sha256": "sha256:fbfa2a9755887cc0be6b9f8c9871df3112b1da685bc68ac807564e9c9ec21e4a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_store.test.ts",
@@ -2857,7 +2869,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:41262452ed21d400bd4ac5e9641a0d4136fd6f382999984d957530a4c6b001ab"
+      "sha256": "sha256:0f5918de34ba83e8ffd34543e6a295761283bbeed7cec854f4ba509920209183"
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2_interaction.test.ts",
@@ -3274,6 +3286,10 @@
     {
       "path": "apps/operator-backend/test/fixtures/assignment-kernel-v2/epic0456_liveness_shapes.json",
       "sha256": "sha256:c83578d12262e55bc1385bf4ab2bbd10e68ae76f4972d5d3c1f47505be37bc39"
+    },
+    {
+      "path": "apps/operator-backend/test/fixtures/assignment-kernel-v2/epic0457_candidate1_operation_ownership.json",
+      "sha256": "sha256:d05db6b25222c7cd033d2b61d7b2c3aa2bdf2c2be9aa94a78cb60b7841c13a52"
     },
     {
       "path": "apps/operator-backend/test/fixtures/codex_app_server_fixture.js",
@@ -5805,7 +5821,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:e750642dd8e706f0b62d0e2e25aa9d0ac9ac66dd3cf4e09f93c2b3277fa6ac94",
+  "inputs_hash": "sha256:01331e4edb88d002bf78c775cf3f758c6a65f633aa3409dddd0a2f3802f476ed",
   "result": {
     "passed": true,
     "checks": [
