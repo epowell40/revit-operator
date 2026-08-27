@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@revitoperator/payload-digest-v2": "file:../../packages/payload-digest-v2",
     "@types/pdf-parse": "^1.1.5",
     "mammoth": "^1.11.0",
     "ml-random-forest": "^2.1.0",

@@ -1,0 +1,74 @@
+{
+  "schema": "revit-operator.payload-digest-forensics/v1",
+  "assignment_id": "0ebf6bb8-5133-45ee-9622-c9874253af04",
+  "operation_id": "opv2_98f44b38d7caa323f7e44eb1153be9564570d18f3d9d4e9c2d1334ba873c9bba",
+  "result_id": "resultv2_1157cb6bf634238d36fbcdadee774fcba19edf26b1aec02076a1344d68401c90",
+  "native_correlation_id": "260ba5326eed0b2cc258ad293be1977e1d5f8c68a7547fc987ce35bf6882468a",
+  "failure": "Raw payload does not match the native result hash.",
+  "cause": "locale_sensitive_key_ordering",
+  "representations": [
+    {
+      "stage": "courier_result_file",
+      "representation": "courier_result_json_file",
+      "algorithm": "sha256",
+      "digest": "7a6c09121a3c716067a9879ab568c773b1ccc9168230d78256a2b655d5d9afb8",
+      "byte_count": 804528
+    },
+    {
+      "stage": "native_source_payload",
+      "representation": "source_json_utf8/system-text-json-v1",
+      "algorithm": "sha256",
+      "digest": "4e6242decd234a1203e02b1ba4bc7edc34fe7ef1d1d1012a2311d35e5e85a21e",
+      "byte_count": 402629
+    },
+    {
+      "stage": "transmitted_json",
+      "representation": "utf8_json_bytes/json-stringify-v8",
+      "algorithm": "sha256",
+      "digest": "b571064add16c872c57ed189ac76ee0052aefd2637a0d7ef800d321e1f8ed293",
+      "byte_count": 400625
+    },
+    {
+      "stage": "mcp_normalized",
+      "representation": "canonical_json/locale-compare-unversioned",
+      "algorithm": "sha256",
+      "digest": "6e1eda885bb15cff38a47bf00dde8fbabc4a436813ec180e3c7d5ee7ed8d645a",
+      "byte_count": 400625
+    },
+    {
+      "stage": "backend_normalized",
+      "representation": "canonical_json/assignment-kernel-v2-ordinal",
+      "algorithm": "sha256",
+      "digest": "e628fb74ec6f7d479aafc4135c5a60852f5d65e57b5c9e88c15a39add9c426c4",
+      "byte_count": 400625
+    },
+    {
+      "stage": "evidence_object",
+      "representation": "evidence_object_bytes/json-stringify-v8",
+      "algorithm": "sha256",
+      "digest": "b571064add16c872c57ed189ac76ee0052aefd2637a0d7ef800d321e1f8ed293",
+      "byte_count": 400625,
+      "evidence_id": "ev1_MGSBRFfcw-p4m7xVCRlEOZepe1iXvAWU"
+    }
+  ],
+  "comparison": {
+    "payload_mutated": false,
+    "envelope_extraction_changed_payload": false,
+    "control_metadata_removed": false,
+    "undefined_field_mismatch": false,
+    "numeric_normalization_mismatch": false,
+    "unicode_semantic_mismatch": false,
+    "evidence_persistence_succeeded": true,
+    "mcp_backend_normalized_digests_equal": false
+  },
+  "minimal_fixture": {
+    "payload": {"parameter": 1, "parameterName": 2, "paramName": 3},
+    "locale_sha256": "e2d742746dfc5aee417ab32585d2cceee3f3474703fb0028c85659d350b018d8",
+    "ordinal_sha256": "653ec46c5439542a3e3894d035258de882dd5bfcef1acff9611ebf126138d8a0"
+  },
+  "sanitized_candidate2_fixture": {
+    "locale_sha256": "4ba777e03f2039be75ddd741e7f48a043a2a2d6b2fd331480e46557ffd95411b",
+    "ordinal_sha256": "209757281c926ff24d53050a086f357774af069249d8ec28be9975dc28a53890",
+    "byte_count": 2276
+  }
+}

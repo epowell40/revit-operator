@@ -1,11 +1,8 @@
+import type { PayloadDigestV2 as SharedPayloadDigestV2 } from "@revitoperator/payload-digest-v2";
+
 export const PAYLOAD_PROVENANCE_V2_SCHEMA = "revit-operator.payload-provenance/v2" as const;
 
-export interface PayloadDigestV2 {
-  algorithm: "sha256";
-  digest: string;
-  representation: "native_bytes" | "utf8_json_bytes" | "canonical_json";
-  byte_count: number;
-}
+export type PayloadDigestV2 = SharedPayloadDigestV2;
 
 export interface PayloadProvenanceV2 {
   schema: typeof PAYLOAD_PROVENANCE_V2_SCHEMA;

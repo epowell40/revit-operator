@@ -1,0 +1,100 @@
+{
+  "schema": "revit-operator.payload-regression-fixture/v1",
+  "fixture_id": "epic0457-candidate2-tool-registry-sanitized",
+  "source": "EPIC-0457 Candidate 2 authoritative tool-registry result",
+  "sanitization": "Retains one affected tool and the control-settlement shape; replaces temporal and identity values.",
+  "payload": {
+    "version": "operator.tool_registry.v1",
+    "generated_at": "2000-01-01T00:00:00.000Z",
+    "tools": [
+      {
+        "version": "operator.tool_doc.v1",
+        "method": "POST",
+        "path": "/revit/find-elements-by-parameter",
+        "risk": "low",
+        "title": "Find Elements By Parameter",
+        "description": "Find elements by parameter value with optional system/view/category filters. Operators are equals, contains, begins_with, and ends_with. Use legacy {parameterName|parameter|paramName,op,value} for one predicate, or {predicates:[{parameterName,op,value}],matchMode:any|all} for bounded alternatives. Body also supports {category?,categories?,systemName?,viewId?,limit?}.",
+        "required_fields": [],
+        "optional_fields": [
+          "category",
+          "categories",
+          "parameterName",
+          "parameter",
+          "paramName",
+          "op",
+          "value",
+          "predicates",
+          "matchMode",
+          "systemName",
+          "viewId",
+          "limit"
+        ],
+        "enums": {},
+        "units": [],
+        "common_errors": [],
+        "notes": [],
+        "request_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "category": { "type": "string" },
+            "categories": { "type": "array", "items": { "type": "string" } },
+            "parameterName": { "type": "string" },
+            "parameter": { "type": "string" },
+            "paramName": { "type": "string" },
+            "op": { "type": "string" },
+            "value": { "type": "string" },
+            "predicates": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "parameterName": { "type": "string" },
+                  "op": { "type": "string" },
+                  "value": { "type": "string" }
+                },
+                "required": ["parameterName", "value"]
+              }
+            },
+            "matchMode": { "type": "string" },
+            "systemName": { "type": "string" },
+            "viewId": {
+              "oneOf": [{ "type": "null" }, { "type": "integer" }],
+              "description": "Revit element id (integer)."
+            },
+            "limit": { "oneOf": [{ "type": "null" }, { "type": "integer" }] }
+          },
+          "required": []
+        },
+        "response_schema": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {},
+          "required": []
+        },
+        "examples": []
+      }
+    ],
+    "canonical_attempt_settlement": {
+      "schema": "revit-operator.native-attempt-settlement.v1",
+      "assignment_id": "sanitized-assignment",
+      "attempt_id": "sanitized-operation",
+      "run_id": "sanitized-run",
+      "generation": 1,
+      "requested_effect": "read",
+      "method": "GET",
+      "path": "/revit/tool-registry",
+      "action_signature": null,
+      "target_fingerprint": null,
+      "request_dispatched": true,
+      "effect_state": "none",
+      "effect_reason": "read_has_no_persistent_effect",
+      "effect_authority": "native_host",
+      "affected_target_identities": [],
+      "receipt_refs": [],
+      "evidence_refs": [],
+      "settled_at_utc": "2000-01-01T00:00:00.000Z"
+    }
+  }
+}

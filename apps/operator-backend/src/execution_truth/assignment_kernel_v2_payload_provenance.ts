@@ -1,19 +1,9 @@
-import { createHash } from "node:crypto";
+import { payloadDigestV2, payloadRepresentationDigestV2 } from "@revitoperator/payload-digest-v2";
 import {
   PAYLOAD_PROVENANCE_V2_SCHEMA,
-  canonicalJsonV2,
   type PayloadDigestV2,
   type PayloadProvenanceV2
 } from "../domain/assignment-kernel/index.js";
-
-function digest(bytes: Uint8Array, representation: PayloadDigestV2["representation"]): PayloadDigestV2 {
-  return {
-    algorithm: "sha256",
-    digest: createHash("sha256").update(bytes).digest("hex"),
-    representation,
-    byte_count: bytes.byteLength
-  };
-}
 
 function provenance(input: Readonly<{
   source_bytes: Uint8Array;
@@ -22,11 +12,10 @@ function provenance(input: Readonly<{
   transformation_id: string;
   transformation_version: string;
 }>): PayloadProvenanceV2 {
-  const normalizedBytes = Buffer.from(canonicalJsonV2(input.normalized_payload), "utf8");
   return {
     schema: PAYLOAD_PROVENANCE_V2_SCHEMA,
-    source: digest(input.source_bytes, input.source_representation),
-    normalized: digest(normalizedBytes, "canonical_json"),
+    source: payloadRepresentationDigestV2(input.source_bytes, input.source_representation),
+    normalized: payloadDigestV2(input.normalized_payload),
     transformation_id: input.transformation_id,
     transformation_version: input.transformation_version
   };
