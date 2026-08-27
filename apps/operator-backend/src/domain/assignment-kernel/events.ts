@@ -2,7 +2,7 @@ import type { AssignmentSpecV2, AssignmentWorkUnitStateV2 } from "./assignment_s
 import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, ObservationIdV2, OperationIdV2, WorkUnitIdV2 } from "./identity.js";
 import type { CriterionEvaluationV2, AssignmentOutcomeV2 } from "./criteria.js";
 import type { ObservationV2 } from "./observation.js";
-import type { OperationResultV2, OperationV2 } from "./operation.js";
+import type { ObservationCommitInputV2, OperationResultV2, OperationV2 } from "./operation.js";
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallStateV2, ProviderCallV2, ProviderUsageV2 } from "./progress/provider_call.js";
 
@@ -48,8 +48,10 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "operation_dispatch_started"; operation_id: OperationIdV2 }
   | { event_type: "operation_dispatch_recorded"; operation_id: OperationIdV2; authority: "mcp" | "backend" | "dynamic_runtime" | "courier"; correlation_id?: string }
   | { event_type: "native_dispatch_recorded"; operation_id: OperationIdV2; native_correlation_id?: string }
-  | { event_type: "operation_result_recorded"; result: OperationResultV2 }
+  | { event_type: "operation_result_recorded"; result: OperationResultV2; observation_commit?: ObservationCommitInputV2 }
   | { event_type: "observation_retained"; observation: ObservationV2 }
+  | { event_type: "observation_commit_retry_recorded"; operation_id: OperationIdV2; result_id: string; attempt: number; error_code: string }
+  | { event_type: "observation_commit_failed"; operation_id: OperationIdV2; result_id: string; attempt: number; error_code: string }
   | { event_type: "observation_retention_failed"; operation_id: OperationIdV2; error_code: string }
   | { event_type: "criterion_evaluated"; evaluation: CriterionEvaluationV2 }
   | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string }

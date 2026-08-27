@@ -219,9 +219,11 @@ test("V2 publication and benchmark truth consume the canonical snapshot and prov
   assert.match(publication, /provider_ledger/);
   const publicationImports = [...publication.matchAll(/from\s+["'][^"']+["']/g)].map(match => match[0]).join("\n");
   assert.doesNotMatch(publicationImports, /GoalRecord|AssignmentProjection|durable_assignment_projection|chat_response/i);
+  assert.doesNotMatch(publication, /listGoals|related_session_id|assignment_kernel_v2\?/,
+    "V2 session discovery must use the V2-native index, not legacy Goal arrays or lifecycle fields.");
 
   const protocol = readFileSync(path.join(process.cwd(), "src/benchmark/protocol_v2_kernel.ts"), "utf8");
   assert.match(protocol, /durable_assignment_kernel_v2/);
   assert.match(protocol, /Historical V1 report compatibility only/);
-  assert.match(protocol, /return direct\.length > 0 \? direct : legacyKernelPublicationsV2/);
+  assert.match(protocol, /expectedDirect\.length > 0 \? direct/);
 });

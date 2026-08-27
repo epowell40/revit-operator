@@ -20,6 +20,8 @@ function unique<T extends string>(values: readonly T[]): T[] {
 
 function relevantObservationIds(snapshot: AssignmentSnapshotV2, criterion: AssignmentCriterionSpecV2): string[] {
   return Object.values(snapshot.observations)
+    .filter((observation) => snapshot.operations[observation.operation_id]
+      ?.advances_criterion_ids.includes(criterion.criterion_id))
     .filter((observation) => criterion.accepted_observation_authority_ids.includes(observation.authority))
     .filter((observation) => observation.facts.some((fact) => criterion.semantic_fact_requirements.includes(fact.fact_id)))
     .map((observation) => observation.observation_id)

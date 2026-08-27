@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import type { GoalRecord } from "../goals/service.js";
+import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { ensureWorkspaceLayout, resolveFileUnderWorkspace } from "../workspace.js";
 import { readLatestVerifiedWorkPacket } from "../work_packets/store.js";
 import type { PersistedWorkReturn, WorkReturnV1 } from "./contract.js";
@@ -50,13 +51,13 @@ function sourceEquivalent(left: WorkReturnV1, right: WorkReturnV1): boolean {
   return strip(left) === strip(right);
 }
 
-export function persistWorkReturn(goal: GoalRecord): PersistedWorkReturn {
+export function persistWorkReturn(goal: GoalRecord, canonicalSnapshotV2?: AssignmentSnapshotV2): PersistedWorkReturn {
   const existing = readAll(goal.id);
   let packet = null;
-  try { packet = readLatestVerifiedWorkPacket(goal).packet; } catch {}
-  const unparented = generateWorkReturn(goal, null, packet);
+  try { packet = readLatestVerifiedWorkPacket(goal, canonicalSnapshotV2).packet; } catch {}
+  const unparented = generateWorkReturn(goal, null, packet, canonicalSnapshotV2);
   const equivalent = [...existing].reverse().find(candidate => sourceEquivalent(candidate, unparented));
-  const workReturn = equivalent ?? generateWorkReturn(goal, existing.at(-1)?.work_return_id ?? null, packet);
+  const workReturn = equivalent ?? generateWorkReturn(goal, existing.at(-1)?.work_return_id ?? null, packet, canonicalSnapshotV2);
   const root = directory(goal.id);
   const jsonPath = path.join(root, `${workReturn.work_return_id}.json`);
   const markdownPath = path.join(root, `${workReturn.work_return_id}.md`);
@@ -65,8 +66,8 @@ export function persistWorkReturn(goal: GoalRecord): PersistedWorkReturn {
   return { work_return: workReturn, json_path: relative(jsonPath), markdown_path: relative(markdownPath), created: createdJson || createdMarkdown };
 }
 
-export function readLatestWorkReturn(goal: GoalRecord): PersistedWorkReturn {
-  return persistWorkReturn(goal);
+export function readLatestWorkReturn(goal: GoalRecord, canonicalSnapshotV2?: AssignmentSnapshotV2): PersistedWorkReturn {
+  return persistWorkReturn(goal, canonicalSnapshotV2);
 }
 
 export function listWorkReturns(assignmentId: string): WorkReturnV1[] {

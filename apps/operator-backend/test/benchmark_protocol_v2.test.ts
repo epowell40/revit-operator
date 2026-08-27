@@ -521,6 +521,28 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
   assert.equal(result.assignment_outcome, "complete");
 });
 
+test("Protocol V2 reports a missing direct V2 publication instead of falling back to legacy provider absence", () => {
+  const readCase = benchmarkCase({
+    case_id: "q01_v2_publication_missing",
+    operation_family: "inventory",
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const trace = traceFor(readCase);
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_kernel_v2 = {
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignment_ids: ["assignment-1"],
+    assignments: [],
+    failures: [{ assignment_id: "assignment-1", error: "direct publication read failed" }]
+  };
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /v2_publication_missing/);
+});
+
 test("canonical attempt effect accessor is backward compatible but rejects conflicting dual fields", () => {
   assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "read" }), "read");
   assert.equal(canonicalAttemptRequestedEffect({ request_effect: "read" }), "read");

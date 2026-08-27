@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
+  OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
   canonicalJsonV2,
   deriveProgressGapsV2,
   sameAssignmentBindingV2,
@@ -13,11 +14,13 @@ import {
   type OperationRoleV2,
   type OperationResultV2,
   type OperationV2,
+  type ObservationCommitInputV2,
   type PersistentEffectV2,
   type RequestedEffectV2,
   type SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
-import { storeEvidence } from "../evidence/evidence_store.js";
+import { assertEvidenceStoreInputSafe, storeEvidence } from "../evidence/evidence_store.js";
+import type { EvidenceStoreInput, EvidenceStoreResult } from "../evidence/evidence_ref.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
 import {
@@ -29,6 +32,7 @@ import {
   appendCurrentAssignmentKernelEventV2,
   getAssignmentKernelSnapshotV2
 } from "./assignment_kernel_v2_store.js";
+import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 
 export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
@@ -75,6 +79,12 @@ export type AssignmentKernelRecoveryRuntimeV2 = Readonly<{
     assignmentKernelV2: AssignmentKernelOperationLeaseV2;
   }>): Promise<unknown>;
 }>;
+
+export type AssignmentKernelObservationCommitRuntimeV2 = Readonly<{
+  storeEvidence(input: EvidenceStoreInput, projectionMaxBytes?: number): EvidenceStoreResult;
+}>;
+
+const DEFAULT_OBSERVATION_COMMIT_RUNTIME: AssignmentKernelObservationCommitRuntimeV2 = { storeEvidence };
 
 function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -286,7 +296,7 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
   }
   const parent = snapshot.operations[input.parent_operation_id];
-  if (!parent || parent.settlement_state === "settled") {
+  if (!parent || !["open", "awaiting_result", "retaining_observation"].includes(parent.settlement_state)) {
     throw new Error("assignment_kernel_v2_parent_operation_invalid");
   }
   if (!Number.isSafeInteger(input.child_ordinal) || input.child_ordinal < 0) {
@@ -389,6 +399,46 @@ function validateFacts(value: unknown): readonly SemanticFactV2[] {
   });
 }
 
+function observationCommitLimit(): number {
+  const parsed = Number.parseInt(process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS ?? "", 10);
+  return Number.isSafeInteger(parsed) ? Math.max(1, Math.min(10, parsed)) : 3;
+}
+
+function evidenceInput(
+  lease: AssignmentKernelOperationLeaseV2,
+  result: OperationResultV2,
+  commit: ObservationCommitInputV2
+): EvidenceStoreInput {
+  return {
+    scope: {
+      session_id: lease.binding.session_id,
+      assignment_id: lease.binding.assignment_id,
+      run_id: lease.binding.run_id,
+      generation: lease.binding.generation,
+      attempt_id: lease.operation_id
+    },
+    source: `assignment_kernel_v2:${lease.capability_id}`,
+    media_type: "application/json",
+    trust_level: result.authority === "native-host" ? "authoritative_native" : "host_observed",
+    bounded_summary: `Authoritative result for operation ${lease.operation_id}.`,
+    verification_relevance: lease.purpose === "verification" ? "authoritative" : "required",
+    raw: commit.raw_payload
+  };
+}
+
+function commitInput(envelope: AssignmentKernelMcpResultV2, result: OperationResultV2): ObservationCommitInputV2 | undefined {
+  if (!result.observation_required) return undefined;
+  if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  return {
+    schema: OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
+    result_id: result.result_id,
+    raw_payload: structuredClone(envelope.observation.raw_payload),
+    semantic_facts: validateFacts(envelope.observation.semantic_facts),
+    ...(envelope.observation.target_scope ? { target_scope: structuredClone(envelope.observation.target_scope) } : {}),
+    ...(envelope.observation.verification_relevance ? { verification_relevance: [...envelope.observation.verification_relevance] } : {})
+  };
+}
+
 function recordNativeDispatchIfNeeded(lease: AssignmentKernelOperationLeaseV2, result: OperationResultV2): void {
   if (result.dispatch_state !== "dispatched") return;
   const native = result.authority === "native-host" || result.authority === "dynamic-runtime";
@@ -404,20 +454,23 @@ function recordNativeDispatchIfNeeded(lease: AssignmentKernelOperationLeaseV2, r
 
 export function settleAssignmentKernelOperationV2(
   lease: AssignmentKernelOperationLeaseV2,
-  rawResult: unknown
+  rawResult: unknown,
+  observationCommitRuntime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME
 ): AssignmentKernelOperationSettlementV2 {
   const envelope = explicitMcpEnvelope(rawResult);
   const result = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: { operation_result_v2: envelope.operation_result_v2 } });
   if (result.operation_id !== lease.operation_id || !sameAssignmentBindingV2(result.binding, lease.binding)) {
     throw new Error("assignment_kernel_v2_result_binding_mismatch");
   }
+  const commit = commitInput(envelope, result);
+  if (commit) assertEvidenceStoreInputSafe(evidenceInput(lease, result, commit));
   recordNativeDispatchIfNeeded(lease, result);
   appendCurrentAssignmentKernelEventV2({
     goal_id: lease.assignment_id, binding: lease.binding,
     event_id: `operation-result:${result.result_id}`,
     actor: result.authority,
     occurred_at: result.completed_at,
-    body: { event_type: "operation_result_recorded", result }
+    body: { event_type: "operation_result_recorded", result, ...(commit ? { observation_commit: commit } : {}) }
   });
   if (!result.observation_required) {
     return {
@@ -425,34 +478,46 @@ export function settleAssignmentKernelOperationV2(
       observation: null, evidence_refs: [], evidence_projections: []
     };
   }
-  if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
-  const facts = validateFacts(envelope.observation.semantic_facts);
+  return commitAssignmentKernelObservationV2(lease, observationCommitRuntime);
+}
+
+/**
+ * Completes only the durable Observation stage for an already recorded native
+ * result. It cannot dispatch native work or create another OperationV2.
+ */
+export function commitAssignmentKernelObservationV2(
+  lease: AssignmentKernelOperationLeaseV2,
+  runtime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME
+): AssignmentKernelOperationSettlementV2 {
+  const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
+  const operation = snapshot?.operations[lease.operation_id];
+  if (!snapshot || !operation || !operation.result || !sameAssignmentBindingV2(snapshot.current_binding, lease.binding)) {
+    throw new Error("assignment_kernel_v2_observation_commit_operation_missing");
+  }
+  if (operation.settlement_state === "settled") {
+    const observation = operation.observation_ids.length > 0
+      ? snapshot.observations[operation.observation_ids[operation.observation_ids.length - 1]!]
+      : undefined;
+    return { snapshot, result: operation.result, observation: observation ?? null, evidence_refs: [], evidence_projections: [] };
+  }
+  if (operation.settlement_state !== "retaining_observation" || !operation.observation_commit) {
+    throw new Error("assignment_kernel_v2_observation_commit_not_pending");
+  }
+  const result = operation.result;
+  const commit = operation.observation_commit;
+  const attempt = (operation.observation_commit_attempts ?? 0) + 1;
   try {
-    const stored = storeEvidence({
-      scope: {
-        session_id: lease.binding.session_id,
-        assignment_id: lease.binding.assignment_id,
-        run_id: lease.binding.run_id,
-        generation: lease.binding.generation,
-        attempt_id: lease.operation_id
-      },
-      source: `assignment_kernel_v2:${lease.capability_id}`,
-      media_type: "application/json",
-      trust_level: result.authority === "native-host" ? "authoritative_native" : "host_observed",
-      bounded_summary: `Authoritative result for operation ${lease.operation_id}.`,
-      verification_relevance: lease.purpose === "verification" ? "authoritative" : "required",
-      raw: envelope.observation.raw_payload
-    }, getEvidenceContextBudget().item_bytes);
+    const stored = runtime.storeEvidence(evidenceInput(lease, result, commit), getEvidenceContextBudget().item_bytes);
     const registry = new ObservationDecoderRegistryV2();
-    registry.register(result.result_schema_id, () => facts);
+    registry.register(result.result_schema_id, () => commit.semantic_facts);
     const observation = observationFromOperationResultV2({
       result,
       expected_binding: lease.binding,
       observation_id: `obsv2_${stableHash({ operation_id: lease.operation_id, evidence_id: stored.ref.evidence_id })}`,
       raw_payload_ref: `evidence:${stored.ref.evidence_id}`,
-      raw_payload: envelope.observation.raw_payload,
-      target_scope: envelope.observation.target_scope,
-      verification_relevance: envelope.observation.verification_relevance,
+      raw_payload: commit.raw_payload,
+      target_scope: commit.target_scope,
+      verification_relevance: commit.verification_relevance,
       registry
     });
     appendCurrentAssignmentKernelEventV2({
@@ -467,13 +532,17 @@ export function settleAssignmentKernelOperationV2(
       evidence_refs: [stored.ref], evidence_projections: [stored.projection]
     };
   } catch (error) {
-    const errorCode = error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240);
+    const errorCode = (error instanceof Error ? error.message : String(error)).slice(0, 240) || "observation_commit_failed";
+    const terminal = attempt >= observationCommitLimit();
     appendCurrentAssignmentKernelEventV2({
       goal_id: lease.assignment_id, binding: lease.binding,
-      event_id: `observation-retention-failed:${result.result_id}`,
+      event_id: `${terminal ? "observation-commit-failed" : "observation-commit-retry"}:${result.result_id}:${attempt}`,
       actor: "operator-evidence-store",
-      body: { event_type: "observation_retention_failed", operation_id: lease.operation_id, error_code: errorCode || "observation_retention_failed" }
+      body: terminal
+        ? { event_type: "observation_commit_failed", operation_id: lease.operation_id, result_id: result.result_id, attempt, error_code: errorCode }
+        : { event_type: "observation_commit_retry_recorded", operation_id: lease.operation_id, result_id: result.result_id, attempt, error_code: errorCode }
     });
+    if (terminal) deriveAndSettleAssignmentKernelV2(lease.binding, "observation_commit_failed");
     throw error;
   }
 }
@@ -484,7 +553,7 @@ export function failAssignmentKernelOperationV2(
   dispatch: "not_dispatched" | "dispatching" | "dispatched"
 ): AssignmentSnapshotV2 {
   const current = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];
-  if (!current || current.settlement_state === "settled") return getAssignmentKernelSnapshotV2(lease.assignment_id)!;
+  if (!current || current.settlement_state === "settled" || current.result) return getAssignmentKernelSnapshotV2(lease.assignment_id)!;
   const effectiveDispatch = current.dispatch_state === "dispatched" ? "dispatched" : dispatch;
   const effect: PersistentEffectV2 = lease.requested_effect === "apply" && effectiveDispatch !== "not_dispatched" ? "unknown" : "none";
   if (effectiveDispatch === "dispatched" && current.dispatch_state !== "dispatched") {
@@ -551,6 +620,7 @@ export function leaseFromOperation(operation: OperationV2): AssignmentKernelOper
 export async function recoverAssignmentKernelOperationsV2(input: Readonly<{
   snapshot: AssignmentSnapshotV2;
   runtime: AssignmentKernelRecoveryRuntimeV2;
+  observation_commit_runtime?: AssignmentKernelObservationCommitRuntimeV2;
   now?: Date;
   transport?: string;
 }>): Promise<AssignmentSnapshotV2> {
@@ -561,6 +631,34 @@ export async function recoverAssignmentKernelOperationsV2(input: Readonly<{
     const operation = snapshot.operations[operationId];
     if (!operation || operation.settlement_state === "settled") continue;
     const lease = leaseFromOperation(operation);
+    if (operation.settlement_state === "retaining_observation" && operation.result) {
+      if (!operation.observation_commit) {
+        appendCurrentAssignmentKernelEventV2({
+          goal_id: lease.assignment_id,
+          binding: lease.binding,
+          event_id: `observation-commit-failed:${operation.result.result_id}:missing-input`,
+          actor: "assignment-kernel-v2-recovery",
+          body: {
+            event_type: "observation_commit_failed",
+            operation_id: lease.operation_id,
+            result_id: operation.result.result_id,
+            attempt: (operation.observation_commit_attempts ?? 0) + 1,
+            error_code: "observation_commit_payload_missing"
+          }
+        });
+        snapshot = deriveAndSettleAssignmentKernelV2(lease.binding, "observation_commit_failed");
+        continue;
+      }
+      try {
+        snapshot = commitAssignmentKernelObservationV2(
+          lease,
+          input.observation_commit_runtime ?? DEFAULT_OBSERVATION_COMMIT_RUNTIME
+        ).snapshot;
+      } catch {
+        snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id)!;
+      }
+      continue;
+    }
     if (Date.parse(operation.deadline_at) <= now.getTime()) {
       snapshot = failAssignmentKernelOperationV2(
         lease,

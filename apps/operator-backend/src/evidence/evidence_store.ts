@@ -70,6 +70,25 @@ function assertSecretFree(bytes: Buffer, mediaType: string): void {
   }
 }
 
+/**
+ * Performs the same serialization and secret screening used by storeEvidence
+ * without writing any bytes. Durable workflows use this before journaling a
+ * recoverable evidence payload so rejected secret-like material never enters
+ * the Assignment journal.
+ */
+export function assertEvidenceStoreInputSafe(input: EvidenceStoreInput): void {
+  scopePart(input.scope.session_id, "scope.session_id", true);
+  scopePart(input.scope.assignment_id, "scope.assignment_id");
+  scopePart(input.scope.run_id, "scope.run_id");
+  scopePart(input.scope.attempt_id, "scope.attempt_id");
+  if (input.scope.generation != null && (!Number.isSafeInteger(input.scope.generation) || input.scope.generation < 0)) {
+    throw new Error("scope.generation must be a non-negative integer.");
+  }
+  safeBounded(input.source, 240, "source", true);
+  const mediaType = safeBounded(input.media_type || (Buffer.isBuffer(input.raw) ? "application/octet-stream" : typeof input.raw === "string" ? "text/plain; charset=utf-8" : "application/json"), 160, "media_type", true).toLowerCase();
+  assertSecretFree(rawBytes(input.raw, mediaType), mediaType);
+}
+
 function writeImmutable(filePath: string, bytes: Buffer): boolean {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;

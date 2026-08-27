@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
   AssignmentJournalV2,
@@ -9,8 +11,20 @@ import {
   type AssignmentSpecV2
 } from "../domain/assignment-kernel/index.js";
 import { getGoal, mutateGoalRecord, type GoalRecord, type GoalStatus } from "../goals/service.js";
+import { ensureWorkspaceLayout } from "../workspace.js";
 
 export const ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA = "revit-operator.assignment-kernel-journal/v2" as const;
+export const ASSIGNMENT_KERNEL_INDEX_ENTRY_V2_SCHEMA = "revit-operator.assignment-kernel-index-entry/v2" as const;
+
+export interface AssignmentKernelIndexEntryV2 {
+  schema: typeof ASSIGNMENT_KERNEL_INDEX_ENTRY_V2_SCHEMA;
+  assignment_id: string;
+  assignment_version: number;
+  session_id: string;
+  binding: AssignmentSnapshotV2["current_binding"];
+  outcome: AssignmentSnapshotV2["outcome"];
+  terminal: boolean;
+}
 
 export interface AssignmentKernelQuarantinedEventV2 {
   event: AssignmentEventV2;
@@ -38,6 +52,65 @@ export type AssignmentKernelEventBodyV2<T> = T extends unknown
 
 function emptyJournal(): AssignmentKernelJournalRecordV2 {
   return { schema: ASSIGNMENT_KERNEL_JOURNAL_V2_SCHEMA, events: [], quarantined_events: [] };
+}
+
+function assignmentKernelIndexRoot(): string {
+  const root = path.join(ensureWorkspaceLayout().artifacts, "assignment-kernel-v2", "index");
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function assignmentKernelIndexPath(assignmentId: string): string {
+  const fileName = createHash("sha256").update(assignmentId, "utf8").digest("hex") + ".json";
+  return path.join(assignmentKernelIndexRoot(), fileName);
+}
+
+function indexEntry(snapshot: AssignmentSnapshotV2): AssignmentKernelIndexEntryV2 {
+  return {
+    schema: ASSIGNMENT_KERNEL_INDEX_ENTRY_V2_SCHEMA,
+    assignment_id: snapshot.current_binding.assignment_id,
+    assignment_version: snapshot.assignment_version,
+    session_id: snapshot.current_binding.session_id,
+    binding: structuredClone(snapshot.current_binding),
+    outcome: snapshot.outcome,
+    terminal: snapshot.terminal
+  };
+}
+
+function observeAssignmentKernelIndexV2(snapshot: AssignmentSnapshotV2): void {
+  const destination = assignmentKernelIndexPath(snapshot.current_binding.assignment_id);
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(indexEntry(snapshot), null, 2) + "\n", { encoding: "utf8", flag: "wx" });
+    fs.renameSync(temporary, destination);
+  } finally {
+    if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
+}
+
+export function listAssignmentKernelIndexV2(sessionId: string, limit = 50): AssignmentKernelIndexEntryV2[] {
+  const boundedSessionId = sessionId.trim().slice(0, 180);
+  const boundedLimit = Math.max(1, Math.min(200, Math.trunc(limit) || 50));
+  const entries: AssignmentKernelIndexEntryV2[] = [];
+  for (const name of fs.readdirSync(assignmentKernelIndexRoot()).filter(value => /^[a-f0-9]{64}\.json$/.test(value))) {
+    try {
+      const candidate = JSON.parse(fs.readFileSync(path.join(assignmentKernelIndexRoot(), name), "utf8")) as Partial<AssignmentKernelIndexEntryV2>;
+      if (candidate.schema !== ASSIGNMENT_KERNEL_INDEX_ENTRY_V2_SCHEMA
+        || candidate.session_id !== boundedSessionId
+        || typeof candidate.assignment_id !== "string"
+        || !Number.isSafeInteger(candidate.assignment_version)
+        || !candidate.binding
+        || typeof candidate.terminal !== "boolean") continue;
+      entries.push(candidate as AssignmentKernelIndexEntryV2);
+    } catch {
+      // A malformed independent index entry cannot replace exact-ID V2 truth.
+    }
+  }
+  return entries
+    .sort((left, right) => right.assignment_version - left.assignment_version
+      || (left.assignment_id < right.assignment_id ? 1 : left.assignment_id > right.assignment_id ? -1 : 0))
+    .slice(0, boundedLimit)
+    .map(entry => structuredClone(entry));
 }
 
 export function normalizeAssignmentKernelJournalV2(value: unknown): AssignmentKernelJournalRecordV2 {
@@ -149,6 +222,7 @@ export function appendAssignmentKernelEventV2(goalId: string, event: AssignmentE
     }
   });
   if (!acceptedSnapshot) throw new Error("assignment_kernel_v2_not_created");
+  if (accepted) observeAssignmentKernelIndexV2(acceptedSnapshot);
   return { goal, snapshot: acceptedSnapshot, accepted, quarantined_reason_code: quarantinedReasonCode };
 }
 
@@ -227,5 +301,6 @@ export function appendCurrentAssignmentKernelEventV2(input: Readonly<{
   });
   if (!acceptedSnapshot) throw new Error("assignment_kernel_v2_not_created");
   if (!accepted) throw new Error(quarantinedReasonCode ?? "assignment_kernel_v2_event_rejected");
+  observeAssignmentKernelIndexV2(acceptedSnapshot);
   return { goal, snapshot: acceptedSnapshot, accepted, quarantined_reason_code: quarantinedReasonCode };
 }

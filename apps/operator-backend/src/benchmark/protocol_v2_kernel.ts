@@ -17,6 +17,14 @@ export function directKernelPublicationsV2(toolResultsValue: unknown): JsonRecor
       && record(publication.provider_ledger).schema === "revit-operator.assignment-provider-ledger/v2");
 }
 
+export function expectedDirectKernelAssignmentIdsV2(toolResultsValue: unknown): string[] {
+  const bundle = record(record(toolResultsValue).durable_assignment_kernel_v2);
+  if (bundle.schema !== "revit-operator.benchmark-assignment-kernel-v2/v1") return [];
+  return Array.isArray(bundle.assignment_ids)
+    ? [...new Set(bundle.assignment_ids.map(String).map((value) => value.trim()).filter(Boolean))]
+    : [];
+}
+
 /** Historical V1 report compatibility only; new V2 publications use the direct bundle. */
 function legacyKernelPublicationsV2(toolResults: JsonRecord): JsonRecord[] {
   const projection = record(toolResults.durable_assignment_projection);
@@ -45,7 +53,8 @@ function legacyKernelPublicationsV2(toolResults: JsonRecord): JsonRecord[] {
 export function kernelPublicationsV2(toolResultsValue: unknown): JsonRecord[] {
   const toolResults = record(toolResultsValue);
   const direct = directKernelPublicationsV2(toolResults);
-  return direct.length > 0 ? direct : legacyKernelPublicationsV2(toolResults);
+  const expectedDirect = expectedDirectKernelAssignmentIdsV2(toolResults);
+  return expectedDirect.length > 0 ? direct : direct.length > 0 ? direct : legacyKernelPublicationsV2(toolResults);
 }
 
 export function assignmentRowFromKernelPublicationV2(publication: JsonRecord): JsonRecord {

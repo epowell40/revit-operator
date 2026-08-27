@@ -23,7 +23,7 @@ import {
   type VerifiedWorkTarget,
   type VerifiedWorkTrust
 } from "./contract.js";
-import { AssignmentJournalV2 } from "../domain/assignment-kernel/index.js";
+import { AssignmentJournalV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { generateVerifiedWorkPacketFromKernelV2 } from "./assignment_kernel_v2_generator.js";
 
 type JsonMap = Record<string, unknown>;
@@ -581,11 +581,19 @@ function packetBody(goal: GoalRecord, parentPacketId: string | null): Omit<Verif
   };
 }
 
-export function generateVerifiedWorkPacket(goal: GoalRecord, parentPacketId: string | null = null): VerifiedWorkPacketV1 {
+export function generateVerifiedWorkPacket(
+  goal: GoalRecord,
+  parentPacketId: string | null = null,
+  canonicalSnapshotV2?: AssignmentSnapshotV2
+): VerifiedWorkPacketV1 {
   const kernelEvents = goal.assignment_kernel_v2?.schema === "revit-operator.assignment-kernel-journal/v2"
     && Array.isArray(goal.assignment_kernel_v2.events) ? goal.assignment_kernel_v2.events : [];
   if (kernelEvents.length > 0) {
-    return generateVerifiedWorkPacketFromKernelV2(goal, new AssignmentJournalV2(kernelEvents).snapshot(), parentPacketId);
+    return generateVerifiedWorkPacketFromKernelV2(
+      goal,
+      canonicalSnapshotV2 ?? new AssignmentJournalV2(kernelEvents).snapshot(),
+      parentPacketId
+    );
   }
   if (!["blocked", "complete", "canceled", "failed"].includes(goal.status)) {
     const projection = reduceAssignmentControlPlane(goal.id, normalizeAssignmentControlPlane(goal.assignment_control_plane).events).projection;

@@ -24,6 +24,7 @@ import { canonicalAttemptRequestedEffect } from "./durable_tool_evidence.js";
 import {
   assignmentRowFromKernelPublicationV2,
   directKernelPublicationsV2,
+  expectedDirectKernelAssignmentIdsV2,
   kernelPublicationsV2
 } from "./protocol_v2_kernel.js";
 
@@ -85,6 +86,17 @@ export function observedProviderRoutesV2(legacyReport: JsonRecord): BenchmarkRun
 
 export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selectedCaseIds: readonly string[]): void {
   const traces = records(legacyReport.task_traces);
+  for (const caseId of selectedCaseIds) {
+    const trace = traces.find((entry) => entry.case_id === caseId);
+    if (!trace) continue;
+    const toolResults = record(trace.tool_results);
+    const expectedIds = expectedDirectKernelAssignmentIdsV2(toolResults);
+    const receivedIds = new Set(directKernelPublicationsV2(toolResults).map((publication) => String(publication.assignment_id ?? "")));
+    const failures = records(record(toolResults.durable_assignment_kernel_v2).failures);
+    if (expectedIds.some((assignmentId) => !receivedIds.has(assignmentId)) || failures.length > 0) {
+      throw new Error(`Benchmark Protocol V2 v2_publication_missing for ${caseId}.`);
+    }
+  }
   const allDirect = selectedCaseIds.every((caseId) => {
     const trace = traces.find((entry) => entry.case_id === caseId);
     return trace ? directKernelPublicationsV2(record(trace.tool_results)).length > 0 : false;
@@ -104,6 +116,15 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const assignmentProjection = record(toolResults.durable_assignment_projection);
     const assignmentRows = records(assignmentProjection.assignments);
     const directPublications = directKernelPublicationsV2(toolResults);
+    const expectedDirectAssignmentIds = expectedDirectKernelAssignmentIdsV2(toolResults);
+    if (expectedDirectAssignmentIds.length > 0) {
+      const receivedIds = new Set(directPublications.map((publication) => String(publication.assignment_id ?? "")));
+      const missingIds = expectedDirectAssignmentIds.filter((assignmentId) => !receivedIds.has(assignmentId));
+      const publicationFailures = records(record(toolResults.durable_assignment_kernel_v2).failures);
+      if (missingIds.length > 0 || publicationFailures.length > 0) {
+        throw new Error(`Benchmark Protocol V2 v2_publication_missing for ${caseId}: ${missingIds.join(",") || "direct publication read failed"}.`);
+      }
+    }
     const publications = kernelPublicationsV2(toolResults);
     const v2AssignmentRows = publications.map(assignmentRowFromKernelPublicationV2);
     if (directPublications.length > 0) {
@@ -196,6 +217,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
 function finalizationFailureDetails(message: string): {
   code: string; stage: string; missing: string[]; telemetry: BenchmarkFinalizationFailureV2["telemetry_completeness"];
 } {
+  if (/v2_publication_missing/i.test(message)) return { code: "v2_publication_missing", stage: "v2_publication", missing: ["v2_assignment_publication"], telemetry: "collection_failed" };
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
   if (/settlement still in flight/i.test(message)) return { code: "assignment_settlement_in_flight", stage: "settlement_barrier", missing: ["settled_revit_receipt"], telemetry: "still_in_flight" };
   if (/missing a complete Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };

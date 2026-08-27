@@ -214,7 +214,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: error instanceof Error ? error.message : String(error) });
       const currentOperation = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];
-      if (!currentOperation || currentOperation.settlement_state !== "settled") {
+      if (!currentOperation || !currentOperation.result) {
         try { failAssignmentKernelOperationV2(lease, error, accepted ? "dispatching" : "not_dispatched"); } catch {}
       }
       const failed = getAssignmentKernelSnapshotV2(lease.assignment_id);
