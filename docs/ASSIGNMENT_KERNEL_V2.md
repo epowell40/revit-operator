@@ -47,6 +47,16 @@ through a legacy adapter; new V2 Assignments will write only the V2 journal.
     successful retained verification Observation linked to the exact applied
     operation and canonical target before an apply Assignment can derive
     `complete`.
+13. Assignment progression is a versioned kernel concern. Each provider call
+    and operation must eventually cite stable unresolved gap and criterion
+    identities; a provider transcript cannot decide to continue on its own.
+14. Semantic fact identity is schema-aware. Singular facts conflict only when
+    the same identity has incompatible values; collection facts use declared
+    identity dimensions and preserve distinct members.
+15. Native bytes and normalized semantic payloads have separate hashes joined
+    by an explicit, versioned transformation. Canonical settlement never
+    compares hashes of different byte representations as though they were the
+    same payload.
 
 ## Target flow
 
@@ -57,6 +67,35 @@ native edge -> OperationResultV2(operation_id) -> retained raw bytes
 observation edge -> ObservationV2 semantic facts -> criterion events
 pure reducer -> AssignmentSnapshotV2 -> read-only API/UI/audit projections
 ```
+
+## Progression contracts
+
+`ProgressGapV2` names the exact unresolved criterion, work unit, required fact,
+and currently available observations. `ProgressDecisionV2` is the single typed
+answer to "what happens next?" and `ProgressEpochV2` records whether a bounded
+reasoning/execution cycle changed authoritative domain truth. Provider prose,
+repeated observations, and equivalent operations are not progress.
+
+The EPIC-0457 contracts and historical replay utility are deliberately
+non-operative until the deterministic controller is integrated. They make the
+old absence of call justification and criterion scheduling observable without
+changing the existing V2 execution path. A future enabled V2 path must reject
+reasoning or operations that cannot bind to an unresolved gap, evaluate
+qualifying observations before another unconstrained reasoning turn, and
+derive a truthful non-active outcome whenever the Assignment is quiescent and
+no justified next action exists.
+
+Semantic fact cardinality is part of the Observation contract:
+
+- `one` uses the fact identity, dimensions, and target as one value slot;
+- `many` additionally uses declared identity dimensions to distinguish
+  collection members;
+- byte-for-byte duplicate members are idempotent;
+- incompatible values for the same fully resolved identity remain a conflict.
+
+`PayloadProvenanceV2` records both the authenticated source-byte digest and the
+canonical normalized-payload digest. The transformation ID and version explain
+the relationship; neither digest is substituted for the other.
 
 ## Settlement ordering
 

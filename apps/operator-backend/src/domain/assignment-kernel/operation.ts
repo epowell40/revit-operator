@@ -1,10 +1,12 @@
 import type { RequestedEffectV2 } from "./assignment_spec.js";
 import type {
   AssignmentBindingV2,
+  CriterionIdV2,
   ObservationIdV2,
   OperationIdV2,
   WorkUnitIdV2
 } from "./identity.js";
+import type { PayloadProvenanceV2 } from "./payload_provenance.js";
 
 export const OPERATION_V2_SCHEMA = "revit-operator.operation/v2" as const;
 export const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const;
@@ -30,6 +32,8 @@ export interface OperationV2 {
   capability_id: string;
   requested_effect: RequestedEffectV2;
   purpose: OperationPurposeV2;
+  advances_criterion_ids?: readonly CriterionIdV2[];
+  resolves_gap_ids?: readonly string[];
   target: CanonicalTargetV2;
   input: Readonly<Record<string, unknown>>;
   admission_state: OperationAdmissionStateV2;
@@ -67,6 +71,7 @@ export interface OperationResultV2 {
   result_schema_id: string;
   observation_required: boolean;
   raw_payload_hash?: string;
+  payload_provenance?: PayloadProvenanceV2;
   receipt_id?: string;
   native_correlation_id?: string;
   completed_at: string;

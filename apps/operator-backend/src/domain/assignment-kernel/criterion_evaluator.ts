@@ -2,15 +2,11 @@ import { canonicalJsonV2 } from "./canonical.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import { kernelAssertV2 } from "./errors.js";
 import type { ObservationIdV2 } from "./identity.js";
-import type { SemanticFactV2 } from "./observation.js";
+import { semanticFactIdentityV2, type SemanticFactV2 } from "./observation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 
-function factIdentity(fact: SemanticFactV2): string {
-  return canonicalJsonV2({ fact_id: fact.fact_id, dimensions: fact.dimensions ?? {}, target_id: fact.target_id ?? null });
-}
-
 function comparisonIdentity(comparison: Readonly<{ fact_id: string; dimensions?: Readonly<Record<string, string | number | boolean | null>>; target_id?: string }>): string {
-  return canonicalJsonV2({ fact_id: comparison.fact_id, dimensions: comparison.dimensions ?? {}, target_id: comparison.target_id ?? null });
+  return semanticFactIdentityV2({ fact_id: comparison.fact_id, value: null, dimensions: comparison.dimensions, target_id: comparison.target_id });
 }
 
 export function evaluateCriterionV2(input: Readonly<{
@@ -34,7 +30,7 @@ export function evaluateCriterionV2(input: Readonly<{
   const byIdentity = new Map<string, string>();
   let contradiction = false;
   for (const { fact } of facts) {
-    const identity = factIdentity(fact);
+    const identity = semanticFactIdentityV2(fact);
     const value = canonicalJsonV2(fact.value);
     const previous = byIdentity.get(identity);
     if (previous !== undefined && previous !== value) contradiction = true;

@@ -97,6 +97,39 @@ test("historical replay corpus covers every EPIC-0455 candidate and required fai
   }
 });
 
+test("EPIC-0456 progression replay names every frozen liveness failure family", () => {
+  const file = path.join(process.cwd(), "test", "fixtures", "assignment-kernel-v2", "epic0456_liveness_shapes.json");
+  const corpus = JSON.parse(readFileSync(file, "utf8")) as {
+    schema: string;
+    source_summary: Record<string, number | boolean>;
+    scenarios: Array<{ id: string; invariant: string; implementation_phase: number }>;
+  };
+  assert.equal(corpus.schema, "revit-operator.assignment-progression-historical-replay/v1");
+  assert.deepEqual(corpus.source_summary, {
+    provider_calls: 51,
+    operations: 45,
+    observations: 29,
+    criterion_evaluations: 0,
+    terminal: false,
+    quiescent: true
+  });
+  assert.equal(corpus.scenarios.length, 15);
+  assert.equal(new Set(corpus.scenarios.map((scenario) => scenario.id)).size, corpus.scenarios.length);
+  for (const scenario of corpus.scenarios) {
+    assert.ok(scenario.id.length > 4);
+    assert.ok(scenario.invariant.length > 8);
+    assert.ok([1, 2, 3].includes(scenario.implementation_phase));
+  }
+});
+
+test("canonical progression decision and epoch contracts have one domain owner", () => {
+  const root = path.join(process.cwd(), "src");
+  const declarations = sourceFiles(root).filter((file) => /export type ProgressDecisionV2|export interface ProgressEpochV2/.test(readFileSync(file, "utf8")));
+  assert.deepEqual(declarations.map((file) => path.relative(process.cwd(), file).replaceAll("\\", "/")), [
+    "src/domain/assignment-kernel/progress/contracts.ts"
+  ]);
+});
+
 function sourceFiles(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap(entry => {
     const absolute = path.join(root, entry.name);

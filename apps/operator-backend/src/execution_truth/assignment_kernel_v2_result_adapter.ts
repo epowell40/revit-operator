@@ -4,6 +4,7 @@ import {
   OPERATION_RESULT_V2_SCHEMA,
   AssignmentKernelErrorV2,
   canonicalJsonV2,
+  normalizeSemanticFactSetV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type ObservationV2,
@@ -111,14 +112,7 @@ export class ObservationDecoderRegistryV2 {
   decode(resultSchemaId: string, rawPayload: unknown): readonly SemanticFactV2[] {
     const decoder = this.#decoders.get(resultSchemaId);
     adapterAssert(decoder, "observation_decoder_missing", `No semantic decoder is registered for ${resultSchemaId}.`);
-    const facts = decoder(structuredClone(rawPayload));
-    const identities = new Set<string>();
-    for (const fact of facts) {
-      const identity = canonicalJsonV2({ fact_id: fact.fact_id, dimensions: fact.dimensions ?? {}, target_id: fact.target_id ?? null });
-      adapterAssert(!identities.has(identity), "observation_fact_duplicate", "Semantic fact identities must be unique within an observation.");
-      identities.add(identity);
-    }
-    return structuredClone(facts);
+    return structuredClone(normalizeSemanticFactSetV2(decoder(structuredClone(rawPayload))));
   }
 }
 
