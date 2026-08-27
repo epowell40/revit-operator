@@ -40,11 +40,11 @@ function terminalOutcome(outcome: AssignmentOutcomeV2): outcome is Exclude<Assig
   return ["complete", "complete_with_issues", "verified_noop", "blocked", "failed"].includes(outcome);
 }
 
-function persistTerminalArtifacts(assignmentId: string): void {
+function persistTerminalArtifacts(assignmentId: string, snapshot: AssignmentSnapshotV2): void {
   const goal = getGoal(assignmentId);
   if (!goal) throw new Error("assignment_kernel_v2_goal_not_found");
-  persistVerifiedWorkPacket(goal);
-  persistWorkReturn(goal);
+  persistVerifiedWorkPacket(goal, snapshot);
+  persistWorkReturn(goal, snapshot);
 }
 
 export function deriveAndSettleAssignmentKernelV2(binding: AssignmentKernelBindingInputV2, reason: string): AssignmentSnapshotV2 {
@@ -65,7 +65,7 @@ export function deriveAndSettleAssignmentKernelV2(binding: AssignmentKernelBindi
     actor: "assignment-kernel-v2",
     body: { event_type: "assignment_terminal", outcome: snapshot.outcome, reason }
   }).snapshot;
-  persistTerminalArtifacts(binding.assignment_id);
+  persistTerminalArtifacts(binding.assignment_id, terminal);
   return terminal;
 }
 

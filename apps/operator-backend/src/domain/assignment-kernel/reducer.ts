@@ -91,7 +91,7 @@ function current(state: ReducerStateV2): AssignmentSnapshotV2 {
 
 function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 {
   const inFlight = Object.values(snapshot.operations)
-    .filter((operation) => operation.settlement_state !== "settled")
+    .filter((operation) => ["open", "awaiting_result", "retaining_observation"].includes(operation.settlement_state))
     .map((operation) => operation.operation_id)
     .sort();
   const unknown = Object.values(snapshot.operations)
@@ -168,7 +168,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       "operation_root_blocking_invalid", "Only a child operation can block parent settlement.");
   } else {
     const parent = operation.parent_operation_id ? snapshot.operations[operation.parent_operation_id] : undefined;
-    kernelAssertV2(parent && parent.settlement_state !== "settled",
+    kernelAssertV2(parent && ["open", "awaiting_result", "retaining_observation"].includes(parent.settlement_state),
       "operation_parent_invalid", "A child operation requires one current unsettled parent operation.");
     kernelAssertV2(sameAssignmentBindingV2(parent.binding, operation.binding),
       "operation_parent_binding_mismatch", "Parent and child operations must share one Assignment binding.");
@@ -498,6 +498,10 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           persistent_effect: event.result.persistent_effect,
           settlement_state: settlementState,
           result: structuredClone(event.result),
+          ...(event.observation_commit ? {
+            observation_commit: structuredClone(event.observation_commit),
+            observation_commit_attempts: 0
+          } : {}),
           settled_at: settlementState === "settled" ? event.result.completed_at : undefined
         } } };
         break;
@@ -513,6 +517,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           ...operation,
           settlement_state: "settled" as const,
           settled_at: event.occurred_at,
+          observation_retention_error: undefined,
           observation_ids: [...operation.observation_ids, event.observation.observation_id]
         };
         const operations = { ...snapshot.operations, [operation.operation_id]: settledOperation };
@@ -535,6 +540,42 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
               ? { [operation.work_unit_id]: "retained" as const }
               : {})
           }
+        };
+        break;
+      }
+      case "observation_commit_retry_recorded": {
+        const operation = snapshot.operations[event.operation_id];
+        kernelAssertV2(operation && operation.settlement_state === "retaining_observation" && operation.result && operation.observation_commit,
+          "observation_commit_operation_invalid", "Observation commit retry requires one durable result awaiting authoritative retention.");
+        kernelAssertV2(operation.result.result_id === event.result_id && operation.observation_commit.result_id === event.result_id,
+          "observation_commit_result_mismatch", "Observation commit retry must remain bound to the exact durable result.");
+        kernelAssertV2(event.attempt === (operation.observation_commit_attempts ?? 0) + 1,
+          "observation_commit_attempt_out_of_order", "Observation commit attempts must be monotonic.");
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
+          ...operation,
+          observation_commit_attempts: event.attempt,
+          observation_retention_error: event.error_code.slice(0, 240)
+        } } };
+        break;
+      }
+      case "observation_commit_failed": {
+        const operation = snapshot.operations[event.operation_id];
+        kernelAssertV2(operation && operation.settlement_state === "retaining_observation" && operation.result,
+          "observation_commit_operation_invalid", "Observation commit failure requires one durable result awaiting authoritative retention.");
+        kernelAssertV2(operation.result.result_id === event.result_id
+          && (!operation.observation_commit || operation.observation_commit.result_id === event.result_id),
+          "observation_commit_result_mismatch", "Observation commit failure must remain bound to the exact durable result.");
+        kernelAssertV2(event.attempt === (operation.observation_commit_attempts ?? 0) + 1,
+          "observation_commit_attempt_out_of_order", "Observation commit attempts must be monotonic.");
+        snapshot = {
+          ...snapshot,
+          progress_blocker: { code: "observation_commit_failed", gap_ids: [...operation.resolves_gap_ids], recorded_at: event.occurred_at },
+          operations: { ...snapshot.operations, [operation.operation_id]: {
+            ...operation,
+            settlement_state: "observation_commit_failed",
+            observation_commit_attempts: event.attempt,
+            observation_retention_error: event.error_code.slice(0, 240)
+          } }
         };
         break;
       }

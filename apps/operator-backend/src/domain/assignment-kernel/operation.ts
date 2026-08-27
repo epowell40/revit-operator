@@ -10,12 +10,13 @@ import type { PayloadProvenanceV2 } from "./payload_provenance.js";
 
 export const OPERATION_V2_SCHEMA = "revit-operator.operation/v2" as const;
 export const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const;
+export const OBSERVATION_COMMIT_INPUT_V2_SCHEMA = "revit-operator.observation-commit-input/v2" as const;
 
 export type OperationAdmissionStateV2 = "proposed" | "admitted" | "rejected";
 export type OperationDispatchStateV2 = "not_dispatched" | "dispatching" | "dispatched";
 export type PersistentEffectV2 = "none" | "unknown" | "applied";
 export type OperationPurposeV2 = "work" | "discovery" | "verification" | "evidence_read" | "reconciliation";
-export type OperationSettlementStateV2 = "open" | "awaiting_result" | "retaining_observation" | "settled";
+export type OperationSettlementStateV2 = "open" | "awaiting_result" | "retaining_observation" | "observation_commit_failed" | "settled";
 export type OperationRoleV2 = "root" | "prerequisite" | "child";
 
 export interface OperationRequestIdentityV2 {
@@ -54,6 +55,8 @@ export interface OperationV2 {
   persistent_effect: PersistentEffectV2;
   settlement_state: OperationSettlementStateV2;
   result?: OperationResultV2;
+  observation_commit?: ObservationCommitInputV2;
+  observation_commit_attempts?: number;
   observation_ids: readonly ObservationIdV2[];
   verification_operation_ids: readonly OperationIdV2[];
   verification_of_operation_id?: OperationIdV2;
@@ -66,6 +69,15 @@ export interface OperationV2 {
   deadline_at: string;
   settled_at?: string;
   observation_retention_error?: string;
+}
+
+export interface ObservationCommitInputV2 {
+  schema: typeof OBSERVATION_COMMIT_INPUT_V2_SCHEMA;
+  result_id: string;
+  raw_payload: unknown;
+  semantic_facts: readonly import("./observation.js").SemanticFactV2[];
+  target_scope?: Readonly<Record<string, string | number | boolean | null>>;
+  verification_relevance?: readonly string[];
 }
 
 export type NativeTransactionStateV2 = "not_applicable" | "committed" | "rolled_back" | "unknown";

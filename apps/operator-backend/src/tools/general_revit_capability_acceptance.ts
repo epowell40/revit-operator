@@ -27,6 +27,7 @@ import { aggregateModelCallReceipts, modelCallReceiptsFromSources, modelCallRece
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
+import { loadAssignmentKernelPublicationsV2 } from "../benchmark/assignment_kernel_v2_collection.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
 import { bindComputerClarificationResponse, executeGeneralRevitComputerTurn, modelCallReceiptsFromComputerTurns, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
@@ -48,7 +49,6 @@ const SMOKE_CASE_IDS = new Set([
   "r04_delete_preview",
   "r07_type_change"
 ]);
-
 function flagValues(name: string): string[] {
   const values: string[] = [];
   for (let index = 0; index < process.argv.length; index += 1) {
@@ -56,11 +56,9 @@ function flagValues(name: string): string[] {
   }
   return values.flatMap((value) => value.split(",")).map((value) => value.trim()).filter(Boolean);
 }
-
 function flag(name: string, fallback = ""): string {
   return flagValues(name)[0] || fallback;
 }
-
 function asRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
@@ -699,12 +697,13 @@ async function runCase(
   const finalHealthPromise = requestJson(baseUrl, finalHealthPath, {}, healthTimeoutMs())
     .catch((error) => ({ ok: false, error: String(error) }))
     .finally(() => { finalHealthDurationMs = Date.now() - finalHealthStartedAt; });
-  const [finalState, assignmentProjection] = await Promise.all([
+  const [finalState, assignmentProjection, assignmentKernelV2] = await Promise.all([
     finalHealthPromise,
     (sessionId
       ? requestJson(baseUrl, `/api/assignments?limit=10&session_id=${encodeURIComponent(sessionId)}`, {}, 30_000)
       : Promise.resolve({ ok: false, error: "Computer run did not expose a backend session id." }))
-      .catch((error) => ({ ok: false, error: String(error) }))
+      .catch((error) => ({ ok: false, error: String(error) })),
+    loadAssignmentKernelPublicationsV2(baseUrl, sessionId, requestJson)
   ]);
   const durableWorkPackets = await loadVerifiedWorkPackets(baseUrl, assignmentProjection, requestJson);
   const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
@@ -765,6 +764,7 @@ async function runCase(
       outcome_unknown: attempt.outcome_unknown === true,
       reconciliation_required: attempt.reconciliation_required === true,
       durable_assignment_projection: assignmentProjection,
+      durable_assignment_kernel_v2: assignmentKernelV2,
       durable_tool_evidence: durableToolEvidence,
       durable_work_packets: durableWorkPackets,
       raw_sidecar_response_sha256: sha256(evaluatedAttempt),

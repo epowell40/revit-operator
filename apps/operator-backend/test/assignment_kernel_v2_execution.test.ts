@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+  commitAssignmentKernelObservationV2,
   failAssignmentKernelOperationV2,
   leaseFromOperation,
   markAssignmentKernelOperationDispatchStartedV2,
@@ -15,7 +16,7 @@ import {
   settleAssignmentKernelOperationV2
 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
-import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { appendCurrentAssignmentKernelEventV2, getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import {
   OPERATION_RESULT_V2_SCHEMA,
   canonicalJsonV2,
@@ -23,6 +24,7 @@ import {
   type OperationResultV2
 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
+import { storeEvidence } from "../src/evidence/evidence_store.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal, transitionGoal } from "../src/goals/service.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "../src/assignments/model_call_budget.js";
 import {
@@ -144,6 +146,158 @@ test("duplicate native delivery is idempotent and does not create a second opera
   assert.equal(Object.keys(second.snapshot.observations).length, 1);
 }));
 
+test("Observation persistence retries only the durable commit and never repeats native work", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-observation-retry-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { goal, snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({
+      snapshot, controller_request_id: "commit-retry", provider_turn_id: "turn-commit-retry",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {}
+    });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    let persistenceAttempts = 0;
+    assert.throws(() => settleAssignmentKernelOperationV2(
+      lease,
+      envelope(lease.operation_id, lease.binding, { total: 1 }),
+      { storeEvidence() { persistenceAttempts += 1; throw new Error("simulated_evidence_store_unavailable"); } }
+    ), /simulated_evidence_store_unavailable/);
+    const pending = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(pending.operations[lease.operation_id]!.settlement_state, "retaining_observation");
+    assert.equal(pending.operations[lease.operation_id]!.observation_commit_attempts, 1);
+    assert.equal(pending.operations[lease.operation_id]!.result?.result_id, `result-${lease.operation_id}`);
+    assert.deepEqual(pending.operations[lease.operation_id]!.observation_commit?.raw_payload, { total: 1 });
+    assert.equal(advanceAssignmentKernelProgressV2({ binding: lease.binding }).decision.decision, "await_operation");
+
+    let nativeCalls = 0;
+    const recovered = await recoverAssignmentKernelOperationsV2({
+      snapshot: pending,
+      transport: "courier",
+      runtime: { async callTool() { nativeCalls += 1; throw new Error("native_must_not_be_called"); } },
+      observation_commit_runtime: { storeEvidence }
+    });
+    assert.equal(nativeCalls, 0);
+    assert.equal(persistenceAttempts, 1);
+    assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
+    assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
+    assert.equal(Object.keys(recovered.operations).length, 1);
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("bounded Observation commit failure terminalizes specifically without provider or native retry", async () => {
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const previousLimit = process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-observation-failed-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS = "3";
+  __testOnlyResetGoalListCache();
+  try {
+    const { goal, snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({
+      snapshot, controller_request_id: "commit-failed", provider_turn_id: "turn-commit-failed",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {}
+    });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const unavailable = { storeEvidence(): never { throw new Error("simulated_evidence_store_unavailable"); } };
+    assert.throws(() => settleAssignmentKernelOperationV2(
+      lease, envelope(lease.operation_id, lease.binding, { total: 1 }), unavailable
+    ), /simulated_evidence_store_unavailable/);
+    let nativeCalls = 0;
+    for (let attempt = 2; attempt <= 3; attempt += 1) {
+      await recoverAssignmentKernelOperationsV2({
+        snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+        transport: "courier",
+        runtime: { async callTool() { nativeCalls += 1; throw new Error("native_must_not_be_called"); } },
+        observation_commit_runtime: unavailable
+      });
+    }
+    const failed = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(nativeCalls, 0);
+    assert.equal(failed.operations[lease.operation_id]!.settlement_state, "observation_commit_failed");
+    assert.equal(failed.operations[lease.operation_id]!.observation_commit_attempts, 3);
+    assert.equal(failed.operations[lease.operation_id]!.result?.status, "succeeded");
+    assert.equal(failed.progress_blocker?.code, "observation_commit_failed");
+    assert.equal(failed.outcome, "blocked");
+    assert.equal(failed.terminal, true);
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    if (previousLimit === undefined) delete process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS;
+    else process.env.OPERATOR_OBSERVATION_COMMIT_MAX_ATTEMPTS = previousLimit;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("restart fails a legacy pending Observation commit specifically instead of replaying Revit", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-legacy-observation-pending-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { goal, snapshot } = setup();
+    const lease = openAssignmentKernelOperationV2({
+      snapshot, controller_request_id: "legacy-pending", provider_turn_id: "turn-legacy-pending",
+      capability_id: "inventory.read", classified_effect: "read", arguments: {}
+    });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const raw = envelope(lease.operation_id, lease.binding, { total: 1 });
+    const result = raw.structuredContent.operation_result_v2;
+    appendCurrentAssignmentKernelEventV2({
+      goal_id: goal.id,
+      binding: lease.binding,
+      event_id: `native-dispatch:${lease.operation_id}`,
+      actor: "native-host",
+      body: { event_type: "native_dispatch_recorded", operation_id: lease.operation_id }
+    });
+    appendCurrentAssignmentKernelEventV2({
+      goal_id: goal.id,
+      binding: lease.binding,
+      event_id: `operation-result:${result.result_id}`,
+      actor: "native-host",
+      body: { event_type: "operation_result_recorded", result }
+    });
+    let nativeCalls = 0;
+    const recovered = await recoverAssignmentKernelOperationsV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      transport: "courier",
+      runtime: { async callTool() { nativeCalls += 1; throw new Error("native_must_not_be_called"); } }
+    });
+    assert.equal(nativeCalls, 0);
+    assert.equal(recovered.operations[lease.operation_id]!.result?.status, "succeeded");
+    assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "observation_commit_failed");
+    assert.equal(recovered.operations[lease.operation_id]!.observation_retention_error, "observation_commit_payload_missing");
+    assert.equal(recovered.outcome, "blocked");
+    assert.equal(recovered.terminal, true);
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("same result identity with a changed payload fails as an integrity conflict", () => workspace(() => {
+  const { snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "conflict", provider_turn_id: "turn-conflict",
+    capability_id: "inventory.read", classified_effect: "read", arguments: {}
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const first = envelope(lease.operation_id, lease.binding, { total: 1 });
+  settleAssignmentKernelOperationV2(lease, first);
+  const conflict = envelope(lease.operation_id, lease.binding, { total: 2 });
+  (conflict.structuredContent.operation_result_v2 as OperationResultV2).raw_payload_hash = hash({ total: 2 });
+  assert.throws(() => settleAssignmentKernelOperationV2(lease, conflict), /conflict|immutable|event/i);
+}));
+
 test("MCP acceptance without a native read result settles no effect honestly", () => workspace(() => {
   const { snapshot } = setup();
   const lease = openAssignmentKernelOperationV2({
@@ -249,6 +403,15 @@ test("Candidate 1 registry prerequisite settles only its child before the quanti
     completed.operations[parent.operation_id]!.result?.native_correlation_id,
     completed.operations[child.operation_id]!.result?.native_correlation_id
   );
+  const progressed = advanceAssignmentKernelProgressV2({ binding: parent.binding });
+  assert.equal(progressed.snapshot.terminal, true);
+  assert.equal(progressed.snapshot.outcome, "complete");
+  const evaluation = progressed.snapshot.criteria[progressed.snapshot.spec.criteria[0]!.criterion_id]!;
+  assert.equal(evaluation.status, "pass");
+  assert.ok(evaluation.supporting_facts.every((fact) => fact.observation_id
+    === completed.operations[parent.operation_id]!.observation_ids[0]));
+  assert.ok(!evaluation.supporting_facts.some((fact) => fact.observation_id
+    === completed.operations[child.operation_id]!.observation_ids[0]));
 }));
 
 test("captured V2 operation binding settles after the legacy Goal envelope is paused", () => workspace(() => {

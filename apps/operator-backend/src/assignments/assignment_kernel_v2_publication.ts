@@ -1,8 +1,9 @@
 import type { AssignmentSnapshotV2, ProviderCallV2 } from "../domain/assignment-kernel/index.js";
-import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
+import { getAssignmentKernelSnapshotV2, listAssignmentKernelIndexV2 } from "./assignment_kernel_v2_store.js";
 
 export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignment-kernel-publication/v2" as const;
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2" as const;
+export const ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA = "revit-operator.assignment-kernel-session-index/v2" as const;
 
 export interface AssignmentProviderLedgerPublicationV2 {
   schema: typeof ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA;
@@ -20,6 +21,20 @@ export interface AssignmentKernelPublicationV2 {
   assignment_version: number;
   snapshot: AssignmentSnapshotV2;
   provider_ledger: AssignmentProviderLedgerPublicationV2;
+}
+
+export interface AssignmentKernelSessionIndexEntryV2 {
+  assignment_id: string;
+  assignment_version: number;
+  binding: AssignmentSnapshotV2["current_binding"];
+  outcome: AssignmentSnapshotV2["outcome"];
+  terminal: boolean;
+}
+
+export interface AssignmentKernelSessionIndexV2 {
+  schema: typeof ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA;
+  session_id: string;
+  assignments: readonly AssignmentKernelSessionIndexEntryV2[];
 }
 
 /**
@@ -51,4 +66,20 @@ export function buildAssignmentKernelPublicationV2(snapshot: AssignmentSnapshotV
 export function getAssignmentKernelPublicationV2(assignmentId: string): AssignmentKernelPublicationV2 | null {
   const snapshot = getAssignmentKernelSnapshotV2(assignmentId);
   return snapshot ? buildAssignmentKernelPublicationV2(snapshot) : null;
+}
+
+/**
+ * Lists only lightweight V2 identities. Consumers must follow an entry with
+ * the exact-ID publication read above; no Goal/V1 lifecycle data is projected.
+ */
+export function listAssignmentKernelSessionIndexV2(sessionId: string, limit = 50): AssignmentKernelSessionIndexV2 {
+  const boundedSessionId = sessionId.trim().slice(0, 180);
+  const assignments = listAssignmentKernelIndexV2(boundedSessionId, limit).map(entry => ({
+    assignment_id: entry.assignment_id,
+    assignment_version: entry.assignment_version,
+    binding: structuredClone(entry.binding),
+    outcome: entry.outcome,
+    terminal: entry.terminal
+  }));
+  return { schema: ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA, session_id: boundedSessionId, assignments };
 }

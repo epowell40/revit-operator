@@ -23,6 +23,8 @@ import { createHash } from "node:crypto";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { listWorkReturns } from "../src/work_returns/store.js";
+import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
+import { generateWorkReturnFromKernelV2 } from "../src/work_returns/assignment_kernel_v2_generator.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
 import { assertCompleteProtocolV2Receipts } from "../src/benchmark/protocol_v2_runner.js";
 import {
@@ -124,8 +126,20 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   const persistedGoal = getGoal(goal.id)!;
   assert.equal(persistedGoal.status, "complete");
   assert.ok(persistedGoal.finished_at);
-  assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
-  assert.equal(listWorkReturns(goal.id).length, 1);
+  const packets = listVerifiedWorkPackets(goal.id);
+  const returns = listWorkReturns(goal.id);
+  assert.equal(packets.length, 1);
+  assert.equal(returns.length, 1);
+  assert.equal(
+    packets[0]!.packet_id,
+    generateVerifiedWorkPacketFromKernelV2(persistedGoal, terminal, null).packet_id,
+    "Work Packet must be generated from the exact terminal snapshot returned by settlement."
+  );
+  assert.equal(
+    returns[0]!.work_return_id,
+    generateWorkReturnFromKernelV2(persistedGoal, terminal, null, packets[0]!).work_return_id,
+    "Work Return must be generated from the same exact terminal snapshot as the Work Packet."
+  );
   assert.throws(() => evaluateAssignmentObservationCriteriaV2({
     binding, claims: [{ criterion_id: criterionId, observation_ids: [observationId] }]
   }), /terminal_immutable/);

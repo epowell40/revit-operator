@@ -25,7 +25,7 @@ import {
   settleAssignmentKernelOperationV2
 } from "./assignment_kernel_v2_execution.js";
 import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
-import { getAssignmentKernelPublicationV2 } from "./assignment_kernel_v2_publication.js";
+import { getAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -46,6 +46,17 @@ export async function handleAssignmentHttpRoute(
 ): Promise<boolean> {
   if (handleVerifiedWorkPacketHttpRoute(req, res, url, authorizeSession)) return true;
   if (handleWorkReturnHttpRoute(req, res, url, authorizeSession)) return true;
+  if (req.method === "GET" && url.pathname === "/api/assignments/v2") {
+    const sessionId = (url.searchParams.get("session_id") ?? "").trim().slice(0, 180);
+    if (!sessionId) {
+      writeJson(res, 400, { error: "session_id is required." });
+      return true;
+    }
+    if (!authorizeSession(sessionId)) return true;
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
+    writeJson(res, 200, { ok: true, assignment_kernel_v2_index: listAssignmentKernelSessionIndexV2(sessionId, limit) });
+    return true;
+  }
   if (req.method === "GET" && url.pathname.startsWith("/api/assignments/v2/")
       && !url.pathname.startsWith("/api/assignments/v2/operations/")
       && !url.pathname.startsWith("/api/assignments/v2/criteria/")) {

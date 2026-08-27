@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { GoalRecord } from "../goals/service.js";
+import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { ensureWorkspaceLayout, resolveFileUnderWorkspace } from "../workspace.js";
 import type { PersistedVerifiedWorkPacket, VerifiedWorkPacketV1 } from "./contract.js";
 import { generateVerifiedWorkPacket, verifyVerifiedWorkPacketHash } from "./generator.js";
@@ -73,11 +74,11 @@ function relativeWorkspacePath(filePath: string): string {
   return path.relative(ensureWorkspaceLayout().root, filePath).split(path.sep).join("/");
 }
 
-export function persistVerifiedWorkPacket(goal: GoalRecord): PersistedVerifiedWorkPacket {
+export function persistVerifiedWorkPacket(goal: GoalRecord, canonicalSnapshotV2?: AssignmentSnapshotV2): PersistedVerifiedWorkPacket {
   const existing = readPackets(goal.id);
-  const unparented = generateVerifiedWorkPacket(goal, null);
+  const unparented = generateVerifiedWorkPacket(goal, null, canonicalSnapshotV2);
   const equivalent = [...existing].reverse().find(packet => sourceEquivalent(packet, unparented));
-  const packet = equivalent ?? generateVerifiedWorkPacket(goal, latestPacket(existing)?.packet_id ?? null);
+  const packet = equivalent ?? generateVerifiedWorkPacket(goal, latestPacket(existing)?.packet_id ?? null, canonicalSnapshotV2);
   const directory = packetDirectory(goal.id);
   const jsonPath = path.join(directory, `${packet.packet_id}.json`);
   const markdownPath = path.join(directory, `${packet.packet_id}.md`);
@@ -93,8 +94,8 @@ export function persistVerifiedWorkPacket(goal: GoalRecord): PersistedVerifiedWo
   };
 }
 
-export function readLatestVerifiedWorkPacket(goal: GoalRecord): PersistedVerifiedWorkPacket {
-  return persistVerifiedWorkPacket(goal);
+export function readLatestVerifiedWorkPacket(goal: GoalRecord, canonicalSnapshotV2?: AssignmentSnapshotV2): PersistedVerifiedWorkPacket {
+  return persistVerifiedWorkPacket(goal, canonicalSnapshotV2);
 }
 
 export function listVerifiedWorkPackets(assignmentId: string): VerifiedWorkPacketV1[] {

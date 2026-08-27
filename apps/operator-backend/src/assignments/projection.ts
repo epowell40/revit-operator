@@ -782,7 +782,17 @@ export function listAssignmentProjections(args: { limit?: number; session_id?: s
   const limit = Math.max(1, Math.min(200, Math.trunc(args.limit ?? 50) || 50));
   const sessionId = text(args.session_id);
   const lifecycle = text(args.lifecycle).toLowerCase();
-  return buildAssignmentProjection(listGoals(200), listOperatorTasks(200))
+  const goals = listGoals(200);
+  const v2GoalIds = new Set(goals
+    .filter((goal) => goal.assignment_kernel_v2?.schema === "revit-operator.assignment-kernel-journal/v2")
+    .map((goal) => goal.id));
+  return buildAssignmentProjection(
+    goals.filter((goal) => !v2GoalIds.has(goal.id)),
+    listOperatorTasks(200).filter((task) => {
+      const goalId = taskGoalId(task);
+      return !goalId || !v2GoalIds.has(goalId);
+    })
+  )
     .filter(assignment => !sessionId || assignment.target.session_id === sessionId)
     .filter(assignment => !lifecycle || assignment.lifecycle.phase === lifecycle)
     .slice(0, limit);
