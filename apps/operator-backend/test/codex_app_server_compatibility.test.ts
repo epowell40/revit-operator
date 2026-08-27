@@ -15,7 +15,7 @@ import {
   getAuthoritativeWebEvidenceRequirement,
   isSuccessfulAuthoritativeWebEvidenceCall
 } from "../src/brains/authoritative_web_evidence.js";
-import { EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
+import { CodexMcpToolRuntime, EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, resolveOperatorBackendRoot, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
@@ -451,4 +451,21 @@ test("backend MCP adapter resolves the sibling built server", () => {
   const spec = resolveOperatorMcpServerSpec(process.cwd());
   assert.equal(path.basename(spec.serverJs), "server.js");
   assert.equal(fs.existsSync(spec.serverJs), true);
+});
+
+test("V2 turn-stop requests survive handler registration order and clear at the turn boundary", () => {
+  const runtime = new CodexMcpToolRuntime({
+    backendCwd: process.cwd(),
+    workspaceRoot: process.cwd(),
+    codexHome: process.cwd(),
+    spawnEnv: {}
+  });
+  const reasons: string[] = [];
+  runtime.requestAssignmentKernelV2TurnStop("turn-before-bind", "criteria_complete");
+  runtime.bindAssignmentKernelV2TurnStop("turn-before-bind", reason => reasons.push(reason));
+  assert.deepEqual(reasons, ["criteria_complete"]);
+  runtime.clearAssignmentKernelV2TurnStop("turn-before-bind");
+  runtime.requestAssignmentKernelV2TurnStop("turn-before-bind", "stale");
+  assert.deepEqual(reasons, ["criteria_complete"]);
+  runtime.stop();
 });

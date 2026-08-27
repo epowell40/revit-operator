@@ -352,6 +352,18 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       case "provider_call_state_recorded":
         snapshot = applyProviderState(snapshot, event);
         break;
+      case "provider_call_receipt_recorded":
+        kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, event.call.binding), "provider_call_binding_mismatch", "Provider receipt binding is not current.");
+        kernelAssertV2(event.call.state === "completed" && Boolean(event.call.completed_at), "provider_call_receipt_incomplete", "Provider receipt must represent a completed upstream call.");
+        kernelAssertV2(event.call.gap_ids.length > 0 && event.call.criterion_ids.length > 0 && event.call.expected_information.length > 0,
+          "provider_call_progress_binding_missing", "Provider receipt must retain its admission justification.");
+        kernelAssertV2(!snapshot.provider_calls[event.call.call_id], "provider_call_duplicate_admission", "Provider call identity is already retained.");
+        snapshot = {
+          ...snapshot,
+          provider_calls: { ...snapshot.provider_calls, [event.call.call_id]: structuredClone(event.call) },
+          provider_call_ids: [...new Set([...snapshot.provider_call_ids, event.call.call_id])].sort()
+        };
+        break;
       case "provider_budget_exhausted":
         kernelAssertV2(event.limit > 0 && snapshot.provider_call_ids.length >= event.limit,
           "provider_budget_exhaustion_invalid", "Provider budget exhaustion requires the durable call count to reach the configured limit.");

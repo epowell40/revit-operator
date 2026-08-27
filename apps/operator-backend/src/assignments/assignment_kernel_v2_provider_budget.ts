@@ -1,8 +1,18 @@
 import { createHash } from "node:crypto";
 import type { ModelCallReceipt } from "../contracts.js";
-import type { AssignmentBindingV2, AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import {
+  deriveProgressGapsV2,
+  criteriaPendingEvaluationV2,
+  type AssignmentBindingV2,
+  type AssignmentSnapshotV2,
+  type ProviderUsageV2
+} from "../domain/assignment-kernel/index.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "./model_call_budget.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
+import {
+  advanceAssignmentKernelProgressV2,
+  recordCompletedAssignmentProviderReceiptV2
+} from "./assignment_kernel_v2_progress.js";
 import { appendCurrentAssignmentKernelEventV2, getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
 
 function digest(value: unknown): string {
@@ -20,22 +30,48 @@ export function assignmentKernelV2ModelReceiptObserver(
 ): (receipt: ModelCallReceipt) => void {
   let notified = false;
   return receipt => {
-    const snapshot = getAssignmentKernelSnapshotV2(binding.assignment_id);
-    if (!snapshot || snapshot.terminal) return;
-    const call = appendCurrentAssignmentKernelEventV2({
-      goal_id: binding.assignment_id,
-      binding,
-      event_id: `provider-call:${digest({ binding, call_id: receipt.call_id })}`,
-      actor: "provider-receipt-observer",
-      body: {
-        event_type: "provider_call_recorded",
-        call_id: receipt.call_id,
-        provider: receipt.provider,
-        model: receipt.model,
-        reasoning_effort: receipt.reasoning_effort,
-        success: receipt.success
+    const before = getAssignmentKernelSnapshotV2(binding.assignment_id);
+    if (!before || before.terminal || before.provider_calls[receipt.call_id]) return;
+    const gaps = deriveProgressGapsV2(before);
+    const gapIds = gaps.map(gap => gap.gap_id);
+    const criterionIds = [...new Set(gaps.flatMap(gap => gap.criterion_ids))].sort();
+    const expectedInformation = [...new Set(gaps.flatMap(gap => gap.required_fact_ids))].sort();
+    if (gapIds.length === 0 || criterionIds.length === 0) {
+      if (!notified) {
+        notified = true;
+        onLimit();
       }
-    }).snapshot;
+      return;
+    }
+    const providerUsage: ProviderUsageV2 = {
+      input_tokens: receipt.tokens.input_tokens,
+      output_tokens: receipt.tokens.output_tokens,
+      reasoning_tokens: receipt.tokens.reasoning_output_tokens,
+      total_tokens: receipt.tokens.total_tokens,
+      estimated_cost_usd: null
+    };
+    const call = recordCompletedAssignmentProviderReceiptV2({
+      binding,
+      call_id: receipt.call_id,
+      ...(receipt.turn_id ? { controller_turn_id: receipt.turn_id } : {}),
+      provider: receipt.provider,
+      model: receipt.model,
+      reasoning_effort: receipt.reasoning_effort,
+      gap_ids: gapIds,
+      criterion_ids: criterionIds,
+      expected_information: expectedInformation.length > 0 ? expectedInformation : gapIds,
+      admitted_at: receipt.started_at_utc,
+      usage: providerUsage,
+      success: receipt.success,
+      ...(receipt.success ? {} : { error_class: "provider" as const })
+    });
+    if (call.in_flight_operation_ids.length === 0 && Object.keys(criteriaPendingEvaluationV2(call)).length > 0) {
+      const advanced = advanceAssignmentKernelProgressV2({ binding: call.current_binding });
+      if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision) && !notified) {
+        notified = true;
+        onLimit();
+      }
+    }
     if (call.provider_call_ids.length < ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT || call.provider_budget_exhausted) return;
     appendCurrentAssignmentKernelEventV2({
       goal_id: binding.assignment_id,

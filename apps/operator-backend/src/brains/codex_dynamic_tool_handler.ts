@@ -37,8 +37,37 @@ import {
   settleAssignmentKernelOperationV2
 } from "../assignments/assignment_kernel_v2_execution.js";
 import { settleAssignmentKernelProviderBudgetAtQuiescenceV2 } from "../assignments/assignment_kernel_v2_provider_budget.js";
+import {
+  advanceAssignmentKernelProgressV2,
+  recordAssignmentProgressEpochV2
+} from "../assignments/assignment_kernel_v2_progress.js";
+import { deriveProgressGapsV2 } from "../domain/assignment-kernel/index.js";
 
 const parallelGuard = new RevitToolParallelGuard();
+
+function checkpointAssignmentKernelProgressV2(input: Readonly<{
+  runtime: CodexMcpToolRuntime;
+  turn_id: unknown;
+  before: NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;
+  after: NonNullable<ReturnType<typeof getAssignmentKernelSnapshotV2>>;
+  operation_id: string;
+}>): void {
+  const gapIds = deriveProgressGapsV2(input.before).map(gap => gap.gap_id);
+  const epoch = recordAssignmentProgressEpochV2({
+    before: input.before,
+    after: input.after,
+    stated_gap_ids: gapIds,
+    admitted_operation_ids: [input.operation_id]
+  });
+  const controllerTurnId = typeof input.turn_id === "string" ? input.turn_id.trim() : "";
+  const providerReceiptRetained = Object.values(input.after.provider_calls)
+    .some(call => Boolean(controllerTurnId) && call.controller_turn_id === controllerTurnId);
+  if (!providerReceiptRetained) return;
+  const advanced = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
+  if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
+    input.runtime.requestAssignmentKernelV2TurnStop(input.turn_id, advanced.decision.reason);
+  }
+}
 
 export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, request: CodexServerRequest): Promise<unknown> {
   const params = request.params ?? {};
@@ -122,6 +151,12 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           assignmentKernelV2Binding: v2Binding
         });
         recordTeammateMcpResult(runtime, teammateGate, result);
+        const afterInteraction = getAssignmentKernelSnapshotV2(v2Binding.assignment_id);
+        if (afterInteraction && (afterInteraction.terminal
+          || afterInteraction.outcome === "awaiting_user_input"
+          || afterInteraction.outcome === "awaiting_user_review")) {
+          runtime.requestAssignmentKernelV2TurnStop(params.turnId, afterInteraction.terminal_reason ?? afterInteraction.outcome);
+        }
         return adaptMcpToolCallResultToDynamicResponse(result, {
           tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0
         });
@@ -154,6 +189,13 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       });
       recordTeammateMcpResult(runtime, teammateGate, rawResult);
       const settled = settleAssignmentKernelOperationV2(lease, rawResult);
+      checkpointAssignmentKernelProgressV2({
+        runtime,
+        turn_id: params.turnId,
+        before: v2Snapshot,
+        after: settled.snapshot,
+        operation_id: lease.operation_id
+      });
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
       const result = params.tool === "revit_search_tools" ? filterQuarantinedToolSearchResult(rawResult) : rawResult;
       const context = assembleBoundedEvidenceContext({
@@ -174,6 +216,21 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       const currentOperation = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];
       if (!currentOperation || currentOperation.settlement_state !== "settled") {
         try { failAssignmentKernelOperationV2(lease, error, accepted ? "dispatching" : "not_dispatched"); } catch {}
+      }
+      const failed = getAssignmentKernelSnapshotV2(lease.assignment_id);
+      if (failed && failed.assignment_version > v2Snapshot.assignment_version) {
+        try {
+          checkpointAssignmentKernelProgressV2({
+            runtime,
+            turn_id: params.turnId,
+            before: v2Snapshot,
+            after: failed,
+            operation_id: lease.operation_id
+          });
+        } catch {
+          // The original operation failure remains authoritative even if the
+          // bounded progression checkpoint itself rejects conflicting state.
+        }
       }
       settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding);
       return {

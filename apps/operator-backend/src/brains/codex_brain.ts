@@ -26,7 +26,6 @@ import {
   type RequirementsReceipt
 } from "../memory/requirements_store.js";
 import { getPinnedGoal } from "../session_store.js";
-import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import { formatActiveGoalContext, getActiveGoalForSession, getGoal } from "../goals/service.js";
 import { createAutoGoalTurnObserver } from "../goals/auto_goal_runtime.js";
 import { formatEnvironmentSummaryForPrompt } from "../environment_profile.js";
@@ -48,12 +47,8 @@ import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSucce
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
-import {
-  assignmentKernelV2ModelReceiptObserver,
-  settleAssignmentKernelProviderBudgetAtQuiescenceV2
-} from "../assignments/assignment_kernel_v2_provider_budget.js";
+import { assignmentKernelV2ModelReceiptObserver } from "../assignments/assignment_kernel_v2_provider_budget.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
-import { assembleBoundedEvidenceContext } from "../evidence/model_context_budget.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
 import { handleCodexDynamicToolCall } from "./codex_dynamic_tool_handler.js";
@@ -61,8 +56,15 @@ import { getRequestOperatorBackendAuth } from "../request_context.js";
 import type { AssignmentKernelTurnLeaseV2, OperatorBackendAuthLease } from "../codex/mcp_tool_runtime.js";
 import { canonicalAssignmentOutcomeForBinding } from "../assignments/outcome_handoff.js";
 import { assignmentKernelV2ForBinding } from "../assignments/assignment_kernel_v2_factory.js";
-import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
 import { recoverAssignmentKernelOperationsV2 } from "../assignments/assignment_kernel_v2_execution.js";
+import {
+  checkpointCodexAssignmentProgressV2,
+  codexAssignmentControllerStopMessage,
+  currentCodexAssignmentSnapshotV2,
+  prepareCodexAssignmentProgressV2,
+  settleCodexAssignmentProgressV2
+} from "./codex_assignment_progress.js";
+import { formatToolResultsForCodex } from "./codex_tool_result_formatting.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -253,89 +255,6 @@ export function getCodexThreadStartProfileForTest(req: Pick<ChatRequest, "sessio
     baseInstructions: getOperatorAgentBaseInstructions(),
     developerInstructions: developerInstructions()
   });
-}
-
-function truncateForCodex(value: string, maxChars = 1600): string {
-  if (value.length <= maxChars) return value;
-  return `${value.slice(0, maxChars)}…(truncated)`;
-}
-
-function summarizeResultJsonForCodex(r: ToolResult): string | null {
-  try {
-    const compacted = compactIncomingToolResult(r);
-    const resultJson = compacted.result_json;
-    if (resultJson === undefined) return null;
-
-    const path = (r.path ?? "").trim().toLowerCase();
-    const includeJson =
-      path === "/revit/export-visible-elements" ||
-      path === "/revit/export-view-frame" ||
-      path === "/revit/export-view-region" ||
-      path === "/revit/pick-candidate-cluster" ||
-      path === "/revit/get-placement-context" ||
-      path === "/revit/resolve-room-wall" ||
-      path === "/revit/project-point-to-host-frame" ||
-      path === "/revit/mep-route-workflow" ||
-      path === "/revit/mep-branch-network-workflow" ||
-      path === "/revit/edit-mep-route-elements" ||
-      path === "/revit/reroute-mep-route-segment" ||
-      path === "/revit/audit-hosted-instance-placement" ||
-      path === "/tools/redline/verify-visual";
-    if (!includeJson) return null;
-
-    const raw = JSON.stringify(resultJson);
-    if (!raw) return null;
-    return truncateForCodex(raw);
-  } catch {
-    return null;
-  }
-}
-
-function formatToolResultsForCodex(toolResults: ToolResult[] | undefined, telemetry?: { session_id: string; assignment_id?: string | null; model_call_id?: string | null }): string {
-  const list = Array.isArray(toolResults) ? toolResults : [];
-  if (list.length === 0) return "";
-
-  const lines: string[] = [];
-  lines.push("Tool results (this step):");
-  let i = 0;
-  for (const r of list) {
-    i++;
-    if (i > 12) {
-      lines.push(`- … (${list.length - 12} more tool results)`);
-      break;
-    }
-    if (!r || typeof r !== "object") continue;
-    const head = `- [${i}] ${String(r.status || "").toUpperCase()} ${r.method} ${r.path} (action_id=${r.action_id})`;
-    lines.push(head);
-    const failureCode = typeof r.failure_code === "string" ? r.failure_code.trim() : "";
-    if (failureCode) lines.push(`  - failure_code: ${failureCode}`);
-
-    const projections = Array.isArray(r.evidence_projections) ? r.evidence_projections : [];
-    if (projections.length > 0) {
-      const bounded = telemetry
-        ? assembleBoundedEvidenceContext({ projections, ...telemetry, source: "codex_tool_results" })
-        : { projections, omitted: 0 };
-      for (const projection of bounded.projections) lines.push(`  - evidence: ${JSON.stringify(projection)}`);
-      if (bounded.omitted > 0) lines.push(`  - evidence_budget: ${bounded.omitted} projection(s) omitted; retrieve a named evidence_id with a focused selector if needed.`);
-      continue;
-    }
-
-    const atts = Array.isArray(r.attachments) ? r.attachments : [];
-    const imgs = atts.filter(a => a && typeof a === "object" && (a as any).kind === "image");
-    for (const a of imgs.slice(0, 3)) {
-      const p = typeof (a as any).local_path === "string" ? (a as any).local_path.trim() : "";
-      const fn = typeof (a as any).filename === "string" ? (a as any).filename.trim() : "";
-      const mime = typeof (a as any).mime === "string" ? (a as any).mime.trim() : "";
-      if (p) lines.push(`  - image: ${fn || p} (local_path=${p}${mime ? `, mime=${mime}` : ""})`);
-      else if (fn) lines.push(`  - image: ${fn}${mime ? ` (mime=${mime})` : ""}`);
-    }
-
-    const resultJsonSummary = summarizeResultJsonForCodex(r);
-    if (resultJsonSummary) {
-      lines.push(`  - result_json: ${resultJsonSummary}`);
-    }
-  }
-  return lines.join("\n");
 }
 
 export function getCodexBaseInstructionsForTest(): string {
@@ -679,6 +598,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let teammateContext: ReturnType<typeof beginTeammateLoopOwner> | null = null;
   let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
+  let assignmentProgressTurnStart: ReturnType<typeof currentCodexAssignmentSnapshotV2> = null;
   let start: Awaited<ReturnType<CodexAppServer["startTurn"]>>;
   const agentTurnStartedAt = new Date().toISOString();
   const agentTurnStartedMs = Date.now();
@@ -705,6 +625,31 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             text_elements: [] as any[]
           });
         }
+      }
+      if (assignmentKernelV2) {
+        const progression = prepareCodexAssignmentProgressV2(assignmentKernelV2.binding);
+        if (!progression.prompt) {
+          const message = progression.message;
+          mcpRuntime?.endBackendAuthLease(backendAuthLease);
+          backendAuthLease = null;
+          mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
+          assignmentKernelV2Lease = null;
+          endTeammateLoopOwner(teammateContext);
+          teammateContext = null;
+          endRevitCourierTurnContext(courierContext);
+          courierContext = null;
+          endRequirementsPlanningLease(requirementsLease);
+          requirementsLease = null;
+          cb.onDone?.(message);
+          return {
+            version: OPERATOR_BACKEND_CONTRACT_VERSION,
+            assistant_message: message,
+            actions: [],
+            assignment_snapshot_v2: progression.snapshot
+          };
+        }
+        assignmentProgressTurnStart = progression.snapshot;
+        input.push({ type: "text", text: progression.prompt, text_elements: [] as any[] });
       }
     }
     try {
@@ -768,7 +713,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   let assistantText = "", assistantDeltas = "";
   let assignmentBudgetInterrupt: (() => void) | null = null;
-  let assignmentBudgetTerminated = false;
+  let assignmentControllerStopReason: string | null = null;
   const modelTelemetry = createCodexTurnModelTelemetry({
     sessionId: req.session_id,
     threadId,
@@ -777,12 +722,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     startedAtUtc: agentTurnStartedAt,
     onReceipt: assignmentKernelV2
       ? assignmentKernelV2ModelReceiptObserver(assignmentKernelV2.binding, () => {
-          assignmentBudgetTerminated = true;
+          assignmentControllerStopReason = assignmentControllerStopReason ?? "assignment_progress_controller_stop";
           assignmentBudgetInterrupt?.();
         })
       : assignmentModelReceiptObserver(req.session_id, () => {
-      assignmentBudgetTerminated = true;
-      assignmentBudgetInterrupt?.();
+          assignmentControllerStopReason = "absolute_model_call_limit_reached";
+          assignmentBudgetInterrupt?.();
         })
   });
   let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
@@ -1049,6 +994,13 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   assignmentBudgetInterrupt = () => {
     void requestActiveCodexTurnInterrupt(activeTurn).catch(() => {});
   };
+  if (assignmentKernelV2) {
+    mcpRuntime?.bindAssignmentKernelV2TurnStop(turnId, reason => {
+      assignmentControllerStopReason = assignmentControllerStopReason ?? reason;
+      assignmentBudgetInterrupt?.();
+    });
+  }
+  if (assignmentControllerStopReason) assignmentBudgetInterrupt();
   const priorActiveTurn = activeCodexTurns.get(activeTurnKey);
   if (priorActiveTurn) void requestActiveCodexTurnInterrupt(priorActiveTurn).catch(() => {});
   activeCodexTurns.set(activeTurnKey, activeTurn);
@@ -1098,6 +1050,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       activeCodexTurns.delete(activeTurnKey);
     }
     assignmentBudgetInterrupt = null;
+    mcpRuntime?.clearAssignmentKernelV2TurnStop(turnId);
     mcpRuntime?.endBackendAuthLease(backendAuthLease);
     backendAuthLease = null;
     mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
@@ -1116,20 +1069,29 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
       if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
     }
-    if (assignmentKernelV2) settleAssignmentKernelProviderBudgetAtQuiescenceV2(assignmentKernelV2.binding);
-    const budgetMessage = assignmentBudgetTerminated
-      ? "The canonical Assignment watchdog terminated repeated provider work that produced no new grounded target, verified fact, plan, action, model-state change, or terminal reason."
+    const snapshot = assignmentKernelV2 ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding) : null;
+    const budgetMessage = assignmentControllerStopReason
+      ? codexAssignmentControllerStopMessage(snapshot, assignmentControllerStopReason)
       : "";
+    cb.onDone?.(budgetMessage);
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
       assistant_message: budgetMessage,
       actions: [],
       model_call_receipts: modelTelemetry.receipts,
+      ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
       ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
     };
   }
 
   assistantText = assistantText || assistantDeltas;
+  if (assignmentKernelV2 && assignmentProgressTurnStart) {
+    checkpointCodexAssignmentProgressV2({
+      binding: assignmentKernelV2.binding,
+      turn_start: assignmentProgressTurnStart,
+      receipts: modelTelemetry.receipts
+    });
+  }
   teammateReceipt = reconcileTeammateReceiptWithAssistant(teammateReceipt, assistantText);
   const missingRequiredInputs = teammateReceipt?.missing_required_inputs ?? [];
   if (missingRequiredInputs.length > 0
@@ -1181,7 +1143,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   hasAuthoritativeWebEvidence = webSettlement.satisfied;
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
-  if (assignmentKernelV2) settleAssignmentKernelProviderBudgetAtQuiescenceV2(assignmentKernelV2.binding);
+  if (assignmentKernelV2) settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
   const canonicalAssignmentOutcome = !assignmentKernelV2 && req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({
@@ -1211,7 +1173,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     assistant_message: assistantText || "",
     actions: [],
     model_call_receipts: modelTelemetry.receipts,
-    ...(assignmentKernelV2 ? { assignment_snapshot_v2: getAssignmentKernelSnapshotV2(assignmentKernelV2.binding.assignment_id) ?? assignmentKernelV2.snapshot } : {}),
+    ...(assignmentKernelV2 ? { assignment_snapshot_v2: currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot } : {}),
     ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {}),
     ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})

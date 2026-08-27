@@ -17,6 +17,7 @@ import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_ker
 import {
   OPERATION_RESULT_V2_SCHEMA,
   canonicalJsonV2,
+  deriveProgressGapsV2,
   type OperationResultV2
 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
@@ -26,6 +27,10 @@ import {
   assignmentKernelV2ModelReceiptObserver,
   settleAssignmentKernelProviderBudgetAtQuiescenceV2
 } from "../src/assignments/assignment_kernel_v2_provider_budget.js";
+import {
+  advanceAssignmentKernelProgressV2,
+  recordAssignmentProgressEpochV2
+} from "../src/assignments/assignment_kernel_v2_progress.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -324,4 +329,97 @@ test("V2 provider budget is durable resource truth and cannot terminalize an in-
   assert.equal(terminal.outcome, "failed");
   assert.equal(terminal.terminal, true);
   assert.equal(terminal.terminal_reason, "absolute_model_call_limit_reached");
+}));
+
+test("late provider receipt evaluates an already-retained Observation instead of admitting another reasoning turn", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "late-provider-receipt",
+    provider_turn_id: "turn-late-receipt",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: {}
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const settled = settleAssignmentKernelOperationV2(lease, envelope(
+    lease.operation_id,
+    lease.binding,
+    { result: "authoritative" }
+  ));
+  const epoch = recordAssignmentProgressEpochV2({
+    before: snapshot,
+    after: settled.snapshot,
+    stated_gap_ids: deriveProgressGapsV2(snapshot).map(gap => gap.gap_id),
+    admitted_operation_ids: [lease.operation_id]
+  });
+  assert.equal(epoch.terminal, false);
+  assert.equal(Object.keys(epoch.criteria).length, 0);
+
+  let stops = 0;
+  assignmentKernelV2ModelReceiptObserver(lease.binding, () => { stops += 1; })({
+    schema: "revit-operator.model-call-receipt.v1",
+    call_id: "provider-late-receipt",
+    provider: "openai",
+    route: "codex_agent",
+    requested_model: "gpt-test",
+    model: "gpt-test",
+    reasoning_effort: "medium",
+    started_at_utc: "2026-08-26T16:00:00.000Z",
+    duration_ms: null,
+    success: true,
+    response_status: "completed",
+    error_code: null,
+    tokens: {
+      input_tokens: 100,
+      cached_input_tokens: 0,
+      output_tokens: 20,
+      reasoning_output_tokens: 5,
+      total_tokens: 120
+    },
+    turn_id: "turn-late-receipt"
+  });
+  const terminal = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
+  assert.equal(stops, 1);
+  const provider = terminal.provider_calls["provider-late-receipt"]!;
+  assert.equal(provider.controller_turn_id, "turn-late-receipt");
+  assert.equal(provider.dispatched_at, provider.admitted_at);
+  assert.equal(provider.response_started_at, provider.admitted_at);
+  assert.equal(provider.usage?.total_tokens, 120);
+}));
+
+test("provider receipt without a tool result is durable but waits for the quiescent turn checkpoint", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  let stops = 0;
+  assignmentKernelV2ModelReceiptObserver(snapshot.current_binding, () => { stops += 1; })({
+    schema: "revit-operator.model-call-receipt.v1",
+    call_id: "provider-no-tool",
+    provider: "openai",
+    route: "codex_agent",
+    requested_model: "gpt-test",
+    model: "gpt-test",
+    reasoning_effort: "medium",
+    started_at_utc: "2026-08-26T16:00:00.000Z",
+    duration_ms: null,
+    success: true,
+    response_status: "completed",
+    error_code: null,
+    tokens: { input_tokens: 20, cached_input_tokens: 0, output_tokens: 5, reasoning_output_tokens: 1, total_tokens: 25 },
+    turn_id: "turn-no-tool"
+  });
+  const retained = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(retained.terminal, false);
+  assert.equal(retained.progress_epochs.length, 0);
+  assert.equal(stops, 0);
+  const checkpoint = recordAssignmentProgressEpochV2({
+    before: snapshot,
+    after: retained,
+    stated_gap_ids: deriveProgressGapsV2(snapshot).map(gap => gap.gap_id),
+    admitted_reasoning_call_ids: ["provider-no-tool"]
+  });
+  const continued = advanceAssignmentKernelProgressV2({ binding: checkpoint.current_binding });
+  assert.equal(continued.decision.decision, "admit_reasoning_turn");
+  assert.equal(continued.snapshot.progress_epochs[0]!.genuine_progress, false);
 }));

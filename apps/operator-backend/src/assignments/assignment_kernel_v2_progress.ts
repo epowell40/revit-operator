@@ -9,6 +9,8 @@ import {
   type AssignmentProgressBudgetV2,
   type AssignmentSnapshotV2,
   type ProgressDecisionV2,
+  PROVIDER_CALL_V2_SCHEMA,
+  type ProviderCallV2,
   type ProviderCallStateV2,
   type ProviderUsageV2
 } from "../domain/assignment-kernel/index.js";
@@ -72,6 +74,54 @@ export function recordAssignmentProviderCallStateV2(input: Readonly<{
       ...(input.success !== undefined ? { success: input.success } : {}),
       ...(input.error_class ? { error_class: input.error_class } : {})
     }
+  }).snapshot;
+}
+
+export function recordCompletedAssignmentProviderReceiptV2(input: Readonly<{
+  binding: AssignmentBindingV2;
+  call_id: string;
+  controller_turn_id?: string;
+  provider: string;
+  model: string;
+  reasoning_effort: string | null;
+  gap_ids: readonly string[];
+  criterion_ids: readonly string[];
+  expected_information: readonly string[];
+  admitted_at: string;
+  completed_at?: string;
+  usage: ProviderUsageV2;
+  success: boolean;
+  error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
+}>): AssignmentSnapshotV2 {
+  const completedAt = input.completed_at ?? new Date().toISOString();
+  const call: ProviderCallV2 = {
+    schema: PROVIDER_CALL_V2_SCHEMA,
+    call_id: input.call_id,
+    ...(input.controller_turn_id ? { controller_turn_id: input.controller_turn_id } : {}),
+    binding: structuredClone(input.binding),
+    state: "completed",
+    provider: input.provider,
+    model: input.model,
+    reasoning_effort: input.reasoning_effort,
+    gap_ids: [...new Set(input.gap_ids)].sort(),
+    criterion_ids: [...new Set(input.criterion_ids)].sort(),
+    expected_information: [...new Set(input.expected_information)].sort(),
+    admitted_at: input.admitted_at,
+    dispatched_at: input.admitted_at,
+    response_started_at: input.admitted_at,
+    usage_received_at: completedAt,
+    completed_at: completedAt,
+    usage: structuredClone(input.usage),
+    success: input.success,
+    ...(input.error_class ? { error_class: input.error_class } : {})
+  };
+  return appendCurrentAssignmentKernelEventV2({
+    goal_id: input.binding.assignment_id,
+    binding: input.binding,
+    event_id: `provider-receipt:${digest({ binding: input.binding, call_id: input.call_id })}`,
+    actor: "provider-receipt-observer",
+    occurred_at: completedAt,
+    body: { event_type: "provider_call_receipt_recorded", call }
   }).snapshot;
 }
 

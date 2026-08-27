@@ -64,6 +64,7 @@ export class CodexMcpToolRuntime {
   private dynamicNamespace: unknown | null = null;
   private readonly backendAuthLeases = new OperatorBackendAuthLeaseRegistry();
   private readonly assignmentKernelV2Leases = new AssignmentKernelTurnLeaseRegistryV2();
+  private readonly assignmentKernelV2TurnStops = new Map<string, { handler?: (reason: string) => void; pending_reason?: string }>();
 
   constructor(private readonly opts: {
     backendCwd: string;
@@ -140,6 +141,28 @@ export class CodexMcpToolRuntime {
     return this.assignmentKernelV2Leases.resolve(turnId, sessionId);
   }
 
+  bindAssignmentKernelV2TurnStop(turnId: string, handler: (reason: string) => void): void {
+    const id = String(turnId || "").trim();
+    if (!id) throw new Error("assignment_kernel_v2_turn_stop_identity_missing");
+    const current = this.assignmentKernelV2TurnStops.get(id) ?? {};
+    this.assignmentKernelV2TurnStops.set(id, { ...current, handler });
+    if (current.pending_reason) handler(current.pending_reason);
+  }
+
+  requestAssignmentKernelV2TurnStop(turnId: unknown, reason: string): void {
+    const id = typeof turnId === "string" ? turnId.trim() : "";
+    if (!id) return;
+    const normalized = String(reason || "assignment_progress_controller_stop").slice(0, 240);
+    const current = this.assignmentKernelV2TurnStops.get(id) ?? {};
+    this.assignmentKernelV2TurnStops.set(id, { ...current, pending_reason: current.pending_reason ?? normalized });
+    current.handler?.(current.pending_reason ?? normalized);
+  }
+
+  clearAssignmentKernelV2TurnStop(turnId: unknown): void {
+    const id = typeof turnId === "string" ? turnId.trim() : "";
+    if (id) this.assignmentKernelV2TurnStops.delete(id);
+  }
+
   async callTool(tool: string, args: unknown, binding?: {
     turnId?: unknown;
     sessionId?: unknown;
@@ -209,6 +232,7 @@ export class CodexMcpToolRuntime {
     this.dynamicNamespace = null;
     this.backendAuthLeases.clear();
     this.assignmentKernelV2Leases.clear();
+    this.assignmentKernelV2TurnStops.clear();
     void (async () => {
       try { await client?.close(); } catch {}
       try { await transport?.close(); } catch {}
