@@ -396,6 +396,131 @@ test("Protocol V2 consumes the real durable projector's canonical read receipt w
   }, [readCase.case_id]), /Verified Work Packet/);
 });
 
+test("Protocol V2 publishes directly from the V2 snapshot and durable provider ledger after chat response loss", () => {
+  const readCase = benchmarkCase({
+    case_id: "t03_direct_kernel_read",
+    operation_family: "inventory",
+    prompt: "Return the requested authoritative inventory.",
+    probe_prompt: "Return the requested authoritative inventory without editing.",
+    capability_paths: ["/revit/quantify"],
+    dispatch_any_of: ["/revit/quantify"],
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const trace = traceFor(readCase, {
+    actionRows: [{
+      path: "/revit/quantify", request_effect: "read", request_dispatched: true,
+      status: "success", receipt: { count: 2 }
+    }]
+  });
+  const operation = {
+    schema: "revit-operator.operation/v2",
+    operation_id: "operation-direct-read",
+    binding: {
+      assignment_id: "assignment-1", run_id: "assignment-run-1", generation: 1,
+      session_id: "suite-session-v2", principal_id: "suite-principal-v2"
+    },
+    work_unit_id: "work-primary",
+    capability_id: "revit.quantify",
+    purpose: "work",
+    operation_role: "root",
+    requested_effect: "read",
+    criterion_ids: ["criterion-inventory"],
+    resolves_gap_ids: ["criterion:criterion-inventory"],
+    target: { target_id: "document:fixture", document_fingerprint: "fixture" },
+    canonical_input: {},
+    admission_state: "admitted",
+    dispatch_state: "dispatched",
+    dispatch_authority: "native",
+    persistent_effect: "none",
+    settlement_state: "settled",
+    observation_ids: ["observation-inventory"],
+    result: {
+      result_id: "result-inventory",
+      operation_id: "operation-direct-read",
+      status: "succeeded",
+      dispatch_state: "dispatched",
+      persistent_effect: "none",
+      authority: "native-host",
+      receipt_id: "receipt-inventory"
+    }
+  };
+  const providerCall = {
+    schema: "revit-operator.provider-call/v2",
+    call_id: "provider-call-direct-read",
+    state: "completed",
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    reasoning_effort: "medium",
+    gap_ids: ["criterion:criterion-inventory"],
+    criterion_ids: ["criterion-inventory"],
+    expected_information: ["inventory.total"],
+    admitted_at: START,
+    completed_at: FINISH,
+    success: true,
+    usage: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 30, total_tokens: 150 }
+  };
+  const snapshot = {
+    schema: "revit-operator.assignment-snapshot/v2",
+    assignment_version: 9,
+    current_binding: operation.binding,
+    operations: { [operation.operation_id]: operation },
+    observations: {
+      "observation-inventory": {
+        schema: "revit-operator.observation/v2",
+        observation_id: "observation-inventory",
+        operation_id: operation.operation_id,
+        binding: operation.binding,
+        authority: "native-host",
+        semantic_facts: [{ fact_id: "inventory.total", value: 2 }]
+      }
+    },
+    operation_ids: [operation.operation_id],
+    in_flight_operation_ids: [],
+    unresolved_unknown_operation_ids: [],
+    quiescent: true,
+    terminal: true,
+    outcome: "complete",
+    progress_epochs: [],
+    provider_call_ids: [providerCall.call_id],
+    provider_calls: { [providerCall.call_id]: providerCall },
+    in_flight_provider_call_ids: []
+  };
+  const toolResults = trace.tool_results as JsonRecord;
+  delete toolResults.durable_assignment_projection;
+  toolResults.durable_assignment_kernel_v2 = {
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignments: [{
+      schema: "revit-operator.assignment-kernel-publication/v2",
+      assignment_id: "assignment-1",
+      assignment_version: 9,
+      snapshot,
+      provider_ledger: {
+        schema: "revit-operator.assignment-provider-ledger/v2",
+        assignment_id: "assignment-1",
+        run_id: "assignment-run-1",
+        generation: 1,
+        call_ids: [providerCall.call_id],
+        calls: { [providerCall.call_id]: providerCall },
+        in_flight_call_ids: []
+      }
+    }]
+  };
+  assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
+    task_traces: [trace]
+  }, [readCase.case_id]));
+  const result = buildBenchmarkCaseResultV2({
+    runId: "run-v2", lane: "controlled_capability", testCase: readCase, trace,
+    rawTraceRef: "trace.json", judgedAt: FINISH
+  });
+  assert.equal(result.execution_truth.attempt_ids[0], operation.operation_id);
+  assert.equal(result.execution_truth.effect_state, "none");
+  assert.equal(result.original_runtime_verdict.verdict, "complete");
+  assert.equal(result.assignment_outcome, "complete");
+});
+
 test("canonical attempt effect accessor is backward compatible but rejects conflicting dual fields", () => {
   assert.equal(canonicalAttemptRequestedEffect({ requested_effect: "read" }), "read");
   assert.equal(canonicalAttemptRequestedEffect({ request_effect: "read" }), "read");

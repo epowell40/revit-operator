@@ -9,6 +9,8 @@ import {
   type AssignmentSnapshotV2,
   type ObservationV2,
   type OperationPurposeV2,
+  type OperationRequestIdentityV2,
+  type OperationRoleV2,
   type OperationResultV2,
   type OperationV2,
   type PersistentEffectV2,
@@ -50,6 +52,11 @@ export type AssignmentKernelOperationLeaseV2 = Readonly<{
   capability_id: string;
   requested_effect: RequestedEffectV2;
   purpose: OperationPurposeV2;
+  operation_role: OperationRoleV2;
+  parent_operation_id?: string;
+  root_operation_id: string;
+  blocks_parent_settlement: boolean;
+  request_identity: OperationRequestIdentityV2;
   opened_at: string;
   deadline_at: string;
 }>;
@@ -123,6 +130,31 @@ function canonicalInput(value: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(source).filter(([key]) => !forbidden.has(key)));
 }
 
+function canonicalMethod(value: unknown): "GET" | "POST" | undefined {
+  const method = String(value ?? "").trim().toUpperCase();
+  return method === "GET" || method === "POST" ? method : undefined;
+}
+
+function requestIdentity(input: Readonly<{
+  capability_id: string;
+  arguments: unknown;
+  method?: unknown;
+  path?: unknown;
+}>): OperationRequestIdentityV2 {
+  const args = canonicalInput(input.arguments);
+  const method = canonicalMethod(input.method ?? args.method);
+  const path = String(input.path ?? args.path ?? "").trim() || undefined;
+  const signatureInput = input.capability_id === "revit_call_tool"
+    ? { capability_id: input.capability_id, method, path, body: args.body ?? null }
+    : { capability_id: input.capability_id, input: args };
+  return {
+    capability_id: input.capability_id,
+    ...(method ? { method } : {}),
+    ...(path ? { path } : {}),
+    request_signature: stableHash(signatureInput)
+  };
+}
+
 function canonicalTargetId(targetTokens: readonly string[]): string | undefined {
   const exactIds = [...new Set(targetTokens.filter(token => /^id:[^\s]{1,240}$/.test(token)))];
   if (exactIds.length === 1) return exactIds[0];
@@ -188,6 +220,9 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     capability_id: input.capability_id,
     requested_effect: effect,
     purpose,
+    operation_role: "root",
+    blocks_parent_settlement: false,
+    request_identity: requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }),
     advances_criterion_ids: advancesCriterionIds,
     resolves_gap_ids: resolvesGapIds,
     target: {
@@ -224,9 +259,107 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     capability_id: input.capability_id,
     requested_effect: effect,
     purpose,
+    operation_role: "root",
+    root_operation_id: operationId,
+    blocks_parent_settlement: false,
+    request_identity: structuredClone(operation.request_identity!),
     opened_at: openedAt,
     deadline_at: operation.deadline_at
   };
+}
+
+export function openAssignmentKernelChildOperationV2(input: Readonly<{
+  binding: AssignmentBindingV2;
+  parent_operation_id: string;
+  child_ordinal: number;
+  operation_role: Exclude<OperationRoleV2, "root">;
+  capability_id: string;
+  classified_effect: string;
+  method?: "GET" | "POST";
+  path?: string;
+  arguments: unknown;
+  blocks_parent_settlement?: boolean;
+  opened_at?: string;
+}>): AssignmentKernelOperationLeaseV2 {
+  const snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
+  if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.binding)) {
+    throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
+  }
+  const parent = snapshot.operations[input.parent_operation_id];
+  if (!parent || parent.settlement_state === "settled") {
+    throw new Error("assignment_kernel_v2_parent_operation_invalid");
+  }
+  if (!Number.isSafeInteger(input.child_ordinal) || input.child_ordinal < 0) {
+    throw new Error("assignment_kernel_v2_child_ordinal_invalid");
+  }
+  const suggestedEffect = operationEffect(input.classified_effect);
+  const purpose = input.operation_role === "prerequisite" ? "discovery" : operationPurpose(input.classified_effect, snapshot);
+  const unit = admittedWorkUnit(snapshot, suggestedEffect, purpose);
+  const identity = requestIdentity({
+    capability_id: input.capability_id,
+    arguments: input.arguments,
+    method: input.method,
+    path: input.path
+  });
+  const operationId = `opv2_${stableHash({
+    assignment_id: input.binding.assignment_id,
+    generation: input.binding.generation,
+    parent_operation_id: parent.operation_id,
+    child_ordinal: input.child_ordinal,
+    operation_role: input.operation_role,
+    request_identity: identity
+  })}`;
+  const existing = snapshot.operations[operationId];
+  if (existing) {
+    if (existing.parent_operation_id !== parent.operation_id
+        || existing.request_identity?.request_signature !== identity.request_signature) {
+      throw new Error("assignment_kernel_v2_child_operation_identity_conflict");
+    }
+    return leaseFromOperation(existing);
+  }
+  const openedAt = input.opened_at ?? new Date().toISOString();
+  // A prerequisite establishes whether/how the parent may execute; its result
+  // cannot masquerade as task-level evidence for the parent's criteria. A
+  // first-class child may inherit the parent's explicit progress binding.
+  const advancesCriterionIds = input.operation_role === "prerequisite"
+    ? [] : [...new Set(parent.advances_criterion_ids)].sort();
+  const resolvesGapIds = input.operation_role === "prerequisite"
+    ? [] : [...new Set(parent.resolves_gap_ids)].sort();
+  const operation: OperationV2 = {
+    schema: OPERATION_V2_SCHEMA,
+    operation_id: operationId,
+    binding: structuredClone(snapshot.current_binding),
+    work_unit_id: unit.work_unit_id,
+    capability_id: input.capability_id,
+    requested_effect: unit.requested_effect,
+    purpose,
+    operation_role: input.operation_role,
+    parent_operation_id: parent.operation_id,
+    root_operation_id: parent.root_operation_id ?? parent.operation_id,
+    blocks_parent_settlement: input.blocks_parent_settlement !== false,
+    request_identity: identity,
+    advances_criterion_ids: advancesCriterionIds,
+    resolves_gap_ids: resolvesGapIds,
+    target: structuredClone(parent.target),
+    input: canonicalInput(input.arguments),
+    admission_state: "admitted",
+    dispatch_state: "not_dispatched",
+    persistent_effect: "none",
+    settlement_state: "open",
+    observation_ids: [],
+    verification_operation_ids: [],
+    opened_at: openedAt,
+    deadline_at: boundedDeadline(openedAt)
+  };
+  appendCurrentAssignmentKernelEventV2({
+    goal_id: snapshot.spec.binding.assignment_id,
+    binding: snapshot.current_binding,
+    event_id: `operation-admitted:${operationId}`,
+    actor: "assignment-kernel-v2-child-edge",
+    occurred_at: openedAt,
+    body: { event_type: "operation_admitted", operation }
+  });
+  return leaseFromOperation(operation);
 }
 
 export function markAssignmentKernelOperationDispatchStartedV2(lease: AssignmentKernelOperationLeaseV2): void {
@@ -376,7 +509,8 @@ export function failAssignmentKernelOperationV2(
     result_schema_id: "operation-transport-failure/v2",
     observation_required: false,
     completed_at: completedAt,
-    error_code: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240)
+    error_code: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
+    request_identity: structuredClone(lease.request_identity)
   };
   recordNativeDispatchIfNeeded(lease, result);
   appendCurrentAssignmentKernelEventV2({
@@ -389,7 +523,8 @@ export function failAssignmentKernelOperationV2(
   return getAssignmentKernelSnapshotV2(lease.assignment_id)!;
 }
 
-function leaseFromOperation(operation: OperationV2): AssignmentKernelOperationLeaseV2 {
+export function leaseFromOperation(operation: OperationV2): AssignmentKernelOperationLeaseV2 {
+  if (!operation.request_identity) throw new Error("assignment_kernel_v2_operation_request_identity_missing");
   return {
     schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
     assignment_id: operation.binding.assignment_id,
@@ -398,6 +533,11 @@ function leaseFromOperation(operation: OperationV2): AssignmentKernelOperationLe
     capability_id: operation.capability_id,
     requested_effect: operation.requested_effect,
     purpose: operation.purpose,
+    operation_role: operation.operation_role ?? "root",
+    ...(operation.parent_operation_id ? { parent_operation_id: operation.parent_operation_id } : {}),
+    root_operation_id: operation.root_operation_id ?? operation.operation_id,
+    blocks_parent_settlement: operation.blocks_parent_settlement !== false,
+    request_identity: structuredClone(operation.request_identity),
     opened_at: operation.opened_at,
     deadline_at: operation.deadline_at
   };

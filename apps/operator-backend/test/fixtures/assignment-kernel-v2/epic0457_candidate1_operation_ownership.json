@@ -1,0 +1,46 @@
+{
+  "schema": "revit-operator.assignment-operation-ownership-replay/v1",
+  "source": "EPIC-0457 Candidate 1 immutable NO-GO",
+  "source_summary": {
+    "provider_calls": 51,
+    "parent_route": "POST /revit/quantify",
+    "hidden_prerequisite_route": "GET /revit/tool-registry",
+    "failure": "prerequisite_result_relabelled_as_parent_settlement"
+  },
+  "operation_tree": {
+    "parent": {
+      "operation_id": "opv2_ddb17e23e4b18499911c7217998ed1f1330691e0b897d3809d518ea32c4b5be1",
+      "role": "root",
+      "request": "POST /revit/quantify",
+      "created_by": "deterministic_assignment_controller",
+      "settlement_rule": "only_a_result_with_this_exact_operation_id_and_request_identity_may_settle"
+    },
+    "children": [
+      {
+        "operation_id": "child:tool-registry",
+        "role": "prerequisite",
+        "request": "GET /revit/tool-registry",
+        "created_by": "mcp_native_edge_before_dispatch",
+        "native_correlation_id": "2c0be",
+        "settlement_rule": "may_settle_only_child:tool-registry"
+      },
+      {
+        "operation_id": "child:quantify-native",
+        "role": "child",
+        "request": "POST /revit/quantify",
+        "created_by": "mcp_native_edge_before_dispatch",
+        "native_correlation_id": "500544",
+        "settlement_rule": "may_settle_only_child:quantify-native"
+      }
+    ]
+  },
+  "invariants": [
+    "operation_identity_survives_planner_mcp_native_courier_result_observation_settlement",
+    "child_result_never_settles_parent",
+    "blocking_child_prevents_parent_settlement",
+    "blocking_child_prevents_unadmitted_nested_provider_progression",
+    "retained_observation_is_evaluated_before_another_provider_turn",
+    "provider_turn_requires_a_current_canonical_criterion_gap",
+    "v2_publication_uses_snapshot_and_provider_ledger_without_v1_projection"
+  ]
+}

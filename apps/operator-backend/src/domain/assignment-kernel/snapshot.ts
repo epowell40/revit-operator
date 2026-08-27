@@ -31,6 +31,8 @@ export interface AssignmentSnapshotV2 {
   progress_epochs: readonly ProgressEpochV2[];
   progress_blocker?: Readonly<{ code: string; gap_ids: readonly string[]; recorded_at: string }>;
   operations: Readonly<Record<OperationIdV2, OperationV2>>;
+  operation_children: Readonly<Record<OperationIdV2, readonly OperationIdV2[]>>;
+  blocking_child_operation_ids: readonly OperationIdV2[];
   observations: Readonly<Record<ObservationIdV2, ObservationV2>>;
   observation_versions: Readonly<Record<ObservationIdV2, number>>;
   criteria: Readonly<Record<CriterionIdV2, CriterionEvaluationV2>>;

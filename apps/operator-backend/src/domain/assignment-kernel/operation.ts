@@ -16,6 +16,14 @@ export type OperationDispatchStateV2 = "not_dispatched" | "dispatching" | "dispa
 export type PersistentEffectV2 = "none" | "unknown" | "applied";
 export type OperationPurposeV2 = "work" | "discovery" | "verification" | "evidence_read" | "reconciliation";
 export type OperationSettlementStateV2 = "open" | "awaiting_result" | "retaining_observation" | "settled";
+export type OperationRoleV2 = "root" | "prerequisite" | "child";
+
+export interface OperationRequestIdentityV2 {
+  capability_id: string;
+  method?: "GET" | "POST";
+  path?: string;
+  request_signature: string;
+}
 
 export interface CanonicalTargetV2 {
   target_id?: string;
@@ -32,6 +40,11 @@ export interface OperationV2 {
   capability_id: string;
   requested_effect: RequestedEffectV2;
   purpose: OperationPurposeV2;
+  operation_role?: OperationRoleV2;
+  parent_operation_id?: OperationIdV2;
+  root_operation_id?: OperationIdV2;
+  blocks_parent_settlement?: boolean;
+  request_identity?: OperationRequestIdentityV2;
   advances_criterion_ids: readonly CriterionIdV2[];
   resolves_gap_ids: readonly string[];
   target: CanonicalTargetV2;
@@ -56,7 +69,8 @@ export interface OperationV2 {
 }
 
 export type NativeTransactionStateV2 = "not_applicable" | "committed" | "rolled_back" | "unknown";
-export type OperationResultStatusV2 = "succeeded" | "failed_before_dispatch" | "failed_after_dispatch" | "timed_out" | "canceled";
+export type OperationResultStatusV2 = "succeeded" | "completed_without_native_dispatch"
+  | "failed_before_dispatch" | "failed_after_dispatch" | "timed_out" | "canceled";
 
 export interface OperationResultV2 {
   schema: typeof OPERATION_RESULT_V2_SCHEMA;
@@ -77,4 +91,5 @@ export interface OperationResultV2 {
   completed_at: string;
   error_code?: string;
   diagnostics?: readonly string[];
+  request_identity?: OperationRequestIdentityV2;
 }

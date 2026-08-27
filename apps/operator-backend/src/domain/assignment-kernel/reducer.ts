@@ -102,10 +102,27 @@ function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 
     .filter((call) => !call.completed_at)
     .map((call) => call.call_id)
     .sort();
+  const operationChildren: Record<string, string[]> = {};
+  for (const operation of Object.values(snapshot.operations)) {
+    if (!operation.parent_operation_id) continue;
+    operationChildren[operation.parent_operation_id] = [
+      ...(operationChildren[operation.parent_operation_id] ?? []),
+      operation.operation_id
+    ];
+  }
+  for (const children of Object.values(operationChildren)) children.sort();
+  const blockingChildren = Object.values(snapshot.operations)
+    .filter((operation) => Boolean(operation.parent_operation_id)
+      && operation.blocks_parent_settlement !== false
+      && operation.settlement_state !== "settled")
+    .map((operation) => operation.operation_id)
+    .sort();
   const next: AssignmentSnapshotV2 = {
     ...snapshot,
     in_flight_operation_ids: inFlight,
     in_flight_provider_call_ids: inFlightProviders,
+    operation_children: operationChildren,
+    blocking_child_operation_ids: blockingChildren,
     unresolved_unknown_operation_ids: unknown,
     quiescent: inFlight.length === 0 && inFlightProviders.length === 0
   };
@@ -129,8 +146,9 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     "operation_unknown_effect_requires_reconciliation", "Unknown-effect work must be reconciled before another ordinary operation is admitted.");
   const workUnit = snapshot.spec.work_units.find((candidate) => candidate.work_unit_id === operation.work_unit_id);
   kernelAssertV2(workUnit, "operation_work_unit_unknown", "Operation work unit is not in AssignmentSpecV2.");
-  kernelAssertV2(operation.advances_criterion_ids.length > 0 || operation.resolves_gap_ids.length > 0,
-    "operation_progress_binding_missing", "Operation must bind to unresolved criterion or gap work.");
+  const role = operation.operation_role ?? "root";
+  kernelAssertV2(role !== "root" || operation.advances_criterion_ids.length > 0 || operation.resolves_gap_ids.length > 0,
+    "operation_progress_binding_missing", "A root operation must bind to unresolved criterion or gap work; nested work binds through its parent.");
   for (const criterionId of operation.advances_criterion_ids) {
     kernelAssertV2(workUnit.criterion_ids.includes(criterionId), "operation_progress_criterion_unbound", "Operation criterion is not admitted by its work unit.");
   }
@@ -143,6 +161,29 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
   for (const dependencyId of workUnit.dependency_ids) kernelAssertV2(["complete", "retained"].includes(snapshot.work_unit_states[dependencyId] ?? ""), "operation_dependency_incomplete", "Operation dependencies must be complete or retained.");
   for (const variableId of workUnit.input_variable_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId), "operation_input_missing", "Operation requires a known stable input variable.");
+  if (role === "root") {
+    kernelAssertV2(!operation.parent_operation_id && !operation.root_operation_id,
+      "operation_root_relation_invalid", "A root operation cannot cite a parent or another root operation.");
+    kernelAssertV2(operation.blocks_parent_settlement === undefined || operation.blocks_parent_settlement === false,
+      "operation_root_blocking_invalid", "Only a child operation can block parent settlement.");
+  } else {
+    const parent = operation.parent_operation_id ? snapshot.operations[operation.parent_operation_id] : undefined;
+    kernelAssertV2(parent && parent.settlement_state !== "settled",
+      "operation_parent_invalid", "A child operation requires one current unsettled parent operation.");
+    kernelAssertV2(sameAssignmentBindingV2(parent.binding, operation.binding),
+      "operation_parent_binding_mismatch", "Parent and child operations must share one Assignment binding.");
+    const expectedRoot = parent.root_operation_id ?? parent.operation_id;
+    kernelAssertV2(operation.root_operation_id === expectedRoot,
+      "operation_root_identity_mismatch", "A child operation must retain the deterministic root operation identity.");
+    kernelAssertV2(operation.operation_id !== parent.operation_id,
+      "operation_child_identity_collision", "A child operation must have its own immutable identity.");
+  }
+  if (operation.request_identity) {
+    kernelAssertV2(operation.request_identity.capability_id === operation.capability_id,
+      "operation_request_capability_mismatch", "Operation request identity must preserve its admitted capability.");
+    kernelAssertV2(Boolean(operation.request_identity.request_signature.trim()),
+      "operation_request_signature_missing", "Operation request identity requires a stable signature.");
+  }
   if (operation.retry_of_operation_id) {
     const prior = snapshot.operations[operation.retry_of_operation_id];
     kernelAssertV2(prior?.settlement_state === "settled" && prior.persistent_effect === "none", "operation_retry_unsafe", "A retry requires a settled no-effect predecessor.");
@@ -170,10 +211,26 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
   kernelAssertV2(operation.persistent_effect === "none" && operation.settlement_state === "open" && !operation.settled_at && !operation.result, "operation_admission_effect_invalid", "A newly admitted operation cannot claim a result, persistent effect, or settlement.");
 }
 
-function validateResult(operation: OperationV2, result: OperationResultV2): void {
+function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, result: OperationResultV2): void {
   kernelAssertV2(result.operation_id === operation.operation_id, "operation_result_identity_mismatch", "Result operation identity is incorrect.");
   kernelAssertV2(sameAssignmentBindingV2(operation.binding, result.binding), "operation_result_binding_mismatch", "Result binding is incorrect.");
-  if (result.status === "failed_before_dispatch") {
+  const unresolvedBlockingChildren = Object.values(snapshot.operations).filter((candidate) =>
+    candidate.parent_operation_id === operation.operation_id
+    && candidate.blocks_parent_settlement !== false
+    && candidate.settlement_state !== "settled");
+  kernelAssertV2(unresolvedBlockingChildren.length === 0,
+    "operation_parent_blocked_by_child", "A parent operation cannot settle while a blocking child operation is unresolved.");
+  if (operation.request_identity) {
+    kernelAssertV2(Boolean(result.request_identity)
+      && canonicalJsonV2(result.request_identity) === canonicalJsonV2(operation.request_identity),
+    "operation_result_request_identity_mismatch", "Result request identity does not match the exact admitted operation.");
+  }
+  if (result.status === "completed_without_native_dispatch") {
+    kernelAssertV2(result.dispatch_state === "not_dispatched" && result.persistent_effect === "none"
+      && result.native_transaction_state === "not_applicable" && result.observation_required === false
+      && !result.authority.startsWith("native"),
+    "operation_result_non_native_invalid", "A controller-only result cannot claim native dispatch, persistent effect, or authoritative Observation truth.");
+  } else if (result.status === "failed_before_dispatch") {
     kernelAssertV2(result.dispatch_state === "not_dispatched" && result.persistent_effect === "none", "operation_result_predispatch_invalid", "Pre-dispatch failure must prove no effect.");
   } else if (result.dispatch_state === "dispatching") {
     kernelAssertV2(operation.dispatch_state === "dispatching", "operation_result_dispatch_unproven", "An indeterminate dispatch result requires an operation at the MCP dispatch boundary.");
@@ -267,6 +324,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       provider_call_ids: [], provider_calls: {}, in_flight_provider_call_ids: [], provider_budget_exhausted: false,
       progress_epochs: [],
       operations: {}, observations: {}, observation_versions: {}, criteria: {}, criterion_evaluation_versions: {}, outcome: "active", terminal: false,
+      operation_children: {}, blocking_child_operation_ids: [],
       in_flight_operation_ids: [], unresolved_unknown_operation_ids: [], quiescent: true
     });
     return;
@@ -401,6 +459,12 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(operation && operation.settlement_state !== "settled"
           && (operation.dispatch_state === "not_dispatched" || operation.dispatch_state === "dispatching"),
         "operation_dispatch_invalid", "Native dispatch requires one admitted, unsettled operation.");
+        const unresolvedBlockingChildren = Object.values(snapshot.operations).filter((candidate) =>
+          candidate.parent_operation_id === operation.operation_id
+          && candidate.blocks_parent_settlement !== false
+          && candidate.settlement_state !== "settled");
+        kernelAssertV2(unresolvedBlockingChildren.length === 0,
+          "operation_parent_blocked_by_child", "A parent operation cannot dispatch while a blocking child operation is unresolved.");
         const persistentEffect = operation.requested_effect === "read" ? "none" : "unknown";
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: { ...operation, dispatch_state: "dispatched", dispatch_authority: "native", persistent_effect: persistentEffect, settlement_state: "awaiting_result", dispatched_at: event.occurred_at } } };
         break;
@@ -410,6 +474,12 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(operation && operation.settlement_state !== "settled"
           && (operation.dispatch_state === "not_dispatched" || operation.dispatch_state === "dispatching"),
         "operation_dispatch_invalid", "Operation dispatch requires one admitted, unsettled operation.");
+        const unresolvedBlockingChildren = Object.values(snapshot.operations).filter((candidate) =>
+          candidate.parent_operation_id === operation.operation_id
+          && candidate.blocks_parent_settlement !== false
+          && candidate.settlement_state !== "settled");
+        kernelAssertV2(unresolvedBlockingChildren.length === 0,
+          "operation_parent_blocked_by_child", "A parent operation cannot dispatch while a blocking child operation is unresolved.");
         kernelAssertV2(operation.requested_effect === "read", "operation_non_native_mutation_dispatch_forbidden", "A mutation cannot establish dispatch without native or dynamic-runtime authority.");
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
           ...operation, dispatch_state: "dispatched", dispatch_authority: event.authority,
@@ -420,7 +490,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       case "operation_result_recorded": {
         const operation = snapshot.operations[event.result.operation_id];
         kernelAssertV2(operation && operation.settlement_state !== "settled" && !operation.result, "operation_result_unmatched", "Result requires one unsettled admitted operation without a prior result.");
-        validateResult(operation, event.result);
+        validateResult(snapshot, operation, event.result);
         const settlementState = event.result.observation_required ? "retaining_observation" : "settled";
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
           ...operation,

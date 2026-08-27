@@ -554,7 +554,7 @@ function compactToolForList(t: RegistryToolEntry, score?: number): Record<string
   return out;
 }
 
-async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayload> {
+async function getToolRegistry(forceRefresh = false, operationRole?: "prerequisite"): Promise<ToolRegistryPayload> {
   const now = Date.now();
   const cached = !forceRefresh ? freshCachedToolRegistry(now) : null;
   if (cached) {
@@ -563,7 +563,10 @@ async function getToolRegistry(forceRefresh = false): Promise<ToolRegistryPayloa
       tools: filterRegistryEntriesForSearch(cached.tools ?? [])
     };
   }
-  const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, { channel: "search" });
+  const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, {
+    channel: "search",
+    ...(operationRole ? { assignmentOperationRole: operationRole } : {})
+  });
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const toolsRaw = Array.isArray(root.tools) ? root.tools : [];
   const tools: RegistryToolEntry[] = [];
@@ -1366,7 +1369,7 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
         known = isKnownToolExposureRoute(method, pathInput);
       } else {
         try {
-          registry = await getToolRegistry(!!args.forceRefreshRegistry);
+          registry = await getToolRegistry(!!args.forceRefreshRegistry, "prerequisite");
         } catch (e) {
           registryLookupError = String(e ?? "");
         }

@@ -14,6 +14,9 @@ export const NOOP_COMPLETION_CLAIM_PATH = "/api/assignments/noop-completion-clai
 export const ASSIGNMENT_V2_CRITERIA_PATH = "/api/assignments/v2/criteria/evaluate";
 export const ASSIGNMENT_V2_CLARIFICATION_PATH = "/api/assignments/v2/clarifications";
 export const ASSIGNMENT_V2_INPUT_PATH = "/api/assignments/v2/inputs";
+export const ASSIGNMENT_V2_CHILD_OPERATION_PATH = "/api/assignments/v2/operations/children";
+export const ASSIGNMENT_V2_OPERATION_DISPATCH_PATH = "/api/assignments/v2/operations/dispatch";
+export const ASSIGNMENT_V2_OPERATION_RESULT_PATH = "/api/assignments/v2/operations/results";
 
 export type SemanticMepRoutePlanInput = {
   userText: string;
@@ -81,6 +84,15 @@ export function createOperatorBackendClient(options: OperatorBackendClientOption
     },
     async supplyAssignmentInputV2(input: unknown): Promise<unknown> {
       return await post(ASSIGNMENT_V2_INPUT_PATH, input, "Operator V2 input response");
+    },
+    async openAssignmentChildOperationV2(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_V2_CHILD_OPERATION_PATH, input, "Operator V2 child operation admission");
+    },
+    async markAssignmentOperationDispatchV2(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_V2_OPERATION_DISPATCH_PATH, input, "Operator V2 operation dispatch");
+    },
+    async settleAssignmentOperationV2(input: unknown): Promise<unknown> {
+      return await post(ASSIGNMENT_V2_OPERATION_RESULT_PATH, input, "Operator V2 operation settlement");
     },
     async retrieveEvidence(input: unknown): Promise<unknown> {
       return await post(EVIDENCE_RETRIEVE_PATH, input, "Operator evidence retrieval");

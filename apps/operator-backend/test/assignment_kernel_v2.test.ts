@@ -246,6 +246,97 @@ test("controller acceptance cannot masquerade as native dispatch or settlement",
   assert.throws(() => journal.append(event(journal, { event_type: "operation_result_recorded", result: result({ total: 1 }) })), (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === "operation_result_dispatch_unproven");
 });
 
+test("a blocking prerequisite is a child operation and its receipt cannot dispatch or settle the parent", () => {
+  const journal = createJournal();
+  const parent = {
+    ...operation(),
+    operation_id: "operation-parent",
+    capability_id: "revit_call_tool",
+    operation_role: "root",
+    request_identity: {
+      capability_id: "revit_call_tool",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "request-quantify"
+    }
+  } as OperationV2;
+  const child = {
+    ...operation("read", "discovery"),
+    operation_id: "operation-registry-child",
+    capability_id: "native:GET:/revit/tool-registry",
+    operation_role: "prerequisite",
+    parent_operation_id: parent.operation_id,
+    root_operation_id: parent.operation_id,
+    blocks_parent_settlement: true,
+    request_identity: {
+      capability_id: "native:GET:/revit/tool-registry",
+      method: "GET",
+      path: "/revit/tool-registry",
+      request_signature: "request-registry"
+    }
+  } as OperationV2;
+  journal.append(event(journal, { event_type: "operation_admitted", operation: parent }));
+  journal.append(event(journal, { event_type: "operation_admitted", operation: child }));
+
+  assert.throws(
+    () => journal.append(event(journal, {
+      event_type: "native_dispatch_recorded",
+      operation_id: parent.operation_id,
+      native_correlation_id: "registry-courier-job"
+    })),
+    (error: unknown) => error instanceof AssignmentKernelErrorV2
+      && error.code === "operation_parent_blocked_by_child"
+  );
+
+  journal.append(event(journal, {
+    event_type: "native_dispatch_recorded",
+    operation_id: child.operation_id,
+    native_correlation_id: "registry-courier-job"
+  }));
+  const childResult = {
+    ...result({ tools: [{ path: "/revit/quantify" }] }),
+    result_id: "result-registry-child",
+    operation_id: child.operation_id,
+    request_identity: child.request_identity
+  } as OperationResultV2;
+  journal.append(event(journal, { event_type: "operation_result_recorded", result: childResult }));
+
+  const parentAfterChildResult = journal.snapshot().operations[parent.operation_id];
+  assert.equal(parentAfterChildResult.dispatch_state, "not_dispatched");
+  assert.equal(parentAfterChildResult.settlement_state, "open");
+});
+
+test("Candidate 1 shape rejects a prerequisite receipt relabeled with the parent operation identity", () => {
+  const journal = createJournal();
+  const parent = {
+    ...operation(),
+    capability_id: "revit_call_tool",
+    request_identity: {
+      capability_id: "revit_call_tool",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "request-quantify"
+    }
+  } as OperationV2;
+  journal.append(event(journal, { event_type: "operation_admitted", operation: parent }));
+  journal.append(event(journal, { event_type: "operation_dispatch_started", operation_id: parent.operation_id }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: parent.operation_id }));
+  const relabeledPrerequisite = {
+    ...result({ tools: [] }),
+    request_identity: {
+      capability_id: "native:GET:/revit/tool-registry",
+      method: "GET",
+      path: "/revit/tool-registry",
+      request_signature: "request-registry"
+    }
+  } as OperationResultV2;
+  assert.throws(
+    () => journal.append(event(journal, { event_type: "operation_result_recorded", result: relabeledPrerequisite })),
+    (error: unknown) => error instanceof AssignmentKernelErrorV2
+      && error.code === "operation_result_request_identity_mismatch"
+  );
+});
+
 test("all supported transport wrappers unwrap to one exact OperationResultV2", () => {
   const nativeResult = result({ total: 509 });
   const transports: OperationResultTransportV2[] = [

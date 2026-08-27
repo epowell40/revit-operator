@@ -7,7 +7,9 @@ import test from "node:test";
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
   failAssignmentKernelOperationV2,
+  leaseFromOperation,
   markAssignmentKernelOperationDispatchStartedV2,
+  openAssignmentKernelChildOperationV2,
   openAssignmentKernelOperationV2,
   recoverAssignmentKernelOperationsV2,
   settleAssignmentKernelOperationV2
@@ -80,6 +82,7 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
     raw_payload_hash: hash(payload),
     receipt_id: `receipt-${operationId}`,
     native_correlation_id: `native-${operationId}`,
+    request_identity: getAssignmentKernelSnapshotV2(binding.assignment_id)?.operations[operationId]?.request_identity,
     completed_at: "2026-08-26T16:00:05.000Z"
   };
   return {
@@ -187,6 +190,65 @@ test("operation identity is derived from trusted controller identity, never a ty
   assert.equal(left.operation_id.includes("revit"), false);
   assert.equal(left.operation_id.includes("mcp"), false);
   assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!.operations[left.operation_id]!.capability_id, "inventory.read");
+}));
+
+test("Candidate 1 registry prerequisite settles only its child before the quantify parent", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const parent = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate-1-parent",
+    provider_turn_id: "candidate-1-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/quantify", body: { category: "Air Terminals" } },
+    opened_at: "2026-08-27T12:30:00.000Z"
+  });
+  markAssignmentKernelOperationDispatchStartedV2(parent);
+  const child = openAssignmentKernelChildOperationV2({
+    binding: parent.binding,
+    parent_operation_id: parent.operation_id,
+    child_ordinal: 0,
+    operation_role: "prerequisite",
+    capability_id: "native:GET:/revit/tool-registry",
+    classified_effect: "read",
+    method: "GET",
+    path: "/revit/tool-registry",
+    arguments: { method: "GET", path: "/revit/tool-registry", body: null },
+    opened_at: "2026-08-27T12:30:00.100Z"
+  });
+  assert.notEqual(child.operation_id, parent.operation_id);
+  assert.equal(child.parent_operation_id, parent.operation_id);
+  assert.equal(child.root_operation_id, parent.operation_id);
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id)!.operations[child.operation_id]!.advances_criterion_ids, []);
+  const nestedWait = advanceAssignmentKernelProgressV2({ binding: parent.binding });
+  assert.equal(nestedWait.decision.decision, "await_operation");
+  assert.deepEqual(new Set((nestedWait.decision as any).operation_ids), new Set([parent.operation_id, child.operation_id]));
+  markAssignmentKernelOperationDispatchStartedV2(child);
+  const childSettled = settleAssignmentKernelOperationV2(
+    child,
+    envelope(child.operation_id, child.binding, { tools: [{ method: "POST", path: "/revit/quantify" }] })
+  ).snapshot;
+  assert.equal(childSettled.operations[child.operation_id]!.settlement_state, "settled");
+  assert.equal(childSettled.operations[parent.operation_id]!.settlement_state, "awaiting_result");
+  assert.equal(childSettled.operations[parent.operation_id]!.result, undefined);
+  assert.equal(childSettled.terminal, false);
+  assert.deepEqual(childSettled.blocking_child_operation_ids, []);
+  const parentWait = advanceAssignmentKernelProgressV2({ binding: parent.binding });
+  assert.equal(parentWait.decision.decision, "await_operation");
+  assert.deepEqual((parentWait.decision as any).operation_ids, [parent.operation_id]);
+
+  const parentLease = leaseFromOperation(childSettled.operations[parent.operation_id]!);
+  const completed = settleAssignmentKernelOperationV2(
+    parentLease,
+    envelope(parent.operation_id, parent.binding, { total: 509 })
+  ).snapshot;
+  assert.equal(completed.operations[parent.operation_id]!.settlement_state, "settled");
+  assert.equal(completed.operations[parent.operation_id]!.result?.receipt_id, `receipt-${parent.operation_id}`);
+  assert.equal(completed.operations[child.operation_id]!.result?.receipt_id, `receipt-${child.operation_id}`);
+  assert.notEqual(
+    completed.operations[parent.operation_id]!.result?.native_correlation_id,
+    completed.operations[child.operation_id]!.result?.native_correlation_id
+  );
 }));
 
 test("captured V2 operation binding settles after the legacy Goal envelope is paused", () => workspace(() => {

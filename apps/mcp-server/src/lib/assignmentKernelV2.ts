@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { createOperatorBackendClient } from "./operatorBackendClient.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -24,17 +25,56 @@ type Context = {
   capability_id: string;
   requested_effect: "read" | "preview" | "apply";
   purpose: "work" | "discovery" | "verification" | "evidence_read" | "reconciliation";
+  operation_role: "root" | "prerequisite" | "child";
+  parent_operation_id?: string;
+  root_operation_id: string;
+  blocks_parent_settlement: boolean;
+  request_identity: RequestIdentity;
   opened_at: string;
   deadline_at: string;
 };
+type RequestIdentity = {
+  capability_id: string;
+  method?: "GET" | "POST";
+  path?: string;
+  request_signature: string;
+};
 type NativeCall = {
   request_id: string;
+  operation_id: string;
+  parent_operation_id?: string;
+  operation_role: "root" | "prerequisite" | "child";
+  lease: Context;
   method: string;
   path: string;
   state: "reserved" | "dispatching" | "completed";
   payload?: unknown;
+  settlement?: unknown;
 };
-type Scope = { context: Context; native_calls: NativeCall[] };
+type ChildAdmissionInput = {
+  parent_operation_id: string;
+  child_ordinal: number;
+  operation_role: "prerequisite" | "child";
+  capability_id: string;
+  classified_effect: string;
+  method: "GET" | "POST";
+  path: string;
+  arguments: unknown;
+  blocks_parent_settlement: boolean;
+};
+type OperationEdge = {
+  openChild(input: ChildAdmissionInput, binding: Binding): Promise<Context>;
+  markDispatch(lease: Context): Promise<void>;
+  settle(lease: Context, mcpResult: unknown): Promise<unknown>;
+};
+type Scope = { context: Context; native_calls: NativeCall[]; parent_claimed: boolean; edge: OperationEdge };
+
+export type AssignmentKernelNativeRequestV2 = Readonly<{
+  request_id: string;
+  operation_id: string;
+  operation_role: "root" | "prerequisite" | "child";
+  parent_operation_id?: string;
+}>;
 
 const storage = new AsyncLocalStorage<Scope>();
 const bindingStorage = new AsyncLocalStorage<Binding>();
@@ -69,10 +109,16 @@ function parseContext(meta: unknown): Context | null {
   const binding = object(source.binding);
   const requestedEffect = source.requested_effect;
   const purpose = source.purpose;
+  const role = source.operation_role ?? "root";
+  const requestIdentity = object(source.request_identity);
   if (!text(source.assignment_id) || !text(source.operation_id) || !text(source.capability_id)
       || !text(source.opened_at) || !text(source.deadline_at)
       || !["read", "preview", "apply"].includes(String(requestedEffect))
-      || !["work", "discovery", "verification", "evidence_read", "reconciliation"].includes(String(purpose))) {
+      || !["work", "discovery", "verification", "evidence_read", "reconciliation"].includes(String(purpose))
+      || !["root", "prerequisite", "child"].includes(String(role))
+      || !text(source.root_operation_id ?? source.operation_id)
+      || !text(requestIdentity.capability_id)
+      || !text(requestIdentity.request_signature)) {
     throw new Error("assignment_kernel_v2_operation_context_invalid");
   }
   for (const field of ["assignment_id", "run_id", "session_id", "principal_id"]) {
@@ -80,7 +126,13 @@ function parseContext(meta: unknown): Context | null {
   }
   if (!Number.isSafeInteger(binding.generation) || Number(binding.generation) < 1
       || binding.assignment_id !== source.assignment_id) throw new Error("assignment_kernel_v2_operation_binding_invalid");
-  return structuredClone(source) as Context;
+  return structuredClone({
+    ...source,
+    operation_role: role,
+    root_operation_id: source.root_operation_id ?? source.operation_id,
+    blocks_parent_settlement: source.blocks_parent_settlement === true,
+    request_identity: requestIdentity
+  }) as Context;
 }
 
 function parseBinding(meta: unknown): Binding | null {
@@ -95,12 +147,48 @@ function parseBinding(meta: unknown): Binding | null {
   return structuredClone(source) as Binding;
 }
 
-export async function runWithAssignmentKernelV2<T>(meta: unknown, fn: () => Promise<T>): Promise<T> {
+function bindingBody(binding: Binding): Record<string, unknown> {
+  return {
+    assignment_id: binding.assignment_id,
+    run_id: binding.run_id,
+    generation: binding.generation,
+    session_id: binding.session_id
+  };
+}
+
+function defaultOperationEdge(): OperationEdge {
+  const client = createOperatorBackendClient();
+  return {
+    async openChild(input, binding) {
+      const response = object(await client.openAssignmentChildOperationV2({ ...bindingBody(binding), ...input }));
+      const lease = object(response.operation_lease_v2);
+      if (lease.schema !== ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA) {
+        throw new Error("assignment_kernel_v2_child_operation_admission_invalid");
+      }
+      return structuredClone(lease) as Context;
+    },
+    async markDispatch(lease) {
+      await client.markAssignmentOperationDispatchV2({
+        ...bindingBody(lease.binding),
+        operation_id: lease.operation_id
+      });
+    },
+    async settle(lease, mcpResult) {
+      return await client.settleAssignmentOperationV2({
+        ...bindingBody(lease.binding),
+        operation_id: lease.operation_id,
+        mcp_result: mcpResult
+      });
+    }
+  };
+}
+
+export async function runWithAssignmentKernelV2<T>(meta: unknown, fn: () => Promise<T>, edge?: OperationEdge): Promise<T> {
   const context = parseContext(meta);
   const binding = context?.binding ?? parseBinding(meta);
   if (!binding) return await fn();
   return await bindingStorage.run(binding, async () => context
-    ? await storage.run({ context, native_calls: [] }, fn)
+    ? await storage.run({ context, native_calls: [], parent_claimed: false, edge: edge ?? defaultOperationEdge() }, fn)
     : await fn());
 }
 
@@ -114,40 +202,162 @@ export function currentAssignmentKernelV2Binding(): Readonly<Binding> | null {
   return binding ? structuredClone(binding) : null;
 }
 
-export function reserveAssignmentKernelNativeRequestV2(method: string, path: string): string | null {
+function nativeRequestIdentity(method: "GET" | "POST", path: string, body: unknown): RequestIdentity {
+  const capabilityId = `native:${method}:${path}`;
+  return {
+    capability_id: capabilityId,
+    method,
+    path,
+    request_signature: sha256({ capability_id: capabilityId, method, path, body: body ?? null })
+  };
+}
+
+function operationMatchesNativeRequest(context: Context, method: "GET" | "POST", path: string): boolean {
+  const expected = context.request_identity;
+  // A typed MCP capability and a native route are different executable
+  // identities unless the trusted controller admitted the exact native
+  // method/path. Never let the first hidden native call opportunistically
+  // claim an abstract typed parent.
+  return Boolean(expected.method && expected.path)
+    && expected.method === method
+    && expected.path === path;
+}
+
+export async function beginAssignmentKernelNativeRequestV2(
+  methodValue: string,
+  pathValue: string,
+  body?: unknown,
+  options: Readonly<{
+    operation_role?: "prerequisite" | "child";
+    classified_effect?: string;
+    blocks_parent_settlement?: boolean;
+  }> = {}
+): Promise<AssignmentKernelNativeRequestV2 | null> {
   const scope = storage.getStore();
   if (!scope) return null;
+  const method = String(methodValue).trim().toUpperCase();
+  if (method !== "GET" && method !== "POST") throw new Error("assignment_kernel_v2_native_request_method_invalid");
+  const path = String(pathValue).trim();
+  if (!path.startsWith("/")) throw new Error("assignment_kernel_v2_native_request_path_invalid");
+  const identity = nativeRequestIdentity(method, path, body);
+  const parentMatches = operationMatchesNativeRequest(scope.context, method, path);
+  const useParent = !options.operation_role && !scope.parent_claimed && parentMatches;
+  let lease: Context;
+  let role: "root" | "prerequisite" | "child";
+  if (useParent) {
+    scope.parent_claimed = true;
+    lease = scope.context;
+    role = "root";
+  } else {
+    role = options.operation_role ?? "child";
+    lease = await scope.edge.openChild({
+      parent_operation_id: scope.context.operation_id,
+      child_ordinal: scope.native_calls.length,
+      operation_role: role,
+      capability_id: identity.capability_id,
+      classified_effect: options.classified_effect ?? "read",
+      method,
+      path,
+      arguments: { method, path, body: body ?? null },
+      blocks_parent_settlement: options.blocks_parent_settlement !== false
+    }, scope.context.binding);
+    if (lease.operation_id === scope.context.operation_id || lease.parent_operation_id !== scope.context.operation_id) {
+      throw new Error("assignment_kernel_v2_child_operation_identity_invalid");
+    }
+  }
   const requestId = sha256({
-    operation_id: scope.context.operation_id,
+    operation_id: lease.operation_id,
+    request_identity: identity,
     native_call_index: scope.native_calls.length
   });
   scope.native_calls.push({
     request_id: requestId,
-    method: String(method).toUpperCase(),
-    path: String(path),
+    operation_id: lease.operation_id,
+    ...(role === "root" ? {} : { parent_operation_id: scope.context.operation_id }),
+    operation_role: role,
+    lease,
+    method,
+    path,
     state: "reserved"
   });
-  return requestId;
+  return Object.freeze({
+    request_id: requestId,
+    operation_id: lease.operation_id,
+    operation_role: role,
+    ...(role === "root" ? {} : { parent_operation_id: scope.context.operation_id })
+  });
 }
 
-export function markAssignmentKernelNativeRequestDispatchingV2(requestId: string | null): void {
-  if (!requestId) return;
-  const call = storage.getStore()?.native_calls.find(candidate => candidate.request_id === requestId);
-  if (!call) throw new Error("assignment_kernel_v2_native_request_unknown");
+function nativeCall(request: AssignmentKernelNativeRequestV2 | null): NativeCall | null {
+  if (!request) return null;
+  const call = storage.getStore()?.native_calls.find(candidate => candidate.request_id === request.request_id);
+  if (!call || call.operation_id !== request.operation_id) throw new Error("assignment_kernel_v2_native_request_unknown");
+  return call;
+}
+
+export async function markAssignmentKernelNativeRequestDispatchingV2(request: AssignmentKernelNativeRequestV2 | null): Promise<void> {
+  const call = nativeCall(request);
+  if (!call) return;
   if (call.state === "completed") throw new Error("assignment_kernel_v2_native_request_already_completed");
+  if (call.state === "dispatching") return;
+  if (call.operation_role !== "root") await storage.getStore()!.edge.markDispatch(call.lease);
   call.state = "dispatching";
 }
 
-export function recordAssignmentKernelNativeResultV2(method: string, path: string, payload: unknown, requestId?: string | null): void {
+export async function recordAssignmentKernelNativeResultV2(
+  method: string,
+  path: string,
+  payload: unknown,
+  request: AssignmentKernelNativeRequestV2 | null
+): Promise<void> {
   const scope = storage.getStore();
   if (!scope) return;
-  const id = requestId ?? reserveAssignmentKernelNativeRequestV2(method, path);
-  const call = scope.native_calls.find(candidate => candidate.request_id === id);
+  const call = nativeCall(request);
   if (!call || call.method !== String(method).toUpperCase() || call.path !== String(path)) {
     throw new Error("assignment_kernel_v2_native_result_request_mismatch");
   }
-  call.state = "completed";
+  if (call.state === "completed") return;
   call.payload = structuredClone(payload);
+  if (call.operation_role !== "root") {
+    const result = operationResultForCall(call, false);
+    const settlementEnvelope = mcpEnvelopeForCall(call, result);
+    call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
+  }
+  call.state = "completed";
+}
+
+export async function recordAssignmentKernelNativeFailureV2(
+  request: AssignmentKernelNativeRequestV2 | null,
+  error: unknown
+): Promise<void> {
+  const scope = storage.getStore();
+  const call = nativeCall(request);
+  if (!scope || !call || call.state === "completed") return;
+  const errorRecord = object(error);
+  const bridgeDetails = object(errorRecord.bridgeDetails);
+  const phase = text(errorRecord.phase) || text(bridgeDetails.phase);
+  const outcomeUnknown = errorRecord.outcomeUnknown === true || errorRecord.outcome_unknown === true;
+  const explicitlyNotDispatched = errorRecord.request_dispatched === false
+    || bridgeDetails.request_dispatched === false
+    || bridgeDetails.dispatched === false
+    || ["pre_dispatch", "request_validation", "authentication", "authorization", "write_grant", "admission", "routing"].includes(phase);
+  const explicitlyDispatched = errorRecord.request_dispatched === true
+    || bridgeDetails.request_dispatched === true
+    || bridgeDetails.dispatched === true
+    || typeof errorRecord.status === "number"
+    || phase === "response";
+  call.payload = {
+    error_code: text(errorRecord.code) || "native_operation_failed",
+    outcome_unknown: outcomeUnknown,
+    native_dispatch_state: explicitlyNotDispatched ? "not_dispatched"
+      : explicitlyDispatched ? "dispatched"
+        : outcomeUnknown ? "dispatching" : "not_dispatched"
+  };
+  if (call.operation_role !== "root") {
+    const result = operationResultForCall(call, true);
+    call.settlement = await scope.edge.settle(call.lease, mcpEnvelopeForCall(call, result));
+  }
+  call.state = "completed";
 }
 
 function normalizedFieldName(value: string): string {
@@ -211,63 +421,126 @@ function directSettlement(payload: unknown): Record<string, unknown> {
   return object(object(payload).canonical_attempt_settlement);
 }
 
-function aggregatePayload(calls: readonly NativeCall[]): unknown {
-  return calls.length === 1 ? calls[0]!.payload : { native_results: calls.map(call => call.payload) };
-}
-
-function decoratedResult(result: unknown, capabilityId: string, scope: Scope): unknown {
-  const calls = scope.native_calls;
-  const completedCalls = calls.filter(call => call.state === "completed");
-  const failed = Boolean(object(result).isError);
-  if (!failed && completedCalls.length !== calls.length) throw new Error("assignment_kernel_v2_native_result_missing");
-  const payload = completedCalls.length > 0 ? aggregatePayload(completedCalls) : result;
-  const settlements = completedCalls.map(call => directSettlement(call.payload)).filter(row => Object.keys(row).length > 0);
-  const retainedEvidenceRead = calls.length === 0 && scope.context.purpose === "evidence_read" && !failed;
-  if (completedCalls.length > 0 && settlements.length !== completedCalls.length) throw new Error("assignment_kernel_v2_native_settlement_missing");
-  const settlementEffects = settlements.map(row => text(row.effect_state));
-  const persistentEffect = settlementEffects.includes("unknown") ? "unknown"
-    : settlementEffects.includes("applied") ? "applied" : "none";
-  if (scope.context.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
-  if (scope.context.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
-  const now = new Date().toISOString();
-  const dispatchState = completedCalls.length > 0 || retainedEvidenceRead ? "dispatched"
-    : calls.some(call => call.state === "dispatching") ? "dispatching" : "not_dispatched";
+function operationResultForCall(call: NativeCall, failed: boolean): Record<string, unknown> {
+  const settlement = directSettlement(call.payload);
+  if (!failed && Object.keys(settlement).length === 0) throw new Error("assignment_kernel_v2_native_settlement_missing");
+  const failureDispatchState = text(object(call.payload).native_dispatch_state);
+  const dispatchState = failed
+    ? failureDispatchState === "dispatched" ? "dispatched"
+      : failureDispatchState === "dispatching" ? "dispatching"
+        : "not_dispatched"
+    : settlement.request_dispatched === true ? "dispatched" : "not_dispatched";
+  const dispatched = dispatchState !== "not_dispatched";
+  const outcomeUnknown = object(call.payload).outcome_unknown === true;
+  const persistentEffect = text(settlement.effect_state)
+    || (failed && dispatched && call.lease.requested_effect === "apply" && outcomeUnknown ? "unknown" : "none");
+  if (!['none', 'unknown', 'applied'].includes(persistentEffect)) throw new Error("assignment_kernel_v2_native_effect_invalid");
+  if (call.lease.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
+  if (call.lease.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
   const nativeTransactionState = persistentEffect === "applied" ? "committed"
-    : scope.context.requested_effect === "preview" && !failed && calls.length > 0 ? "rolled_back"
+    : call.lease.requested_effect === "preview" && !failed ? "rolled_back"
       : persistentEffect === "unknown" ? "unknown" : "not_applicable";
-  const operationResult = {
+  return {
     schema: OPERATION_RESULT_V2_SCHEMA,
-    result_id: `resultv2_${sha256({ operation_id: scope.context.operation_id, payload, failed })}`,
-    operation_id: scope.context.operation_id,
-    binding: scope.context.binding,
-    status: failed ? dispatchState === "not_dispatched" ? "failed_before_dispatch" : "failed_after_dispatch"
-      : completedCalls.length > 0 || retainedEvidenceRead ? "succeeded" : "failed_before_dispatch",
+    result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed })}`,
+    operation_id: call.operation_id,
+    binding: call.lease.binding,
+    status: failed ? dispatched ? "failed_after_dispatch" : "failed_before_dispatch" : "succeeded",
     dispatch_state: dispatchState,
     persistent_effect: persistentEffect,
     native_transaction_state: nativeTransactionState,
-    authority: completedCalls.length > 0 ? "native-host" : retainedEvidenceRead ? "operator-evidence-store" : "operator-mcp-transport",
-    result_schema_id: `operator-capability/${capabilityId}/v2`,
-    observation_required: (completedCalls.length > 0 || retainedEvidenceRead) && !failed,
-    ...((completedCalls.length > 0 || retainedEvidenceRead) && !failed ? { raw_payload_hash: sha256(payload) } : {}),
-    ...(text(settlements[0]?.attempt_id) ? { receipt_id: text(settlements[0]?.attempt_id) } : {}),
-    ...(calls[0]?.request_id ? { native_correlation_id: calls[0].request_id } : {}),
-    completed_at: now,
-    ...(!failed && completedCalls.length > 0 ? {} : { error_code: failed ? "mcp_tool_failed" : "native_operation_not_observed" })
+    authority: "native-host",
+    result_schema_id: `operator-native/${call.method}:${call.path}/v2`,
+    observation_required: !failed,
+    ...(!failed ? { raw_payload_hash: sha256(call.payload) } : {}),
+    ...(text(settlement.attempt_id) ? { receipt_id: text(settlement.attempt_id) } : {}),
+    native_correlation_id: call.request_id,
+    request_identity: call.lease.request_identity,
+    completed_at: new Date().toISOString(),
+    ...(failed ? { error_code: "native_operation_failed" } : {})
   };
-  const root = object(result);
+}
+
+function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, unknown>): Record<string, unknown> {
   return {
-    ...root,
+    content: [],
     structuredContent: {
       schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
       operation_result_v2: operationResult,
       ...(operationResult.observation_required ? {
         observation: {
-          raw_payload: payload,
-          semantic_facts: semanticFacts(payload, calls.length),
+          raw_payload: call.payload,
+          semantic_facts: semanticFacts(call.payload, 1),
+          target_scope: {},
+          verification_relevance: call.lease.purpose === "verification" ? ["postcondition"] : ["task_result"]
+        }
+      } : {})
+    }
+  };
+}
+
+function transportOnlyResult(context: Context, payload: unknown, failed: boolean, evidenceRead: boolean): Record<string, unknown> {
+  const transportSucceeded = !failed;
+  return {
+    schema: OPERATION_RESULT_V2_SCHEMA,
+    result_id: `resultv2_${sha256({ operation_id: context.operation_id, payload, failed })}`,
+    operation_id: context.operation_id,
+    binding: context.binding,
+    status: failed ? "failed_before_dispatch"
+      : evidenceRead ? "succeeded" : "completed_without_native_dispatch",
+    dispatch_state: evidenceRead ? "dispatched" : "not_dispatched",
+    persistent_effect: "none",
+    native_transaction_state: "not_applicable",
+    authority: evidenceRead ? "operator-evidence-store" : "operator-mcp-transport",
+    result_schema_id: `operator-capability/${context.capability_id}/v2`,
+    observation_required: evidenceRead && !failed,
+    ...(evidenceRead && !failed ? { raw_payload_hash: sha256(payload) } : {}),
+    request_identity: context.request_identity,
+    completed_at: new Date().toISOString(),
+    ...(failed ? { error_code: "mcp_tool_failed" } : {})
+  };
+}
+
+function decoratedResult(result: unknown, capabilityId: string, scope: Scope): unknown {
+  const calls = scope.native_calls;
+  if (calls.some(call => call.state !== "completed")) throw new Error("assignment_kernel_v2_native_result_missing");
+  const failed = Boolean(object(result).isError);
+  const parentCall = calls.find(call => call.operation_role === "root");
+  const retainedEvidenceRead = calls.length === 0 && scope.context.purpose === "evidence_read" && !failed;
+  const operationResult = parentCall
+    ? operationResultForCall(parentCall, failed)
+    : transportOnlyResult(scope.context, result, failed, retainedEvidenceRead);
+  const root = object(result);
+  const childOperationResults = calls
+    .filter(call => call.operation_role !== "root")
+    .map(call => ({
+      operation_id: call.operation_id,
+      parent_operation_id: call.parent_operation_id,
+      operation_role: call.operation_role,
+      request_identity: call.lease.request_identity,
+      settlement_digest: sha256(call.settlement ?? null)
+    }));
+  return {
+    ...root,
+    structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: operationResult,
+      ...(parentCall && operationResult.observation_required ? {
+        observation: {
+          raw_payload: parentCall.payload,
+          semantic_facts: semanticFacts(parentCall.payload, 1),
           target_scope: {},
           verification_relevance: scope.context.purpose === "verification" ? ["postcondition"] : ["task_result"]
         }
-      } : {})
+      } : retainedEvidenceRead ? {
+        observation: {
+          raw_payload: result,
+          semantic_facts: semanticFacts(result, 0),
+          target_scope: {},
+          verification_relevance: ["task_result"]
+        }
+      } : {}),
+      ...(childOperationResults.length > 0 ? { child_operation_results_v2: childOperationResults } : {})
     }
   };
 }

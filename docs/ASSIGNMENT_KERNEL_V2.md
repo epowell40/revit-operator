@@ -57,16 +57,53 @@ through a legacy adapter; new V2 Assignments will write only the V2 journal.
     by an explicit, versioned transformation. Canonical settlement never
     compares hashes of different byte representations as though they were the
     same payload.
+16. A root operation and every executable prerequisite or nested native action
+    have distinct immutable operation identities. Parent/child relationships
+    are explicit; a child's receipt, payload, Observation, or settlement can
+    settle only that child.
+17. A blocking child prevents its parent from settling and prevents an
+    unconstrained provider turn. Newly retained child observations are offered
+    to criterion evaluation before the progress controller may admit more
+    reasoning.
 
 ## Target flow
 
 ```text
 trusted host -> AssignmentSpecV2 -> AssignmentEventV2 journal
 planner -> admitted OperationV2(operation_id) -> transport edge
-native edge -> OperationResultV2(operation_id) -> retained raw bytes
+MCP edge -> explicit prerequisite/child OperationV2(parent_operation_id)
+native edge -> OperationResultV2(exact operation_id) -> retained raw bytes
 observation edge -> ObservationV2 semantic facts -> criterion events
 pure reducer -> AssignmentSnapshotV2 -> read-only API/UI/audit projections
 ```
+
+## Operation ownership
+
+The trusted controller creates a root `operation_id` from Assignment identity
+and controller request identity before MCP dispatch. At the MCP/native edge,
+the first exact request may claim that root. Every other executable request,
+including registry lookup, discovery, courier work, and Dynamic Runtime work,
+opens a deterministic prerequisite or child operation before dispatch. The
+child records its root and immediate parent, blocking relation, immutable
+request identity, and its own native correlation.
+
+Only an `OperationResultV2` carrying the exact admitted operation identity,
+request identity, and current Assignment binding may settle that operation.
+The reducer rejects parent settlement while a blocking child is unresolved and
+rejects a child result relabeled with its parent's identity. Child raw payloads
+are never copied into a synthetic parent result; the parent transport exposes
+only bounded child identities and settlement digests.
+
+The progress controller is the sole owner of nested progression. It waits for
+provider work, root operations, and blocking children; evaluates qualifying
+Observations; and admits another provider call only for a remaining canonical
+criterion gap. A transport callback cannot independently continue the loop.
+
+V2 publication is a read-only view containing the exact
+`AssignmentSnapshotV2` and its durable provider ledger. Sidecar, Work Packet,
+Protocol V2, and benchmark adapters consume that publication. The V1
+Assignment projection remains only a historical compatibility fallback and
+the survival of a `/chat` response is not a provider-receipt authority.
 
 ## Progression contracts
 

@@ -10,7 +10,12 @@ import { buildTeammateTurnContract } from "../teammate_loop_runtime.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
 import { normalizeProviderSupervisorEvidence } from "./provider_supervisor_evidence.js";
 import { computeDynamicRuntimePackageDirectoryIdentity } from "./runtime_package_directory_identity.js";
-import { journalProviderDynamicRuntimeSettlement } from "../assignments/dynamic_runtime_settlement.js";
+import {
+  failProviderDynamicRuntimeOperationV2,
+  journalProviderDynamicRuntimeSettlement,
+  markProviderDynamicRuntimeDispatchingV2,
+  openProviderDynamicRuntimeOperationV2
+} from "../assignments/dynamic_runtime_settlement.js";
 
 export const PROVIDER_DYNAMIC_PROGRAM_V1 = "revit-operator.provider-dynamic-program.v1" as const;
 export const PROVIDER_DYNAMIC_PROGRAM_EXECUTION_RECEIPT_V1 =
@@ -683,8 +688,16 @@ export async function executeProviderDynamicProgramLane(args: {
       args.strategyEvidence
     );
   }
-  const response = await (args.runner ?? runTrustedProviderDynamicProgram)(args.req, program);
-  journalProviderDynamicRuntimeSettlement(args.req, program, response);
+  const v2Operation = openProviderDynamicRuntimeOperationV2(args.req, program);
+  markProviderDynamicRuntimeDispatchingV2(v2Operation);
+  let response: ChatResponse;
+  try {
+    response = await (args.runner ?? runTrustedProviderDynamicProgram)(args.req, program);
+  } catch (error) {
+    failProviderDynamicRuntimeOperationV2(v2Operation, error);
+    throw error;
+  }
+  journalProviderDynamicRuntimeSettlement(args.req, program, response, v2Operation);
   return args.strategyEvidence && !response.execution_strategy_evidence
     ? { ...response, execution_strategy_evidence: args.strategyEvidence }
     : response;

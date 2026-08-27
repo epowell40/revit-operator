@@ -6,11 +6,11 @@ import {
   ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_BINDING_META_KEY,
   ASSIGNMENT_KERNEL_V2_META_KEY,
+  beginAssignmentKernelNativeRequestV2,
   currentAssignmentKernelV2Binding,
   decorateAssignmentKernelMcpResultV2,
   markAssignmentKernelNativeRequestDispatchingV2,
   recordAssignmentKernelNativeResultV2,
-  reserveAssignmentKernelNativeRequestV2,
   runWithAssignmentKernelV2
 } from "./assignmentKernelV2.js";
 
@@ -23,7 +23,11 @@ const binding = {
   document_fingerprint: "document-1"
 };
 
-function meta(effect: "read" | "preview" | "apply" = "read", purpose = "work") {
+function meta(
+  effect: "read" | "preview" | "apply" = "read",
+  purpose = "work",
+  nativeRequest?: { method: "GET" | "POST"; path: string }
+) {
   return {
     [ASSIGNMENT_KERNEL_V2_META_KEY]: {
       schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
@@ -33,6 +37,14 @@ function meta(effect: "read" | "preview" | "apply" = "read", purpose = "work") {
       capability_id: "inventory.read",
       requested_effect: effect,
       purpose,
+      operation_role: "root",
+      root_operation_id: "operation-1",
+      blocks_parent_settlement: false,
+      request_identity: {
+        capability_id: "inventory.read",
+        ...nativeRequest,
+        request_signature: "inventory-read-request"
+      },
       opened_at: "2026-08-26T15:00:00.000Z",
       deadline_at: "2026-08-26T15:04:00.000Z"
     }
@@ -40,8 +52,10 @@ function meta(effect: "read" | "preview" | "apply" = "read", purpose = "work") {
 }
 
 test("native result is normalized once into an explicit OperationResultV2 and semantic facts", async () => {
-  const decorated = await runWithAssignmentKernelV2(meta(), async () => {
-    recordAssignmentKernelNativeResultV2("POST", "/revit/find-elements", {
+  const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/find-elements" }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/find-elements");
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/find-elements", {
       totalCount: 2,
       items: [
         { familyName: "Supply Diffuser", typeName: "24x24" },
@@ -55,7 +69,7 @@ test("native result is normalized once into an explicit OperationResultV2 and se
         effect_authority: "native_receipt",
         request_dispatched: true
       }
-    });
+    }, request);
     return decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: "bounded model projection" }] }, "inventory.read") as any;
   });
   assert.equal(decorated.structuredContent.schema, ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA);
@@ -68,11 +82,13 @@ test("native result is normalized once into an explicit OperationResultV2 and se
 
 test("source field spelling aliases normalize to identical semantic fact identities", async () => {
   async function facts(payload: unknown) {
-    return await runWithAssignmentKernelV2(meta(), async () => {
-      recordAssignmentKernelNativeResultV2("POST", "/transport-only", {
+    return await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/transport-only" }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/transport-only");
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/transport-only", {
         ...(payload as object),
         canonical_attempt_settlement: { attempt_id: "receipt", requested_effect: "read", effect_state: "none", request_dispatched: true }
-      });
+      }, request);
       return (decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any).structuredContent.observation.semantic_facts;
     });
   }
@@ -83,11 +99,11 @@ test("source field spelling aliases normalize to identical semantic fact identit
 });
 
 test("native request correlation is derived from the canonical Operation and survives result settlement", async () => {
-  const decorated = await runWithAssignmentKernelV2(meta(), async () => {
-    const requestId = reserveAssignmentKernelNativeRequestV2("POST", "/revit/schedules");
-    assert.match(requestId ?? "", /^[0-9a-f]{64}$/);
-    markAssignmentKernelNativeRequestDispatchingV2(requestId);
-    recordAssignmentKernelNativeResultV2("POST", "/revit/schedules", {
+  const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/schedules" }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/schedules");
+    assert.match(request?.request_id ?? "", /^[0-9a-f]{64}$/);
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/schedules", {
       schedules: [{ id: 1 }],
       canonical_attempt_settlement: {
         attempt_id: "native-receipt",
@@ -95,12 +111,146 @@ test("native request correlation is derived from the canonical Operation and sur
         effect_state: "none",
         request_dispatched: true
       }
-    }, requestId);
+    }, request);
     const result = decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
-    assert.equal(result.structuredContent.operation_result_v2.native_correlation_id, requestId);
+    assert.equal(result.structuredContent.operation_result_v2.native_correlation_id, request?.request_id);
     return result;
   });
   assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+});
+
+test("Candidate 1 prerequisite and parent native calls retain distinct operation identities", async () => {
+  const childLeases: any[] = [];
+  const settled: any[] = [];
+  const edge = {
+    async openChild(input: any) {
+      const lease = {
+        ...meta()[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: `child-${input.child_ordinal}`,
+        capability_id: input.capability_id,
+        requested_effect: "read",
+        purpose: "discovery",
+        operation_role: input.operation_role,
+        parent_operation_id: input.parent_operation_id,
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: `child-signature-${input.child_ordinal}`
+        }
+      };
+      childLeases.push(lease);
+      return lease as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { settled: true };
+    }
+  };
+  const decorated = await runWithAssignmentKernelV2({
+    [ASSIGNMENT_KERNEL_V2_META_KEY]: {
+      ...meta()[ASSIGNMENT_KERNEL_V2_META_KEY],
+      capability_id: "revit_call_tool",
+      request_identity: {
+        capability_id: "revit_call_tool",
+        method: "POST",
+        path: "/revit/quantify",
+        request_signature: "request-quantify"
+      }
+    }
+  }, async () => {
+    const prerequisite = await beginAssignmentKernelNativeRequestV2("GET", "/revit/tool-registry", undefined, {
+      operation_role: "prerequisite"
+    });
+    assert.notEqual(prerequisite?.operation_id, "operation-1");
+    await markAssignmentKernelNativeRequestDispatchingV2(prerequisite);
+    await recordAssignmentKernelNativeResultV2("GET", "/revit/tool-registry", {
+      tools: [{ method: "POST", path: "/revit/quantify" }],
+      canonical_attempt_settlement: {
+        attempt_id: "registry-receipt",
+        requested_effect: "read",
+        effect_state: "none",
+        request_dispatched: true
+      }
+    }, prerequisite);
+
+    const parent = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify");
+    assert.equal(parent?.operation_id, "operation-1");
+    await markAssignmentKernelNativeRequestDispatchingV2(parent);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
+      total: 509,
+      canonical_attempt_settlement: {
+        attempt_id: "quantify-receipt",
+        requested_effect: "read",
+        effect_state: "none",
+        request_dispatched: true
+      }
+    }, parent);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  }, edge);
+  assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+  assert.equal(decorated.structuredContent.observation.raw_payload.total, 509);
+  assert.equal(decorated.structuredContent.child_operation_results_v2.length, 1);
+  assert.notEqual(decorated.structuredContent.child_operation_results_v2[0].operation_id, "operation-1");
+  assert.equal(childLeases[0].parent_operation_id, "operation-1");
+  assert.equal(settled[0].result.structuredContent.operation_result_v2.operation_id, childLeases[0].operation_id);
+  assert.equal(settled[0].result.structuredContent.observation.raw_payload.tools[0].path, "/revit/quantify");
+});
+
+test("typed MCP parent retains controller identity while its exact native action settles as a child", async () => {
+  const settled: any[] = [];
+  const edge = {
+    async openChild(input: any) {
+      return {
+        ...meta()[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "native-child-1",
+        capability_id: input.capability_id,
+        requested_effect: "read",
+        purpose: "work",
+        operation_role: "child",
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "native-child-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { operation_id: lease.operation_id, settled: true };
+    }
+  };
+  const decorated = await runWithAssignmentKernelV2(meta(), async () => {
+    const native = await beginAssignmentKernelNativeRequestV2("POST", "/revit/find-elements");
+    assert.equal(native?.operation_role, "child");
+    assert.equal(native?.parent_operation_id, "operation-1");
+    await markAssignmentKernelNativeRequestDispatchingV2(native);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/find-elements", {
+      total: 2,
+      canonical_attempt_settlement: {
+        attempt_id: "typed-native-receipt",
+        requested_effect: "read",
+        effect_state: "none",
+        request_dispatched: true
+      }
+    }, native);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
+  }, edge);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].result.structuredContent.operation_result_v2.operation_id, "native-child-1");
+  assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "completed_without_native_dispatch");
+  assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
+  assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id, "native-child-1");
+  assert.equal(decorated.structuredContent.observation, undefined);
 });
 
 test("retained evidence retrieval settles as a non-native read and cannot claim mutation", async () => {
@@ -112,11 +262,13 @@ test("retained evidence retrieval settles as a non-native read and cannot claim 
 });
 
 test("read context rejects a contradictory native applied settlement", async () => {
-  await assert.rejects(() => runWithAssignmentKernelV2(meta("read"), async () => {
-    recordAssignmentKernelNativeResultV2("POST", "/transport-only", {
+  await assert.rejects(() => runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/transport-only" }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/transport-only");
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/transport-only", {
       ok: true,
       canonical_attempt_settlement: { attempt_id: "receipt", requested_effect: "apply", effect_state: "applied", request_dispatched: true }
-    });
+    }, request);
     return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read");
   }), /read_effect_conflict/);
 });

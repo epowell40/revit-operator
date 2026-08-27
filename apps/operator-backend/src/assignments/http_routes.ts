@@ -18,6 +18,14 @@ import {
   type AssignmentKernelBindingInputV2
 } from "./assignment_kernel_v2_lifecycle.js";
 import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
+import {
+  leaseFromOperation,
+  markAssignmentKernelOperationDispatchStartedV2,
+  openAssignmentKernelChildOperationV2,
+  settleAssignmentKernelOperationV2
+} from "./assignment_kernel_v2_execution.js";
+import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
+import { getAssignmentKernelPublicationV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -38,6 +46,101 @@ export async function handleAssignmentHttpRoute(
 ): Promise<boolean> {
   if (handleVerifiedWorkPacketHttpRoute(req, res, url, authorizeSession)) return true;
   if (handleWorkReturnHttpRoute(req, res, url, authorizeSession)) return true;
+  if (req.method === "GET" && url.pathname.startsWith("/api/assignments/v2/")
+      && !url.pathname.startsWith("/api/assignments/v2/operations/")
+      && !url.pathname.startsWith("/api/assignments/v2/criteria/")) {
+    const assignmentId = decodeURIComponent(url.pathname.slice("/api/assignments/v2/".length)).trim().slice(0, 240);
+    const publication = assignmentId ? getAssignmentKernelPublicationV2(assignmentId) : null;
+    if (!publication) {
+      writeJson(res, assignmentId ? 404 : 400, { error: assignmentId ? "Assignment not found." : "assignment id is required." });
+      return true;
+    }
+    if (!authorizeSession(publication.snapshot.current_binding.session_id)) return true;
+    writeJson(res, 200, { ok: true, assignment_kernel_v2: publication });
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/operations/children") {
+    try {
+      const body = await readJson(req, 512_000) as JsonMap | null;
+      const requested = v2Binding(body);
+      if (!authorizeSession(requested.session_id)) return true;
+      const snapshot = getAssignmentKernelSnapshotV2(requested.assignment_id);
+      if (!snapshot || snapshot.current_binding.run_id !== requested.run_id
+          || snapshot.current_binding.generation !== requested.generation
+          || snapshot.current_binding.session_id !== requested.session_id) {
+        throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
+      }
+      const role = body?.operation_role === "prerequisite" ? "prerequisite"
+        : body?.operation_role === "child" ? "child" : null;
+      if (!role) throw new Error("assignment_kernel_v2_child_role_invalid");
+      const method = String(body?.method ?? "").trim().toUpperCase();
+      const lease = openAssignmentKernelChildOperationV2({
+        binding: snapshot.current_binding,
+        parent_operation_id: String(body?.parent_operation_id ?? "").trim(),
+        child_ordinal: Number(body?.child_ordinal),
+        operation_role: role,
+        capability_id: String(body?.capability_id ?? "").trim(),
+        classified_effect: String(body?.classified_effect ?? "read").trim(),
+        ...(method === "GET" || method === "POST" ? { method } : {}),
+        ...(typeof body?.path === "string" ? { path: body.path } : {}),
+        arguments: body?.arguments ?? {},
+        blocks_parent_settlement: body?.blocks_parent_settlement !== false
+      });
+      writeJson(res, 201, {
+        ok: true,
+        operation_lease_v2: lease,
+        assignment_snapshot_v2: getAssignmentKernelSnapshotV2(requested.assignment_id)
+      });
+    } catch (error) {
+      writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/operations/dispatch") {
+    try {
+      const body = await readJson(req, 128_000) as JsonMap | null;
+      const requested = v2Binding(body);
+      if (!authorizeSession(requested.session_id)) return true;
+      const snapshot = getAssignmentKernelSnapshotV2(requested.assignment_id);
+      const operation = snapshot?.operations[String(body?.operation_id ?? "").trim()];
+      if (!snapshot || !operation || !sameAssignmentBindingV2(snapshot.current_binding, operation.binding)
+          || snapshot.current_binding.run_id !== requested.run_id
+          || snapshot.current_binding.generation !== requested.generation
+          || snapshot.current_binding.session_id !== requested.session_id) {
+        throw new Error("assignment_kernel_v2_operation_binding_mismatch");
+      }
+      markAssignmentKernelOperationDispatchStartedV2(leaseFromOperation(operation));
+      writeJson(res, 202, { ok: true, assignment_snapshot_v2: getAssignmentKernelSnapshotV2(requested.assignment_id) });
+    } catch (error) {
+      writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/operations/results") {
+    try {
+      const body = await readJson(req, 8 * 1024 * 1024) as JsonMap | null;
+      const requested = v2Binding(body);
+      if (!authorizeSession(requested.session_id)) return true;
+      const snapshot = getAssignmentKernelSnapshotV2(requested.assignment_id);
+      const operation = snapshot?.operations[String(body?.operation_id ?? "").trim()];
+      if (!snapshot || !operation || !sameAssignmentBindingV2(snapshot.current_binding, operation.binding)
+          || snapshot.current_binding.run_id !== requested.run_id
+          || snapshot.current_binding.generation !== requested.generation
+          || snapshot.current_binding.session_id !== requested.session_id) {
+        throw new Error("assignment_kernel_v2_operation_binding_mismatch");
+      }
+      const settled = settleAssignmentKernelOperationV2(leaseFromOperation(operation), body?.mcp_result);
+      writeJson(res, 200, {
+        ok: true,
+        operation_id: operation.operation_id,
+        evidence_refs: settled.evidence_refs,
+        assignment_snapshot_v2: settled.snapshot
+      });
+    } catch (error) {
+      writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
   if (req.method === "POST" && url.pathname === "/api/assignments/v2/criteria/evaluate") {
     try {
       const body = await readJson(req, 128_000) as JsonMap | null;
