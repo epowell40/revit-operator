@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import {
   OBSERVATION_V2_SCHEMA,
   OPERATION_RESULT_V2_SCHEMA,
@@ -80,7 +80,7 @@ export function unwrapOperationResultV2(envelope: OperationResultTransportV2): O
 }
 
 export function canonicalPayloadHashV2(rawPayload: unknown): string {
-  return createHash("sha256").update(canonicalJsonV2(rawPayload), "utf8").digest("hex");
+  return payloadDigestV2(rawPayload).digest;
 }
 
 function normalizedSourceField(value: string): string {
@@ -139,6 +139,9 @@ export function observationFromOperationResultV2(input: Readonly<{
     result_schema_id: input.result.result_schema_id,
     raw_payload_ref: input.raw_payload_ref,
     raw_payload_hash: payloadHash,
+    ...(input.result.payload_provenance
+      ? { payload_provenance: structuredClone(input.result.payload_provenance) }
+      : {}),
     facts: input.registry.decode(input.result.result_schema_id, input.raw_payload),
     target_scope: structuredClone(input.target_scope ?? {}),
     observed_at: input.result.completed_at,

@@ -1,0 +1,99 @@
+{
+  "schema": "revit-operator.payload-digest-golden-vectors/v2",
+  "canonicalization_version": "revit-operator.canonical-json.utf8-ordinal.v2",
+  "vectors": [
+    {
+      "id": "nested-arrays-empty-primitives",
+      "value": {
+        "nested": {"items": [{"ok": false, "count": 0}, null, [], {}]},
+        "empty_array": [],
+        "empty_object": {},
+        "null_value": null,
+        "false_value": false,
+        "zero_value": 0
+      },
+      "canonical_json": "{\"empty_array\":[],\"empty_object\":{},\"false_value\":false,\"nested\":{\"items\":[{\"count\":0,\"ok\":false},null,[],{}]},\"null_value\":null,\"zero_value\":0}",
+      "digest": "c6dc2da29d1904e26f63af905da7675f2f54b8ef76585c41106f9177016cfd57",
+      "byte_count": 144
+    },
+    {
+      "id": "source-key-spellings-and-ordinal-order",
+      "value": {
+        "camelCase": 1,
+        "snake_case": 2,
+        "hyphen-key": 3,
+        "_metadata": 4,
+        "$schema": 5,
+        "Alpha": 6,
+        "alpha": 7,
+        "Zed": 8,
+        "zed": 9
+      },
+      "canonical_json": "{\"$schema\":5,\"Alpha\":6,\"Zed\":8,\"_metadata\":4,\"alpha\":7,\"camelCase\":1,\"hyphen-key\":3,\"snake_case\":2,\"zed\":9}",
+      "digest": "47ab688d52ca585cfec8b088602258c39a9702234538638327e8419ed8a50335",
+      "byte_count": 107
+    },
+    {
+      "id": "unicode-preserved-without-semantic-normalization",
+      "value": {
+        "accent_precomposed": "Café",
+        "accent_decomposed": "Café",
+        "cjk": "模型",
+        "emoji": "🛠️",
+        "separators": "line paragraph end"
+      },
+      "canonical_json": "{\"accent_decomposed\":\"Café\",\"accent_precomposed\":\"Café\",\"cjk\":\"模型\",\"emoji\":\"🛠️\",\"separators\":\"line paragraph end\"}",
+      "digest": "7581973642b9d8738c991f77488e7885b0804a3dde2a2953f378121ee538479a",
+      "byte_count": 130
+    },
+    {
+      "id": "metadata-plus-task-payload",
+      "value": {
+        "data": {"total": 2, "items": [{"familyName": "A", "type_name": "B"}]},
+        "canonical_attempt_settlement": {
+          "schema": "revit-operator.native-attempt-settlement.v1",
+          "request_dispatched": true,
+          "effect_state": "none"
+        }
+      },
+      "canonical_json": "{\"canonical_attempt_settlement\":{\"effect_state\":\"none\",\"request_dispatched\":true,\"schema\":\"revit-operator.native-attempt-settlement.v1\"},\"data\":{\"items\":[{\"familyName\":\"A\",\"type_name\":\"B\"}],\"total\":2}}",
+      "digest": "e99514b4fc2ca45a8147f01cc3da3a966681bc3a2272a6c42ce2ce59395b237a",
+      "byte_count": 201
+    },
+    {
+      "id": "candidate2-tool-registry-shape",
+      "value": {
+        "version": "operator.tool_registry.v1",
+        "tools": [{
+          "path": "/revit/find-elements-by-parameter",
+          "request_schema": {
+            "type": "object",
+            "properties": {
+              "parameterName": {"type": "string"},
+              "parameter": {"type": "string"},
+              "paramName": {"type": "string"}
+            }
+          }
+        }],
+        "canonical_attempt_settlement": {"request_dispatched": true, "effect_state": "none"}
+      },
+      "canonical_json": "{\"canonical_attempt_settlement\":{\"effect_state\":\"none\",\"request_dispatched\":true},\"tools\":[{\"path\":\"/revit/find-elements-by-parameter\",\"request_schema\":{\"properties\":{\"paramName\":{\"type\":\"string\"},\"parameter\":{\"type\":\"string\"},\"parameterName\":{\"type\":\"string\"}},\"type\":\"object\"}}],\"version\":\"operator.tool_registry.v1\"}",
+      "digest": "6aceebd7ea2a6b876769a1760a116dfad158084f111dcaf11cbcfcff52f8c5f9",
+      "byte_count": 319
+    },
+    {
+      "id": "q01-inventory-result-shape",
+      "value": {
+        "total": 509,
+        "groups": [
+          {"family": "Supply Grille - Double Deflection", "type": "Curve Face Rectangular Neck", "count": 266},
+          {"family": "Return Grille - Double Deflection", "type": "Curve Face Rectangular Neck", "count": 138}
+        ],
+        "canonical_attempt_settlement": {"request_dispatched": true, "effect_state": "none"}
+      },
+      "canonical_json": "{\"canonical_attempt_settlement\":{\"effect_state\":\"none\",\"request_dispatched\":true},\"groups\":[{\"count\":266,\"family\":\"Supply Grille - Double Deflection\",\"type\":\"Curve Face Rectangular Neck\"},{\"count\":138,\"family\":\"Return Grille - Double Deflection\",\"type\":\"Curve Face Rectangular Neck\"}],\"total\":509}",
+      "digest": "ff58d7a652cff146d0c367e9dce32a1ebb611760fa6d253041e82e5707c7e792",
+      "byte_count": 297
+    }
+  ]
+}

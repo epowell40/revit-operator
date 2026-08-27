@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
+import {
+  canonicalPayloadJsonV2,
+  payloadDigestV2,
+  payloadRepresentationDigestV2
+} from "@revitoperator/payload-digest-v2";
 import { createOperatorBackendClient } from "./operatorBackendClient.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
@@ -49,6 +53,8 @@ type NativeCall = {
   path: string;
   state: "reserved" | "dispatching" | "completed";
   payload?: unknown;
+  observation_payload?: unknown;
+  payload_provenance?: ReturnType<typeof payloadProvenance>;
   settlement?: unknown;
 };
 type ChildAdmissionInput = {
@@ -83,20 +89,24 @@ function object(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
-function canonicalValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => [key, canonicalValue(item)]));
-}
-
 function canonicalJson(value: unknown): string {
-  return JSON.stringify(canonicalValue(value));
+  return canonicalPayloadJsonV2(value);
 }
 
 function sha256(value: unknown): string {
-  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+  return payloadDigestV2(value).digest;
+}
+
+function payloadProvenance(sourceValue: unknown, normalizedValue: unknown, transformationId: string) {
+  const sourceJson = JSON.stringify(sourceValue);
+  if (sourceJson === undefined) throw new Error("assignment_kernel_v2_payload_not_json_serializable");
+  return {
+    schema: "revit-operator.payload-provenance/v2",
+    source: payloadRepresentationDigestV2(Buffer.from(sourceJson, "utf8"), "utf8_json_bytes"),
+    normalized: payloadDigestV2(normalizedValue),
+    transformation_id: transformationId,
+    transformation_version: "1"
+  };
 }
 
 function text(value: unknown, max = 500): string {
@@ -318,6 +328,12 @@ export async function recordAssignmentKernelNativeResultV2(
   }
   if (call.state === "completed") return;
   call.payload = structuredClone(payload);
+  call.observation_payload = observationPayload(call.payload);
+  call.payload_provenance = payloadProvenance(
+    call.payload,
+    call.observation_payload,
+    "revit-operator.native-result-control-extraction"
+  );
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, false);
     const settlementEnvelope = mcpEnvelopeForCall(call, result);
@@ -408,7 +424,11 @@ function semanticFacts(payload: unknown, nativeCallCount: number): Array<Record<
     const prior = groups.get(key);
     groups.set(key, { family, type, count: (prior?.count ?? 0) + 1 });
   }
-  for (const group of [...groups.values()].sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)))) {
+  for (const group of [...groups.values()].sort((left, right) => {
+    const leftJson = canonicalJson(left);
+    const rightJson = canonicalJson(right);
+    return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
+  })) {
     facts.push({ fact_id: "inventory.group", value: group.count, dimensions: { family: group.family, type: group.type } });
   }
   for (const [key, value] of Object.entries(root)) {
@@ -419,6 +439,13 @@ function semanticFacts(payload: unknown, nativeCallCount: number): Array<Record<
 
 function directSettlement(payload: unknown): Record<string, unknown> {
   return object(object(payload).canonical_attempt_settlement);
+}
+
+function observationPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return structuredClone(payload);
+  return Object.fromEntries(Object.entries(payload as Record<string, unknown>)
+    .filter(([key]) => key !== "canonical_attempt_settlement")
+    .map(([key, value]) => [key, structuredClone(value)]));
 }
 
 function operationResultForCall(call: NativeCall, failed: boolean): Record<string, unknown> {
@@ -440,6 +467,10 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
   const nativeTransactionState = persistentEffect === "applied" ? "committed"
     : call.lease.requested_effect === "preview" && !failed ? "rolled_back"
       : persistentEffect === "unknown" ? "unknown" : "not_applicable";
+  const provenance = failed ? undefined : call.payload_provenance;
+  if (!failed && (!provenance || call.observation_payload === undefined)) {
+    throw new Error("assignment_kernel_v2_observation_payload_not_captured");
+  }
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
     result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed })}`,
@@ -452,7 +483,10 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
     authority: "native-host",
     result_schema_id: `operator-native/${call.method}:${call.path}/v2`,
     observation_required: !failed,
-    ...(!failed ? { raw_payload_hash: sha256(call.payload) } : {}),
+    ...(!failed && provenance ? {
+      raw_payload_hash: provenance.normalized.digest,
+      payload_provenance: provenance
+    } : {}),
     ...(text(settlement.attempt_id) ? { receipt_id: text(settlement.attempt_id) } : {}),
     native_correlation_id: call.request_id,
     request_identity: call.lease.request_identity,
@@ -469,8 +503,8 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
       operation_result_v2: operationResult,
       ...(operationResult.observation_required ? {
         observation: {
-          raw_payload: call.payload,
-          semantic_facts: semanticFacts(call.payload, 1),
+          raw_payload: call.observation_payload,
+          semantic_facts: semanticFacts(call.observation_payload, 1),
           target_scope: {},
           verification_relevance: call.lease.purpose === "verification" ? ["postcondition"] : ["task_result"]
         }
@@ -481,6 +515,9 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
 
 function transportOnlyResult(context: Context, payload: unknown, failed: boolean, evidenceRead: boolean): Record<string, unknown> {
   const transportSucceeded = !failed;
+  const provenance = evidenceRead && !failed
+    ? payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload")
+    : undefined;
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
     result_id: `resultv2_${sha256({ operation_id: context.operation_id, payload, failed })}`,
@@ -494,7 +531,10 @@ function transportOnlyResult(context: Context, payload: unknown, failed: boolean
     authority: evidenceRead ? "operator-evidence-store" : "operator-mcp-transport",
     result_schema_id: `operator-capability/${context.capability_id}/v2`,
     observation_required: evidenceRead && !failed,
-    ...(evidenceRead && !failed ? { raw_payload_hash: sha256(payload) } : {}),
+    ...(evidenceRead && !failed && provenance ? {
+      raw_payload_hash: provenance.normalized.digest,
+      payload_provenance: provenance
+    } : {}),
     request_identity: context.request_identity,
     completed_at: new Date().toISOString(),
     ...(failed ? { error_code: "mcp_tool_failed" } : {})
@@ -527,8 +567,8 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       operation_result_v2: operationResult,
       ...(parentCall && operationResult.observation_required ? {
         observation: {
-          raw_payload: parentCall.payload,
-          semantic_facts: semanticFacts(parentCall.payload, 1),
+          raw_payload: parentCall.observation_payload,
+          semantic_facts: semanticFacts(parentCall.observation_payload, 1),
           target_scope: {},
           verification_relevance: scope.context.purpose === "verification" ? ["postcondition"] : ["task_result"]
         }

@@ -1,0 +1,16 @@
+{
+  "schema": "revit-operator.payload-regression-fixture/v1",
+  "fixture_id": "minimal-locale-versus-ordinal-order",
+  "source": "Minimal extraction of the Candidate 2 representation defect",
+  "payload": {
+    "parameter": 1,
+    "parameterName": 2,
+    "paramName": 3
+  },
+  "candidate2_failure": {
+    "locale_json": "{\"parameter\":1,\"parameterName\":2,\"paramName\":3}",
+    "locale_sha256": "e2d742746dfc5aee417ab32585d2cceee3f3474703fb0028c85659d350b018d8",
+    "ordinal_json": "{\"paramName\":3,\"parameter\":1,\"parameterName\":2}",
+    "ordinal_sha256": "653ec46c5439542a3e3894d035258de882dd5bfcef1acff9611ebf126138d8a0"
+  }
+}

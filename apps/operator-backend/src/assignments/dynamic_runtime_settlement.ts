@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { payloadDigestV2, payloadRepresentationDigestV2 } from "@revitoperator/payload-digest-v2";
 import type { ChatRequest, ChatResponse } from "../contracts.js";
 import { getActiveGoalForSession } from "../goals/service.js";
 import type { ProviderDynamicProgramV1 } from "../dynamic_runtime/provider_dynamic_program.js";
@@ -13,14 +14,10 @@ import {
   type AssignmentKernelOperationLeaseV2
 } from "./assignment_kernel_v2_execution.js";
 import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
-import { OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2 } from "../domain/assignment-kernel/index.js";
+import { OPERATION_RESULT_V2_SCHEMA } from "../domain/assignment-kernel/index.js";
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
-}
-
-function canonicalDigest(value: unknown): string {
-  return createHash("sha256").update(canonicalJsonV2(value), "utf8").digest("hex");
 }
 
 export function openProviderDynamicRuntimeOperationV2(
@@ -78,6 +75,10 @@ export function journalProviderDynamicRuntimeSettlement(
     const persistentEffect = completed && program.apply ? "applied"
       : receipt.outcome_unknown && program.apply ? "unknown" : "none";
     const dispatchState = receipt.request_dispatched ? "dispatched" : "not_dispatched";
+    const normalizedPayload = completed ? payloadDigestV2(response) : null;
+    const sourcePayload = completed
+      ? payloadRepresentationDigestV2(Buffer.from(JSON.stringify(response), "utf8"), "utf8_json_bytes")
+      : null;
     const result = {
       schema: OPERATION_RESULT_V2_SCHEMA,
       result_id: `resultv2_${digest({ operation_id: v2Lease.operation_id, receipt })}`,
@@ -92,7 +93,16 @@ export function journalProviderDynamicRuntimeSettlement(
       authority: "dynamic-runtime",
       result_schema_id: "operator-dynamic-runtime/provider-program/v2",
       observation_required: completed,
-      ...(completed ? { raw_payload_hash: canonicalDigest(response) } : {}),
+      ...(completed && normalizedPayload && sourcePayload ? {
+        raw_payload_hash: normalizedPayload.digest,
+        payload_provenance: {
+          schema: "revit-operator.payload-provenance/v2",
+          source: sourcePayload,
+          normalized: normalizedPayload,
+          transformation_id: "revit-operator.parsed-json-to-canonical-payload",
+          transformation_version: "2"
+        }
+      } : {}),
       ...(receipt.evidence_sha256 ? { receipt_id: `dynamic-evidence:${receipt.evidence_sha256}` } : {}),
       request_identity: v2Lease.request_identity,
       completed_at: new Date().toISOString(),

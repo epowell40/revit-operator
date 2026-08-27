@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -22,6 +24,17 @@ const binding = {
   principal_id: "principal-1",
   document_fingerprint: "document-1"
 };
+
+function payloadRegressionFixture(name: string): any {
+  const relative = path.join("contracts", "assignment-kernel-v2", "payload-digest", name);
+  const candidates = [
+    path.resolve(process.cwd(), "..", "..", relative),
+    path.resolve(process.cwd(), "..", relative)
+  ];
+  const fixturePath = candidates.find(candidate => existsSync(candidate));
+  assert.ok(fixturePath, `Missing payload regression fixture ${name}`);
+  return JSON.parse(readFileSync(fixturePath, "utf8"));
+}
 
 function meta(
   effect: "read" | "preview" | "apply" = "read",
@@ -78,6 +91,31 @@ test("native result is normalized once into an explicit OperationResultV2 and se
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "native-host");
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.total" && fact.value === 2));
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.group" && fact.value === 2));
+});
+
+test("Candidate 2 tool-registry payload uses the cross-process ordinal digest", async () => {
+  const fixture = payloadRegressionFixture("candidate2-tool-registry-sanitized.json");
+  const decorated = await runWithAssignmentKernelV2(
+    meta("read", "discovery", { method: "GET", path: "/revit/tool-registry" }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("GET", "/revit/tool-registry");
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("GET", "/revit/tool-registry", fixture.payload, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
+    }
+  ) as any;
+  assert.equal(
+    decorated.structuredContent.operation_result_v2.raw_payload_hash,
+    "a7c639107bc169b5077712e82bd0c2f9886c3d8bde34c7599dff966097e12f40"
+  );
+  const { canonical_attempt_settlement: _control, ...expectedObservationPayload } = fixture.payload;
+  assert.deepEqual(decorated.structuredContent.observation.raw_payload, expectedObservationPayload);
+  assert.equal(decorated.structuredContent.operation_result_v2.payload_provenance.source.representation, "utf8_json_bytes");
+  assert.equal(decorated.structuredContent.operation_result_v2.payload_provenance.normalized.representation, "canonical_json");
+  assert.equal(
+    decorated.structuredContent.operation_result_v2.payload_provenance.transformation_id,
+    "revit-operator.native-result-control-extraction"
+  );
 });
 
 test("source field spelling aliases normalize to identical semantic fact identities", async () => {

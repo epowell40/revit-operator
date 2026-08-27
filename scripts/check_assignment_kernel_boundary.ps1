@@ -19,7 +19,8 @@ foreach ($file in $domainFiles) {
   $relative = $file.FullName.Substring($domainRoot.Length).TrimStart('\', '/').Replace('\', '/')
   foreach ($match in [regex]::Matches($content, '(?m)^\s*(?:import|export)\b[^\r\n]*?from\s+["'']([^"'']+)["'']')) {
     $specifier = $match.Groups[1].Value
-    if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../")) {
+    $sharedPayloadContract = $specifier -eq "@revitoperator/payload-digest-v2" -and @("canonical.ts", "payload_provenance.ts") -contains $relative
+    if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
   }
@@ -31,6 +32,39 @@ foreach ($file in $domainFiles) {
   if ($content -match '(?i)json[_ -]?path|payload\.[A-Za-z_]|selector[_ -]?dsl|completion[_ -]?assertion') {
     $violations.Add("$relative introduces a payload selector or completion assertion language")
   }
+}
+
+# Payload identity is a cross-process protocol. These reviewed producers and
+# consumers must import the one shared package, and may not grow another local
+# canonical-payload implementation.
+$payloadDigestPackage = Join-Path $RepoRoot "packages/payload-digest-v2/index.js"
+if (-not (Test-Path -LiteralPath $payloadDigestPackage -PathType Leaf)) {
+  $violations.Add("Shared payload digest V2 package is missing")
+}
+$payloadContractConsumers = @(
+  "apps/mcp-server/src/lib/assignmentKernelV2.ts",
+  "apps/operator-backend/src/domain/assignment-kernel/canonical.ts",
+  "apps/operator-backend/src/execution_truth/assignment_kernel_v2_result_adapter.ts",
+  "apps/operator-backend/src/execution_truth/assignment_kernel_v2_payload_provenance.ts",
+  "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts"
+)
+foreach ($relativePath in $payloadContractConsumers) {
+  $path = Join-Path $RepoRoot $relativePath
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $violations.Add("Reviewed payload digest consumer is missing: $relativePath")
+    continue
+  }
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/payload-digest-v2') {
+    $violations.Add("$relativePath does not import the shared payload digest V2 contract")
+  }
+  if ($content -match '(?m)function\s+canonicalValue\s*\(' -or $content -match '(?m)function\s+canonicalDigest\s*\(') {
+    $violations.Add("$relativePath introduces a local V2 canonical-payload implementation")
+  }
+}
+$mcpPayloadEdge = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "apps/mcp-server/src/lib/assignmentKernelV2.ts")
+if ($mcpPayloadEdge -match 'localeCompare\s*\(') {
+  $violations.Add("MCP Assignment Kernel payload identity must not use locale-sensitive key ordering")
 }
 
 # The registry is the reviewed inventory of authoritative effect/outcome fields.
