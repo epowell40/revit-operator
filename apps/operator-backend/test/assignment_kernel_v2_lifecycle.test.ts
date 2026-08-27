@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+  failAssignmentKernelOperationV2,
   markAssignmentKernelOperationDispatchStartedV2,
   openAssignmentKernelOperationV2,
   settleAssignmentKernelOperationV2
@@ -24,6 +25,12 @@ import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { listWorkReturns } from "../src/work_returns/store.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
 import { assertCompleteProtocolV2Receipts } from "../src/benchmark/protocol_v2_runner.js";
+import {
+  DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,
+  advanceAssignmentKernelProgressV2,
+  assignmentEfficiencyTraceV2,
+  recordAssignmentProviderCallStateV2
+} from "../src/assignments/assignment_kernel_v2_progress.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -192,4 +199,88 @@ test("stable clarification variable survives aliases and resumes the same Assign
   assert.equal(resumed.input_values.replacement_text, "Current issue wording");
   assert.equal(resumed.pending_input_variable_ids.length, 0);
   assert.equal(resumed.clarifications["clarification-replacement"]!.resolved_at !== undefined, true);
+}));
+
+test("durable progress controller evaluates retained observations and terminalizes before another provider turn", () => workspace(() => {
+  const { goal, binding } = setup();
+  recordAssignmentProviderCallStateV2({
+    binding,
+    call_id: "provider-inventory",
+    state: "admitted",
+    provider: "openai",
+    model: "gpt-test",
+    reasoning_effort: "medium",
+    gap_ids: [`criterion:${getAssignmentKernelSnapshotV2(goal.id)!.spec.criteria[0]!.criterion_id}`],
+    criterion_ids: [getAssignmentKernelSnapshotV2(goal.id)!.spec.criteria[0]!.criterion_id],
+    expected_information: ["result.available"]
+  });
+  recordAssignmentProviderCallStateV2({ binding, call_id: "provider-inventory", state: "dispatched" });
+  recordAssignmentProviderCallStateV2({
+    binding,
+    call_id: "provider-inventory",
+    state: "usage_received",
+    usage: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 5, total_tokens: 125, estimated_cost_usd: 0.02 }
+  });
+  recordAssignmentProviderCallStateV2({ binding, call_id: "provider-inventory", state: "completed", success: true });
+  settleRead(goal.id);
+  const before = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(Object.keys(before.criteria).length, 0);
+  assert.equal(before.quiescent, true);
+
+  const advanced = advanceAssignmentKernelProgressV2({ binding });
+  assert.equal(advanced.snapshot.terminal, true);
+  assert.equal(advanced.snapshot.outcome, "complete");
+  assert.equal(advanced.snapshot.terminal_reason, "criterion_observations_evaluated");
+
+  __testOnlyResetGoalListCache();
+  const recovered = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(recovered.terminal, true);
+  assert.equal(recovered.provider_calls["provider-inventory"]!.usage?.total_tokens, 125);
+  const trace = assignmentEfficiencyTraceV2(goal.id);
+  assert.equal(trace.provider_calls, 1);
+  assert.equal(trace.criteria_closed, 1);
+  assert.equal(trace.provider_call_explanations[0]!.why, `Resolve criterion:${recovered.spec.criteria[0]!.criterion_id} by obtaining result.available.`);
+  assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
+  assert.equal(listWorkReturns(goal.id).length, 1);
+}));
+
+test("bounded reconciliation exhaustion terminalizes an unknown effect as blocked without replay", () => workspace(() => {
+  const { goal, binding, snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "apply-request",
+    provider_turn_id: "apply-turn",
+    capability_id: "element.update",
+    classified_effect: "apply",
+    target_tokens: ["id:selected-note"],
+    arguments: { value: "new wording" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const unknown = failAssignmentKernelOperationV2(applyLease, new Error("native response lost"), "dispatching");
+  assert.deepEqual(unknown.unresolved_unknown_operation_ids, [applyLease.operation_id]);
+  assert.equal(unknown.quiescent, true);
+
+  const reconciliationLease = openAssignmentKernelOperationV2({
+    snapshot: unknown,
+    controller_request_id: "reconciliation-request",
+    provider_turn_id: "reconciliation-turn",
+    capability_id: "element.read",
+    classified_effect: "read",
+    target_tokens: ["id:selected-note"],
+    arguments: { target_id: "selected-note" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(reconciliationLease);
+  const stillUnknown = failAssignmentKernelOperationV2(reconciliationLease, new Error("reconciliation result unavailable"), "dispatching");
+  assert.deepEqual(stillUnknown.unresolved_unknown_operation_ids, [applyLease.operation_id]);
+
+  const advanced = advanceAssignmentKernelProgressV2({
+    binding,
+    budget: { ...DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, max_reconciliation_attempts: 1 }
+  });
+  assert.equal(advanced.snapshot.terminal, true);
+  assert.equal(advanced.snapshot.outcome, "blocked");
+  assert.equal(advanced.snapshot.progress_blocker?.code, "reconciliation_budget_exhausted");
+  assert.deepEqual(advanced.snapshot.unresolved_unknown_operation_ids, [applyLease.operation_id]);
+  assert.equal(Object.keys(advanced.snapshot.operations).length, 2, "the mutation is never replayed");
+  assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
 }));

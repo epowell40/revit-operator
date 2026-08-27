@@ -135,14 +135,14 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
         work_unit_id: "work-discovery",
         requested_effect: "read" as const,
         execution_class: "analysis" as const,
-        dependency_ids: [] as string[], criterion_ids: [] as string[], input_variable_ids: [] as string[],
+        dependency_ids: [] as string[], criterion_ids: criterionSpecs.map(criterion => criterion.criterion_id), input_variable_ids: [] as string[],
         independently_useful: false, safe_to_retain: true, rollback_scope: "none" as const
       }]),
       ...(effect === "apply" ? [{
         work_unit_id: "work-preview",
         requested_effect: "preview" as const,
         execution_class: "coupled_atomic" as const,
-        dependency_ids: [] as string[], criterion_ids: [] as string[],
+        dependency_ids: [] as string[], criterion_ids: criterionSpecs.map(criterion => criterion.criterion_id),
         input_variable_ids: inputVariables.map(variable => variable.variable_id),
         independently_useful: false, safe_to_retain: false, rollback_scope: "operation" as const
       }] : []),
@@ -168,7 +168,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
         work_unit_id: "work-evidence",
         requested_effect: "read" as const,
         execution_class: "analysis" as const,
-        dependency_ids: [], criterion_ids: [], input_variable_ids: [],
+        dependency_ids: [], criterion_ids: criterionSpecs.map(criterion => criterion.criterion_id), input_variable_ids: [],
         independently_useful: false, safe_to_retain: true, rollback_scope: "none" as const
       }
     ],

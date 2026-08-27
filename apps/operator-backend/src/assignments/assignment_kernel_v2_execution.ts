@@ -3,6 +3,7 @@ import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
   canonicalJsonV2,
+  deriveProgressGapsV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type AssignmentSnapshotV2,
@@ -171,6 +172,14 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   if (purpose === "verification" && !verifies) {
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
+  const advancesCriterionIds = [...new Set(unit.criterion_ids)].sort();
+  const currentGaps = deriveProgressGapsV2(input.snapshot);
+  const resolvesGapIds = currentGaps
+    .filter((gap) => gap.work_unit_ids.includes(unit.work_unit_id)
+      || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
+      || (purpose === "reconciliation" && gap.kind === "effect_unknown"))
+    .map((gap) => gap.gap_id)
+    .sort();
   const operation: OperationV2 = {
     schema: OPERATION_V2_SCHEMA,
     operation_id: operationId,
@@ -179,6 +188,8 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     capability_id: input.capability_id,
     requested_effect: effect,
     purpose,
+    advances_criterion_ids: advancesCriterionIds,
+    resolves_gap_ids: resolvesGapIds,
     target: {
       ...(targetId ? { target_id: targetId } : {}),
       ...(input.snapshot.current_binding.document_fingerprint ? { document_fingerprint: input.snapshot.current_binding.document_fingerprint } : {}),

@@ -32,8 +32,8 @@ export interface OperationV2 {
   capability_id: string;
   requested_effect: RequestedEffectV2;
   purpose: OperationPurposeV2;
-  advances_criterion_ids?: readonly CriterionIdV2[];
-  resolves_gap_ids?: readonly string[];
+  advances_criterion_ids: readonly CriterionIdV2[];
+  resolves_gap_ids: readonly string[];
   target: CanonicalTargetV2;
   input: Readonly<Record<string, unknown>>;
   admission_state: OperationAdmissionStateV2;

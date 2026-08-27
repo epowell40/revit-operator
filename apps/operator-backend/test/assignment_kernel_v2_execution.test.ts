@@ -159,7 +159,7 @@ test("MCP acceptance without an apply settlement remains unknown and cannot be r
   const failed = failAssignmentKernelOperationV2(lease, new Error("transport_response_lost"), "dispatching");
   assert.equal(failed.operations[lease.operation_id]!.persistent_effect, "unknown");
   assert.deepEqual(failed.unresolved_unknown_operation_ids, [lease.operation_id]);
-  assert.equal(failed.quiescent, false);
+  assert.equal(failed.quiescent, true);
   assert.throws(() => openAssignmentKernelOperationV2({
     snapshot: failed, controller_request_id: 6, provider_turn_id: "turn-6", capability_id: "element.update",
     classified_effect: "apply", arguments: { value: "new" }

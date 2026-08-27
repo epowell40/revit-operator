@@ -3,6 +3,8 @@ import type { AssignmentBindingV2, CriterionIdV2, InputVariableIdV2, Observation
 import type { CriterionEvaluationV2, AssignmentOutcomeV2 } from "./criteria.js";
 import type { ObservationV2 } from "./observation.js";
 import type { OperationResultV2, OperationV2 } from "./operation.js";
+import type { ProgressEpochV2 } from "./progress/contracts.js";
+import type { ProviderCallStateV2, ProviderUsageV2 } from "./progress/provider_call.js";
 
 export const ASSIGNMENT_EVENT_V2_SCHEMA = "revit-operator.assignment-event/v2" as const;
 
@@ -24,7 +26,23 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "input_requested"; variable_id: InputVariableIdV2; clarification_id: string; question: string }
   | { event_type: "input_supplied"; variable_id: InputVariableIdV2; clarification_id: string; value: unknown }
   | { event_type: "provider_call_recorded"; call_id: string; provider: string; model: string; reasoning_effort: string | null; success: boolean }
+  | {
+      event_type: "provider_call_state_recorded";
+      call_id: string;
+      state: ProviderCallStateV2;
+      provider?: string;
+      model?: string;
+      reasoning_effort?: string | null;
+      gap_ids?: readonly string[];
+      criterion_ids?: readonly CriterionIdV2[];
+      expected_information?: readonly string[];
+      usage?: ProviderUsageV2;
+      success?: boolean;
+      error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
+    }
   | { event_type: "provider_budget_exhausted"; limit: number }
+  | { event_type: "progress_epoch_recorded"; epoch: ProgressEpochV2 }
+  | { event_type: "progress_blocked"; code: string; gap_ids: readonly string[] }
   | { event_type: "operation_admitted"; operation: OperationV2 }
   | { event_type: "operation_dispatch_started"; operation_id: OperationIdV2 }
   | { event_type: "operation_dispatch_recorded"; operation_id: OperationIdV2; authority: "mcp" | "backend" | "dynamic_runtime" | "courier"; correlation_id?: string }
