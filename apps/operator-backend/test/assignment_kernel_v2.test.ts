@@ -99,6 +99,8 @@ function operation(effect: "read" | "preview" | "apply" = "read", purpose: Opera
     capability_id: effect === "read" ? "inventory.read" : "element.update",
     requested_effect: effect,
     purpose,
+    advances_criterion_ids: ["criterion-result"],
+    resolves_gap_ids: ["criterion:criterion-result"],
     target: { target_id: "target-1", document_fingerprint: binding.document_fingerprint },
     input: {},
     admission_state: "admitted",
@@ -438,7 +440,7 @@ test("apply completion requires a committed native result and task-level criteri
   assert.deepEqual(completed.operations["operation-1"].verification_operation_ids, [verification.operation_id]);
 });
 
-test("apply timeout remains nonquiescent until target-bound reconciliation", () => {
+test("apply timeout settles native work but remains unresolved until target-bound reconciliation", () => {
   const journal = createJournal(spec("apply"));
   journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
@@ -454,7 +456,8 @@ test("apply timeout remains nonquiescent until target-bound reconciliation", () 
   };
   const timedOut = journal.append(event(journal, { event_type: "operation_result_recorded", result: timeout }));
   assert.equal(timedOut.operations["operation-1"].settlement_state, "settled");
-  assert.equal(timedOut.quiescent, false);
+  assert.equal(timedOut.quiescent, true);
+  assert.equal(timedOut.outcome, "active");
   assert.deepEqual(timedOut.unresolved_unknown_operation_ids, ["operation-1"]);
 });
 
@@ -559,7 +562,13 @@ test("independent completed work remains retained while another work unit needs 
     ]
   };
   const journal = createJournal(assignmentSpec);
-  const completedOperation = { ...operation(), operation_id: "operation-complete", work_unit_id: "work-complete" };
+  const completedOperation = {
+    ...operation(),
+    operation_id: "operation-complete",
+    work_unit_id: "work-complete",
+    advances_criterion_ids: ["criterion-complete"],
+    resolves_gap_ids: ["criterion:criterion-complete"]
+  };
   journal.append(event(journal, { event_type: "operation_admitted", operation: completedOperation }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-complete" }));
   const raw = { total: 1 };

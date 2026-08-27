@@ -20,7 +20,9 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
     return "awaiting_user_input";
   }
   if (snapshot.pending_review_ids.length > 0) return "awaiting_user_review";
-  if (!snapshot.quiescent || snapshot.unresolved_unknown_operation_ids.length > 0) return "active";
+  if (!snapshot.quiescent) return "active";
+  if (snapshot.progress_blocker) return "blocked";
+  if (snapshot.unresolved_unknown_operation_ids.length > 0) return "active";
   if (snapshot.provider_budget_exhausted) return "failed";
 
   const requiredSpecs = snapshot.spec.criteria.filter((criterion) => criterion.required);

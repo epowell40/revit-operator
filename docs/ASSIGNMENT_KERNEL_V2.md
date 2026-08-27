@@ -76,14 +76,35 @@ answer to "what happens next?" and `ProgressEpochV2` records whether a bounded
 reasoning/execution cycle changed authoritative domain truth. Provider prose,
 repeated observations, and equivalent operations are not progress.
 
-The EPIC-0457 contracts and historical replay utility are deliberately
-non-operative until the deterministic controller is integrated. They make the
-old absence of call justification and criterion scheduling observable without
-changing the existing V2 execution path. A future enabled V2 path must reject
-reasoning or operations that cannot bind to an unresolved gap, evaluate
-qualifying observations before another unconstrained reasoning turn, and
-derive a truthful non-active outcome whenever the Assignment is quiescent and
-no justified next action exists.
+The EPIC-0457 controller is a pure reducer-side decision owner. It evaluates
+qualifying observations before admitting another reasoning turn, waits for
+durably recorded provider calls and operations, prioritizes reconciliation,
+requests authenticated input/review, and derives a truthful blocked or terminal
+decision when no justified work remains. Store-level integration exposes the
+same decision and deterministic criterion handoff without switching the live
+provider loop yet; that switch is a separate edge-integration change.
+
+Provider calls have a durable lifecycle ledger (`admitted`, `dispatched`,
+`response_started`, `usage_received`, `completed`, and downstream
+`response_transport_completed`). The provider call is bound at admission to
+exact gaps, criteria, and expected information. Provider completion—not the
+survival of a downstream response socket—ends provider work for Assignment
+quiescence. Late telemetry can enrich a completed call without regressing or
+rewriting its completion.
+
+Operations carry `advances_criterion_ids` and `resolves_gap_ids`; admission
+fails when neither points to currently unresolved Assignment work. Equivalent
+operation repetition needs a typed retry or reconciliation basis. Progress
+epochs count only changes to authoritative observations, gaps, criteria, input,
+review, uncertainty, work units, or derived outcome. Consecutive no-progress
+epochs are bounded per unresolved gap set rather than accumulated forever
+across unrelated productive work.
+
+The generic emergency budgets bound provider calls, reasoning turns,
+operations, equivalent operations, no-progress epochs, reconciliation attempts,
+wall time, and known tokens. Exhaustion never creates success. Unknown effects
+remain visible and replay-prohibited; once bounded reconciliation is exhausted,
+the controller derives a truthful blocked outcome.
 
 Semantic fact cardinality is part of the Observation contract:
 
@@ -108,7 +129,10 @@ nor controller acceptance can make a V2 Assignment quiescent prematurely.
 Pre-dispatch rejection proves effect `none`. A dispatched apply is `unknown`
 until an authoritative committed result or target-bound reconciliation settles
 it. Retry requires a settled no-effect predecessor and a typed material-change
-basis. A terminal event is rejected while any operation is unresolved.
+basis. Quiescence means no provider call or operation is actively executing;
+a settled unknown effect remains an explicit reconciliation gap. A terminal
+event is rejected while execution is in flight, and completion cannot be
+derived while an unknown effect remains.
 
 ## Criterion authority
 

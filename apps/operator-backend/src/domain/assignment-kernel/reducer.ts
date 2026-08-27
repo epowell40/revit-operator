@@ -6,8 +6,77 @@ import type { CriterionEvaluationV2 } from "./criteria.js";
 import { deriveAssignmentOutcomeV2 } from "./outcome.js";
 import type { OperationResultV2, OperationV2 } from "./operation.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
+import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
+import { deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
 
 const EFFECT_RANK = { read: 0, preview: 1, apply: 2 } as const;
+const PROVIDER_STATE_RANK: Readonly<Record<ProviderCallStateV2, number>> = {
+  admitted: 0,
+  dispatched: 1,
+  response_started: 2,
+  usage_received: 3,
+  completed: 4,
+  response_transport_completed: 5
+};
+
+function providerTimestampField(state: ProviderCallStateV2): keyof ProviderCallV2 {
+  return ({
+    admitted: "admitted_at",
+    dispatched: "dispatched_at",
+    response_started: "response_started_at",
+    usage_received: "usage_received_at",
+    completed: "completed_at",
+    response_transport_completed: "response_transport_completed_at"
+  } as const)[state];
+}
+
+function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<AssignmentEventV2, { event_type: "provider_call_state_recorded" }>): AssignmentSnapshotV2 {
+  const previous = snapshot.provider_calls[event.call_id];
+  kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider call requires a stable identity.");
+  if (!previous) {
+    kernelAssertV2(event.state === "admitted", "provider_call_not_admitted", "The first provider-call state must be admitted.");
+    kernelAssertV2(Boolean(event.provider?.trim()) && Boolean(event.model?.trim()), "provider_call_route_missing", "Provider admission requires the selected provider and model.");
+    kernelAssertV2((event.gap_ids?.length ?? 0) > 0 && (event.criterion_ids?.length ?? 0) > 0, "provider_call_progress_binding_missing", "Provider admission requires unresolved gap and criterion bindings.");
+    kernelAssertV2((event.expected_information?.length ?? 0) > 0, "provider_call_expected_information_missing", "Provider admission must state expected information.");
+    const call: ProviderCallV2 = {
+      schema: PROVIDER_CALL_V2_SCHEMA,
+      call_id: event.call_id,
+      binding: structuredClone(snapshot.current_binding),
+      state: "admitted",
+      provider: event.provider!,
+      model: event.model!,
+      reasoning_effort: event.reasoning_effort ?? null,
+      gap_ids: [...new Set(event.gap_ids)].sort(),
+      criterion_ids: [...new Set(event.criterion_ids)].sort(),
+      expected_information: [...new Set(event.expected_information)].sort(),
+      admitted_at: event.occurred_at
+    };
+    return { ...snapshot, provider_calls: { ...snapshot.provider_calls, [call.call_id]: call }, provider_call_ids: [...new Set([...snapshot.provider_call_ids, call.call_id])].sort() };
+  }
+  kernelAssertV2(event.state !== "admitted", "provider_call_duplicate_admission", "Provider admission is unique.");
+  if (event.state === "usage_received") kernelAssertV2(Boolean(event.usage), "provider_call_usage_missing", "Usage state requires provider usage data.");
+  if (event.state === "completed") kernelAssertV2(typeof event.success === "boolean", "provider_call_completion_missing", "Provider completion requires success truth.");
+  if (event.state === "response_transport_completed") kernelAssertV2(Boolean(previous.completed_at), "provider_transport_before_completion", "Downstream response transport cannot complete before provider completion.");
+  const timestamp = providerTimestampField(event.state);
+  if (event.state === "usage_received" && previous.usage) {
+    kernelAssertV2(canonicalJsonV2(previous.usage) === canonicalJsonV2(event.usage), "provider_call_usage_conflict", "Replayed provider usage must agree with retained usage.");
+  }
+  if (event.state === "completed" && previous.completed_at) {
+    kernelAssertV2(previous.success === event.success && (!event.error_class || previous.error_class === event.error_class), "provider_call_completion_conflict", "Replayed provider completion must agree with retained completion.");
+  }
+  const nextState = PROVIDER_STATE_RANK[event.state] > PROVIDER_STATE_RANK[previous.state]
+    ? event.state
+    : previous.state;
+  const next = {
+    ...previous,
+    state: nextState,
+    [timestamp]: previous[timestamp] ?? event.occurred_at,
+    ...(event.usage ? { usage: structuredClone(event.usage) } : {}),
+    ...(event.success !== undefined ? { success: event.success } : {}),
+    ...(event.error_class ? { error_class: event.error_class } : {})
+  } as ProviderCallV2;
+  return { ...snapshot, provider_calls: { ...snapshot.provider_calls, [event.call_id]: next } };
+}
 
 interface ReducerStateV2 {
   snapshot?: AssignmentSnapshotV2;
@@ -29,11 +98,16 @@ function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 
     .filter((operation) => operation.persistent_effect === "unknown")
     .map((operation) => operation.operation_id)
     .sort();
+  const inFlightProviders = Object.values(snapshot.provider_calls)
+    .filter((call) => !call.completed_at)
+    .map((call) => call.call_id)
+    .sort();
   const next: AssignmentSnapshotV2 = {
     ...snapshot,
     in_flight_operation_ids: inFlight,
+    in_flight_provider_call_ids: inFlightProviders,
     unresolved_unknown_operation_ids: unknown,
-    quiescent: inFlight.length === 0 && unknown.length === 0
+    quiescent: inFlight.length === 0 && inFlightProviders.length === 0
   };
   return { ...next, outcome: deriveAssignmentOutcomeV2(next) };
 }
@@ -55,6 +129,16 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     "operation_unknown_effect_requires_reconciliation", "Unknown-effect work must be reconciled before another ordinary operation is admitted.");
   const workUnit = snapshot.spec.work_units.find((candidate) => candidate.work_unit_id === operation.work_unit_id);
   kernelAssertV2(workUnit, "operation_work_unit_unknown", "Operation work unit is not in AssignmentSpecV2.");
+  kernelAssertV2(operation.advances_criterion_ids.length > 0 || operation.resolves_gap_ids.length > 0,
+    "operation_progress_binding_missing", "Operation must bind to unresolved criterion or gap work.");
+  for (const criterionId of operation.advances_criterion_ids) {
+    kernelAssertV2(workUnit.criterion_ids.includes(criterionId), "operation_progress_criterion_unbound", "Operation criterion is not admitted by its work unit.");
+  }
+  const currentGapIds = new Set(deriveProgressGapsV2(snapshot).map((gap) => gap.gap_id));
+  for (const gapId of operation.resolves_gap_ids) kernelAssertV2(currentGapIds.has(gapId), "operation_progress_gap_stale", "Operation gap is no longer unresolved.");
+  const equivalent = Object.values(snapshot.operations).find((candidate) => operationProgressIdentityV2(candidate) === operationProgressIdentityV2(operation));
+  kernelAssertV2(!equivalent || Boolean(operation.retry_of_operation_id) || operation.purpose === "reconciliation",
+    "operation_progress_equivalent_repeat", "Equivalent operation requires a typed retry or reconciliation basis.");
   kernelAssertV2(operation.requested_effect === workUnit.requested_effect, "operation_effect_mismatch", "Operation effect must come from its admitted work unit.");
   kernelAssertV2(EFFECT_RANK[operation.requested_effect] <= EFFECT_RANK[snapshot.spec.requested_effect], "operation_effect_exceeds_assignment", "Operation effect exceeds the Assignment effect envelope.");
   for (const dependencyId of workUnit.dependency_ids) kernelAssertV2(["complete", "retained"].includes(snapshot.work_unit_states[dependencyId] ?? ""), "operation_dependency_incomplete", "Operation dependencies must be complete or retained.");
@@ -180,8 +264,9 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       clarifications: {},
       work_unit_states: Object.fromEntries(event.spec.work_units.map((unit) => [unit.work_unit_id, "pending"])),
       pending_review_ids: [],
-      provider_call_ids: [], provider_budget_exhausted: false,
-      operations: {}, observations: {}, criteria: {}, outcome: "active", terminal: false,
+      provider_call_ids: [], provider_calls: {}, in_flight_provider_call_ids: [], provider_budget_exhausted: false,
+      progress_epochs: [],
+      operations: {}, observations: {}, observation_versions: {}, criteria: {}, criterion_evaluation_versions: {}, outcome: "active", terminal: false,
       in_flight_operation_ids: [], unresolved_unknown_operation_ids: [], quiescent: true
     });
     return;
@@ -243,12 +328,45 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         break;
       case "provider_call_recorded":
         kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider-call telemetry requires a stable call identity.");
-        snapshot = { ...snapshot, provider_call_ids: [...new Set([...snapshot.provider_call_ids, event.call_id])].sort() };
+        snapshot = {
+          ...snapshot,
+          provider_call_ids: [...new Set([...snapshot.provider_call_ids, event.call_id])].sort(),
+          provider_calls: snapshot.provider_calls[event.call_id] ? snapshot.provider_calls : {
+            ...snapshot.provider_calls,
+            [event.call_id]: {
+              schema: PROVIDER_CALL_V2_SCHEMA,
+              call_id: event.call_id,
+              binding: structuredClone(snapshot.current_binding),
+              state: "completed",
+              provider: event.provider,
+              model: event.model,
+              reasoning_effort: event.reasoning_effort,
+              gap_ids: [], criterion_ids: [], expected_information: [],
+              admitted_at: event.occurred_at,
+              completed_at: event.occurred_at,
+              success: event.success
+            }
+          }
+        };
+        break;
+      case "provider_call_state_recorded":
+        snapshot = applyProviderState(snapshot, event);
         break;
       case "provider_budget_exhausted":
         kernelAssertV2(event.limit > 0 && snapshot.provider_call_ids.length >= event.limit,
           "provider_budget_exhaustion_invalid", "Provider budget exhaustion requires the durable call count to reach the configured limit.");
         snapshot = { ...snapshot, provider_budget_exhausted: true };
+        break;
+      case "progress_epoch_recorded":
+        kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, event.epoch.binding), "progress_epoch_binding_mismatch", "Progress epoch binding is not current.");
+        kernelAssertV2(event.epoch.before_assignment_version < event.epoch.after_assignment_version && event.epoch.after_assignment_version < event.assignment_version, "progress_epoch_version_invalid", "Progress epoch must describe an earlier bounded snapshot transition.");
+        kernelAssertV2(!snapshot.progress_epochs.some((epoch) => epoch.epoch_id === event.epoch.epoch_id), "progress_epoch_duplicate", "Progress epoch identity already exists.");
+        snapshot = { ...snapshot, progress_epochs: [...snapshot.progress_epochs, structuredClone(event.epoch)] };
+        break;
+      case "progress_blocked":
+        kernelAssertV2(snapshot.quiescent, "progress_blocked_not_quiescent", "Progress can be blocked only at a quiescent checkpoint.");
+        kernelAssertV2(event.code.trim().length > 0, "progress_blocker_code_missing", "Progress blocker requires a stable code.");
+        snapshot = { ...snapshot, progress_blocker: { code: event.code, gap_ids: [...new Set(event.gap_ids)].sort(), recorded_at: event.occurred_at } };
         break;
       case "operation_admitted":
         validateOperationAdmission(snapshot, event.operation);
@@ -327,6 +445,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         snapshot = {
           ...snapshot,
           observations: { ...snapshot.observations, [event.observation.observation_id]: structuredClone(event.observation) },
+          observation_versions: { ...snapshot.observation_versions, [event.observation.observation_id]: event.assignment_version },
           operations,
           work_unit_states: {
             ...snapshot.work_unit_states,
@@ -354,7 +473,8 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         validateCriterionEvaluation(snapshot, event.evaluation);
         snapshot = projectWorkUnitCriteria({
           ...snapshot,
-          criteria: { ...snapshot.criteria, [event.evaluation.criterion_id]: mergeEvaluation(snapshot.criteria[event.evaluation.criterion_id], structuredClone(event.evaluation)) }
+          criteria: { ...snapshot.criteria, [event.evaluation.criterion_id]: mergeEvaluation(snapshot.criteria[event.evaluation.criterion_id], structuredClone(event.evaluation)) },
+          criterion_evaluation_versions: { ...snapshot.criterion_evaluation_versions, [event.evaluation.criterion_id]: event.assignment_version }
         });
         break;
       }
