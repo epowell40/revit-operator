@@ -178,10 +178,49 @@ function issues(snapshot: AssignmentSnapshotV2, rows: VerifiedWorkAcceptanceCrit
   return output;
 }
 
+type ProviderUsageMetric = "input_tokens" | "output_tokens" | "total_tokens" | "estimated_cost_usd";
+
+function assertProviderLedgerCoherent(snapshot: AssignmentSnapshotV2): void {
+  const ids = [...snapshot.provider_call_ids];
+  const uniqueIds = new Set(ids);
+  if (uniqueIds.size !== ids.length) throw new Error("V2 provider ledger contains duplicate call identities.");
+  const recordIds = Object.keys(snapshot.provider_calls);
+  if (recordIds.length !== ids.length || recordIds.some(callId => !uniqueIds.has(callId))) {
+    throw new Error("V2 provider ledger call identities and records do not match.");
+  }
+  for (const callId of ids) {
+    const call = snapshot.provider_calls[callId];
+    if (!call || call.call_id !== callId) throw new Error("V2 provider ledger call identity is inconsistent.");
+    const usage = call.usage;
+    if (!usage) continue;
+    for (const metric of ["input_tokens", "output_tokens", "total_tokens"] as const) {
+      const value = usage[metric];
+      if (value !== null && (!Number.isSafeInteger(value) || value < 0)) {
+        throw new Error(`V2 provider ledger contains invalid ${metric}.`);
+      }
+    }
+    if (usage.estimated_cost_usd !== null
+        && (!Number.isFinite(usage.estimated_cost_usd) || usage.estimated_cost_usd < 0)) {
+      throw new Error("V2 provider ledger contains invalid estimated_cost_usd.");
+    }
+  }
+}
+
+function sumProviderUsage(snapshot: AssignmentSnapshotV2, metric: ProviderUsageMetric): number | null {
+  const values = snapshot.provider_call_ids.map(callId => snapshot.provider_calls[callId]?.usage?.[metric]);
+  return values.every((value): value is number => typeof value === "number")
+    ? values.reduce((sum, value) => sum + value, 0) : null;
+}
+
 export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapshot: AssignmentSnapshotV2, parentPacketId: string | null): VerifiedWorkPacketV1 {
   if (!snapshot.terminal) throw new Error("Verified Work Packet requires a settled V2 Assignment.");
+  assertProviderLedgerCoherent(snapshot);
   const actionRows = actions(snapshot);
   const criterionRows = criteria(snapshot);
+  const providerUsage = {
+    input_tokens: sumProviderUsage(snapshot, "input_tokens"), output_tokens: sumProviderUsage(snapshot, "output_tokens"),
+    total_tokens: sumProviderUsage(snapshot, "total_tokens"), estimated_cost_usd: sumProviderUsage(snapshot, "estimated_cost_usd")
+  };
   const evidence = Object.values(snapshot.observations).flatMap(observation => {
     const id = evidenceId(observation.raw_payload_ref);
     return id ? [reference(id)] : [];
@@ -229,9 +268,10 @@ export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapsho
     },
     performance: {
       elapsed_ms: snapshot.finished_at ? Math.max(0, Date.parse(snapshot.finished_at) - Date.parse(snapshot.spec.created_at)) : null,
-      model_calls: null, revit_calls: Object.values(snapshot.operations).filter(operation => operation.dispatch_authority === "native").length,
-      input_tokens: null, output_tokens: null, total_tokens: null, estimated_cost_usd: null,
-      telemetry_complete: false, human_intervention: null
+      model_calls: snapshot.provider_call_ids.length,
+      revit_calls: Object.values(snapshot.operations).filter(operation => operation.dispatch_authority === "native").length,
+      ...providerUsage,
+      telemetry_complete: Object.values(providerUsage).every(value => value !== null), human_intervention: null
     },
     trust_presentation: {
       overall: snapshot.terminal && criterionRows.length > 0 && criterionRows.every(row => row.status === "pass")

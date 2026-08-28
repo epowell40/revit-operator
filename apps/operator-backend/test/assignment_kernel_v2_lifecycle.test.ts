@@ -270,6 +270,57 @@ test("durable progress controller evaluates retained observations and terminaliz
   assert.equal(trace.criteria_closed, 1);
   assert.equal(trace.provider_call_explanations[0]!.why, `Resolve criterion:${recovered.spec.criteria[0]!.criterion_id} by obtaining result.available.`);
   assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
+  const terminalPacket = listVerifiedWorkPackets(goal.id)[0]!;
+  assert.equal(terminalPacket.performance.model_calls, 1);
+  assert.equal(terminalPacket.performance.input_tokens, 100);
+  assert.equal(terminalPacket.performance.output_tokens, 20);
+  assert.equal(terminalPacket.performance.total_tokens, 125);
+  assert.equal(terminalPacket.performance.estimated_cost_usd, 0.02);
+  assert.equal(terminalPacket.performance.telemetry_complete, true);
+  const missingPrice = structuredClone(recovered);
+  missingPrice.provider_calls["provider-inventory"]!.usage!.estimated_cost_usd = null;
+  const packetWithoutPrice = generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, missingPrice, null);
+  assert.equal(packetWithoutPrice.performance.model_calls, 1, "durable call count is independent of pricing coverage");
+  assert.equal(packetWithoutPrice.performance.total_tokens, 125);
+  assert.equal(packetWithoutPrice.performance.estimated_cost_usd, null);
+  assert.equal(packetWithoutPrice.performance.telemetry_complete, false);
+  const candidateNineShape = structuredClone(recovered);
+  candidateNineShape.provider_call_ids = ["provider-inventory", "provider-schema", "provider-repair", "provider-summary"];
+  candidateNineShape.provider_calls = Object.fromEntries(candidateNineShape.provider_call_ids.map((callId, index) => [callId, {
+    ...structuredClone(recovered.provider_calls["provider-inventory"]!),
+    call_id: callId,
+    usage: {
+      input_tokens: 100 + index,
+      output_tokens: 20 + index,
+      reasoning_tokens: 5 + index,
+      total_tokens: 125 + (index * 3),
+      estimated_cost_usd: null
+    }
+  }]));
+  const candidateNinePacket = generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, candidateNineShape, null);
+  assert.equal(candidateNinePacket.performance.model_calls, 4);
+  assert.equal(candidateNinePacket.performance.input_tokens, 406);
+  assert.equal(candidateNinePacket.performance.output_tokens, 86);
+  assert.equal(candidateNinePacket.performance.total_tokens, 518);
+  assert.equal(candidateNinePacket.performance.estimated_cost_usd, null);
+  assert.equal(candidateNinePacket.performance.telemetry_complete, false);
+  const zeroCalls = structuredClone(recovered);
+  zeroCalls.provider_call_ids = [];
+  zeroCalls.provider_calls = {};
+  const zeroCallPacket = generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, zeroCalls, null);
+  assert.equal(zeroCallPacket.performance.model_calls, 0);
+  assert.equal(zeroCallPacket.performance.total_tokens, 0);
+  assert.equal(zeroCallPacket.performance.estimated_cost_usd, 0);
+  assert.equal(zeroCallPacket.performance.telemetry_complete, true);
+  const danglingCall = structuredClone(recovered);
+  danglingCall.provider_call_ids = [...danglingCall.provider_call_ids, "provider-missing"];
+  assert.throws(() => generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, danglingCall, null), /identities and records do not match/);
+  const duplicateCall = structuredClone(recovered);
+  duplicateCall.provider_call_ids = [...duplicateCall.provider_call_ids, duplicateCall.provider_call_ids[0]!];
+  assert.throws(() => generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, duplicateCall, null), /duplicate call identities/);
+  const invalidUsage = structuredClone(recovered);
+  invalidUsage.provider_calls["provider-inventory"]!.usage!.total_tokens = -1;
+  assert.throws(() => generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, invalidUsage, null), /invalid total_tokens/);
   assert.equal(listWorkReturns(goal.id).length, 1);
 
   const handedOff = advanceAssignmentKernelProgressV2({ binding });
