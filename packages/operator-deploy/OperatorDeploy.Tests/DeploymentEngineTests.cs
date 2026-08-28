@@ -41,6 +41,7 @@ public sealed class DeploymentEngineTests : IDisposable
     [InlineData("node_modules/has-symbols/.github/FUNDING.yml")]
     [InlineData("node_modules/has-symbols/test/.eslintrc")]
     [InlineData("node_modules/.well-known/asset.json")]
+    [InlineData("node_modules/@revitoperator/assignment-kernel-v2-contracts/index.js")]
     [InlineData("node_modules\\.bin\\openai.ps1")]
     [InlineData("node_modules/openai/_vendor/partial-json-parser/parser.mjs")]
     public void Manifest_relative_paths_allow_single_leading_dot_npm_segments(string path)
@@ -68,6 +69,9 @@ public sealed class DeploymentEngineTests : IDisposable
     [InlineData(".%2e/escape")]
     [InlineData("node_modules/openai/._vendor/parser.mjs")]
     [InlineData("node_modules/openai/__vendor/parser.mjs")]
+    [InlineData("node_modules/@/package.json")]
+    [InlineData("node_modules/@@revitoperator/package.json")]
+    [InlineData("node_modules/@revitoperator@evil/package.json")]
     [InlineData("\uFF0Eenv.example")]
     [InlineData("\u2024env.example")]
     [InlineData("node_modules\u2215openai")]
