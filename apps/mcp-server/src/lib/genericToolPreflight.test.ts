@@ -170,6 +170,43 @@ test("Candidate 11 exact find-text-notes elementIds request is admitted by its o
   assert.equal(outOfRange?.validation_issues?.[0]?.expected_type, "maximum:500");
 });
 
+test("Candidate 12 replace-text-note preview requires only the actual mutation inputs", () => {
+  const contract = {
+    method: "POST",
+    path: "/revit/replace-text-note",
+    required_fields: ["elementId", "newText"],
+    request_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        docId: { type: "string", maxLength: 64 },
+        familyDocumentId: { type: "string", maxLength: 64 },
+        elementId: { type: "integer" },
+        newText: { type: "string", minLength: 1, maxLength: 200 },
+        expectedOldText: { type: "string", maxLength: 200 },
+        dryRun: { type: "boolean" },
+        apply: { type: "boolean" },
+        confirm: { type: "string", maxLength: 120 }
+      },
+      required: ["elementId", "newText"]
+    }
+  };
+
+  assert.equal(preflightKnownGenericToolBody(contract, {
+    elementId: 1478627,
+    newText: "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX",
+    dryRun: true,
+    apply: false
+  }), null);
+
+  const missingTarget = preflightKnownGenericToolBody(contract, {
+    newText: "replacement",
+    dryRun: true,
+    apply: false
+  });
+  assert.deepEqual(missingTarget?.missing_required_fields, ["elementId"]);
+});
+
 test("schema diagnostics fail closed within bounded issue and field-path limits", () => {
   const tooMany = preflightKnownGenericToolBody({
     method: "POST",

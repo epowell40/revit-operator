@@ -26,13 +26,15 @@ export function evaluateCriterionV2(input: Readonly<{
     kernelAssertV2(observation, "criterion_observation_unknown", "Criterion evaluator received an unknown observation.");
     return observation;
   });
+  const basis = input.basis ?? "observation";
   const admissions = proposedObservations.map((observation) => ({
     observation,
     admission: observationAdmissibilityForCriterionV2({
       snapshot: input.snapshot,
       criterion,
       observation,
-      evaluated_at: input.evaluated_at
+      evaluated_at: input.evaluated_at,
+      basis
     })
   })).filter(({ admission }) => admission.admissible);
   const observations = admissions.map(({ observation }) => observation);
@@ -49,7 +51,6 @@ export function evaluateCriterionV2(input: Readonly<{
   }
 
   const requiredFactsPresent = criterion.semantic_fact_requirements.every((required) => facts.some(({ fact }) => fact.fact_id === required));
-  const basis = input.basis ?? "observation";
   let desiredStateMatches = true;
   if (basis === "desired_state_equivalence") {
     const comparisons = criterion.desired_state_comparisons ?? [];
