@@ -47,6 +47,40 @@ test("shared V2 session-index response is the only new producer/consumer contrac
   assert.deepEqual((collected.session_index as typeof index).assignments, index.assignments);
 });
 
+test("V2 publication collection recovers transient session-index and exact-publication fetch failures without replaying work", async () => {
+  const response = assignmentKernelSessionIndexResponseV2(index);
+  const publication = {
+    schema: "revit-operator.assignment-kernel-publication/v2",
+    assignment_id: "assignment-v2",
+    assignment_version: 29,
+    snapshot: { schema: "revit-operator.assignment-snapshot/v2", terminal: true, outcome: "complete" },
+    provider_ledger: { schema: "revit-operator.assignment-provider-ledger/v2", call_ids: ["call-1"] }
+  };
+  let indexAttempts = 0;
+  let publicationAttempts = 0;
+  const collected = await loadAssignmentKernelPublicationsV2(
+    "http://operator",
+    "session-v2",
+    async (_base, pathname) => {
+      if (pathname.startsWith("/api/assignments/v2?")) {
+        indexAttempts += 1;
+        if (indexAttempts === 1) throw new Error("fetch failed");
+        return response as unknown as Record<string, unknown>;
+      }
+      publicationAttempts += 1;
+      if (publicationAttempts === 1) throw new Error("fetch failed");
+      return { ok: true, assignment_kernel_v2: publication };
+    },
+    { attempts: 3, retryDelayMs: 0 }
+  );
+
+  assert.equal(indexAttempts, 2);
+  assert.equal(publicationAttempts, 2);
+  assert.deepEqual(collected.assignment_ids, ["assignment-v2"]);
+  assert.deepEqual(collected.failures, []);
+  assert.deepEqual(collected.assignments, [publication]);
+});
+
 test("historical or malformed session-index aliases fail explicitly for new V2 traffic", () => {
   assert.throws(() => parseAssignmentKernelSessionIndexResponseV2({
     ok: true,

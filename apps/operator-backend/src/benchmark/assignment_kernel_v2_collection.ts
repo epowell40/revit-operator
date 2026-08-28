@@ -7,24 +7,53 @@ type RequestJson = (
   timeoutMs?: number
 ) => Promise<JsonRecord>;
 
+type PublicationRecoveryOptions = {
+  attempts?: number;
+  retryDelayMs?: number;
+};
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+async function requestPublicationJson(
+  baseUrl: string,
+  pathname: string,
+  requestJson: RequestJson,
+  options: PublicationRecoveryOptions
+): Promise<JsonRecord> {
+  const attempts = Math.max(1, Math.min(5, Math.trunc(options.attempts ?? 4)));
+  const retryDelayMs = Math.max(0, Math.trunc(options.retryDelayMs ?? 250));
+  let lastError: unknown = new Error(`Publication request failed: ${pathname}`);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await requestJson(baseUrl, pathname, {}, 30_000);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts && retryDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+      }
+    }
+  }
+  throw lastError;
 }
 
 export async function loadAssignmentKernelPublicationsV2(
   baseUrl: string,
   sessionId: string,
-  requestJson: RequestJson
+  requestJson: RequestJson,
+  options: PublicationRecoveryOptions = {}
 ): Promise<JsonRecord> {
   if (!sessionId) {
     return { schema: "revit-operator.benchmark-assignment-kernel-v2/v1", assignment_ids: [], assignments: [], failures: [] };
   }
   try {
-    const indexResponse = await requestJson(
+    const indexPath = `/api/assignments/v2?limit=10&session_id=${encodeURIComponent(sessionId)}`;
+    const indexResponse = await requestPublicationJson(
       baseUrl,
-      `/api/assignments/v2?limit=10&session_id=${encodeURIComponent(sessionId)}`,
-      {},
-      30_000
+      indexPath,
+      requestJson,
+      options
     );
     const parsedIndexResponse = parseAssignmentKernelSessionIndexResponseV2(indexResponse);
     const index = record(parsedIndexResponse[ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD]);
@@ -32,7 +61,12 @@ export async function loadAssignmentKernelPublicationsV2(
     const assignmentIds = [...new Set(entries.map((entry) => String(entry.assignment_id ?? "").trim()).filter(Boolean))];
     const settled = await Promise.all(assignmentIds.map(async (assignmentId) => {
       try {
-        const response = await requestJson(baseUrl, `/api/assignments/v2/${encodeURIComponent(assignmentId)}`, {}, 30_000);
+        const response = await requestPublicationJson(
+          baseUrl,
+          `/api/assignments/v2/${encodeURIComponent(assignmentId)}`,
+          requestJson,
+          options
+        );
         const publication = record(response.assignment_kernel_v2);
         return publication.schema === "revit-operator.assignment-kernel-publication/v2"
           ? { publication }
