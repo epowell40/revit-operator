@@ -126,6 +126,50 @@ test("known generic tools enforce published enum, range, and nested collection c
   }), null);
 });
 
+test("Candidate 11 exact find-text-notes elementIds request is admitted by its optional-selector contract", () => {
+  const contract = {
+    method: "POST",
+    path: "/revit/find-text-notes",
+    required_fields: [],
+    request_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        docId: { type: "string" },
+        familyDocumentId: { type: "string" },
+        textContains: { type: "string" },
+        contains: { type: "string" },
+        regex: { type: "string" },
+        viewId: { type: "integer" },
+        elementId: { type: "integer" },
+        elementIds: { type: "array", maxItems: 500, items: { type: "integer" } },
+        max: { type: "integer", minimum: 1, maximum: 500 }
+      },
+      required: []
+    }
+  };
+
+  assert.equal(preflightKnownGenericToolBody(contract, {
+    elementIds: [1478627],
+    max: 10
+  }), null);
+
+  const invalid = preflightKnownGenericToolBody(contract, {
+    elementIds: 1478627,
+    max: 10
+  });
+  assert.deepEqual(invalid?.invalid_fields, ["body.elementIds"]);
+  assert.equal(invalid?.validation_issues?.[0]?.expected_type, "array");
+  assert.equal(invalid?.request_dispatched, false);
+
+  const outOfRange = preflightKnownGenericToolBody(contract, {
+    elementIds: [1478627],
+    max: 501
+  });
+  assert.deepEqual(outOfRange?.invalid_fields, ["body.max"]);
+  assert.equal(outOfRange?.validation_issues?.[0]?.expected_type, "maximum:500");
+});
+
 test("schema diagnostics fail closed within bounded issue and field-path limits", () => {
   const tooMany = preflightKnownGenericToolBody({
     method: "POST",

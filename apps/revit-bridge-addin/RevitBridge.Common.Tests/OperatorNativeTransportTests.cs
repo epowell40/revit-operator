@@ -304,6 +304,16 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("find-text-notes max must be between 1 and 500", schema);
             Assert.Contains("ValidateOptionalLong(obj.Value, \"elementId\"", schema);
             Assert.Contains("ValidateOptionalLongArray(obj.Value, \"elementIds\", maxCount: 500", schema);
+            var introspection = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolIntrospection.cs");
+            var explicitContract = introspection.IndexOf(
+                "if (string.Equals(p, \"/revit/find-text-notes\", StringComparison.OrdinalIgnoreCase))",
+                StringComparison.Ordinal);
+            var reflectionFallback = introspection.IndexOf(
+                "if (RequestTypesByPath.TryGetValue(p, out var t))",
+                StringComparison.Ordinal);
+            Assert.True(explicitContract >= 0 && explicitContract < reflectionFallback);
+            Assert.Contains("{ \"elementIds\", Arr(Int(), maxItems: 500) }", introspection);
+            Assert.Contains("{ \"max\", Int(minimum: 1, maximum: 500) }", introspection);
             var risk = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorApprovalPolicy.cs");
             Assert.Contains("\"/revit/find-text-notes\", StringComparison.OrdinalIgnoreCase)) return OperatorActionRisk.Low", risk);
         }

@@ -1218,6 +1218,29 @@ namespace RevitBridge.Operator
                     return WithRequiredFields(SchemaFromType(RequestTypesByPath[p], depth: 0));
                 }
 
+                // Exact-id lookup, text filters, and family-session selection are
+                // independent optional selectors. The net48 reflection fallback
+                // cannot recover nullable-reference metadata and would advertise
+                // every nullable string selector as simultaneously required.
+                if (string.Equals(p, "/revit/find-text-notes", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "docId", Str(maxLength: 64) },
+                            { "familyDocumentId", Str(maxLength: 64) },
+                            { "textContains", Str(maxLength: 200) },
+                            { "contains", Str(maxLength: 200) },
+                            { "regex", Str(maxLength: 200) },
+                            { "viewId", Int() },
+                            { "elementId", Int() },
+                            { "elementIds", Arr(Int(), maxItems: 500) },
+                            { "max", Int(minimum: 1, maximum: 500) }
+                        },
+                        required: Array.Empty<string>(),
+                        additionalProps: false);
+                }
+
                 // Default: schema from request type when known, else generic object.
                 if (RequestTypesByPath.TryGetValue(p, out var t))
                 {
@@ -1886,10 +1909,14 @@ namespace RevitBridge.Operator
                 return schema;
             }
 
-            private static object Str(string[]? enumVals = null) =>
-                enumVals == null
-                    ? new Dictionary<string, object> { { "type", "string" } }
-                    : new Dictionary<string, object> { { "type", "string" }, { "enum", enumVals } };
+            private static object Str(string[]? enumVals = null, long? minLength = null, long? maxLength = null)
+            {
+                var schema = new Dictionary<string, object> { { "type", "string" } };
+                if (enumVals != null) schema["enum"] = enumVals;
+                if (minLength.HasValue) schema["minLength"] = minLength.Value;
+                if (maxLength.HasValue) schema["maxLength"] = maxLength.Value;
+                return schema;
+            }
 
             private static object Bool() => new Dictionary<string, object> { { "type", "boolean" } };
             private static object Int(long? minimum = null, long? maximum = null)

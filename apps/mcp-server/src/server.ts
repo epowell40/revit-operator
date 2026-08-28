@@ -1850,13 +1850,17 @@ server.tool("revit_open_family_doc", "Open a family document for editing (return
   }
 );
 
-server.tool("revit_find_text_notes", "Find TextNotes in an open family doc session (docId).",
+server.tool("revit_find_text_notes", "Find TextNotes by exact element identity, text, or regex in the active project or an open family document session.",
   {
-    docId: z.string(),
-    textContains: z.string().optional(),
-    regex: z.string().optional(),
-    viewId: z.number().optional(),
-    max: z.number().int().optional(),
+    docId: z.string().max(64).optional(),
+    familyDocumentId: z.string().max(64).optional(),
+    textContains: z.string().max(200).optional(),
+    contains: z.string().max(200).optional(),
+    regex: z.string().max(200).optional(),
+    viewId: z.number().int().optional(),
+    elementId: z.number().int().optional(),
+    elementIds: z.array(z.number().int()).max(500).optional(),
+    max: z.number().int().min(1).max(500).optional(),
   },
   async (args) => {
     try {
