@@ -655,6 +655,10 @@
       "sha256": "sha256:3a4057afabf2efb3440bc7dd31e66ebc9f2f566606957a0cd39054161531a5a5"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_acceptance.ts",
+      "sha256": "sha256:dc59a7e573b58dbb39cba6dda70ed8c06f98ce3c8f4908b9b5f1e8a3ee57eb31"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts",
       "sha256": "sha256:3cee0e4673ed275c59a66eebfca4361d26f60b91ed1fdf7a0c0ea553df6b21cd"
     },
@@ -716,7 +720,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:200cd9168cc2c87b7d459393ffb78cf68fba3f3ad2088642fe91e534bb5fedd3"
+      "sha256": "sha256:3e3b600ec29c16138b0ce3d27e8ee4d1e2ebf98cb640e68ae1e40d015f663844"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_report.ts",
@@ -932,7 +936,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/work_packet_collection.ts",
-      "sha256": "sha256:5c5bf1dd8ef4a6f7af3889c5d44c830de5d6b7e88273fe1a8d11c77ccb682b41"
+      "sha256": "sha256:41460bacc3a812302915a697a6de762f8e939937f7e41c81d17f0d696e3a8607"
     },
     {
       "path": "apps/operator-backend/src/brain.ts",
@@ -2525,7 +2529,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:067b1530ceef41e5cb8f9ce1c935148ac50a50ee76c4e19390e51bd6ea1d29f0"
+      "sha256": "sha256:8f5963ae6e2436b20cceae7351db90d39b297c680e0c1d6510ea60e989017fcb"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2798,6 +2802,10 @@
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
       "sha256": "sha256:ad3c6908a6b73f0e4d70d293bfd69f289ad55aac0496cbb97f781fd2a354b0c6"
+    },
+    {
+      "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
+      "sha256": "sha256:8585f89215c4070f6c8f329fdb4f0448f5ed1fa78e76d2ab27b8d9f5e3d91649"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_candidate3_semantic_replay.test.ts",
@@ -5849,7 +5857,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:abb079a89dc9b0f2628af98a29a7b47debfe7cad0e561c1794fd588a074916a7",
+  "inputs_hash": "sha256:a765288917b9ed5f8c614f0bcdd5ff9d1e7a1d07da1bde08d1b0fa577d00e972",
   "result": {
     "passed": true,
     "checks": [

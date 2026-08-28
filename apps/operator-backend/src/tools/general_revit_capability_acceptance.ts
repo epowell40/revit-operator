@@ -705,7 +705,7 @@ async function runCase(
       .catch((error) => ({ ok: false, error: String(error) })),
     loadAssignmentKernelPublicationsV2(baseUrl, sessionId, requestJson)
   ]);
-  const durableWorkPackets = await loadVerifiedWorkPackets(baseUrl, assignmentProjection, requestJson);
+  const durableWorkPackets = await loadVerifiedWorkPackets(baseUrl, assignmentProjection, assignmentKernelV2, requestJson);
   const executedPrompt = applyRequested ? testCase.prompt : testCase.probe_prompt;
   const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
     session_id: sessionId,
@@ -713,7 +713,7 @@ async function runCase(
   });
   const evaluatedAttempt = {
     ...attempt,
-    assignment_projection: assignmentProjection,
+    assignment_projection: assignmentProjection, assignment_kernel_v2: assignmentKernelV2,
     durable_tool_evidence: durableToolEvidence
   };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);

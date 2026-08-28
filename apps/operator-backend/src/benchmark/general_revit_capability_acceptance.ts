@@ -2,6 +2,7 @@ import path from "node:path";
 import { benchmarkDataRoot, readJsonFile } from "./files.js";
 import { benchmarkSemanticCapabilityId, canonicalBenchmarkRevitPath, verifiedSessionMutationPaths } from "./durable_tool_evidence.js";
 import { canonicalAssignmentLifecycleTruth } from "./canonical_assignment_truth.js";
+import { assignmentKernelAcceptanceTruthV2 } from "./assignment_kernel_v2_acceptance.js";
 export const GENERAL_REVIT_CAPABILITY_SCHEMA = "revit-operator.general-revit-capability-acceptance/v1" as const;
 export const GENERAL_REVIT_RESULT_TIERS = [
   "not_run", "accepted", "planned", "previewed", "completed", "verified", "refused", "failed"
@@ -17,6 +18,7 @@ export type GeneralRevitVerificationBasis =
   | "artifact_evidence"
   | "structured_preview_receipt"
   | "durable_server_validation"
+  | "canonical_assignment_v2"
   | "generic_structured_receipt";
 
 export type GeneralRevitCapabilityCase = {
@@ -929,7 +931,7 @@ function verificationBasis(
   completed: boolean,
   answerAssertionPassed: boolean | null,
   teammate: { mutationAttempted: boolean; blocked: boolean; verified: boolean },
-  durable: { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] }
+  durable: { completed: boolean; blocked: boolean; verified: boolean; requestedEffects: GeneralRevitExpectedEffect[] }, canonicalV2Verified = false
 ): GeneralRevitVerificationBasis {
   if (!completed) return "none";
   if (testCase.answer_assertions && answerAssertionPassed === true) return "fixture_semantic_oracle";
@@ -948,6 +950,7 @@ function verificationBasis(
   if (nestedEvidenceMatches(attempt, (key, child) =>
     ["artifact", "artifacts", "artifact_id", "artifact_ids", "artifact_path", "artifact_paths"].includes(key)
       && nonEmptyEvidenceValue(child))) return "artifact_evidence";
+  if (canonicalV2Verified) return "canonical_assignment_v2";
   if (durable.verified) return "durable_server_validation";
   return hasStructuredVerificationEvidence(attempt) ? "generic_structured_receipt" : "none";
 }
@@ -975,12 +978,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     };
   }
   const rows = actionRows(attempt);
+  const canonicalV2 = assignmentKernelAcceptanceTruthV2(attempt.assignment_kernel_v2);
   const durableEvidence = durableEvidenceRecord(attempt);
   const durableReceipts = validatedActionReceipts(durableEvidence);
-  const durablePaths = new Set([
-    ...successfulEvidencePaths(durableEvidence),
-    ...durableSpecificRevitPaths(attempt)
-  ]);
+  const durablePaths = new Set([...successfulEvidencePaths(durableEvidence), ...durableSpecificRevitPaths(attempt), ...canonicalV2.successful_task_paths]);
   const teammatePreviewPaths = certifiedTeammatePreviewPaths(attempt).map(canonicalBenchmarkRevitPath);
   const expectedPaths = new Set(testCase.dispatch_any_of.map(canonicalBenchmarkRevitPath));
   const rowMatchesExpectedPathAndEffect = (row: ActionLike, effect: GeneralRevitExpectedEffect) =>
@@ -990,12 +991,10 @@ export function evaluateGeneralRevitCapabilityAttempt(
     && teammatePreviewPaths.includes("/revit/transaction-plan");
   const observedPaths = [...new Set([
     ...rows.map((row) => canonicalBenchmarkRevitPath(String(row.path || ""))).filter(Boolean),
-    ...durablePaths,
-    ...teammatePreviewPaths
+    ...durablePaths, ...teammatePreviewPaths
   ])];
-  const expectedPathObserved = composablePreviewLaneObserved
-    || observedPaths.some((candidate) => expectedPaths.has(candidate))
-    || rows.some((row) => dynamicRuntimeEffectMatches(row, testCase.expected_effect));
+  const expectedPathObserved = composablePreviewLaneObserved || observedPaths.some((candidate) => expectedPaths.has(candidate)) || rows.some((row) => dynamicRuntimeEffectMatches(row, testCase.expected_effect))
+    || (canonicalV2.completed && canonicalV2.requested_effects.includes(testCase.expected_effect));
   const substantiveFailedAction = rows.some((row, index) => {
     const failedPath = String(row.path || "");
     if (row.status !== "failed" || !/^\/revit\/(?!health$|context$|ping$)/.test(failedPath)) return false;
@@ -1010,22 +1009,20 @@ export function evaluateGeneralRevitCapabilityAttempt(
       return failedEffect === "read" && String(later.request_effect || "").trim() === "read";
     });
   });
-  const successfulExpectedPathObserved = [...durablePaths].some((candidate) => expectedPaths.has(candidate))
-    || composablePreviewLaneObserved
-    || teammatePreviewPaths.some((candidate) => expectedPaths.has(candidate))
-    || rows.some((row) => rowMatchesExpectedPathAndEffect(row, testCase.expected_effect))
-    || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect));
+  const successfulExpectedPathObserved = [...durablePaths].some((candidate) => expectedPaths.has(candidate)) || composablePreviewLaneObserved
+    || teammatePreviewPaths.some((candidate) => expectedPaths.has(candidate)) || rows.some((row) => rowMatchesExpectedPathAndEffect(row, testCase.expected_effect))
+    || rows.some((row) => successfulDynamicRuntimeAlternative(row, testCase.expected_effect))
+    || (canonicalV2.completed && canonicalV2.requested_effects.includes(testCase.expected_effect));
   const teammate = teammateLoopTruth(attempt);
   const verifiedSessionMutation = testCase.expected_effect === "apply" && [...verifiedSessionMutationPaths(durableEvidence)].some((candidate) => expectedPaths.has(candidate));
-  const applyDispatched = rows.some((row) => rowMatchesExpectedPathAndEffect(row, "apply"))
-    || rows.some((row) => successfulDynamicRuntimeAlternative(row, "apply")) || verifiedSessionMutation
-    || (teammate.mutationAttempted && [...durablePaths].some((candidate) => expectedPaths.has(candidate)));
-  const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true)
-    || durablePaths.size > 0;
-  const answerAssertionsApplicable = !!testCase.answer_assertions
-    && (testCase.expected_effect !== "apply" || !applyDispatched);
+  const applyDispatched = rows.some((row) => rowMatchesExpectedPathAndEffect(row, "apply")) || rows.some((row) => successfulDynamicRuntimeAlternative(row, "apply")) || verifiedSessionMutation
+    || (teammate.mutationAttempted && [...durablePaths].some((candidate) => expectedPaths.has(candidate)))
+    || (canonicalV2.apply_dispatched && canonicalV2.requested_effects.includes("apply"));
+  const dispatched = applyDispatched || rows.some((row) => row.request_dispatched === true) || durablePaths.size > 0 || canonicalV2.dispatched;
+  const answerAssertionsApplicable = !!testCase.answer_assertions && (testCase.expected_effect !== "apply" || !applyDispatched);
   const durable = durableLifecycle(attempt);
-  const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true || durable.outcomeUnknown;
+  const outcomeUnknown = attempt.outcome_unknown === true || attempt.reconciliation_required === true || durable.outcomeUnknown
+    || canonicalV2.outcome_unknown || canonicalV2.malformed;
   const durableEffectReceiptCompleted = durableReceiptBoundToLifecycle(
     durable, durableReceipts, expectedPaths, testCase.expected_effect
   );
@@ -1112,7 +1109,9 @@ export function evaluateGeneralRevitCapabilityAttempt(
       ? teammate.mutationAttempted && applyDispatched
       : teammatePreviewDispatched
   );
-  const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted || authoritativeTeammateEffect || verifiedSessionMutation;
+  const authoritativeV2Effect = canonicalV2.completed && canonicalV2.requested_effects.includes(testCase.expected_effect);
+  const authoritativeEffectRecovery = durableVerifiedEffectReceiptCompleted || authoritativeTeammateEffect || verifiedSessionMutation
+    || authoritativeV2Effect;
   // A stale Assignment lifecycle flag must not veto an exact fixture-semantic
   // read answer when the same flight record proves a successful expected Revit
   // route and contains no unresolved action or transport failure. This recovery
@@ -1136,7 +1135,8 @@ export function evaluateGeneralRevitCapabilityAttempt(
   const effectiveMissingTargetClarification = missingTargetClarification && !authoritativeEffectRecovery;
   const completed = attemptSucceeded && successfulExpectedPathObserved && requestedEffectSatisfied && answerAssertionPassed !== false && !effectiveSubstantiveFailedAction && !outcomeUnknown && !effectiveDurableBlocked && !effectiveTeammateBlocked && !effectiveAssistantIncomplete && !effectiveAssistantBlocked && !effectiveMissingTargetClarification
     && !targetBoundPreviewVerificationMissing && (dispatched || durableEffectCompleted);
-  const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable);
+  const basis = verificationBasis(testCase, attempt, completed, answerAssertionPassed, teammate, durable,
+    canonicalV2.verified && canonicalV2.requested_effects.includes(testCase.expected_effect));
   const verified = completed && !["none", "durable_server_validation", "generic_structured_receipt"].includes(basis);
   let tier: GeneralRevitResultTier;
   if (refusalReason) tier = "refused";
