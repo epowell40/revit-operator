@@ -6,6 +6,11 @@ import type {
 } from "./identity.js";
 import { canonicalJsonV2 } from "./canonical.js";
 import type { PayloadProvenanceV2 } from "./payload_provenance.js";
+import type {
+  ObservationEvidenceClassV2,
+  OperationFulfillmentRoleV2,
+  SemanticFactClassV2
+} from "./semantic_admissibility.js";
 
 export const OBSERVATION_V2_SCHEMA = "revit-operator.observation/v2" as const;
 
@@ -14,6 +19,7 @@ export type SemanticFactCardinalityV2 = "one" | "many";
 
 export interface SemanticFactV2 {
   fact_id: SemanticFactIdV2;
+  fact_class?: SemanticFactClassV2;
   value: SemanticFactScalarV2 | readonly SemanticFactScalarV2[];
   cardinality?: SemanticFactCardinalityV2;
   dimensions?: Readonly<Record<string, SemanticFactScalarV2>>;
@@ -55,6 +61,10 @@ export interface ObservationV2 {
   schema: typeof OBSERVATION_V2_SCHEMA;
   observation_id: ObservationIdV2;
   operation_id: OperationIdV2;
+  fulfillment_role?: OperationFulfillmentRoleV2;
+  evidence_class?: ObservationEvidenceClassV2;
+  capability_id?: string;
+  eligible_criterion_ids?: readonly string[];
   binding: AssignmentBindingV2;
   authority: string;
   result_schema_id: string;

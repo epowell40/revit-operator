@@ -4,6 +4,7 @@ import {
   buildProgressEpochV2,
   canonicalJsonV2,
   decideAssignmentProgressV2,
+  observationAdmissibilityForCriterionV2,
   type AssignmentBindingV2,
   type AssignmentEfficiencyTraceV2,
   type AssignmentProgressBudgetV2,
@@ -161,7 +162,8 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
       observation_ids: evaluationDecision.observation_ids.filter((observationId) => {
         const observation = snapshot!.observations[observationId];
         const criterion = snapshot!.spec.criteria.find((candidate) => candidate.criterion_id === criterionId);
-        return Boolean(observation && criterion?.accepted_observation_authority_ids.includes(observation.authority)
+        return Boolean(observation && criterion
+          && observationAdmissibilityForCriterionV2({ snapshot: snapshot!, criterion, observation, evaluated_at: now }).admissible
           && observation.facts.some((fact) => criterion.semantic_fact_requirements.includes(fact.fact_id)));
       })
     }));

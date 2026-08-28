@@ -64,6 +64,14 @@ function setup(effect: "read" | "apply" = "read", requiredInputs: string[] = [])
 
 function resultEnvelope(operationId: string, binding: any, requestIdentity: any, payload: unknown) {
   const hash = createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex");
+  const operation = getAssignmentKernelSnapshotV2(binding.assignment_id)?.operations[operationId];
+  const semanticFacts = operation?.fulfillment_role === "supporting_control" || operation?.fulfillment_role === "prerequisite"
+    ? [{ fact_id: "control.result_available", fact_class: "control", value: true }]
+    : [
+        { fact_id: "task.result_available", fact_class: "domain", value: true },
+        { fact_id: "inventory.complete", fact_class: "domain", value: true },
+        { fact_id: "inventory.total", fact_class: "domain", value: 509 }
+      ];
   return {
     content: [{ type: "text", text: "bounded projection" }],
     structuredContent: {
@@ -87,7 +95,7 @@ function resultEnvelope(operationId: string, binding: any, requestIdentity: any,
       },
       observation: {
         raw_payload: payload,
-        semantic_facts: [{ fact_id: "result.available", value: true }],
+        semantic_facts: semanticFacts,
         verification_relevance: ["task_result"]
       }
     }

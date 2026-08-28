@@ -13,19 +13,23 @@ test("known generic tools reject missing required fields before dispatch with re
     path: "/revit/open-model",
     required_fields: ["filePath"]
   }, { path: "C:\\models\\plumbing.rvt", audit: false });
-  assert.deepEqual(failure, {
-    schema: "revit-operator.mcp-pre-dispatch-failure.v1",
-    ok: false,
-    code: "mcp_request_validation_failed",
-    phase: "request_validation",
-    retryable: true,
-    request_dispatched: false,
-    outcome_unknown: false,
-    method: "POST",
-    path: "/revit/open-model",
-    missing_required_fields: ["filePath"],
-    error: "POST /revit/open-model is missing required field: filePath. Inspect the exact tool contract and retry with a corrected request."
-  });
+  assert.equal(failure?.schema, "revit-operator.mcp-pre-dispatch-failure.v1");
+  assert.equal(failure?.code, "mcp_request_validation_failed");
+  assert.equal(failure?.request_dispatched, false);
+  assert.equal(failure?.outcome_unknown, false);
+  assert.deepEqual(failure?.missing_required_fields, ["filePath"]);
+  assert.deepEqual(failure?.invalid_fields, ["body.filePath"]);
+  assert.match(failure?.input_schema_digest ?? "", /^[a-f0-9]{64}$/);
+  assert.deepEqual(failure?.validation_issues, [{
+    field_path: "body.filePath",
+    expected_type: "required",
+    actual_type: "missing",
+    safe_correction_eligibility: "provider_corrected_arguments_required",
+    correction_action: "provider_resubmit",
+    expected_constraint: { kind: "required" },
+    message: "body.filePath is required"
+  }]);
+  assert.equal(failure?.error, "POST /revit/open-model is missing required field: filePath. Inspect the exact tool contract and retry with a corrected request.");
   const result = mcpPreDispatchFailureResult(failure!);
   assert.equal(result.isError, true);
   assert.deepEqual(result.structuredContent, failure);
@@ -94,10 +98,49 @@ test("known generic tools enforce published enum, range, and nested collection c
   assert.match(failure?.error || "", /body\.scope must be one of "host", "links", "both"/);
   assert.match(failure?.error || "", /body\.maxRows must be at most 500/);
 
+  const scalarArrayFailure = preflightKnownGenericToolBody(contract, {
+    intent: "count_and_list",
+    scope: "host",
+    categories: "OST_DuctTerminal",
+    maxRows: 500
+  });
+  assert.deepEqual(scalarArrayFailure?.validation_issues, [{
+    field_path: "body.categories",
+    expected_type: "array",
+    actual_type: "string",
+    safe_correction_eligibility: "provider_corrected_arguments_required",
+    correction_action: "provider_resubmit",
+    expected_constraint: { kind: "json_type", type: "array" },
+    message: "body.categories must be of type array"
+  }]);
+  assert.equal(scalarArrayFailure?.input_schema_id, "operator-native/POST:/revit/quantify/input/v1");
+  assert.deepEqual(failure?.validation_issues?.find(issue => issue.field_path === "body.scope")?.expected_constraint, {
+    kind: "enum", allowed_values: ["host", "links", "both"]
+  });
+
   assert.equal(preflightKnownGenericToolBody(contract, {
     intent: "count_and_list",
     scope: "host",
     categories: ["OST_DuctTerminal"],
     maxRows: 500
   }), null);
+});
+
+test("schema diagnostics fail closed within bounded issue and field-path limits", () => {
+  const tooMany = preflightKnownGenericToolBody({
+    method: "POST",
+    path: "/revit/bounded-contract",
+    required_fields: Array.from({ length: 65 }, (_, index) => `field_${index}`)
+  }, {});
+  assert.equal(tooMany?.validation_issues?.length, 1);
+  assert.equal(tooMany?.validation_issues?.[0]?.expected_constraint.kind, "schema_bounds");
+  assert.ok((tooMany?.error.length ?? 0) <= 2_000);
+
+  const oversizedPath = preflightKnownGenericToolBody({
+    method: "POST",
+    path: "/revit/bounded-contract",
+    required_fields: ["x".repeat(600)]
+  }, {});
+  assert.equal(oversizedPath?.validation_issues?.[0]?.field_path, "body");
+  assert.equal(oversizedPath?.validation_issues?.[0]?.actual_type, "schema_contract_out_of_bounds");
 });

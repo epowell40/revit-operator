@@ -46,13 +46,25 @@ function spec(criteria = true): AssignmentSpecV2 {
     binding,
     source_user_request: "Return a grouped inventory.",
     requested_effect: "read",
+    semantic_evidence_contract: "revit-operator.semantic-evidence-contract/v2",
     criteria: criteria ? [{
       criterion_id: "criterion-inventory",
       requirement: "Requested inventory is authoritatively returned.",
       required: true,
       semantic_fact_requirements: ["inventory.total", "inventory.group"],
       accepted_evaluator_authority_ids: ["deterministic-controller"],
-      accepted_observation_authority_ids: ["native-host"]
+      accepted_observation_authority_ids: ["native-host"],
+      evidence_policy: {
+        schema: "revit-operator.criterion-evidence-policy/v2",
+        allowed_evidence_classes: ["task_result"],
+        allowed_fulfillment_roles: ["delegated_task_execution"],
+        allowed_fact_classes: ["domain"],
+        allowed_capability_ids: ["inventory.read"],
+        allowed_result_schema_ids: ["inventory/v1"],
+        required_fact_ids: ["inventory.total", "inventory.group"],
+        require_native_dispatch: true,
+        require_current_generation: true
+      }
     }] : [],
     input_variables: [],
     work_units: [{
@@ -105,7 +117,10 @@ function operation(id = "operation-inventory"): OperationV2 {
     capability_id: "inventory.read",
     requested_effect: "read",
     purpose: "work",
+    fulfillment_role: "delegated_task_execution",
+    delegation_authority_id: `delegation:${id}`,
     advances_criterion_ids: ["criterion-inventory"],
+    eligible_criterion_ids: ["criterion-inventory"],
     resolves_gap_ids: ["criterion:criterion-inventory"],
     target: { document_fingerprint: binding.document_fingerprint },
     input: { category: "devices" },
@@ -150,13 +165,17 @@ function observation(operationId = "operation-inventory", observationId = "obser
     raw_payload_ref: `evidence://${observationId}`,
     raw_payload_hash: `hash-${operationId}`,
     facts: [
-      { fact_id: "inventory.total", value: 3, cardinality: "one" },
-      { fact_id: "inventory.group", value: 2, cardinality: "many", identity_dimensions: ["family", "type"], dimensions: { family: "A", type: "A" } },
-      { fact_id: "inventory.group", value: 1, cardinality: "many", identity_dimensions: ["family", "type"], dimensions: { family: "B", type: "B" } }
+      { fact_id: "inventory.total", fact_class: "domain", value: 3, cardinality: "one" },
+      { fact_id: "inventory.group", fact_class: "domain", value: 2, cardinality: "many", identity_dimensions: ["family", "type"], dimensions: { family: "A", type: "A" } },
+      { fact_id: "inventory.group", fact_class: "domain", value: 1, cardinality: "many", identity_dimensions: ["family", "type"], dimensions: { family: "B", type: "B" } }
     ],
     target_scope: {},
     observed_at: "2026-08-26T20:00:05.000Z",
-    verification_relevance: ["task_result"]
+    verification_relevance: ["task_result"],
+    fulfillment_role: "delegated_task_execution",
+    evidence_class: "task_result",
+    capability_id: "inventory.read",
+    eligible_criterion_ids: ["criterion-inventory"]
   };
 }
 

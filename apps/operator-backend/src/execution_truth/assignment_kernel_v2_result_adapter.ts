@@ -8,6 +8,8 @@ import {
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type ObservationV2,
+  type ObservationEvidenceClassV2,
+  type OperationFulfillmentRoleV2,
   type OperationResultV2,
   type SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
@@ -66,11 +68,23 @@ function validateOperationResultShape(value: unknown): asserts value is Operatio
   }
   adapterAssert(Number.isInteger(value.binding.generation) && Number(value.binding.generation) > 0, "operation_result_binding_invalid", "Operation result generation must be a positive integer.");
   adapterAssert(typeof value.observation_required === "boolean", "operation_result_observation_contract_missing", "Operation result must state whether authoritative observation retention is required.");
-  adapterAssert(["succeeded", "failed_before_dispatch", "failed_after_dispatch", "timed_out", "canceled"].includes(String(value.status)), "operation_result_status_invalid", "Operation result status is invalid.");
+  adapterAssert(["succeeded", "failed_before_dispatch", "completed_without_native_dispatch", "failed_after_dispatch", "timed_out", "canceled"].includes(String(value.status)), "operation_result_status_invalid", "Operation result status is invalid.");
   adapterAssert(["not_dispatched", "dispatching", "dispatched"].includes(String(value.dispatch_state)), "operation_result_dispatch_invalid", "Operation result dispatch state is invalid.");
   adapterAssert(["none", "unknown", "applied"].includes(String(value.persistent_effect)), "operation_result_effect_invalid", "Operation result effect is invalid.");
   adapterAssert(["not_applicable", "committed", "rolled_back", "unknown"].includes(String(value.native_transaction_state)), "operation_result_transaction_invalid", "Operation result transaction state is invalid.");
   if (value.observation_required) adapterAssert(typeof value.raw_payload_hash === "string" && value.raw_payload_hash.length > 0, "operation_result_payload_hash_missing", "Observation-bearing result requires a raw payload hash.");
+  if (value.input_schema_gap !== undefined) {
+    adapterAssert(isRecord(value.input_schema_gap), "operation_input_schema_gap_invalid", "Input-schema gap must be structured.");
+    const gap = value.input_schema_gap;
+    adapterAssert(gap.schema === "revit-operator.operation-input-schema-gap/v2"
+      && gap.operation_id === value.operation_id
+      && typeof gap.input_schema_digest === "string" && /^[a-f0-9]{64}$/.test(gap.input_schema_digest)
+      && (gap.method === "GET" || gap.method === "POST") && typeof gap.path === "string"
+      && typeof gap.request_signature === "string" && gap.request_signature.length > 0
+      && gap.dispatch === false && gap.effect === "none"
+      && Array.isArray(gap.issues) && gap.issues.length > 0,
+    "operation_input_schema_gap_invalid", "Input-schema gap must bind to the no-effect operation result.");
+  }
 }
 
 export function unwrapOperationResultV2(envelope: OperationResultTransportV2): OperationResultV2 {
@@ -124,6 +138,10 @@ export function observationFromOperationResultV2(input: Readonly<{
   raw_payload: unknown;
   target_scope?: Readonly<Record<string, string | number | boolean | null>>;
   verification_relevance?: readonly string[];
+  fulfillment_role?: OperationFulfillmentRoleV2;
+  evidence_class?: ObservationEvidenceClassV2;
+  capability_id?: string;
+  eligible_criterion_ids?: readonly string[];
   registry: ObservationDecoderRegistryV2;
 }>): ObservationV2 {
   adapterAssert(input.result.observation_required, "operation_result_observation_not_required", "An observation cannot be synthesized for a result that does not require one.");
@@ -134,6 +152,10 @@ export function observationFromOperationResultV2(input: Readonly<{
     schema: OBSERVATION_V2_SCHEMA,
     observation_id: input.observation_id,
     operation_id: input.result.operation_id,
+    ...(input.fulfillment_role ? { fulfillment_role: input.fulfillment_role } : {}),
+    ...(input.evidence_class ? { evidence_class: input.evidence_class } : {}),
+    ...(input.capability_id ? { capability_id: input.capability_id } : {}),
+    ...(input.eligible_criterion_ids ? { eligible_criterion_ids: [...input.eligible_criterion_ids] } : {}),
     binding: structuredClone(input.expected_binding),
     authority: input.result.authority,
     result_schema_id: input.result.result_schema_id,

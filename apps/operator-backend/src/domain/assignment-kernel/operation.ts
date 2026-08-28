@@ -7,10 +7,12 @@ import type {
   WorkUnitIdV2
 } from "./identity.js";
 import type { PayloadProvenanceV2 } from "./payload_provenance.js";
+import type { OperationFulfillmentRoleV2 } from "./semantic_admissibility.js";
 
 export const OPERATION_V2_SCHEMA = "revit-operator.operation/v2" as const;
 export const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const;
 export const OBSERVATION_COMMIT_INPUT_V2_SCHEMA = "revit-operator.observation-commit-input/v2" as const;
+export const OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA = "revit-operator.operation-input-schema-gap/v2" as const;
 
 export type OperationAdmissionStateV2 = "proposed" | "admitted" | "rejected";
 export type OperationDispatchStateV2 = "not_dispatched" | "dispatching" | "dispatched";
@@ -42,11 +44,14 @@ export interface OperationV2 {
   requested_effect: RequestedEffectV2;
   purpose: OperationPurposeV2;
   operation_role?: OperationRoleV2;
+  fulfillment_role?: OperationFulfillmentRoleV2;
+  delegation_authority_id?: string;
   parent_operation_id?: OperationIdV2;
   root_operation_id?: OperationIdV2;
   blocks_parent_settlement?: boolean;
   request_identity?: OperationRequestIdentityV2;
   advances_criterion_ids: readonly CriterionIdV2[];
+  eligible_criterion_ids?: readonly CriterionIdV2[];
   resolves_gap_ids: readonly string[];
   target: CanonicalTargetV2;
   input: Readonly<Record<string, unknown>>;
@@ -104,4 +109,39 @@ export interface OperationResultV2 {
   error_code?: string;
   diagnostics?: readonly string[];
   request_identity?: OperationRequestIdentityV2;
+  input_schema_gap?: OperationInputSchemaGapV2;
+}
+
+export interface OperationInputSchemaIssueV2 {
+  field_path: string;
+  expected_type: string;
+  actual_type: string;
+  safe_correction_eligibility: "provider_corrected_arguments_required" | "declared_deterministic_coercion";
+  correction_action: "provider_resubmit" | "wrap_scalar_as_singleton_array";
+  expected_constraint: Readonly<{
+    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "schema_depth" | "schema_bounds";
+    type?: string;
+    allowed_values?: readonly (string | number | boolean | null)[];
+    minimum?: number;
+    maximum?: number;
+    min_length?: number;
+    max_length?: number;
+    min_items?: number;
+    max_items?: number;
+  }>;
+}
+
+export interface OperationInputSchemaGapV2 {
+  schema: typeof OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA;
+  gap_id: string;
+  operation_id: OperationIdV2;
+  capability_id: string;
+  input_schema_id: string;
+  input_schema_digest: string;
+  method: "GET" | "POST";
+  path: string;
+  request_signature: string;
+  dispatch: false;
+  effect: "none";
+  issues: readonly OperationInputSchemaIssueV2[];
 }

@@ -68,6 +68,7 @@ import { createOperatorBackendClient } from "./lib/operatorBackendClient.js";
 import { runWithOperatorBackendAuth } from "./lib/operatorBackendAuth.js";
 import {
   currentAssignmentKernelV2Binding,
+  currentAssignmentKernelTaskFulfillmentRoleV2,
   decorateAssignmentKernelMcpResultV2,
   runWithAssignmentKernelV2
 } from "./lib/assignmentKernelV2.js";
@@ -1391,8 +1392,14 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
       const preflightFailure = preflightKnownGenericToolBody(registryEntry, normalizedBody);
       if (preflightFailure) return mcpPreDispatchFailureResult(preflightFailure);
       const data = method === "GET"
-        ? await callRevit(pathInput, method, undefined, { channel: "generic_call" })
-        : await callRevit(pathInput, method, normalizedBody, { channel: "generic_call" });
+        ? await callRevit(pathInput, method, undefined, {
+            channel: "generic_call",
+            assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+          })
+        : await callRevit(pathInput, method, normalizedBody, {
+            channel: "generic_call",
+            assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+          });
       const projected = pathInput === "/revit/find-elements"
         ? projectFindElementsResultForAgent(data)
         : data;
@@ -1468,7 +1475,9 @@ server.tool("revit_list_schedules", "List schedules or read one schedule's bound
       if (args.action === "detail" && args.scheduleId === undefined && !String(args.query ?? "").trim()) {
         throw new Error("revit_list_schedules detail requires scheduleId or query.");
       }
-      const data = await callRevit("/revit/schedules", "POST", args);
+      const data = await callRevit("/revit/schedules", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2479,7 +2488,9 @@ server.tool("revit_find_elements", "Selector helper: find element ids by scope (
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/find-elements", "POST", req);
+      const data = await callRevit("/revit/find-elements", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }

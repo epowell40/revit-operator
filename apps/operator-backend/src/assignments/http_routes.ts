@@ -1,4 +1,5 @@
 import type http from "node:http";
+import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { readJson, writeJson } from "../http.js";
 import { handleVerifiedWorkPacketHttpRoute } from "../work_packets/http_routes.js";
 import { handleWorkReturnHttpRoute } from "../work_returns/http_routes.js";
@@ -54,7 +55,7 @@ export async function handleAssignmentHttpRoute(
     }
     if (!authorizeSession(sessionId)) return true;
     const limit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
-    writeJson(res, 200, { ok: true, assignment_kernel_v2_index: listAssignmentKernelSessionIndexV2(sessionId, limit) });
+    writeJson(res, 200, assignmentKernelSessionIndexResponseV2(listAssignmentKernelSessionIndexV2(sessionId, limit)));
     return true;
   }
   if (req.method === "GET" && url.pathname.startsWith("/api/assignments/v2/")
@@ -85,6 +86,10 @@ export async function handleAssignmentHttpRoute(
         : body?.operation_role === "child" ? "child" : null;
       if (!role) throw new Error("assignment_kernel_v2_child_role_invalid");
       const method = String(body?.method ?? "").trim().toUpperCase();
+      const fulfillmentRole = String(body?.fulfillment_role ?? "supporting_control").trim();
+      if (!["supporting_control", "prerequisite", "delegated_task_execution", "verification", "reconciliation", "telemetry"].includes(fulfillmentRole)) {
+        throw new Error("assignment_kernel_v2_fulfillment_role_invalid");
+      }
       const lease = openAssignmentKernelChildOperationV2({
         binding: snapshot.current_binding,
         parent_operation_id: String(body?.parent_operation_id ?? "").trim(),
@@ -95,7 +100,10 @@ export async function handleAssignmentHttpRoute(
         ...(method === "GET" || method === "POST" ? { method } : {}),
         ...(typeof body?.path === "string" ? { path: body.path } : {}),
         arguments: body?.arguments ?? {},
-        blocks_parent_settlement: body?.blocks_parent_settlement !== false
+        blocks_parent_settlement: body?.blocks_parent_settlement !== false,
+        fulfillment_role: fulfillmentRole as "supporting_control" | "prerequisite" | "delegated_task_execution" | "verification" | "reconciliation" | "telemetry",
+        ...(typeof body?.delegation_authority_id === "string" ? { delegation_authority_id: body.delegation_authority_id } : {}),
+        eligible_criterion_ids: Array.isArray(body?.eligible_criterion_ids) ? body.eligible_criterion_ids.map(String) : []
       });
       writeJson(res, 201, {
         ok: true,

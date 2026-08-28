@@ -69,6 +69,16 @@ function hash(value: unknown): string {
 }
 
 function envelope(operationId: string, binding: any, payload: unknown, effect: "none" | "applied" = "none") {
+  const admitted = getAssignmentKernelSnapshotV2(binding.assignment_id)?.operations[operationId];
+  const semanticFacts = admitted?.fulfillment_role === "supporting_control" || admitted?.fulfillment_role === "prerequisite"
+    ? [{ fact_id: "control.result_available", fact_class: "control", value: true }]
+    : admitted?.fulfillment_role === "verification"
+      ? [{ fact_id: "verification.result_available", fact_class: "verification", value: true }]
+      : [
+          { fact_id: "task.result_available", fact_class: "domain", value: true },
+          { fact_id: "inventory.complete", fact_class: "domain", value: true },
+          { fact_id: "inventory.total", fact_class: "domain", value: 2 }
+        ];
   const result: OperationResultV2 = {
     schema: OPERATION_RESULT_V2_SCHEMA,
     result_id: `result-${operationId}`,
@@ -94,10 +104,7 @@ function envelope(operationId: string, binding: any, payload: unknown, effect: "
       operation_result_v2: result,
       observation: {
         raw_payload: payload,
-        semantic_facts: [
-          { fact_id: "result.available", value: true },
-          { fact_id: "inventory.total", value: 2 }
-        ],
+        semantic_facts: semanticFacts,
         verification_relevance: ["task_result"]
       }
     }
@@ -144,6 +151,160 @@ test("duplicate native delivery is idempotent and does not create a second opera
   assert.deepEqual(second.snapshot, first.snapshot);
   assert.equal(Object.keys(second.snapshot.operations).length, 1);
   assert.equal(Object.keys(second.snapshot.observations).length, 1);
+}));
+
+test("Candidate 3 repaired sequence resolves only the schema gap before one corrected quantify task result", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const invalid = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "invalid-quantify",
+    provider_turn_id: "turn-invalid",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/quantify", body: { categories: "OST_DuctTerminal" } }
+  });
+  const failedResult: OperationResultV2 = {
+    schema: OPERATION_RESULT_V2_SCHEMA,
+    result_id: `result-${invalid.operation_id}`,
+    operation_id: invalid.operation_id,
+    binding: invalid.binding,
+    status: "failed_before_dispatch",
+    dispatch_state: "not_dispatched",
+    persistent_effect: "none",
+    native_transaction_state: "not_applicable",
+    authority: "operator-mcp-transport",
+    result_schema_id: "operation-transport-failure/v2",
+    observation_required: false,
+    completed_at: "2026-08-26T16:00:01.000Z",
+    error_code: "mcp_request_validation_failed",
+    request_identity: invalid.request_identity,
+    input_schema_gap: {
+      schema: "revit-operator.operation-input-schema-gap/v2",
+      gap_id: `input-schema:${invalid.operation_id}`,
+      operation_id: invalid.operation_id,
+      capability_id: invalid.capability_id,
+      input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+      input_schema_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: invalid.request_identity.request_signature,
+      dispatch: false,
+      effect: "none",
+      issues: [{
+        field_path: "body.categories",
+        expected_type: "array",
+        actual_type: "string",
+        safe_correction_eligibility: "provider_corrected_arguments_required",
+        correction_action: "provider_resubmit",
+        expected_constraint: { kind: "json_type", type: "array" }
+      }]
+    }
+  };
+  settleAssignmentKernelOperationV2(invalid, {
+    content: [],
+    structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: failedResult }
+  });
+  __testOnlyResetGoalListCache();
+  const afterInvalid = getAssignmentKernelSnapshotV2(goal.id)!;
+  const inputGapId = `input-schema:${invalid.operation_id}`;
+  assert.equal(afterInvalid.operations[invalid.operation_id]!.dispatch_state, "not_dispatched");
+  assert.equal(afterInvalid.operations[invalid.operation_id]!.persistent_effect, "none");
+  assert.equal(afterInvalid.operations[invalid.operation_id]!.observation_ids.length, 0);
+  assert.deepEqual(afterInvalid.operations[invalid.operation_id]!.result?.input_schema_gap?.issues[0]?.expected_constraint,
+    { kind: "json_type", type: "array" }, "the actionable schema constraint must survive restart replay");
+  assert.ok(deriveProgressGapsV2(afterInvalid).some(gap => gap.gap_id === inputGapId
+    && gap.kind === "operation_input_schema_invalid"));
+
+  const unrelatedControl = openAssignmentKernelOperationV2({
+    snapshot: afterInvalid,
+    controller_request_id: "unrelated-control",
+    provider_turn_id: "turn-unrelated-control",
+    capability_id: "revit_search_tools",
+    classified_effect: "discovery",
+    arguments: { query: "inventory" }
+  });
+  assert.ok(getAssignmentKernelSnapshotV2(goal.id)!.operations[unrelatedControl.operation_id]!.resolves_gap_ids.includes(inputGapId));
+  markAssignmentKernelOperationDispatchStartedV2(unrelatedControl);
+  settleAssignmentKernelOperationV2(unrelatedControl,
+    envelope(unrelatedControl.operation_id, unrelatedControl.binding, { matches: ["/revit/quantify"] }));
+  assert.ok(deriveProgressGapsV2(getAssignmentKernelSnapshotV2(goal.id)!).some(gap => gap.gap_id === inputGapId),
+    "an unrelated successful control result must not erase the exact input-schema gap");
+
+  const nonNativeControl = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id: "non-native-control",
+    provider_turn_id: "turn-non-native-control",
+    capability_id: "operator_record_execution_strategy",
+    classified_effect: "discovery",
+    arguments: { strategy: "inspect schema" }
+  });
+  const nonNativeResult: OperationResultV2 = {
+    schema: OPERATION_RESULT_V2_SCHEMA,
+    result_id: `result-${nonNativeControl.operation_id}`,
+    operation_id: nonNativeControl.operation_id,
+    binding: nonNativeControl.binding,
+    status: "completed_without_native_dispatch",
+    dispatch_state: "not_dispatched",
+    persistent_effect: "none",
+    native_transaction_state: "not_applicable",
+    authority: "operator-controller",
+    result_schema_id: "operator-control/strategy/v2",
+    observation_required: false,
+    request_identity: nonNativeControl.request_identity,
+    completed_at: "2026-08-26T16:00:02.000Z"
+  };
+  appendCurrentAssignmentKernelEventV2({
+    goal_id: goal.id,
+    binding: nonNativeControl.binding,
+    event_id: `operation-result:${nonNativeResult.result_id}`,
+    actor: nonNativeResult.authority,
+    occurred_at: nonNativeResult.completed_at,
+    body: { event_type: "operation_result_recorded", result: nonNativeResult }
+  });
+  assert.ok(deriveProgressGapsV2(getAssignmentKernelSnapshotV2(goal.id)!).some(gap => gap.gap_id === inputGapId),
+    "controller-only completion without native evidence must not erase the input-schema gap");
+
+  const docs = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id: "tool-doc",
+    provider_turn_id: "turn-doc",
+    capability_id: "revit_tool_doc",
+    classified_effect: "discovery",
+    arguments: { method: "POST", path: "/revit/quantify" }
+  });
+  assert.equal(docs.fulfillment_role, "supporting_control");
+  assert.deepEqual(docs.eligible_criterion_ids, []);
+  assert.ok(getAssignmentKernelSnapshotV2(goal.id)!.operations[docs.operation_id]!.resolves_gap_ids.includes(inputGapId));
+  markAssignmentKernelOperationDispatchStartedV2(docs);
+  settleAssignmentKernelOperationV2(docs, envelope(docs.operation_id, docs.binding, { schema_available: true }));
+  const afterDocs = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(deriveProgressGapsV2(afterDocs).some(gap => gap.gap_id === inputGapId), false);
+  assert.equal(afterDocs.criteria[afterDocs.spec.criteria[0]!.criterion_id], undefined,
+    "tool documentation must not evaluate or pass the inventory criterion");
+  const docsObservation = afterDocs.observations[afterDocs.operations[docs.operation_id]!.observation_ids[0]!]!;
+  assert.equal(docsObservation.evidence_class, "control");
+  assert.deepEqual(docsObservation.eligible_criterion_ids, []);
+
+  const corrected = openAssignmentKernelOperationV2({
+    snapshot: afterDocs,
+    controller_request_id: "corrected-quantify",
+    provider_turn_id: "turn-corrected",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/quantify", body: { categories: ["OST_DuctTerminal"] } }
+  });
+  const correctedOperation = getAssignmentKernelSnapshotV2(goal.id)!.operations[corrected.operation_id]!;
+  assert.equal(correctedOperation.retry_of_operation_id, invalid.operation_id);
+  assert.equal(correctedOperation.retry_basis, "corrected_input");
+  assert.equal(corrected.fulfillment_role, "delegated_task_execution");
+  markAssignmentKernelOperationDispatchStartedV2(corrected);
+  const settled = settleAssignmentKernelOperationV2(corrected,
+    envelope(corrected.operation_id, corrected.binding, { total: 2, groups: [{ family: "A", type: "B", count: 2 }] }));
+  assert.equal(settled.observation?.evidence_class, "task_result");
+  const decision = advanceAssignmentKernelProgressV2({ binding: corrected.binding });
+  assert.equal(decision.decision.decision, "terminal",
+    "the deterministic controller must evaluate the new task evidence before deriving completion");
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.criteria[afterDocs.spec.criteria[0]!.criterion_id]?.status, "pass");
 }));
 
 test("Observation persistence retries only the durable commit and never repeats native work", async () => {

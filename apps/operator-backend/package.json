@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@revitoperator/assignment-kernel-v2-contracts": "file:../../packages/assignment-kernel-v2-contracts",
     "@revitoperator/payload-digest-v2": "file:../../packages/payload-digest-v2",
     "@napi-rs/canvas": "^0.1.100",
     "ajv": "^8.20.0",

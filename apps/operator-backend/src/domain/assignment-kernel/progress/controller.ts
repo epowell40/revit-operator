@@ -2,6 +2,7 @@ import { canonicalJsonV2 } from "../canonical.js";
 import type { AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
+import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
 import type { OperationV2 } from "../operation.js";
 import {
   PROGRESS_DECISION_V2_SCHEMA,
@@ -20,16 +21,65 @@ function unique<T extends string>(values: readonly T[]): T[] {
 
 function relevantObservationIds(snapshot: AssignmentSnapshotV2, criterion: AssignmentCriterionSpecV2): string[] {
   return Object.values(snapshot.observations)
-    .filter((observation) => snapshot.operations[observation.operation_id]
-      ?.advances_criterion_ids.includes(criterion.criterion_id))
-    .filter((observation) => criterion.accepted_observation_authority_ids.includes(observation.authority))
+    .filter((observation) => observationAdmissibilityForCriterionV2({ snapshot, criterion, observation }).admissible)
     .filter((observation) => observation.facts.some((fact) => criterion.semantic_fact_requirements.includes(fact.fact_id)))
     .map((observation) => observation.observation_id)
     .sort();
 }
 
+const INPUT_SCHEMA_DOCUMENTATION_CAPABILITIES = new Set(["revit_tool_doc", "revit_tool_examples"]);
+
+function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: OperationV2): boolean {
+  const gap = rejected.result?.input_schema_gap;
+  if (!gap) return false;
+  return Object.values(snapshot.operations).some((candidate) => {
+    if (candidate.operation_id === rejected.operation_id
+        || !candidate.resolves_gap_ids.includes(gap.gap_id)
+        || candidate.settlement_state !== "settled"
+        || !["succeeded", "completed_without_native_dispatch"].includes(candidate.result?.status ?? "")
+        || candidate.binding.run_id !== rejected.binding.run_id
+        || candidate.binding.generation !== rejected.binding.generation) return false;
+    const correctedRetry = candidate.retry_of_operation_id === rejected.operation_id
+      && candidate.retry_basis === "corrected_input"
+      && candidate.capability_id === rejected.capability_id
+      && candidate.request_identity?.method === gap.method
+      && candidate.request_identity?.path === gap.path
+      && candidate.request_identity?.request_signature !== gap.request_signature
+      && candidate.result?.dispatch_state === "dispatched"
+      && candidate.observation_ids.length > 0;
+    const documentationChildren = Object.values(snapshot.operations).filter((child) =>
+      child.parent_operation_id === candidate.operation_id
+      && child.settlement_state === "settled"
+      && child.result?.status === "succeeded"
+      && child.observation_ids.length > 0
+      && (child.fulfillment_role === "supporting_control" || child.fulfillment_role === "prerequisite"));
+    const documentation = candidate.fulfillment_role === "supporting_control"
+      && INPUT_SCHEMA_DOCUMENTATION_CAPABILITIES.has(candidate.capability_id)
+      && String(candidate.input.method ?? "").toUpperCase() === gap.method
+      && String(candidate.input.path ?? "") === gap.path
+      && (candidate.observation_ids.length > 0 || documentationChildren.length > 0);
+    return correctedRetry || documentation;
+  });
+}
+
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
+  for (const operation of Object.values(snapshot.operations)) {
+    const inputGap = operation.result?.input_schema_gap;
+    if (!inputGap) continue;
+    const resolved = inputSchemaGapResolvedV2(snapshot, operation);
+    if (resolved) continue;
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA,
+      gap_id: inputGap.gap_id,
+      kind: "operation_input_schema_invalid",
+      criterion_ids: operation.advances_criterion_ids,
+      work_unit_ids: [operation.work_unit_id],
+      required_fact_ids: inputGap.issues.map((issue) => `${issue.field_path}:${issue.expected_type}`).sort(),
+      current_observation_ids: [],
+      reason: `Operation ${operation.operation_id} was safely rejected before dispatch because its structured input did not satisfy ${inputGap.input_schema_id}.`
+    });
+  }
   for (const variableId of snapshot.pending_input_variable_ids) {
     const workUnits = snapshot.spec.work_units.filter((unit) => unit.input_variable_ids.includes(variableId));
     gaps.push({
@@ -188,6 +238,8 @@ export function operationProgressIdentityV2(operation: OperationV2): string {
     target: operation.target,
     input: operation.input,
     advances_criterion_ids: [...operation.advances_criterion_ids].sort(),
+    eligible_criterion_ids: [...(operation.eligible_criterion_ids ?? [])].sort(),
+    fulfillment_role: operation.fulfillment_role ?? null,
     resolves_gap_ids: [...operation.resolves_gap_ids].sort(),
     operation_role: operation.operation_role ?? "root",
     parent_operation_id: operation.parent_operation_id ?? null,

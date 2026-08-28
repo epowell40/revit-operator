@@ -117,9 +117,9 @@ export function journalProviderDynamicRuntimeSettlement(
           observation: {
             raw_payload: response,
             semantic_facts: [
-              { fact_id: "result.available", value: true },
-              { fact_id: "dynamic_runtime.status", value: receipt.status },
-              ...(receipt.evidence_sha256 ? [{ fact_id: "dynamic_runtime.evidence_hash", value: receipt.evidence_sha256 }] : [])
+              { fact_id: "task.result_available", fact_class: "domain", value: true },
+              { fact_id: "dynamic_runtime.status", fact_class: "domain", value: receipt.status },
+              ...(receipt.evidence_sha256 ? [{ fact_id: "dynamic_runtime.evidence_hash", fact_class: "domain", value: receipt.evidence_sha256 }] : [])
             ],
             target_scope: {},
             verification_relevance: ["task_result"]

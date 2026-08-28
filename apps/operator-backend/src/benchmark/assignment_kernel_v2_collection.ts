@@ -26,7 +26,8 @@ export async function loadAssignmentKernelPublicationsV2(
       {},
       30_000
     );
-    const index = record(indexResponse.assignment_kernel_v2_index);
+    const parsedIndexResponse = parseAssignmentKernelSessionIndexResponseV2(indexResponse);
+    const index = record(parsedIndexResponse[ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD]);
     const entries = Array.isArray(index.assignments) ? index.assignments.map(record) : [];
     const assignmentIds = [...new Set(entries.map((entry) => String(entry.assignment_id ?? "").trim()).filter(Boolean))];
     const settled = await Promise.all(assignmentIds.map(async (assignmentId) => {
@@ -56,3 +57,7 @@ export async function loadAssignmentKernelPublicationsV2(
     };
   }
 }
+import {
+  ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
+  parseAssignmentKernelSessionIndexResponseV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
