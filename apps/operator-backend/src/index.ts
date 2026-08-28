@@ -70,8 +70,8 @@ import {
   resolveAuthMode
 } from "./auth.js";
 import {
-  createPrincipalBoundSessionId,
   isSessionIdBoundToPrincipal,
+  resolveSessionCreationId,
   runWithRequestContext,
   type RequestPrincipal
 } from "./request_context.js";
@@ -1094,7 +1094,9 @@ const server = http.createServer(async (req, res) => {
     ensureDefaultMacroSkills();
 
     if (req.method === "POST" && url.pathname === "/session/new") {
-      const session_id = auth.principal ? createPrincipalBoundSessionId(auth.principal) : randomUUID();
+      const sessionCreation = await readJson(req, 4_096).then((body) => resolveSessionCreationId(body, auth.principal)).catch(() => ({ error: "Session creation body must be a JSON object." }));
+      if ("error" in sessionCreation) return writeJson(res, 400, { error: sessionCreation.error });
+      const session_id = sessionCreation.sessionId;
       const sessionOwner = sessionOwnerForPrincipal(auth.principal) ?? undefined;
       ensureSession(session_id, sessionOwner);
       try {

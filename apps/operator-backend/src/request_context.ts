@@ -47,8 +47,66 @@ function principalSessionScope(principal: RequestPrincipal): string {
   return createHash("sha256").update(`${tenantId}\u0000${userId}`, "utf8").digest("base64url").slice(0, 20);
 }
 
+function deterministicSessionUuid(scope: string, clientRequestId: string): string {
+  const bytes = Buffer.from(
+    createHash("sha256")
+      .update("revit-operator.session-new.v1\u0000", "utf8")
+      .update(scope, "utf8")
+      .update("\u0000", "utf8")
+      .update(clientRequestId, "utf8")
+      .digest()
+      .subarray(0, 16)
+  );
+  // RFC 4122 variant with a version-5 marker. The digest namespace above is
+  // product-owned; this is deterministic identity, not a claim of SHA-1 use.
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function createPrincipalBoundSessionId(principal: RequestPrincipal): string {
   return `ps1_${principalSessionScope(principal)}_${randomUUID()}`;
+}
+
+/**
+ * Returns the same principal-bound session identity when a caller must retry a
+ * lost `/session/new` response. The request id is scoped to the authenticated
+ * principal, so equal caller ids cannot merge sessions across principals.
+ */
+export function createPrincipalBoundSessionIdForRequest(principal: RequestPrincipal, clientRequestId: string): string {
+  const scope = principalSessionScope(principal);
+  return `ps1_${scope}_${deterministicSessionUuid(scope, clientRequestId)}`;
+}
+
+/** Local-token mode has no principal scope but still needs response-loss-safe creation. */
+export function createUnboundSessionIdForRequest(clientRequestId: string): string {
+  return deterministicSessionUuid("local-token", clientRequestId);
+}
+
+export function resolveSessionCreationId(
+  body: unknown,
+  principal: RequestPrincipal | null | undefined
+): { sessionId: string } | { error: string } {
+  if (body !== null && (typeof body !== "object" || Array.isArray(body))) {
+    return { error: "Session creation body must be a JSON object." };
+  }
+  const rawClientRequestId = body && typeof body === "object"
+    ? (body as Record<string, unknown>).client_request_id
+    : undefined;
+  const clientRequestId = typeof rawClientRequestId === "string" ? rawClientRequestId.trim() : "";
+  if (rawClientRequestId !== undefined && !/^[A-Za-z0-9._:-]{1,200}$/.test(clientRequestId)) {
+    return { error: "client_request_id must contain 1-200 safe identifier characters." };
+  }
+  return {
+    sessionId: clientRequestId
+      ? principal
+        ? createPrincipalBoundSessionIdForRequest(principal, clientRequestId)
+        : createUnboundSessionIdForRequest(clientRequestId)
+      : principal
+        ? createPrincipalBoundSessionId(principal)
+        : randomUUID()
+  };
 }
 
 export function isSessionIdBoundToPrincipal(sessionId: string, principal: RequestPrincipal): boolean {

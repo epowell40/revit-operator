@@ -2189,7 +2189,7 @@
     },
     {
       "path": "apps/operator-backend/src/index.ts",
-      "sha256": "sha256:92ad26e35e00e55fa43f72e59ff15508febc22351ab14ef2fc0d78e41f26df9b"
+      "sha256": "sha256:031f62b7aefea37d57dc07518061c14eb536437bf188bc0cb083cd3720da67c9"
     },
     {
       "path": "apps/operator-backend/src/knowledge_base/config.ts",
@@ -2365,7 +2365,7 @@
     },
     {
       "path": "apps/operator-backend/src/request_context.ts",
-      "sha256": "sha256:013078623afd266c5ac98b3bb3a3e1bb295161944e45a0fe43c90898c017bc9a"
+      "sha256": "sha256:7869acf367376f0dd78f6309e3d9dc2c7d8ffba2797988da4dbf5cf835a9854e"
     },
     {
       "path": "apps/operator-backend/src/revit_batch/service.ts",
@@ -3698,6 +3698,10 @@
     {
       "path": "apps/operator-backend/test/semantic_route_endpoint.test.ts",
       "sha256": "sha256:99cace8d2e995cb85ad336da379554f8bc11164906e7f934870f79344fb4c08c"
+    },
+    {
+      "path": "apps/operator-backend/test/session_creation_idempotency.test.ts",
+      "sha256": "sha256:6358ed0810d3cbb54bb00997baca2487d610e3ba19c517f15f18674ef26dcd32"
     },
     {
       "path": "apps/operator-backend/test/sheet_candidate_classifier.test.ts",
@@ -5857,7 +5861,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:6662520222c9df93c940a47f9fe364312442a4ae08d6f85182ee043cc3bbd127",
+  "inputs_hash": "sha256:5e4432fed18be3ab3b3015004dfa81ca9dc519c8701f8aef88327d299745e932",
   "result": {
     "passed": true,
     "checks": [
