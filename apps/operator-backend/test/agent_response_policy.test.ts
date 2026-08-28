@@ -144,6 +144,8 @@ test("Codex settles the durable Assignment before publishing turn completion", (
   assert.ok(settlement < outcome, "Assignment settlement must precede the authenticated outcome projection");
   assert.ok(outcome < completion, "The authenticated outcome must be captured before the response completion signal");
   assert.match(codexBrain, /canonical_assignment_outcome: canonicalAssignmentOutcome/);
+  assert.doesNotMatch(codexBrain, /const canonicalAssignmentOutcome = !assignmentKernelV2/);
+  assert.match(codexBrain, /if \(!progression\.prompt\)[\s\S]*canonicalAssignmentOutcomeForBinding\([\s\S]*canonical_assignment_outcome: canonicalAssignmentOutcome/);
 });
 
 test("pre-model redline routing uses async recovery bridge", () => {

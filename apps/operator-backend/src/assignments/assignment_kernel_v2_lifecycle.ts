@@ -10,7 +10,11 @@ import { persistVerifiedWorkPacket } from "../work_packets/store.js";
 import { persistWorkReturn } from "../work_returns/store.js";
 import { normalizeAssignmentInputsV2, type AssignmentInputAliasRegistryV2 } from "./assignment_kernel_v2_input_adapter.js";
 import { assignmentKernelV2ForBinding } from "./assignment_kernel_v2_factory.js";
-import { appendCurrentAssignmentKernelEventV2, getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
+import {
+  appendCurrentAssignmentKernelEventV2,
+  getAssignmentKernelSnapshotV2,
+  normalizeAssignmentKernelJournalV2
+} from "./assignment_kernel_v2_store.js";
 
 export type AssignmentKernelBindingInputV2 = Readonly<{
   session_id: string;
@@ -136,20 +140,55 @@ export function supplyAssignmentInputV2(input: Readonly<{
   external_values: Readonly<Record<string, unknown>>;
   aliases?: AssignmentInputAliasRegistryV2;
 }>): AssignmentSnapshotV2 {
-  let snapshot = context(input.binding).snapshot;
+  return supplyAssignmentInputResultV2(input).snapshot;
+}
+
+export function supplyAssignmentInputResultV2(input: Readonly<{
+  binding: AssignmentKernelBindingInputV2;
+  clarification_id: string;
+  external_values: Readonly<Record<string, unknown>>;
+  aliases?: AssignmentInputAliasRegistryV2;
+}>): Readonly<{ snapshot: AssignmentSnapshotV2; idempotent: boolean }> {
+  const resolved = assignmentKernelV2ForBinding(input.binding);
+  if (!resolved) throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
+  let snapshot = resolved.snapshot;
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(input.clarification_id.trim())) throw new Error("assignment_kernel_v2_clarification_id_invalid");
   const normalized = normalizeAssignmentInputsV2({ spec: snapshot.spec, external_values: input.external_values, aliases: input.aliases });
   if (Object.keys(normalized).length < 1) throw new Error("assignment_kernel_v2_input_value_required");
-  for (const [variableId, value] of Object.entries(normalized)) {
+  const entries = Object.entries(normalized).map(([variableId, value]) => ({
+    variableId,
+    value,
+    eventId: `input-supplied:${input.clarification_id}:${variableId}:${digest(value)}`
+  }));
+  const journal = normalizeAssignmentKernelJournalV2(resolved.goal.assignment_kernel_v2);
+  const suppliedEvents = journal.events.flatMap(event => event.event_type === "input_supplied"
+    && event.clarification_id === input.clarification_id
+    ? [{ event_id: event.event_id, variable_id: event.variable_id }]
+    : []);
+  const conflicting = entries.some(entry => suppliedEvents.some(event => event.variable_id === entry.variableId
+    && event.event_id !== entry.eventId));
+  if (conflicting) throw new Error("assignment_kernel_v2_input_integrity_conflict");
+  const existingIds = new Set(suppliedEvents.map(event => event.event_id));
+  if (entries.every(entry => existingIds.has(entry.eventId))) return { snapshot, idempotent: true };
+  if (snapshot.terminal) throw new Error("assignment_terminal_immutable");
+  if (entries.some(entry => existingIds.has(entry.eventId))) throw new Error("assignment_kernel_v2_input_partial_replay");
+  for (const entry of entries) {
+    const clarification = snapshot.clarifications[input.clarification_id];
+    if (!clarification || clarification.resolved_at || clarification.variable_id !== entry.variableId
+      || !snapshot.pending_input_variable_ids.includes(entry.variableId)) {
+      throw new Error("clarification_binding_invalid");
+    }
+  }
+  for (const { variableId, value, eventId } of entries) {
     snapshot = appendCurrentAssignmentKernelEventV2({
       goal_id: input.binding.assignment_id,
       binding: snapshot.current_binding,
-      event_id: `input-supplied:${input.clarification_id}:${variableId}:${digest(value)}`,
+      event_id: eventId,
       actor: "authenticated-user",
       body: { event_type: "input_supplied", variable_id: variableId, clarification_id: input.clarification_id, value }
     }).snapshot;
   }
   const resumedGoal = getGoal(input.binding.assignment_id);
   if (resumedGoal) persistWorkReturn(resumedGoal);
-  return snapshot;
+  return { snapshot, idempotent: false };
 }

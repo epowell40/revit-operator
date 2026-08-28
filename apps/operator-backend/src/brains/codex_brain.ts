@@ -631,6 +631,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         const progression = prepareCodexAssignmentProgressV2(assignmentKernelV2.binding);
         if (!progression.prompt) {
           const message = progression.message;
+          const canonicalAssignmentOutcome = canonicalAssignmentOutcomeForBinding({
+            session_id: assignmentKernelV2.binding.session_id,
+            assignment_id: assignmentKernelV2.binding.assignment_id,
+            assignment_run_id: assignmentKernelV2.binding.run_id,
+            assignment_generation: assignmentKernelV2.binding.generation
+          });
           mcpRuntime?.endBackendAuthLease(backendAuthLease);
           backendAuthLease = null;
           mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
@@ -647,7 +653,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             assistant_message: message,
             actions: [],
             assignment_snapshot_v2: progression.snapshot,
-            ...(progression.snapshot.terminal ? { terminal_result_v2: deriveTerminalResultV2(progression.snapshot) } : {})
+            ...(progression.snapshot.terminal ? { terminal_result_v2: deriveTerminalResultV2(progression.snapshot) } : {}),
+            ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {})
           };
         }
         assignmentProgressTurnStart = progression.snapshot;
@@ -1147,7 +1154,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   if (assignmentKernelV2) settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
-  const canonicalAssignmentOutcome = !assignmentKernelV2 && req.assignment_id && req.assignment_run_id
+  const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({
         session_id: req.session_id,
