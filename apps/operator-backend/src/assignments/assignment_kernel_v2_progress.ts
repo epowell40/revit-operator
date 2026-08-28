@@ -155,6 +155,7 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
   let snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
   if (!snapshot) throw new Error("assignment_kernel_v2_not_found");
   let decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+  if (snapshot.terminal) return { snapshot, decision };
   if (decision.decision === "evaluate_criteria") {
     const evaluationDecision = decision;
     const claims = evaluationDecision.criterion_ids.map((criterionId) => ({

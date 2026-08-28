@@ -5,6 +5,7 @@ import {
 } from "../assignments/assignment_kernel_v2_progress.js";
 import { settleAssignmentKernelProviderBudgetAtQuiescenceV2 } from "../assignments/assignment_kernel_v2_provider_budget.js";
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 
 function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
@@ -48,7 +49,9 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2): 
   return {
     snapshot: progression.snapshot,
     prompt: progressPrompt(progression.decision),
-    message: progressMessage(progression.decision)
+    message: progression.snapshot.terminal
+      ? renderTerminalResultV2(progression.snapshot)
+      : progressMessage(progression.decision)
   };
 }
 
@@ -78,7 +81,7 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
 
 export function codexAssignmentControllerStopMessage(snapshot: AssignmentSnapshotV2 | null, reason: string): string {
   return snapshot?.terminal
-    ? `The canonical Assignment is ${snapshot.outcome}: ${snapshot.terminal_reason ?? reason}.`
+    ? renderTerminalResultV2(snapshot)
     : `The canonical Assignment controller stopped this reasoning turn: ${reason}.`;
 }
 
