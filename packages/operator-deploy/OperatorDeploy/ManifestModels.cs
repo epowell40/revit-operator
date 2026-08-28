@@ -274,9 +274,10 @@ public sealed class ReleaseManifest
     }
 
     private static readonly Regex SafeName = new("^[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.CultureInvariant);
-    // npm payloads legitimately include names such as .bin, .package-lock.json, .env.example, and _vendor.
-    // One leading ASCII dot or underscore is allowed only for relative-path segments; "." and ".." remain rejected above.
-    private static readonly Regex SafePathSegment = new("^[._]?[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.CultureInvariant);
+    // npm payloads legitimately include names such as .bin, .package-lock.json, .env.example, _vendor,
+    // and scoped-package directories such as @revitoperator. One leading ASCII dot, underscore, or at-sign
+    // is allowed only for relative-path segments; "." and ".." remain rejected above.
+    private static readonly Regex SafePathSegment = new("^[@._]?[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.CultureInvariant);
     private static readonly Regex DottedIdentifier = new("^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)+$", RegexOptions.CultureInvariant);
     private static readonly HashSet<string> ReservedDeviceNames = new(
         new[] { "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9" },
