@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
@@ -9,6 +10,7 @@ import {
   ASSIGNMENT_KERNEL_V2_BINDING_META_KEY,
   ASSIGNMENT_KERNEL_V2_META_KEY,
   beginAssignmentKernelNativeRequestV2,
+  currentAssignmentKernelTaskFulfillmentRoleV2,
   currentAssignmentKernelV2Binding,
   decorateAssignmentKernelMcpResultV2,
   markAssignmentKernelNativeRequestDispatchingV2,
@@ -39,24 +41,43 @@ function payloadRegressionFixture(name: string): any {
 function meta(
   effect: "read" | "preview" | "apply" = "read",
   purpose = "work",
-  nativeRequest?: { method: "GET" | "POST"; path: string }
+  nativeRequest?: { method: "GET" | "POST"; path: string; body?: unknown }
 ) {
+  const fulfillmentRole = purpose === "verification" ? "verification"
+    : purpose === "reconciliation" ? "reconciliation"
+      : purpose === "discovery" || purpose === "evidence_read" ? "supporting_control"
+        : "delegated_task_execution";
+  const capabilityId = nativeRequest ? "revit_call_tool" : "inventory.read";
   return {
     [ASSIGNMENT_KERNEL_V2_META_KEY]: {
       schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
       assignment_id: binding.assignment_id,
       binding,
       operation_id: "operation-1",
-      capability_id: "inventory.read",
+      capability_id: capabilityId,
       requested_effect: effect,
       purpose,
       operation_role: "root",
+      fulfillment_role: fulfillmentRole,
+      ...(fulfillmentRole === "delegated_task_execution" || fulfillmentRole === "verification"
+        ? { delegation_authority_id: "delegation:operation-1" }
+        : {}),
+      eligible_criterion_ids: fulfillmentRole === "delegated_task_execution" || fulfillmentRole === "verification"
+        ? ["criterion-inventory"]
+        : [],
       root_operation_id: "operation-1",
       blocks_parent_settlement: false,
       request_identity: {
-        capability_id: "inventory.read",
-        ...nativeRequest,
-        request_signature: "inventory-read-request"
+        capability_id: capabilityId,
+        ...(nativeRequest ? { method: nativeRequest.method, path: nativeRequest.path } : {}),
+        request_signature: nativeRequest
+          ? payloadDigestV2({
+              capability_id: capabilityId,
+              method: nativeRequest.method,
+              path: nativeRequest.path,
+              body: nativeRequest.body ?? null
+            }).digest
+          : "inventory-read-request"
       },
       opened_at: "2026-08-26T15:00:00.000Z",
       deadline_at: "2026-08-26T15:04:00.000Z"
@@ -64,11 +85,11 @@ function meta(
   };
 }
 
-test("native result is normalized once into an explicit OperationResultV2 and semantic facts", async () => {
-  const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/find-elements" }), async () => {
-    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/find-elements");
+test("quantify result is normalized once into an explicit task-result Observation and inventory facts", async () => {
+  const decorated = await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/quantify" }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify");
     await markAssignmentKernelNativeRequestDispatchingV2(request);
-    await recordAssignmentKernelNativeResultV2("POST", "/revit/find-elements", {
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
       totalCount: 2,
       items: [
         { familyName: "Supply Diffuser", typeName: "24x24" },
@@ -89,6 +110,8 @@ test("native result is normalized once into an explicit OperationResultV2 and se
   assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "native-host");
+  assert.equal(decorated.structuredContent.observation.evidence_class, "task_result");
+  assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.complete" && fact.value === true));
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.total" && fact.value === 2));
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.group" && fact.value === 2));
 });
@@ -120,10 +143,10 @@ test("Candidate 2 tool-registry payload uses the cross-process ordinal digest", 
 
 test("source field spelling aliases normalize to identical semantic fact identities", async () => {
   async function facts(payload: unknown) {
-    return await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/transport-only" }), async () => {
-      const request = await beginAssignmentKernelNativeRequestV2("POST", "/transport-only");
+    return await runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/revit/quantify" }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify");
       await markAssignmentKernelNativeRequestDispatchingV2(request);
-      await recordAssignmentKernelNativeResultV2("POST", "/transport-only", {
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
         ...(payload as object),
         canonical_attempt_settlement: { attempt_id: "receipt", requested_effect: "read", effect_state: "none", request_dispatched: true }
       }, request);
@@ -134,6 +157,76 @@ test("source field spelling aliases normalize to identical semantic fact identit
   const snake = await facts({ total_count: 1, items: [{ family_name: "A", type_name: "B" }] });
   const select = (rows: any[]) => rows.filter(row => row.fact_id === "inventory.total" || row.fact_id === "inventory.group");
   assert.deepEqual(select(camel), select(snake));
+});
+
+test("pre-dispatch schema rejection becomes a structured no-effect correction gap", async () => {
+  const context = meta("read", "work");
+  const operationContext = context[ASSIGNMENT_KERNEL_V2_META_KEY];
+  const decorated = await runWithAssignmentKernelV2({
+    [ASSIGNMENT_KERNEL_V2_META_KEY]: {
+      ...operationContext,
+      capability_id: "revit_call_tool",
+      request_identity: {
+        capability_id: "revit_call_tool",
+        method: "POST",
+        path: "/revit/quantify",
+        request_signature: "invalid-scalar-array"
+      }
+    }
+  }, async () => decorateAssignmentKernelMcpResultV2({
+    isError: true,
+    structuredContent: {
+      schema: "revit-operator.mcp-pre-dispatch-failure.v1",
+      ok: false,
+      code: "mcp_request_validation_failed",
+      phase: "request_validation",
+      retryable: true,
+      request_dispatched: false,
+      outcome_unknown: false,
+      method: "POST",
+      path: "/revit/quantify",
+      input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+      input_schema_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      invalid_fields: ["body.categories"],
+      validation_issues: [{
+        field_path: "body.categories",
+        expected_type: "array",
+        actual_type: "string",
+        safe_correction_eligibility: "provider_corrected_arguments_required",
+        correction_action: "provider_resubmit",
+        expected_constraint: { kind: "json_type", type: "array" }
+      }],
+      error: "body.categories must be of type array"
+    },
+    content: []
+  }, "revit_call_tool") as any);
+  const result = (decorated as any).structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_before_dispatch");
+  assert.equal(result.dispatch_state, "not_dispatched");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.observation_required, false);
+  assert.deepEqual(result.input_schema_gap, {
+    schema: "revit-operator.operation-input-schema-gap/v2",
+    gap_id: "input-schema:operation-1",
+    operation_id: "operation-1",
+    capability_id: "revit_call_tool",
+    input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+    input_schema_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    method: "POST",
+    path: "/revit/quantify",
+    request_signature: "invalid-scalar-array",
+    dispatch: false,
+    effect: "none",
+    issues: [{
+      field_path: "body.categories",
+      expected_type: "array",
+      actual_type: "string",
+      safe_correction_eligibility: "provider_corrected_arguments_required",
+      correction_action: "provider_resubmit",
+      expected_constraint: { kind: "json_type", type: "array" }
+    }]
+  });
+  assert.equal((decorated as any).structuredContent.observation, undefined);
 });
 
 test("native request correlation is derived from the canonical Operation and survives result settlement", async () => {
@@ -169,6 +262,9 @@ test("Candidate 1 prerequisite and parent native calls retain distinct operation
         requested_effect: "read",
         purpose: "discovery",
         operation_role: input.operation_role,
+        fulfillment_role: input.fulfillment_role,
+        delegation_authority_id: input.delegation_authority_id,
+        eligible_criterion_ids: input.eligible_criterion_ids,
         parent_operation_id: input.parent_operation_id,
         root_operation_id: "operation-1",
         blocks_parent_settlement: true,
@@ -196,7 +292,12 @@ test("Candidate 1 prerequisite and parent native calls retain distinct operation
         capability_id: "revit_call_tool",
         method: "POST",
         path: "/revit/quantify",
-        request_signature: "request-quantify"
+        request_signature: payloadDigestV2({
+          capability_id: "revit_call_tool",
+          method: "POST",
+          path: "/revit/quantify",
+          body: null
+        }).digest
       }
     }
   }, async () => {
@@ -234,7 +335,10 @@ test("Candidate 1 prerequisite and parent native calls retain distinct operation
   assert.equal(decorated.structuredContent.child_operation_results_v2.length, 1);
   assert.notEqual(decorated.structuredContent.child_operation_results_v2[0].operation_id, "operation-1");
   assert.equal(childLeases[0].parent_operation_id, "operation-1");
+  assert.equal(childLeases[0].fulfillment_role, "prerequisite");
+  assert.deepEqual(childLeases[0].eligible_criterion_ids, []);
   assert.equal(settled[0].result.structuredContent.operation_result_v2.operation_id, childLeases[0].operation_id);
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "prerequisite");
   assert.equal(settled[0].result.structuredContent.observation.raw_payload.tools[0].path, "/revit/quantify");
 });
 
@@ -249,6 +353,8 @@ test("typed MCP parent retains controller identity while its exact native action
         requested_effect: "read",
         purpose: "work",
         operation_role: "child",
+        fulfillment_role: input.fulfillment_role,
+        eligible_criterion_ids: input.eligible_criterion_ids,
         parent_operation_id: "operation-1",
         root_operation_id: "operation-1",
         blocks_parent_settlement: true,
@@ -267,7 +373,9 @@ test("typed MCP parent retains controller identity while its exact native action
     }
   };
   const decorated = await runWithAssignmentKernelV2(meta(), async () => {
-    const native = await beginAssignmentKernelNativeRequestV2("POST", "/revit/find-elements");
+    const native = await beginAssignmentKernelNativeRequestV2("POST", "/revit/find-elements", undefined, {
+      fulfillment_role: "delegated_task_execution"
+    });
     assert.equal(native?.operation_role, "child");
     assert.equal(native?.parent_operation_id, "operation-1");
     await markAssignmentKernelNativeRequestDispatchingV2(native);
@@ -283,12 +391,144 @@ test("typed MCP parent retains controller identity while its exact native action
     return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
   }, edge);
   assert.equal(settled.length, 1);
+  assert.equal(settled[0].lease.fulfillment_role, "delegated_task_execution");
+  assert.deepEqual(settled[0].lease.eligible_criterion_ids, ["criterion-inventory"]);
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "task_result");
   assert.equal(settled[0].result.structuredContent.operation_result_v2.operation_id, "native-child-1");
   assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
   assert.equal(decorated.structuredContent.operation_result_v2.status, "completed_without_native_dispatch");
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
   assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id, "native-child-1");
   assert.equal(decorated.structuredContent.observation, undefined);
+});
+
+test("a reviewed typed verification handler delegates its native read with the exact parent grant", async () => {
+  const settled: any[] = [];
+  const edge = {
+    async openChild(input: any) {
+      return {
+        ...meta("read", "verification")[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "native-verification-child",
+        capability_id: input.capability_id,
+        purpose: "verification",
+        operation_role: "child",
+        fulfillment_role: input.fulfillment_role,
+        delegation_authority_id: input.delegation_authority_id,
+        eligible_criterion_ids: input.eligible_criterion_ids,
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "verification-child-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { settled: true };
+    }
+  };
+  await runWithAssignmentKernelV2(meta("read", "verification"), async () => {
+    const native = await beginAssignmentKernelNativeRequestV2("POST", "/revit/find-elements", { ids: [1] }, {
+      fulfillment_role: currentAssignmentKernelTaskFulfillmentRoleV2()
+    });
+    await markAssignmentKernelNativeRequestDispatchingV2(native);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/find-elements", {
+      items: [{ id: 1 }],
+      canonical_attempt_settlement: {
+        attempt_id: "verification-receipt", requested_effect: "read", effect_state: "none", request_dispatched: true
+      }
+    }, native);
+  }, edge);
+  assert.equal(settled[0].lease.fulfillment_role, "verification");
+  assert.equal(settled[0].lease.delegation_authority_id, "delegation:operation-1");
+  assert.deepEqual(settled[0].lease.eligible_criterion_ids, ["criterion-inventory"]);
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "verification");
+});
+
+test("an unclassified native child is supporting control until the trusted caller delegates task fulfillment", async () => {
+  let admission: any = null;
+  const edge = {
+    async openChild(input: any) {
+      admission = structuredClone(input);
+      return {
+        ...meta()[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "native-support-child",
+        capability_id: input.capability_id,
+        requested_effect: "read",
+        purpose: "work",
+        operation_role: "child",
+        fulfillment_role: input.fulfillment_role,
+        eligible_criterion_ids: input.eligible_criterion_ids,
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "native-support-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle() { return { settled: true }; }
+  };
+  await runWithAssignmentKernelV2(meta(), async () => {
+    const child = await beginAssignmentKernelNativeRequestV2("POST", "/revit/unclassified-support", { probe: true });
+    assert.equal(child?.operation_role, "child");
+  }, edge);
+  assert.equal(admission.fulfillment_role, "supporting_control");
+  assert.deepEqual(admission.eligible_criterion_ids, []);
+  assert.equal(admission.delegation_authority_id, undefined);
+});
+
+test("same native route with a different canonical body cannot claim the admitted generic parent", async () => {
+  let admission: any = null;
+  const edge = {
+    async openChild(input: any) {
+      admission = structuredClone(input);
+      return {
+        ...meta()[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "body-mismatch-child",
+        capability_id: input.capability_id,
+        requested_effect: "read",
+        purpose: "work",
+        operation_role: "child",
+        fulfillment_role: input.fulfillment_role,
+        eligible_criterion_ids: input.eligible_criterion_ids,
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "body-mismatch-child-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle() { return { settled: true }; }
+  };
+  await runWithAssignmentKernelV2(
+    meta("read", "work", { method: "POST", path: "/revit/quantify", body: { categories: ["OST_DuctTerminal"] } }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2(
+        "POST", "/revit/quantify", { categories: ["OST_MechanicalEquipment"] },
+        { fulfillment_role: "delegated_task_execution" }
+      );
+      assert.equal(request?.operation_id, "body-mismatch-child");
+      assert.equal(request?.operation_role, "child");
+    },
+    edge
+  );
+  assert.deepEqual(admission.arguments.body, { categories: ["OST_MechanicalEquipment"] });
+  assert.equal(admission.delegation_authority_id, "delegation:operation-1");
 });
 
 test("retained evidence retrieval settles as a non-native read and cannot claim mutation", async () => {

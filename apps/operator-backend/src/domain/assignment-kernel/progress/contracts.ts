@@ -14,6 +14,7 @@ export const PROGRESS_GAP_V2_SCHEMA = "revit-operator.assignment-progress-gap/v2
 export type ProgressGapKindV2 =
   | "criterion_fact_missing"
   | "criterion_uncertain"
+  | "operation_input_schema_invalid"
   | "input_missing"
   | "review_required"
   | "operation_unsettled"

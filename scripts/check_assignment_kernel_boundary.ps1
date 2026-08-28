@@ -67,6 +67,73 @@ if ($mcpPayloadEdge -match 'localeCompare\s*\(') {
   $violations.Add("MCP Assignment Kernel payload identity must not use locale-sensitive key ordering")
 }
 
+# Semantic admissibility is deny-by-default. Control success cannot be emitted
+# as a domain fact, and evidence class must come from the admitted fulfillment
+# role rather than a generic non-verification shortcut.
+$semanticContract = Join-Path $domainRoot "semantic_admissibility.ts"
+if (-not (Test-Path -LiteralPath $semanticContract -PathType Leaf)) {
+  $violations.Add("Shared semantic evidence-admissibility contract is missing")
+}
+$semanticProducers = @(
+  "apps/mcp-server/src/lib/assignmentKernelV2.ts",
+  "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts",
+  "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"
+)
+foreach ($relativePath in $semanticProducers) {
+  $path = Join-Path $RepoRoot $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -match '["'']result\.available["'']') {
+    $violations.Add("$relativePath emits legacy generic result.available evidence")
+  }
+  if ($content -match '(?is)purpose\s*===\s*["'']verification["''].{0,120}task_result') {
+    $violations.Add("$relativePath reintroduces non-verification => task_result classification")
+  }
+}
+
+# Task fulfillment transfer is an explicit reviewed handler decision. A native
+# child defaults to control evidence; these production surfaces must opt in via
+# the shared current-operation helper instead of relying on route heuristics.
+$mcpKernel = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "apps/mcp-server/src/lib/assignmentKernelV2.ts")
+if ($mcpKernel -notmatch 'return\s+"supporting_control"') {
+  $violations.Add("Unclassified MCP native children no longer default to supporting_control")
+}
+if ($mcpKernel -notmatch 'currentAssignmentKernelTaskFulfillmentRoleV2') {
+  $violations.Add("Reviewed MCP task-fulfillment delegation helper is missing")
+}
+if ($mcpKernel -notmatch 'expected\.request_signature\s*===\s*sha256') {
+  $violations.Add("Generic native parent claiming is not bound to the exact canonical request signature")
+}
+foreach ($relativePath in @(
+  "apps/mcp-server/src/server.ts",
+  "apps/mcp-server/src/skills/quantify.ts"
+)) {
+  $content = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot $relativePath)
+  if ($content -notmatch 'assignmentFulfillmentRole:\s*currentAssignmentKernelTaskFulfillmentRoleV2\(\)') {
+    $violations.Add("$relativePath does not explicitly delegate its reviewed task-producing native action")
+  }
+}
+
+# Every new V2 session-index producer and consumer must share one response
+# schema and field name. Historical artifact readers may live elsewhere, but
+# production traffic cannot grow another alias.
+$sessionIndexContract = Join-Path $RepoRoot "packages/assignment-kernel-v2-contracts/index.js"
+if (-not (Test-Path -LiteralPath $sessionIndexContract -PathType Leaf)) {
+  $violations.Add("Shared Assignment Kernel V2 session-index contract is missing")
+}
+foreach ($relativePath in @(
+  "apps/operator-backend/src/assignments/http_routes.ts",
+  "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts"
+)) {
+  $path = Join-Path $RepoRoot $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts') {
+    $violations.Add("$relativePath does not import the shared V2 session-index contract")
+  }
+  if ($content -match 'assignment_kernel_v2_index') {
+    $violations.Add("$relativePath retains the superseded V2 session-index alias")
+  }
+}
+
 # The registry is the reviewed inventory of authoritative effect/outcome fields.
 # These declaration checks make introducing another mutable owner an explicit
 # architecture change instead of an unnoticed TypeScript addition.

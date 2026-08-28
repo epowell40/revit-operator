@@ -4,6 +4,7 @@ import type {
   InputVariableIdV2,
   WorkUnitIdV2
 } from "./identity.js";
+import type { CriterionEvidencePolicyV2 } from "./semantic_admissibility.js";
 
 export const ASSIGNMENT_SPEC_V2_SCHEMA = "revit-operator.assignment-spec/v2" as const;
 
@@ -25,6 +26,7 @@ export interface AssignmentCriterionSpecV2 {
   semantic_fact_requirements: readonly string[];
   accepted_evaluator_authority_ids: readonly string[];
   accepted_observation_authority_ids: readonly string[];
+  evidence_policy?: CriterionEvidencePolicyV2;
   desired_state_comparisons?: readonly {
     fact_id: string;
     input_variable_id: InputVariableIdV2;
@@ -52,6 +54,7 @@ export interface AssignmentSpecV2 {
   binding: AssignmentBindingV2;
   source_user_request: string;
   requested_effect: RequestedEffectV2;
+  semantic_evidence_contract?: "revit-operator.semantic-evidence-contract/v2";
   criteria: readonly AssignmentCriterionSpecV2[];
   input_variables: readonly AssignmentInputVariableV2[];
   work_units: readonly AssignmentWorkUnitSpecV2[];

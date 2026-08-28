@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
+  CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
+  SEMANTIC_EVIDENCE_CONTRACT_V2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type AssignmentInputVariableV2,
@@ -48,6 +50,38 @@ function requestedEffect(goal: GoalRecord): RequestedEffectV2 {
   throw new Error("assignment_kernel_v2_requested_effect_required");
 }
 
+function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly string[] = []): string[] | null {
+  if (configuredFacts.some((fact) => fact.startsWith("inventory."))) return [...configuredFacts];
+  const source = `${goal.objective}\n${goal.acceptance_criteria.join("\n")}\n${text(goal.work_budget?.source_user_request, 20_000)}`;
+  if (!/\b(inventory|quantif(?:y|ication)|count|how many|group(?:ed|ing)?)\b/i.test(source)) return null;
+  const grouped = /\b(group(?:ed|ing)?|family|type)\b/i.test(source);
+  return ["inventory.complete", "inventory.total", ...(grouped ? ["inventory.group"] : [])];
+}
+
+function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
+  const inventoryFacts = inventoryCriterionFacts(goal, facts);
+  const requiredFacts = inventoryFacts ?? facts.map((fact) => fact === "result.available" ? "task.result_available" : fact);
+  const inventory = requiredFacts.some((fact) => fact.startsWith("inventory."));
+  return {
+    semantic_fact_requirements: requiredFacts,
+    evidence_policy: {
+      schema: CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
+      allowed_evidence_classes: ["task_result" as const],
+      allowed_fulfillment_roles: ["delegated_task_execution" as const],
+      allowed_fact_classes: ["domain" as const],
+      allowed_capability_ids: inventory
+        ? ["revit_call_tool", "inventory.read", "native:POST:/revit/quantify"]
+        : [],
+      allowed_result_schema_ids: inventory
+        ? ["operator-native/POST:/revit/quantify/v2", "operator-capability/inventory.read/v2"]
+        : [],
+      required_fact_ids: requiredFacts,
+      require_native_dispatch: true,
+      require_current_generation: true
+    }
+  };
+}
+
 function inputs(goal: GoalRecord): AssignmentInputVariableV2[] {
   const sourceRequest = text(goal.work_budget?.source_user_request, 20_000) || goal.objective;
   const declared = strings(goal.work_budget?.required_user_inputs);
@@ -65,9 +99,10 @@ function criteria(goal: GoalRecord): AssignmentSpecV2["criteria"] {
   if (configured === undefined || configured === null) {
     if (goal.acceptance_criteria.length !== 1) throw new Error("assignment_kernel_v2_criterion_fact_contract_required");
     const requirement = goal.acceptance_criteria[0]!;
+    const contract = evidencePolicy(goal, inventoryCriterionFacts(goal) ?? ["task.result_available"]);
     return [{
       criterion_id: stableId("criterion", requirement), requirement, required: true,
-      semantic_fact_requirements: ["result.available"],
+      ...contract,
       accepted_evaluator_authority_ids: ["operator-runtime"],
       accepted_observation_authority_ids: ["native-host", "dynamic-runtime", "operator-evidence-store"]
     }];
@@ -86,7 +121,7 @@ function criteria(goal: GoalRecord): AssignmentSpecV2["criteria"] {
     }
     return {
       criterion_id: stableId("criterion", requirement), requirement, required: row.required !== false,
-      semantic_fact_requirements: facts,
+      ...evidencePolicy(goal, facts),
       accepted_evaluator_authority_ids: ["operator-runtime"],
       accepted_observation_authority_ids: ["native-host", "dynamic-runtime", "operator-evidence-store"]
     };
@@ -128,6 +163,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     binding,
     source_user_request: input.goal.objective,
     requested_effect: effect,
+    semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
     criteria: criterionSpecs,
     input_variables: inputVariables,
     work_units: [

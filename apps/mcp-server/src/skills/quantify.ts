@@ -1,5 +1,6 @@
 import { RunBundle } from "../lib/RunBundle.js";
 import { callRevit } from "../lib/revitClient.js";
+import { currentAssignmentKernelTaskFulfillmentRoleV2 } from "../lib/assignmentKernelV2.js";
 
 // Mapping of common terms to Revit Categories and Keywords
 const CATEGORY_MAP: { [key: string]: { categories: string[], keywords?: string[] } } = {
@@ -52,7 +53,9 @@ export async function runQuantify(query: string) {
         }
 
         // 2. Call Revit Handler
-        const response: any = await callRevit("/revit/quantify", "POST", request);
+        const response: any = await callRevit("/revit/quantify", "POST", request, {
+            assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+        });
         
         if (!response) {
             throw new Error("No response from Revit.");

@@ -1,9 +1,14 @@
 import type { AssignmentSnapshotV2, ProviderCallV2 } from "../domain/assignment-kernel/index.js";
+import {
+  ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA,
+  type AssignmentKernelV2SessionIndex,
+  type AssignmentKernelV2SessionIndexEntry
+} from "@revitoperator/assignment-kernel-v2-contracts";
 import { getAssignmentKernelSnapshotV2, listAssignmentKernelIndexV2 } from "./assignment_kernel_v2_store.js";
 
 export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignment-kernel-publication/v2" as const;
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2" as const;
-export const ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA = "revit-operator.assignment-kernel-session-index/v2" as const;
+export const ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA = ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA;
 
 export interface AssignmentProviderLedgerPublicationV2 {
   schema: typeof ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA;
@@ -23,19 +28,8 @@ export interface AssignmentKernelPublicationV2 {
   provider_ledger: AssignmentProviderLedgerPublicationV2;
 }
 
-export interface AssignmentKernelSessionIndexEntryV2 {
-  assignment_id: string;
-  assignment_version: number;
-  binding: AssignmentSnapshotV2["current_binding"];
-  outcome: AssignmentSnapshotV2["outcome"];
-  terminal: boolean;
-}
-
-export interface AssignmentKernelSessionIndexV2 {
-  schema: typeof ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA;
-  session_id: string;
-  assignments: readonly AssignmentKernelSessionIndexEntryV2[];
-}
+export type AssignmentKernelSessionIndexEntryV2 = AssignmentKernelV2SessionIndexEntry;
+export type AssignmentKernelSessionIndexV2 = AssignmentKernelV2SessionIndex;
 
 /**
  * V2 publication is a pure, read-only view of the canonical snapshot. It does

@@ -10,6 +10,7 @@ export * from "./observation.js";
 export * from "./operation.js";
 export * from "./outcome.js";
 export * from "./payload_provenance.js";
+export * from "./semantic_admissibility.js";
 export * from "./progress/contracts.js";
 export * from "./progress/controller.js";
 export * from "./progress/provider_call.js";

@@ -331,6 +331,6 @@ test("multiple V2 criteria require an explicit semantic-fact contract instead of
   });
   const spec = assignmentSpecFromGoalV2({ goal: bound, run_id: "run-criteria-bound" });
   assert.deepEqual(spec.criteria.map(criterion => criterion.semantic_fact_requirements), [
-    ["result.available"], ["result.payload_hash"]
+    ["task.result_available"], ["result.payload_hash"]
   ]);
 }));

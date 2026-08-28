@@ -11,8 +11,11 @@ export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
 export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const;
+const OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA = "revit-operator.operation-input-schema-gap/v2" as const;
 
 type Scalar = string | number | boolean | null;
+type FulfillmentRole = "supporting_control" | "prerequisite" | "delegated_task_execution" | "verification" | "reconciliation" | "telemetry";
+type EvidenceClass = "control" | "prerequisite" | "task_result" | "verification" | "reconciliation" | "telemetry";
 type Binding = {
   assignment_id: string;
   run_id: string;
@@ -33,6 +36,9 @@ type Context = {
   parent_operation_id?: string;
   root_operation_id: string;
   blocks_parent_settlement: boolean;
+  fulfillment_role: FulfillmentRole;
+  delegation_authority_id?: string;
+  eligible_criterion_ids: string[];
   request_identity: RequestIdentity;
   opened_at: string;
   deadline_at: string;
@@ -67,6 +73,9 @@ type ChildAdmissionInput = {
   path: string;
   arguments: unknown;
   blocks_parent_settlement: boolean;
+  fulfillment_role: FulfillmentRole;
+  delegation_authority_id?: string;
+  eligible_criterion_ids: string[];
 };
 type OperationEdge = {
   openChild(input: ChildAdmissionInput, binding: Binding): Promise<Context>;
@@ -126,6 +135,10 @@ function parseContext(meta: unknown): Context | null {
       || !["read", "preview", "apply"].includes(String(requestedEffect))
       || !["work", "discovery", "verification", "evidence_read", "reconciliation"].includes(String(purpose))
       || !["root", "prerequisite", "child"].includes(String(role))
+      || !["supporting_control", "prerequisite", "delegated_task_execution", "verification", "reconciliation", "telemetry"].includes(String(source.fulfillment_role))
+      || !Array.isArray(source.eligible_criterion_ids)
+      || ((source.fulfillment_role === "delegated_task_execution" || source.fulfillment_role === "verification")
+        && !text(source.delegation_authority_id))
       || !text(source.root_operation_id ?? source.operation_id)
       || !text(requestIdentity.capability_id)
       || !text(requestIdentity.request_signature)) {
@@ -222,15 +235,52 @@ function nativeRequestIdentity(method: "GET" | "POST", path: string, body: unkno
   };
 }
 
-function operationMatchesNativeRequest(context: Context, method: "GET" | "POST", path: string): boolean {
+/**
+ * A reviewed MCP handler calls this only for the one native action that is
+ * intended to fulfill its admitted task. Supporting and prerequisite calls do
+ * not opt in and therefore remain deny-by-default control evidence.
+ */
+export function currentAssignmentKernelTaskFulfillmentRoleV2(): "delegated_task_execution" | "verification" | undefined {
+  const role = storage.getStore()?.context.fulfillment_role;
+  return role === "delegated_task_execution" || role === "verification" ? role : undefined;
+}
+
+function evidenceClass(role: FulfillmentRole): EvidenceClass {
+  return ({
+    supporting_control: "control",
+    prerequisite: "prerequisite",
+    delegated_task_execution: "task_result",
+    verification: "verification",
+    reconciliation: "reconciliation",
+    telemetry: "telemetry"
+  } as const)[role];
+}
+
+function nativeChildFulfillmentRole(_path: string, topology: "prerequisite" | "child", explicit?: FulfillmentRole): FulfillmentRole {
+  if (topology === "prerequisite") return "prerequisite";
+  if (explicit) return explicit;
+  return "supporting_control";
+}
+
+function operationMatchesNativeRequest(context: Context, request: RequestIdentity, body: unknown): boolean {
   const expected = context.request_identity;
   // A typed MCP capability and a native route are different executable
   // identities unless the trusted controller admitted the exact native
   // method/path. Never let the first hidden native call opportunistically
   // claim an abstract typed parent.
-  return Boolean(expected.method && expected.path)
-    && expected.method === method
-    && expected.path === path;
+  if (!expected.method || !expected.path
+      || expected.method !== request.method
+      || expected.path !== request.path) return false;
+  if (context.capability_id === "revit_call_tool") {
+    return expected.request_signature === sha256({
+      capability_id: context.capability_id,
+      method: request.method,
+      path: request.path,
+      body: body ?? null
+    });
+  }
+  return context.capability_id === request.capability_id
+    && expected.request_signature === request.request_signature;
 }
 
 export async function beginAssignmentKernelNativeRequestV2(
@@ -239,6 +289,7 @@ export async function beginAssignmentKernelNativeRequestV2(
   body?: unknown,
   options: Readonly<{
     operation_role?: "prerequisite" | "child";
+    fulfillment_role?: FulfillmentRole;
     classified_effect?: string;
     blocks_parent_settlement?: boolean;
   }> = {}
@@ -250,7 +301,7 @@ export async function beginAssignmentKernelNativeRequestV2(
   const path = String(pathValue).trim();
   if (!path.startsWith("/")) throw new Error("assignment_kernel_v2_native_request_path_invalid");
   const identity = nativeRequestIdentity(method, path, body);
-  const parentMatches = operationMatchesNativeRequest(scope.context, method, path);
+  const parentMatches = operationMatchesNativeRequest(scope.context, identity, body);
   const useParent = !options.operation_role && !scope.parent_claimed && parentMatches;
   let lease: Context;
   let role: "root" | "prerequisite" | "child";
@@ -260,6 +311,7 @@ export async function beginAssignmentKernelNativeRequestV2(
     role = "root";
   } else {
     role = options.operation_role ?? "child";
+    const fulfillmentRole = nativeChildFulfillmentRole(path, role, options.fulfillment_role);
     lease = await scope.edge.openChild({
       parent_operation_id: scope.context.operation_id,
       child_ordinal: scope.native_calls.length,
@@ -269,7 +321,14 @@ export async function beginAssignmentKernelNativeRequestV2(
       method,
       path,
       arguments: { method, path, body: body ?? null },
-      blocks_parent_settlement: options.blocks_parent_settlement !== false
+      blocks_parent_settlement: options.blocks_parent_settlement !== false,
+      fulfillment_role: fulfillmentRole,
+      ...((fulfillmentRole === "delegated_task_execution" || fulfillmentRole === "verification") && scope.context.delegation_authority_id
+        ? { delegation_authority_id: scope.context.delegation_authority_id }
+        : {}),
+      eligible_criterion_ids: fulfillmentRole === "delegated_task_execution" || fulfillmentRole === "verification"
+        ? [...scope.context.eligible_criterion_ids]
+        : []
     }, scope.context.binding);
     if (lease.operation_id === scope.context.operation_id || lease.parent_operation_id !== scope.context.operation_id) {
       throw new Error("assignment_kernel_v2_child_operation_identity_invalid");
@@ -403,36 +462,48 @@ function candidateItems(payload: unknown): unknown[] {
   return [];
 }
 
-function semanticFacts(payload: unknown, nativeCallCount: number): Array<Record<string, unknown>> {
+function semanticFacts(payload: unknown, nativeCallCount: number, evidence: EvidenceClass, path: string): Array<Record<string, unknown>> {
   const facts: Array<Record<string, unknown>> = [
-    { fact_id: "result.available", value: true },
-    { fact_id: "result.native_call_count", value: nativeCallCount },
-    { fact_id: "result.payload_hash", value: sha256(payload) }
+    { fact_id: "control.result_available", fact_class: "control", value: true },
+    { fact_id: "control.native_call_count", fact_class: "control", value: nativeCallCount },
+    { fact_id: "control.payload_hash", fact_class: "control", value: sha256(payload) }
   ];
+  if (evidence === "task_result") facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
   const root = object(payload);
   const total = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
-  if (typeof total === "number" && Number.isFinite(total)) facts.push({ fact_id: "inventory.total", value: total });
+  const inventory = evidence === "task_result" && path.toLowerCase() === "/revit/quantify";
+  if (inventory && typeof total === "number" && Number.isFinite(total)) {
+    facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
+    facts.push({ fact_id: "inventory.total", fact_class: "domain", value: total });
+  }
   const items = candidateItems(payload);
-  if (items.length > 0) facts.push({ fact_id: "inventory.total", value: typeof total === "number" ? total : items.length });
+  if (inventory && items.length > 0 && !(typeof total === "number" && Number.isFinite(total))) {
+    facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
+    facts.push({ fact_id: "inventory.total", fact_class: "domain", value: items.length });
+  }
   const groups = new Map<string, { family: Scalar; type: Scalar; count: number }>();
-  for (const candidate of items) {
+  const declaredGroups = aliasedField(root, ["groups", "grouped_counts", "groupedCounts"]);
+  const groupCandidates = Array.isArray(declaredGroups) ? declaredGroups : items;
+  for (const candidate of groupCandidates) {
     const row = object(candidate);
     const family = aliasedField(row, ["family", "family_name", "familyName"]);
     const type = aliasedField(row, ["type", "type_name", "typeName"]);
     if (!scalar(family) || !scalar(type)) continue;
     const key = canonicalJson([family, type]);
     const prior = groups.get(key);
-    groups.set(key, { family, type, count: (prior?.count ?? 0) + 1 });
+    const declaredCount = aliasedField(row, ["count", "total", "quantity"]);
+    const count = typeof declaredCount === "number" && Number.isFinite(declaredCount) ? declaredCount : 1;
+    groups.set(key, { family, type, count: (prior?.count ?? 0) + count });
   }
   for (const group of [...groups.values()].sort((left, right) => {
     const leftJson = canonicalJson(left);
     const rightJson = canonicalJson(right);
     return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
   })) {
-    facts.push({ fact_id: "inventory.group", value: group.count, dimensions: { family: group.family, type: group.type } });
+    if (inventory) facts.push({ fact_id: "inventory.group", fact_class: "domain", value: group.count, dimensions: { family: group.family, type: group.type } });
   }
   for (const [key, value] of Object.entries(root)) {
-    if (scalar(value) && facts.length < 256) facts.push({ fact_id: `result.field.${normalizedFieldName(key)}`, value });
+    if (scalar(value) && facts.length < 256) facts.push({ fact_id: `control.field.${normalizedFieldName(key)}`, fact_class: "control", value });
   }
   return facts;
 }
@@ -496,6 +567,7 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
 }
 
 function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, unknown>): Record<string, unknown> {
+  const observationClass = evidenceClass(call.lease.fulfillment_role);
   return {
     content: [],
     structuredContent: {
@@ -504,9 +576,10 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
       ...(operationResult.observation_required ? {
         observation: {
           raw_payload: call.observation_payload,
-          semantic_facts: semanticFacts(call.observation_payload, 1),
+          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path),
           target_scope: {},
-          verification_relevance: call.lease.purpose === "verification" ? ["postcondition"] : ["task_result"]
+          verification_relevance: [observationClass],
+          evidence_class: observationClass
         }
       } : {})
     }
@@ -517,6 +590,42 @@ function transportOnlyResult(context: Context, payload: unknown, failed: boolean
   const transportSucceeded = !failed;
   const provenance = evidenceRead && !failed
     ? payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload")
+    : undefined;
+  const failure = object(object(payload).structuredContent ?? object(payload).structured_content);
+  const validationIssues = Array.isArray(failure.validation_issues)
+    ? failure.validation_issues.map(candidate => object(candidate)).filter(candidate =>
+      text(candidate.field_path) && text(candidate.expected_type) && text(candidate.actual_type))
+    : [];
+  const inputSchemaGap = failed
+    && failure.schema === "revit-operator.mcp-pre-dispatch-failure.v1"
+    && failure.code === "mcp_request_validation_failed"
+    && failure.request_dispatched === false
+    && validationIssues.length > 0
+    ? {
+        schema: OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA,
+        gap_id: `input-schema:${context.operation_id}`,
+        operation_id: context.operation_id,
+        capability_id: context.capability_id,
+        input_schema_id: text(failure.input_schema_id) || `operator-capability/${context.capability_id}/input/v2`,
+        input_schema_digest: text(failure.input_schema_digest),
+        method: context.request_identity.method ?? "POST",
+        path: context.request_identity.path ?? text(failure.path),
+        request_signature: context.request_identity.request_signature,
+        dispatch: false,
+        effect: "none",
+        issues: validationIssues.map(issue => ({
+          field_path: text(issue.field_path),
+          expected_type: text(issue.expected_type),
+          actual_type: text(issue.actual_type),
+          safe_correction_eligibility: issue.safe_correction_eligibility === "declared_deterministic_coercion"
+            ? "declared_deterministic_coercion"
+            : "provider_corrected_arguments_required",
+          correction_action: issue.correction_action === "wrap_scalar_as_singleton_array"
+            ? "wrap_scalar_as_singleton_array"
+            : "provider_resubmit",
+          expected_constraint: structuredClone(object(issue.expected_constraint))
+        }))
+      }
     : undefined;
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
@@ -537,7 +646,8 @@ function transportOnlyResult(context: Context, payload: unknown, failed: boolean
     } : {}),
     request_identity: context.request_identity,
     completed_at: new Date().toISOString(),
-    ...(failed ? { error_code: "mcp_tool_failed" } : {})
+    ...(failed ? { error_code: "mcp_tool_failed" } : {}),
+    ...(inputSchemaGap ? { input_schema_gap: inputSchemaGap } : {})
   };
 }
 
@@ -568,16 +678,18 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       ...(parentCall && operationResult.observation_required ? {
         observation: {
           raw_payload: parentCall.observation_payload,
-          semantic_facts: semanticFacts(parentCall.observation_payload, 1),
+           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path),
           target_scope: {},
-          verification_relevance: scope.context.purpose === "verification" ? ["postcondition"] : ["task_result"]
+           verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],
+           evidence_class: evidenceClass(parentCall.lease.fulfillment_role)
         }
       } : retainedEvidenceRead ? {
         observation: {
           raw_payload: result,
-          semantic_facts: semanticFacts(result, 0),
+           semantic_facts: semanticFacts(result, 0, "control", "operator-evidence-store"),
           target_scope: {},
-          verification_relevance: ["task_result"]
+           verification_relevance: ["control"],
+           evidence_class: "control"
         }
       } : {}),
       ...(childOperationResults.length > 0 ? { child_operation_results_v2: childOperationResults } : {})

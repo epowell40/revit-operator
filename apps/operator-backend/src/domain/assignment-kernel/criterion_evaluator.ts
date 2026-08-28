@@ -3,6 +3,7 @@ import type { CriterionEvaluationV2 } from "./criteria.js";
 import { kernelAssertV2 } from "./errors.js";
 import type { ObservationIdV2 } from "./identity.js";
 import { semanticFactIdentityV2, type SemanticFactV2 } from "./observation.js";
+import { observationAdmissibilityForCriterionV2 } from "./semantic_admissibility.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
 
 function comparisonIdentity(comparison: Readonly<{ fact_id: string; dimensions?: Readonly<Record<string, string | number | boolean | null>>; target_id?: string }>): string {
@@ -20,13 +21,23 @@ export function evaluateCriterionV2(input: Readonly<{
   const criterion = input.snapshot.spec.criteria.find((candidate) => candidate.criterion_id === input.criterion_id);
   kernelAssertV2(criterion, "criterion_unknown", "Criterion is not in AssignmentSpecV2.");
   kernelAssertV2(criterion.accepted_evaluator_authority_ids.includes(input.evaluator_authority), "criterion_evaluator_untrusted", "Criterion evaluator authority is not admitted by AssignmentSpecV2.");
-  const observations = input.observation_ids.map((observationId) => {
+  const proposedObservations = input.observation_ids.map((observationId) => {
     const observation = input.snapshot.observations[observationId];
     kernelAssertV2(observation, "criterion_observation_unknown", "Criterion evaluator received an unknown observation.");
-    kernelAssertV2(criterion.accepted_observation_authority_ids.includes(observation.authority), "criterion_observation_untrusted", "Criterion evaluator received an untrusted observation.");
     return observation;
   });
-  const facts = observations.flatMap((observation) => observation.facts.map((fact) => ({ observation, fact })));
+  const admissions = proposedObservations.map((observation) => ({
+    observation,
+    admission: observationAdmissibilityForCriterionV2({
+      snapshot: input.snapshot,
+      criterion,
+      observation,
+      evaluated_at: input.evaluated_at
+    })
+  })).filter(({ admission }) => admission.admissible);
+  const observations = admissions.map(({ observation }) => observation);
+  const facts = admissions.flatMap(({ observation, admission }) =>
+    admission.supporting_facts.map((fact) => ({ observation, fact })));
   const byIdentity = new Map<string, string>();
   let contradiction = false;
   for (const { fact } of facts) {
@@ -62,11 +73,13 @@ export function evaluateCriterionV2(input: Readonly<{
     evaluator_authority: input.evaluator_authority,
     reason: contradiction
       ? "Authoritative observations disagree for the same semantic fact identity."
-      : !requiredFactsPresent
-        ? "One or more required semantic facts are absent."
-        : !desiredStateMatches
-          ? "Observed state does not establish the authenticated desired state."
-          : "All required semantic facts are authoritatively supported.",
+      : observations.length === 0
+        ? "No Observation satisfies the criterion's typed evidence-admissibility policy."
+        : !requiredFactsPresent
+          ? "One or more required semantic facts are absent."
+          : !desiredStateMatches
+            ? "Observed state does not establish the authenticated desired state."
+            : "All required semantic facts are authoritatively supported.",
     evaluated_at: input.evaluated_at
   };
 }

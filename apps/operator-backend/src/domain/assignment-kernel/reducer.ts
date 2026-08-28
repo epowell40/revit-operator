@@ -4,10 +4,17 @@ import { kernelAssertV2 } from "./errors.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import { deriveAssignmentOutcomeV2 } from "./outcome.js";
-import type { OperationResultV2, OperationV2 } from "./operation.js";
+import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
 import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
 import { deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
+import {
+  CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
+  SEMANTIC_EVIDENCE_CONTRACT_V2,
+  evidenceClassForFulfillmentRoleV2,
+  fulfillmentRoleCanCarryTaskCriteriaV2,
+  observationAdmissibilityForCriterionV2
+} from "./semantic_admissibility.js";
 
 const EFFECT_RANK = { read: 0, preview: 1, apply: 2 } as const;
 const PROVIDER_STATE_RANK: Readonly<Record<ProviderCallStateV2, number>> = {
@@ -146,6 +153,36 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     "operation_unknown_effect_requires_reconciliation", "Unknown-effect work must be reconciled before another ordinary operation is admitted.");
   const workUnit = snapshot.spec.work_units.find((candidate) => candidate.work_unit_id === operation.work_unit_id);
   kernelAssertV2(workUnit, "operation_work_unit_unknown", "Operation work unit is not in AssignmentSpecV2.");
+  if (snapshot.spec.semantic_evidence_contract === SEMANTIC_EVIDENCE_CONTRACT_V2) {
+    kernelAssertV2(Boolean(operation.fulfillment_role) && Array.isArray(operation.eligible_criterion_ids),
+      "operation_fulfillment_contract_missing", "A semantic-evidence Assignment requires an explicit operation fulfillment contract.");
+    const eligible = operation.eligible_criterion_ids ?? [];
+    if (!fulfillmentRoleCanCarryTaskCriteriaV2(operation.fulfillment_role!)) {
+      kernelAssertV2(eligible.length === 0, "operation_support_criterion_forbidden", "Supporting, prerequisite, reconciliation, and telemetry work cannot satisfy task criteria.");
+    }
+    if (operation.fulfillment_role === "delegated_task_execution") {
+      kernelAssertV2(operation.purpose === "work", "operation_delegated_purpose_invalid", "Delegated task execution requires work purpose.");
+    } else if (operation.fulfillment_role === "verification") {
+      kernelAssertV2(operation.purpose === "verification", "operation_verification_fulfillment_invalid", "Verification fulfillment requires verification purpose.");
+    } else if (operation.fulfillment_role === "reconciliation") {
+      kernelAssertV2(operation.purpose === "reconciliation", "operation_reconciliation_fulfillment_invalid", "Reconciliation fulfillment requires reconciliation purpose.");
+    } else if (operation.fulfillment_role === "prerequisite") {
+      kernelAssertV2(operation.purpose === "discovery" && operation.operation_role === "prerequisite",
+        "operation_prerequisite_fulfillment_invalid", "Prerequisite fulfillment requires prerequisite topology and discovery purpose.");
+    } else if (operation.fulfillment_role === "telemetry") {
+      kernelAssertV2(false, "operation_telemetry_admission_invalid", "Telemetry is retained in the provider ledger, not admitted as task execution.");
+    }
+    if ((operation.operation_role ?? "root") === "root" && fulfillmentRoleCanCarryTaskCriteriaV2(operation.fulfillment_role!)) {
+      kernelAssertV2(Boolean(operation.delegation_authority_id), "operation_delegation_authority_missing", "A criterion-fulfillment root must issue one delegation authority.");
+    }
+    for (const criterionId of eligible) {
+      kernelAssertV2(workUnit.criterion_ids.includes(criterionId), "operation_eligible_criterion_unbound", "Operation criterion eligibility is outside its admitted work unit.");
+      kernelAssertV2(operation.advances_criterion_ids.includes(criterionId), "operation_eligible_criterion_progress_unbound", "Eligible criterion must retain its progress binding.");
+    }
+    if ((operation.operation_role ?? "root") === "prerequisite") {
+      kernelAssertV2(operation.fulfillment_role === "prerequisite", "operation_prerequisite_fulfillment_invalid", "Prerequisite topology requires prerequisite fulfillment semantics.");
+    }
+  }
   const role = operation.operation_role ?? "root";
   kernelAssertV2(role !== "root" || operation.advances_criterion_ids.length > 0 || operation.resolves_gap_ids.length > 0,
     "operation_progress_binding_missing", "A root operation must bind to unresolved criterion or gap work; nested work binds through its parent.");
@@ -177,6 +214,20 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       "operation_root_identity_mismatch", "A child operation must retain the deterministic root operation identity.");
     kernelAssertV2(operation.operation_id !== parent.operation_id,
       "operation_child_identity_collision", "A child operation must have its own immutable identity.");
+    if (snapshot.spec.semantic_evidence_contract === SEMANTIC_EVIDENCE_CONTRACT_V2) {
+      const parentEligible = new Set(parent.eligible_criterion_ids ?? []);
+      for (const criterionId of operation.eligible_criterion_ids ?? []) {
+        kernelAssertV2(parentEligible.has(criterionId), "operation_delegated_criterion_widening", "A child cannot widen its parent's criterion eligibility.");
+      }
+      if (fulfillmentRoleCanCarryTaskCriteriaV2(operation.fulfillment_role!)) {
+        kernelAssertV2(Boolean(parent.delegation_authority_id)
+          && operation.delegation_authority_id === parent.delegation_authority_id,
+        "operation_delegation_authority_invalid", "A fulfillment child requires the exact parent-issued delegation authority.");
+      } else {
+        kernelAssertV2(!operation.delegation_authority_id,
+          "operation_support_delegation_forbidden", "Supporting children cannot retain task-fulfillment delegation authority.");
+      }
+    }
   }
   if (operation.request_identity) {
     kernelAssertV2(operation.request_identity.capability_id === operation.capability_id,
@@ -188,6 +239,15 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     const prior = snapshot.operations[operation.retry_of_operation_id];
     kernelAssertV2(prior?.settlement_state === "settled" && prior.persistent_effect === "none", "operation_retry_unsafe", "A retry requires a settled no-effect predecessor.");
     kernelAssertV2(Boolean(operation.retry_basis), "operation_retry_basis_missing", "A retry must state the material correction that permits it.");
+    if (operation.retry_basis === "corrected_input") {
+      const gap = prior?.result?.input_schema_gap;
+      kernelAssertV2(Boolean(gap)
+        && operation.capability_id === prior?.capability_id
+        && operation.request_identity?.method === gap?.method
+        && operation.request_identity?.path === gap?.path
+        && operation.request_identity?.request_signature !== gap?.request_signature,
+      "operation_corrected_input_retry_invalid", "Corrected-input retry must bind to the exact schema-rejected capability and route with materially changed input.");
+    }
   } else {
     kernelAssertV2(!operation.retry_basis, "operation_retry_basis_unbound", "Retry basis requires a predecessor operation.");
   }
@@ -248,6 +308,56 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
   if (operation.requested_effect === "preview" && result.status === "succeeded") {
     kernelAssertV2(result.persistent_effect === "none" && result.native_transaction_state === "rolled_back", "operation_preview_settlement_invalid", "Successful preview requires authoritative rollback.");
   }
+  if (result.input_schema_gap) {
+    const gap = result.input_schema_gap;
+    kernelAssertV2(result.status === "failed_before_dispatch" && result.dispatch_state === "not_dispatched"
+      && result.persistent_effect === "none" && result.observation_required === false,
+    "operation_input_schema_gap_effect_invalid", "An input-schema gap is valid only for a proven no-effect pre-dispatch rejection.");
+    kernelAssertV2(gap.schema === OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA
+      && gap.gap_id === `input-schema:${operation.operation_id}`
+      && gap.operation_id === operation.operation_id
+      && gap.capability_id === operation.capability_id
+      && Boolean(gap.input_schema_id.trim())
+      && /^[a-f0-9]{64}$/.test(gap.input_schema_digest)
+      && gap.method === operation.request_identity?.method
+      && gap.path === operation.request_identity?.path
+      && gap.request_signature === operation.request_identity?.request_signature
+      && gap.dispatch === false && gap.effect === "none" && gap.issues.length > 0 && gap.issues.length <= 64,
+    "operation_input_schema_gap_invalid", "Input-schema gap identity and schema provenance must bind to the rejected operation.");
+    for (const issue of gap.issues) {
+      kernelAssertV2(Boolean(issue.field_path.trim()) && Boolean(issue.expected_type.trim()) && Boolean(issue.actual_type.trim())
+        && issue.field_path.length <= 512 && issue.expected_type.length <= 160 && issue.actual_type.length <= 160
+        && ["provider_corrected_arguments_required", "declared_deterministic_coercion"].includes(issue.safe_correction_eligibility)
+        && ["provider_resubmit", "wrap_scalar_as_singleton_array"].includes(issue.correction_action)
+        && Boolean(issue.expected_constraint?.kind),
+      "operation_input_schema_issue_invalid", "Input-schema issues require structured path, expected type, actual type, and correction eligibility.");
+      const constraint = issue.expected_constraint;
+      const allowedConstraintKeys = new Set([
+        "kind", "type", "allowed_values", "minimum", "maximum", "min_length", "max_length", "min_items", "max_items"
+      ]);
+      kernelAssertV2([
+        "required", "json_type", "enum", "numeric_range", "string_length", "array_length", "schema_depth", "schema_bounds"
+      ].includes(constraint.kind)
+        && Object.keys(constraint).every((key) => allowedConstraintKeys.has(key))
+        && canonicalJsonV2(constraint).length <= 4_096,
+      "operation_input_schema_constraint_invalid", "Input-schema expected constraint must use the bounded reviewed shape.");
+      if (constraint.allowed_values !== undefined) {
+        kernelAssertV2(Array.isArray(constraint.allowed_values) && constraint.allowed_values.length <= 32
+          && constraint.allowed_values.every((value) => value === null || typeof value === "boolean"
+            || (typeof value === "number" && Number.isFinite(value))
+            || (typeof value === "string" && value.length <= 256)),
+        "operation_input_schema_constraint_invalid", "Input-schema enum constraints must be bounded JSON scalars.");
+      }
+      for (const numeric of [constraint.minimum, constraint.maximum, constraint.min_length, constraint.max_length, constraint.min_items, constraint.max_items]) {
+        kernelAssertV2(numeric === undefined || (typeof numeric === "number" && Number.isFinite(numeric)),
+          "operation_input_schema_constraint_invalid", "Input-schema numeric constraints must be finite.");
+      }
+      kernelAssertV2(issue.safe_correction_eligibility === "declared_deterministic_coercion"
+        ? issue.correction_action === "wrap_scalar_as_singleton_array"
+        : issue.correction_action === "provider_resubmit",
+      "operation_input_schema_correction_invalid", "Input-schema correction action must match the declared safe correction eligibility.");
+    }
+  }
 }
 
 function mergeEvaluation(previous: CriterionEvaluationV2 | undefined, next: CriterionEvaluationV2): CriterionEvaluationV2 {
@@ -294,6 +404,19 @@ function validateCriterionEvaluation(snapshot: AssignmentSnapshotV2, evaluation:
     kernelAssertV2(observation.facts.some((candidate) => candidate.fact_id === fact.fact_id), "criterion_fact_unknown", "Criterion cites an unknown semantic fact.");
     citedFacts.add(fact.fact_id);
   }
+  if (snapshot.spec.semantic_evidence_contract === SEMANTIC_EVIDENCE_CONTRACT_V2) {
+    const citedObservationIds = [...new Set(evaluation.supporting_facts.map((fact) => fact.observation_id))];
+    for (const observationId of citedObservationIds) {
+      const observation = snapshot.observations[observationId]!;
+      const admission = observationAdmissibilityForCriterionV2({
+        snapshot,
+        criterion,
+        observation,
+        evaluated_at: evaluation.evaluated_at
+      });
+      kernelAssertV2(admission.admissible, "criterion_evidence_not_admissible", `Criterion cites inadmissible evidence: ${admission.reason}.`);
+    }
+  }
   if (evaluation.status === "pass") {
     for (const requirement of criterion.semantic_fact_requirements) kernelAssertV2(citedFacts.has(requirement), "criterion_required_fact_missing", "Passing criterion omits a required semantic fact.");
     kernelAssertV2(evaluation.supporting_facts.length > 0 || ["user_input", "policy"].includes(evaluation.basis), "criterion_pass_unsupported", "Passing criterion requires semantic fact support.");
@@ -310,6 +433,31 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
   if (event.event_type === "assignment_created") {
     kernelAssertV2(!state.snapshot, "assignment_already_created", "Assignment creation is unique.");
     kernelAssertV2(event.assignment_id === event.spec.binding.assignment_id && sameAssignmentBindingV2(event.binding, event.spec.binding), "assignment_spec_binding_mismatch", "Creation event and spec binding disagree.");
+    if (event.spec.semantic_evidence_contract === SEMANTIC_EVIDENCE_CONTRACT_V2) {
+      for (const criterion of event.spec.criteria) {
+        const policy = criterion.evidence_policy;
+        kernelAssertV2(Boolean(policy), "criterion_evidence_policy_missing", "Semantic-evidence criteria require one explicit evidence policy.");
+        kernelAssertV2(policy?.schema === CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
+          "criterion_evidence_policy_schema_invalid", "Criterion evidence policy schema must be the current shared contract.");
+        kernelAssertV2(canonicalJsonV2([...(policy?.required_fact_ids ?? [])].sort())
+          === canonicalJsonV2([...criterion.semantic_fact_requirements].sort()),
+        "criterion_evidence_policy_fact_mismatch", "Criterion fact requirements and evidence-policy requirements must be identical.");
+        kernelAssertV2((policy?.allowed_evidence_classes.length ?? 0) > 0
+          && (policy?.allowed_fulfillment_roles.length ?? 0) > 0
+          && (policy?.allowed_fact_classes.length ?? 0) > 0,
+        "criterion_evidence_policy_empty", "Criterion evidence policy must declare evidence, fulfillment, and fact classes.");
+        kernelAssertV2(!(policy?.allowed_fact_classes.includes("control")),
+          "criterion_control_fact_forbidden", "User-task criteria cannot admit control facts as acceptance evidence.");
+        for (const values of [
+          policy?.allowed_evidence_classes ?? [], policy?.allowed_fulfillment_roles ?? [],
+          policy?.allowed_fact_classes ?? [], policy?.allowed_capability_ids ?? [],
+          policy?.allowed_result_schema_ids ?? [], policy?.required_fact_ids ?? []
+        ]) {
+          kernelAssertV2(new Set(values).size === values.length,
+            "criterion_evidence_policy_duplicate", "Criterion evidence policy entries must be unique.");
+        }
+      }
+    }
     const inputValues = Object.fromEntries(event.spec.input_variables.filter((input) => input.value_state === "known").map((input) => [input.variable_id, input.value]));
     state.snapshot = withDerivedState({
       schema: ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
@@ -513,6 +661,17 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(operation.result.authority === event.observation.authority, "observation_authority_mismatch", "Observation authority must match the exact native result authority.");
         kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, event.observation.binding), "observation_binding_mismatch", "Observation binding is not current.");
         kernelAssertV2(!snapshot.observations[event.observation.observation_id], "observation_duplicate", "Observation identity already exists.");
+        if (snapshot.spec.semantic_evidence_contract === SEMANTIC_EVIDENCE_CONTRACT_V2) {
+          kernelAssertV2(Boolean(operation.fulfillment_role) && event.observation.fulfillment_role === operation.fulfillment_role,
+            "observation_fulfillment_role_mismatch", "Observation must retain the admitted operation fulfillment role.");
+          kernelAssertV2(Boolean(event.observation.evidence_class)
+            && event.observation.evidence_class === evidenceClassForFulfillmentRoleV2(operation.fulfillment_role!),
+          "observation_evidence_class_mismatch", "Observation evidence class must be derived from the admitted operation.");
+          kernelAssertV2(event.observation.capability_id === operation.capability_id,
+            "observation_capability_mismatch", "Observation must retain the admitted capability identity.");
+          kernelAssertV2(canonicalJsonV2(event.observation.eligible_criterion_ids ?? []) === canonicalJsonV2(operation.eligible_criterion_ids ?? []),
+            "observation_criterion_eligibility_mismatch", "Observation criterion eligibility must equal the immutable operation contract.");
+        }
         const settledOperation = {
           ...operation,
           settlement_state: "settled" as const,

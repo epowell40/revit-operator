@@ -205,6 +205,8 @@ export type RevitCallOptions = {
   laboratoryMoveEvidenceAdmission?: LaboratoryMoveEvidenceAdmission;
   /** Explicit nested kernel role for a native prerequisite or child action. */
   assignmentOperationRole?: "prerequisite" | "child";
+  /** Trusted admission for a nested action that actually fulfills the parent task. */
+  assignmentFulfillmentRole?: "supporting_control" | "delegated_task_execution" | "verification" | "reconciliation" | "telemetry";
 };
 
 const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
@@ -283,6 +285,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   const transportBody = familyAdmission ? serializedBody : body;
   const kernelNativeRequest = await beginAssignmentKernelNativeRequestV2(upperMethod, path, transportBody, {
     ...(options.assignmentOperationRole ? { operation_role: options.assignmentOperationRole } : {}),
+    ...(options.assignmentFulfillmentRole ? { fulfillment_role: options.assignmentFulfillmentRole } : {}),
     classified_effect: revitRouteEffect(path, upperMethod, body)
   });
 

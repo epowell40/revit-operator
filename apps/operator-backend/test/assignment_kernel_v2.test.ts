@@ -41,13 +41,25 @@ function spec(effect: "read" | "preview" | "apply" = "read", needsInput = false)
     binding,
     source_user_request: effect === "apply" ? "Update the selected note." : "Report the selected inventory.",
     requested_effect: effect,
+    semantic_evidence_contract: "revit-operator.semantic-evidence-contract/v2",
     criteria: [{
       criterion_id: "criterion-result",
       requirement: "Requested result is authoritatively established.",
       required: true,
       semantic_fact_requirements: ["result.total"],
       accepted_evaluator_authority_ids: ["deterministic-test"],
-      accepted_observation_authority_ids: ["native-host"]
+      accepted_observation_authority_ids: ["native-host"],
+      evidence_policy: {
+        schema: "revit-operator.criterion-evidence-policy/v2",
+        allowed_evidence_classes: ["task_result", "verification"],
+        allowed_fulfillment_roles: ["delegated_task_execution", "verification"],
+        allowed_fact_classes: ["domain", "verification"],
+        allowed_capability_ids: [],
+        allowed_result_schema_ids: ["inventory-result/v1"],
+        required_fact_ids: ["result.total"],
+        require_native_dispatch: true,
+        require_current_generation: true
+      }
     }],
     input_variables: needsInput ? [{ variable_id: "replacement_text", value_state: "needs_input", required: true, sensitive: false }] : [],
     work_units: [{
@@ -91,6 +103,10 @@ function createJournal(assignmentSpec = spec()): AssignmentJournalV2 {
 }
 
 function operation(effect: "read" | "preview" | "apply" = "read", purpose: OperationV2["purpose"] = "work"): OperationV2 {
+  const fulfillmentRole = purpose === "verification" ? "verification"
+    : purpose === "reconciliation" ? "reconciliation"
+      : purpose === "discovery" || purpose === "evidence_read" ? "supporting_control"
+        : "delegated_task_execution";
   return {
     schema: OPERATION_V2_SCHEMA,
     operation_id: "operation-1",
@@ -99,7 +115,14 @@ function operation(effect: "read" | "preview" | "apply" = "read", purpose: Opera
     capability_id: effect === "read" ? "inventory.read" : "element.update",
     requested_effect: effect,
     purpose,
+    fulfillment_role: fulfillmentRole,
+    ...(fulfillmentRole === "delegated_task_execution" || fulfillmentRole === "verification"
+      ? { delegation_authority_id: "delegation:operation-1" }
+      : {}),
     advances_criterion_ids: ["criterion-result"],
+    eligible_criterion_ids: fulfillmentRole === "delegated_task_execution" || fulfillmentRole === "verification"
+      ? ["criterion-result"]
+      : [],
     resolves_gap_ids: ["criterion:criterion-result"],
     target: { target_id: "target-1", document_fingerprint: binding.document_fingerprint },
     input: {},
@@ -138,22 +161,41 @@ function registry(): ObservationDecoderRegistryV2 {
   const output = new ObservationDecoderRegistryV2();
   output.register("inventory-result/v1", (raw) => {
     const value = raw as { total: number };
-    return [{ fact_id: "result.total", value: value.total }];
+    return [{ fact_id: "result.total", fact_class: "domain", value: value.total }];
   });
   return output;
+}
+
+function observationFor(
+  journal: AssignmentJournalV2,
+  nativeResult: OperationResultV2,
+  observationId: string,
+  rawPayloadRef: string,
+  rawPayload: unknown,
+  decoder = registry()
+) {
+  const admitted = journal.snapshot().operations[nativeResult.operation_id]!;
+  return observationFromOperationResultV2({
+    result: nativeResult,
+    expected_binding: binding,
+    observation_id: observationId,
+    raw_payload_ref: rawPayloadRef,
+    raw_payload: rawPayload,
+    fulfillment_role: admitted.fulfillment_role!,
+    evidence_class: admitted.fulfillment_role === "verification" ? "verification"
+      : admitted.fulfillment_role === "reconciliation" ? "reconciliation"
+        : admitted.fulfillment_role === "prerequisite" ? "prerequisite"
+          : admitted.fulfillment_role === "supporting_control" ? "control" : "task_result",
+    capability_id: admitted.capability_id,
+    eligible_criterion_ids: admitted.eligible_criterion_ids ?? [],
+    registry: decoder
+  });
 }
 
 function retainResult(journal: AssignmentJournalV2, rawPayload: unknown, effect: "read" | "preview" | "apply" = "read"): void {
   const nativeResult = result(rawPayload, effect);
   journal.append(event(journal, { event_type: "operation_result_recorded", result: nativeResult }));
-  const observation = observationFromOperationResultV2({
-    result: nativeResult,
-    expected_binding: binding,
-    observation_id: "observation-1",
-    raw_payload_ref: "evidence://sha256/result",
-    raw_payload: rawPayload,
-    registry: registry()
-  });
+  const observation = observationFor(journal, nativeResult, "observation-1", "evidence://sha256/result", rawPayload);
   journal.append(event(journal, { event_type: "observation_retained", observation }));
 }
 
@@ -180,7 +222,7 @@ test("read operation remains in flight until the authoritative observation is re
   assert.equal(afterResult.operations["operation-1"].settlement_state, "retaining_observation");
   assert.equal(afterResult.outcome, "active");
 
-  const observation = observationFromOperationResultV2({ result: nativeResult, expected_binding: binding, observation_id: "observation-1", raw_payload_ref: "evidence://sha256/result", raw_payload: { total: 509 }, registry: registry() });
+  const observation = observationFor(journal, nativeResult, "observation-1", "evidence://sha256/result", { total: 509 });
   const afterObservation = journal.append(event(journal, { event_type: "observation_retained", observation }));
   assert.equal(afterObservation.quiescent, true);
   assert.equal(afterObservation.operations["operation-1"].settlement_state, "settled");
@@ -240,6 +282,56 @@ test("pre-dispatch rejection settles none without consuming apply truth", () => 
   assert.equal(settled.quiescent, true);
 });
 
+test("forged oversized schema-gap diagnostics are rejected at the kernel boundary", () => {
+  const journal = createJournal();
+  const admitted: OperationV2 = {
+    ...operation(),
+    request_identity: {
+      capability_id: "inventory.read",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "bounded-schema-request"
+    }
+  };
+  journal.append(event(journal, { event_type: "operation_admitted", operation: admitted }));
+  const issues = Array.from({ length: 65 }, (_, index) => ({
+    field_path: `body.field_${index}`,
+    expected_type: "array",
+    actual_type: "string",
+    safe_correction_eligibility: "provider_corrected_arguments_required" as const,
+    correction_action: "provider_resubmit" as const,
+    expected_constraint: { kind: "json_type" as const, type: "array" }
+  }));
+  const rejected: OperationResultV2 = {
+    ...result({}),
+    status: "failed_before_dispatch",
+    dispatch_state: "not_dispatched",
+    persistent_effect: "none",
+    native_transaction_state: "not_applicable",
+    authority: "operator-mcp-transport",
+    result_schema_id: "operation-transport-failure/v2",
+    observation_required: false,
+    raw_payload_hash: undefined,
+    request_identity: admitted.request_identity,
+    input_schema_gap: {
+      schema: "revit-operator.operation-input-schema-gap/v2",
+      gap_id: "input-schema:operation-1",
+      operation_id: "operation-1",
+      capability_id: "inventory.read",
+      input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+      input_schema_digest: "a".repeat(64),
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "bounded-schema-request",
+      dispatch: false,
+      effect: "none",
+      issues
+    }
+  };
+  assert.throws(() => journal.append(event(journal, { event_type: "operation_result_recorded", result: rejected })),
+    (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === "operation_input_schema_gap_invalid");
+});
+
 test("controller acceptance cannot masquerade as native dispatch or settlement", () => {
   const journal = createJournal();
   journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
@@ -265,6 +357,9 @@ test("a blocking prerequisite is a child operation and its receipt cannot dispat
     operation_id: "operation-registry-child",
     capability_id: "native:GET:/revit/tool-registry",
     operation_role: "prerequisite",
+    fulfillment_role: "prerequisite",
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
     parent_operation_id: parent.operation_id,
     root_operation_id: parent.operation_id,
     blocks_parent_settlement: true,
@@ -367,7 +462,7 @@ test("transport choice produces the same operation and snapshot projection", () 
           : { transport, settlement: { operation_result_v2: nativeResult } };
     const decoded = unwrapOperationResultV2(envelope);
     journal.append(event(journal, { event_type: "operation_result_recorded", result: decoded }));
-    journal.append(event(journal, { event_type: "observation_retained", observation: observationFromOperationResultV2({ result: decoded, expected_binding: binding, observation_id: "observation-1", raw_payload_ref: "evidence://sha256/result", raw_payload: { total: 509 }, registry: registry() }) }));
+    journal.append(event(journal, { event_type: "observation_retained", observation: observationFor(journal, decoded, "observation-1", "evidence://sha256/result", { total: 509 }) }));
     return canonicalJsonV2(journal.snapshot());
   });
   assert.equal(new Set(snapshots).size, 1);
@@ -453,23 +548,159 @@ test("the pure criterion evaluator passes required facts and detects contradicti
   const original = snapshot.observations["observation-1"];
   const conflictingSnapshot = {
     ...snapshot,
-    operations: {
-      ...snapshot.operations,
-      "operation-2": { ...snapshot.operations["operation-1"], operation_id: "operation-2", observation_ids: ["observation-2"] }
-    },
     observations: {
       ...snapshot.observations,
-      "observation-2": { ...original, observation_id: "observation-2", operation_id: "operation-2", facts: [{ fact_id: "result.total", value: 510 }] }
+      "observation-1": {
+        ...original,
+        facts: [
+          ...original.facts,
+          { fact_id: "result.total", fact_class: "domain" as const, value: 510 }
+        ]
+      }
     }
   };
   const conflicting = evaluateCriterionV2({
     snapshot: conflictingSnapshot,
     criterion_id: "criterion-result",
-    observation_ids: ["observation-1", "observation-2"],
+    observation_ids: ["observation-1"],
     evaluator_authority: "deterministic-test",
     evaluated_at: "2026-08-26T12:00:08.000Z"
   });
   assert.equal(conflicting.status, "uncertain");
+});
+
+test("typed criterion admissibility rejects wrong class, schema, generation, and operation eligibility", () => {
+  const journal = createJournal();
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
+  retainResult(journal, { total: 509 });
+  const valid = journal.snapshot();
+  const evaluate = (snapshot: typeof valid) => evaluateCriterionV2({
+    snapshot,
+    criterion_id: "criterion-result",
+    observation_ids: ["observation-1"],
+    evaluator_authority: "deterministic-test",
+    evaluated_at: "2026-08-26T12:00:09.000Z"
+  });
+  assert.equal(evaluate(valid).status, "pass");
+
+  const originalObservation = valid.observations["observation-1"]!;
+  assert.equal(evaluate({
+    ...valid,
+    observations: { ...valid.observations, "observation-1": { ...originalObservation, evidence_class: "control" } }
+  }).status, "uncertain", "control evidence cannot pass a domain criterion");
+  assert.equal(evaluate({
+    ...valid,
+    observations: { ...valid.observations, "observation-1": { ...originalObservation, result_schema_id: "tool-doc/v1" } }
+  }).status, "uncertain", "wrong result schema must fail closed");
+  assert.equal(evaluate({
+    ...valid,
+    observations: { ...valid.observations, "observation-1": { ...originalObservation, binding: { ...originalObservation.binding, generation: 2 } } }
+  }).status, "uncertain", "cross-generation evidence must fail closed");
+  assert.equal(evaluate({
+    ...valid,
+    operations: { ...valid.operations, "operation-1": { ...valid.operations["operation-1"]!, eligible_criterion_ids: [] } },
+    observations: { ...valid.observations, "observation-1": { ...originalObservation, eligible_criterion_ids: [] } }
+  }).status, "uncertain", "right evidence class from an ineligible operation must fail closed");
+  assert.equal(evaluate({
+    ...valid,
+    observations: {
+      ...valid.observations,
+      "observation-1": {
+        ...originalObservation,
+        facts: [{ fact_id: "result.total", fact_class: "control", value: 509 }]
+      }
+    }
+  }).status, "uncertain", "right fact ID in the wrong fact class must fail closed");
+});
+
+test("supporting and prerequisite operations cannot carry user-task criterion eligibility", () => {
+  for (const candidate of [
+    { ...operation("read", "discovery"), fulfillment_role: "supporting_control" as const, eligible_criterion_ids: ["criterion-result"] },
+    { ...operation("read", "discovery"), operation_role: "prerequisite" as const, fulfillment_role: "prerequisite" as const, eligible_criterion_ids: ["criterion-result"] }
+  ]) {
+    const journal = createJournal();
+    assert.throws(() => journal.append(event(journal, { event_type: "operation_admitted", operation: candidate })),
+      (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === "operation_support_criterion_forbidden");
+  }
+});
+
+test("delegated task children require the exact immutable parent grant", () => {
+  const admittedChild = (grant?: string): OperationV2 => ({
+    ...operation(),
+    operation_id: "operation-child",
+    operation_role: "child",
+    parent_operation_id: "operation-1",
+    root_operation_id: "operation-1",
+    blocks_parent_settlement: true,
+    delegation_authority_id: grant,
+    resolves_gap_ids: []
+  });
+
+  for (const grant of [undefined, "delegation:forged"]) {
+    const journal = createJournal();
+    journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
+    assert.throws(() => journal.append(event(journal, {
+      event_type: "operation_admitted",
+      operation: admittedChild(grant)
+    })), (error: unknown) => error instanceof AssignmentKernelErrorV2
+      && error.code === "operation_delegation_authority_invalid");
+  }
+
+  const journal = createJournal();
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
+  const snapshot = journal.append(event(journal, {
+    event_type: "operation_admitted",
+    operation: admittedChild("delegation:operation-1")
+  }));
+  assert.deepEqual(snapshot.operations["operation-child"]!.eligible_criterion_ids, ["criterion-result"]);
+});
+
+test("fulfillment role and execution purpose cannot be relabeled independently", () => {
+  const cases: readonly [OperationV2, string][] = [
+    [{ ...operation(), fulfillment_role: "verification" }, "operation_verification_fulfillment_invalid"],
+    [{ ...operation(), purpose: "verification", fulfillment_role: "delegated_task_execution" }, "operation_delegated_purpose_invalid"],
+    [{ ...operation(), purpose: "reconciliation", fulfillment_role: "delegated_task_execution" }, "operation_delegated_purpose_invalid"],
+    [{ ...operation(), fulfillment_role: "telemetry", eligible_criterion_ids: [], delegation_authority_id: undefined }, "operation_telemetry_admission_invalid"]
+  ];
+  for (const [candidate, code] of cases) {
+    const journal = createJournal();
+    assert.throws(() => journal.append(event(journal, { event_type: "operation_admitted", operation: candidate })),
+      (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === code);
+  }
+});
+
+test("conflicting reuse of a child operation identity fails closed", () => {
+  const journal = createJournal();
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation() }));
+  const child: OperationV2 = {
+    ...operation(), operation_id: "operation-child", operation_role: "child",
+    parent_operation_id: "operation-1", root_operation_id: "operation-1",
+    blocks_parent_settlement: true, resolves_gap_ids: []
+  };
+  journal.append(event(journal, { event_type: "operation_admitted", operation: child }));
+  assert.throws(() => journal.append(event(journal, {
+    event_type: "operation_admitted",
+    operation: { ...child, fulfillment_role: "supporting_control", eligible_criterion_ids: [], delegation_authority_id: undefined }
+  })), (error: unknown) => error instanceof AssignmentKernelErrorV2 && error.code === "operation_duplicate");
+});
+
+test("Assignment creation rejects evidence-policy drift from criterion requirements", () => {
+  const assignmentSpec = spec();
+  const mismatched: AssignmentSpecV2 = {
+    ...assignmentSpec,
+    criteria: [{
+      ...assignmentSpec.criteria[0]!,
+      evidence_policy: {
+        ...assignmentSpec.criteria[0]!.evidence_policy!,
+        required_fact_ids: ["control.result_available"]
+      }
+    }]
+  };
+  const journal = new AssignmentJournalV2();
+  assert.throws(() => journal.append(event(journal, { event_type: "assignment_created", spec: mismatched })),
+    (error: unknown) => error instanceof AssignmentKernelErrorV2
+      && error.code === "criterion_evidence_policy_fact_mismatch");
 });
 
 test("criterion events reject untrusted evaluators and incomplete semantic support", () => {
@@ -514,10 +745,7 @@ test("apply completion requires a committed native result and task-level criteri
     ...result(raw), result_id: "result-verification", operation_id: verification.operation_id
   };
   journal.append(event(journal, { event_type: "operation_result_recorded", result: verificationResult }));
-  const verificationObservation = observationFromOperationResultV2({
-    result: verificationResult, expected_binding: binding, observation_id: "observation-verification",
-    raw_payload_ref: "evidence://sha256/verification", raw_payload: raw, registry: registry()
-  });
+  const verificationObservation = observationFor(journal, verificationResult, "observation-verification", "evidence://sha256/verification", raw);
   journal.append(event(journal, { event_type: "observation_retained", observation: verificationObservation }));
   const completed = journal.append(event(journal, {
     event_type: "criterion_evaluated",
@@ -620,19 +848,30 @@ test("verified no-op is derived from authenticated desired-state equivalence, no
       semantic_fact_requirements: ["note.text"],
       accepted_evaluator_authority_ids: ["deterministic-test"],
       accepted_observation_authority_ids: ["native-host"],
+      evidence_policy: {
+        schema: "revit-operator.criterion-evidence-policy/v2",
+        allowed_evidence_classes: ["task_result"],
+        allowed_fulfillment_roles: ["delegated_task_execution"],
+        allowed_fact_classes: ["domain"],
+        allowed_capability_ids: ["inventory.read"],
+        allowed_result_schema_ids: ["note-result/v1"],
+        required_fact_ids: ["note.text"],
+        require_native_dispatch: true,
+        require_current_generation: true
+      },
       desired_state_comparisons: [{ fact_id: "note.text", input_variable_id: "replacement_text", target_id: "target-1" }]
     }],
     work_units: [{ ...spec("read").work_units[0], input_variable_ids: ["replacement_text"] }]
   };
   const journal = createJournal(assignmentSpec);
-  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("read", "discovery") }));
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("read", "work") }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
   const raw = { text: "Current wording" };
   const nativeResult = { ...result(raw), result_schema_id: "note-result/v1" };
   journal.append(event(journal, { event_type: "operation_result_recorded", result: nativeResult }));
   const decoder = new ObservationDecoderRegistryV2();
-  decoder.register("note-result/v1", (payload) => [{ fact_id: "note.text", value: String((payload as { text: string }).text), target_id: "target-1" }]);
-  journal.append(event(journal, { event_type: "observation_retained", observation: observationFromOperationResultV2({ result: nativeResult, expected_binding: binding, observation_id: "observation-1", raw_payload_ref: "evidence://sha256/note", raw_payload: raw, registry: decoder }) }));
+  decoder.register("note-result/v1", (payload) => [{ fact_id: "note.text", fact_class: "domain", value: String((payload as { text: string }).text), target_id: "target-1" }]);
+  journal.append(event(journal, { event_type: "observation_retained", observation: observationFor(journal, nativeResult, "observation-1", "evidence://sha256/note", raw, decoder) }));
   const evaluation = evaluateCriterionV2({ snapshot: journal.snapshot(), criterion_id: "criterion-result", observation_ids: ["observation-1"], evaluator_authority: "deterministic-test", evaluated_at: "2026-08-26T12:00:08.000Z", basis: "desired_state_equivalence" });
   assert.equal(evaluation.status, "pass");
   const projected = journal.append(event(journal, { event_type: "criterion_evaluated", evaluation }));
@@ -658,6 +897,7 @@ test("independent completed work remains retained while another work unit needs 
     operation_id: "operation-complete",
     work_unit_id: "work-complete",
     advances_criterion_ids: ["criterion-complete"],
+    eligible_criterion_ids: ["criterion-complete"],
     resolves_gap_ids: ["criterion:criterion-complete"]
   };
   journal.append(event(journal, { event_type: "operation_admitted", operation: completedOperation }));
@@ -665,7 +905,7 @@ test("independent completed work remains retained while another work unit needs 
   const raw = { total: 1 };
   const completedResult = { ...result(raw), result_id: "result-complete", operation_id: "operation-complete" };
   journal.append(event(journal, { event_type: "operation_result_recorded", result: completedResult }));
-  const retainedObservation = observationFromOperationResultV2({ result: completedResult, expected_binding: binding, observation_id: "observation-complete", raw_payload_ref: "evidence://sha256/complete", raw_payload: raw, registry: registry() });
+  const retainedObservation = observationFor(journal, completedResult, "observation-complete", "evidence://sha256/complete", raw);
   journal.append(event(journal, { event_type: "observation_retained", observation: retainedObservation }));
   journal.append(event(journal, { event_type: "work_unit_state_changed", work_unit_id: "work-complete", state: "retained", reason: "independently useful" }));
   const evaluation = { ...passingEvaluation(), criterion_id: "criterion-complete", supporting_operation_ids: ["operation-complete"], supporting_facts: [{ observation_id: "observation-complete", fact_id: "result.total" }] };

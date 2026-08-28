@@ -5,11 +5,16 @@ import {
   OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
   canonicalJsonV2,
   deriveProgressGapsV2,
+  evidenceClassForFulfillmentRoleV2,
+  fulfillmentRoleCanCarryTaskCriteriaV2,
+  normalizeSemanticFactsForEvidenceV2,
+  operationFulfillmentRoleForAdmissionV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type AssignmentSnapshotV2,
   type ObservationV2,
   type OperationPurposeV2,
+  type OperationFulfillmentRoleV2,
   type OperationRequestIdentityV2,
   type OperationRoleV2,
   type OperationResultV2,
@@ -60,6 +65,9 @@ export type AssignmentKernelOperationLeaseV2 = Readonly<{
   parent_operation_id?: string;
   root_operation_id: string;
   blocks_parent_settlement: boolean;
+  fulfillment_role: OperationFulfillmentRoleV2;
+  delegation_authority_id?: string;
+  eligible_criterion_ids: readonly string[];
   request_identity: OperationRequestIdentityV2;
   opened_at: string;
   deadline_at: string;
@@ -214,7 +222,19 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   if (purpose === "verification" && !verifies) {
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
-  const advancesCriterionIds = [...new Set(unit.criterion_ids)].sort();
+  const fulfillmentRole = operationFulfillmentRoleForAdmissionV2({
+    purpose,
+    capability_id: input.capability_id
+  });
+  const advancesCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+    ? [...new Set(unit.criterion_ids)].sort()
+    : [];
+  const eligibleCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+    ? advancesCriterionIds
+    : [];
+  const delegationAuthorityId = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+    ? `delegation:${operationId}`
+    : undefined;
   const currentGaps = deriveProgressGapsV2(input.snapshot);
   const resolvesGapIds = currentGaps
     .filter((gap) => gap.work_unit_ids.includes(unit.work_unit_id)
@@ -222,6 +242,18 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
       || (purpose === "reconciliation" && gap.kind === "effect_unknown"))
     .map((gap) => gap.gap_id)
     .sort();
+  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  const correctedPredecessor = Object.values(input.snapshot.operations)
+    .filter(candidate => candidate.capability_id === input.capability_id
+      && candidate.settlement_state === "settled"
+      && candidate.persistent_effect === "none"
+      && Boolean(candidate.result?.input_schema_gap)
+      && candidate.request_identity?.method === currentIdentity.method
+      && candidate.request_identity?.path === currentIdentity.path
+      && candidate.request_identity?.request_signature !== currentIdentity.request_signature
+      && !Object.values(input.snapshot.operations).some(retry => retry.retry_of_operation_id === candidate.operation_id))
+    .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
+      .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0];
   const operation: OperationV2 = {
     schema: OPERATION_V2_SCHEMA,
     operation_id: operationId,
@@ -231,9 +263,12 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     requested_effect: effect,
     purpose,
     operation_role: "root",
+    fulfillment_role: fulfillmentRole,
+    ...(delegationAuthorityId ? { delegation_authority_id: delegationAuthorityId } : {}),
     blocks_parent_settlement: false,
-    request_identity: requestIdentity({ capability_id: input.capability_id, arguments: input.arguments }),
+    request_identity: currentIdentity,
     advances_criterion_ids: advancesCriterionIds,
+    eligible_criterion_ids: eligibleCriterionIds,
     resolves_gap_ids: resolvesGapIds,
     target: {
       ...(targetId ? { target_id: targetId } : {}),
@@ -246,6 +281,10 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     persistent_effect: "none",
     settlement_state: "open",
     observation_ids: [], verification_operation_ids: [],
+    ...(correctedPredecessor ? {
+      retry_of_operation_id: correctedPredecessor.operation_id,
+      retry_basis: "corrected_input" as const
+    } : {}),
     ...(verifies ? { verification_of_operation_id: verifies.operation_id } : {}),
     ...(purpose === "reconciliation" ? {
       reconciliation_of_operation_id: input.snapshot.unresolved_unknown_operation_ids[0]
@@ -270,6 +309,9 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     requested_effect: effect,
     purpose,
     operation_role: "root",
+    fulfillment_role: fulfillmentRole,
+    ...(delegationAuthorityId ? { delegation_authority_id: delegationAuthorityId } : {}),
+    eligible_criterion_ids: eligibleCriterionIds,
     root_operation_id: operationId,
     blocks_parent_settlement: false,
     request_identity: structuredClone(operation.request_identity!),
@@ -289,6 +331,9 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   path?: string;
   arguments: unknown;
   blocks_parent_settlement?: boolean;
+  fulfillment_role?: OperationFulfillmentRoleV2;
+  delegation_authority_id?: string;
+  eligible_criterion_ids?: readonly string[];
   opened_at?: string;
 }>): AssignmentKernelOperationLeaseV2 {
   const snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
@@ -322,19 +367,40 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   const existing = snapshot.operations[operationId];
   if (existing) {
     if (existing.parent_operation_id !== parent.operation_id
-        || existing.request_identity?.request_signature !== identity.request_signature) {
+        || existing.request_identity?.request_signature !== identity.request_signature
+        || existing.fulfillment_role !== (input.operation_role === "prerequisite" ? "prerequisite" : input.fulfillment_role ?? "supporting_control")
+        || canonicalJsonV2(existing.eligible_criterion_ids ?? []) !== canonicalJsonV2([...new Set(input.eligible_criterion_ids ?? [])].sort())
+        || existing.delegation_authority_id !== input.delegation_authority_id) {
       throw new Error("assignment_kernel_v2_child_operation_identity_conflict");
     }
     return leaseFromOperation(existing);
   }
   const openedAt = input.opened_at ?? new Date().toISOString();
-  // A prerequisite establishes whether/how the parent may execute; its result
-  // cannot masquerade as task-level evidence for the parent's criteria. A
-  // first-class child may inherit the parent's explicit progress binding.
-  const advancesCriterionIds = input.operation_role === "prerequisite"
-    ? [] : [...new Set(parent.advances_criterion_ids)].sort();
-  const resolvesGapIds = input.operation_role === "prerequisite"
-    ? [] : [...new Set(parent.resolves_gap_ids)].sort();
+  // Topology never grants semantic fulfillment. Ordinary children default to
+  // supporting control with no criterion eligibility; only the trusted edge
+  // may explicitly delegate a parent-approved criterion subset.
+  const fulfillmentRole = input.operation_role === "prerequisite"
+    ? "prerequisite"
+    : input.fulfillment_role ?? "supporting_control";
+  const requestedEligible = [...new Set(input.eligible_criterion_ids ?? [])].sort();
+  if (!fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole) && requestedEligible.length > 0) {
+    throw new Error("assignment_kernel_v2_support_operation_criterion_forbidden");
+  }
+  const parentEligible = new Set(parent.eligible_criterion_ids ?? []);
+  if (requestedEligible.some((criterionId) => !parentEligible.has(criterionId))) {
+    throw new Error("assignment_kernel_v2_delegated_criterion_widening");
+  }
+  if (fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+      && (!parent.delegation_authority_id || input.delegation_authority_id !== parent.delegation_authority_id)) {
+    throw new Error("assignment_kernel_v2_delegation_authority_invalid");
+  }
+  const eligibleCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+    ? requestedEligible
+    : [];
+  const advancesCriterionIds = [...eligibleCriterionIds];
+  const resolvesGapIds = eligibleCriterionIds.length > 0
+    ? [...new Set(parent.resolves_gap_ids)].sort()
+    : [];
   const operation: OperationV2 = {
     schema: OPERATION_V2_SCHEMA,
     operation_id: operationId,
@@ -344,11 +410,14 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     requested_effect: unit.requested_effect,
     purpose,
     operation_role: input.operation_role,
+    fulfillment_role: fulfillmentRole,
+    ...(input.delegation_authority_id ? { delegation_authority_id: input.delegation_authority_id } : {}),
     parent_operation_id: parent.operation_id,
     root_operation_id: parent.root_operation_id ?? parent.operation_id,
     blocks_parent_settlement: input.blocks_parent_settlement !== false,
     request_identity: identity,
     advances_criterion_ids: advancesCriterionIds,
+    eligible_criterion_ids: eligibleCriterionIds,
     resolves_gap_ids: resolvesGapIds,
     target: structuredClone(parent.target),
     input: canonicalInput(input.arguments),
@@ -508,8 +577,16 @@ export function commitAssignmentKernelObservationV2(
   const attempt = (operation.observation_commit_attempts ?? 0) + 1;
   try {
     const stored = runtime.storeEvidence(evidenceInput(lease, result, commit), getEvidenceContextBudget().item_bytes);
+    const fulfillmentRole = operation.fulfillment_role
+      ?? operationFulfillmentRoleForAdmissionV2({
+        purpose: operation.purpose,
+        capability_id: operation.capability_id,
+        prerequisite: operation.operation_role === "prerequisite"
+      });
+    const evidenceClass = evidenceClassForFulfillmentRoleV2(fulfillmentRole);
+    const semanticFacts = normalizeSemanticFactsForEvidenceV2(evidenceClass, commit.semantic_facts);
     const registry = new ObservationDecoderRegistryV2();
-    registry.register(result.result_schema_id, () => commit.semantic_facts);
+    registry.register(result.result_schema_id, () => semanticFacts);
     const observation = observationFromOperationResultV2({
       result,
       expected_binding: lease.binding,
@@ -518,6 +595,10 @@ export function commitAssignmentKernelObservationV2(
       raw_payload: commit.raw_payload,
       target_scope: commit.target_scope,
       verification_relevance: commit.verification_relevance,
+      fulfillment_role: fulfillmentRole,
+      evidence_class: evidenceClass,
+      capability_id: operation.capability_id,
+      eligible_criterion_ids: operation.eligible_criterion_ids ?? [],
       registry
     });
     appendCurrentAssignmentKernelEventV2({
@@ -603,6 +684,13 @@ export function leaseFromOperation(operation: OperationV2): AssignmentKernelOper
     requested_effect: operation.requested_effect,
     purpose: operation.purpose,
     operation_role: operation.operation_role ?? "root",
+    fulfillment_role: operation.fulfillment_role ?? operationFulfillmentRoleForAdmissionV2({
+      purpose: operation.purpose,
+      capability_id: operation.capability_id,
+      prerequisite: operation.operation_role === "prerequisite"
+    }),
+    ...(operation.delegation_authority_id ? { delegation_authority_id: operation.delegation_authority_id } : {}),
+    eligible_criterion_ids: [...(operation.eligible_criterion_ids ?? [])],
     ...(operation.parent_operation_id ? { parent_operation_id: operation.parent_operation_id } : {}),
     root_operation_id: operation.root_operation_id ?? operation.operation_id,
     blocks_parent_settlement: operation.blocks_parent_settlement !== false,
