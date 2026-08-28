@@ -457,6 +457,7 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   const sheetTool = tools.tools.find(tool => tool.name === "revit_list_sheets");
   const safeReadTool = tools.tools.find(tool => tool.name === "revit_count_sheets_certified");
   const getParametersTool = tools.tools.find(tool => tool.name === "revit_get_parameters");
+  const findTextNotesTool = tools.tools.find(tool => tool.name === "revit_find_text_notes");
   const schedulesTool = tools.tools.find(tool => tool.name === "revit_list_schedules");
   const v2CriteriaTool = tools.tools.find(tool => tool.name === "operator_evaluate_assignment_criteria");
   const v2InputTool = tools.tools.find(tool => tool.name === "operator_request_assignment_input");
@@ -472,6 +473,11 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal((getParametersTool?.inputSchema as any)?.properties?.elementIds?.anyOf?.length, 2);
   assert.equal((getParametersTool?.inputSchema as any)?.properties?.names?.items?.type, "string");
   assert.equal((getParametersTool?.inputSchema as any)?.properties?.limit?.maximum, 500);
+  assert.deepEqual((findTextNotesTool?.inputSchema as any)?.required ?? [], []);
+  assert.equal((findTextNotesTool?.inputSchema as any)?.properties?.elementIds?.items?.type, "integer");
+  assert.equal((findTextNotesTool?.inputSchema as any)?.properties?.elementIds?.maxItems, 500);
+  assert.equal((findTextNotesTool?.inputSchema as any)?.properties?.max?.minimum, 1);
+  assert.equal((findTextNotesTool?.inputSchema as any)?.properties?.max?.maximum, 500);
   assert.equal((schedulesTool?.inputSchema as any)?.properties?.maxRows?.maximum, 500);
   assert.equal((schedulesTool?.inputSchema as any)?.properties?.maxColumns?.maximum, 100);
   for (const tool of [connectorRepairTool, dryConnectorRepairTool]) {
