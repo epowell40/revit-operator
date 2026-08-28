@@ -1241,6 +1241,30 @@ namespace RevitBridge.Operator
                         additionalProps: false);
                 }
 
+                // The mutation identity and replacement text are the only
+                // unconditional inputs. Document/session selection, optimistic
+                // old-text matching, preview/apply mode, and confirmation are
+                // independent optional controls. The net48 reflection fallback
+                // cannot recover nullable-reference metadata and would advertise
+                // those controls as simultaneously required.
+                if (string.Equals(p, "/revit/replace-text-note", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Obj(
+                        props: new Dictionary<string, object>
+                        {
+                            { "docId", Str(maxLength: 64) },
+                            { "familyDocumentId", Str(maxLength: 64) },
+                            { "elementId", Int() },
+                            { "newText", Str(minLength: 1, maxLength: 200) },
+                            { "expectedOldText", Str(maxLength: 200) },
+                            { "dryRun", Bool() },
+                            { "apply", Bool() },
+                            { "confirm", Str(maxLength: 120) }
+                        },
+                        required: new[] { "elementId", "newText" },
+                        additionalProps: false);
+                }
+
                 // Default: schema from request type when known, else generic object.
                 if (RequestTypesByPath.TryGetValue(p, out var t))
                 {

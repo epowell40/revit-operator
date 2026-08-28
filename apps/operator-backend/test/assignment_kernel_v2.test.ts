@@ -759,6 +759,35 @@ test("apply completion requires a committed native result and task-level criteri
   assert.deepEqual(completed.operations["operation-1"].verification_operation_ids, [verification.operation_id]);
 });
 
+test("an apply criterion cannot pass from a rolled-back preview observation", () => {
+  const applySpec = spec("apply");
+  const journal = createJournal({
+    ...applySpec,
+    work_units: [
+      ...applySpec.work_units,
+      { ...applySpec.work_units[0]!, work_unit_id: "work-preview", requested_effect: "preview", independently_useful: false, safe_to_retain: false }
+    ]
+  });
+  journal.append(event(journal, {
+    event_type: "operation_admitted",
+    operation: { ...operation("preview"), work_unit_id: "work-preview" }
+  }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-preview" }));
+  retainResult(journal, { total: 1 }, "preview");
+
+  const evaluation = evaluateCriterionV2({
+    snapshot: journal.snapshot(),
+    criterion_id: "criterion-result",
+    observation_ids: ["observation-1"],
+    evaluator_authority: "deterministic-test",
+    evaluated_at: "2026-08-26T12:00:06.000Z"
+  });
+
+  assert.notEqual(evaluation.status, "pass", "rolled-back preview evidence cannot prove an apply deliverable");
+  assert.equal(journal.snapshot().operations["operation-1"].persistent_effect, "none");
+  assert.equal(journal.snapshot().operations["operation-1"].result?.native_transaction_state, "rolled_back");
+});
+
 test("apply timeout settles native work but remains unresolved until target-bound reconciliation", () => {
   const journal = createJournal(spec("apply"));
   journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));

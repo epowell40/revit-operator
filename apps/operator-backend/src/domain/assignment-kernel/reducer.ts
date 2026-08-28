@@ -412,7 +412,8 @@ function validateCriterionEvaluation(snapshot: AssignmentSnapshotV2, evaluation:
         snapshot,
         criterion,
         observation,
-        evaluated_at: evaluation.evaluated_at
+        evaluated_at: evaluation.evaluated_at,
+        basis: evaluation.basis
       });
       kernelAssertV2(admission.admissible, "criterion_evidence_not_admissible", `Criterion cites inadmissible evidence: ${admission.reason}.`);
     }

@@ -326,6 +326,18 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("OperatorNativeTransactionReceipt", setHandler);
             Assert.Contains("transaction = transactionReceipt", setHandler);
             Assert.Contains("new SetTextNoteTextHandler().Handle", replaceHandler);
+
+            var introspection = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolIntrospection.cs");
+            var explicitContract = introspection.IndexOf(
+                "if (string.Equals(p, \"/revit/replace-text-note\", StringComparison.OrdinalIgnoreCase))",
+                StringComparison.Ordinal);
+            var reflectionFallback = introspection.IndexOf(
+                "if (RequestTypesByPath.TryGetValue(p, out var t))",
+                StringComparison.Ordinal);
+            Assert.True(explicitContract >= 0 && explicitContract < reflectionFallback);
+            Assert.Contains("required: new[] { \"elementId\", \"newText\" }", introspection);
+            Assert.Contains("{ \"expectedOldText\", Str(maxLength: 200) }", introspection);
+            Assert.Contains("{ \"confirm\", Str(maxLength: 120) }", introspection);
         }
 
         [Fact]
@@ -346,8 +358,9 @@ namespace RevitBridge.Common.Tests
 
             var mcp = ReadSharedSource("mcp-server", "src", "server.ts");
             Assert.Contains("revit_replace_text_note", mcp);
-            Assert.Contains("docId: z.string().optional()", mcp);
-            Assert.Contains("expectedOldText: z.string().optional()", mcp);
+            Assert.Contains("docId: z.string().max(64).optional()", mcp);
+            Assert.Contains("familyDocumentId: z.string().max(64).optional()", mcp);
+            Assert.Contains("expectedOldText: z.string().max(200).optional()", mcp);
             Assert.Contains("confirm: APPLY 1 TEXT NOTE CHANGE", mcp);
         }
 

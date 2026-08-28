@@ -1,5 +1,6 @@
 import { sameAssignmentBindingV2 } from "./identity.js";
 import type { AssignmentCriterionSpecV2 } from "./assignment_spec.js";
+import type { CriterionEvaluationV2 } from "./criteria.js";
 import type { ObservationV2, SemanticFactV2 } from "./observation.js";
 import type { OperationPurposeV2, OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
@@ -120,6 +121,7 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
   criterion: AssignmentCriterionSpecV2;
   observation: ObservationV2;
   evaluated_at?: string;
+  basis?: CriterionEvaluationV2["basis"];
 }>): ObservationAdmissibilityV2 {
   const policy = input.criterion.evidence_policy;
   if (!policy || input.snapshot.spec.semantic_evidence_contract !== SEMANTIC_EVIDENCE_CONTRACT_V2) {
@@ -131,6 +133,21 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
   if (operation.settlement_state !== "settled" || operation.result?.status !== "succeeded") return denied("operation_not_successfully_settled", operation);
   if (!operation.fulfillment_role || !operation.eligible_criterion_ids) return denied("operation_fulfillment_contract_missing", operation);
   if (!operation.eligible_criterion_ids.includes(input.criterion.criterion_id)) return denied("operation_not_eligible_for_criterion", operation);
+  if (operation.fulfillment_role === "delegated_task_execution") {
+    const desiredStateRead = input.basis === "desired_state_equivalence"
+      && input.snapshot.spec.requested_effect === "apply"
+      && operation.requested_effect === "read"
+      && operation.persistent_effect === "none"
+      && operation.result.native_transaction_state === "not_applicable";
+    if (!desiredStateRead && operation.requested_effect !== input.snapshot.spec.requested_effect) {
+      return denied("task_operation_effect_mismatch", operation);
+    }
+    if (!desiredStateRead && input.snapshot.spec.requested_effect === "apply"
+        && (operation.persistent_effect !== "applied"
+          || operation.result.native_transaction_state !== "committed")) {
+      return denied("apply_task_effect_not_committed", operation);
+    }
+  }
   if (!input.observation.fulfillment_role || input.observation.fulfillment_role !== operation.fulfillment_role) return denied("observation_fulfillment_role_mismatch", operation);
   if (input.observation.capability_id !== operation.capability_id) return denied("observation_capability_mismatch", operation);
   if (!input.observation.eligible_criterion_ids?.includes(input.criterion.criterion_id)) return denied("observation_not_eligible_for_criterion", operation);

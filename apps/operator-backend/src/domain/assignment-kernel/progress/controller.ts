@@ -20,8 +20,11 @@ function unique<T extends string>(values: readonly T[]): T[] {
 }
 
 function relevantObservationIds(snapshot: AssignmentSnapshotV2, criterion: AssignmentCriterionSpecV2): string[] {
+  const basis = snapshot.spec.requested_effect === "apply" && (criterion.desired_state_comparisons?.length ?? 0) > 0
+    ? "desired_state_equivalence" as const
+    : "observation" as const;
   return Object.values(snapshot.observations)
-    .filter((observation) => observationAdmissibilityForCriterionV2({ snapshot, criterion, observation }).admissible)
+    .filter((observation) => observationAdmissibilityForCriterionV2({ snapshot, criterion, observation, basis }).admissible)
     .filter((observation) => observation.facts.some((fact) => criterion.semantic_fact_requirements.includes(fact.fact_id)))
     .map((observation) => observation.observation_id)
     .sort();

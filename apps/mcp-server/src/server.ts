@@ -1872,13 +1872,14 @@ server.tool("revit_find_text_notes", "Find TextNotes by exact element identity, 
 
 server.tool("revit_replace_text_note", "Replace a TextNote's text in the active project, or in an open family session when docId is supplied. Preview first; applying a change requires confirm: APPLY 1 TEXT NOTE CHANGE.",
   {
-    docId: z.string().optional(),
+    docId: z.string().max(64).optional(),
+    familyDocumentId: z.string().max(64).optional(),
     elementId: z.number().int(),
-    newText: z.string(),
-    expectedOldText: z.string().optional(),
+    newText: z.string().min(1).max(200),
+    expectedOldText: z.string().max(200).optional(),
     dryRun: z.boolean().optional(),
     apply: z.boolean().optional(),
-    confirm: z.string().optional(),
+    confirm: z.string().max(120).optional(),
   },
   async (args) => {
     try {
