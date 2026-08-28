@@ -16,6 +16,7 @@ import {
   evaluateAssignmentObservationCriteriaV2,
   requestAssignmentInputV2,
   supplyAssignmentInputV2,
+  supplyAssignmentInputResultV2,
   type AssignmentKernelBindingInputV2
 } from "./assignment_kernel_v2_lifecycle.js";
 import { getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
@@ -267,13 +268,13 @@ export async function handleAssignmentHttpRoute(
       const assignmentId = typeof body?.assignment_id === "string" ? body.assignment_id.trim() : "";
       if (assignmentId && getAssignmentKernelSnapshotV2(assignmentId)) {
         const binding = v2Binding(body as unknown as JsonMap);
-        const snapshot = supplyAssignmentInputV2({
+        const supplied = supplyAssignmentInputResultV2({
           binding,
           clarification_id: String(body?.clarification_id ?? "").trim(),
           external_values: body?.supplied_values && typeof body.supplied_values === "object" && !Array.isArray(body.supplied_values)
             ? body.supplied_values as JsonMap : {}
         });
-        writeJson(res, 200, { ok: true, idempotent: false, assignment_snapshot_v2: snapshot });
+        writeJson(res, 200, { ok: true, idempotent: supplied.idempotent, assignment_snapshot_v2: supplied.snapshot });
         return true;
       }
       const resolved = resolveAssignmentClarification(body!, "authenticated_user");

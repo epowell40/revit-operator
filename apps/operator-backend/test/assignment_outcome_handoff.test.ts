@@ -5,10 +5,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { requestAssignmentClarification } from "../src/assignments/interaction.js";
+import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
+import { advanceAssignmentKernelProgressV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { ensureAssignmentRunForTurn } from "../src/assignments/turn_journal.js";
 import { canonicalAssignmentOutcomeForBinding } from "../src/assignments/outcome_handoff.js";
 import { configureGoalEvidenceAuthorityProvider, createGoal } from "../src/goals/service.js";
 import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
+import { runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
 
 function withWorkspace<T>(fn: () => T): T {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -82,6 +85,53 @@ test("authenticated chat outcome handoff projects a committed clarification with
       missing_fields: ["replacement_text"]
     });
     assert.ok(Buffer.byteLength(JSON.stringify(outcome), "utf8") < 8_192);
+  });
+});
+
+test("authenticated chat outcome handoff reads a V2 clarification from the exact bound V2 snapshot", () => {
+  withWorkspace(() => {
+    const principal: RequestPrincipal = {
+      sub: "principal-outcome-handoff-v2",
+      user_id: "principal-outcome-handoff-v2",
+      license_id: "tenant-outcome-handoff-v2",
+      roles: ["operator"],
+      tier: "development",
+      claims: {}
+    };
+    runWithRequestContext({ principal }, () => {
+      const sessionId = "session-outcome-handoff-v2";
+      const goal = createGoal({
+        title: "Update selected note through V2",
+        objective: "Replace the selected note after the user supplies the exact wording.",
+        acceptance_criteria: ["The existing note is updated in place."],
+        related_session_id: sessionId,
+        created_by: principal.user_id,
+        status: "active",
+        work_budget: { requested_effect: "apply", required_user_inputs: ["replacement_text"] }
+      });
+      const run = ensureAssignmentRunForTurn(sessionId, "sidecar:outcome-handoff-v2", "test", false);
+      assert.ok(run);
+      const binding = createAssignmentKernelForGoalV2({ goal, run_id: run.runId });
+      const advanced = advanceAssignmentKernelProgressV2({ binding, now: "2026-08-28T16:00:00.000Z" });
+      const [clarification] = Object.values(advanced.snapshot.clarifications);
+      assert.ok(clarification);
+
+      const outcome = canonicalAssignmentOutcomeForBinding({
+        session_id: sessionId,
+        assignment_id: goal.id,
+        assignment_run_id: run.runId,
+        assignment_generation: run.generation
+      });
+
+      assert.equal(outcome?.outcome_state, "awaiting_user_input");
+      assert.equal(outcome?.terminal_state, "open");
+      assert.equal(outcome?.quiescent, true);
+      assert.deepEqual(outcome?.pending_clarification, {
+        clarification_id: clarification.clarification_id,
+        question: clarification.question,
+        missing_fields: ["replacement_text"]
+      });
+    });
   });
 });
 

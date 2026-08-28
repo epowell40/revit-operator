@@ -15,6 +15,7 @@ import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_k
 import {
   evaluateAssignmentObservationCriteriaV2,
   requestAssignmentInputV2,
+  supplyAssignmentInputResultV2,
   supplyAssignmentInputV2
 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
@@ -228,6 +229,98 @@ test("stable clarification variable survives aliases and resumes the same Assign
   assert.equal(resumed.input_values.replacement_text, "Current issue wording");
   assert.equal(resumed.pending_input_variable_ids.length, 0);
   assert.equal(resumed.clarifications["clarification-replacement"]!.resolved_at !== undefined, true);
+}));
+
+test("progress controller durably materializes missing authenticated input without provider or Revit work", () => workspace(() => {
+  const { goal, binding, snapshot: created } = setup("apply", ["replacement_text"]);
+  assert.equal(created.assignment_version, 1);
+  assert.deepEqual(created.pending_input_variable_ids, ["replacement_text"]);
+  assert.deepEqual(created.clarifications, {}, "Candidate 10 first-bad-transition shape is reproduced before progress advances.");
+
+  const first = advanceAssignmentKernelProgressV2({ binding, now: "2026-08-28T16:00:00.000Z" });
+  assert.equal(first.decision.decision, "request_user_input");
+  assert.equal(first.snapshot.assignment_version, 2);
+  assert.equal(first.snapshot.outcome, "awaiting_user_input");
+  assert.deepEqual(first.snapshot.pending_input_variable_ids, ["replacement_text"]);
+  assert.equal(Object.keys(first.snapshot.provider_calls).length, 0);
+  assert.equal(Object.keys(first.snapshot.operations).length, 0);
+  const [clarificationId] = Object.keys(first.snapshot.clarifications);
+  assert.ok(clarificationId);
+  const clarification = first.snapshot.clarifications[clarificationId]!;
+  assert.equal(clarification.variable_id, "replacement_text");
+  assert.match(clarification.question, /replacement text/i);
+
+  const duplicate = advanceAssignmentKernelProgressV2({ binding, now: "2026-08-28T16:00:01.000Z" });
+  assert.equal(duplicate.snapshot.assignment_version, first.snapshot.assignment_version);
+  assert.deepEqual(duplicate.snapshot.clarifications, first.snapshot.clarifications);
+  assert.equal(duplicate.decision.decision, "request_user_input");
+
+  __testOnlyResetGoalListCache();
+  const recovered = advanceAssignmentKernelProgressV2({ binding, now: "2026-08-28T16:00:02.000Z" });
+  assert.equal(recovered.snapshot.assignment_version, first.snapshot.assignment_version);
+  assert.deepEqual(recovered.snapshot.clarifications, first.snapshot.clarifications);
+
+  const prepared = prepareCodexAssignmentProgressV2(binding);
+  assert.equal(prepared.snapshot.assignment_version, first.snapshot.assignment_version);
+  assert.match(prepared.message, /waiting for the required authenticated user input/i);
+
+  const resumed = supplyAssignmentInputV2({
+    binding,
+    clarification_id: clarificationId,
+    external_values: { "replacement-text": "Current issue wording" }
+  });
+  assert.equal(resumed.current_binding.assignment_id, goal.id);
+  assert.equal(resumed.input_values.replacement_text, "Current issue wording");
+  assert.deepEqual(resumed.pending_input_variable_ids, []);
+  assert.ok(resumed.clarifications[clarificationId]!.resolved_at);
+}));
+
+test("clarification responses are atomic, restart-idempotent, and conflicting duplicates fail closed", () => workspace(() => {
+  const { goal, binding } = setup("apply", ["replacement_text", "target_note"]);
+  requestAssignmentInputV2({
+    binding,
+    clarification_id: "clarification-replacement",
+    variable_ids: ["replacement_text"],
+    question: "What replacement text should I use?"
+  });
+  const pending = requestAssignmentInputV2({
+    binding,
+    clarification_id: "clarification-target",
+    variable_ids: ["target_note"],
+    question: "Which note should I update?"
+  });
+  assert.throws(() => supplyAssignmentInputResultV2({
+    binding,
+    clarification_id: "clarification-replacement",
+    external_values: { replacement_text: "Current issue", target_note: "Note 7" }
+  }), /clarification_binding_invalid/);
+  const unchanged = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(unchanged.assignment_version, pending.assignment_version);
+  assert.deepEqual(unchanged.input_values, {});
+
+  const accepted = supplyAssignmentInputResultV2({
+    binding,
+    clarification_id: "clarification-replacement",
+    external_values: { replacement_text: "Current issue" }
+  });
+  assert.equal(accepted.idempotent, false);
+  assert.equal(accepted.snapshot.input_values.replacement_text, "Current issue");
+  const acceptedVersion = accepted.snapshot.assignment_version;
+
+  __testOnlyResetGoalListCache();
+  const replayed = supplyAssignmentInputResultV2({
+    binding,
+    clarification_id: "clarification-replacement",
+    external_values: { replacement_text: "Current issue" }
+  });
+  assert.equal(replayed.idempotent, true);
+  assert.equal(replayed.snapshot.assignment_version, acceptedVersion);
+  assert.throws(() => supplyAssignmentInputResultV2({
+    binding,
+    clarification_id: "clarification-replacement",
+    external_values: { replacement_text: "Different issue" }
+  }), /assignment_kernel_v2_input_integrity_conflict/);
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.assignment_version, acceptedVersion);
 }));
 
 test("durable progress controller evaluates retained observations and terminalizes before another provider turn", () => workspace(() => {

@@ -17,7 +17,8 @@ import {
 } from "../domain/assignment-kernel/index.js";
 import {
   deriveAndSettleAssignmentKernelV2,
-  evaluateAssignmentObservationCriteriaV2
+  evaluateAssignmentObservationCriteriaV2,
+  requestAssignmentInputV2
 } from "./assignment_kernel_v2_lifecycle.js";
 import {
   appendCurrentAssignmentKernelEventV2,
@@ -37,6 +38,23 @@ export const DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2: AssignmentProgressBudgetV2 =
 
 function digest(value: unknown): string {
   return createHash("sha256").update(canonicalJsonV2(value), "utf8").digest("hex");
+}
+
+function clarificationIdentityV2(snapshot: AssignmentSnapshotV2, variableId: string): string {
+  return `clarification-v2:${digest({
+    schema: "revit-operator.assignment-input-clarification-identity/v2",
+    binding: snapshot.current_binding,
+    variable_id: variableId
+  }).slice(0, 48)}`;
+}
+
+function clarificationQuestionV2(variableId: string): string {
+  const label = variableId
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
+  return `What exact ${label || "required input"} should I use?`;
 }
 
 export function recordAssignmentProviderCallStateV2(input: Readonly<{
@@ -170,6 +188,22 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
     }));
     snapshot = evaluateAssignmentObservationCriteriaV2({ binding: input.binding, claims });
     if (snapshot.terminal) return { snapshot, decision: decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now }) };
+    decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
+  }
+  if (decision.decision === "request_user_input") {
+    const variablesWithActiveClarifications = new Set(Object.values(snapshot.clarifications)
+      .filter((clarification) => !clarification.resolved_at)
+      .map((clarification) => clarification.variable_id));
+    for (const variableId of snapshot.pending_input_variable_ids) {
+      if (variablesWithActiveClarifications.has(variableId)) continue;
+      snapshot = requestAssignmentInputV2({
+        binding: snapshot.current_binding,
+        clarification_id: clarificationIdentityV2(snapshot, variableId),
+        variable_ids: [variableId],
+        question: clarificationQuestionV2(variableId)
+      });
+      variablesWithActiveClarifications.add(variableId);
+    }
     decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
   }
   if (decision.decision === "blocked") {
