@@ -23,6 +23,8 @@ import { createHash } from "node:crypto";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { listWorkReturns } from "../src/work_returns/store.js";
+import { deriveTerminalResultV2, renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
+import { prepareCodexAssignmentProgressV2, settleCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
 import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
 import { generateWorkReturnFromKernelV2 } from "../src/work_returns/assignment_kernel_v2_generator.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
@@ -70,7 +72,9 @@ function resultEnvelope(operationId: string, binding: any, requestIdentity: any,
     : [
         { fact_id: "task.result_available", fact_class: "domain", value: true },
         { fact_id: "inventory.complete", fact_class: "domain", value: true },
-        { fact_id: "inventory.total", fact_class: "domain", value: 509 }
+        { fact_id: "inventory.total", fact_class: "domain", value: 509 },
+        { fact_id: "inventory.group", fact_class: "domain", value: 300, cardinality: "many", dimensions: { family: "Family A", type: "Type A" } },
+        { fact_id: "inventory.group", fact_class: "domain", value: 209, cardinality: "many", dimensions: { family: "Family B", type: "Type B" } }
       ];
   return {
     content: [{ type: "text", text: "bounded projection" }],
@@ -267,6 +271,24 @@ test("durable progress controller evaluates retained observations and terminaliz
   assert.equal(trace.provider_call_explanations[0]!.why, `Resolve criterion:${recovered.spec.criteria[0]!.criterion_id} by obtaining result.available.`);
   assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
   assert.equal(listWorkReturns(goal.id).length, 1);
+
+  const handedOff = advanceAssignmentKernelProgressV2({ binding });
+  assert.equal(handedOff.snapshot.assignment_version, advanced.snapshot.assignment_version);
+  assert.equal(handedOff.snapshot.terminal, true);
+  assert.equal(handedOff.decision.decision, "terminal");
+  assert.equal(listVerifiedWorkPackets(goal.id).length, 1);
+  assert.equal(listWorkReturns(goal.id).length, 1);
+  const terminalResult = deriveTerminalResultV2(handedOff.snapshot);
+  assert.equal(terminalResult.terminal_snapshot_version, advanced.snapshot.assignment_version);
+  assert.deepEqual(terminalResult.supporting_observation_ids, Object.keys(handedOff.snapshot.observations));
+  assert.match(renderTerminalResultV2(handedOff.snapshot), /Inventory total: 509/);
+  assert.match(renderTerminalResultV2(handedOff.snapshot), /Family A — Type A: 300/);
+  assert.match(renderTerminalResultV2(handedOff.snapshot), /Family B — Type B: 209/);
+  const reconnected = prepareCodexAssignmentProgressV2(binding);
+  assert.equal(reconnected.snapshot.assignment_version, advanced.snapshot.assignment_version);
+  assert.equal(reconnected.prompt, "");
+  assert.equal(reconnected.message, renderTerminalResultV2(handedOff.snapshot));
+  assert.equal(settleCodexAssignmentProgressV2(binding)?.assignment_version, advanced.snapshot.assignment_version);
 }));
 
 test("bounded reconciliation exhaustion terminalizes an unknown effect as blocked without replay", () => workspace(() => {

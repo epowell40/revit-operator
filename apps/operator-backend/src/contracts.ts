@@ -2,6 +2,7 @@ export const OPERATOR_BACKEND_CONTRACT_VERSION = "operator.backend.v1";
 
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "./evidence/evidence_ref.js";
 import type { AssignmentSnapshotV2 } from "./domain/assignment-kernel/index.js";
+import type { TerminalResultV2 } from "./assignments/assignment_kernel_v2_terminal_result.js";
 
 export type HttpMethod = "GET" | "POST";
 
@@ -160,6 +161,8 @@ export type ChatResponse = {
   canonical_assignment_outcome?: CanonicalAssignmentOutcomeV1;
   /** Exact V2 journal projection; authoritative for V2 Assignments. */
   assignment_snapshot_v2?: AssignmentSnapshotV2;
+  /** Read-only product handoff derived from the exact terminal V2 snapshot. */
+  terminal_result_v2?: TerminalResultV2;
   execution_strategy_evidence?: {
     schema: "revit-operator.execution-strategy-evidence.v1";
     selected_substrate: "typed_capability" | "typed_capability_composition" | "dynamic_revit_program";

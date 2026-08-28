@@ -57,6 +57,7 @@ import type { AssignmentKernelTurnLeaseV2, OperatorBackendAuthLease } from "../c
 import { canonicalAssignmentOutcomeForBinding } from "../assignments/outcome_handoff.js";
 import { assignmentKernelV2ForBinding } from "../assignments/assignment_kernel_v2_factory.js";
 import { recoverAssignmentKernelOperationsV2 } from "../assignments/assignment_kernel_v2_execution.js";
+import { deriveTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import {
   checkpointCodexAssignmentProgressV2,
   codexAssignmentControllerStopMessage,
@@ -645,7 +646,8 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
             version: OPERATOR_BACKEND_CONTRACT_VERSION,
             assistant_message: message,
             actions: [],
-            assignment_snapshot_v2: progression.snapshot
+            assignment_snapshot_v2: progression.snapshot,
+            ...(progression.snapshot.terminal ? { terminal_result_v2: deriveTerminalResultV2(progression.snapshot) } : {})
           };
         }
         assignmentProgressTurnStart = progression.snapshot;
@@ -1080,6 +1082,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       actions: [],
       model_call_receipts: modelTelemetry.receipts,
       ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
+      ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {}),
       ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {})
     };
   }
@@ -1168,12 +1171,16 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     // ignore
   }
 
+  const terminalSnapshot = assignmentKernelV2
+    ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
+    : null;
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: assistantText || "",
     actions: [],
     model_call_receipts: modelTelemetry.receipts,
-    ...(assignmentKernelV2 ? { assignment_snapshot_v2: currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot } : {}),
+    ...(terminalSnapshot ? { assignment_snapshot_v2: terminalSnapshot } : {}),
+    ...(terminalSnapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(terminalSnapshot) } : {}),
     ...(canonicalAssignmentOutcome ? { canonical_assignment_outcome: canonicalAssignmentOutcome } : {}),
     ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})

@@ -508,7 +508,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_progress.ts",
-      "sha256": "sha256:3d63843a4f5989a822d261e7fa2799ab32af029e3eeffc62ee656dcd075a53ba"
+      "sha256": "sha256:bd5c28d2b09b475b6ae8daab829c3f377e7c32cd2b9e770b0c28083154dee11f"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_provider_budget.ts",
@@ -521,6 +521,10 @@
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_store.ts",
       "sha256": "sha256:9a1bac06917d2b586a0b1177972c9d1e57af1e46735dab35aa2a225943beec7e"
+    },
+    {
+      "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_terminal_result.ts",
+      "sha256": "sha256:e6b9e4cda530fe6ae29f1d27bd0ab0a87ddc00581b13c7784c971b1f4877101c"
     },
     {
       "path": "apps/operator-backend/src/assignments/async_tool_settlement.ts",
@@ -940,11 +944,11 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
-      "sha256": "sha256:021e9b342513bfe3e2da1a10d063771eb38f60dfa0273b84a87fc7aab084e378"
+      "sha256": "sha256:53d1e2710661136d83f78accd4e1e51957f2edff78e7e5ede2a4cd14f73f9371"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:9445c1410e6e06db0e59b7d5e00c87c2ac8556e91196ab12dde4a835346edd04"
+      "sha256": "sha256:7f867ba95351b6c98d1deb9070600161e2249732a3765759f5307b60066abcb7"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -1541,7 +1545,7 @@
     },
     {
       "path": "apps/operator-backend/src/contracts.ts",
-      "sha256": "sha256:905596cdb97d2b2359c3d17e8e7317f58e722d492c0ff50258c39beab583a11b"
+      "sha256": "sha256:cb79a5f057ec62a73c48c35f6e40b27b4177b2b103d8dcbdeb41b5e32c6c0f24"
     },
     {
       "path": "apps/operator-backend/src/courier/active_job_index.ts",
@@ -2805,7 +2809,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:aab001ca865e12cefd6893fad158893b49cbd9300f0e017460b5957475b610f2"
+      "sha256": "sha256:916b9b26cf354a75821d4dafc12ccff8b388ccc478cda2c032f205343f5f7d54"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_contracts.test.ts",
@@ -5845,7 +5849,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:b18b0693747616a9cb1efe6f0e6ef37218f0b787ad3d9ee00f3ac05f00480c5b",
+  "inputs_hash": "sha256:abb079a89dc9b0f2628af98a29a7b47debfe7cad0e561c1794fd588a074916a7",
   "result": {
     "passed": true,
     "checks": [
