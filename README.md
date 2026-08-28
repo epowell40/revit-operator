@@ -18,6 +18,10 @@ Copy `.env.example` to a local `.env` file and fill only local values. Do not co
 
 See [docs/LOCAL_SETUP.md](docs/LOCAL_SETUP.md) for the current local setup notes and [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for self-hosting guidance.
 
+Development is local-first: use local checkpoint commits and local Revit/runtime
+validation, then make one consolidated push for one PR/CI release checkpoint.
+See [docs/LOCAL_DEVELOPMENT_WORKFLOW.md](docs/LOCAL_DEVELOPMENT_WORKFLOW.md).
+
 To use the Revit bridge from Codex, Claude Code, or another MCP-compatible agent without the Operator pane, see [docs/EXTERNAL_AGENT_HARNESS.md](docs/EXTERNAL_AGENT_HARNESS.md). The public helper generates host configuration, diagnoses the live bridge, and can issue deliberately bounded pane-free write grants.
 
 The backend harness also persists bounded failed-then-successful schema repairs and supports evidence-based tool quarantine without deleting registry history; see [docs/TOOL_CONTRACT_MEMORY_AND_QUARANTINE.md](docs/TOOL_CONTRACT_MEMORY_AND_QUARANTINE.md).
