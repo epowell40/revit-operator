@@ -364,6 +364,192 @@ test("repeated no-progress epochs exhaust liveness without creating success", ()
   if (decision.decision === "blocked") assert.equal(decision.reason, "no_progress_budget_exhausted");
 });
 
+test("Candidate 13 flight 3 preserves one correction turn when a structured schema gap follows unrelated no-progress", () => {
+  const initial = journal().snapshot();
+  const scheduleOperation: OperationV2 = {
+    ...operation("operation-schedule"),
+    capability_id: "revit_list_schedules",
+    input: { action: "list", max: 200 },
+    settlement_state: "settled",
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: "result-operation-schedule",
+      operation_id: "operation-schedule",
+      binding,
+      status: "failed_before_dispatch",
+      dispatch_state: "not_dispatched",
+      persistent_effect: "none",
+      native_transaction_state: "not_applicable",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_list_schedules/v2",
+      observation_required: false,
+      error_code: "mcp_tool_failed",
+      completed_at: "2026-08-26T20:00:02.000Z"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const afterSchedule = {
+    ...initial,
+    operations: { [scheduleOperation.operation_id]: scheduleOperation },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const scheduleEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterSchedule,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [scheduleOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(scheduleEpoch.genuine_progress, false);
+
+  const beforeInvalid = { ...afterSchedule, progress_epochs: [scheduleEpoch] };
+  const invalidOperation: OperationV2 = {
+    ...operation("operation-invalid-quantify"),
+    capability_id: "revit_call_tool",
+    request_identity: {
+      capability_id: "revit_call_tool",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "invalid-quantify-signature"
+    },
+    input: {
+      method: "POST",
+      path: "/revit/quantify",
+      body: { intent: "Count every air terminal" }
+    },
+    settlement_state: "settled",
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: "result-operation-invalid-quantify",
+      operation_id: "operation-invalid-quantify",
+      binding,
+      status: "failed_before_dispatch",
+      dispatch_state: "not_dispatched",
+      persistent_effect: "none",
+      native_transaction_state: "not_applicable",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_call_tool/v2",
+      observation_required: false,
+      error_code: "mcp_tool_failed",
+      input_schema_gap: {
+        schema: "revit-operator.operation-input-schema-gap/v2",
+        gap_id: "input-schema:operation-invalid-quantify",
+        operation_id: "operation-invalid-quantify",
+        capability_id: "revit_call_tool",
+        input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+        input_schema_digest: "quantify-input-schema-digest",
+        method: "POST",
+        path: "/revit/quantify",
+        request_signature: "invalid-quantify-signature",
+        dispatch: false,
+        effect: "none",
+        issues: [{
+          field_path: "body.intent",
+          expected_type: "enum",
+          actual_type: "string",
+          safe_correction_eligibility: "provider_corrected_arguments_required",
+          correction_action: "provider_resubmit",
+          expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+        }]
+      },
+      completed_at: "2026-08-26T20:00:03.000Z"
+    },
+    settled_at: "2026-08-26T20:00:03.000Z"
+  };
+  const afterInvalid = {
+    ...beforeInvalid,
+    operations: {
+      ...beforeInvalid.operations,
+      [invalidOperation.operation_id]: invalidOperation
+    }
+  };
+  const invalidEpoch = buildProgressEpochV2({
+    before: beforeInvalid,
+    after: afterInvalid,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [invalidOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:03.000Z"
+  });
+  const finalSnapshot = { ...afterInvalid, progress_epochs: [scheduleEpoch, invalidEpoch] };
+  const decision = decideAssignmentProgressV2({ snapshot: finalSnapshot, budget, now: "2026-08-26T20:00:04.000Z" });
+
+  assert.equal(invalidEpoch.genuine_progress, true);
+  assert.deepEqual(invalidEpoch.progress_reasons, ["correction_gap_identified"]);
+  assert.equal(decision.decision, "admit_reasoning_turn");
+  if (decision.decision === "admit_reasoning_turn") {
+    assert.deepEqual(decision.gap_ids, ["criterion:criterion-inventory", "input-schema:operation-invalid-quantify"]);
+    assert.ok(decision.expected_information.includes("body.intent:enum"));
+  }
+});
+
+test("an identical schema-invalid proposal cannot mint another correction gap", () => {
+  const rejected: OperationV2 = {
+    ...operation("operation-rejected"),
+    capability_id: "revit_call_tool",
+    request_identity: {
+      capability_id: "revit_call_tool",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "same-invalid-signature"
+    },
+    settlement_state: "settled",
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: "result-operation-rejected",
+      operation_id: "operation-rejected",
+      binding,
+      status: "failed_before_dispatch",
+      dispatch_state: "not_dispatched",
+      persistent_effect: "none",
+      native_transaction_state: "not_applicable",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_call_tool/v2",
+      observation_required: false,
+      error_code: "mcp_tool_failed",
+      input_schema_gap: {
+        schema: "revit-operator.operation-input-schema-gap/v2",
+        gap_id: "input-schema:operation-rejected",
+        operation_id: "operation-rejected",
+        capability_id: "revit_call_tool",
+        input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+        input_schema_digest: "quantify-input-schema-digest",
+        method: "POST",
+        path: "/revit/quantify",
+        request_signature: "same-invalid-signature",
+        dispatch: false,
+        effect: "none",
+        issues: [{
+          field_path: "body.intent",
+          expected_type: "enum",
+          actual_type: "string",
+          safe_correction_eligibility: "provider_corrected_arguments_required",
+          correction_action: "provider_resubmit",
+          expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+        }]
+      },
+      completed_at: "2026-08-26T20:00:02.000Z"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const snapshot = {
+    ...journal().snapshot(),
+    operations: { [rejected.operation_id]: rejected },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const identical: OperationV2 = {
+    ...operation("operation-identical-retry"),
+    capability_id: "revit_call_tool",
+    request_identity: structuredClone(rejected.request_identity),
+    resolves_gap_ids: ["criterion:criterion-inventory", "input-schema:operation-rejected"]
+  };
+  assert.throws(
+    () => assertOperationAdvancesProgressV2({ snapshot, operation: identical, budget }),
+    /identical_input_schema_retry/
+  );
+});
+
 test("unknown effect blocks truthfully when bounded reconciliation is exhausted", () => {
   const base = journal().snapshot();
   const unknownOperation: OperationV2 = {

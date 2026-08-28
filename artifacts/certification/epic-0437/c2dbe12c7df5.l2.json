@@ -492,7 +492,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:476bc3123e0918e46ba61c856211e062e3b90f97fad6ce574ef815fc67631226"
+      "sha256": "sha256:71d92ac462f697cd1b288e65f36b5bb9de595cf9b35386be6862861a99c21750"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_factory.ts",
@@ -1717,11 +1717,11 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/contracts.ts",
-      "sha256": "sha256:49eb69727b75166bc32205ebcdc7c0c035930da19b52edd473dd33a2d5f7d966"
+      "sha256": "sha256:83fe804b27e8990df300c53c9f6007b1ab386ae01e9550d12ffcdc830b214fa7"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/controller.ts",
-      "sha256": "sha256:0e0f9b481d1b6bf390145eb329855a82847f4c2d68fb3923749c62de5b864948"
+      "sha256": "sha256:ffe164b5dfe713013660f08a9dbebb1e1e48f734196798e04d790f48dff124eb"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/provider_call.ts",
@@ -2813,7 +2813,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:26f85b09e60dbd0204e928a72d457028c76dd1c88cf494659cb57b9908146fa7"
+      "sha256": "sha256:cb457897c672ff1fad70bc655b950d672b1bc3c51c14d95cf346049b7b5da9f5"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
@@ -2825,7 +2825,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_controller.test.ts",
-      "sha256": "sha256:aac215f5b5076c63e8ddb21a8b2ca9aed551c97131ec1a822884cf8b5b586b0e"
+      "sha256": "sha256:57ca468076b9c2981ec0f4e728b8f786a40e9e5ea309d4d3be922aff1dac0400"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_publication.test.ts",
@@ -5861,7 +5861,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:f4216411fd5cdbc4fab2edca6d55238da2240bc129ad22ae5b29b7b8fe520cf0",
+  "inputs_hash": "sha256:b1f70c2bf17c1d11b112e3a0018682c6f129f9858f0e69b875e07c213e8fbf86",
   "result": {
     "passed": true,
     "checks": [

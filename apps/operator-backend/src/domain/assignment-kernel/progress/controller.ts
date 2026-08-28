@@ -260,11 +260,27 @@ export function assertOperationAdvancesProgressV2(input: Readonly<{
   for (const gapId of input.operation.resolves_gap_ids) if (!gaps.has(gapId)) throw new Error("operation_progress_gap_not_current");
   const unresolvedCriteria = new Set([...gaps.values()].flatMap((gap) => gap.criterion_ids));
   for (const criterionId of input.operation.advances_criterion_ids) if (!unresolvedCriteria.has(criterionId)) throw new Error("operation_progress_criterion_not_unresolved");
+  assertOperationDoesNotRepeatSchemaRejectedInputV2(input);
   const identity = operationProgressIdentityV2(input.operation);
   const equivalents = Object.values(input.snapshot.operations).filter((operation) => operationProgressIdentityV2(operation) === identity);
   if (equivalents.length >= input.budget.max_equivalent_operations && !input.operation.retry_of_operation_id && input.operation.purpose !== "reconciliation") {
     throw new Error("operation_progress_equivalent_budget_exhausted");
   }
+}
+
+export function assertOperationDoesNotRepeatSchemaRejectedInputV2(input: Readonly<{
+  snapshot: AssignmentSnapshotV2;
+  operation: OperationV2;
+}>): void {
+  const repeatsSchemaRejectedInput = Object.values(input.snapshot.operations).some((candidate) => {
+    const gap = candidate.result?.input_schema_gap;
+    return Boolean(gap
+      && candidate.capability_id === input.operation.capability_id
+      && gap.method === input.operation.request_identity?.method
+      && gap.path === input.operation.request_identity?.path
+      && gap.request_signature === input.operation.request_identity?.request_signature);
+  });
+  if (repeatsSchemaRejectedInput) throw new Error("operation_progress_identical_input_schema_retry");
 }
 
 function statusRank(status: string): number {
@@ -292,6 +308,7 @@ export function buildProgressEpochV2(input: Readonly<{
   const progressReasons: ProgressEpochV2["progress_reasons"][number][] = [];
   if (criterionDeltas.some((delta) => statusRank(delta.after_status) > statusRank(delta.before_status))) progressReasons.push("criterion_advanced");
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
+  if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");
   if (newFacts.length > 0) progressReasons.push("authoritative_observation_added");
   if (input.after.pending_input_variable_ids.length > input.before.pending_input_variable_ids.length) progressReasons.push("input_requested");
   if (input.after.pending_input_variable_ids.length < input.before.pending_input_variable_ids.length) progressReasons.push("input_resolved");

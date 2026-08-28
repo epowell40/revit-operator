@@ -507,6 +507,82 @@ test("operation identity is derived from trusted controller identity, never a ty
   assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!.operations[left.operation_id]!.capability_id, "inventory.read");
 }));
 
+test("operation admission rejects an identical retry of structured schema-invalid input", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const invalidArguments = {
+    method: "POST",
+    path: "/revit/quantify",
+    body: { intent: "Count every air terminal" }
+  };
+  const first = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "schema-invalid-first",
+    provider_turn_id: "schema-invalid-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    arguments: invalidArguments
+  });
+  const admitted = getAssignmentKernelSnapshotV2(goal.id)!.operations[first.operation_id]!;
+  const rejected = {
+    ...admitted,
+    settlement_state: "settled" as const,
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: `result-${first.operation_id}`,
+      operation_id: first.operation_id,
+      binding: first.binding,
+      status: "failed_before_dispatch" as const,
+      dispatch_state: "not_dispatched" as const,
+      persistent_effect: "none" as const,
+      native_transaction_state: "not_applicable" as const,
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_call_tool/v2",
+      observation_required: false,
+      request_identity: first.request_identity,
+      error_code: "mcp_tool_failed",
+      input_schema_gap: {
+        schema: "revit-operator.operation-input-schema-gap/v2" as const,
+        gap_id: `input-schema:${first.operation_id}`,
+        operation_id: first.operation_id,
+        capability_id: "revit_call_tool",
+        input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+        input_schema_digest: "quantify-input-schema-digest",
+        method: "POST" as const,
+        path: "/revit/quantify",
+        request_signature: first.request_identity.request_signature,
+        dispatch: false as const,
+        effect: "none" as const,
+        issues: [{
+          field_path: "body.intent",
+          expected_type: "enum",
+          actual_type: "string",
+          safe_correction_eligibility: "provider_corrected_arguments_required" as const,
+          correction_action: "provider_resubmit" as const,
+          expected_constraint: { kind: "enum" as const, allowed_values: ["count", "list", "count_and_list"] }
+        }]
+      },
+      completed_at: "2026-08-28T21:27:05.927Z"
+    },
+    settled_at: "2026-08-28T21:27:05.927Z"
+  };
+  const rejectedSnapshot = {
+    ...getAssignmentKernelSnapshotV2(goal.id)!,
+    operations: { [first.operation_id]: rejected },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+
+  assert.throws(() => openAssignmentKernelOperationV2({
+    snapshot: rejectedSnapshot,
+    controller_request_id: "schema-invalid-identical-retry",
+    provider_turn_id: "schema-invalid-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    arguments: invalidArguments
+  }), /identical_input_schema_retry/);
+  assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1);
+}));
+
 test("Candidate 1 registry prerequisite settles only its child before the quantify parent", () => workspace(() => {
   const { goal, snapshot } = setup();
   const parent = openAssignmentKernelOperationV2({

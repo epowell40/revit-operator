@@ -3,6 +3,7 @@ import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
   OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
+  assertOperationDoesNotRepeatSchemaRejectedInputV2,
   canonicalJsonV2,
   deriveProgressGapsV2,
   evidenceClassForFulfillmentRoleV2,
@@ -292,6 +293,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     opened_at: openedAt,
     deadline_at: boundedDeadline(openedAt)
   };
+  assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot: input.snapshot, operation });
   appendCurrentAssignmentKernelEventV2({
     goal_id: input.snapshot.spec.binding.assignment_id,
     binding: input.snapshot.current_binding,
