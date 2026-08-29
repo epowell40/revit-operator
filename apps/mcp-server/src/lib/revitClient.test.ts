@@ -77,6 +77,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
     exposurePolicyPath: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH,
     exposurePolicyHash: process.env.OPERATOR_TOOL_EXPOSURE_POLICY_SHA256,
     protectedLaboratory: process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY,
+    unsafeLegacyPlaintext: process.env.OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT,
   };
   process.env.REVIT_BRIDGE_URL = url;
   process.env.OPERATOR_REVIT_REQUEST_TIMEOUT_MS = String(timeoutMs);
@@ -86,6 +87,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
   process.env.OPERATOR_REVIT_TRANSPORT = "direct";
   process.env.REVIT_OPERATOR_MODE = "development";
   process.env.OPERATOR_TOOL_EXPOSURE_PROFILE = "laboratory";
+  process.env.OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT = "1";
   delete process.env.OPERATOR_TOOL_EXPOSURE_POLICY_PATH;
   return () => {
     for (const [name, value] of Object.entries({
@@ -100,6 +102,7 @@ function setTestEnvironment(url: string, timeoutMs: number): () => void {
       OPERATOR_TOOL_EXPOSURE_POLICY_PATH: previous.exposurePolicyPath,
       OPERATOR_TOOL_EXPOSURE_POLICY_SHA256: previous.exposurePolicyHash,
       OPERATOR_CERTIFICATION_PROTECTED_LABORATORY: previous.protectedLaboratory,
+      OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT: previous.unsafeLegacyPlaintext,
     })) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -299,7 +302,39 @@ test("callRevit returns JSON from a responsive bridge", async () => {
   }
 });
 
-test("exact development and laboratory direct transport preserves the legacy raw credential contract", async () => {
+test("normal development laboratory keeps the Candidate 20 schedule request inside the protected native contract", async () => {
+  let observed: http.IncomingMessage | undefined;
+  const server = http.createServer((request, response) => {
+    observed = request;
+    response.setHeader("content-type", "application/vnd.revit-operator.native-transport+json");
+    response.end("{}");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  delete process.env.OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT;
+  writeNativeTransportReceipt(`http://127.0.0.1:${port}`);
+  try {
+    await assert.rejects(
+      runWithRevitToolAlias("revit_list_schedules", async () => await callRevit(
+        "/revit/schedules",
+        "POST",
+        { action: "list", query: "", exact: false, max: 200 }
+      )),
+      (error: unknown) => error instanceof RevitBridgeCallError
+        && error.code === "revit_bridge_invalid_response"
+    );
+    assert.equal(observed?.method, "POST");
+    assert.equal(observed?.url, NATIVE_TRANSPORT_PATH);
+    assert.equal(observed?.headers["x-operator-token"], undefined);
+    assert.equal(observed?.headers["x-operator-correlation-id"], undefined);
+    assert.equal(observed?.headers["x-operator-write-grant"], undefined);
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("explicit unsafe development laboratory opt-in preserves the legacy raw credential contract", async () => {
   let headers: http.IncomingHttpHeaders | undefined;
   const server = http.createServer((request, response) => {
     headers = request.headers;
@@ -308,6 +343,7 @@ test("exact development and laboratory direct transport preserves the legacy raw
   });
   const port = await listen(server);
   const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  process.env.OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT = "1";
   fs.writeFileSync(path.join(process.env.OPERATOR_WORKSPACE_ROOT!, "write_grant.json"), JSON.stringify({
     token: "legacy-grant",
     expires_at_utc: new Date(Date.now() + 60_000).toISOString()

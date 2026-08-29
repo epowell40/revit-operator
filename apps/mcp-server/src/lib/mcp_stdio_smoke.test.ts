@@ -395,7 +395,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       OPERATOR_TOKEN: "mcp-stdio-smoke-token",
       OPERATOR_WORKSPACE_ROOT: workspace,
       REVIT_OPERATOR_MODE: "development",
-      OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
+      OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+      OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT: "1"
     },
     stderr: "pipe"
   });

@@ -209,6 +209,11 @@ export type RevitCallOptions = {
   assignmentFulfillmentRole?: "supporting_control" | "delegated_task_execution" | "verification" | "reconciliation" | "telemetry";
 };
 
+function useLegacyPlaintextLaboratoryTransport(): boolean {
+  return isExactDevelopmentLaboratory()
+    && process.env.OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT === "1";
+}
+
 const certifiedExecutionContexts = new WeakMap<object, CertifiedMoveExecutionContext>();
 export type RevitDirectLaboratoryEvidenceContext = Readonly<{
   schema: "revit-operator.direct-laboratory-evidence-context.v1";
@@ -340,8 +345,13 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   // A rollback preview still enters a native mutation transaction. If dispatch
   // status is unknown, it must be reconciled instead of retried automatically.
   const mutating = requestEffect !== "read";
-  const laboratoryBypass = isExactDevelopmentLaboratory();
-  const protectedLaboratoryEvidence = laboratoryBypass
+  const laboratoryRuntime = isExactDevelopmentLaboratory();
+  // Development/laboratory is an exposure policy, not proof that the independently
+  // hosted Revit process accepts the legacy plaintext loopback protocol. Normal
+  // local product checkpoints keep Revit in its protected local-host identity, so
+  // plaintext direct transport must remain an explicit unsafe compatibility opt-in.
+  const legacyPlaintextLaboratoryTransport = useLegacyPlaintextLaboratoryTransport();
+  const protectedLaboratoryEvidence = laboratoryRuntime
     && process.env.OPERATOR_CERTIFICATION_PROTECTED_LABORATORY === "1";
   if (protectedLaboratoryEvidence && options.certifiedMoveOneAdmission) {
     throw new Error("Protected laboratory evidence transport cannot manufacture certified request-family admission; use the exact generic candidate body until L4 policy is generated.");
@@ -358,12 +368,12 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
-    const certifiedDirectDispatchId = kernelNativeRequest?.operation_id ?? (!laboratoryBypass && options.certifiedMoveOneAdmission
+    const certifiedDirectDispatchId = kernelNativeRequest?.operation_id ?? (!legacyPlaintextLaboratoryTransport && options.certifiedMoveOneAdmission
       ? randomBytes(16).toString("hex")
       : undefined);
 
     try {
-      if (!laboratoryBypass || protectedLaboratoryEvidence) {
+      if (!legacyPlaintextLaboratoryTransport || protectedLaboratoryEvidence) {
         const nativeChannel = exposure.channel;
         if (nativeChannel === "deterministic_workflow") {
           throw new Error("Deterministic workflow certification requires the durable courier transport.");

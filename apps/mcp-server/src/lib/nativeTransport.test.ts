@@ -139,7 +139,7 @@ test("Node request and response exactly match the executable C# ROSB/1 vector", 
   });
 });
 
-test("only exact raw development plus laboratory enables legacy transport", () => {
+test("only exact raw development plus laboratory identifies the laboratory runtime", () => {
   assert.equal(isExactDevelopmentLaboratory({ REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }), true);
   for (const env of [
     { REVIT_OPERATOR_MODE: "Development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
