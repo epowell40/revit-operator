@@ -368,7 +368,12 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
     const timeoutMs = requestTimeoutMs();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const writeGrant = getWriteGrantToken();
-    const certifiedDirectDispatchId = kernelNativeRequest?.operation_id ?? (!legacyPlaintextLaboratoryTransport && options.certifiedMoveOneAdmission
+    // OperationV2 identities intentionally use the `opv2_...` domain format,
+    // while the protected native wire contract accepts only 32/64 lowercase
+    // hexadecimal request IDs. The kernel already derives a stable 64-hex
+    // request identity bound to the exact operation and request payload; keep
+    // those two identities distinct at the transport boundary.
+    const certifiedDirectDispatchId = kernelNativeRequest?.request_id ?? (!legacyPlaintextLaboratoryTransport && options.certifiedMoveOneAdmission
       ? randomBytes(16).toString("hex")
       : undefined);
 

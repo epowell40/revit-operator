@@ -12,6 +12,11 @@ import {
   NATIVE_TRANSPORT_PATH,
   NATIVE_TRANSPORT_VERSION
 } from "./nativeTransport.js";
+import {
+  ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
+  ASSIGNMENT_KERNEL_V2_META_KEY,
+  runWithAssignmentKernelV2
+} from "./assignmentKernelV2.js";
 
 const sourcePolicyPath = process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH
   ? path.resolve(process.env.OPERATOR_TEST_TOOL_EXPOSURE_POLICY_PATH)
@@ -328,6 +333,98 @@ test("normal development laboratory keeps the Candidate 20 schedule request insi
     assert.equal(observed?.headers["x-operator-token"], undefined);
     assert.equal(observed?.headers["x-operator-correlation-id"], undefined);
     assert.equal(observed?.headers["x-operator-write-grant"], undefined);
+  } finally {
+    restore();
+    await close(server);
+  }
+});
+
+test("Candidate 21 OperationV2 identity uses its distinct kernel request ID on protected native transport", async () => {
+  let requests = 0;
+  const server = http.createServer((_request, response) => {
+    requests += 1;
+    response.setHeader("content-type", "application/vnd.revit-operator.native-transport+json");
+    response.end("{}");
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  delete process.env.OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT;
+  writeNativeTransportReceipt(`http://127.0.0.1:${port}`);
+  const binding = {
+    assignment_id: "assignment-candidate-21",
+    run_id: "run-candidate-21",
+    generation: 1,
+    session_id: "session-candidate-21",
+    principal_id: "principal-candidate-21",
+    document_fingerprint: "document-candidate-21"
+  };
+  const parentOperationId = "opv2_97a00c041c27db421c7e2b59aef277ad4320ec069c7f289a99b5a5ee7756e918";
+  const childOperationId = "opv2_d6103499d77a170bf141377fcdc77d8584ea35453cbd9363d64fb563aa159545";
+  const edge = {
+    async openChild(input: any) {
+      return {
+        schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
+        assignment_id: binding.assignment_id,
+        binding,
+        operation_id: childOperationId,
+        capability_id: input.capability_id,
+        requested_effect: input.classified_effect,
+        purpose: "work" as const,
+        operation_role: input.operation_role,
+        fulfillment_role: input.fulfillment_role,
+        ...(input.delegation_authority_id ? { delegation_authority_id: input.delegation_authority_id } : {}),
+        eligible_criterion_ids: input.eligible_criterion_ids,
+        parent_operation_id: parentOperationId,
+        root_operation_id: parentOperationId,
+        blocks_parent_settlement: input.blocks_parent_settlement,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "candidate-21-native-schedule-request"
+        },
+        opened_at: "2026-08-29T06:08:23.000Z",
+        deadline_at: "2026-08-29T06:12:23.000Z"
+      };
+    },
+    async markDispatch() {},
+    async settle() { return { settled: true }; }
+  };
+  try {
+    await assert.rejects(
+      runWithAssignmentKernelV2({
+        [ASSIGNMENT_KERNEL_V2_META_KEY]: {
+          schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
+          assignment_id: binding.assignment_id,
+          binding,
+          operation_id: parentOperationId,
+          capability_id: "revit_list_schedules",
+          requested_effect: "read",
+          purpose: "work",
+          operation_role: "root",
+          fulfillment_role: "delegated_task_execution",
+          delegation_authority_id: `delegation:${parentOperationId}`,
+          eligible_criterion_ids: ["criterion-inventory"],
+          root_operation_id: parentOperationId,
+          blocks_parent_settlement: false,
+          request_identity: {
+            capability_id: "revit_list_schedules",
+            method: "POST",
+            path: "/revit/schedules",
+            request_signature: "candidate-21-schedule-request"
+          },
+          opened_at: "2026-08-29T06:08:23.000Z",
+          deadline_at: "2026-08-29T06:12:23.000Z"
+        }
+      }, async () => await runWithRevitToolAlias("revit_list_schedules", async () => await callRevit(
+        "/revit/schedules",
+        "POST",
+        { action: "list", query: "", exact: false, max: 200 }
+      )), edge),
+      (error: unknown) => error instanceof RevitBridgeCallError
+        && error.code === "revit_bridge_invalid_response"
+    );
+    assert.equal(requests, 1, "the protected request must reach the native transport instead of failing on the OperationV2 ID format");
   } finally {
     restore();
     await close(server);
