@@ -195,11 +195,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:5a15aea4d7ccb1734033b23ac66b0e39dc2231437437f9675777cff918c9a3a3"
+      "sha256": "sha256:3a900cf5960c53bf7e8ff9303f14ed19bdce76a9b2aae3f256fea59351e19f03"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
-      "sha256": "sha256:9b3d3a3acec5a665460922da0a9fef95db8af786e35c84fb8c5de4bdf86ed58a"
+      "sha256": "sha256:3d5f2d251a0209d65c8d3005d3fa8e0ae38b71c587927f0e7ba2a93fbf51e982"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.ts",
@@ -223,11 +223,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.test.ts",
-      "sha256": "sha256:d11f5592d2aaba545b3bf3890a2626e68018abefb0438cc9bc9cb8502330945d"
+      "sha256": "sha256:3c9041f6c595cd7336b3f763f8b7f2d47362705b2142970e26bbcc633342b8bb"
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.ts",
-      "sha256": "sha256:293d61968e4e43fa5f33a4ea2ed94deca45c85ac98fc7615f8bc9e7bd4845893"
+      "sha256": "sha256:0696406e7c3fb85a3482e9f031930e9e5f0ca3d0446947df8b14396f41e611ec"
     },
     {
       "path": "apps/mcp-server/src/lib/revitCourier.test.ts",
@@ -5905,7 +5905,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:46f31fcb28070d82118ec6ba6825455ac86e8d293d2498231e1ce30e55cb2124",
+  "inputs_hash": "sha256:b05c00f8f505f114967fbb5aeb2f492a581ff219761313391923fa0ec9faabde",
   "result": {
     "passed": true,
     "checks": [
