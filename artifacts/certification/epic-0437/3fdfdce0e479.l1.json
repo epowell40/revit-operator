@@ -223,11 +223,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.test.ts",
-      "sha256": "sha256:3c9041f6c595cd7336b3f763f8b7f2d47362705b2142970e26bbcc633342b8bb"
+      "sha256": "sha256:f869122f7c0e60ac946d4e313bd555ba851f6683bd066d6d6b8bfbc55d07c377"
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.ts",
-      "sha256": "sha256:0696406e7c3fb85a3482e9f031930e9e5f0ca3d0446947df8b14396f41e611ec"
+      "sha256": "sha256:1b28bc4dd978ae9c3ef059efb0e837f2993a7851ff98856982217beee4e84f91"
     },
     {
       "path": "apps/mcp-server/src/lib/revitCourier.test.ts",
@@ -5905,7 +5905,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:b05c00f8f505f114967fbb5aeb2f492a581ff219761313391923fa0ec9faabde",
+  "inputs_hash": "sha256:3ea7d73a9face1a7455e10151f12094aa2f15f8efc2537a4379db41a5c20e4ab",
   "result": {
     "passed": true,
     "checks": [
