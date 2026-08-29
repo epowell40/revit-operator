@@ -1036,7 +1036,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
-      "sha256": "sha256:5eda05172fda6c3223dd676656b0db2e93255cce676b99ec48544b064ec3ce6e"
+      "sha256": "sha256:77f71a88dffd7d89a83700e21e0536e9691c92857ae6e0b3f37af217b746b688"
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_promotion_authority.ts",
@@ -2977,7 +2977,7 @@
     },
     {
       "path": "apps/operator-backend/test/direct_revit_execution_authorization.test.ts",
-      "sha256": "sha256:7eb950650dfe8bedebabce93c62fa24c2988d0cd960338017ca3320a1a47b73f"
+      "sha256": "sha256:c650804b37050fc09854d64a4e330e35a985c2d156223938a6f16341bd222547"
     },
     {
       "path": "apps/operator-backend/test/dynamic_file_capability.test.ts",
@@ -4025,7 +4025,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeHttpAdmissionTests.cs",
-      "sha256": "sha256:540e1be40ae41d14b0a720610589d8b84b2747e2344be7addbdcf59d844c6fd7"
+      "sha256": "sha256:886e87cd7c825a52feb022285c41a30b400b652af7f463d0b1eda87c61ab69b7"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeMutationScopePolicyTests.cs",
@@ -4441,7 +4441,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeHttpAdmission.cs",
-      "sha256": "sha256:19aff29ed2644585612a7993e5a456dcc94fe91a285347f3bc50feb238eb6bf8"
+      "sha256": "sha256:b4d3be1a2c68f233e657836851beeadb5e19b6fe06c7b46e50e0b27d2e7b1320"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeMutationScopePolicy.cs",
@@ -5861,7 +5861,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:40daf732297e3a1571fcb1853b493e749d3e7aeeb1667a35717636770d6afb8c",
+  "inputs_hash": "sha256:1c15ab05588c8823021a40a028f2ceeec20e82b3a687b906c22524e1a6d1a24d",
   "result": {
     "passed": true,
     "checks": [
