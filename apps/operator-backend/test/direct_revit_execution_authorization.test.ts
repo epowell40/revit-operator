@@ -555,6 +555,20 @@ test("direct authorization rejects caller trust material, malformed contracts, r
   assert.equal(laboratory.exposure_profile, "general");
   assert.equal(laboratory.policy_trust_source, "deployment");
   assert.notEqual(laboratory.policy_hash, allowed.policyHash);
+  const localRevitHost = authorizeDirectRevitExecution(directRequest(), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "codex"
+  }));
+  assert.equal(localRevitHost.runtime_mode, "local");
+  assert.equal(localRevitHost.exposure_profile, "general");
+  assert.equal(localRevitHost.policy_trust_source, "deployment");
+  assert.notEqual(localRevitHost.policy_hash, allowed.policyHash);
+  expectDirectError(() => authorizeDirectRevitExecution(directRequest({ runtime_mode: "production" }), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "codex"
+  })), 403, "CERTIFICATION_RUNTIME_PROFILE_MISMATCH");
   expectDirectError(() => authorizeDirectRevitExecution(directRequest({ runtime_mode: "development" }), certifiedEnv(allowed, {
     REVIT_OPERATOR_MODE: "development",
     OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",

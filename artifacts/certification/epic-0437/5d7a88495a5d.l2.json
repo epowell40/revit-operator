@@ -1036,7 +1036,7 @@
     },
     {
       "path": "apps/operator-backend/src/capabilities/direct_revit_execution_authorization.ts",
-      "sha256": "sha256:77f71a88dffd7d89a83700e21e0536e9691c92857ae6e0b3f37af217b746b688"
+      "sha256": "sha256:224df84671517cb26063abede5d8af7836243b3b98c152ce12cb387d85e70dfe"
     },
     {
       "path": "apps/operator-backend/src/capabilities/epic_0437_promotion_authority.ts",
@@ -2977,7 +2977,7 @@
     },
     {
       "path": "apps/operator-backend/test/direct_revit_execution_authorization.test.ts",
-      "sha256": "sha256:c650804b37050fc09854d64a4e330e35a985c2d156223938a6f16341bd222547"
+      "sha256": "sha256:3e1d483767f233f57c8cf62f1e2ab479c3084ed5c1ab24df576a769f51e1f15d"
     },
     {
       "path": "apps/operator-backend/test/dynamic_file_capability.test.ts",
@@ -5861,7 +5861,7 @@
       "sha256": "sha256:a14745982e1d12d009b8bd1f42d50a1429d5c749616a3fb9ee0248b38d0b6fd6"
     }
   ],
-  "inputs_hash": "sha256:1c15ab05588c8823021a40a028f2ceeec20e82b3a687b906c22524e1a6d1a24d",
+  "inputs_hash": "sha256:388f6785cf6a79bd15da6c7520bf4dbd7c74fd24f8f04e24980a3eee87391d26",
   "result": {
     "passed": true,
     "checks": [

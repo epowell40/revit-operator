@@ -326,8 +326,13 @@ export function authorizeDirectRevitExecution(
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   try {
     const hostedGeneralAgent = isHostedGeneralAgentReady(env) && !requestFamilyAdmission;
+    // Revit is launched by Autodesk, not by the backend process, so its native
+    // client normally has no REVIT_OPERATOR_MODE environment variable and
+    // identifies itself as the local host. The authenticated backend remains
+    // the profile authority: only its exact ready development/laboratory
+    // environment may map that local host binding to a deployment receipt.
     const developmentGeneralAgent = isDevelopmentGeneralAgentReady(env)
-      && runtimeMode === "development"
+      && (runtimeMode === "development" || runtimeMode === "local")
       && !requestFamilyAdmission;
     if (isDevelopmentLaboratory(env) && !developmentGeneralAgent) {
       throw new DirectRevitExecutionAuthorizationError(
