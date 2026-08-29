@@ -440,7 +440,7 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   }
   for (const file of ["index.js", "package.json"]) {
     fs.copyFileSync(
-      path.resolve(process.cwd(), "..", "..", "packages", "revit-action-effect-v1", file),
+      path.resolve(process.cwd(), "node_modules", "@revitoperator", "revit-action-effect-v1", file),
       path.join(packagedRouteEffectPackage, file)
     );
   }

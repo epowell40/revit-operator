@@ -275,7 +275,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/toolExposurePolicy.test.ts",
-      "sha256": "sha256:71e931e056a753c5e31d423f00c47f47b35463504c523b8184cbd33fc8d292e3"
+      "sha256": "sha256:cfe7fe53e9d0c59183dd6454742262fa3c50aaf4c4a23bd3b14a5bb158187f0d"
     },
     {
       "path": "apps/mcp-server/src/lib/toolExposurePolicy.ts",
@@ -5905,7 +5905,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:84ebdf35695548ba4956a7a569b203954f50377b10d9fd7309ad66edc400dcb5",
+  "inputs_hash": "sha256:46f31fcb28070d82118ec6ba6825455ac86e8d293d2498231e1ce30e55cb2124",
   "result": {
     "passed": true,
     "checks": [
