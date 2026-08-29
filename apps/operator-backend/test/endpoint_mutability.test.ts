@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { conditionalActionPathEffect, pathLooksWrite } from "../src/action_path_mutability.js";
+import { conditionalActionPathEffect, pathLooksWrite, revitRouteEffect } from "../src/action_path_mutability.js";
 import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
 
 test("scoped duct resize is classified as a write", () => {
@@ -13,6 +13,7 @@ test("known read-only POST endpoints remain read-only", () => {
   assert.equal(pathLooksWrite("/revit/context"), false);
   assert.equal(pathLooksWrite("/revit/activate-view", { viewId: 9948 }), false);
   assert.equal(pathLooksWrite("/revit/sheets"), false);
+  assert.equal(pathLooksWrite("/revit/schedules"), false);
   assert.equal(pathLooksWrite("/revit/find-text-notes"), false);
   assert.equal(pathLooksWrite("/revit/locate-elements"), false);
   assert.equal(pathLooksWrite("/revit/find-duplicate-marks"), false);
@@ -45,6 +46,12 @@ test("known read-only POST endpoints remain read-only", () => {
     "/revit/revisions"
   ]) assert.equal(pathLooksWrite(route), false, `${route} should remain observational`);
   assert.equal(pathLooksWrite("/revit/apply-family-evolution"), true);
+});
+
+test("typed MCP and backend classify schedule reads through the same contract", () => {
+  assert.equal(revitRouteEffect("/revit/schedules", "POST", { action: "list", max: 200 }), "read");
+  assert.equal(revitRouteEffect("/revit/list-schedules", "POST", { action: "list", max: 200 }), "read");
+  assert.equal(revitRouteEffect("/revit/unknown-future-route", "POST", {}), "apply");
 });
 
 test("backend read classification covers every low-risk Revit POST in the add-in manifest", () => {

@@ -67,6 +67,31 @@ if ($mcpPayloadEdge -match 'localeCompare\s*\(') {
   $violations.Add("MCP Assignment Kernel payload identity must not use locale-sensitive key ordering")
 }
 
+# Native route effect is also cross-process admission truth. The backend and
+# independently packaged MCP must import the same contract so a read cannot be
+# widened to apply (or vice versa) by drift between local route tables.
+$routeEffectPackage = Join-Path $RepoRoot "packages/revit-action-effect-v1/index.js"
+if (-not (Test-Path -LiteralPath $routeEffectPackage -PathType Leaf)) {
+  $violations.Add("Shared Revit action-effect package is missing")
+}
+foreach ($relativePath in @(
+  "apps/operator-backend/src/action_path_mutability.ts",
+  "apps/mcp-server/src/lib/revitRouteEffect.ts"
+)) {
+  $path = Join-Path $RepoRoot $relativePath
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $violations.Add("Reviewed Revit action-effect consumer is missing: $relativePath")
+    continue
+  }
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/revit-action-effect-v1') {
+    $violations.Add("$relativePath does not import the shared Revit action-effect contract")
+  }
+  if ($content -match 'READ_ONLY_(?:POST_)?PATHS' -or $content -match 'new\s+Set') {
+    $violations.Add("$relativePath introduces local Revit action-effect metadata")
+  }
+}
+
 # Semantic admissibility is deny-by-default. Control success cannot be emitted
 # as a domain fact, and evidence class must come from the admitted fulfillment
 # role rather than a generic non-verification shortcut.
