@@ -34,10 +34,11 @@ namespace RevitBridge.Common.Tests
         [InlineData("hosted", "general", "deployment", true)]
         [InlineData("production", "general", "deployment", true)]
         [InlineData("local", "general", "deployment", true)]
+        [InlineData("development", "general", "deployment", true)]
         [InlineData("Hosted", "general", "deployment", false)]
         [InlineData("hosted", "certified", "deployment", false)]
         [InlineData("hosted", "general", "bundled", false)]
-        [InlineData("development", "general", "deployment", false)]
+        [InlineData("development", "laboratory", "deployment", false)]
         public void DeploymentGeneralAgentRequiresExactProfile(
             string runtimeMode,
             string profile,
@@ -63,6 +64,35 @@ namespace RevitBridge.Common.Tests
                 useProductionAuthority: true);
             Assert.True(receipt.IsDeploymentGeneralAgent);
             Assert.Equal("general", receipt.ExposureProfile);
+        }
+
+        [Fact]
+        public void DevelopmentGeneralAgentAcceptsOnlyAnExactBackendBoundGeneralReceipt()
+        {
+            var request = OperatorNativeHttpRequestFence.Prepare(
+                "GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId,
+                "typed_mcp", "revit_get_context");
+            var values = AuthorizationValues(request, "");
+            values["runtime_mode"] = "development";
+            values["exposure_profile"] = "general";
+            values["policy_trust_source"] = "deployment";
+
+            var receipt = VerifyResponse(
+                request,
+                values,
+                expectedRuntimeMode: "development",
+                useProductionAuthority: true);
+            Assert.True(receipt.IsDeploymentGeneralAgent);
+            Assert.Equal("general", receipt.ExposureProfile);
+
+            values["exposure_profile"] = "laboratory";
+            var error = Assert.Throws<OperatorNativeHttpAdmissionException>(() => VerifyResponse(
+                request,
+                values,
+                expectedRuntimeMode: "development",
+                useProductionAuthority: true));
+            Assert.Equal("CERTIFICATION_DIRECT_AUTHORIZATION_PROFILE_INVALID", error.Code);
+            Assert.False(error.OutcomeUnknown);
         }
 
         [Fact]

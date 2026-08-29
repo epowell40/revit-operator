@@ -23,7 +23,8 @@ namespace RevitBridge.Common
 
         public static bool IsExactDeploymentGeneralAgent(string? runtimeMode, string? exposureProfile, string? trustSource)
         {
-            return (string.Equals(runtimeMode, "local", StringComparison.Ordinal)
+            return (string.Equals(runtimeMode, "development", StringComparison.Ordinal)
+                    || string.Equals(runtimeMode, "local", StringComparison.Ordinal)
                     || string.Equals(runtimeMode, "hosted", StringComparison.Ordinal)
                     || string.Equals(runtimeMode, "production", StringComparison.Ordinal))
                 && string.Equals(exposureProfile, "general", StringComparison.Ordinal)

@@ -135,6 +135,15 @@ function isHostedGeneralAgentReady(env: NodeJS.ProcessEnv): boolean {
     && (profile.runtime_mode === "hosted" || profile.runtime_mode === "production");
 }
 
+function isDevelopmentGeneralAgentReady(env: NodeJS.ProcessEnv): boolean {
+  const profile = getSidecarAgentProfileState(env);
+  return isDevelopmentLaboratory(env)
+    && profile.general_agent_ready === true
+    && profile.capability_profile === "general_agent_laboratory"
+    && profile.tool_exposure_profile === "laboratory"
+    && profile.runtime_mode === "development";
+}
+
 /**
  * The authenticated hosted product is a general Revit worker, not a static
  * certification allowlist. Bind each well-formed request to an exact receipt
@@ -144,6 +153,8 @@ function generalAgentAdmissionRecord(input: {
   method: "GET" | "POST";
   path: string;
   requestHash: string;
+  authority: "authenticated_hosted_general_agent" | "authenticated_local_general_agent";
+  capabilityProfile: "general_agent" | "general_agent_laboratory";
   effectHash?: string;
 }): {
   policy_hash: string;
@@ -159,7 +170,7 @@ function generalAgentAdmissionRecord(input: {
   } as never);
   const evidenceRecordHash = sha256({
     schema: "revit-operator.general-agent-direct-evidence.v1",
-    authority: "authenticated_hosted_general_agent",
+    authority: input.authority,
     method: input.method,
     path: input.path
   } as never);
@@ -174,7 +185,7 @@ function generalAgentAdmissionRecord(input: {
   const policyHash = sha256({
     schema: "revit-operator.general-agent-direct-policy.v1",
     authority: "backend_environment",
-    capability_profile: "general_agent"
+    capability_profile: input.capabilityProfile
   } as never);
   return {
     policy_hash: policyHash,
@@ -279,15 +290,6 @@ export function authorizeDirectRevitExecution(
       malformed("Direct Revit authorization body_json must contain canonicalizable UTF-8 JSON.");
     }
   }
-  if (isDevelopmentLaboratory(env)) {
-    throw new DirectRevitExecutionAuthorizationError(
-      "CERTIFICATION_RUNTIME_PROFILE_MISMATCH",
-      "Certified direct Revit authorization is unavailable in the explicit development laboratory profile.",
-      403,
-      false
-    );
-  }
-
   let requestFamilyAdmission: ValidatedCertifiedRequestFamilyAdmission | undefined;
   if (requestSchema === DIRECT_REVIT_ADMISSION_REQUEST_V3_SCHEMA) {
     for (const field of ["policy_hash", "policy_record_hash", "evidence_record_hash", "effect_hash"] as const) {
@@ -324,8 +326,29 @@ export function authorizeDirectRevitExecution(
   const requestHash = computeRequestHash(method, toolPath, method === "GET" ? {} : parsedBody);
   try {
     const hostedGeneralAgent = isHostedGeneralAgentReady(env) && !requestFamilyAdmission;
-    if (hostedGeneralAgent) {
-      const record = generalAgentAdmissionRecord({ method, path: toolPath, requestHash });
+    const developmentGeneralAgent = isDevelopmentGeneralAgentReady(env)
+      && runtimeMode === "development"
+      && !requestFamilyAdmission;
+    if (isDevelopmentLaboratory(env) && !developmentGeneralAgent) {
+      throw new DirectRevitExecutionAuthorizationError(
+        "CERTIFICATION_RUNTIME_PROFILE_MISMATCH",
+        "Direct Revit authorization requires the exact ready development General Agent profile.",
+        403,
+        false
+      );
+    }
+    if (hostedGeneralAgent || developmentGeneralAgent) {
+      const record = generalAgentAdmissionRecord({
+        method,
+        path: toolPath,
+        requestHash,
+        authority: developmentGeneralAgent
+          ? "authenticated_local_general_agent"
+          : "authenticated_hosted_general_agent",
+        capabilityProfile: developmentGeneralAgent
+          ? "general_agent_laboratory"
+          : "general_agent"
+      });
       const payload = {
         version: DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION as typeof DIRECT_REVIT_EXECUTION_AUTHORIZATION_V1_VERSION,
         phase: "certification_native_direct_admission" as const,
