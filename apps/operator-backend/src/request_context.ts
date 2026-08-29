@@ -20,6 +20,16 @@ export type RequestContext = {
   operator_backend_auth?: OperatorBackendAuthV1;
 };
 
+/**
+ * Shared-token mode is an authenticated, single-workstation trust boundary but
+ * intentionally has no hosted user/tenant principal. V2 still needs an
+ * immutable principal dimension so local Assignments cannot be created with a
+ * blank lifecycle binding. The identifier is stable across token rotation and
+ * contains no credential material.
+ */
+export const LOCAL_SHARED_TOKEN_ASSIGNMENT_PRINCIPAL_ID = "local:shared-token" as const;
+export const HOSTED_ASSIGNMENT_PRINCIPAL_V1_PREFIX = "ap1_" as const;
+
 const requestContextStorage = new AsyncLocalStorage<RequestContext>();
 
 function identityPathSegment(value: string, fallback: string): string {
@@ -128,4 +138,48 @@ export function getRequestPrincipal(): RequestPrincipal | undefined {
 
 export function getRequestOperatorBackendAuth(): OperatorBackendAuthV1 | undefined {
   return requestContextStorage.getStore()?.operator_backend_auth;
+}
+
+function hostedAssignmentPrincipalId(principal: RequestPrincipal): string {
+  const tenantId = (principal.tenant_id || principal.license_id || "").trim();
+  const userId = (principal.user_id || principal.sub || "").trim();
+  if (!tenantId || !userId) return "";
+  const digest = createHash("sha256")
+    .update("revit-operator.assignment-principal.v1\u0000", "utf8")
+    .update(tenantId, "utf8")
+    .update("\u0000", "utf8")
+    .update(userId, "utf8")
+    .digest("base64url");
+  return `${HOSTED_ASSIGNMENT_PRINCIPAL_V1_PREFIX}${digest}`;
+}
+
+/** Returns the trusted Assignment principal for the current authenticated edge. */
+export function getRequestAssignmentPrincipalId(context: RequestContext | undefined = getRequestContext()): string | null {
+  const hostedPrincipal = context?.principal ? hostedAssignmentPrincipalId(context.principal) : "";
+  if (hostedPrincipal) return hostedPrincipal;
+  return context?.operator_backend_auth?.mode === "shared_token"
+    ? LOCAL_SHARED_TOKEN_ASSIGNMENT_PRINCIPAL_ID
+    : null;
+}
+
+/**
+ * Authenticates a durable V2 binding against the current request. Raw hosted
+ * user IDs remain readable only as an isolated compatibility edge for V2
+ * journals created before the tenant-qualified principal contract.
+ */
+export function requestMatchesAssignmentPrincipalId(
+  principalId: string,
+  context: RequestContext | undefined = getRequestContext(),
+  sessionId?: string
+): boolean {
+  const durableId = principalId.trim();
+  const currentId = getRequestAssignmentPrincipalId(context);
+  if (!durableId || !currentId) return false;
+  if (durableId === currentId) return true;
+  if (!context?.principal || durableId.startsWith(HOSTED_ASSIGNMENT_PRINCIPAL_V1_PREFIX)) return false;
+  const legacyUserId = context.principal.user_id.trim();
+  const legacySubject = context.principal.sub.trim();
+  return Boolean(sessionId
+    && isSessionIdBoundToPrincipal(sessionId, context.principal)
+    && (durableId === legacyUserId || durableId === legacySubject));
 }

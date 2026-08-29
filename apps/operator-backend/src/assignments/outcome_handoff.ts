@@ -1,6 +1,6 @@
 import type { CanonicalAssignmentOutcomeV1, ChatRequest } from "../contracts.js";
 import { getGoal, type GoalRecord } from "../goals/service.js";
-import { getRequestPrincipal } from "../request_context.js";
+import { getRequestPrincipal, requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { AssignmentJournalV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { normalizeAssignmentControlPlane, reduceAssignmentControlPlane } from "./control_plane.js";
 import { normalizeAssignmentKernelJournalV2 } from "./assignment_kernel_v2_store.js";
@@ -45,7 +45,7 @@ function exactV2Outcome(
       || snapshot.current_binding.session_id !== sessionId
       || snapshot.current_binding.run_id !== runId
       || snapshot.current_binding.generation !== generation
-      || (goal.created_by && snapshot.current_binding.principal_id !== goal.created_by)) return null;
+      || !requestMatchesAssignmentPrincipalId(snapshot.current_binding.principal_id, undefined, sessionId)) return null;
   const clarification = Object.values(snapshot.clarifications)
     .filter(item => !item.resolved_at && snapshot.pending_input_variable_ids.includes(item.variable_id))
     .sort((left, right) => ordinal(left.requested_at, right.requested_at)
@@ -89,10 +89,11 @@ export function canonicalAssignmentOutcomeForBinding(
   const generation = Number(binding.assignment_generation);
   if (!assignmentId || !runId || !sessionId || !Number.isSafeInteger(generation) || generation < 1) return null;
   const goal = getGoal(assignmentId);
-  if (!goal || goal.related_session_id !== sessionId || !principalMayRead(goal.created_by)) return null;
+  if (!goal || goal.related_session_id !== sessionId) return null;
   const kernelJournal = normalizeAssignmentKernelJournalV2(goal.assignment_kernel_v2);
   const kernelSnapshot = kernelJournal.events.length > 0 ? new AssignmentJournalV2(kernelJournal.events).snapshot() : null;
   if (kernelSnapshot) return exactV2Outcome(goal, kernelSnapshot, sessionId, runId, generation);
+  if (!principalMayRead(goal.created_by)) return null;
   const projection = reduceAssignmentControlPlane(
     goal.id,
     normalizeAssignmentControlPlane(goal.assignment_control_plane).events

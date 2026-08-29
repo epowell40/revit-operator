@@ -17,6 +17,14 @@ The normal local endpoint is `http://127.0.0.1:7007`. Keep local services bound
 to loopback unless a self-hosting task explicitly requires another reviewed
 network configuration.
 
+Architecture qualification must start the backend with
+`OPERATOR_ASSIGNMENT_KERNEL_V2=1`. Shared-token mode remains a single local
+trust boundary; the backend binds those Assignments to the stable,
+credential-free principal identifier `local:shared-token`. Hosted JWT sessions
+continue to bind to a versioned, tenant-qualified digest of the authenticated
+principal. Omitting the V2 flag is only appropriate when intentionally
+replaying the historical V1 lifecycle.
+
 Public-core validation commonly includes:
 
 ```powershell

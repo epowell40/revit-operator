@@ -26,7 +26,8 @@ import {
   openAssignmentKernelChildOperationV2,
   settleAssignmentKernelOperationV2
 } from "./assignment_kernel_v2_execution.js";
-import { sameAssignmentBindingV2 } from "../domain/assignment-kernel/index.js";
+import { sameAssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { getAssignmentKernelPublicationV2, listAssignmentKernelSessionIndexV2 } from "./assignment_kernel_v2_publication.js";
 
 type JsonMap = Record<string, unknown>;
@@ -38,6 +39,18 @@ function v2Binding(body: JsonMap | null): AssignmentKernelBindingInputV2 {
   const generation = typeof body?.generation === "number" && Number.isInteger(body.generation) ? body.generation : 0;
   if (!session_id || !assignment_id || !run_id || generation < 1) throw new Error("assignment_kernel_v2_binding_required");
   return { session_id, assignment_id, run_id, generation };
+}
+
+function v2PrincipalAllowed(snapshot: Pick<AssignmentSnapshotV2, "current_binding"> | null | undefined): boolean {
+  return Boolean(snapshot && requestMatchesAssignmentPrincipalId(
+    snapshot.current_binding.principal_id,
+    undefined,
+    snapshot.current_binding.session_id
+  ));
+}
+
+function requireV2Principal(snapshot: Pick<AssignmentSnapshotV2, "current_binding"> | null | undefined): void {
+  if (!v2PrincipalAllowed(snapshot)) throw new Error("assignment_kernel_v2_foreign_principal");
 }
 
 export async function handleAssignmentHttpRoute(
@@ -56,7 +69,15 @@ export async function handleAssignmentHttpRoute(
     }
     if (!authorizeSession(sessionId)) return true;
     const limit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
-    writeJson(res, 200, assignmentKernelSessionIndexResponseV2(listAssignmentKernelSessionIndexV2(sessionId, limit)));
+    const index = listAssignmentKernelSessionIndexV2(sessionId, limit);
+    writeJson(res, 200, assignmentKernelSessionIndexResponseV2({
+      ...index,
+      assignments: index.assignments.filter(entry => requestMatchesAssignmentPrincipalId(
+        entry.binding.principal_id,
+        undefined,
+        entry.binding.session_id
+      ))
+    }));
     return true;
   }
   if (req.method === "GET" && url.pathname.startsWith("/api/assignments/v2/")
@@ -69,6 +90,10 @@ export async function handleAssignmentHttpRoute(
       return true;
     }
     if (!authorizeSession(publication.snapshot.current_binding.session_id)) return true;
+    if (!v2PrincipalAllowed(publication.snapshot)) {
+      writeJson(res, 403, { error: "Forbidden (Assignment belongs to another principal)." });
+      return true;
+    }
     writeJson(res, 200, { ok: true, assignment_kernel_v2: publication });
     return true;
   }
@@ -78,7 +103,7 @@ export async function handleAssignmentHttpRoute(
       const requested = v2Binding(body);
       if (!authorizeSession(requested.session_id)) return true;
       const snapshot = getAssignmentKernelSnapshotV2(requested.assignment_id);
-      if (!snapshot || snapshot.current_binding.run_id !== requested.run_id
+      if (!snapshot || !v2PrincipalAllowed(snapshot) || snapshot.current_binding.run_id !== requested.run_id
           || snapshot.current_binding.generation !== requested.generation
           || snapshot.current_binding.session_id !== requested.session_id) {
         throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
@@ -123,7 +148,7 @@ export async function handleAssignmentHttpRoute(
       if (!authorizeSession(requested.session_id)) return true;
       const snapshot = getAssignmentKernelSnapshotV2(requested.assignment_id);
       const operation = snapshot?.operations[String(body?.operation_id ?? "").trim()];
-      if (!snapshot || !operation || !sameAssignmentBindingV2(snapshot.current_binding, operation.binding)
+      if (!snapshot || !v2PrincipalAllowed(snapshot) || !operation || !sameAssignmentBindingV2(snapshot.current_binding, operation.binding)
           || snapshot.current_binding.run_id !== requested.run_id
           || snapshot.current_binding.generation !== requested.generation
           || snapshot.current_binding.session_id !== requested.session_id) {
@@ -143,7 +168,7 @@ export async function handleAssignmentHttpRoute(
       if (!authorizeSession(requested.session_id)) return true;
       const snapshot = getAssignmentKernelSnapshotV2(requested.assignment_id);
       const operation = snapshot?.operations[String(body?.operation_id ?? "").trim()];
-      if (!snapshot || !operation || !sameAssignmentBindingV2(snapshot.current_binding, operation.binding)
+      if (!snapshot || !v2PrincipalAllowed(snapshot) || !operation || !sameAssignmentBindingV2(snapshot.current_binding, operation.binding)
           || snapshot.current_binding.run_id !== requested.run_id
           || snapshot.current_binding.generation !== requested.generation
           || snapshot.current_binding.session_id !== requested.session_id) {
@@ -166,6 +191,7 @@ export async function handleAssignmentHttpRoute(
       const body = await readJson(req, 128_000) as JsonMap | null;
       const binding = v2Binding(body);
       if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const claims = Array.isArray(body?.claims) ? body.claims.map(item => {
         const row = item && typeof item === "object" && !Array.isArray(item) ? item as JsonMap : {};
         return {
@@ -186,6 +212,7 @@ export async function handleAssignmentHttpRoute(
       const body = await readJson(req, 128_000) as JsonMap | null;
       const binding = v2Binding(body);
       if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const snapshot = requestAssignmentInputV2({
         binding,
         clarification_id: String(body?.clarification_id ?? "").trim(),
@@ -203,6 +230,7 @@ export async function handleAssignmentHttpRoute(
       const body = await readJson(req, 128_000) as JsonMap | null;
       const binding = v2Binding(body);
       if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
       const externalValues = body?.values && typeof body.values === "object" && !Array.isArray(body.values)
         ? body.values as JsonMap : {};
       const snapshot = supplyAssignmentInputV2({
@@ -228,6 +256,7 @@ export async function handleAssignmentHttpRoute(
       const assignmentId = typeof body?.assignment_id === "string" ? body.assignment_id.trim() : "";
       const kernelSnapshot = assignmentId ? getAssignmentKernelSnapshotV2(assignmentId) : null;
       if (kernelSnapshot) {
+        requireV2Principal(kernelSnapshot);
         const binding = v2Binding(body as unknown as JsonMap);
         const variableIds = Array.isArray(body?.missing_fields) ? body.missing_fields.map(String) : [];
         const clarificationId = typeof body?.clarification_id === "string" && body.clarification_id.trim()
@@ -267,6 +296,7 @@ export async function handleAssignmentHttpRoute(
       if (!authorizeSession(sessionId)) return true;
       const assignmentId = typeof body?.assignment_id === "string" ? body.assignment_id.trim() : "";
       if (assignmentId && getAssignmentKernelSnapshotV2(assignmentId)) {
+        requireV2Principal(getAssignmentKernelSnapshotV2(assignmentId));
         const binding = v2Binding(body as unknown as JsonMap);
         const supplied = supplyAssignmentInputResultV2({
           binding,

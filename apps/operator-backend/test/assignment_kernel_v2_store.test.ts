@@ -19,6 +19,8 @@ import {
 import { assignmentSpecFromGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
+import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
+import { runWithRequestContext } from "../src/request_context.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -233,6 +235,39 @@ test("trusted external Assignment start writes exactly one V2 journal when the f
     assert.equal(stored.assignment_kernel_v2?.events.length, 1);
     assert.equal(stored.assignment_control_plane?.events.length ?? 0, 0, "V2 external start must not dual-write V1 truth");
     assert.equal(getAssignmentKernelSnapshotV2(goal.id)?.assignment_version, 1);
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
+    else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previous;
+  }
+}));
+
+test("authenticated local shared-token Assignment start receives a trusted V2 principal binding", () => workspace(() => {
+  const previous = process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
+  process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1";
+  try {
+    runWithRequestContext({
+      operator_backend_auth: createOperatorBackendAuth("shared_token", "local-assignment-test-token")
+    }, () => {
+      const goal = createGoal({
+        title: "Inspect the local model",
+        objective: "Return the requested local inventory.",
+        acceptance_criteria: ["The local inventory is authoritatively returned."],
+        status: "active",
+        related_session_id: "session-local-v2",
+        created_by: null,
+        work_budget: { requested_effect: "read" }
+      });
+      const binding = startExternalAssignmentRun({
+        goal,
+        sessionId: "session-local-v2",
+        requestedRunId: "local-v2-run",
+        actor: "sidecar"
+      });
+      const snapshot = getAssignmentKernelSnapshotV2(goal.id);
+      assert.equal(binding.kernelVersion, 2);
+      assert.equal(snapshot?.current_binding.principal_id, "local:shared-token");
+      assert.equal(getGoal(goal.id)?.assignment_control_plane?.events.length ?? 0, 0);
+    });
   } finally {
     if (previous === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
     else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previous;
