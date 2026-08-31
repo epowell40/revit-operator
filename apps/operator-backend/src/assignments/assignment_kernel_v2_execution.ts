@@ -174,6 +174,37 @@ function requestIdentity(input: Readonly<{
   };
 }
 
+function anticipatedResultSchemaIds(capabilityId: string, identity: OperationRequestIdentityV2): readonly string[] {
+  if (capabilityId === "revit_call_tool" && identity.method && identity.path) {
+    return [`operator-native/${identity.method}:${identity.path}/v2`];
+  }
+  return [`operator-capability/${capabilityId}/v2`];
+}
+
+function criterionIdsAdmittedForOperationV2(input: Readonly<{
+  snapshot: AssignmentSnapshotV2;
+  criterion_ids: readonly string[];
+  capability_id: string;
+  request_identity: OperationRequestIdentityV2;
+}>): readonly string[] {
+  const nativeCapabilityId = input.request_identity.method && input.request_identity.path
+    ? `native:${input.request_identity.method}:${input.request_identity.path}`
+    : undefined;
+  const resultSchemas = anticipatedResultSchemaIds(input.capability_id, input.request_identity);
+  return input.criterion_ids.filter((criterionId) => {
+    if (input.snapshot.criteria[criterionId]?.status === "pass") return false;
+    const criterion = input.snapshot.spec.criteria.find(candidate => candidate.criterion_id === criterionId);
+    const policy = criterion?.evidence_policy;
+    if (!policy) return false;
+    const capabilityAllowed = policy.allowed_capability_ids.length === 0
+      || policy.allowed_capability_ids.includes(input.capability_id)
+      || Boolean(nativeCapabilityId && policy.allowed_capability_ids.includes(nativeCapabilityId));
+    const resultSchemaAllowed = policy.allowed_result_schema_ids.length === 0
+      || resultSchemas.some(schemaId => policy.allowed_result_schema_ids.includes(schemaId));
+    return capabilityAllowed && resultSchemaAllowed;
+  }).sort();
+}
+
 function canonicalTargetId(targetTokens: readonly string[]): string | undefined {
   const exactIds = [...new Set(targetTokens.filter(token => /^id:[^\s]{1,240}$/.test(token)))];
   if (exactIds.length === 1) return exactIds[0];
@@ -223,12 +254,22 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   if (purpose === "verification" && !verifies) {
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
-  const fulfillmentRole = operationFulfillmentRoleForAdmissionV2({
+  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  const proposedFulfillmentRole = operationFulfillmentRoleForAdmissionV2({
     purpose,
     capability_id: input.capability_id
   });
+  const admittedCriterionIds = criterionIdsAdmittedForOperationV2({
+    snapshot: input.snapshot,
+    criterion_ids: unit.criterion_ids,
+    capability_id: input.capability_id,
+    request_identity: currentIdentity
+  });
+  const fulfillmentRole = proposedFulfillmentRole === "delegated_task_execution" && admittedCriterionIds.length === 0
+    ? "supporting_control"
+    : proposedFulfillmentRole;
   const advancesCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
-    ? [...new Set(unit.criterion_ids)].sort()
+    ? admittedCriterionIds
     : [];
   const eligibleCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
     ? advancesCriterionIds
@@ -243,7 +284,6 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
       || (purpose === "reconciliation" && gap.kind === "effect_unknown"))
     .map((gap) => gap.gap_id)
     .sort();
-  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
   const correctedPredecessor = Object.values(input.snapshot.operations)
     .filter(candidate => candidate.capability_id === input.capability_id
       && candidate.settlement_state === "settled"

@@ -507,6 +507,33 @@ test("operation identity is derived from trusted controller identity, never a ty
   assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!.operations[left.operation_id]!.capability_id, "inventory.read");
 }));
 
+test("Candidate 22 support reads cannot inherit inventory fulfillment while the exact quantify route can", () => workspace(() => {
+  const { snapshot } = setup();
+  const schedule = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "candidate22-schedule", provider_turn_id: "candidate22-turn-schedule",
+    capability_id: "revit_list_schedules", classified_effect: "read",
+    arguments: { action: "list", query: "air terminal" }
+  });
+  assert.equal(schedule.fulfillment_role, "supporting_control");
+  assert.deepEqual(schedule.eligible_criterion_ids, []);
+  const findElements = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!,
+    controller_request_id: "candidate22-find-elements", provider_turn_id: "candidate22-turn-find-elements",
+    capability_id: "revit_call_tool", classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/find-elements", body: { category: "Air Terminals" } }
+  });
+  assert.equal(findElements.fulfillment_role, "supporting_control");
+  assert.deepEqual(findElements.eligible_criterion_ids, []);
+  const quantify = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!,
+    controller_request_id: "candidate22-quantify", provider_turn_id: "candidate22-turn-quantify",
+    capability_id: "revit_call_tool", classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/quantify", body: { categories: ["OST_DuctTerminal"] } }
+  });
+  assert.equal(quantify.fulfillment_role, "delegated_task_execution");
+  assert.deepEqual(quantify.eligible_criterion_ids, snapshot.spec.criteria.map(criterion => criterion.criterion_id));
+}));
+
 test("operation admission rejects an identical retry of structured schema-invalid input", () => workspace(() => {
   const { goal, snapshot } = setup();
   const invalidArguments = {

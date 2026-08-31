@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using RevitBridge.Common;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -49,7 +50,7 @@ namespace RevitBridge.Operator
             var normalizedRisk = NormalizeOptionalFilter(risk);
             var normalizedMethod = NormalizeOptionalFilter(method)?.ToUpperInvariant();
             var maxResults = Math.Max(1, Math.Min(12, max ?? 8));
-            var queryTokens = Tokenize(normalizedQuery);
+            var queryTokens = OperatorToolSearchRanking.Tokenize(normalizedQuery);
 
             var matches = OperatorToolManifest.Tools
                 .Where(t => normalizedGroup == null || string.Equals(t.Group, normalizedGroup, StringComparison.OrdinalIgnoreCase))
@@ -115,33 +116,22 @@ namespace RevitBridge.Operator
         private static ToolSearchMatch ScoreTool(OperatorToolInfo tool, string normalizedQuery, IReadOnlyList<string> queryTokens)
         {
             var reasons = new List<string>();
-            var score = 0;
+            var score = OperatorToolSearchRanking.Score(normalizedQuery, tool.Path, tool.Title, tool.Group, tool.Description, tool.Example, tool.Method);
 
-            score += ScoreField(tool.Path, normalizedQuery, queryTokens, exactMatchScore: 140, tokenMatchScore: 28, reason: "path");
-            if (score > 0 && FieldContains(tool.Path, normalizedQuery, queryTokens))
+            if (OperatorToolSearchRanking.FieldContains(tool.Path, normalizedQuery, queryTokens))
             {
                 reasons.Add("path");
             }
 
-            var titleScore = ScoreField(tool.Title, normalizedQuery, queryTokens, exactMatchScore: 120, tokenMatchScore: 30, reason: "title");
-            score += titleScore;
-            if (titleScore > 0) reasons.Add("title");
+            if (OperatorToolSearchRanking.FieldContains(tool.Title, normalizedQuery, queryTokens)) reasons.Add("title");
 
-            var groupScore = ScoreField(tool.Group, normalizedQuery, queryTokens, exactMatchScore: 80, tokenMatchScore: 24, reason: "group");
-            score += groupScore;
-            if (groupScore > 0) reasons.Add("group");
+            if (OperatorToolSearchRanking.FieldContains(tool.Group, normalizedQuery, queryTokens)) reasons.Add("group");
 
-            var descriptionScore = ScoreField(tool.Description, normalizedQuery, queryTokens, exactMatchScore: 55, tokenMatchScore: 12, reason: "description");
-            score += descriptionScore;
-            if (descriptionScore > 0) reasons.Add("description");
+            if (OperatorToolSearchRanking.FieldContains(tool.Description, normalizedQuery, queryTokens)) reasons.Add("description");
 
-            var exampleScore = ScoreField(tool.Example, normalizedQuery, queryTokens, exactMatchScore: 45, tokenMatchScore: 10, reason: "example");
-            score += exampleScore;
-            if (exampleScore > 0) reasons.Add("example");
+            if (OperatorToolSearchRanking.FieldContains(tool.Example, normalizedQuery, queryTokens)) reasons.Add("example");
 
-            var methodScore = ScoreField(tool.Method, normalizedQuery, queryTokens, exactMatchScore: 25, tokenMatchScore: 8, reason: "method");
-            score += methodScore;
-            if (methodScore > 0) reasons.Add("method");
+            if (OperatorToolSearchRanking.FieldContains(tool.Method, normalizedQuery, queryTokens)) reasons.Add("method");
 
             return new ToolSearchMatch
             {
@@ -151,57 +141,10 @@ namespace RevitBridge.Operator
             };
         }
 
-        private static int ScoreField(string? field, string normalizedQuery, IReadOnlyList<string> queryTokens, int exactMatchScore, int tokenMatchScore, string reason)
-        {
-            var value = (field ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(value)) return 0;
-
-            var score = 0;
-            if (value.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                score += exactMatchScore;
-            }
-
-            var matchedTokens = 0;
-            foreach (var token in queryTokens)
-            {
-                if (token.Length < 2) continue;
-                if (value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    matchedTokens++;
-                }
-            }
-
-            if (matchedTokens > 0)
-            {
-                score += matchedTokens * tokenMatchScore;
-            }
-
-            return score;
-        }
-
-        private static bool FieldContains(string? field, string normalizedQuery, IReadOnlyList<string> queryTokens)
-        {
-            var value = (field ?? "").Trim();
-            if (string.IsNullOrWhiteSpace(value)) return false;
-            if (value.IndexOf(normalizedQuery, StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            return queryTokens.Any(token => token.Length >= 2 && value.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0);
-        }
-
         private static string? NormalizeOptionalFilter(string? value)
         {
             var trimmed = (value ?? "").Trim();
             return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
-        }
-
-        private static List<string> Tokenize(string value)
-        {
-            return (value ?? "")
-                .Split(new[] { ' ', '\t', '\r', '\n', '-', '_', '/', '\\', '.', ':', ',' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(token => token.Trim())
-                .Where(token => token.Length >= 2)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
         }
 
         private static object DescribeTool(string method, string path, bool includeSchemas, bool includeExamples)

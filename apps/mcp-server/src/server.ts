@@ -46,6 +46,8 @@ import {
   preflightKnownGenericToolBody
 } from "./lib/genericToolPreflight.js";
 import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
+import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
+import { compareToolSearchCandidatesV2, scoreToolSearchCandidateV2 } from "./lib/toolSearchRanking.js";
 import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
@@ -490,54 +492,8 @@ function normalizeRegistryTool(entry: unknown): RegistryToolEntry | null {
   };
 }
 
-function tokenizeForSearch(s: string): string[] {
-  return String(s ?? "")
-    .toLowerCase()
-    .split(/[^a-z0-9/_-]+/g)
-    .map(x => x.trim())
-    .filter(Boolean);
-}
-
-function searchableTextForTool(t: RegistryToolEntry): string {
-  const parts: string[] = [];
-  if (t.path) parts.push(t.path);
-  if (t.method) parts.push(t.method);
-  if (t.group) parts.push(t.group);
-  if (t.title) parts.push(t.title);
-  if (t.description) parts.push(t.description);
-  if (Array.isArray(t.required_fields) && t.required_fields.length > 0) parts.push(t.required_fields.join(" "));
-  if (Array.isArray(t.optional_fields) && t.optional_fields.length > 0) parts.push(t.optional_fields.join(" "));
-  return parts.join(" ").toLowerCase();
-}
-
 function scoreToolMatch(t: RegistryToolEntry, query: string): number {
-  const q = String(query ?? "").trim().toLowerCase();
-  if (!q) return 0;
-  const tokens = tokenizeForSearch(q);
-  if (tokens.length === 0) return 0;
-
-  const method = String(t.method ?? "").toLowerCase();
-  const path = String(t.path ?? "").toLowerCase();
-  const title = String(t.title ?? "").toLowerCase();
-  const desc = String(t.description ?? "").toLowerCase();
-  const hay = searchableTextForTool(t);
-
-  let score = 0;
-  if (q === path) score += 200;
-  if (q === `${method} ${path}`.trim()) score += 240;
-  if (path.startsWith(q)) score += 120;
-  if (title.includes(q)) score += 80;
-  if (desc.includes(q)) score += 40;
-
-  for (const tok of tokens) {
-    if (!tok) continue;
-    if (path === tok) score += 100;
-    else if (path.includes(tok)) score += 28;
-    if (title.includes(tok)) score += 20;
-    if (desc.includes(tok)) score += 8;
-    if (hay.includes(tok)) score += 3;
-  }
-  return score;
+  return scoreToolSearchCandidateV2(t, query);
 }
 
 function compactToolForList(t: RegistryToolEntry, score?: number): Record<string, unknown> {
@@ -564,10 +520,14 @@ async function getToolRegistry(forceRefresh = false, operationRole?: "prerequisi
       tools: filterRegistryEntriesForSearch(cached.tools ?? [])
     };
   }
-  const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, {
-    channel: "search",
+  const transport = registryLookupTransportContractV2(operationRole);
+  const invoke = () => callRevit<unknown>("/revit/tool-registry", "GET", undefined, {
+    channel: transport.channel,
     ...(operationRole ? { assignmentOperationRole: operationRole } : {})
   });
+  const raw = transport.alias
+    ? await runWithRevitToolAlias(transport.alias, invoke)
+    : await invoke();
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const toolsRaw = Array.isArray(root.tools) ? root.tools : [];
   const tools: RegistryToolEntry[] = [];
@@ -1316,7 +1276,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
         })
         .map(tool => ({ tool, score: scoreToolMatch(tool, query) }))
         .filter(x => x.score > 0)
-        .sort((a, b) => b.score - a.score || String(a.tool.path ?? "").localeCompare(String(b.tool.path ?? "")))
+        .sort(compareToolSearchCandidatesV2)
         .slice(0, max);
 
       const matches = includeSchemas ? ranked.map(x => ({ score: x.score, ...x.tool })) : ranked.map(x => compactToolForList(x.tool, x.score));

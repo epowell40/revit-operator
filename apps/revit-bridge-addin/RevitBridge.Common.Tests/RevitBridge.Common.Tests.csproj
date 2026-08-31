@@ -25,6 +25,7 @@
     <Compile Include="..\RevitBridge\Operator\OperatorApprovalPolicy.cs" Link="Operator\OperatorApprovalPolicy.cs" />
     <Compile Include="..\RevitBridge\Operator\OperatorBackendContracts.cs" Link="Operator\OperatorBackendContracts.cs" />
     <Compile Include="..\RevitBridge\Operator\OperatorDesktopLauncher.cs" Link="Operator\OperatorDesktopLauncher.cs" />
+    <Compile Include="..\RevitBridge\Operator\OperatorToolManifest.cs" Link="Operator\OperatorToolManifest.cs" />
   </ItemGroup>
 
 </Project>
