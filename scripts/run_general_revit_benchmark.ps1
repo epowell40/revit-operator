@@ -26,11 +26,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$backendRoot = Join-Path $repoRoot "apps\operator-backend"
+$backendCandidates = @(
+  (Join-Path $repoRoot "apps\operator-backend"),
+  (Join-Path $repoRoot "operator-backend")
+)
+$backendRoot = $backendCandidates |
+  Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
+  Select-Object -First 1
 $resolvedBenchmarkOutputDir = if ($OutputDir) { [IO.Path]::GetFullPath($OutputDir) } else { Join-Path $repoRoot "local-work\benchmarks\general-revit" }
 
-if (-not (Test-Path -LiteralPath $backendRoot)) {
-  throw "Operator backend was not found at $backendRoot"
+if (-not $backendRoot) {
+  throw "Operator backend was not found in any supported repository layout: $($backendCandidates -join ', ')"
 }
 if ($Fixture -and $Fixture -notin @("snowdon_hvac", "snowdon_plumbing", "snowdon_electrical")) {
   throw "Fixture must be snowdon_hvac, snowdon_plumbing, or snowdon_electrical."

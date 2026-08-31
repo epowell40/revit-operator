@@ -121,6 +121,10 @@ test("local benchmark process liveness treats access denied as alive and missing
 test("benchmark wrapper orchestrates controlled fixtures unless one is pinned and preserves ambient context", () => {
   const wrapperRoot = path.basename(repoRoot()).toLowerCase() === "apps" ? path.resolve(repoRoot(), "..") : repoRoot();
   const wrapper = fs.readFileSync(path.join(wrapperRoot, "scripts", "run_general_revit_benchmark.ps1"), "utf8");
+  assert.match(wrapper, /Join-Path \$repoRoot "apps\\operator-backend"/);
+  assert.match(wrapper, /Join-Path \$repoRoot "operator-backend"/);
+  assert.match(wrapper, /Where-Object \{ Test-Path -LiteralPath \$_ -PathType Container \}/);
+  assert.match(wrapper, /Select-Object -First 1/);
   assert.match(wrapper, /if \(\$Fixture\) \{ \$runnerArgs \+= @\("--fixture", \$Fixture\) \} elseif \(\$Lane -ne "ambient_context"\) \{ \$runnerArgs \+= "--orchestrate-fixtures" \}/);
   assert.match(wrapper, /ValidateSet\("controlled_capability", "ambient_context", "safe_readiness", "committed_apply"\)/);
   assert.match(wrapper, /--fixture-root/);
