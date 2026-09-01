@@ -99,6 +99,54 @@ test("certified MCP JSON text projects a complete bounded identity inventory ins
   assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString("utf8")), raw);
 }));
 
+test("normalized native payload retrieval honors the advertised payload root selector", { concurrency: false }, () => withWorkspace(() => {
+  const items = [{
+    textNoteId: 1_478_627,
+    uniqueId: "0fd05cf9-f97f-46ff-8cc3-99ae511f929f-00168fe3",
+    text: "Chase for Electrical Conduit\r",
+    ownerViewId: 1_363_433,
+    ownerViewName: "L4"
+  }];
+  const normalizedNativePayload = {
+    ok: true,
+    scope: "active_project",
+    itemsComplete: true,
+    elementIds: [1_478_627],
+    textSamples: ["Chase for Electrical Conduit\r"],
+    items
+  };
+  const stored = storeEvidence({
+    scope,
+    source: "assignment_kernel_v2:revit_call_tool",
+    media_type: "application/json",
+    trust_level: "authoritative_native",
+    raw: normalizedNativePayload
+  }, 4_096);
+
+  const fields = retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "bind the exact TextNote identity for a conditional preview",
+    fields: ["payload.itemsComplete", "payload.elementIds", "payload.items"],
+    max_bytes: 4_096
+  });
+  assert.deepEqual(fields.selection, {
+    "payload.itemsComplete": true,
+    "payload.elementIds": [1_478_627],
+    "payload.items": items
+  });
+  const page = retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "retrieve the single TextNote row for a conditional preview",
+    item_range: { path: "payload.items", start: 0, count: 1 },
+    max_bytes: 4_096
+  });
+  assert.deepEqual(page.selection, items);
+  assert.equal(page.complete, true);
+  assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString("utf8")), normalizedNativePayload);
+}));
+
 test("nested inventory projection normalizes snake-case identity fields", { concurrency: false }, () => withWorkspace(() => {
   const raw = { content: [{ type: "text", text: JSON.stringify({
     count: 3,

@@ -355,7 +355,14 @@ function retrievalRoot(value: unknown): unknown {
   if (!row) return value;
   const looksLikeMcpEnvelope = Array.isArray(row.content)
     || Object.prototype.hasOwnProperty.call(row, "structuredContent");
-  if (!looksLikeMcpEnvelope) return value;
+  if (!looksLikeMcpEnvelope) {
+    if (Object.prototype.hasOwnProperty.call(row, "payload")) return value;
+    // OperationResultV2 persists the normalized semantic payload itself rather
+    // than the original MCP envelope. Keep direct root selectors available for
+    // historical callers while exposing the same payload.<field> contract that
+    // projections advertise for MCP-carried JSON.
+    return { ...row, payload: row };
+  }
   const structured = extractMcpStructuredPayload(value);
   const { payload: _untrustedPayload, ...envelope } = row;
   return structured ? { ...envelope, payload: structured.payload } : envelope;

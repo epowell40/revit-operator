@@ -237,7 +237,7 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     additional_evidence: true,
     retrieval: {
       tool_name: "operator_retrieve_evidence",
-      selector_forms: ["fields", "itemRange", "textRange", "targetSubset", "image", "MCP JSON fields: payload.<field>", "MCP JSON arrays: payload.<array>"],
+      selector_forms: ["fields", "itemRange", "textRange", "targetSubset", "image", "JSON payload fields: payload.<field>", "JSON payload arrays: payload.<array>"],
       max_bytes: 1_048_576
     },
     truncated: extracted.omitted
