@@ -1230,11 +1230,12 @@ namespace RevitBridge.Server
         {
             var finalReceipt = preauthorizedFinalReceipt
                 ?? await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
-            return OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+            return await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
+                _nativeHttpAuthorizer,
                 finalReceipt,
                 effectiveRequest,
-                DateTimeOffset.UtcNow,
-                expectedCanonicalBody);
+                expectedCanonicalBody,
+                cancellationToken).ConfigureAwait(false);
         }
 
         private static async Task<byte[]> ReadRequestBodyBytesAsync(HttpListenerRequest request, int maximumBytes)

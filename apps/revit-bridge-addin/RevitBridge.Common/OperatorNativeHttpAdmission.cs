@@ -397,6 +397,35 @@ namespace RevitBridge.Common
 
     public static class OperatorNativeHttpDispatchFence
     {
+        public static async Task<string> RequireFreshOneUseWithQueueRefreshAsync(
+            IOperatorNativeHttpAuthorizer authorizer,
+            OperatorNativeHttpAuthorizationReceipt? receipt,
+            OperatorNativeHttpRequest request,
+            string expectedCanonicalBodyJson,
+            CancellationToken cancellationToken,
+            Func<DateTimeOffset>? utcNow = null)
+        {
+            if (authorizer == null) throw new ArgumentNullException(nameof(authorizer));
+            var clock = utcNow ?? (() => DateTimeOffset.UtcNow);
+            try
+            {
+                return RequireFreshOneUse(receipt, request, clock(), expectedCanonicalBodyJson);
+            }
+            catch (OperatorNativeHttpAdmissionException error) when (
+                error.Code == "CERTIFICATION_DIRECT_AUTHORIZATION_EXPIRED"
+                && receipt?.IsDeploymentGeneralAgent == true)
+            {
+                // A deployment General Agent receipt is obtained before write-grant
+                // consumption, but Revit may not acquire its single ExternalEvent
+                // lane until after that receipt's bounded local window. Refresh only
+                // the exact final authorization at the dispatch boundary. No native
+                // handler has run, and every other integrity or replay failure stays
+                // fail-closed.
+                var refreshed = await authorizer.AuthorizeAsync(request, cancellationToken, "final").ConfigureAwait(false);
+                return RequireFreshOneUse(refreshed, request, clock(), expectedCanonicalBodyJson);
+            }
+        }
+
         public static string RequireFreshOneUse(
             OperatorNativeHttpAuthorizationReceipt? receipt,
             OperatorNativeHttpRequest request,

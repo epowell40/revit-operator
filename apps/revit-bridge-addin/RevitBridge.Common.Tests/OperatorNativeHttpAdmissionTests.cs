@@ -96,6 +96,57 @@ namespace RevitBridge.Common.Tests
         }
 
         [Fact]
+        public async Task ExpiredQueuedGeneralAgentReceiptRefreshesOnceBeforeNativeDispatch()
+        {
+            var request = Prepare("POST", "/revit/find-text-notes", "{\"max\":25}");
+            var initialValues = AuthorizationValues(request, "{\"max\":25}");
+            initialValues["runtime_mode"] = "development";
+            initialValues["exposure_profile"] = "general";
+            initialValues["policy_trust_source"] = "deployment";
+            var initial = VerifyResponse(request, initialValues, expectedRuntimeMode: "development", useProductionAuthority: true);
+
+            var refreshedValues = AuthorizationValues(request, "{\"max\":25}");
+            refreshedValues["runtime_mode"] = "development";
+            refreshedValues["exposure_profile"] = "general";
+            refreshedValues["policy_trust_source"] = "deployment";
+            var refreshed = VerifyResponse(request, refreshedValues, expectedRuntimeMode: "development", useProductionAuthority: true);
+            var authorizer = new CountingAuthorizer(refreshed);
+            var clockCalls = 0;
+
+            var body = await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
+                authorizer,
+                initial,
+                request,
+                "{\"max\":25}",
+                CancellationToken.None,
+                () => clockCalls++ == 0 ? initial.ExpiresAtUtc.AddMilliseconds(1) : DateTimeOffset.UtcNow);
+
+            Assert.Equal("{\"max\":25}", body);
+            Assert.Equal(1, authorizer.Calls);
+            Assert.Equal("final", authorizer.LastStage);
+        }
+
+        [Fact]
+        public async Task QueueRefreshDoesNotRecoverIntegrityMismatchOrCertifiedReceiptExpiry()
+        {
+            var request = Prepare("POST", "/revit/find-text-notes", "{\"max\":25}");
+            var certified = Verify(request, "{\"max\":25}");
+            var authorizer = new CountingAuthorizer(certified);
+
+            var expired = await Assert.ThrowsAsync<OperatorNativeHttpAdmissionException>(() =>
+                OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
+                    authorizer,
+                    certified,
+                    request,
+                    "{\"max\":25}",
+                    CancellationToken.None,
+                    () => certified.ExpiresAtUtc.AddMilliseconds(1)));
+
+            Assert.Equal("CERTIFICATION_DIRECT_AUTHORIZATION_EXPIRED", expired.Code);
+            Assert.Equal(0, authorizer.Calls);
+        }
+
+        [Fact]
         public void RequestFenceAcceptsOnlyCanonicalBoundedRevitRequests()
         {
             var post = Prepare("POST", "/revit/ping", "{\"a\":1,\"label\":\"é\"}");
@@ -415,6 +466,7 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("earlyReceipt.IsDeploymentGeneralAgent", server);
             Assert.Contains("capturedDeploymentGeneralAgentFinalReceipt", server);
             Assert.Contains("preauthorizedFinalReceipt", server);
+            Assert.Contains("RequireFreshOneUseWithQueueRefreshAsync", server);
             Assert.Contains("handler.Handle(app, dispatchBody)", server);
             Assert.DoesNotContain("handler.Handle(app, body).GetAwaiter().GetResult()", server);
             Assert.Contains("handler.Handle(null!, body)", server);
@@ -592,6 +644,30 @@ namespace RevitBridge.Common.Tests
             public void RequireAuthorized(OperatorNativeToolExposureBinding binding)
             {
                 Assert.NotNull(binding);
+            }
+        }
+
+        private sealed class CountingAuthorizer : IOperatorNativeHttpAuthorizer
+        {
+            private readonly OperatorNativeHttpAuthorizationReceipt _receipt;
+
+            public CountingAuthorizer(OperatorNativeHttpAuthorizationReceipt receipt)
+            {
+                _receipt = receipt;
+            }
+
+            public int Calls { get; private set; }
+            public string LastStage { get; private set; } = "";
+
+            public Task<OperatorNativeHttpAuthorizationReceipt> AuthorizeAsync(
+                OperatorNativeHttpRequest request,
+                CancellationToken cancellationToken,
+                string authorizationStage = "final")
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Calls += 1;
+                LastStage = authorizationStage;
+                return Task.FromResult(_receipt);
             }
         }
     }
