@@ -129,6 +129,14 @@ test("benchmark wrapper orchestrates controlled fixtures unless one is pinned an
   assert.match(wrapper, /ValidateSet\("controlled_capability", "ambient_context", "safe_readiness", "committed_apply"\)/);
   assert.match(wrapper, /--fixture-root/);
   assert.match(wrapper, /--case/);
+  assert.match(wrapper, /Get-Content -LiteralPath \$resolvedProtocolV2Envelope -Raw \| ConvertFrom-Json/);
+  assert.match(wrapper, /--agent-model", \$requestedAgentModel/);
+  assert.match(wrapper, /--agent-effort", \$requestedAgentEffort/);
+  assert.match(wrapper, /ProtocolV2Envelope must bind requested_agent\.model and requested_agent\.reasoning_effort/);
+  assert.match(wrapper, /benchmark_interaction_manifest_sha256/);
+  assert.match(wrapper, /Get-FileHash -LiteralPath \$interactionManifestCandidate -Algorithm SHA256/);
+  assert.match(wrapper, /--interaction-manifest", \$resolvedInteractionManifest/);
+  assert.match(wrapper, /InteractionManifest SHA-256 does not match ProtocolV2Envelope/);
 });
 
 test("benchmark groups cases by fixture and fails closed on an unpinned mixed-model run", () => {

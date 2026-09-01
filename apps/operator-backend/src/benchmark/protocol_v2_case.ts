@@ -335,6 +335,10 @@ function deliveryVerdict(
       && stages.find((entry) => entry.stage === "postcondition_read_back")?.status === "pass") {
     return "verified_read_completion";
   }
+  if (truth.requested_effect === "preview" && truth.effect_state === "none" && evaluation.verified
+      && stages.find((entry) => entry.stage === "preview_correct_where_required")?.status === "pass") {
+    return "verified_preview_completion";
+  }
   if (truth.effect_state === "applied" && evaluation.verified) {
     const recovered = canonicalAttempts(trace).some(({ attempt }) => Boolean(attempt.retry_of_attempt_id || attempt.reconciliation_of_attempt_id));
     return recovered ? "recovered_verified" : "first_pass_verified";

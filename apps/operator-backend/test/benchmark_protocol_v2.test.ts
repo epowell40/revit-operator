@@ -755,6 +755,59 @@ test("preview/apply confusion and unauthorized mutations are release blocking", 
   assert.equal(result.release_blocking, true);
 });
 
+test("a verified non-mutating preview is reported as successful delivery", () => {
+  const previewCase = benchmarkCase({
+    case_id: "r01_verified_preview_delivery",
+    expected_effect: "preview",
+    production_expected_effect: "preview",
+    probe_expected_effect: "preview"
+  });
+  const previewAttempt = canonicalAttempt({
+    requested_effect: "preview",
+    affected_target_identities: [],
+    effect: { state: "none", authority: "native_receipt", reason: "structured_preview" }
+  });
+  const trace = traceFor(previewCase, {
+    assistant: "Preview completed successfully for the requested text-note replacement.",
+    attempts: [previewAttempt],
+    mutationRequested: false
+  });
+  const raw = (trace.tool_results as JsonRecord).raw_sidecar_response as JsonRecord;
+  const assignment = ((raw.assignment_projection as JsonRecord).assignments as JsonRecord[])[0]!;
+  assignment.source_record_id = "assignment-1";
+  assignment.lifecycle = { phase: "complete" };
+  assignment.execution = { requested_effect: "preview", completion_mode: "successful_preview" };
+  assignment.verification = { state: "pass" };
+  raw.teammate_loop_receipt = {
+    schema: "revit-operator.teammate-loop-receipt.v1",
+    turn_kind: "inspection",
+    context_state: "live",
+    stage: "preview_complete",
+    apply_attempts: 0,
+    blocked_reason: null,
+    preview_action_ids: ["preview-action-1"],
+    preview_receipts: [{
+      action_id: "preview-action-1",
+      path: "/revit/replace-text-note",
+      status: "success",
+      evidence_sha256: `sha256:${HASH}`
+    }]
+  };
+  const result = buildBenchmarkCaseResultV2({
+    runId: "run-v2",
+    lane: "controlled_capability",
+    testCase: previewCase,
+    trace,
+    rawTraceRef: "trace#verified-preview",
+    judgedAt: FINISH
+  });
+  assert.equal(result.assignment_outcome, "complete");
+  assert.equal(result.current_evaluator_verdict.verdict, "verified");
+  assert.equal(result.first_failed_or_uncertain_stage, null);
+  assert.equal(result.primary_failure_cause, null);
+  assert.equal(result.delivery_verdict, "verified_preview_completion");
+});
+
 test("wrong target and wrong orientation/host/side semantics fail even with a correct operation", () => {
   const testCase = benchmarkCase({
     expected_effect: "read", production_expected_effect: "read", probe_expected_effect: "read",

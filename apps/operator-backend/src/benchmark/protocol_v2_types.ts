@@ -58,6 +58,7 @@ export const BENCHMARK_DELIVERY_VERDICTS = [
   "recovered_verified",
   "verified_noop",
   "verified_read_completion",
+  "verified_preview_completion",
   "awaiting_user_input",
   "awaiting_user_review",
   "complete_with_issues",
@@ -264,6 +265,7 @@ export type BenchmarkLaneMetricsV2 = {
   recovered_verified: number;
   verified_noop: number;
   verified_read_completion: number;
+  verified_preview_completion: number;
   awaiting_user_input: number;
   awaiting_user_review: number;
   complete_with_issues: number;

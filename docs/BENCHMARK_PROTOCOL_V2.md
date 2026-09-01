@@ -115,6 +115,18 @@ case hashes cover those exact cases:
   -ProtocolV2Envelope C:\external-eval\canary-envelope-draft.json
 ```
 
+The PowerShell wrapper reads `requested_agent.model` and
+`requested_agent.reasoning_effort` from that immutable envelope and passes both
+to the runner. A new Protocol V2 flight therefore fails before provider work if
+the requested model configuration is missing, instead of producing an
+expensive run that cannot be compared.
+
+When the envelope binds `benchmark_interaction_manifest_sha256`, the wrapper
+also resolves the canonical interaction manifest (or an explicit
+`InteractionManifest` path), verifies that exact SHA-256, and passes the same
+file to the runner. A missing or mismatched interactive contract fails before
+provider or Revit work.
+
 The runner owns exact fixture transitions, isolates apply cases by default,
 rejects resume, requires all ten traces, and fails closed on incomplete provider
 or Revit receipts. Exact rerun comparison uses a new run identity and unchanged

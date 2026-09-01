@@ -8,6 +8,7 @@ param(
   [ValidateSet("controlled_capability", "ambient_context", "safe_readiness", "committed_apply")]
   [string]$Lane = "safe_readiness",
   [string]$ProtocolV2Envelope = "",
+  [string]$InteractionManifest = "",
   [switch]$LegacyProtocolV1,
   [switch]$ReleaseCanary,
   [string]$ExternalHoldout = "",
@@ -34,6 +35,10 @@ $backendRoot = $backendCandidates |
   Where-Object { Test-Path -LiteralPath $_ -PathType Container } |
   Select-Object -First 1
 $resolvedBenchmarkOutputDir = if ($OutputDir) { [IO.Path]::GetFullPath($OutputDir) } else { Join-Path $repoRoot "local-work\benchmarks\general-revit" }
+$resolvedProtocolV2Envelope = if ($ProtocolV2Envelope) { (Resolve-Path -LiteralPath $ProtocolV2Envelope).Path } else { "" }
+$requestedAgentModel = ""
+$requestedAgentEffort = ""
+$resolvedInteractionManifest = ""
 
 if (-not $backendRoot) {
   throw "Operator backend was not found in any supported repository layout: $($backendCandidates -join ', ')"
@@ -46,6 +51,32 @@ if (-not $ListCases -and -not $ProtocolV2Envelope -and -not $LegacyProtocolV1) {
 if ($ReleaseCanary -and $Resume) { throw "ReleaseCanary is non-resumed by default." }
 if (($Lane -eq "committed_apply") -ne [bool]$Apply) { throw "Lane committed_apply and Apply must be selected together." }
 if ($ExternalHoldout -and -not $OutputDir) { throw "ExternalHoldout requires an explicit external OutputDir." }
+if ($resolvedProtocolV2Envelope) {
+  $envelope = Get-Content -LiteralPath $resolvedProtocolV2Envelope -Raw | ConvertFrom-Json
+  $requestedAgentModel = [string]$envelope.requested_agent.model
+  $requestedAgentEffort = [string]$envelope.requested_agent.reasoning_effort
+  if (-not $requestedAgentModel.Trim() -or -not $requestedAgentEffort.Trim()) {
+    throw "ProtocolV2Envelope must bind requested_agent.model and requested_agent.reasoning_effort."
+  }
+  $boundInteractionManifestSha256 = [string]$envelope.feature_flags.benchmark_interaction_manifest_sha256
+  if ($boundInteractionManifestSha256.Trim()) {
+    $interactionManifestCandidate = if ($InteractionManifest) {
+      (Resolve-Path -LiteralPath $InteractionManifest).Path
+    } else {
+      Join-Path $backendRoot "benchmark\general-agent\revit-capability-interactions.v1.json"
+    }
+    if (-not (Test-Path -LiteralPath $interactionManifestCandidate -PathType Leaf)) {
+      throw "ProtocolV2Envelope binds an interaction manifest, but no manifest exists at $interactionManifestCandidate."
+    }
+    $actualInteractionManifestSha256 = (Get-FileHash -LiteralPath $interactionManifestCandidate -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualInteractionManifestSha256 -ne $boundInteractionManifestSha256.Trim().ToLowerInvariant()) {
+      throw "InteractionManifest SHA-256 does not match ProtocolV2Envelope."
+    }
+    $resolvedInteractionManifest = $interactionManifestCandidate
+  } elseif ($InteractionManifest) {
+    throw "InteractionManifest requires a matching ProtocolV2Envelope feature-flag binding."
+  }
+}
 
 $runnerArgs = @(
   "run", "probe:general-revit-capabilities", "--",
@@ -57,7 +88,15 @@ $runnerArgs = @(
 if ($Fixture) { $runnerArgs += @("--fixture", $Fixture) } elseif ($Lane -ne "ambient_context") { $runnerArgs += "--orchestrate-fixtures" }
 $runnerArgs += @("--fixture-root", $FixtureRoot)
 if ($Case.Count -gt 0) { $runnerArgs += @("--case", ($Case -join ",")) }
-if ($ProtocolV2Envelope) { $runnerArgs += @("--protocol-v2-envelope", (Resolve-Path -LiteralPath $ProtocolV2Envelope).Path, "--lane", $Lane) }
+if ($resolvedProtocolV2Envelope) {
+  $runnerArgs += @(
+    "--protocol-v2-envelope", $resolvedProtocolV2Envelope,
+    "--lane", $Lane,
+    "--agent-model", $requestedAgentModel,
+    "--agent-effort", $requestedAgentEffort
+  )
+}
+if ($resolvedInteractionManifest) { $runnerArgs += @("--interaction-manifest", $resolvedInteractionManifest) }
 if ($LegacyProtocolV1) { $runnerArgs += "--legacy-protocol-v1" }
 if ($ReleaseCanary) { $runnerArgs += "--release-canary" }
 if ($ExternalHoldout) { $runnerArgs += @("--external-holdout", (Resolve-Path -LiteralPath $ExternalHoldout).Path) }
