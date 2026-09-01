@@ -700,7 +700,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/durable_tool_evidence.ts",
-      "sha256": "sha256:e4f1209a6c0357850610cfe07dacb51c216fdbc1ea5cda403481dfef5f4e6440"
+      "sha256": "sha256:1c27fd8b39bbfd756c11c6c152ad66bb8573c0c0cf54242bc547481009560a2b"
     },
     {
       "path": "apps/operator-backend/src/benchmark/environment.ts",
@@ -756,7 +756,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_latency.ts",
-      "sha256": "sha256:1e97fc309ce06d26c59026a7dea925584482df3740498abc584c544b5aa78966"
+      "sha256": "sha256:c0692bf9ed9b1eed2aa85423c6fa4876dd7ad3fafdbe40655e04afec5ab1d8fc"
     },
     {
       "path": "apps/operator-backend/src/benchmark/general_revit_model_telemetry.ts",
@@ -792,7 +792,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_case.ts",
-      "sha256": "sha256:aa2039b37b003c4efda8224da797d59ef51698fea8c8c1daadfacd4391dec921"
+      "sha256": "sha256:b4e3d5aa3371905cd1c9c295ed5616e7c276b3e59fdac9f586955e92b6c6f27f"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_compare.ts",
@@ -972,7 +972,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
-      "sha256": "sha256:d58e906baccd4afa2fdc2a32f30f6c21cca9d45922fb7f4f5d6d3016ecde36c0"
+      "sha256": "sha256:b323008ce9887b2e29ac830ab0368a24a0f30a07407e71fbe24a0e1ff81d5fb0"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
@@ -980,7 +980,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:dfb5a482aca8bf69cf2df5248b5eeacc7b9b2703bb31d6f8ba011c23eccf2270"
+      "sha256": "sha256:63815122c2ecfca7d4baa5bc3fa06636495fb926a0f1adf5b5fb343e488fea5e"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -1545,7 +1545,7 @@
     },
     {
       "path": "apps/operator-backend/src/codex/mcp_tool_runtime.ts",
-      "sha256": "sha256:8d32184d4e117dc93a8410ab34c3609e1f9f4f2f38cd4fb7af0e66448510904e"
+      "sha256": "sha256:97f45636f3c1a72c1b894f5a7b21f0822883cfe492b0bdf77023148ba3c65f1b"
     },
     {
       "path": "apps/operator-backend/src/codex/operator_backend_auth_lease.ts",
@@ -2921,7 +2921,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:80b74a2c7a15641e4def44ccfe4e3e2756e2da74c1ef7836dd6485a5c2079921"
+      "sha256": "sha256:843a530c0951efcab70a03e8eff6ca1311b5165042aebb3f81aa208f049df4d9"
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2_interaction.test.ts",
@@ -2957,7 +2957,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:99c50a31cae55634f2357e76386ac4d1c8273ea83bc6b2caf1a1d49cce7ead48"
+      "sha256": "sha256:52153ba4f93b2641badb5d30704d1b0435db974c5e088b9285b2e8f6dc4cb6b5"
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_lifecycle.test.ts",
@@ -3425,7 +3425,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
-      "sha256": "sha256:0b51cd1b4da3ddb43b090d68353d0ffda2394d890ae1a209824841dfaa2c53cc"
+      "sha256": "sha256:4e642b089ab4af67b661e4751fcbc7b729c96dc16637346c4ef0d55d1508f5c3"
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_report.test.ts",
@@ -5929,7 +5929,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:43b80b6ad24654510c40c4344f2332cfbbdf8e1e43ed87d82826a1d95f68fbcc",
+  "inputs_hash": "sha256:d88fb7abc0f6e2cc19746638cc615c80c070d360e0bbaff9b76614c870ed013b",
   "result": {
     "passed": true,
     "checks": [

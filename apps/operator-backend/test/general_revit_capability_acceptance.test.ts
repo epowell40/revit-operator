@@ -4451,6 +4451,59 @@ test("session-scoped tool notifications recover a timed-out mutation only after 
   }
 });
 
+test("session evidence treats a safe schema correction followed by success as recovered current truth", async () => {
+  const notifications = [
+    {
+      id: 201, ts: "2026-09-01T00:46:18.000Z", type: "codex.tool_call",
+      payload: {
+        server: "revit_operator", tool: "revit_call_tool", status: "failed",
+        arguments: { method: "POST", path: "/revit/quantify", body: { intent: "inventory" } },
+        result: [{ type: "inputText", text: JSON.stringify({
+          schema: "revit-operator.mcp-pre-dispatch-failure.v1", ok: false,
+          code: "mcp_request_validation_failed", request_dispatched: false,
+          outcome_unknown: false, path: "/revit/quantify"
+        }) }]
+      }
+    },
+    {
+      id: 202, ts: "2026-09-01T00:46:32.000Z", type: "codex.tool_call",
+      payload: {
+        server: "revit_operator", tool: "revit_call_tool", status: "completed", error: null,
+        arguments: { method: "POST", path: "/revit/quantify", body: {
+          intent: "count_and_list", categories: ["Air Terminals"], groupBy: ["family", "type"]
+        } },
+        result: [{ type: "inputText", text: JSON.stringify({
+          status: "Ok", total: 509, groups: [{ family: "Fixture family", type: "Fixture type", count: 509 }],
+          canonical_attempt_settlement: { request_dispatched: true, effect_state: "none" }
+        }) }]
+      }
+    }
+  ];
+  const server = http.createServer((request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(request.url?.startsWith("/api/notifications")
+      ? { notifications, next_after_id: 202 }
+      : { goal: { action_log: [] } }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const evidence = await loadDurableToolEvidence(`http://127.0.0.1:${address.port}`, { assignments: [] },
+      "Count all air devices by family and type.", {
+        session_id: "candidate-26-session",
+        started_at: "2026-09-01T00:46:00.000Z"
+      });
+    assert.deepEqual(evidence.successful_paths, ["/revit/quantify"]);
+    assert.deepEqual(evidence.failed_paths, []);
+    assert.deepEqual(evidence.recovered_paths, ["/revit/quantify"]);
+    assert.deepEqual(evidence.rejected_no_effect_paths, ["/revit/quantify"]);
+    assert.deepEqual(evidence.historical_failed_paths, []);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
 test("durable loading rejects completed tool records with failed or uncertain result envelopes", async () => {
   const action = (id: string, result: Record<string, unknown>) => ({
     id,

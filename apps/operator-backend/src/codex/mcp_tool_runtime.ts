@@ -64,7 +64,12 @@ export class CodexMcpToolRuntime {
   private dynamicNamespace: unknown | null = null;
   private readonly backendAuthLeases = new OperatorBackendAuthLeaseRegistry();
   private readonly assignmentKernelV2Leases = new AssignmentKernelTurnLeaseRegistryV2();
-  private readonly assignmentKernelV2TurnStops = new Map<string, { handler?: (reason: string) => void; pending_reason?: string }>();
+  private readonly assignmentKernelV2TurnStops = new Map<string, {
+    handler?: (reason: string) => void;
+    pending_reason?: string;
+    wait_for_tool_completion?: boolean;
+    dispatched?: boolean;
+  }>();
 
   constructor(private readonly opts: {
     backendCwd: string;
@@ -145,8 +150,14 @@ export class CodexMcpToolRuntime {
     const id = String(turnId || "").trim();
     if (!id) throw new Error("assignment_kernel_v2_turn_stop_identity_missing");
     const current = this.assignmentKernelV2TurnStops.get(id) ?? {};
-    this.assignmentKernelV2TurnStops.set(id, { ...current, handler });
-    if (current.pending_reason) handler(current.pending_reason);
+    const next = { ...current, handler };
+    if (next.pending_reason && next.wait_for_tool_completion !== true && next.dispatched !== true) {
+      next.dispatched = true;
+      this.assignmentKernelV2TurnStops.set(id, next);
+      handler(next.pending_reason);
+      return;
+    }
+    this.assignmentKernelV2TurnStops.set(id, next);
   }
 
   requestAssignmentKernelV2TurnStop(turnId: unknown, reason: string): void {
@@ -154,8 +165,46 @@ export class CodexMcpToolRuntime {
     if (!id) return;
     const normalized = String(reason || "assignment_progress_controller_stop").slice(0, 240);
     const current = this.assignmentKernelV2TurnStops.get(id) ?? {};
-    this.assignmentKernelV2TurnStops.set(id, { ...current, pending_reason: current.pending_reason ?? normalized });
-    current.handler?.(current.pending_reason ?? normalized);
+    const next = {
+      ...current,
+      pending_reason: current.pending_reason ?? normalized,
+      wait_for_tool_completion: false
+    };
+    if (next.handler && next.dispatched !== true) {
+      next.dispatched = true;
+      this.assignmentKernelV2TurnStops.set(id, next);
+      next.handler(next.pending_reason);
+      return;
+    }
+    this.assignmentKernelV2TurnStops.set(id, next);
+  }
+
+  queueAssignmentKernelV2TurnStop(turnId: unknown, reason: string): void {
+    const id = typeof turnId === "string" ? turnId.trim() : "";
+    if (!id) return;
+    const normalized = String(reason || "assignment_progress_controller_stop").slice(0, 240);
+    const current = this.assignmentKernelV2TurnStops.get(id) ?? {};
+    this.assignmentKernelV2TurnStops.set(id, {
+      ...current,
+      pending_reason: current.pending_reason ?? normalized,
+      wait_for_tool_completion: true
+    });
+  }
+
+  flushAssignmentKernelV2TurnStop(turnId: unknown): void {
+    const id = typeof turnId === "string" ? turnId.trim() : "";
+    if (!id) return;
+    const current = this.assignmentKernelV2TurnStops.get(id);
+    if (!current?.pending_reason || current.dispatched === true) return;
+    const pendingReason = current.pending_reason;
+    const next = { ...current, wait_for_tool_completion: false };
+    if (next.handler) {
+      next.dispatched = true;
+      this.assignmentKernelV2TurnStops.set(id, next);
+      next.handler(pendingReason);
+      return;
+    }
+    this.assignmentKernelV2TurnStops.set(id, next);
   }
 
   clearAssignmentKernelV2TurnStop(turnId: unknown): void {

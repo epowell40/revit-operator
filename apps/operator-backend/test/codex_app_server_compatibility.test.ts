@@ -469,3 +469,31 @@ test("V2 turn-stop requests survive handler registration order and clear at the 
   assert.deepEqual(reasons, ["criteria_complete"]);
   runtime.stop();
 });
+
+test("V2 terminal stop waits until the completed dynamic tool result is observable", () => {
+  const runtime = new CodexMcpToolRuntime({
+    backendCwd: process.cwd(),
+    workspaceRoot: process.cwd(),
+    codexHome: process.cwd(),
+    spawnEnv: {}
+  });
+  const reasons: string[] = [];
+  runtime.bindAssignmentKernelV2TurnStop("terminal-tool-turn", reason => reasons.push(reason));
+  runtime.queueAssignmentKernelV2TurnStop("terminal-tool-turn", "criterion_observations_evaluated");
+  assert.deepEqual(reasons, [], "settlement must not interrupt before Codex records the successful tool result");
+  runtime.flushAssignmentKernelV2TurnStop("terminal-tool-turn");
+  assert.deepEqual(reasons, ["criterion_observations_evaluated"]);
+  runtime.flushAssignmentKernelV2TurnStop("terminal-tool-turn");
+  assert.deepEqual(reasons, ["criterion_observations_evaluated"], "duplicate completion notifications are idempotent");
+  runtime.clearAssignmentKernelV2TurnStop("terminal-tool-turn");
+
+  const lateReasons: string[] = [];
+  runtime.queueAssignmentKernelV2TurnStop("queued-before-bind", "criterion_observations_evaluated");
+  runtime.bindAssignmentKernelV2TurnStop("queued-before-bind", reason => lateReasons.push(reason));
+  assert.deepEqual(lateReasons, [],
+    "handler registration must not bypass the completed-tool boundary");
+  runtime.flushAssignmentKernelV2TurnStop("queued-before-bind");
+  assert.deepEqual(lateReasons, ["criterion_observations_evaluated"]);
+  runtime.clearAssignmentKernelV2TurnStop("queued-before-bind");
+  runtime.stop();
+});

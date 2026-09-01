@@ -27,6 +27,30 @@ function durationStats(values: number[]) {
   };
 }
 
+function canonicalV2OperationRows(toolResults: JsonRecord): Array<{ path: string; duration_ms: number; failed: boolean }> {
+  const bundle = asRecord(toolResults.durable_assignment_kernel_v2);
+  const publications = Array.isArray(bundle.assignments) ? bundle.assignments.map(asRecord) : [];
+  return publications.flatMap((publication) => {
+    const snapshot = asRecord(publication.snapshot);
+    return Object.values(asRecord(snapshot.operations)).map(asRecord).flatMap((operation) => {
+      const requestIdentity = asRecord(operation.request_identity);
+      const input = asRecord(operation.input);
+      const path = String(requestIdentity.path || input.path || "");
+      if (!path.startsWith("/revit/") || operation.dispatch_state !== "dispatched") return [];
+      const result = asRecord(operation.result);
+      const startedAt = Date.parse(String(operation.dispatched_at || ""));
+      const finishedAt = Date.parse(String(result.completed_at || operation.settled_at || ""));
+      const duration = Number.isFinite(startedAt) && Number.isFinite(finishedAt)
+        ? Math.max(0, finishedAt - startedAt)
+        : 0;
+      const failed = result.status !== "succeeded"
+        || result.dispatch_state !== "dispatched"
+        || operation.persistent_effect === "unknown";
+      return [{ path, duration_ms: duration, failed }];
+    });
+  });
+}
+
 export function summarizeGeneralRevitLatency(tracesValue: unknown[], suiteContextValue: unknown): JsonRecord {
   const traces = tracesValue.map(asRecord);
   const byPath = new Map<string, Array<{ duration: number; failed: boolean; caseId: string }>>();
@@ -42,13 +66,16 @@ export function summarizeGeneralRevitLatency(tracesValue: unknown[], suiteContex
     const caseId = String(trace.case_id || "unknown");
     const toolResults = asRecord(trace.tool_results);
     const durable = asRecord(toolResults.durable_tool_evidence);
-    const receipts = Array.isArray(durable.result_receipts) ? durable.result_receipts.map(asRecord) : [];
+    const canonicalV2Rows = canonicalV2OperationRows(toolResults);
+    const receipts: JsonRecord[] = canonicalV2Rows.length > 0
+      ? canonicalV2Rows.map((row) => ({ path: row.path, duration_ms: row.duration_ms, failed: row.failed } as JsonRecord))
+      : Array.isArray(durable.result_receipts) ? durable.result_receipts.map(asRecord) : [];
     const pathCounts = new Map<string, number>();
     for (const receipt of receipts) {
       const path = String(receipt.path || "unknown");
       const duration = numberValue(receipt.duration_ms);
       const rows = byPath.get(path) || [];
-      rows.push({ duration, failed: receipt.status === "failed" || receipt.envelope_succeeded === false, caseId });
+      rows.push({ duration, failed: receipt.failed === true || receipt.status === "failed" || receipt.envelope_succeeded === false, caseId });
       byPath.set(path, rows);
       pathCounts.set(path, (pathCounts.get(path) || 0) + 1);
     }

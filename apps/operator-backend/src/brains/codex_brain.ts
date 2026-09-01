@@ -842,6 +842,11 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
               // ignore
             }
           }
+          // A terminal/progress stop raised while settling this tool is
+          // intentionally flushed only after Codex has emitted the completed
+          // dynamic-tool item. This preserves the successful result envelope
+          // while still preventing any subsequent provider reasoning.
+          mcpRuntime?.flushAssignmentKernelV2TurnStop(turnId);
         }
         if (item?.type === "mcpToolCall") {
           const mcpStatus = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";

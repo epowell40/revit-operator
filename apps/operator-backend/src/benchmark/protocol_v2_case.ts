@@ -457,8 +457,19 @@ export function buildBenchmarkCaseResultV2(args: {
   const modelSummary = record(efficiency.model_call_summary);
   const toolCalls = records(args.trace.tool_calls);
   const canonicalRevitCalls = records(record(record(args.trace.tool_results).durable_tool_evidence).canonical_attempt_receipts)
-    .filter((entry) => String(entry.path || "").startsWith("/revit/")).length;
-  const revitCalls = Math.max(toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/")).length, canonicalRevitCalls);
+    .filter((entry) => String(entry.path || "").startsWith("/revit/")
+      && ["acknowledged", "dispatched"].includes(String(entry.dispatch_state || ""))).length;
+  const kernelRevitCalls = kernelOperations(args.trace).filter(({ operation }) => {
+    const requestIdentity = record(operation.request_identity);
+    const input = record(operation.input);
+    const path = String(requestIdentity.path || input.path || "");
+    return path.startsWith("/revit/") && operation.dispatch_state === "dispatched";
+  }).length;
+  const revitCalls = Math.max(
+    toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/") && entry.request_dispatched !== false).length,
+    canonicalRevitCalls,
+    kernelRevitCalls
+  );
   const evaluatorVersion = args.evaluatorVersion || GENERAL_REVIT_EVALUATOR_V2;
   const presentation = stages.at(-1)!;
   const identity = transformedIdentity({

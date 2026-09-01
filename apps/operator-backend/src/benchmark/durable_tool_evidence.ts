@@ -421,9 +421,16 @@ export async function loadDurableToolEvidence(
   type SessionReceipt = {
     notification_id: number; notification_ts: string; source_session_id: string; action_id: string;
     path: string; request_effect: "read" | "preview" | "apply"; status: string;
-    envelope_succeeded: boolean; result_sha256: string; parsed_result: JsonRecord;
+    envelope_succeeded: boolean; request_dispatched: boolean | null;
+    outcome_unknown: boolean; reconciliation_required: boolean;
+    result_sha256: string; parsed_result: JsonRecord;
+  };
+  type SessionOutcome = {
+    path: string; tool: string; outcome: "completed" | "failed" | "rejected_no_effect";
+    had_failure: boolean; had_rejection: boolean;
   };
   const sessionResultReceipts: SessionReceipt[] = [];
+  const sessionOutcomes = new Map<string, SessionOutcome>();
   if (expectedSessionId) {
     try {
       const notifications = await requestSessionNotifications(baseUrl, expectedSessionId);
@@ -448,6 +455,14 @@ export async function loadDurableToolEvidence(
           && !String(payload.error || "").trim()
           && !parsedEnvelopeHasFailure(parsed)
           && !outcomeEnvelopeIsUnsafe(envelope);
+        const requestDispatched = envelope.request_dispatched_false
+          ? false
+          : envelope.request_dispatched_true ? true : null;
+        const rejectedNoEffect = !succeeded
+          && requestDispatched === false
+          && !envelope.outcome_unknown
+          && !envelope.reconciliation_required
+          && !envelope.classification_incomplete;
         const resultText = Object.keys(parsed).length > 0 ? canonicalJson(parsed) : canonicalJson(payload.result ?? null);
         const receipt: SessionReceipt = {
           notification_id: numberValue(notification.id),
@@ -458,15 +473,50 @@ export async function loadDurableToolEvidence(
           request_effect: effect,
           status: succeeded ? "completed" : "failed",
           envelope_succeeded: succeeded,
+          request_dispatched: requestDispatched,
+          outcome_unknown: envelope.outcome_unknown,
+          reconciliation_required: envelope.reconciliation_required,
           result_sha256: sha256(resultText),
           parsed_result: parsed
         };
         sessionResultReceipts.push(receipt);
-        (succeeded ? successfulPaths : failedPaths).add(path);
-        (succeeded ? successfulTools : failedTools).add(toolName);
+        const outcomeKey = `${toolName}\n${path}\n${effect}`;
+        const prior = sessionOutcomes.get(outcomeKey);
+        const outcome: SessionOutcome["outcome"] = succeeded
+          ? "completed"
+          : rejectedNoEffect ? "rejected_no_effect" : "failed";
+        sessionOutcomes.set(outcomeKey, {
+          path,
+          tool: toolName,
+          outcome,
+          had_failure: prior?.had_failure === true || outcome === "failed",
+          had_rejection: prior?.had_rejection === true || outcome === "rejected_no_effect"
+        });
+        if (outcome === "failed") {
+          historicalFailedPaths.add(path);
+          historicalFailedTools.add(toolName);
+        }
+        if (outcome === "rejected_no_effect") {
+          rejectedNoEffectPaths.add(path);
+          rejectedNoEffectTools.add(toolName);
+        }
       }
     } catch (error) {
       resultReceipts.push({ goal_id: null, status: "session_notifications_fetch_failed", error: String(error) });
+    }
+  }
+
+  for (const outcome of sessionOutcomes.values()) {
+    if (outcome.outcome === "completed") {
+      successfulPaths.add(outcome.path);
+      successfulTools.add(outcome.tool);
+      if (outcome.had_failure || outcome.had_rejection) {
+        recoveredPaths.add(outcome.path);
+        recoveredTools.add(outcome.tool);
+      }
+    } else if (outcome.outcome === "failed") {
+      failedPaths.add(outcome.path);
+      failedTools.add(outcome.tool);
     }
   }
 

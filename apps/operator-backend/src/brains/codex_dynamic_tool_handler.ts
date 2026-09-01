@@ -65,7 +65,12 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
   if (!providerReceiptRetained) return;
   const advanced = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
   if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
-    input.runtime.requestAssignmentKernelV2TurnStop(input.turn_id, advanced.decision.reason);
+    // The canonical decision is already durable, but interrupting the Codex
+    // turn here races the item/tool/call response and can make a successful
+    // native result appear as a failed dynamic tool item. Arm the stop now;
+    // the Codex notification boundary flushes it after the completed tool
+    // result has been observed and journaled.
+    input.runtime.queueAssignmentKernelV2TurnStop(input.turn_id, advanced.decision.reason);
   }
 }
 
@@ -155,7 +160,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         if (afterInteraction && (afterInteraction.terminal
           || afterInteraction.outcome === "awaiting_user_input"
           || afterInteraction.outcome === "awaiting_user_review")) {
-          runtime.requestAssignmentKernelV2TurnStop(params.turnId, afterInteraction.terminal_reason ?? afterInteraction.outcome);
+          runtime.queueAssignmentKernelV2TurnStop(params.turnId, afterInteraction.terminal_reason ?? afterInteraction.outcome);
         }
         return adaptMcpToolCallResultToDynamicResponse(result, {
           tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0

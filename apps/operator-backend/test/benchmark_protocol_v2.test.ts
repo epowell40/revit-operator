@@ -12,6 +12,7 @@ import {
 } from "../src/benchmark/general_revit_capability_acceptance.js";
 import { buildBenchmarkCaseResultV2 } from "../src/benchmark/protocol_v2_case.js";
 import { canonicalAttemptRequestedEffect, loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
+import { summarizeGeneralRevitLatency } from "../src/benchmark/general_revit_latency.js";
 import { assertReleaseCanaryInvocationV2, RELEASE_CANARY_CASE_IDS_V2, selectReleaseCanaryCasesV2 } from "../src/benchmark/protocol_v2_canary.js";
 import { compareBenchmarkExactRerunsV2 } from "../src/benchmark/protocol_v2_compare.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "../src/benchmark/protocol_v2_envelope.js";
@@ -423,6 +424,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     },
     work_unit_id: "work-primary",
     capability_id: "revit.quantify",
+    request_identity: { method: "POST", path: "/revit/quantify", request_signature: "request-inventory" },
     purpose: "work",
     operation_role: "root",
     requested_effect: "read",
@@ -433,6 +435,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     admission_state: "admitted",
     dispatch_state: "dispatched",
     dispatch_authority: "native",
+    dispatched_at: START,
     persistent_effect: "none",
     settlement_state: "settled",
     observation_ids: ["observation-inventory"],
@@ -443,7 +446,8 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
       dispatch_state: "dispatched",
       persistent_effect: "none",
       authority: "native-host",
-      receipt_id: "receipt-inventory"
+      receipt_id: "receipt-inventory",
+      completed_at: FINISH
     }
   };
   const providerCall = {
@@ -507,6 +511,11 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
       }
     }]
   };
+  trace.tool_calls = [];
+  toolResults.durable_tool_evidence = {
+    schema: "revit-operator.benchmark-durable-tool-evidence/v1",
+    canonical_attempt_receipts: [], result_receipts: []
+  };
   assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({
     model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
     task_traces: [trace]
@@ -519,6 +528,11 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
   assert.equal(result.execution_truth.effect_state, "none");
   assert.equal(result.original_runtime_verdict.verdict, "complete");
   assert.equal(result.assignment_outcome, "complete");
+  assert.equal(result.metrics.revit_calls, 1, "Protocol metrics must count the dispatched operation in the exact V2 snapshot");
+  const latency = summarizeGeneralRevitLatency([trace], {});
+  assert.equal((latency.revit_tool_duration as JsonRecord).count, 1,
+    "latency reporting must use the same exact V2 operation publication");
+  assert.equal(((latency.by_revit_path as JsonRecord)["/revit/quantify"] as JsonRecord).failed_or_rejected_count, 0);
 });
 
 test("Protocol V2 reports a missing direct V2 publication instead of falling back to legacy provider absence", () => {
