@@ -116,6 +116,53 @@ test("quantify result is normalized once into an explicit task-result Observatio
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.group" && fact.value === 2));
 });
 
+test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
+  const body = {
+    elementId: 1421361,
+    expectedOldText: "***An Autodesk Revit sample project***",
+    newText: "Issued for Construction",
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body);
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: false,
+        status: "Precondition Failed",
+        errorCode: "expected_old_text_mismatch",
+        actualText: "***An Autodesk Revit sample project***\r",
+        expectedOldText: "***An Autodesk Revit sample project***",
+        changed: false,
+        dryRun: true,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "candidate39-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const result = decorated.structuredContent.operation_result_v2;
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.equal(result.observation_required, true);
+  assert.equal(result.error_code, "expected_old_text_mismatch");
+  assert.ok(facts.some((fact: any) => fact.fact_id === "control.domain_succeeded" && fact.value === false));
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.preview_valid"), false);
+});
+
 test("count-only quantify summary is sufficient task evidence without rows or another Revit call", async () => {
   const body = {
     categories: ["OST_DuctTerminal"],

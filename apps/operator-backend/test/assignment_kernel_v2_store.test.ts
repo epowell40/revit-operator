@@ -353,6 +353,7 @@ test("trusted AssignmentSpec creation gives opaque executable previews the same 
   });
   const previewSpec = assignmentSpecFromGoalV2({ goal: preview, run_id: "run-preview-input-v2" });
   assert.deepEqual(previewSpec.input_variables.map(value => value.variable_id), ["replacement_text"]);
+  assert.deepEqual(previewSpec.criteria[0]?.semantic_fact_requirements, ["task.preview_valid"]);
 
   const read = createGoal({
     title: "Explain note replacement",

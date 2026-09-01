@@ -147,6 +147,11 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
           || operation.result.native_transaction_state !== "committed")) {
       return denied("apply_task_effect_not_committed", operation);
     }
+    if (!desiredStateRead && input.snapshot.spec.requested_effect === "preview"
+        && (operation.persistent_effect !== "none"
+          || operation.result.native_transaction_state !== "rolled_back")) {
+      return denied("preview_task_effect_not_rolled_back", operation);
+    }
   }
   if (!input.observation.fulfillment_role || input.observation.fulfillment_role !== operation.fulfillment_role) return denied("observation_fulfillment_role_mismatch", operation);
   if (input.observation.capability_id !== operation.capability_id) return denied("observation_capability_mismatch", operation);

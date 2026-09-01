@@ -112,6 +112,53 @@ function resultEnvelope(operationId: string, binding: any, requestIdentity: any,
   };
 }
 
+function previewResultEnvelope(
+  operationId: string,
+  binding: any,
+  requestIdentity: any,
+  payload: Record<string, unknown>,
+  succeeded: boolean
+) {
+  const hash = createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex");
+  return {
+    content: [],
+    structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: {
+        schema: OPERATION_RESULT_V2_SCHEMA,
+        result_id: `result-${operationId}`,
+        operation_id: operationId,
+        binding,
+        status: succeeded ? "succeeded" : "failed_after_dispatch",
+        dispatch_state: "dispatched",
+        persistent_effect: "none",
+        native_transaction_state: "rolled_back",
+        authority: "native-host",
+        result_schema_id: "operator-native/POST:/revit/replace-text-note/v2",
+        observation_required: true,
+        raw_payload_hash: hash,
+        receipt_id: `receipt-${operationId}`,
+        request_identity: requestIdentity,
+        completed_at: "2026-09-01T14:28:16.000Z",
+        ...(succeeded ? {} : { error_code: "expected_old_text_mismatch" })
+      },
+      observation: {
+        raw_payload: payload,
+        semantic_facts: [
+          { fact_id: "control.result_available", fact_class: "control", value: true },
+          { fact_id: "control.domain_succeeded", fact_class: "control", value: succeeded },
+          ...(succeeded ? [
+            { fact_id: "task.result_available", fact_class: "domain", value: true },
+            { fact_id: "task.preview_valid", fact_class: "domain", value: true }
+          ] : [])
+        ],
+        verification_relevance: ["task_result"],
+        evidence_class: "task_result"
+      }
+    }
+  };
+}
+
 function settleRead(goalId: string) {
   const snapshot = getAssignmentKernelSnapshotV2(goalId)!;
   const lease = openAssignmentKernelOperationV2({
@@ -197,6 +244,92 @@ test("quiescence or assistant claim without authoritative Observation cannot com
   }), /unknown observation/);
   assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.terminal, false);
   assert.equal(getGoal(goal.id)!.finished_at, null);
+}));
+
+test("Candidate 39 failed native preview remains evidence, cannot complete, and permits one corrected preview", () => workspace(() => {
+  const goal = createGoal({
+    title: "Preview selected note replacement",
+    objective: "Preview replacing the selected note with the authenticated replacement text without applying it.",
+    acceptance_criteria: ["The requested preview is authoritatively returned."],
+    status: "active",
+    related_session_id: "session-candidate39-preview",
+    created_by: "principal-candidate39-preview",
+    work_budget: { requested_effect: "preview", document_fingerprint: "document-candidate39-preview" }
+  });
+  const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate39-preview" });
+  const criterionId = getAssignmentKernelSnapshotV2(goal.id)!.spec.criteria[0]!.criterion_id;
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id)!.spec.criteria[0]!.semantic_fact_requirements, ["task.preview_valid"]);
+
+  const failedLease = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id: "candidate39-preview-first",
+    provider_turn_id: "candidate39-turn-first",
+    capability_id: "revit_call_tool",
+    classified_effect: "preview",
+    target_tokens: ["elementid:1421361"],
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1421361, expectedOldText: "***An Autodesk Revit sample project***", dryRun: true, apply: false }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(failedLease);
+  const failedPayload = {
+    ok: false,
+    status: "Precondition Failed",
+    errorCode: "expected_old_text_mismatch",
+    actualText: "***An Autodesk Revit sample project***\r",
+    expectedOldText: "***An Autodesk Revit sample project***",
+    changed: false,
+    dryRun: true
+  };
+  const failed = settleAssignmentKernelOperationV2(
+    failedLease,
+    previewResultEnvelope(failedLease.operation_id, failedLease.binding, failedLease.request_identity, failedPayload, false)
+  );
+  assert.equal(failed.snapshot.operations[failedLease.operation_id]!.result!.status, "failed_after_dispatch");
+  assert.equal(failed.snapshot.operations[failedLease.operation_id]!.persistent_effect, "none");
+  assert.ok(failed.observation);
+  const unresolved = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{ criterion_id: criterionId, observation_ids: [failed.observation!.observation_id] }]
+  });
+  assert.equal(unresolved.criteria[criterionId]!.status, "uncertain");
+  assert.equal(unresolved.terminal, false);
+  assert.equal(unresolved.outcome, "active");
+
+  const correctedLease = openAssignmentKernelOperationV2({
+    snapshot: unresolved,
+    controller_request_id: "candidate39-preview-corrected",
+    provider_turn_id: "candidate39-turn-corrected",
+    capability_id: "revit_call_tool",
+    classified_effect: "preview",
+    target_tokens: ["elementid:1421361"],
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1421361, expectedOldText: "***An Autodesk Revit sample project***\r", dryRun: true, apply: false }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(correctedLease);
+  const corrected = settleAssignmentKernelOperationV2(
+    correctedLease,
+    previewResultEnvelope(correctedLease.operation_id, correctedLease.binding, correctedLease.request_identity, {
+      ok: true,
+      status: "Dry Run",
+      before: "***An Autodesk Revit sample project***\r",
+      after: "Issued for Construction",
+      changed: true,
+      dryRun: true
+    }, true)
+  );
+  const terminal = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{ criterion_id: criterionId, observation_ids: [failed.observation!.observation_id, corrected.observation!.observation_id] }]
+  });
+  assert.equal(terminal.criteria[criterionId]!.status, "pass");
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
 }));
 
 test("cross-Assignment Observation is rejected and apply Assignment is not promoted by read evidence", () => workspace(() => {

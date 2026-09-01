@@ -61,7 +61,8 @@ function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly str
 
 function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
   const inventoryFacts = inventoryCriterionFacts(goal, facts);
-  const requiredFacts = inventoryFacts ?? facts.map((fact) => fact === "result.available" ? "task.result_available" : fact);
+  const successFact = requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available";
+  const requiredFacts = inventoryFacts ?? facts.map((fact) => fact === "result.available" ? successFact : fact);
   const inventory = requiredFacts.some((fact) => fact.startsWith("inventory."));
   return {
     semantic_fact_requirements: requiredFacts,
@@ -102,7 +103,8 @@ function criteria(goal: GoalRecord): AssignmentSpecV2["criteria"] {
   if (configured === undefined || configured === null) {
     if (goal.acceptance_criteria.length !== 1) throw new Error("assignment_kernel_v2_criterion_fact_contract_required");
     const requirement = goal.acceptance_criteria[0]!;
-    const contract = evidencePolicy(goal, inventoryCriterionFacts(goal) ?? ["task.result_available"]);
+    const contract = evidencePolicy(goal, inventoryCriterionFacts(goal)
+      ?? [requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available"]);
     return [{
       criterion_id: stableId("criterion", requirement), requirement, required: true,
       ...contract,

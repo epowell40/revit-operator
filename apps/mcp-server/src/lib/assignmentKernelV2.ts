@@ -450,6 +450,16 @@ function aliasedField(row: Record<string, unknown>, names: readonly string[]): u
   return matches[0]![1];
 }
 
+function nativeDomainFailure(payload: unknown): boolean {
+  const root = object(payload);
+  return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false;
+}
+
+function nativeDomainFailureCode(payload: unknown): string {
+  const root = object(payload);
+  return text(aliasedField(root, ["error_code", "errorCode", "code"])) || "native_domain_operation_failed";
+}
+
 function scalar(value: unknown): value is Scalar {
   return value === null || ["string", "number", "boolean"].includes(typeof value);
 }
@@ -479,21 +489,27 @@ function semanticFacts(
   nativeCallCount: number,
   evidence: EvidenceClass,
   path: string,
-  requestBody?: unknown
+  requestBody?: unknown,
+  requestedEffect?: Context["requested_effect"]
 ): Array<Record<string, unknown>> {
+  const domainSucceeded = !nativeDomainFailure(payload);
   const facts: Array<Record<string, unknown>> = [
     { fact_id: "control.result_available", fact_class: "control", value: true },
+    { fact_id: "control.domain_succeeded", fact_class: "control", value: domainSucceeded },
     { fact_id: "control.native_call_count", fact_class: "control", value: nativeCallCount },
     { fact_id: "control.payload_hash", fact_class: "control", value: sha256(payload) }
   ];
-  if (evidence === "task_result") facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
+  if (evidence === "task_result" && domainSucceeded) {
+    facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
+    if (requestedEffect === "preview") facts.push({ fact_id: "task.preview_valid", fact_class: "domain", value: true });
+  }
   const root = object(payload);
   const summary = object(aliasedField(root, ["summary"]));
   const rootTotal = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
   const total = rootTotal === undefined
     ? aliasedField(summary, ["total", "total_count", "totalCount", "count"])
     : rootTotal;
-  const inventory = evidence === "task_result" && path.toLowerCase() === "/revit/quantify";
+  const inventory = evidence === "task_result" && domainSucceeded && path.toLowerCase() === "/revit/quantify";
   if (inventory && typeof total === "number" && Number.isFinite(total)) {
     facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
     facts.push({ fact_id: "inventory.total", fact_class: "domain", value: total });
@@ -559,11 +575,13 @@ function observationPayload(payload: unknown): unknown {
     .map(([key, value]) => [key, structuredClone(value)]));
 }
 
-function operationResultForCall(call: NativeCall, failed: boolean): Record<string, unknown> {
+function operationResultForCall(call: NativeCall, transportFailed: boolean): Record<string, unknown> {
   const settlement = directSettlement(call.payload);
-  if (!failed && Object.keys(settlement).length === 0) throw new Error("assignment_kernel_v2_native_settlement_missing");
+  if (!transportFailed && Object.keys(settlement).length === 0) throw new Error("assignment_kernel_v2_native_settlement_missing");
+  const domainFailed = !transportFailed && nativeDomainFailure(call.observation_payload);
+  const failed = transportFailed || domainFailed;
   const failureDispatchState = text(object(call.payload).native_dispatch_state);
-  const dispatchState = failed
+  const dispatchState = transportFailed
     ? failureDispatchState === "dispatched" ? "dispatched"
       : failureDispatchState === "dispatching" ? "dispatching"
         : "not_dispatched"
@@ -571,15 +589,15 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
   const dispatched = dispatchState !== "not_dispatched";
   const outcomeUnknown = object(call.payload).outcome_unknown === true;
   const persistentEffect = text(settlement.effect_state)
-    || (failed && dispatched && call.lease.requested_effect === "apply" && outcomeUnknown ? "unknown" : "none");
+    || (transportFailed && dispatched && call.lease.requested_effect === "apply" && outcomeUnknown ? "unknown" : "none");
   if (!['none', 'unknown', 'applied'].includes(persistentEffect)) throw new Error("assignment_kernel_v2_native_effect_invalid");
   if (call.lease.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
   if (call.lease.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
   const nativeTransactionState = persistentEffect === "applied" ? "committed"
-    : call.lease.requested_effect === "preview" && !failed ? "rolled_back"
+    : call.lease.requested_effect === "preview" && !transportFailed && dispatched ? "rolled_back"
       : persistentEffect === "unknown" ? "unknown" : "not_applicable";
-  const provenance = failed ? undefined : call.payload_provenance;
-  if (!failed && (!provenance || call.observation_payload === undefined)) {
+  const provenance = transportFailed ? undefined : call.payload_provenance;
+  if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
     throw new Error("assignment_kernel_v2_observation_payload_not_captured");
   }
   return {
@@ -593,8 +611,8 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
     native_transaction_state: nativeTransactionState,
     authority: "native-host",
     result_schema_id: `operator-native/${call.method}:${call.path}/v2`,
-    observation_required: !failed,
-    ...(!failed && provenance ? {
+    observation_required: !transportFailed,
+    ...(!transportFailed && provenance ? {
       raw_payload_hash: provenance.normalized.digest,
       payload_provenance: provenance
     } : {}),
@@ -602,7 +620,9 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
     native_correlation_id: call.request_id,
     request_identity: call.lease.request_identity,
     completed_at: new Date().toISOString(),
-    ...(failed ? { error_code: "native_operation_failed" } : {})
+    ...(transportFailed ? { error_code: "native_operation_failed" }
+      : domainFailed ? { error_code: nativeDomainFailureCode(call.observation_payload) }
+        : {})
   };
 }
 
@@ -616,7 +636,7 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
       ...(operationResult.observation_required ? {
         observation: {
           raw_payload: call.observation_payload,
-          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path, call.body),
+          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path, call.body, call.lease.requested_effect),
           target_scope: {},
           verification_relevance: [observationClass],
           evidence_class: observationClass
@@ -718,7 +738,7 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       ...(parentCall && operationResult.observation_required ? {
         observation: {
           raw_payload: parentCall.observation_payload,
-           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path, parentCall.body),
+           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path, parentCall.body, parentCall.lease.requested_effect),
           target_scope: {},
            verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],
            evidence_class: evidenceClass(parentCall.lease.fulfillment_role)
