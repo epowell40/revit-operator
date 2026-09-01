@@ -163,6 +163,135 @@ test("Candidate 39 explicit native domain failure is retained without becoming t
   assert.equal(facts.some((fact: any) => fact.fact_id === "task.preview_valid"), false);
 });
 
+test("an authoritative successful native preview retains explicit task preview evidence", async () => {
+  const body = {
+    elementId: 1421361,
+    expectedOldText: "***An Autodesk Revit sample project***\r",
+    newText: "Issued for Construction",
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
+        classified_effect: "preview"
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true,
+        status: "OK",
+        dryRun: true,
+        textNoteId: 1421361,
+        before: "***An Autodesk Revit sample project***\r",
+        after: "Issued for Construction",
+        changed: true,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "successful-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const result = decorated.structuredContent.operation_result_v2;
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
+});
+
+test("Candidate 40 action-specific read cannot claim a preview parent or emit task preview evidence", async () => {
+  const body = {
+    action: "inspect",
+    textNoteId: 1421361,
+    text: "",
+    typeName: "",
+    newTypeName: "",
+    baseTypeName: "",
+    fontName: "",
+    dryRun: true
+  };
+  const settled: any[] = [];
+  let admission: any = null;
+  const edge = {
+    async openChild(input: any) {
+      admission = structuredClone(input);
+      return {
+        ...meta("read", "work")[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "candidate40-inspection-child",
+        capability_id: input.capability_id,
+        requested_effect: input.classified_effect,
+        purpose: "work",
+        operation_role: "child",
+        fulfillment_role: input.fulfillment_role,
+        eligible_criterion_ids: input.eligible_criterion_ids,
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "candidate40-inspection-child-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { settled: true };
+    }
+  };
+
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/create-text", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-text", body, {
+        classified_effect: "read",
+        fulfillment_role: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/create-text", {
+        ok: true,
+        action: "inspect",
+        textNoteId: 1421361,
+        text: "***An Autodesk Revit sample project***\r",
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "candidate40-inspection-attempt",
+          requested_effect: "read",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    },
+    edge
+  );
+
+  assert.equal(admission.classified_effect, "read");
+  assert.equal(admission.fulfillment_role, "supporting_control");
+  assert.deepEqual(admission.eligible_criterion_ids, []);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].lease.operation_id, "candidate40-inspection-child");
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "control");
+  assert.equal(settled[0].result.structuredContent.observation.semantic_facts.some(
+    (fact: any) => fact.fact_id === "task.preview_valid"
+  ), false);
+  assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "completed_without_native_dispatch");
+  assert.equal(decorated.structuredContent.observation, undefined);
+});
+
 test("count-only quantify summary is sufficient task evidence without rows or another Revit call", async () => {
   const body = {
     categories: ["OST_DuctTerminal"],

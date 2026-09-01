@@ -152,7 +152,7 @@ export function conditionalActionPathEffect(pathname, body) {
   }
   if (normalized === "/revit/create-text") {
     const action = typeof row.action === "string" ? row.action.trim().toLowerCase() : "create";
-    if (action === "list_types") return "read";
+    if (action === "list_types" || action === "inspect") return "read";
     return row.dryRun === true || row.dry_run === true || row.preview === true || row.apply === false ? "preview" : "apply";
   }
   return undefined;

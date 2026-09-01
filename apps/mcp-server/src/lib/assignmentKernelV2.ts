@@ -14,6 +14,7 @@ const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const
 const OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA = "revit-operator.operation-input-schema-gap/v2" as const;
 
 type Scalar = string | number | boolean | null;
+type ClassifiedEffect = "read" | "preview" | "apply";
 type FulfillmentRole = "supporting_control" | "prerequisite" | "delegated_task_execution" | "verification" | "reconciliation" | "telemetry";
 type EvidenceClass = "control" | "prerequisite" | "task_result" | "verification" | "reconciliation" | "telemetry";
 type Binding = {
@@ -54,6 +55,7 @@ type NativeCall = {
   operation_id: string;
   parent_operation_id?: string;
   operation_role: "root" | "prerequisite" | "child";
+  classified_effect: ClassifiedEffect;
   lease: Context;
   method: string;
   path: string;
@@ -263,13 +265,19 @@ function nativeChildFulfillmentRole(_path: string, topology: "prerequisite" | "c
   return "supporting_control";
 }
 
-function operationMatchesNativeRequest(context: Context, request: RequestIdentity, body: unknown): boolean {
+function operationMatchesNativeRequest(
+  context: Context,
+  request: RequestIdentity,
+  body: unknown,
+  classifiedEffect: ClassifiedEffect
+): boolean {
   const expected = context.request_identity;
   // A typed MCP capability and a native route are different executable
   // identities unless the trusted controller admitted the exact native
   // method/path. Never let the first hidden native call opportunistically
   // claim an abstract typed parent.
-  if (!expected.method || !expected.path
+  if (context.requested_effect !== classifiedEffect
+      || !expected.method || !expected.path
       || expected.method !== request.method
       || expected.path !== request.path) return false;
   if (context.capability_id === "revit_call_tool") {
@@ -302,7 +310,12 @@ export async function beginAssignmentKernelNativeRequestV2(
   const path = String(pathValue).trim();
   if (!path.startsWith("/")) throw new Error("assignment_kernel_v2_native_request_path_invalid");
   const identity = nativeRequestIdentity(method, path, body);
-  const parentMatches = operationMatchesNativeRequest(scope.context, identity, body);
+  const classifiedEffectValue = options.classified_effect ?? scope.context.requested_effect;
+  if (!['read', 'preview', 'apply'].includes(classifiedEffectValue)) {
+    throw new Error("assignment_kernel_v2_native_effect_classification_invalid");
+  }
+  const classifiedEffect = classifiedEffectValue as ClassifiedEffect;
+  const parentMatches = operationMatchesNativeRequest(scope.context, identity, body, classifiedEffect);
   const useParent = !options.operation_role && !scope.parent_claimed && parentMatches;
   let lease: Context;
   let role: "root" | "prerequisite" | "child";
@@ -312,13 +325,21 @@ export async function beginAssignmentKernelNativeRequestV2(
     role = "root";
   } else {
     role = options.operation_role ?? "child";
-    const fulfillmentRole = nativeChildFulfillmentRole(path, role, options.fulfillment_role);
+    const taskFulfillmentRequested = options.fulfillment_role === "delegated_task_execution"
+      || options.fulfillment_role === "verification";
+    const fulfillmentRole = nativeChildFulfillmentRole(
+      path,
+      role,
+      taskFulfillmentRequested && classifiedEffect !== scope.context.requested_effect
+        ? undefined
+        : options.fulfillment_role
+    );
     lease = await scope.edge.openChild({
       parent_operation_id: scope.context.operation_id,
       child_ordinal: scope.native_calls.length,
       operation_role: role,
       capability_id: identity.capability_id,
-      classified_effect: options.classified_effect ?? "read",
+      classified_effect: classifiedEffect,
       method,
       path,
       arguments: { method, path, body: body ?? null },
@@ -334,6 +355,9 @@ export async function beginAssignmentKernelNativeRequestV2(
     if (lease.operation_id === scope.context.operation_id || lease.parent_operation_id !== scope.context.operation_id) {
       throw new Error("assignment_kernel_v2_child_operation_identity_invalid");
     }
+    if (lease.requested_effect !== classifiedEffect) {
+      throw new Error("assignment_kernel_v2_child_effect_classification_mismatch");
+    }
   }
   const requestId = sha256({
     operation_id: lease.operation_id,
@@ -345,6 +369,7 @@ export async function beginAssignmentKernelNativeRequestV2(
     operation_id: lease.operation_id,
     ...(role === "root" ? {} : { parent_operation_id: scope.context.operation_id }),
     operation_role: role,
+    classified_effect: classifiedEffect,
     lease,
     method,
     path,
@@ -490,7 +515,8 @@ function semanticFacts(
   evidence: EvidenceClass,
   path: string,
   requestBody?: unknown,
-  requestedEffect?: Context["requested_effect"]
+  requestedEffect?: Context["requested_effect"],
+  authoritativePreview = false
 ): Array<Record<string, unknown>> {
   const domainSucceeded = !nativeDomainFailure(payload);
   const facts: Array<Record<string, unknown>> = [
@@ -501,7 +527,9 @@ function semanticFacts(
   ];
   if (evidence === "task_result" && domainSucceeded) {
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
-    if (requestedEffect === "preview") facts.push({ fact_id: "task.preview_valid", fact_class: "domain", value: true });
+    if (requestedEffect === "preview" && authoritativePreview) {
+      facts.push({ fact_id: "task.preview_valid", fact_class: "domain", value: true });
+    }
   }
   const root = object(payload);
   const summary = object(aliasedField(root, ["summary"]));
@@ -628,6 +656,11 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
 
 function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, unknown>): Record<string, unknown> {
   const observationClass = evidenceClass(call.lease.fulfillment_role);
+  const authoritativePreview = call.classified_effect === "preview"
+    && operationResult.status === "succeeded"
+    && operationResult.dispatch_state === "dispatched"
+    && operationResult.persistent_effect === "none"
+    && operationResult.native_transaction_state === "rolled_back";
   return {
     content: [],
     structuredContent: {
@@ -636,7 +669,15 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
       ...(operationResult.observation_required ? {
         observation: {
           raw_payload: call.observation_payload,
-          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path, call.body, call.lease.requested_effect),
+          semantic_facts: semanticFacts(
+            call.observation_payload,
+            1,
+            observationClass,
+            call.path,
+            call.body,
+            call.lease.requested_effect,
+            authoritativePreview
+          ),
           target_scope: {},
           verification_relevance: [observationClass],
           evidence_class: observationClass
@@ -720,6 +761,13 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
   const operationResult = parentCall
     ? operationResultForCall(parentCall, failed)
     : transportOnlyResult(scope.context, result, failed, retainedEvidenceRead);
+  const authoritativeParentPreview = parentCall
+    ? parentCall.classified_effect === "preview"
+      && operationResult.status === "succeeded"
+      && operationResult.dispatch_state === "dispatched"
+      && operationResult.persistent_effect === "none"
+      && operationResult.native_transaction_state === "rolled_back"
+    : false;
   const root = object(result);
   const childOperationResults = calls
     .filter(call => call.operation_role !== "root")
@@ -738,7 +786,15 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       ...(parentCall && operationResult.observation_required ? {
         observation: {
           raw_payload: parentCall.observation_payload,
-           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path, parentCall.body, parentCall.lease.requested_effect),
+           semantic_facts: semanticFacts(
+             parentCall.observation_payload,
+             1,
+             evidenceClass(parentCall.lease.fulfillment_role),
+             parentCall.path,
+             parentCall.body,
+             parentCall.lease.requested_effect,
+             authoritativeParentPreview
+           ),
           target_scope: {},
            verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],
            evidence_class: evidenceClass(parentCall.lease.fulfillment_role)
