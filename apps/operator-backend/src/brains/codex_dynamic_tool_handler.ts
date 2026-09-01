@@ -172,15 +172,32 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         parallel.release();
       }
     }
-    const lease = openAssignmentKernelOperationV2({
-      snapshot: v2Snapshot,
-      controller_request_id: request.id,
-      provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
-      capability_id: String(params.tool || "unknown-capability"),
-      classified_effect: teammateGate.call?.effect ?? "unknown",
-      target_tokens: teammateGate.call?.target_tokens,
-      arguments: boundArguments.arguments
-    });
+    let lease: ReturnType<typeof openAssignmentKernelOperationV2>;
+    try {
+      lease = openAssignmentKernelOperationV2({
+        snapshot: v2Snapshot,
+        controller_request_id: request.id,
+        provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
+        capability_id: String(params.tool || "unknown-capability"),
+        classified_effect: teammateGate.call?.effect ?? "unknown",
+        target_tokens: teammateGate.call?.target_tokens,
+        arguments: boundArguments.arguments
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Admission is a deterministic controller decision, not an MCP/native
+      // execution failure. Preserve the exact reason for the provider while
+      // leaving the canonical gap and Operation graph unchanged.
+      recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: message });
+      parallel.release();
+      return {
+        contentItems: [{
+          type: "inputText",
+          text: `[assignment_kernel_v2_operation_admission_blocked] ${message}`
+        }],
+        success: false
+      };
+    }
     let accepted = false;
     try {
       const rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {

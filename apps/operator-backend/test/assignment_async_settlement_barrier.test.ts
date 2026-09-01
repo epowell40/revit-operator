@@ -35,6 +35,14 @@ import {
   ASSIGNMENT_CLARIFICATION_SCHEMA,
   requestAssignmentClarification
 } from "../src/assignments/interaction.js";
+import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
+import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import {
+  ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+  openAssignmentKernelOperationV2,
+  settleAssignmentKernelOperationV2
+} from "../src/assignments/assignment_kernel_v2_execution.js";
+import { OPERATION_RESULT_V2_SCHEMA } from "../src/domain/assignment-kernel/index.js";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
 
@@ -637,6 +645,124 @@ test("canonical terminal truth blocks before teammate-gate registration", { conc
       assert.equal(firstGate.allowed, true);
       assert.match(firstGate.call?.path ?? "", /^mcp:1\|/);
       recordTeammateMcpResult(runtime, firstGate, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 42 operation-admission rejection remains structured and never becomes a generic dynamic-tool failure", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate42-structured-admission";
+    const goal = createGoal({
+      title: "Return an inventory",
+      objective: "Count the requested Revit elements and group the result.",
+      acceptance_criteria: ["A complete inventory result is authoritatively established."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate42-regression",
+      work_budget: { requested_effect: "read", document_fingerprint: "document-candidate42" }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate42" });
+    const invalid = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: "candidate42-invalid-quantify",
+      provider_turn_id: "candidate42-turn-1",
+      capability_id: "revit_call_tool",
+      classified_effect: "read",
+      arguments: {
+        method: "POST",
+        path: "/revit/quantify",
+        body: {
+          categories: ["OST_DuctTerminal"],
+          group_by: ["family", "type"],
+          intent: "Count all air devices in the host project and group by family and type.",
+          scope: "host"
+        }
+      }
+    });
+    settleAssignmentKernelOperationV2(invalid, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: {
+          schema: OPERATION_RESULT_V2_SCHEMA,
+          result_id: `result-${invalid.operation_id}`,
+          operation_id: invalid.operation_id,
+          binding: invalid.binding,
+          status: "failed_before_dispatch",
+          dispatch_state: "not_dispatched",
+          persistent_effect: "none",
+          native_transaction_state: "not_applicable",
+          authority: "operator-mcp-transport",
+          result_schema_id: "operator-native/POST:/revit/quantify/input-validation/v1",
+          observation_required: false,
+          request_identity: invalid.request_identity,
+          completed_at: "2026-09-01T18:08:39.000Z",
+          error_code: "operator_native_input_schema_invalid",
+          input_schema_gap: {
+            schema: "revit-operator.operation-input-schema-gap/v2",
+            gap_id: `input-schema:${invalid.operation_id}`,
+            operation_id: invalid.operation_id,
+            capability_id: invalid.capability_id,
+            input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+            input_schema_digest: "a".repeat(64),
+            method: "POST",
+            path: "/revit/quantify",
+            request_signature: invalid.request_identity.request_signature,
+            dispatch: false,
+            effect: "none",
+            issues: [{
+              field_path: "body.intent",
+              expected_type: "enum",
+              actual_type: "string",
+              safe_correction_eligibility: "provider_corrected_arguments_required",
+              correction_action: "provider_resubmit",
+              expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+            }]
+          }
+        }
+      }
+    });
+
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async () => {
+        runtimeCalls += 1;
+        return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+      },
+      queueAssignmentKernelV2TurnStop: () => {}
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate42-message",
+      user_text: "Count all air devices and group the inventory by family and type.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      let response: { success?: boolean; contentItems?: Array<{ text?: string }> } | undefined;
+      await assert.doesNotReject(async () => {
+        response = await handleCodexServerRequest(runtime as any, {
+          id: "candidate42-unrelated-support-request",
+          method: "item/tool/call",
+          params: {
+            namespace: "revit_operator",
+            threadId: "candidate42-thread",
+            turnId: "candidate42-turn-2",
+            callId: "candidate42-support-call",
+            tool: "operator_discover_capabilities",
+            arguments: { need: "inventory" }
+          }
+        } as any) as typeof response;
+      });
+      assert.equal(response?.success, false);
+      assert.match(response?.contentItems?.[0]?.text ?? "", /assignment_kernel_v2_operation_admission_blocked/);
+      assert.match(response?.contentItems?.[0]?.text ?? "", /input_schema_gap_requires_corrected_operation_or_exact_schema_docs/);
+      assert.equal(runtimeCalls, 0, "rejected admission must not invoke the MCP or Revit runtime");
+      assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
+        "rejected admission must not open another OperationV2");
     } finally {
       endTeammateLoopOwner(teammate);
     }
