@@ -1737,11 +1737,11 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/contracts.ts",
-      "sha256": "sha256:83fe804b27e8990df300c53c9f6007b1ab386ae01e9550d12ffcdc830b214fa7"
+      "sha256": "sha256:b2ea713f40fea2b0b70e8090d5a46b39d7aeb507a612118ef9d672903144c8bc"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/controller.ts",
-      "sha256": "sha256:ffe164b5dfe713013660f08a9dbebb1e1e48f734196798e04d790f48dff124eb"
+      "sha256": "sha256:c31a01d0052f1de21399426bf0f0f18c123073c2a145050261cad50c7cc24977"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/provider_call.ts",
@@ -2845,7 +2845,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_controller.test.ts",
-      "sha256": "sha256:57ca468076b9c2981ec0f4e728b8f786a40e9e5ea309d4d3be922aff1dac0400"
+      "sha256": "sha256:e862dba92060cd9c309299eb468d8fb4d90bdd49d579b91f4ef18ccf12dbba8a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_publication.test.ts",
@@ -5929,7 +5929,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:cdfebd2e12c24389623e47634517e6062fea9f9a877af8ccdce2079df0e88288",
+  "inputs_hash": "sha256:43b80b6ad24654510c40c4344f2332cfbbdf8e1e43ed87d82826a1d95f68fbcc",
   "result": {
     "passed": true,
     "checks": [

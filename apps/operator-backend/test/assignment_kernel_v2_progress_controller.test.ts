@@ -364,6 +364,125 @@ test("repeated no-progress epochs exhaust liveness without creating success", ()
   if (decision.decision === "blocked") assert.equal(decision.reason, "no_progress_budget_exhausted");
 });
 
+test("Candidate 25 flight 3 gives one bounded execution opportunity after the first structured strategy selection", () => {
+  const initial = journal().snapshot();
+  const searchOperation: OperationV2 = {
+    ...operation("operation-search"),
+    capability_id: "revit_search_tools",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: { query: "inventory air terminals" },
+    dispatch_state: "not_dispatched",
+    settlement_state: "settled",
+    result: {
+      ...result("operation-search"),
+      status: "completed_without_native_dispatch",
+      dispatch_state: "not_dispatched",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_search_tools/v2",
+      observation_required: false,
+      raw_payload_hash: undefined
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const afterSearch = {
+    ...initial,
+    operations: { [searchOperation.operation_id]: searchOperation },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const searchEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterSearch,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [searchOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(searchEpoch.genuine_progress, false);
+
+  const beforeStrategy = { ...afterSearch, progress_epochs: [searchEpoch] };
+  const strategyOperation: OperationV2 = {
+    ...operation("operation-strategy"),
+    capability_id: "operator_record_execution_strategy",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: {
+      schema: "revit-operator.execution-strategy-evidence.v1",
+      selected_substrate: "typed_capability",
+      reason: "One typed read capability can return the requested inventory."
+    },
+    dispatch_state: "not_dispatched",
+    settlement_state: "settled",
+    result: {
+      ...result("operation-strategy"),
+      status: "completed_without_native_dispatch",
+      dispatch_state: "not_dispatched",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/operator_record_execution_strategy/v2",
+      observation_required: false,
+      raw_payload_hash: undefined
+    },
+    settled_at: "2026-08-26T20:00:03.000Z"
+  };
+  const afterStrategy = {
+    ...beforeStrategy,
+    operations: {
+      ...beforeStrategy.operations,
+      [strategyOperation.operation_id]: strategyOperation
+    }
+  };
+  const strategyEpoch = buildProgressEpochV2({
+    before: beforeStrategy,
+    after: afterStrategy,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [strategyOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:03.000Z"
+  });
+  const finalSnapshot = { ...afterStrategy, progress_epochs: [searchEpoch, strategyEpoch] };
+  const decision = decideAssignmentProgressV2({ snapshot: finalSnapshot, budget, now: "2026-08-26T20:00:04.000Z" });
+
+  assert.equal(strategyEpoch.genuine_progress, true);
+  assert.deepEqual(strategyEpoch.progress_reasons, ["execution_strategy_selected"]);
+  assert.equal(decision.decision, "admit_reasoning_turn");
+
+  const repeatedStrategy: OperationV2 = {
+    ...strategyOperation,
+    operation_id: "operation-strategy-repeat",
+    input: {
+      ...strategyOperation.input,
+      reason: "Different prose cannot turn the same strategy selection into new progress."
+    },
+    result: {
+      ...strategyOperation.result!,
+      result_id: "result-operation-strategy-repeat",
+      operation_id: "operation-strategy-repeat"
+    }
+  };
+  const beforeRepeat = finalSnapshot;
+  const afterRepeat = {
+    ...beforeRepeat,
+    operations: {
+      ...beforeRepeat.operations,
+      [repeatedStrategy.operation_id]: repeatedStrategy
+    }
+  };
+  const repeatedEpoch = buildProgressEpochV2({
+    before: beforeRepeat,
+    after: afterRepeat,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [repeatedStrategy.operation_id],
+    recorded_at: "2026-08-26T20:00:04.000Z"
+  });
+  assert.equal(repeatedEpoch.genuine_progress, false);
+  assert.deepEqual(repeatedEpoch.progress_reasons, []);
+});
+
 test("Candidate 13 flight 3 preserves one correction turn when a structured schema gap follows unrelated no-progress", () => {
   const initial = journal().snapshot();
   const scheduleOperation: OperationV2 = {

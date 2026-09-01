@@ -5,6 +5,10 @@ import { semanticFactIdentityV2 } from "../observation.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
 import type { OperationV2 } from "../operation.js";
 import {
+  EXECUTION_STRATEGY_EVIDENCE_V1,
+  EXECUTION_SUBSTRATES
+} from "../../../execution_strategy.js";
+import {
   PROGRESS_DECISION_V2_SCHEMA,
   PROGRESS_EPOCH_V2_SCHEMA,
   PROGRESS_GAP_V2_SCHEMA,
@@ -287,6 +291,42 @@ function statusRank(status: string): number {
   return ({ unevaluated: 0, uncertain: 1, needs_input: 1, needs_review: 1, failed: 1, partial: 2, pass: 3, not_applicable: 3 } as Record<string, number>)[status] ?? 0;
 }
 
+function executionStrategySelectionIdentityV2(operation: OperationV2): string | null {
+  const selectedSubstrate = operation.input.selected_substrate;
+  if (operation.capability_id !== "operator_record_execution_strategy"
+      || operation.purpose !== "discovery"
+      || operation.fulfillment_role !== "supporting_control"
+      || operation.settlement_state !== "settled"
+      || operation.result?.status !== "completed_without_native_dispatch"
+      || operation.result.dispatch_state !== "not_dispatched"
+      || operation.input.schema !== EXECUTION_STRATEGY_EVIDENCE_V1
+      || typeof selectedSubstrate !== "string"
+      || !(EXECUTION_SUBSTRATES as readonly string[]).includes(selectedSubstrate)) return null;
+  return canonicalJsonV2({
+    work_unit_id: operation.work_unit_id,
+    selected_substrate: selectedSubstrate,
+    resolves_gap_ids: [...operation.resolves_gap_ids].sort()
+  });
+}
+
+function introducesExecutionStrategySelectionV2(input: Readonly<{
+  before: AssignmentSnapshotV2;
+  after: AssignmentSnapshotV2;
+  admitted_operation_ids: readonly string[];
+  stated_gap_ids: readonly string[];
+}>): boolean {
+  const currentGaps = new Set(input.stated_gap_ids);
+  const previous = new Set(Object.values(input.before.operations)
+    .map(executionStrategySelectionIdentityV2)
+    .filter((identity): identity is string => identity !== null));
+  return input.admitted_operation_ids.some((operationId) => {
+    const operation = input.after.operations[operationId];
+    if (!operation || !operation.resolves_gap_ids.some((gapId) => currentGaps.has(gapId))) return false;
+    const identity = executionStrategySelectionIdentityV2(operation);
+    return identity !== null && !previous.has(identity);
+  });
+}
+
 export function buildProgressEpochV2(input: Readonly<{
   before: AssignmentSnapshotV2;
   after: AssignmentSnapshotV2;
@@ -315,6 +355,12 @@ export function buildProgressEpochV2(input: Readonly<{
   if (input.after.pending_review_ids.length > input.before.pending_review_ids.length) progressReasons.push("review_requested");
   if (input.after.pending_review_ids.length < input.before.pending_review_ids.length) progressReasons.push("review_resolved");
   if (input.after.unresolved_unknown_operation_ids.length < input.before.unresolved_unknown_operation_ids.length) progressReasons.push("uncertainty_reconciled");
+  if (introducesExecutionStrategySelectionV2({
+    before: input.before,
+    after: input.after,
+    admitted_operation_ids: input.admitted_operation_ids ?? [],
+    stated_gap_ids: input.stated_gap_ids
+  })) progressReasons.push("execution_strategy_selected");
   if (canonicalJsonV2(input.before.work_unit_states) !== canonicalJsonV2(input.after.work_unit_states)) progressReasons.push("work_unit_changed");
   if (input.before.outcome !== input.after.outcome && input.after.outcome !== "active") progressReasons.push("terminal_derived");
   return {

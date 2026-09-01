@@ -97,6 +97,7 @@ export interface ProgressEpochV2 {
     | "review_requested"
     | "review_resolved"
     | "uncertainty_reconciled"
+    | "execution_strategy_selected"
     | "work_unit_changed"
     | "terminal_derived"
   )[];
