@@ -151,6 +151,35 @@ test("MCP results adapt to app-server dynamic tool responses without losing erro
   assert.equal(JSON.stringify(projected.contentItems).includes("x".repeat(100)), false);
 });
 
+test("focused evidence retrieval returns its bounded selection instead of another evidence projection", () => {
+  const selected = {
+    schema: "revit-operator.evidence-retrieval.v1",
+    evidence_ref: { evidence_id: "ev1_source" },
+    selection: {
+      "payload.items": [{ elementId: 1421361, text: "***An Autodesk Revit sample project***\r" }]
+    },
+    returned_bytes: 128,
+    complete: false
+  };
+  const response = adaptMcpToolCallResultToDynamicResponse({
+    content: [{ type: "text", text: JSON.stringify(selected) }]
+  }, {
+    tool: "operator_retrieve_evidence",
+    arguments: { evidenceId: "ev1_source", fields: ["payload.items"], maxBytes: 8_192 },
+    projections: [{
+      schema: "revit-operator.evidence-projection.v1",
+      evidence_id: "ev1_retrieval_result",
+      content_hash: "sha256:retrieval-result",
+      byte_count: 512
+    } as any]
+  });
+
+  assert.equal(response.success, true);
+  assert.equal(response.contentItems.length, 1);
+  assert.deepEqual(JSON.parse((response.contentItems[0] as { text: string }).text), selected);
+  assert.equal((response.contentItems[0] as { text: string }).text.includes("ev1_retrieval_result"), false);
+});
+
 test("app-server dynamic Revit parameter reads are compacted before returning to Codex", () => {
   const items = Array.from({ length: 500 }, (_, index) => ({
     id: 4000 + index,

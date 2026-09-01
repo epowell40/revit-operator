@@ -43,7 +43,13 @@ export function adaptMcpToolCallResultToDynamicResponse(
 ): { contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }>; success: boolean } {
   const contentItems: Array<{ type: "inputText"; text: string } | { type: "inputImage"; imageUrl: string }> = [];
   const content = Array.isArray(result?.content) ? result.content : [];
-  if (context?.projections?.length) {
+  // operator_retrieve_evidence is the reviewed, byte-bounded expansion edge.
+  // Its selection must reach the model directly; projecting the retrieval
+  // result itself creates an evidence-reference recursion in which the model
+  // can never consume the requested fields. The V2 settlement path still
+  // retains the retrieval result and its projection durably for audit/recovery.
+  const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence";
+  if (context?.projections?.length && !exposeFocusedRetrieval) {
     contentItems.push({
       type: "inputText",
       text: JSON.stringify(modelEvidenceEnvelope(context.projections, context.omitted ?? 0))
@@ -51,7 +57,7 @@ export function adaptMcpToolCallResultToDynamicResponse(
   }
   let attachedImages = 0;
   for (const item of content) {
-    if (context?.projections?.length && item?.type !== "image") continue;
+    if (context?.projections?.length && !exposeFocusedRetrieval && item?.type !== "image") continue;
     if (item?.type === "text" && typeof item.text === "string") {
       contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
       continue;

@@ -976,7 +976,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_result_adapter.ts",
-      "sha256": "sha256:2079b42b1f648eaad665c152e99363895322ef8daf3c8f2d1bbf757175b4c8d5"
+      "sha256": "sha256:b226cfac04365df9acf4a96ce8854b26002b64835c4f5c2ca7168f3133b5bfdc"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
@@ -2957,7 +2957,7 @@
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_compatibility.test.ts",
-      "sha256": "sha256:52153ba4f93b2641badb5d30704d1b0435db974c5e088b9285b2e8f6dc4cb6b5"
+      "sha256": "sha256:1719f05236cf30b6d9ee2fe6e6c91820d298628c468d82df73294893800164e3"
     },
     {
       "path": "apps/operator-backend/test/codex_app_server_lifecycle.test.ts",
@@ -5929,7 +5929,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:3d55af87690f79f9649ee7cd7e42f15b65d41aeaddc9fb9b1a4c525f0c79b698",
+  "inputs_hash": "sha256:feb58d5f4ec9ae24d437d719ecad22826bd1921ea8b60d9df3f168ce8b239448",
   "result": {
     "passed": true,
     "checks": [
