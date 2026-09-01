@@ -116,6 +116,108 @@ test("quantify result is normalized once into an explicit task-result Observatio
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.group" && fact.value === 2));
 });
 
+test("count-only quantify summary is sufficient task evidence without rows or another Revit call", async () => {
+  const body = {
+    categories: ["OST_DuctTerminal"],
+    group_by: ["family", "type"],
+    intent: "count",
+    scope: "host"
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("read", "work", { method: "POST", path: "/revit/quantify", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify", body);
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
+        summary: {
+          total: 509,
+          groups: {
+            "Supply Diffuser | 24x24": 371,
+            "Return Grille | 16x4": 138
+          }
+        },
+        rows: [],
+        resultSetId: "count-only-result",
+        warnings: [],
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-count-only-attempt",
+          requested_effect: "read",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
+    }
+  );
+
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.ok(facts.some((fact: any) => fact.fact_id === "inventory.complete" && fact.value === true));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "inventory.total" && fact.value === 509));
+  assert.deepEqual(
+    facts.filter((fact: any) => fact.fact_id === "inventory.group"),
+    [
+      {
+        fact_id: "inventory.group",
+        fact_class: "domain",
+        value: 138,
+        dimensions: { family: "Return Grille", type: "16x4" }
+      },
+      {
+        fact_id: "inventory.group",
+        fact_class: "domain",
+        value: 371,
+        dimensions: { family: "Supply Diffuser", type: "24x24" }
+      }
+    ]
+  );
+});
+
+test("quantify summary groups remain single-counted when list rows are also present", async () => {
+  const body = {
+    categories: ["OST_DuctTerminal"],
+    group_by: ["family", "type"],
+    intent: "count_and_list",
+    scope: "host"
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("read", "work", { method: "POST", path: "/revit/quantify", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify", body);
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
+        summary: { total: 2, groups: { "Supply Diffuser | 24x24": 2 } },
+        rows: [
+          { family: "Supply Diffuser", type: "24x24" },
+          { family: "Supply Diffuser", type: "24x24" }
+        ],
+        resultSetId: "count-and-list-result",
+        warnings: [],
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-count-and-list-attempt",
+          requested_effect: "read",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
+    }
+  );
+
+  assert.deepEqual(
+    decorated.structuredContent.observation.semantic_facts.filter((fact: any) => fact.fact_id === "inventory.group"),
+    [{
+      fact_id: "inventory.group",
+      fact_class: "domain",
+      value: 2,
+      dimensions: { family: "Supply Diffuser", type: "24x24" }
+    }]
+  );
+});
+
 test("Candidate 2 tool-registry payload uses the cross-process ordinal digest", async () => {
   const fixture = payloadRegressionFixture("candidate2-tool-registry-sanitized.json");
   const decorated = await runWithAssignmentKernelV2(

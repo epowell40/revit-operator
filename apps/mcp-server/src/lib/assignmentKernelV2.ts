@@ -57,6 +57,7 @@ type NativeCall = {
   lease: Context;
   method: string;
   path: string;
+  body?: unknown;
   state: "reserved" | "dispatching" | "completed";
   payload?: unknown;
   observation_payload?: unknown;
@@ -347,6 +348,7 @@ export async function beginAssignmentKernelNativeRequestV2(
     lease,
     method,
     path,
+    ...(body === undefined ? {} : { body: structuredClone(body) }),
     state: "reserved"
   });
   return Object.freeze({
@@ -462,7 +464,23 @@ function candidateItems(payload: unknown): unknown[] {
   return [];
 }
 
-function semanticFacts(payload: unknown, nativeCallCount: number, evidence: EvidenceClass, path: string): Array<Record<string, unknown>> {
+function quantifyGroupDimensions(body: unknown): string[] {
+  const declared = aliasedField(object(body), ["group_by", "groupBy"]);
+  const names = Array.isArray(declared)
+    ? declared.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .slice(0, 3)
+        .map(normalizedFieldName)
+    : [];
+  return names.length > 0 ? names : ["type"];
+}
+
+function semanticFacts(
+  payload: unknown,
+  nativeCallCount: number,
+  evidence: EvidenceClass,
+  path: string,
+  requestBody?: unknown
+): Array<Record<string, unknown>> {
   const facts: Array<Record<string, unknown>> = [
     { fact_id: "control.result_available", fact_class: "control", value: true },
     { fact_id: "control.native_call_count", fact_class: "control", value: nativeCallCount },
@@ -470,7 +488,11 @@ function semanticFacts(payload: unknown, nativeCallCount: number, evidence: Evid
   ];
   if (evidence === "task_result") facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
   const root = object(payload);
-  const total = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
+  const summary = object(aliasedField(root, ["summary"]));
+  const rootTotal = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
+  const total = rootTotal === undefined
+    ? aliasedField(summary, ["total", "total_count", "totalCount", "count"])
+    : rootTotal;
   const inventory = evidence === "task_result" && path.toLowerCase() === "/revit/quantify";
   if (inventory && typeof total === "number" && Number.isFinite(total)) {
     facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
@@ -481,26 +503,44 @@ function semanticFacts(payload: unknown, nativeCallCount: number, evidence: Evid
     facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
     facts.push({ fact_id: "inventory.total", fact_class: "domain", value: items.length });
   }
-  const groups = new Map<string, { family: Scalar; type: Scalar; count: number }>();
-  const declaredGroups = aliasedField(root, ["groups", "grouped_counts", "groupedCounts"]);
-  const groupCandidates = Array.isArray(declaredGroups) ? declaredGroups : items;
+  const groups = new Map<string, { dimensions: Record<string, Scalar>; count: number }>();
+  const rootGroups = aliasedField(root, ["groups", "grouped_counts", "groupedCounts"]);
+  const declaredGroups = rootGroups === undefined
+    ? aliasedField(summary, ["groups", "grouped_counts", "groupedCounts"])
+    : rootGroups;
+  const groupCandidates = Array.isArray(declaredGroups)
+    ? declaredGroups
+    : Object.keys(object(declaredGroups)).length > 0 ? [] : items;
   for (const candidate of groupCandidates) {
     const row = object(candidate);
     const family = aliasedField(row, ["family", "family_name", "familyName"]);
     const type = aliasedField(row, ["type", "type_name", "typeName"]);
     if (!scalar(family) || !scalar(type)) continue;
-    const key = canonicalJson([family, type]);
+    const dimensions = { family, type };
+    const key = canonicalJson(dimensions);
     const prior = groups.get(key);
     const declaredCount = aliasedField(row, ["count", "total", "quantity"]);
     const count = typeof declaredCount === "number" && Number.isFinite(declaredCount) ? declaredCount : 1;
-    groups.set(key, { family, type, count: (prior?.count ?? 0) + count });
+    groups.set(key, { dimensions, count: (prior?.count ?? 0) + count });
+  }
+  if (inventory && declaredGroups && !Array.isArray(declaredGroups)) {
+    const dimensionNames = quantifyGroupDimensions(requestBody);
+    for (const [groupKey, declaredCount] of Object.entries(object(declaredGroups))) {
+      if (typeof declaredCount !== "number" || !Number.isFinite(declaredCount)) continue;
+      const values = groupKey.split(" | ");
+      if (values.length !== dimensionNames.length) continue;
+      const dimensions = Object.fromEntries(dimensionNames.map((name, index) => [name, values[index]!])) as Record<string, Scalar>;
+      const key = canonicalJson(dimensions);
+      const prior = groups.get(key);
+      groups.set(key, { dimensions, count: (prior?.count ?? 0) + declaredCount });
+    }
   }
   for (const group of [...groups.values()].sort((left, right) => {
     const leftJson = canonicalJson(left);
     const rightJson = canonicalJson(right);
     return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
   })) {
-    if (inventory) facts.push({ fact_id: "inventory.group", fact_class: "domain", value: group.count, dimensions: { family: group.family, type: group.type } });
+    if (inventory) facts.push({ fact_id: "inventory.group", fact_class: "domain", value: group.count, dimensions: group.dimensions });
   }
   for (const [key, value] of Object.entries(root)) {
     if (scalar(value) && facts.length < 256) facts.push({ fact_id: `control.field.${normalizedFieldName(key)}`, fact_class: "control", value });
@@ -576,7 +616,7 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
       ...(operationResult.observation_required ? {
         observation: {
           raw_payload: call.observation_payload,
-          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path),
+          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path, call.body),
           target_scope: {},
           verification_relevance: [observationClass],
           evidence_class: observationClass
@@ -678,7 +718,7 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       ...(parentCall && operationResult.observation_required ? {
         observation: {
           raw_payload: parentCall.observation_payload,
-           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path),
+           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path, parentCall.body),
           target_scope: {},
            verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],
            evidence_class: evidenceClass(parentCall.lease.fulfillment_role)
