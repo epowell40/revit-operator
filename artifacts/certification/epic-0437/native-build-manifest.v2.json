@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:ebc329d638d8f2faac18c413f295b8b31e45cd607697faf4a738ea197df7984d",
-  "source_inputs_hash": "sha256:feb58d5f4ec9ae24d437d719ecad22826bd1921ea8b60d9df3f168ce8b239448",
+  "policy_hash": "sha256:2cffd7017eadba325241983ddd680f49a4d3873c8af105fc4bc32f11febae8e8",
+  "source_inputs_hash": "sha256:be509d9dba140b2cbeccf0892c6a1316550d64d450ad8c5b71ebbd18bde3d659",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -290,6 +290,14 @@
       "sha256": "sha256:0603e71d113b632249c1a2098486530c8ad9c4f2ba1072855395b55b490a1ead"
     },
     {
+      "path": "apps/mcp-server/src/lib/toolSearchRiskSemantics.test.ts",
+      "sha256": "sha256:017eec833d4f7527e80bc328e4bd6dbfc22f41085313047f4d0aa0a2a03c0524"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/toolSearchRiskSemantics.ts",
+      "sha256": "sha256:f42162f63c1511a3269538590145cfdb07303a142d19eb2b4936f223805bc4c7"
+    },
+    {
       "path": "apps/mcp-server/src/lib/webResearch.ts",
       "sha256": "sha256:1d6c20f25d0ef6a4016160105888ddd95ce8c56d45f8761b7b05ae8079f5f041"
     },
@@ -359,7 +367,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:6a741686589d99b0ecb4c90156f34a74b1124e5824e84f2b4f01921958faba8c"
+      "sha256": "sha256:6b4bb7a6c1bc2d64e1939a2c32b20f17f08429bd48e4eff6e094414e1fd75aa9"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -5925,15 +5933,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:3e81247fb67ce5278f0c786c96914868d6ad559df17097cd0ae0f19a615eecfd"
+      "sha256": "sha256:c410d1c9d023d64c3375b5ed5975a28ddc6f3245b0186b4c182ab4f359257543"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:05d2898e8461675d9b7dd69f2ad3498c09b5ca5eb4f29e3e4b56ce0928d6e06b"
+      "sha256": "sha256:f01cbd621c694041f8acf0471421f4e496356a4f7182a8c193daee9a65c29858"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:dc7f4db81098dd456665f07a4d0f99144a6161301fbc8dde3f85049d350f4f0b"
+      "sha256": "sha256:2b9cff28805691f7085b09ce1a1bd5542c79bda48d2730d6959b7a5f70323269"
     }
   },
   "runtime_dependencies": [
@@ -5980,19 +5988,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:3e81247fb67ce5278f0c786c96914868d6ad559df17097cd0ae0f19a615eecfd",
+      "sha256": "sha256:c410d1c9d023d64c3375b5ed5975a28ddc6f3245b0186b4c182ab4f359257543",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:dc7f4db81098dd456665f07a4d0f99144a6161301fbc8dde3f85049d350f4f0b",
+      "sha256": "sha256:2b9cff28805691f7085b09ce1a1bd5542c79bda48d2730d6959b7a5f70323269",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:05d2898e8461675d9b7dd69f2ad3498c09b5ca5eb4f29e3e4b56ce0928d6e06b",
+      "sha256": "sha256:f01cbd621c694041f8acf0471421f4e496356a4f7182a8c193daee9a65c29858",
       "host": null
     },
     {
@@ -6080,6 +6088,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:0fdb9ed8af18104496b34d01801f7f2a547946658c1d8b430492e0009fae6b76",
-  "built_at_utc": "2026-09-01T10:48:47.791Z"
+  "runtime_dependencies_hash": "sha256:c6430ae5898584dbd42f3bb1bd43364df482cafa14a277f4e209bc1311eca367",
+  "built_at_utc": "2026-09-01T12:03:27.358Z"
 }

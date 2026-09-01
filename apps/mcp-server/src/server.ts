@@ -49,6 +49,11 @@ import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjec
 import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
 import { compareToolSearchCandidatesV2, scoreToolSearchCandidateV2 } from "./lib/toolSearchRanking.js";
 import {
+  buildToolSearchRiskFilterAdvisory,
+  partitionRiskFilteredCandidates,
+  shouldExposeBroaderRiskCandidates
+} from "./lib/toolSearchRiskSemantics.js";
+import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
   isMcpToolAliasExposed,
@@ -1195,13 +1200,13 @@ server.tool("operator_submit_read_completion", "Submit a task-level read-complet
   }
 );
 
-server.tool("revit_search_tools", "Search Revit bridge primitives and return best matches for a natural-language task.",
+server.tool("revit_search_tools", "Search Revit bridge primitives and return best matches for a natural-language task. Registry risk describes a route's possible committed effect; omit the risk filter when discovering mutation previews because a typed high-risk route may still provide a safe dry-run or rollback mode.",
   {
     query: z.string().describe("What you need to do (or endpoint/path keywords)."),
     max: z.number().int().optional().default(20),
     method: z.enum(["GET", "POST"]).optional(),
     group: z.string().optional(),
-    risk: z.enum(["low", "medium", "high"]).optional(),
+    risk: z.enum(["low", "medium", "high"]).optional().describe("Exact endpoint/action-risk filter. This is not preview risk: omit it when searching for a mutation preview or dry-run capability."),
     pathPrefix: z.string().optional(),
     includeSchemas: z.boolean().optional().default(false),
     forceRefresh: z.boolean().optional().default(false)
@@ -1218,6 +1223,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
       const pathPrefix = String(args.pathPrefix ?? "").trim().toLowerCase();
       const max = Math.max(1, Math.min(100, Number(args.max ?? 20) || 20));
       const includeSchemas = !!args.includeSchemas;
+      const exposeBroaderRiskCandidates = shouldExposeBroaderRiskCandidates(query, risk);
 
       // If capability discovery already loaded the session registry, rank it
       // locally instead of issuing a second live Revit request for the same
@@ -1225,14 +1231,17 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
       // endpoint, and forceRefresh intentionally bypasses this reuse.
       if (!pathPrefix && !includeSchemas && !freshCachedToolRegistry() && !args.forceRefresh) {
         try {
-          const directBody: Record<string, unknown> = { query, max: Math.min(max, 12) };
+          const directBody: Record<string, unknown> = {
+            query,
+            max: exposeBroaderRiskCandidates ? Math.min(Math.max(max * 2, 12), 24) : Math.min(max, 12)
+          };
           if (method) directBody.method = method;
           if (group) directBody.group = group;
-          if (risk) directBody.risk = risk;
+          if (risk && !exposeBroaderRiskCandidates) directBody.risk = risk;
 
           const direct = await callRevit<Record<string, unknown>>("/revit/tool-search", "POST", directBody, { channel: "search" });
           const matchesRaw = Array.isArray((direct as any)?.matches) ? ((direct as any).matches as unknown[]) : [];
-          const matches = filterRegistryEntriesForSearch(matchesRaw.map(item => {
+          const unpartitionedMatches = filterRegistryEntriesForSearch(matchesRaw.map(item => {
             const tool = normalizeRegistryTool(item);
             if (!tool) return null;
             const raw = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
@@ -1240,7 +1249,15 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
             return compactToolForList(tool, score);
           }).filter((item): item is Record<string, unknown> => !!item));
 
-          if (matches.length > 0 || String((direct as any)?.version ?? "") === "operator.tool_search.v1") {
+          const partitioned = exposeBroaderRiskCandidates
+            ? partitionRiskFilteredCandidates(unpartitionedMatches, risk, max)
+            : { matches: unpartitionedMatches.slice(0, max), broaderRiskCandidates: [] as Record<string, unknown>[] };
+          const matches = partitioned.matches;
+          const riskFilterAdvisory = partitioned.broaderRiskCandidates.length > 0
+            ? buildToolSearchRiskFilterAdvisory(risk, partitioned.broaderRiskCandidates)
+            : null;
+
+          if (matches.length > 0 || riskFilterAdvisory || String((direct as any)?.version ?? "") === "operator.tool_search.v1") {
             return {
               content: [
                 {
@@ -1250,7 +1267,8 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
                       source: "/revit/tool-search",
                       query,
                       total_matches: matches.length,
-                      matches
+                      matches,
+                      ...(riskFilterAdvisory ? { risk_filter_advisory: riskFilterAdvisory } : {})
                     },
                     null,
                     2
@@ -1266,18 +1284,28 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
 
       const registry = await getToolRegistry(!!args.forceRefresh);
       const base = Array.isArray(registry.tools) ? registry.tools : [];
-      const ranked = base
+      const unpartitionedRanked = base
         .filter(t => {
           if (method && String(t.method ?? "").toUpperCase() !== method) return false;
           if (group && String(t.group ?? "").toLowerCase() !== group) return false;
-          if (risk && String(t.risk ?? "").toLowerCase() !== risk) return false;
+          if (risk && !exposeBroaderRiskCandidates && String(t.risk ?? "").toLowerCase() !== risk) return false;
           if (pathPrefix && !String(t.path ?? "").toLowerCase().startsWith(pathPrefix)) return false;
           return true;
         })
-        .map(tool => ({ tool, score: scoreToolMatch(tool, query) }))
+        .map(tool => ({ tool, score: scoreToolMatch(tool, query), path: tool.path, risk: tool.risk }))
         .filter(x => x.score > 0)
-        .sort(compareToolSearchCandidatesV2)
-        .slice(0, max);
+        .sort(compareToolSearchCandidatesV2);
+
+      const partitionedRanked = exposeBroaderRiskCandidates
+        ? partitionRiskFilteredCandidates(unpartitionedRanked, risk, max)
+        : { matches: unpartitionedRanked.slice(0, max), broaderRiskCandidates: [] as typeof unpartitionedRanked };
+      const ranked = partitionedRanked.matches;
+      const broaderRiskCandidates = includeSchemas
+        ? partitionedRanked.broaderRiskCandidates.map(x => ({ score: x.score, ...x.tool }))
+        : partitionedRanked.broaderRiskCandidates.map(x => compactToolForList(x.tool, x.score));
+      const riskFilterAdvisory = broaderRiskCandidates.length > 0
+        ? buildToolSearchRiskFilterAdvisory(risk, broaderRiskCandidates)
+        : null;
 
       const matches = includeSchemas ? ranked.map(x => ({ score: x.score, ...x.tool })) : ranked.map(x => compactToolForList(x.tool, x.score));
       return {
@@ -1289,7 +1317,8 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
                 source: "/revit/tool-registry",
                 query,
                 total_matches: ranked.length,
-                matches
+                matches,
+                ...(riskFilterAdvisory ? { risk_filter_advisory: riskFilterAdvisory } : {})
               },
               null,
               2

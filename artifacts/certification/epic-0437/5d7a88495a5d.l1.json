@@ -299,6 +299,14 @@
       "sha256": "sha256:0603e71d113b632249c1a2098486530c8ad9c4f2ba1072855395b55b490a1ead"
     },
     {
+      "path": "apps/mcp-server/src/lib/toolSearchRiskSemantics.test.ts",
+      "sha256": "sha256:017eec833d4f7527e80bc328e4bd6dbfc22f41085313047f4d0aa0a2a03c0524"
+    },
+    {
+      "path": "apps/mcp-server/src/lib/toolSearchRiskSemantics.ts",
+      "sha256": "sha256:f42162f63c1511a3269538590145cfdb07303a142d19eb2b4936f223805bc4c7"
+    },
+    {
       "path": "apps/mcp-server/src/lib/webResearch.ts",
       "sha256": "sha256:1d6c20f25d0ef6a4016160105888ddd95ce8c56d45f8761b7b05ae8079f5f041"
     },
@@ -368,7 +376,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:6a741686589d99b0ecb4c90156f34a74b1124e5824e84f2b4f01921958faba8c"
+      "sha256": "sha256:6b4bb7a6c1bc2d64e1939a2c32b20f17f08429bd48e4eff6e094414e1fd75aa9"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -5929,7 +5937,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:feb58d5f4ec9ae24d437d719ecad22826bd1921ea8b60d9df3f168ce8b239448",
+  "inputs_hash": "sha256:be509d9dba140b2cbeccf0892c6a1316550d64d450ad8c5b71ebbd18bde3d659",
   "result": {
     "passed": true,
     "checks": [
