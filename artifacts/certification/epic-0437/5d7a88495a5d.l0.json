@@ -31,11 +31,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:de706cc02dd0f702321ca56388d7ab4a48767b2c65bdf6caa14204cb2dc4301e"
+      "sha256": "sha256:b9c92ab745d91ee6d2be0f0aac9a06367628e291c74792a583127c3337852f85"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
-      "sha256": "sha256:4ae22188cace20ee4232672e93d63ecb6a37de2db3a36fd15f74cc9d604507e1"
+      "sha256": "sha256:15cca6316fda70c3ba238b3f3be17ae76f6db0bab873e1c71f54d2af2d12341c"
     },
     {
       "path": "apps/mcp-server/src/lib/audit.ts",
@@ -524,7 +524,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_factory.ts",
-      "sha256": "sha256:16f776939df3525a08833a2a377244fc9c71061a472988ad7114cae15bc40d08"
+      "sha256": "sha256:e59da94bfd3b344939715b7147fcb2d007a97f3660032a1bb4872a040857ce16"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_input_adapter.ts",
@@ -1769,7 +1769,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/semantic_admissibility.ts",
-      "sha256": "sha256:2c97fc27ec576379da0d4323c7490f6fb939d750f721902fe1c3bcd147936b41"
+      "sha256": "sha256:83a13645e988407ecf243beab8e0b4fb13473d9f36f1662796ed17cdcd894af1"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/snapshot.ts",
@@ -2845,7 +2845,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:2b371e76e1d6ab663c4182dd60770835b34da7cfc6ec4df07a1f8b5b81a0211e"
+      "sha256": "sha256:a3f6b884e05648d3a295aec38a2ce5dd1c09b068df23a4f024062106b9ada661"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_contracts.test.ts",
@@ -2865,7 +2865,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_store.test.ts",
-      "sha256": "sha256:f0d68c4c29a31a357a5a5640bb0c7243fc9356df6504ef1d326423890d5eacc2"
+      "sha256": "sha256:5fc3b7270e3df720cec86f2d2f505ef91412b70c69ccc72580eb5d7380034a55"
     },
     {
       "path": "apps/operator-backend/test/assignment_mcp_error_settlement.test.ts",
@@ -5937,7 +5937,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:5ed3adab1dccdc253bbfe8a7f46b66486e668c154e5b50c6fc0306e815d0cb33",
+  "inputs_hash": "sha256:0fbf4c415e881d1d1681970b9189357aa3c7737cbd704a4dbf2fa6cb5a980cc0",
   "result": {
     "passed": true,
     "checks": [
