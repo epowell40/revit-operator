@@ -31,11 +31,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:37afd28601eec86fb1dc24f0aa9614819f3d26be24691404c6d385b51c4d490c"
+      "sha256": "sha256:de706cc02dd0f702321ca56388d7ab4a48767b2c65bdf6caa14204cb2dc4301e"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
-      "sha256": "sha256:5b291b63379e6cb79d71d9cf5c182f95aa9cf40649f1a77cc50627a58508e6ce"
+      "sha256": "sha256:4ae22188cace20ee4232672e93d63ecb6a37de2db3a36fd15f74cc9d604507e1"
     },
     {
       "path": "apps/mcp-server/src/lib/audit.ts",
@@ -5929,7 +5929,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:d88fb7abc0f6e2cc19746638cc615c80c070d360e0bbaff9b76614c870ed013b",
+  "inputs_hash": "sha256:cf5297af36cbd9540c84b5ceab79b905f733dd81bc6ff557f83e9880bc612f28",
   "result": {
     "passed": true,
     "checks": [
