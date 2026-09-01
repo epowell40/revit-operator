@@ -86,7 +86,9 @@ function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
 function inputs(goal: GoalRecord): AssignmentInputVariableV2[] {
   const sourceRequest = text(goal.work_budget?.source_user_request, 20_000) || goal.objective;
   const declared = strings(goal.work_budget?.required_user_inputs);
-  const detected = requestedEffect(goal) === "apply" ? missingOpaqueMutationInputs(sourceRequest) : [];
+  // An executable preview needs the same authenticated desired state as the
+  // later apply. Read-only explanation and inspection requests remain exempt.
+  const detected = requestedEffect(goal) !== "read" ? missingOpaqueMutationInputs(sourceRequest) : [];
   return [...new Set([...declared, ...detected].map(stableVariableId))].map(variableId => ({
     variable_id: variableId,
     value_state: "needs_input",

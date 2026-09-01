@@ -341,6 +341,32 @@ test("trusted AssignmentSpec creation gives opaque mutations one stable input va
   }
 }));
 
+test("trusted AssignmentSpec creation gives opaque executable previews the same authenticated input gap", () => workspace(() => {
+  const preview = createGoal({
+    title: "Preview selected note replacement",
+    objective: "Find one project TextNote, report its exact identity, and preview a conditional text replacement that would not create a duplicate. Do not apply it.",
+    acceptance_criteria: ["The requested preview is authoritatively returned."],
+    status: "active",
+    related_session_id: "session-preview-input-v2",
+    created_by: "principal-preview-input-v2",
+    work_budget: { requested_effect: "preview" }
+  });
+  const previewSpec = assignmentSpecFromGoalV2({ goal: preview, run_id: "run-preview-input-v2" });
+  assert.deepEqual(previewSpec.input_variables.map(value => value.variable_id), ["replacement_text"]);
+
+  const read = createGoal({
+    title: "Explain note replacement",
+    objective: "Explain how a conditional text replacement preview works without executing it.",
+    acceptance_criteria: ["The explanation is returned."],
+    status: "active",
+    related_session_id: "session-read-input-v2",
+    created_by: "principal-read-input-v2",
+    work_budget: { requested_effect: "read" }
+  });
+  const readSpec = assignmentSpecFromGoalV2({ goal: read, run_id: "run-read-input-v2" });
+  assert.deepEqual(readSpec.input_variables, []);
+}));
+
 test("multiple V2 criteria require an explicit semantic-fact contract instead of sharing one generic success fact", () => workspace(() => {
   const base = {
     title: "Update selected element",
