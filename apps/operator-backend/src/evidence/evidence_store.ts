@@ -341,11 +341,31 @@ function readSettledEvidenceBytes(ref: EvidenceRefV1): Buffer {
 
 function selectPath(root: unknown, dottedPath: string): unknown {
   if (!dottedPath || dottedPath === "$" || dottedPath.includes("..") || /[\\/\u0000]/.test(dottedPath)) throw new Error("Invalid typed field path.");
+  const segments = dottedPath.replace(/^\$\.?/, "").split(".");
+  if (segments.some(segment => !segment || segment === "__proto__" || segment === "constructor" || segment === "prototype")) {
+    throw new Error("Invalid typed field path.");
+  }
   let value: unknown = root;
-  for (const segment of dottedPath.replace(/^\$\.?/, "").split(".")) {
-    if (!segment || segment === "__proto__" || segment === "constructor" || segment === "prototype") throw new Error("Invalid typed field path.");
-    if (!value || typeof value !== "object" || Array.isArray(value) || !Object.prototype.hasOwnProperty.call(value, segment)) return null;
-    value = (value as Record<string, unknown>)[segment];
+  for (let index = 0; index < segments.length;) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    let matchedKey: string | null = null;
+    let nextIndex = index;
+    // Projections flatten object paths with dots. A trusted result can also
+    // contain a literal dotted key (for example the `payload.items` key in an
+    // evidence-retrieval selection), so prefer the longest exact own-property
+    // match at each level. This keeps every advertised projection selector
+    // retrievable without interpreting code or weakening scope/hash checks.
+    for (let end = segments.length; end > index; end -= 1) {
+      const candidate = segments.slice(index, end).join(".");
+      if (!Object.prototype.hasOwnProperty.call(row, candidate)) continue;
+      matchedKey = candidate;
+      nextIndex = end;
+      break;
+    }
+    if (!matchedKey) return null;
+    value = row[matchedKey];
+    index = nextIndex;
   }
   return value;
 }

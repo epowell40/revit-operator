@@ -147,6 +147,47 @@ test("normalized native payload retrieval honors the advertised payload root sel
   assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString("utf8")), normalizedNativePayload);
 }));
 
+test("projection-advertised dotted selection keys remain retrievable from a stored retrieval result", { concurrency: false }, () => withWorkspace(() => {
+  const items = [
+    { textNoteId: 1_421_361, text: "Autodesk Revit sample project\r" },
+    { textNoteId: 1_422_186, text: "Electrical Transformer Pad\r" },
+    { textNoteId: 1_422_206, text: "Chase for Electrical Conduits\r" }
+  ];
+  const original = storeEvidence({
+    scope,
+    source: "assignment_kernel_v2:revit_call_tool",
+    media_type: "application/json",
+    trust_level: "authoritative_native",
+    raw: { ok: true, itemsComplete: true, items }
+  }, 4_096);
+  const firstRetrieval = retrieveEvidence({
+    evidence_id: original.ref.evidence_id,
+    scope,
+    purpose: "select exact TextNote candidates for a conditional preview",
+    fields: ["payload.items"],
+    max_bytes: 4_096
+  });
+  const storedRetrieval = storeEvidence({
+    scope,
+    source: "assignment_kernel_v2:operator_retrieve_evidence",
+    media_type: "application/json",
+    trust_level: "host_observed",
+    raw: { content: [{ type: "text", text: JSON.stringify({ ok: true, result: firstRetrieval }) }] }
+  }, 4_096);
+
+  const advertisedPath = "payload.result.selection.payload.items";
+  assert.equal(storedRetrieval.projection.key_counts[`${advertisedPath}.length`], items.length);
+  const secondRetrieval = retrieveEvidence({
+    evidence_id: storedRetrieval.ref.evidence_id,
+    scope,
+    purpose: "read the first two projected TextNote candidates",
+    item_range: { path: advertisedPath, start: 0, count: 2 },
+    max_bytes: 4_096
+  });
+  assert.deepEqual(secondRetrieval.selection, items.slice(0, 2));
+  assert.equal(secondRetrieval.complete, false);
+}));
+
 test("nested inventory projection normalizes snake-case identity fields", { concurrency: false }, () => withWorkspace(() => {
   const raw = { content: [{ type: "text", text: JSON.stringify({
     count: 3,
