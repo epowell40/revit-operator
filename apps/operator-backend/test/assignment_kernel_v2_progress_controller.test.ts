@@ -598,7 +598,10 @@ test("Candidate 13 flight 3 preserves one correction turn when a structured sche
   assert.equal(decision.decision, "admit_reasoning_turn");
   if (decision.decision === "admit_reasoning_turn") {
     assert.deepEqual(decision.gap_ids, ["criterion:criterion-inventory", "input-schema:operation-invalid-quantify"]);
-    assert.ok(decision.expected_information.includes("body.intent:enum"));
+    assert.ok(decision.expected_information.some((information) => information.includes("body.intent:enum")
+      && information.includes("count")
+      && information.includes("count_and_list")),
+    "Candidate 28 replay: the bounded correction turn must receive the exact enum choices already known to the controller");
   }
 });
 

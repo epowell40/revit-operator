@@ -3,7 +3,7 @@ import type { AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
-import type { OperationV2 } from "../operation.js";
+import type { OperationInputSchemaIssueV2, OperationV2 } from "../operation.js";
 import {
   EXECUTION_STRATEGY_EVIDENCE_V1,
   EXECUTION_SUBSTRATES
@@ -36,6 +36,37 @@ function relevantObservationIds(snapshot: AssignmentSnapshotV2, criterion: Assig
 
 const INPUT_SCHEMA_DOCUMENTATION_CAPABILITIES = new Set(["revit_tool_doc", "revit_tool_examples"]);
 
+export function operationProposalCanResolveInputSchemaGapV2(input: Readonly<{
+  rejected: OperationV2;
+  capability_id: string;
+  request_identity: Readonly<{
+    method?: "GET" | "POST";
+    path?: string;
+    request_signature: string;
+  }>;
+}>): boolean {
+  const gap = input.rejected.result?.input_schema_gap;
+  if (!gap) return false;
+  const exactCorrectedRetry = input.capability_id === input.rejected.capability_id
+    && input.request_identity.method === gap.method
+    && input.request_identity.path === gap.path
+    && input.request_identity.request_signature !== gap.request_signature;
+  const exactSchemaDocumentation = INPUT_SCHEMA_DOCUMENTATION_CAPABILITIES.has(input.capability_id)
+    && input.request_identity.method === gap.method
+    && input.request_identity.path === gap.path;
+  return exactCorrectedRetry || exactSchemaDocumentation;
+}
+
+function inputSchemaIssueRequirementV2(issue: OperationInputSchemaIssueV2): string {
+  const constraint = issue.expected_constraint;
+  const constraintDetail = constraint.kind === "enum"
+    ? `allowed_values=${canonicalJsonV2(constraint.allowed_values ?? [])}`
+    : constraint.kind === "json_type"
+      ? `required_type=${constraint.type ?? issue.expected_type}`
+      : canonicalJsonV2(constraint);
+  return `${issue.field_path}:${issue.expected_type};actual=${issue.actual_type};${constraintDetail};correction=${issue.correction_action}`;
+}
+
 function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: OperationV2): boolean {
   const gap = rejected.result?.input_schema_gap;
   if (!gap) return false;
@@ -48,10 +79,12 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
         || candidate.binding.generation !== rejected.binding.generation) return false;
     const correctedRetry = candidate.retry_of_operation_id === rejected.operation_id
       && candidate.retry_basis === "corrected_input"
-      && candidate.capability_id === rejected.capability_id
-      && candidate.request_identity?.method === gap.method
-      && candidate.request_identity?.path === gap.path
-      && candidate.request_identity?.request_signature !== gap.request_signature
+      && Boolean(candidate.request_identity)
+      && operationProposalCanResolveInputSchemaGapV2({
+        rejected,
+        capability_id: candidate.capability_id,
+        request_identity: candidate.request_identity!
+      })
       && candidate.result?.dispatch_state === "dispatched"
       && candidate.observation_ids.length > 0;
     const documentationChildren = Object.values(snapshot.operations).filter((child) =>
@@ -82,9 +115,11 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
       kind: "operation_input_schema_invalid",
       criterion_ids: operation.advances_criterion_ids,
       work_unit_ids: [operation.work_unit_id],
-      required_fact_ids: inputGap.issues.map((issue) => `${issue.field_path}:${issue.expected_type}`).sort(),
+      required_fact_ids: inputGap.issues.map(inputSchemaIssueRequirementV2).sort(),
       current_observation_ids: [],
-      reason: `Operation ${operation.operation_id} was safely rejected before dispatch because its structured input did not satisfy ${inputGap.input_schema_id}.`
+      reason: `Operation ${operation.operation_id} was safely rejected before dispatch because its structured input did not satisfy ${inputGap.input_schema_id}. `
+        + `Correct the exact ${inputGap.method} ${inputGap.path} request or inspect that route's exact schema documentation; unrelated capability discovery cannot resolve this gap. `
+        + `Issues: ${inputGap.issues.map(inputSchemaIssueRequirementV2).join(" | ")}`
     });
   }
   for (const variableId of snapshot.pending_input_variable_ids) {

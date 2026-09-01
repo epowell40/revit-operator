@@ -9,6 +9,7 @@ import {
   evidenceClassForFulfillmentRoleV2,
   fulfillmentRoleCanCarryTaskCriteriaV2,
   normalizeSemanticFactsForEvidenceV2,
+  operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
@@ -255,6 +256,19 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
   const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  const correctedPredecessor = Object.values(input.snapshot.operations)
+    .filter(candidate => candidate.settlement_state === "settled"
+      && candidate.persistent_effect === "none"
+      && Boolean(candidate.result?.input_schema_gap)
+      && operationProposalCanResolveInputSchemaGapV2({
+        rejected: candidate,
+        capability_id: input.capability_id,
+        request_identity: currentIdentity
+      })
+      && candidate.capability_id === input.capability_id
+      && !Object.values(input.snapshot.operations).some(retry => retry.retry_of_operation_id === candidate.operation_id))
+    .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
+      .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0];
   const proposedFulfillmentRole = operationFulfillmentRoleForAdmissionV2({
     purpose,
     capability_id: input.capability_id
@@ -279,22 +293,28 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     : undefined;
   const currentGaps = deriveProgressGapsV2(input.snapshot);
   const resolvesGapIds = currentGaps
-    .filter((gap) => gap.work_unit_ids.includes(unit.work_unit_id)
-      || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
-      || (purpose === "reconciliation" && gap.kind === "effect_unknown"))
+    .filter((gap) => {
+      const generallyRelevant = gap.work_unit_ids.includes(unit.work_unit_id)
+        || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
+        || (purpose === "reconciliation" && gap.kind === "effect_unknown");
+      if (!generallyRelevant || gap.kind !== "operation_input_schema_invalid") return generallyRelevant;
+      const rejected = Object.values(input.snapshot.operations)
+        .find(candidate => candidate.result?.input_schema_gap?.gap_id === gap.gap_id);
+      return Boolean(rejected && operationProposalCanResolveInputSchemaGapV2({
+        rejected,
+        capability_id: input.capability_id,
+        request_identity: currentIdentity
+      }));
+    })
     .map((gap) => gap.gap_id)
     .sort();
-  const correctedPredecessor = Object.values(input.snapshot.operations)
-    .filter(candidate => candidate.capability_id === input.capability_id
-      && candidate.settlement_state === "settled"
-      && candidate.persistent_effect === "none"
-      && Boolean(candidate.result?.input_schema_gap)
-      && candidate.request_identity?.method === currentIdentity.method
-      && candidate.request_identity?.path === currentIdentity.path
-      && candidate.request_identity?.request_signature !== currentIdentity.request_signature
-      && !Object.values(input.snapshot.operations).some(retry => retry.retry_of_operation_id === candidate.operation_id))
-    .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
-      .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0];
+  const relevantInputSchemaGaps = currentGaps.filter((gap) => gap.kind === "operation_input_schema_invalid"
+    && gap.work_unit_ids.includes(unit.work_unit_id));
+  if (fulfillmentRole === "supporting_control"
+      && relevantInputSchemaGaps.length > 0
+      && !resolvesGapIds.some((gapId) => relevantInputSchemaGaps.some((gap) => gap.gap_id === gapId))) {
+    throw new Error("assignment_kernel_v2_input_schema_gap_requires_corrected_operation_or_exact_schema_docs");
+  }
   const operation: OperationV2 = {
     schema: OPERATION_V2_SCHEMA,
     operation_id: operationId,

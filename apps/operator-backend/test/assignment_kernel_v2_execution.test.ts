@@ -215,54 +215,23 @@ test("Candidate 3 repaired sequence resolves only the schema gap before one corr
   assert.ok(deriveProgressGapsV2(afterInvalid).some(gap => gap.gap_id === inputGapId
     && gap.kind === "operation_input_schema_invalid"));
 
-  const unrelatedControl = openAssignmentKernelOperationV2({
-    snapshot: afterInvalid,
-    controller_request_id: "unrelated-control",
-    provider_turn_id: "turn-unrelated-control",
-    capability_id: "revit_search_tools",
-    classified_effect: "discovery",
-    arguments: { query: "inventory" }
-  });
-  assert.ok(getAssignmentKernelSnapshotV2(goal.id)!.operations[unrelatedControl.operation_id]!.resolves_gap_ids.includes(inputGapId));
-  markAssignmentKernelOperationDispatchStartedV2(unrelatedControl);
-  settleAssignmentKernelOperationV2(unrelatedControl,
-    envelope(unrelatedControl.operation_id, unrelatedControl.binding, { matches: ["/revit/quantify"] }));
+  for (const [capabilityId, args] of [
+    ["operator_discover_capabilities", { need: "inventory" }],
+    ["revit_search_tools", { query: "inventory" }],
+    ["operator_record_execution_strategy", { strategy: "inspect schema" }]
+  ] as const) {
+    assert.throws(() => openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: `unrelated-control-${capabilityId}`,
+      provider_turn_id: `turn-unrelated-control-${capabilityId}`,
+      capability_id: capabilityId,
+      classified_effect: "discovery",
+      arguments: args
+    }), /input_schema_gap_requires_corrected_operation_or_exact_schema_docs/,
+    `Candidate 28 replay: ${capabilityId} must not claim or consume an exact route input-schema correction gap`);
+  }
   assert.ok(deriveProgressGapsV2(getAssignmentKernelSnapshotV2(goal.id)!).some(gap => gap.gap_id === inputGapId),
-    "an unrelated successful control result must not erase the exact input-schema gap");
-
-  const nonNativeControl = openAssignmentKernelOperationV2({
-    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
-    controller_request_id: "non-native-control",
-    provider_turn_id: "turn-non-native-control",
-    capability_id: "operator_record_execution_strategy",
-    classified_effect: "discovery",
-    arguments: { strategy: "inspect schema" }
-  });
-  const nonNativeResult: OperationResultV2 = {
-    schema: OPERATION_RESULT_V2_SCHEMA,
-    result_id: `result-${nonNativeControl.operation_id}`,
-    operation_id: nonNativeControl.operation_id,
-    binding: nonNativeControl.binding,
-    status: "completed_without_native_dispatch",
-    dispatch_state: "not_dispatched",
-    persistent_effect: "none",
-    native_transaction_state: "not_applicable",
-    authority: "operator-controller",
-    result_schema_id: "operator-control/strategy/v2",
-    observation_required: false,
-    request_identity: nonNativeControl.request_identity,
-    completed_at: "2026-08-26T16:00:02.000Z"
-  };
-  appendCurrentAssignmentKernelEventV2({
-    goal_id: goal.id,
-    binding: nonNativeControl.binding,
-    event_id: `operation-result:${nonNativeResult.result_id}`,
-    actor: nonNativeResult.authority,
-    occurred_at: nonNativeResult.completed_at,
-    body: { event_type: "operation_result_recorded", result: nonNativeResult }
-  });
-  assert.ok(deriveProgressGapsV2(getAssignmentKernelSnapshotV2(goal.id)!).some(gap => gap.gap_id === inputGapId),
-    "controller-only completion without native evidence must not erase the input-schema gap");
+    "rejected generic discovery must leave the exact input-schema gap intact");
 
   const docs = openAssignmentKernelOperationV2({
     snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
