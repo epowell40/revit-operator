@@ -18,6 +18,8 @@ import { decideAnthropic, decideGemini } from "../src/brains/external_provider_b
 import { decideOpenAi } from "../src/brains/openai_brain.js";
 import { guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
 import { computeDynamicRuntimePackageDirectoryIdentity } from "../src/dynamic_runtime/runtime_package_directory_identity.js";
+import { createGoal } from "../src/goals/service.js";
+import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ChatRequest,
@@ -31,6 +33,18 @@ function request(id: string): ChatRequest {
     message_id: "message-1",
     user_text: "Move the bounded mechanical set using a short custom loop."
   };
+}
+
+async function withWorkspace(fn: (root: string) => Promise<void> | void): Promise<void> {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-workspace-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try { await fn(root); }
+  finally {
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 function program(overrides: Partial<ProviderDynamicProgramV1> = {}): ProviderDynamicProgramV1 {
@@ -283,6 +297,44 @@ test("restricted certified request routes cannot enter the dynamic runner", asyn
   });
   assert.equal(invoked, false);
   assert.equal(response?.dynamic_program_execution_receipt?.failure, "dynamic_program_request_ineligible");
+});
+
+test("Dynamic Runtime admission rejection remains structured and cannot invoke the native runner", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "provider-dynamic-admission-boundary";
+    const goal = createGoal({
+      title: "Read the active model",
+      objective: "Return an authoritative read-only model result.",
+      acceptance_criteria: ["The requested result is authoritatively established."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "provider-dynamic-admission-regression",
+      work_budget: { requested_effect: "read", document_fingerprint: "document-dynamic-admission" }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-dynamic-admission" });
+    let invoked = false;
+    const response = await executeProviderDynamicProgramLane({
+      req: {
+        ...request("admission-boundary"),
+        session_id: sessionId,
+        assignment_id: binding.assignment_id,
+        assignment_run_id: binding.run_id,
+        assignment_generation: binding.generation
+      },
+      selectedSubstrate: "dynamic_revit_program",
+      dynamicProgram: program(),
+      otherLaneItemCount: 0,
+      runner: async () => {
+        invoked = true;
+        throw new Error("must not run");
+      }
+    });
+    assert.equal(invoked, false);
+    assert.equal(response?.dynamic_program_execution_receipt?.status, "blocked");
+    assert.equal(response?.dynamic_program_execution_receipt?.request_dispatched, false);
+    assert.match(response?.dynamic_program_execution_receipt?.failure ?? "", /assignment_kernel_v2_work_unit_not_admitted/);
+    assert.match(response?.assistant_message ?? "", /Dynamic Revit execution was blocked before dispatch/);
+  });
 });
 
 test("provider source cannot authorize apply when the user turn did not request a mutation", async () => {

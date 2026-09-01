@@ -138,6 +138,35 @@ foreach ($relativePath in @(
   }
 }
 
+# A successful read is not itself proof that an applied postcondition holds.
+# Live execution and restart recovery must share one deterministic value matcher,
+# and only the reviewed settlement edge may mint the typed verification fact.
+$postconditionContract = Join-Path $RepoRoot "apps/operator-backend/src/postcondition_verification_v2.ts"
+if (-not (Test-Path -LiteralPath $postconditionContract -PathType Leaf)) {
+  $violations.Add("Shared postcondition verification V2 contract is missing")
+}
+foreach ($relativePath in @(
+  "apps/operator-backend/src/teammate_loop_runtime.ts",
+  "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"
+)) {
+  $path = Join-Path $RepoRoot $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch 'postcondition_verification_v2') {
+    $violations.Add("$relativePath does not import the shared postcondition verification V2 contract")
+  }
+}
+$verificationFactWriters = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "apps/operator-backend/src") -Recurse -File -Filter "*.ts" | Where-Object {
+  (Get-Content -Raw -LiteralPath $_.FullName) -match 'fact_id\s*:\s*["'']verification\.postcondition_satisfied["'']'
+})
+$expectedVerificationWriter = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"))
+if ($verificationFactWriters.Count -ne 1 -or $verificationFactWriters[0].FullName -ne $expectedVerificationWriter) {
+  $violations.Add("verification.postcondition_satisfied may be minted only by the reviewed V2 settlement edge")
+}
+$outcomeSource = Get-Content -Raw -LiteralPath (Join-Path $domainRoot "outcome.ts")
+if ($outcomeSource -notmatch 'verification\.postcondition_satisfied') {
+  $violations.Add("Applied V2 completion no longer requires the typed positive postcondition fact")
+}
+
 # Every new V2 session-index producer and consumer must share one response
 # schema and field name. Historical artifact readers may live elsewhere, but
 # production traffic cannot grow another alias.

@@ -206,6 +206,10 @@ test("an authoritative successful native preview retains explicit task preview e
   assert.equal(result.persistent_effect, "none");
   assert.equal(result.native_transaction_state, "rolled_back");
   assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.element_id" && fact.value === 1421361));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.before" && fact.value === "***An Autodesk Revit sample project***\r"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.after" && fact.value === "Issued for Construction"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.changed" && fact.value === true));
 });
 
 test("Candidate 40 action-specific read cannot claim a preview parent or emit task preview evidence", async () => {

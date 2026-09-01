@@ -532,6 +532,19 @@ function semanticFacts(
     }
   }
   const root = object(payload);
+  const textNoteResult = evidence === "task_result"
+    && domainSucceeded
+    && path.toLowerCase() === "/revit/replace-text-note";
+  if (textNoteResult) {
+    const elementId = aliasedField(root, ["text_note_id", "textNoteId", "element_id", "elementId", "id"]);
+    const before = aliasedField(root, ["before", "old_text", "oldText", "previous_text", "previousText"]);
+    const after = aliasedField(root, ["after", "new_text", "newText", "text", "value"]);
+    const changed = aliasedField(root, ["changed", "was_changed", "wasChanged"]);
+    if (scalar(elementId)) facts.push({ fact_id: "text_note.element_id", fact_class: "domain", value: elementId });
+    if (scalar(before)) facts.push({ fact_id: "text_note.before", fact_class: "domain", value: before });
+    if (scalar(after)) facts.push({ fact_id: "text_note.after", fact_class: "domain", value: after });
+    if (typeof changed === "boolean") facts.push({ fact_id: "text_note.changed", fact_class: "domain", value: changed });
+  }
   const summary = object(aliasedField(root, ["summary"]));
   const rootTotal = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
   const total = rootTotal === undefined

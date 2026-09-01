@@ -79,10 +79,15 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
   return advanceAssignmentKernelProgressV2({ binding }).snapshot;
 }
 
+export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+  return snapshot?.terminal ? renderTerminalResultV2(snapshot) : fallback;
+}
+
 export function codexAssignmentControllerStopMessage(snapshot: AssignmentSnapshotV2 | null, reason: string): string {
-  return snapshot?.terminal
-    ? renderTerminalResultV2(snapshot)
-    : `The canonical Assignment controller stopped this reasoning turn: ${reason}.`;
+  return finalCodexAssignmentMessageV2(
+    snapshot,
+    `The canonical Assignment controller stopped this reasoning turn: ${reason}.`
+  );
 }
 
 export function currentCodexAssignmentSnapshotV2(binding: AssignmentBindingV2): AssignmentSnapshotV2 | null {

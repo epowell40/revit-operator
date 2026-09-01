@@ -1599,10 +1599,18 @@ test("Codex MCP host guard accepts independently returned target identity during
       arguments: { query: "target element" }
     });
     assert.equal(readback.allowed, true);
-    recordTeammateMcpResult(owner, readback, {
+    const assertion = recordTeammateMcpResult(owner, readback, {
       content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [{ elementId: 42, Manufacturer: "WATTS" }] }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+    assert.deepEqual(assertion, {
+      schema: "revit-operator.teammate-verification-assertion/v2",
+      action_id: assertion?.action_id,
+      mode: "target_bound_readback",
+      evidence_sha256: assertion?.evidence_sha256
+    });
+    assert.match(assertion?.action_id ?? "", /^mcp:/);
+    assert.match(assertion?.evidence_sha256 ?? "", /^sha256:[a-f0-9]{64}$/);
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -1950,6 +1958,39 @@ test("a generic successful apply payload cannot impersonate independent verifica
       content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("post-apply verification ignores echoed request values outside authoritative result fields", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true, dryRun: false }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], changed: true }) }]
+    });
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_get_parameters",
+      arguments: { elementIds: [42], parameterNames: ["Manufacturer"] }
+    });
+    assert.equal(readback.allowed, true);
+    recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        elementIds: [42],
+        values: ["JOSAM"],
+        metadata: { request: { parameters: { Manufacturer: "WATTS" } } }
+      }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.stage, "verify");
   } finally {
     endTeammateLoopOwner(lease);
   }

@@ -688,8 +688,40 @@ export async function executeProviderDynamicProgramLane(args: {
       args.strategyEvidence
     );
   }
-  const v2Operation = openProviderDynamicRuntimeOperationV2(args.req, program);
-  markProviderDynamicRuntimeDispatchingV2(v2Operation);
+  let v2Operation;
+  try {
+    v2Operation = openProviderDynamicRuntimeOperationV2(args.req, program);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return executionResponse(
+      `Dynamic Revit execution was blocked before dispatch because the canonical operation was not admitted: ${reason}`,
+      receipt({
+        status: "blocked",
+        apply_requested: program.apply,
+        request_dispatched: false,
+        outcome_unknown: false,
+        failure: `assignment_kernel_v2_operation_admission_blocked:${reason}`
+      }),
+      args.strategyEvidence
+    );
+  }
+  try {
+    markProviderDynamicRuntimeDispatchingV2(v2Operation);
+  } catch (error) {
+    if (v2Operation) failProviderDynamicRuntimeOperationV2(v2Operation, error, "not_dispatched");
+    const reason = error instanceof Error ? error.message : String(error);
+    return executionResponse(
+      `Dynamic Revit execution was blocked before dispatch because its canonical dispatch boundary could not be recorded: ${reason}`,
+      receipt({
+        status: "blocked",
+        apply_requested: program.apply,
+        request_dispatched: false,
+        outcome_unknown: false,
+        failure: `assignment_kernel_v2_dispatch_boundary_failed:${reason}`
+      }),
+      args.strategyEvidence
+    );
+  }
   let response: ChatResponse;
   try {
     response = await (args.runner ?? runTrustedProviderDynamicProgram)(args.req, program);

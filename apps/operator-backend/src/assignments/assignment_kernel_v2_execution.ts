@@ -40,6 +40,7 @@ import {
   getAssignmentKernelSnapshotV2
 } from "./assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
+import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
 
 export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
@@ -53,6 +54,14 @@ export type AssignmentKernelMcpResultV2 = Readonly<{
     target_scope?: Readonly<Record<string, string | number | boolean | null>>;
     verification_relevance?: readonly string[];
   }>;
+}>;
+
+export type AssignmentKernelTrustedVerificationV2 = Readonly<{
+  schema: "revit-operator.teammate-verification-assertion/v2";
+  operation_id: string;
+  action_id: string;
+  mode: "target_bound_readback";
+  evidence_sha256: string;
 }>;
 
 export type AssignmentKernelOperationLeaseV2 = Readonly<{
@@ -557,14 +566,49 @@ function evidenceInput(
   };
 }
 
-function commitInput(envelope: AssignmentKernelMcpResultV2, result: OperationResultV2): ObservationCommitInputV2 | undefined {
+function commitInput(
+  envelope: AssignmentKernelMcpResultV2,
+  result: OperationResultV2,
+  lease: AssignmentKernelOperationLeaseV2,
+  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null
+): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)];
+  const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
+  const operation = snapshot?.operations[lease.operation_id];
+  const verificationSubject = operation?.verification_of_operation_id
+    ? snapshot?.operations[operation.verification_of_operation_id]
+    : undefined;
+  const deterministicallySatisfied = Boolean(
+    lease.purpose === "verification"
+      && lease.fulfillment_role === "verification"
+      && verificationSubject?.requested_effect === "apply"
+      && verificationSubject.persistent_effect === "applied"
+      && postconditionSatisfiedByPayloadV2(verificationSubject.input, envelope.observation.raw_payload)
+  );
+  if (trustedVerification) {
+    if (lease.purpose !== "verification"
+        || lease.fulfillment_role !== "verification"
+        || trustedVerification.operation_id !== lease.operation_id
+        || trustedVerification.schema !== "revit-operator.teammate-verification-assertion/v2"
+        || trustedVerification.mode !== "target_bound_readback"
+        || !/^sha256:[a-f0-9]{64}$/.test(trustedVerification.evidence_sha256)) {
+      throw new Error("assignment_kernel_v2_trusted_verification_invalid");
+    }
+  }
+  if (trustedVerification || deterministicallySatisfied) {
+    semanticFacts.push({
+      fact_id: "verification.postcondition_satisfied",
+      fact_class: "verification",
+      value: true
+    });
+  }
   return {
     schema: OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
     result_id: result.result_id,
     raw_payload: structuredClone(envelope.observation.raw_payload),
-    semantic_facts: validateFacts(envelope.observation.semantic_facts),
+    semantic_facts: semanticFacts,
     ...(envelope.observation.target_scope ? { target_scope: structuredClone(envelope.observation.target_scope) } : {}),
     ...(envelope.observation.verification_relevance ? { verification_relevance: [...envelope.observation.verification_relevance] } : {})
   };
@@ -586,14 +630,15 @@ function recordNativeDispatchIfNeeded(lease: AssignmentKernelOperationLeaseV2, r
 export function settleAssignmentKernelOperationV2(
   lease: AssignmentKernelOperationLeaseV2,
   rawResult: unknown,
-  observationCommitRuntime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME
+  observationCommitRuntime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME,
+  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null
 ): AssignmentKernelOperationSettlementV2 {
   const envelope = explicitMcpEnvelope(rawResult);
   const result = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: { operation_result_v2: envelope.operation_result_v2 } });
   if (result.operation_id !== lease.operation_id || !sameAssignmentBindingV2(result.binding, lease.binding)) {
     throw new Error("assignment_kernel_v2_result_binding_mismatch");
   }
-  const commit = commitInput(envelope, result);
+  const commit = commitInput(envelope, result, lease, trustedVerification);
   if (commit) assertEvidenceStoreInputSafe(evidenceInput(lease, result, commit));
   recordNativeDispatchIfNeeded(lease, result);
   appendCurrentAssignmentKernelEventV2({

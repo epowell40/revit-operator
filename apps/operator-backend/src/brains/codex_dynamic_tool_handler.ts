@@ -209,8 +209,9 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           accepted = true;
         }
       });
-      recordTeammateMcpResult(runtime, teammateGate, rawResult);
-      const settled = settleAssignmentKernelOperationV2(lease, rawResult);
+      const trustedVerification = recordTeammateMcpResult(runtime, teammateGate, rawResult);
+      const settled = settleAssignmentKernelOperationV2(lease, rawResult, undefined,
+        trustedVerification ? { ...trustedVerification, operation_id: lease.operation_id } : null);
       checkpointAssignmentKernelProgressV2({
         runtime,
         turn_id: params.turnId,

@@ -55,9 +55,10 @@ export function markProviderDynamicRuntimeDispatchingV2(lease: AssignmentKernelO
 
 export function failProviderDynamicRuntimeOperationV2(
   lease: AssignmentKernelOperationLeaseV2 | null,
-  error: unknown
+  error: unknown,
+  dispatch: "not_dispatched" | "dispatching" | "dispatched" = "dispatching"
 ): void {
-  if (lease) failAssignmentKernelOperationV2(lease, error, "dispatching");
+  if (lease) failAssignmentKernelOperationV2(lease, error, dispatch);
 }
 
 /** Projects the trusted Dynamic Runtime supervisor receipt through the same

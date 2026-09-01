@@ -684,6 +684,124 @@ test("read after committed apply is canonically a verification operation", () =>
     .operations[verificationLease.operation_id]!.verification_of_operation_id, applyLease.operation_id);
   assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
     .operations[applyLease.operation_id]!.target.target_id, "id:1478627");
+  markAssignmentKernelOperationDispatchStartedV2(verificationLease);
+  const verified = settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, { elementId: 1478627, value: "new" }),
+    undefined,
+    {
+      schema: "revit-operator.teammate-verification-assertion/v2",
+      operation_id: verificationLease.operation_id,
+      action_id: "mcp:verification-readback",
+      mode: "target_bound_readback",
+      evidence_sha256: `sha256:${"a".repeat(64)}`
+    }
+  );
+  assert.ok(verified.observation?.facts.some((fact) => fact.fact_id === "verification.postcondition_satisfied"
+    && fact.fact_class === "verification" && fact.value === true));
+}));
+
+test("verification recovery re-derives the exact postcondition from durable apply input and readback", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-kernel-v2-verification-recovery-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { goal, snapshot } = setup("apply");
+    const applyLease = openAssignmentKernelOperationV2({
+      snapshot, controller_request_id: "apply-before-restart", provider_turn_id: "apply-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply",
+      target_tokens: ["id:1478627"],
+      arguments: { method: "POST", path: "/revit/replace-text-note", body: { elementId: 1478627, newText: "new durable value" } }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const applied = settleAssignmentKernelOperationV2(
+      applyLease,
+      envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
+    ).snapshot;
+    const verificationLease = openAssignmentKernelOperationV2({
+      snapshot: applied, controller_request_id: "verification-before-restart", provider_turn_id: "verification-turn",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
+      arguments: { method: "GET", path: "/revit/find-text-notes", body: { elementIds: [1478627] } }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(verificationLease);
+
+    __testOnlyResetGoalListCache();
+    let calls = 0;
+    const recovered = await recoverAssignmentKernelOperationsV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      transport: "courier",
+      runtime: {
+        async callTool() {
+          calls += 1;
+          return envelope(verificationLease.operation_id, verificationLease.binding,
+            { items: [{ elementId: 1478627, text: "new durable value" }] });
+        }
+      }
+    });
+
+    assert.equal(calls, 1);
+    assert.equal(recovered.operations[verificationLease.operation_id]!.verification_of_operation_id, applyLease.operation_id);
+    const observationId = recovered.operations[verificationLease.operation_id]!.observation_ids[0]!;
+    assert.ok(recovered.observations[observationId]!.facts.some(fact =>
+      fact.fact_id === "verification.postcondition_satisfied" && fact.fact_class === "verification" && fact.value === true));
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a successful verification read with the wrong value cannot mint a postcondition fact", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "wrong-value-apply", provider_turn_id: "wrong-value-apply-turn",
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1478627"],
+    arguments: { method: "POST", path: "/revit/replace-text-note", body: { elementId: 1478627, newText: "expected" } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease, envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
+  ).snapshot;
+  const verificationLease = openAssignmentKernelOperationV2({
+    snapshot: applied, controller_request_id: "wrong-value-read", provider_turn_id: "wrong-value-read-turn",
+    capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
+    arguments: { method: "GET", path: "/revit/find-text-notes", body: { elementIds: [1478627] } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(verificationLease);
+  const settled = settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, { items: [{ elementId: 1478627, text: "wrong" }] })
+  );
+  assert.ok(!settled.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
+}));
+
+test("request echoes and metadata cannot impersonate an authoritative postcondition readback", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "echo-apply", provider_turn_id: "echo-apply-turn",
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1478627"],
+    arguments: { method: "POST", path: "/revit/replace-text-note", body: { elementId: 1478627, newText: "expected" } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease, envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
+  ).snapshot;
+  const verificationLease = openAssignmentKernelOperationV2({
+    snapshot: applied, controller_request_id: "echo-read", provider_turn_id: "echo-read-turn",
+    capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
+    arguments: { method: "GET", path: "/revit/find-text-notes", body: { elementIds: [1478627] } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(verificationLease);
+  const settled = settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, {
+      items: [{ elementId: 1478627, text: "wrong" }],
+      metadata: { request: { body: { newText: "expected" } } }
+    })
+  );
+  assert.ok(!settled.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
 }));
 
 test("restart resumes the same durable courier operation without opening or replaying a second operation", async () => {

@@ -62,6 +62,7 @@ import {
   checkpointCodexAssignmentProgressV2,
   codexAssignmentControllerStopMessage,
   currentCodexAssignmentSnapshotV2,
+  finalCodexAssignmentMessageV2,
   prepareCodexAssignmentProgressV2,
   settleCodexAssignmentProgressV2
 } from "./codex_assignment_progress.js";
@@ -1159,6 +1160,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   if (assignmentKernelV2) settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
+  const terminalSnapshot = assignmentKernelV2
+    ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
+    : null;
+  assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText);
   const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({
@@ -1183,9 +1188,6 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     // ignore
   }
 
-  const terminalSnapshot = assignmentKernelV2
-    ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
-    : null;
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: assistantText || "",

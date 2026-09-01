@@ -11,7 +11,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "ts-node src/server.ts",
-    "test": "npm run build && node --test dist/**/*.test.js",
+    "test": "npm run build && node scripts/run-tests.mjs",
     "external-agent": "node dist/cli/externalAgent.js",
     "evidence:epic-0437": "node --loader ts-node/esm src/scripts/run_epic_0437_live_evidence.ts",
     "evidence:epic-0437:archive-discard": "node --loader ts-node/esm src/scripts/archive_epic_0437_discarded_recovery.ts",

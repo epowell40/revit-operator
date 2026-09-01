@@ -745,7 +745,12 @@ test("apply completion requires a committed native result and task-level criteri
     ...result(raw), result_id: "result-verification", operation_id: verification.operation_id
   };
   journal.append(event(journal, { event_type: "operation_result_recorded", result: verificationResult }));
-  const verificationObservation = observationFor(journal, verificationResult, "observation-verification", "evidence://sha256/verification", raw);
+  const verificationDecoder = new ObservationDecoderRegistryV2();
+  verificationDecoder.register("inventory-result/v1", (payload) => [
+    { fact_id: "result.total", fact_class: "domain", value: Number((payload as { total: number }).total) },
+    { fact_id: "verification.postcondition_satisfied", fact_class: "verification", value: true }
+  ]);
+  const verificationObservation = observationFor(journal, verificationResult, "observation-verification", "evidence://sha256/verification", raw, verificationDecoder);
   journal.append(event(journal, { event_type: "observation_retained", observation: verificationObservation }));
   const completed = journal.append(event(journal, {
     event_type: "criterion_evaluated",
@@ -757,6 +762,46 @@ test("apply completion requires a committed native result and task-level criteri
   }));
   assert.equal(completed.outcome, "complete");
   assert.deepEqual(completed.operations["operation-1"].verification_operation_ids, [verification.operation_id]);
+});
+
+test("a successful target-bound read without a positive postcondition fact cannot verify an apply", () => {
+  const applySpec = spec("apply");
+  const journal = createJournal({
+    ...applySpec,
+    work_units: [
+      ...applySpec.work_units,
+      { ...spec("read").work_units[0], work_unit_id: "work-verification" }
+    ]
+  });
+  journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
+  retainResult(journal, { total: 1 }, "apply");
+
+  const verification = {
+    ...operation("read", "verification"),
+    operation_id: "operation-wrong-value-verification",
+    work_unit_id: "work-verification",
+    verification_of_operation_id: "operation-1"
+  };
+  journal.append(event(journal, { event_type: "operation_admitted", operation: verification }));
+  journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: verification.operation_id }));
+  const raw = { total: 999 };
+  const verificationResult = {
+    ...result(raw), result_id: "result-wrong-value-verification", operation_id: verification.operation_id
+  };
+  journal.append(event(journal, { event_type: "operation_result_recorded", result: verificationResult }));
+  const observation = observationFor(
+    journal,
+    verificationResult,
+    "observation-wrong-value-verification",
+    "evidence://sha256/wrong-value-verification",
+    raw
+  );
+  journal.append(event(journal, { event_type: "observation_retained", observation }));
+  const projected = journal.append(event(journal, { event_type: "criterion_evaluated", evaluation: passingEvaluation("execution") }));
+
+  assert.equal(projected.outcome, "active");
+  assert.equal(projected.terminal, false);
 });
 
 test("an apply criterion cannot pass from a rolled-back preview observation", () => {

@@ -566,6 +566,19 @@ test("durable progress controller evaluates retained observations and terminaliz
   assert.match(renderTerminalResultV2(handedOff.snapshot), /Inventory total: 509/);
   assert.match(renderTerminalResultV2(handedOff.snapshot), /Family A — Type A: 300/);
   assert.match(renderTerminalResultV2(handedOff.snapshot), /Family B — Type B: 209/);
+  const textNoteHandoff = structuredClone(handedOff.snapshot);
+  textNoteHandoff.spec.requested_effect = "apply";
+  const textObservation = textNoteHandoff.observations[Object.keys(textNoteHandoff.observations)[0]!]!;
+  textObservation.facts = [
+    { fact_id: "task.result_available", fact_class: "domain", value: true },
+    { fact_id: "text_note.element_id", fact_class: "domain", value: 1421361 },
+    { fact_id: "text_note.before", fact_class: "domain", value: "Existing note" },
+    { fact_id: "text_note.after", fact_class: "domain", value: "Issued for Construction" },
+    { fact_id: "text_note.changed", fact_class: "domain", value: true }
+  ];
+  assert.match(renderTerminalResultV2(textNoteHandoff), /Updated TextNote 1421361/);
+  assert.match(renderTerminalResultV2(textNoteHandoff), /Before: Existing note/);
+  assert.match(renderTerminalResultV2(textNoteHandoff), /After: Issued for Construction/);
   const reconnected = prepareCodexAssignmentProgressV2(binding);
   assert.equal(reconnected.snapshot.assignment_version, advanced.snapshot.assignment_version);
   assert.equal(reconnected.prompt, "");

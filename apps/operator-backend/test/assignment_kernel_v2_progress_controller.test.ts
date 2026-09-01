@@ -19,6 +19,7 @@ import {
   type OperationResultV2,
   type OperationV2
 } from "../src/domain/assignment-kernel/index.js";
+import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
 
 const binding: AssignmentBindingV2 = {
   assignment_id: "assignment-progress",
@@ -219,6 +220,22 @@ test("all required criteria pass and controller terminates immediately", () => {
   j.append(event(j, { event_type: "criterion_evaluated", evaluation: evaluation() }));
   const decision = decideAssignmentProgressV2({ snapshot: j.snapshot(), budget, now: "2026-08-26T20:00:09.000Z" });
   assert.deepEqual({ decision: decision.decision, outcome: decision.decision === "terminal" ? decision.outcome : null }, { decision: "terminal", outcome: "complete" });
+});
+
+test("terminal handoff replaces stale provider prose with the canonical useful result", () => {
+  const j = journal();
+  settleObservation(j);
+  j.append(event(j, { event_type: "criterion_evaluated", evaluation: evaluation() }));
+  const terminal = {
+    ...j.snapshot(),
+    terminal: true,
+    outcome: "complete" as const,
+    terminal_reason: "criteria_satisfied",
+    finished_at: "2026-08-26T20:00:09.000Z"
+  };
+  const message = finalCodexAssignmentMessageV2(terminal, "Provider says it may continue reasoning.");
+  assert.match(message, /Inventory total: 3/);
+  assert.doesNotMatch(message, /continue reasoning/);
 });
 
 test("active operation suppresses another reasoning turn", () => {

@@ -7,6 +7,7 @@ import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveH
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
+import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -74,6 +75,12 @@ type TeammateLoopState = {
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
 export type TeammateMcpGate = { allowed: boolean; message?: string; call?: PendingCall; state?: TeammateLoopState };
+export type TeammateVerificationAssertionV2 = Readonly<{
+  schema: "revit-operator.teammate-verification-assertion/v2";
+  action_id: string;
+  mode: "target_bound_readback";
+  evidence_sha256: string;
+}>;
 
 const statesByTurn = new Map<string, TeammateLoopState>();
 const statesByOwner = new WeakMap<object, { unbound: Set<TeammateLoopOwnerLease>; by_turn: Map<string, TeammateLoopOwnerLease> }>();
@@ -442,32 +449,6 @@ function targetTokens(value: unknown): string[] {
   return [...tokens].sort();
 }
 
-function expectedValues(value: unknown, includeIdentityRenames = true): string[] {
-  const values = new Set<string>();
-  const visit = (node: unknown, key = "", parent = "", depth = 0): void => {
-    if (depth > 6 || values.size >= 32) return;
-    if (Array.isArray(node)) {
-      for (const item of node) visit(item, key, parent, depth + 1);
-      return;
-    }
-    if (node && typeof node === "object") {
-      for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) visit(child, childKey, key, depth + 1);
-      return;
-    }
-    if (node === null || node === undefined) return;
-    const normalizedKey = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    const normalizedParent = parent.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
-    const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedKey);
-    const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedKey);
-    if (normalizedParent === "parameters" || (!valueIsPredicate && (identityRename || assignedValue))) {
-      values.add(JSON.stringify(node));
-    }
-  };
-  visit(value);
-  return [...values].sort();
-}
-
 function operationFor(path: string, body: unknown): string {
   const normalizedPath = path.toLowerCase();
   const serialized = JSON.stringify(body ?? null).toLowerCase();
@@ -499,7 +480,7 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   const signature = actionSignature(path, normalizedBody);
   const target_tokens = targetTokens(normalizedBody);
   const operation = operationFor(path, normalizedBody);
-  const expected_values = expectedValues(normalizedBody, operation !== "create");
+  const expected_values = [...expectedPostconditionValuesV2(normalizedBody, operation !== "create")];
   const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation, raw_body: normalizedBody });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (isTeammateDiscoveryPath(path)) return call("discovery");
@@ -525,7 +506,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
   const target_tokens = targetTokens(args);
   const operation = operationFor(tool, args);
-  const expected_values = expectedValues(args, operation !== "create");
+  const expected_values = [...expectedPostconditionValuesV2(args, operation !== "create")];
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation, raw_body: args });
   if (isTeammateDiscoveryTool(tool)) return call("discovery");
   // Durable EvidenceRef expansion is a bounded certified host read. It neither
@@ -772,21 +753,6 @@ function resultSucceeded(result: ToolResult): boolean {
   return body.ok !== false && body.success !== false;
 }
 
-function evidenceValues(value: unknown): Set<string> {
-  const values = new Set<string>();
-  const visit = (node: unknown, depth = 0): void => {
-    if (depth > 8 || values.size >= 512 || node === null || node === undefined) return;
-    if (Array.isArray(node)) { for (const item of node) visit(item, depth + 1); return; }
-    if (node && typeof node === "object") { for (const item of Object.values(node as Record<string, unknown>)) visit(item, depth + 1); return; }
-    if (typeof node === "string" && /^[\[{]/.test(node.trim())) {
-      try { visit(JSON.parse(node), depth + 1); } catch {}
-    }
-    values.add(JSON.stringify(node));
-  };
-  visit(value);
-  return values;
-}
-
 function explicitVerification(value: unknown): boolean {
   if (typeof value === "string") {
     const text = value.trim();
@@ -823,7 +789,7 @@ function substantiveReadback(value: unknown, depth = 0): boolean {
 
 function verificationMatches(state: TeammateLoopState, evidence: unknown, requireExplicit: boolean): boolean {
   if (requireExplicit && !explicitVerification(evidence)) return false;
-  const observed = evidenceValues(evidence);
+  const observed = observedPostconditionValuesV2(evidence);
   if (state.apply_expected_values.size > 0) return [...state.apply_expected_values].every(value => observed.has(value));
   return explicitVerification(evidence) || (!requireExplicit && substantiveReadback(evidence));
 }
@@ -954,7 +920,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     for (const token of [...pending.target_tokens, ...targetTokens(evidence)]) {
       state.verification_observed_target_tokens.add(token);
     }
-    for (const value of evidenceValues(evidence)) state.verification_observed_values.add(value);
+    for (const value of observedPostconditionValuesV2(evidence)) state.verification_observed_values.add(value);
     state.verification_has_substantive_readback = true;
     if (accumulatedReadbackMatches(state)) {
       markVerified(state, "target_bound_readback", actionId, {
@@ -1212,9 +1178,9 @@ function recoveredLiveContextIdentity(result: unknown): { state: TeammateContext
   return null;
 }
 
-export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, result: unknown): void {
+export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, result: unknown): TeammateVerificationAssertionV2 | null {
   const state = gate.state;
-  if (!state || !gate.allowed || !gate.call) return;
+  if (!state || !gate.allowed || !gate.call) return null;
   const [actionId] = gate.call.path.split("|", 1);
   const succeeded = mcpResultSucceeded(result);
   const separator = gate.call.path.indexOf("|");
@@ -1235,6 +1201,17 @@ export function recordTeammateMcpResult(owner: object, gate: TeammateMcpGate, re
     }
   }
   recordResult(state, actionId, succeeded, result);
+  return state.verified
+      && state.verification_mode === "target_bound_readback"
+      && state.verification_action_id === actionId
+      && state.verification_evidence_sha256
+    ? {
+        schema: "revit-operator.teammate-verification-assertion/v2",
+        action_id: actionId,
+        mode: "target_bound_readback",
+        evidence_sha256: state.verification_evidence_sha256
+      }
+    : null;
 }
 
 export function teammateLoopReceiptForOwner(owner: object): NonNullable<ChatResponse["teammate_loop_receipt"]> | undefined {

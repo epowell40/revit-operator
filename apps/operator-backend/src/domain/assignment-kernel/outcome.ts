@@ -15,6 +15,15 @@ function requiredEvaluations(snapshot: AssignmentSnapshotV2): CriterionEvaluatio
     .filter((evaluation): evaluation is CriterionEvaluationV2 => Boolean(evaluation));
 }
 
+function provesAppliedPostcondition(snapshot: AssignmentSnapshotV2, verificationOperationId: string): boolean {
+  const verification = snapshot.operations[verificationOperationId];
+  if (!verification) return false;
+  return verification.observation_ids.some((observationId) => snapshot.observations[observationId]?.facts.some((fact) =>
+    fact.fact_id === "verification.postcondition_satisfied"
+      && fact.fact_class === "verification"
+      && fact.value === true));
+}
+
 export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): AssignmentOutcomeV2 {
   if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot.spec, snapshot)) {
     return "awaiting_user_input";
@@ -54,7 +63,8 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
       && verification.persistent_effect === "none"
       && verification.settlement_state === "settled"
       && verification.result?.status === "succeeded"
-      && verification.observation_ids.length > 0;
+      && verification.observation_ids.length > 0
+      && provesAppliedPostcondition(snapshot, verification.operation_id);
   }));
   if (appliedAndVerified) {
     return "complete";
