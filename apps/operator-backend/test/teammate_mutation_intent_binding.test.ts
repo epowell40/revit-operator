@@ -4,6 +4,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/cont
 import {
   __testOnlyResetTeammateLoopState,
   beginTeammateLoopOwner,
+  buildTeammateTurnContract,
   endTeammateLoopOwner,
   formatTeammateTurnContract,
   guardTeammateMcpCall
@@ -75,6 +76,17 @@ test("underspecified text replacement cannot preview a model-invented desired va
     assert.match(guessed.message || "", /desired postcondition.*authenticated user input/i);
     assert.match(formatTeammateTurnContract(request(prompt)), /replacement_text/);
   });
+});
+
+test("Candidate 30 nominal text replacement requests create the authenticated-input gap", () => {
+  const prompt = "Find one project TextNote, report its exact identity, and preview a conditional text replacement that would not create a duplicate. Do not apply it.";
+  const contract = buildTeammateTurnContract(request(prompt));
+  assert.equal(contract.turn_kind, "inspection");
+  assert.equal(contract.preview_required, true);
+  assert.equal(contract.no_write, true);
+  assert.equal(contract.stage, "ground");
+  assert.deepEqual(contract.required_user_inputs, ["replacement_text"]);
+  assert.match(formatTeammateTurnContract(request(prompt)), /operator_request_clarification.*replacement_text/);
 });
 
 test("synonymous placeholders do not authorize invented replacement text", () => {

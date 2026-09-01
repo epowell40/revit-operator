@@ -2465,11 +2465,11 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:deb976c664435bcbecfd131379415618cb3451adf0f6fb5a0083686f5aa99c7d"
+      "sha256": "sha256:5319f32fba43116284e7cb4d480d5bd8c3dd8c1c6e1c663770635c6106831586"
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
-      "sha256": "sha256:7667509ba7d13b110b589627813f2236f3cdafddb7bd9e1bc28bbeebee647859"
+      "sha256": "sha256:28ea1914649fef74dfebee6c0732c35098a148d139d15a5eb7b67628f8253e63"
     },
     {
       "path": "apps/operator-backend/src/telemetry/issue_bundles.ts",
@@ -2837,7 +2837,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:be930a8ed3d802a2ccee602b4575c2f1b6d71a77e8874782191c1b4ae1588821"
+      "sha256": "sha256:2b371e76e1d6ab663c4182dd60770835b34da7cfc6ec4df07a1f8b5b81a0211e"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_contracts.test.ts",
@@ -3753,7 +3753,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_mutation_intent_binding.test.ts",
-      "sha256": "sha256:cb32e1d62294b8d5b4fb7e826b7c0b7645c82e1e57921e5c4c8b54f060d64634"
+      "sha256": "sha256:c9e48d07e0112d6edbf53aad2c809c7e2f6bd2c0f8f7d9a65043face2c43f8f9"
     },
     {
       "path": "apps/operator-backend/test/titleblock_verify_guard.test.ts",
@@ -5929,7 +5929,7 @@
       "sha256": "sha256:4432819073ac0e815bd369f5445e9be213a6b2c1f68167bfa5dae726b32344aa"
     }
   ],
-  "inputs_hash": "sha256:1da2afd10bdfc36f9714cf4b7f699f22fcbe7ec832cfca1df4ce458fb5c6c369",
+  "inputs_hash": "sha256:c3f311d049cfbdc61fee14bdec90daed27e71a7c59820447e7453ab80adc7df8",
   "result": {
     "passed": true,
     "checks": [

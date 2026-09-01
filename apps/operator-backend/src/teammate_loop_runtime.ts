@@ -292,8 +292,8 @@ export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "
   const ambiguity = ambiguityFor(text, turnKind);
   const noWrite = hasNoWriteAuthority(text);
   const authorized = writeAuthorized(text, turnKind, noWrite);
-  const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind);
-  const requiredUserInputs = turnKind === "mutation" ? missingOpaqueMutationInputs(text) : [];
+  const opaqueMutationInputs = missingOpaqueMutationInputs(text); const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind) || (/\bpreview\b/i.test(text) && opaqueMutationInputs.length > 0);
+  const requiredUserInputs = turnKind === "mutation" || previewRequired ? opaqueMutationInputs : [];
   const stage: TeammateLoopStage = ambiguity === "material"
     ? "clarify"
     : requiredUserInputs.length > 0 && identity.state === "live"

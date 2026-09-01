@@ -52,9 +52,14 @@ function workspace(fn: () => void): void {
 }
 
 function setup(effect: "read" | "apply" = "read", requiredInputs: string[] = []) {
+  const objective = effect === "read"
+    ? "Return the requested inventory."
+    : requiredInputs.length > 0
+      ? "Replace the selected note text."
+      : 'Replace the selected note text with "Current issue wording".';
   const goal = createGoal({
     title: "Assignment Kernel V2 lifecycle",
-    objective: effect === "read" ? "Return the requested inventory." : "Replace the selected note text.",
+    objective,
     acceptance_criteria: ["The requested result is authoritatively established."],
     status: "active",
     related_session_id: "session-v2-life",
