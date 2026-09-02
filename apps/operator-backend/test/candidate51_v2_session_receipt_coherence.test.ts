@@ -178,9 +178,10 @@ test("Candidate 51 V2-tagged discovery notification uses the exact published ope
       toolName: "revit_search_tools",
       parsedResult: { status: "completed" }
     }), {
-      state: "not_v2_tagged",
-      assignment_id: null,
-      operation_id: null
+      state: "unresolved",
+      assignment_id: assignmentId,
+      operation_id: null,
+      reason: "v2_evidence_projection_missing"
     });
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

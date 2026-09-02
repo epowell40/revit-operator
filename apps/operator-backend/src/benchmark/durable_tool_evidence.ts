@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import { revitRouteEffect } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope, outcomeEnvelopeIsUnsafe } from "../outcome_envelope.js";
-import { resolveSessionReceiptOperationV2 } from "./v2_session_receipt_binding.js";
+import {
+  resolveSessionReceiptOperationV2,
+  sessionReceiptAuthorityPolicyV2
+} from "./v2_session_receipt_binding.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -418,17 +421,21 @@ export async function loadDurableToolEvidence(
     envelope_succeeded: boolean; request_dispatched: boolean | null;
     outcome_unknown: boolean; reconciliation_required: boolean;
     result_sha256: string; parsed_result: JsonRecord;
-    requested_effect_source?: "assignment_kernel_v2" | "v2_binding_unresolved";
-    canonical_binding_state?: "bound" | "unresolved";
+    requested_effect_source?: "assignment_kernel_v2";
+    canonical_binding_state?: "bound";
     canonical_assignment_id?: string;
     canonical_operation_id?: string;
-    canonical_binding_error?: string;
   };
   type SessionOutcome = {
     path: string; tool: string; outcome: "completed" | "failed" | "rejected_no_effect";
     had_failure: boolean; had_rejection: boolean;
   };
   const sessionResultReceipts: SessionReceipt[] = [];
+  const sessionResultReceiptRejections: JsonRecord[] = [];
+  const sessionResultReceiptAuthority = sessionReceiptAuthorityPolicyV2({
+    assignmentKernelV2,
+    expectedSessionId
+  });
   const sessionOutcomes = new Map<string, SessionOutcome>();
   if (expectedSessionId) {
     try {
@@ -445,6 +452,7 @@ export async function loadDurableToolEvidence(
         const explicitPath = toolName === "revit_call_tool" ? String(argumentsRecord.path || "") : "";
         const body = parsedRecord(argumentsRecord.body);
         const parsed = resultRecord(payload.result);
+        const status = String(payload.status || "").trim().toLowerCase();
         const v2Resolution = resolveSessionReceiptOperationV2({
           assignmentKernelV2,
           expectedSessionId,
@@ -453,6 +461,19 @@ export async function loadDurableToolEvidence(
           explicitPath,
           parsedResult: parsed
         });
+        if (v2Resolution.state === "unresolved") {
+          sessionResultReceiptRejections.push({
+            notification_id: numberValue(notification.id),
+            notification_ts: ts,
+            source_session_id: expectedSessionId,
+            tool: toolName,
+            status,
+            assignment_id: v2Resolution.assignment_id,
+            operation_id: v2Resolution.operation_id,
+            reason: v2Resolution.reason || "v2_binding_unresolved"
+          });
+          continue;
+        }
         const path = canonicalBenchmarkRevitPath(
           (v2Resolution.state === "bound" ? v2Resolution.path : "")
             || explicitPath
@@ -462,11 +483,8 @@ export async function loadDurableToolEvidence(
         const effect = v2Resolution.state === "bound"
           ? v2Resolution.requested_effect
           : requestEffect(path, argumentsRecord, body);
-        const v2BindingUnresolved = v2Resolution.state === "unresolved";
-        const status = String(payload.status || "").trim().toLowerCase();
         const envelope = classifyOutcomeEnvelope(parsed);
-        const succeeded = !v2BindingUnresolved
-          && ["success", "ok", "done", "completed"].includes(status)
+        const succeeded = ["success", "ok", "done", "completed"].includes(status)
           && !String(payload.error || "").trim()
           && !parsedEnvelopeHasFailure(parsed)
           && !outcomeEnvelopeIsUnsafe(envelope);
@@ -498,12 +516,6 @@ export async function loadDurableToolEvidence(
             canonical_binding_state: "bound" as const,
             canonical_assignment_id: v2Resolution.assignment_id,
             canonical_operation_id: v2Resolution.operation_id
-          } : v2Resolution.state === "unresolved" ? {
-            requested_effect_source: "v2_binding_unresolved" as const,
-            canonical_binding_state: "unresolved" as const,
-            canonical_assignment_id: v2Resolution.assignment_id || undefined,
-            canonical_operation_id: v2Resolution.operation_id || undefined,
-            canonical_binding_error: v2Resolution.reason || "v2_binding_unresolved"
           } : {})
         };
         sessionResultReceipts.push(receipt);
@@ -866,6 +878,11 @@ export async function loadDurableToolEvidence(
     canonical_attempt_receipts: canonicalAttemptReceipts,
     canonical_verified_mutation_paths: [...canonicalVerifiedMutationPaths].sort(),
     session_result_receipts: sessionResultReceipts.map(({ parsed_result: _parsed, ...receipt }) => receipt),
+    session_result_receipt_policy: {
+      ...sessionResultReceiptAuthority,
+      rejected_count: sessionResultReceiptRejections.length
+    },
+    session_result_receipt_rejections: sessionResultReceiptRejections,
     session_mutation_verifications: sessionMutationVerifications
   };
 }

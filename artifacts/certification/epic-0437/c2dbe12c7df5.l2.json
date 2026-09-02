@@ -712,7 +712,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/durable_tool_evidence.ts",
-      "sha256": "sha256:923756fed9ff97b8d49bce8d1d3f079a141629c90e08c456a6b73e2d53fe2ec4"
+      "sha256": "sha256:139817beecc79de036fcdeb51d3828348e30206947093557efc47d1f9afce7a9"
     },
     {
       "path": "apps/operator-backend/src/benchmark/environment.ts",
@@ -968,7 +968,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/v2_session_receipt_binding.ts",
-      "sha256": "sha256:9730df32e4b5439a6c1946ef4d32b02eff3242c1ce1db494c7686f227e6d3e45"
+      "sha256": "sha256:2daac45ddcc4c9411b8c7d282be8887a0449860e686ded01f9e4c00a91be51af"
     },
     {
       "path": "apps/operator-backend/src/benchmark/work_packet_collection.ts",
@@ -2965,7 +2965,11 @@
     },
     {
       "path": "apps/operator-backend/test/candidate51_v2_session_receipt_coherence.test.ts",
-      "sha256": "sha256:c4083a3962d5731500ff509c3eeaedba226448d6d27e5685814149ed6590fa68"
+      "sha256": "sha256:83c19cdc4d2e2a56211c4e6a97586f072c49b0fb8cdbcf20b6a0c594a275d2da"
+    },
+    {
+      "path": "apps/operator-backend/test/candidate52_v2_session_receipt_authority.test.ts",
+      "sha256": "sha256:043a560d6db4e5851977e5c16c578af51d422d550ef08fe862e52b07ec627448"
     },
     {
       "path": "apps/operator-backend/test/certified_sidecar_capability.test.ts",
@@ -5961,7 +5965,7 @@
       "sha256": "sha256:f9edb46c52ceb1904dbe68a7bd996f0aa491f7a55f7c9299e8924d2523069d03"
     }
   ],
-  "inputs_hash": "sha256:16e0e7ccbdd62a6b137c97f483d845ba664986b9eb803890d16077f6b3383a55",
+  "inputs_hash": "sha256:bae4dbc7e1a3a3ce13c2b3c934e9d875f5244c25393a0cf1ecbd6e2bc0c97a4c",
   "result": {
     "passed": true,
     "checks": [

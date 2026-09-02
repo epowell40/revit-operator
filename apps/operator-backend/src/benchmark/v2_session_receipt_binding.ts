@@ -23,6 +23,11 @@ export type SessionReceiptOperationResolutionV2 = SessionReceiptOperationBinding
   reason?: string;
 };
 
+export type SessionReceiptAuthorityPolicyV2 = {
+  mode: "exact_v2_operation_binding" | "legacy_v1_notification_projection";
+  binding_required: boolean;
+};
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
@@ -37,6 +42,62 @@ function normalizedText(value: unknown): string {
 
 function operationKey(assignmentId: string, operationId: string): string {
   return `${assignmentId}\n${operationId}`;
+}
+
+function sessionPublicationPresenceV2(value: unknown, expectedSessionId: string):
+  | { state: "absent" }
+  | { state: "present"; assignment_ids: string[] }
+  | { state: "invalid"; assignment_ids: string[]; reason: string } {
+  const bundle = record(value);
+  if (Object.keys(bundle).length === 0) return { state: "absent" };
+  const bundleIds = Array.isArray(bundle.assignment_ids)
+    ? bundle.assignment_ids.map(normalizedText).filter(Boolean)
+    : [];
+  const publications = Array.isArray(bundle.assignments) ? bundle.assignments.map(record) : [];
+  const sessionIndex = record(bundle.session_index);
+  if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) {
+    return bundleIds.length > 0 || publications.length > 0 || Object.keys(sessionIndex).length > 0
+      ? { state: "invalid", assignment_ids: bundleIds, reason: "v2_publication_bundle_invalid" }
+      : { state: "absent" };
+  }
+  if (Object.keys(sessionIndex).length === 0) {
+    return bundleIds.length > 0 || publications.length > 0
+      ? { state: "invalid", assignment_ids: bundleIds, reason: "v2_session_index_missing" }
+      : { state: "absent" };
+  }
+  if (sessionIndex.schema !== ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA
+      || normalizedText(sessionIndex.session_id) !== expectedSessionId) {
+    return {
+      state: "invalid",
+      assignment_ids: bundleIds,
+      reason: "v2_session_index_invalid"
+    };
+  }
+  const entries = (Array.isArray(sessionIndex.assignments) ? sessionIndex.assignments : []).map(record);
+  const indexedIds = [...new Set(entries.map((entry) => normalizedText(entry.assignment_id)).filter(Boolean))];
+  if (entries.length === 0) {
+    return bundleIds.length > 0 || publications.length > 0
+      ? { state: "invalid", assignment_ids: bundleIds, reason: "v2_session_index_empty" }
+      : { state: "absent" };
+  }
+  if (indexedIds.length !== entries.length || indexedIds.some((assignmentId) => !bundleIds.includes(assignmentId))) {
+    return {
+      state: "invalid",
+      assignment_ids: indexedIds,
+      reason: "v2_session_index_assignment_invalid"
+    };
+  }
+  return { state: "present", assignment_ids: indexedIds };
+}
+
+export function sessionReceiptAuthorityPolicyV2(input: {
+  assignmentKernelV2: unknown;
+  expectedSessionId: string;
+}): SessionReceiptAuthorityPolicyV2 {
+  const presence = sessionPublicationPresenceV2(input.assignmentKernelV2, input.expectedSessionId);
+  return presence.state === "absent"
+    ? { mode: "legacy_v1_notification_projection", binding_required: false }
+    : { mode: "exact_v2_operation_binding", binding_required: true };
 }
 
 type NotificationOperationReferenceV2 = {
@@ -125,7 +186,16 @@ export function resolveSessionReceiptOperationV2(input: {
 }): SessionReceiptOperationResolutionV2 {
   const reference = notificationOperationReferenceV2(input.parsedResult);
   if (reference.state === "not_v2_tagged") {
-    return { state: "not_v2_tagged", assignment_id: null, operation_id: null };
+    const presence = sessionPublicationPresenceV2(input.assignmentKernelV2, input.expectedSessionId);
+    if (presence.state === "absent") {
+      return { state: "not_v2_tagged", assignment_id: null, operation_id: null };
+    }
+    return {
+      state: "unresolved",
+      assignment_id: presence.assignment_ids.length === 1 ? presence.assignment_ids[0]! : null,
+      operation_id: null,
+      reason: presence.state === "invalid" ? presence.reason : "v2_evidence_projection_missing"
+    };
   }
   if (reference.state === "unresolved") return reference;
   const unresolved = (reason: string): SessionReceiptOperationResolutionV2 => ({
