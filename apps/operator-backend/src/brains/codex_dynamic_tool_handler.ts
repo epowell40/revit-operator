@@ -59,13 +59,10 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
     stated_gap_ids: gapIds,
     admitted_operation_ids: [input.operation_id]
   });
-  const controllerTurnId = typeof input.turn_id === "string" ? input.turn_id.trim() : "";
-  const beforeProviderCallIds = new Set(input.before.provider_call_ids);
-  const providerReceiptRetained = Object.values(input.after.provider_calls)
-    .some(call => Boolean(controllerTurnId)
-      && call.controller_turn_id === controllerTurnId
-      && !beforeProviderCallIds.has(call.call_id));
-  if (!providerReceiptRetained) return;
+  // Operation settlement is the causal boundary for criterion progression.
+  // The active provider-turn terminal barrier keeps the final terminal event
+  // open until its receipt is reconciled; delaying evaluation itself permits
+  // another operation to overtake already-authoritative task evidence.
   const advanced = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
   if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
     // The canonical decision is already durable, but interrupting the Codex

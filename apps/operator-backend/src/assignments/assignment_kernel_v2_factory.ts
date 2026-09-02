@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
+  ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
   CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
   SEMANTIC_EVIDENCE_CONTRACT_V2,
   sameAssignmentBindingV2,
@@ -202,7 +203,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
         rollback_scope: effect === "apply" ? "operation" : "none"
       },
       ...(effect === "apply" ? [{
-        work_unit_id: "work-verification",
+        work_unit_id: ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
         requested_effect: "read" as const,
         execution_class: "analysis" as const,
         dependency_ids: [] as string[], criterion_ids: criterionSpecs.map(criterion => criterion.criterion_id), input_variable_ids: [] as string[],

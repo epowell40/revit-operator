@@ -9,6 +9,8 @@ import {
   AssignmentJournalV2,
   AssignmentKernelErrorV2,
   canonicalJsonV2,
+  deriveAssignmentOutcomeV2,
+  deriveProgressGapsV2,
   evaluateCriterionV2,
   type AssignmentBindingV2,
   type AssignmentEventV2,
@@ -732,11 +734,20 @@ test("apply completion requires a committed native result and task-level criteri
   retainResult(journal, { total: 1 }, "apply");
   assert.equal(journal.snapshot().operations["operation-1"].persistent_effect, "applied");
   assert.equal(journal.snapshot().outcome, "active");
+  journal.append(event(journal, {
+    event_type: "criterion_evaluated",
+    evaluation: passingEvaluation("execution")
+  }));
+  assert.equal(journal.snapshot().outcome, "active",
+    "task evidence may pass while the applied postcondition remains an explicit progress gap");
   const verification = {
     ...operation("read", "verification"),
     operation_id: "operation-verification",
     work_unit_id: "work-verification",
-    verification_of_operation_id: "operation-1"
+    verification_of_operation_id: "operation-1",
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    resolves_gap_ids: ["verification:operation-1"]
   };
   journal.append(event(journal, { event_type: "operation_admitted", operation: verification }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: verification.operation_id }));
@@ -751,17 +762,26 @@ test("apply completion requires a committed native result and task-level criteri
     { fact_id: "verification.postcondition_satisfied", fact_class: "verification", value: true }
   ]);
   const verificationObservation = observationFor(journal, verificationResult, "observation-verification", "evidence://sha256/verification", raw, verificationDecoder);
-  journal.append(event(journal, { event_type: "observation_retained", observation: verificationObservation }));
-  const completed = journal.append(event(journal, {
-    event_type: "criterion_evaluated",
-    evaluation: {
-      ...passingEvaluation("execution"),
-      supporting_operation_ids: [verification.operation_id],
-      supporting_facts: [{ observation_id: verificationObservation.observation_id, fact_id: "result.total" }]
-    }
-  }));
+  const completed = journal.append(event(journal, { event_type: "observation_retained", observation: verificationObservation }));
   assert.equal(completed.outcome, "complete");
   assert.deepEqual(completed.operations["operation-1"].verification_operation_ids, [verification.operation_id]);
+  const secondApplied: OperationV2 = {
+    ...completed.operations["operation-1"],
+    operation_id: "operation-2",
+    target: { ...completed.operations["operation-1"].target, target_id: "target-2" },
+    verification_operation_ids: []
+  };
+  const partiallyVerified = {
+    ...completed,
+    terminal: false,
+    outcome: "active" as const,
+    operations: { ...completed.operations, [secondApplied.operation_id]: secondApplied }
+  };
+  assert.equal(deriveAssignmentOutcomeV2(partiallyVerified), "active",
+    "one verified apply cannot stand in for another applied operation");
+  assert.deepEqual(deriveProgressGapsV2(partiallyVerified)
+    .filter((gap) => gap.kind === "verification_required")
+    .map((gap) => gap.gap_id), ["verification:operation-2"]);
 });
 
 test("a successful target-bound read without a positive postcondition fact cannot verify an apply", () => {
@@ -776,12 +796,16 @@ test("a successful target-bound read without a positive postcondition fact canno
   journal.append(event(journal, { event_type: "operation_admitted", operation: operation("apply") }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1" }));
   retainResult(journal, { total: 1 }, "apply");
+  journal.append(event(journal, { event_type: "criterion_evaluated", evaluation: passingEvaluation("execution") }));
 
   const verification = {
     ...operation("read", "verification"),
     operation_id: "operation-wrong-value-verification",
     work_unit_id: "work-verification",
-    verification_of_operation_id: "operation-1"
+    verification_of_operation_id: "operation-1",
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    resolves_gap_ids: ["verification:operation-1"]
   };
   journal.append(event(journal, { event_type: "operation_admitted", operation: verification }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: verification.operation_id }));
@@ -797,8 +821,7 @@ test("a successful target-bound read without a positive postcondition fact canno
     "evidence://sha256/wrong-value-verification",
     raw
   );
-  journal.append(event(journal, { event_type: "observation_retained", observation }));
-  const projected = journal.append(event(journal, { event_type: "criterion_evaluated", evaluation: passingEvaluation("execution") }));
+  const projected = journal.append(event(journal, { event_type: "observation_retained", observation }));
 
   assert.equal(projected.outcome, "active");
   assert.equal(projected.terminal, false);

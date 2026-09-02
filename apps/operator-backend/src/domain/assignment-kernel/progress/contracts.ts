@@ -19,6 +19,7 @@ export type ProgressGapKindV2 =
   | "review_required"
   | "operation_unsettled"
   | "effect_unknown"
+  | "verification_required"
   | "evidence_stale"
   | "evidence_conflicting"
   | "resource_exhausted";

@@ -1,13 +1,14 @@
 import { canonicalJsonV2 } from "./canonical.js";
+import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2 } from "./events.js";
 import { kernelAssertV2 } from "./errors.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
-import { deriveAssignmentOutcomeV2 } from "./outcome.js";
+import { appliedOperationHasVerifiedPostconditionV2, deriveAssignmentOutcomeV2 } from "./outcome.js";
 import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
 import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
-import { deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
+import { criteriaPendingEvaluationV2, deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
 import {
   CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
   SEMANTIC_EVIDENCE_CONTRACT_V2,
@@ -124,7 +125,7 @@ function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 
       && operation.settlement_state !== "settled")
     .map((operation) => operation.operation_id)
     .sort();
-  const next: AssignmentSnapshotV2 = {
+  const next = projectWorkUnitCriteria({
     ...snapshot,
     in_flight_operation_ids: inFlight,
     in_flight_provider_call_ids: inFlightProviders,
@@ -132,7 +133,7 @@ function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 
     blocking_child_operation_ids: blockingChildren,
     unresolved_unknown_operation_ids: unknown,
     quiescent: inFlight.length === 0 && inFlightProviders.length === 0
-  };
+  });
   return { ...next, outcome: deriveAssignmentOutcomeV2(next) };
 }
 
@@ -184,6 +185,8 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     }
   }
   const role = operation.operation_role ?? "root";
+  kernelAssertV2(role !== "root" || Object.keys(criteriaPendingEvaluationV2(snapshot)).length === 0,
+    "operation_criterion_evaluation_pending", "Retained authoritative evidence must be evaluated before another root operation is admitted.");
   kernelAssertV2(role !== "root" || operation.advances_criterion_ids.length > 0 || operation.resolves_gap_ids.length > 0,
     "operation_progress_binding_missing", "A root operation must bind to unresolved criterion or gap work; nested work binds through its parent.");
   for (const criterionId of operation.advances_criterion_ids) {
@@ -375,11 +378,27 @@ function mergeEvaluation(previous: CriterionEvaluationV2 | undefined, next: Crit
 
 function projectWorkUnitCriteria(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 {
   const states = { ...snapshot.work_unit_states };
+  const appliedOperations = Object.values(snapshot.operations)
+    .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");
+  const verificationUnitIds = new Set([
+    ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
+    ...Object.values(snapshot.operations)
+      .filter((operation) => operation.purpose === "verification")
+      .map((operation) => operation.work_unit_id)
+  ]);
   for (const unit of snapshot.spec.work_units) {
     if (unit.criterion_ids.length === 0) continue;
     const evaluations = unit.criterion_ids.map(id => snapshot.criteria[id]).filter(Boolean);
     if (evaluations.length !== unit.criterion_ids.length) continue;
     if (evaluations.every(row => row!.status === "pass" || row!.status === "not_applicable")) {
+      if (snapshot.spec.requested_effect === "apply" && verificationUnitIds.has(unit.work_unit_id)) {
+        const verifiedNoop = appliedOperations.length === 0
+          && evaluations.some((evaluation) => evaluation!.basis === "desired_state_equivalence");
+        const everyApplyVerified = appliedOperations.length > 0
+          && appliedOperations.every((operation) =>
+            appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id));
+        if (!verifiedNoop && !everyApplyVerified) continue;
+      }
       states[unit.work_unit_id] = "complete";
     } else if (unit.safe_to_retain && evaluations.some(row => row!.status === "pass" || row!.status === "partial")) {
       states[unit.work_unit_id] = "retained";

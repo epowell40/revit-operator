@@ -3,8 +3,10 @@ import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
   OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
+  appliedOperationHasVerifiedPostconditionV2,
   assertOperationDoesNotRepeatSchemaRejectedInputV2,
   canonicalJsonV2,
+  criteriaPendingEvaluationV2,
   deriveProgressGapsV2,
   evidenceClassForFulfillmentRoleV2,
   fulfillmentRoleCanCarryTaskCriteriaV2,
@@ -131,7 +133,9 @@ function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2): Opera
   if (effect === "evidence_read") return "evidence_read";
   if (effect === "discovery" || effect === "navigation") return "discovery";
   if (effect === "read" && snapshot.spec.requested_effect === "apply"
-      && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply" && operation.persistent_effect === "applied")) {
+      && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply"
+        && operation.persistent_effect === "applied"
+        && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))) {
     return "verification";
   }
   if (effect === "read" && snapshot.spec.requested_effect === "apply") return "discovery";
@@ -227,6 +231,7 @@ function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: reado
     .filter(operation => operation.requested_effect === "apply"
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
+      && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
       && Boolean(operation.target.target_id)
       && tokens.has(operation.target.target_id!))
     .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
@@ -254,6 +259,10 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   const purpose = operationPurpose(input.classified_effect, snapshot);
   if (snapshot.unresolved_unknown_operation_ids.length > 0 && purpose !== "reconciliation") {
     throw new Error("assignment_kernel_v2_unknown_effect_requires_reconciliation");
+  }
+  if (purpose !== "reconciliation"
+      && Object.keys(criteriaPendingEvaluationV2(snapshot)).length > 0) {
+    throw new Error("assignment_kernel_v2_criterion_evaluation_pending");
   }
   const unit = admittedWorkUnit(snapshot, suggestedEffect, purpose);
   const effect = unit.requested_effect;
@@ -310,6 +319,11 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   const currentGaps = deriveProgressGapsV2(snapshot);
   const resolvesGapIds = currentGaps
     .filter((gap) => {
+      if (gap.kind === "verification_required") {
+        return purpose === "verification"
+          && Boolean(verifies)
+          && gap.gap_id === `verification:${verifies!.operation_id}`;
+      }
       const generallyRelevant = gap.work_unit_ids.includes(unit.work_unit_id)
         || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
         || (purpose === "reconciliation" && gap.kind === "effect_unknown");

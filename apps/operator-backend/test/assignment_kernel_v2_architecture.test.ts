@@ -233,6 +233,35 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
     "started-turn cleanup must own interruption, terminal barrier release, and lease release as one idempotent path");
 });
 
+test("settled task evidence cannot be overtaken by another root operation", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const dynamicHandler = readFileSync(path.join(sourceRoot, "brains", "codex_dynamic_tool_handler.ts"), "utf8");
+  const checkpointStart = dynamicHandler.indexOf("function checkpointAssignmentKernelProgressV2");
+  const checkpointEnd = dynamicHandler.indexOf("export async function handleCodexDynamicToolCall", checkpointStart);
+  const checkpoint = dynamicHandler.slice(checkpointStart, checkpointEnd);
+  assert.ok(checkpointStart >= 0 && checkpointEnd > checkpointStart);
+  assert.match(checkpoint, /recordAssignmentProgressEpochV2[\s\S]*advanceAssignmentKernelProgressV2/);
+  assert.doesNotMatch(checkpoint, /providerReceiptRetained|if\s*\([^)]*provider[^)]*receipt[^)]*\)\s*return/i,
+    "criterion progression must not wait for provider telemetry; the terminal barrier owns receipt ordering");
+
+  const execution = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution.ts"), "utf8");
+  assert.match(execution, /criteriaPendingEvaluationV2\(snapshot\)[\s\S]*assignment_kernel_v2_criterion_evaluation_pending/);
+  const reducer = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "reducer.ts"), "utf8");
+  assert.match(reducer, /role !== "root" \|\| Object\.keys\(criteriaPendingEvaluationV2\(snapshot\)\)\.length === 0/,
+    "the canonical reducer, not only one adapter, must enforce evaluate-before-act");
+});
+
+test("apply progress exposes one typed verification gap per unverified persistent effect", () => {
+  const sourceRoot = path.join(process.cwd(), "src", "domain", "assignment-kernel");
+  const controller = readFileSync(path.join(sourceRoot, "progress", "controller.ts"), "utf8");
+  assert.match(controller, /kind:\s*"verification_required"/);
+  assert.match(controller, /required_fact_ids:\s*\["verification\.postcondition_satisfied"\]/);
+  const outcome = readFileSync(path.join(sourceRoot, "outcome.ts"), "utf8");
+  assert.match(outcome, /appliedOperations\.every\(\(operation\) => appliedOperationHasVerifiedPostconditionV2/,
+    "every applied operation must retain its own verified postcondition before completion");
+  assert.doesNotMatch(outcome, /appliedOperations\.some\(/);
+});
+
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {
   const source = readFileSync(path.join(process.cwd(), "src/assignments/assignment_kernel_v2_execution.ts"), "utf8");
   const identity = /const operationId = `opv2_\$\{stableHash\(\{([\s\S]*?)\}\)\}`;/.exec(source)?.[1] ?? "";

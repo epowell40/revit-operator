@@ -1,7 +1,8 @@
 import { canonicalJsonV2 } from "../canonical.js";
-import type { AssignmentCriterionSpecV2 } from "../assignment_spec.js";
+import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
+import { appliedOperationHasVerifiedPostconditionV2 } from "../outcome.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
 import type { OperationInputSchemaIssueV2, OperationV2 } from "../operation.js";
 import {
@@ -146,6 +147,28 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
       required_fact_ids: [],
       current_observation_ids: operation?.observation_ids ?? [],
       reason: "A possibly dispatched mutation requires target-bound reconciliation."
+    });
+  }
+  for (const operation of Object.values(snapshot.operations)) {
+    if (operation.requested_effect !== "apply"
+        || operation.persistent_effect !== "applied"
+        || operation.settlement_state !== "settled"
+        || appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)) continue;
+    const verificationOperationIds = operation.verification_operation_ids
+      .filter((operationId) => Boolean(snapshot.operations[operationId]));
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA,
+      gap_id: `verification:${operation.operation_id}`,
+      kind: "verification_required",
+      criterion_ids: operation.advances_criterion_ids,
+      work_unit_ids: snapshot.spec.work_units.some((unit) => unit.work_unit_id === ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2)
+        ? [ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2]
+        : [operation.work_unit_id],
+      required_fact_ids: ["verification.postcondition_satisfied"],
+      current_observation_ids: verificationOperationIds
+        .flatMap((operationId) => snapshot.operations[operationId]?.observation_ids ?? [])
+        .sort(),
+      reason: `Applied operation ${operation.operation_id} requires a successful target-bound readback before completion.`
     });
   }
   for (const criterion of snapshot.spec.criteria.filter((candidate) => candidate.required)) {

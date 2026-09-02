@@ -7,6 +7,7 @@ import type {
 import type { CriterionEvidencePolicyV2 } from "./semantic_admissibility.js";
 
 export const ASSIGNMENT_SPEC_V2_SCHEMA = "revit-operator.assignment-spec/v2" as const;
+export const ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 = "work-verification" as const;
 
 export type RequestedEffectV2 = "read" | "preview" | "apply";
 export type ExecutionClassV2 = "analysis" | "independent" | "coupled_atomic";

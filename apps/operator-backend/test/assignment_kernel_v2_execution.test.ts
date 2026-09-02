@@ -672,8 +672,15 @@ test("read after committed apply is canonically a verification operation", () =>
     applyLease,
     envelope(applyLease.operation_id, applyLease.binding, { updated: true }, "applied")
   ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  assert.equal(readyForVerification.criteria[readyForVerification.spec.criteria[0]!.criterion_id]?.status, "pass");
+  assert.equal(readyForVerification.outcome, "active",
+    "a passing task-result criterion must not terminalize an apply before postcondition verification");
+  assert.ok(deriveProgressGapsV2(readyForVerification).some((gap) =>
+    gap.kind === "verification_required" && gap.gap_id === `verification:${applyLease.operation_id}`));
+  assert.equal(readyForVerification.work_unit_states["work-verification"], "pending");
   const verificationLease = openAssignmentKernelOperationV2({
-    snapshot: applied, controller_request_id: "verify-request", provider_turn_id: "verify-turn",
+    snapshot: readyForVerification, controller_request_id: "verify-request", provider_turn_id: "verify-turn",
     capability_id: "element.read", classified_effect: "read", target_tokens: ["elementid:1478627", "id:1478627"], arguments: { target_id: "1478627" }
   });
   assert.equal(verificationLease.purpose, "verification");
@@ -699,6 +706,43 @@ test("read after committed apply is canonically a verification operation", () =>
   );
   assert.ok(verified.observation?.facts.some((fact) => fact.fact_id === "verification.postcondition_satisfied"
     && fact.fact_class === "verification" && fact.value === true));
+  assert.equal(verified.snapshot.outcome, "complete");
+  assert.equal(verified.snapshot.work_unit_states["work-verification"], "complete");
+}));
+
+test("operation admission cannot overtake retained evidence awaiting criterion evaluation", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const first = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate49-first-quantify",
+    provider_turn_id: "candidate49-provider-turn",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: { categories: ["OST_DuctTerminal"], group_by: ["family", "type"] }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(first);
+  settleAssignmentKernelOperationV2(first, envelope(
+    first.operation_id,
+    first.binding,
+    { total: 509, groups: [{ family: "A", type: "B", count: 509 }] }
+  ));
+  const retained = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(retained.criteria[retained.spec.criteria[0]!.criterion_id], undefined,
+    "this regression deliberately captures the commit boundary before deterministic evaluation");
+  assert.throws(() => openAssignmentKernelOperationV2({
+    snapshot: retained,
+    controller_request_id: "candidate49-redundant-quantify",
+    provider_turn_id: "candidate49-provider-turn",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: { categories: ["OST_DuctTerminal"], group_by: ["family", "type"], include_parameters: true }
+  }), /criterion_evaluation_pending/,
+  "an adapter may not bypass the deterministic evaluate-before-act decision");
+  assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1);
+
+  const progressed = advanceAssignmentKernelProgressV2({ binding: first.binding }).snapshot;
+  assert.equal(progressed.criteria[progressed.spec.criteria[0]!.criterion_id]?.status, "pass");
+  assert.equal(progressed.outcome, "complete");
 }));
 
 test("verification recovery re-derives the exact postcondition from durable apply input and readback", async () => {
@@ -719,8 +763,10 @@ test("verification recovery re-derives the exact postcondition from durable appl
       applyLease,
       envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
     ).snapshot;
+    const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+    assert.equal(readyForVerification.outcome, "active");
     const verificationLease = openAssignmentKernelOperationV2({
-      snapshot: applied, controller_request_id: "verification-before-restart", provider_turn_id: "verification-turn",
+      snapshot: readyForVerification, controller_request_id: "verification-before-restart", provider_turn_id: "verification-turn",
       capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
       arguments: { method: "GET", path: "/revit/find-text-notes", body: { elementIds: [1478627] } }
     });
@@ -764,8 +810,10 @@ test("a successful verification read with the wrong value cannot mint a postcond
   const applied = settleAssignmentKernelOperationV2(
     applyLease, envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
   ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  assert.equal(readyForVerification.outcome, "active");
   const verificationLease = openAssignmentKernelOperationV2({
-    snapshot: applied, controller_request_id: "wrong-value-read", provider_turn_id: "wrong-value-read-turn",
+    snapshot: readyForVerification, controller_request_id: "wrong-value-read", provider_turn_id: "wrong-value-read-turn",
     capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
     arguments: { method: "GET", path: "/revit/find-text-notes", body: { elementIds: [1478627] } }
   });
@@ -788,8 +836,10 @@ test("request echoes and metadata cannot impersonate an authoritative postcondit
   const applied = settleAssignmentKernelOperationV2(
     applyLease, envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
   ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  assert.equal(readyForVerification.outcome, "active");
   const verificationLease = openAssignmentKernelOperationV2({
-    snapshot: applied, controller_request_id: "echo-read", provider_turn_id: "echo-read-turn",
+    snapshot: readyForVerification, controller_request_id: "echo-read", provider_turn_id: "echo-read-turn",
     capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
     arguments: { method: "GET", path: "/revit/find-text-notes", body: { elementIds: [1478627] } }
   });

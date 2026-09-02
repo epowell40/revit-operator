@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -38,11 +38,15 @@ import {
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import {
+  beginAssignmentKernelTerminalBarrierV2,
+  endAssignmentKernelTerminalBarrierV2
+} from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
+import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
   openAssignmentKernelOperationV2,
   settleAssignmentKernelOperationV2
 } from "../src/assignments/assignment_kernel_v2_execution.js";
-import { OPERATION_RESULT_V2_SCHEMA } from "../src/domain/assignment-kernel/index.js";
+import { canonicalJsonV2, OPERATION_RESULT_V2_SCHEMA } from "../src/domain/assignment-kernel/index.js";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
 
@@ -764,6 +768,134 @@ test("Candidate 42 operation-admission rejection remains structured and never be
       assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
         "rejected admission must not open another OperationV2");
     } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 49 retained task evidence is evaluated before another task operation can dispatch", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate49-observation-before-next-operation";
+    const goal = createGoal({
+      title: "Return an inventory",
+      objective: "Count the requested Revit elements and group the result by family and type.",
+      acceptance_criteria: ["A complete grouped inventory result is authoritatively established."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate49-regression",
+      work_budget: { requested_effect: "read", document_fingerprint: "document-candidate49" }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate49" });
+    const queuedStops: string[] = [];
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async (_tool: string, _args: unknown, context: any) => {
+        runtimeCalls += 1;
+        context.onMcpAccepted?.();
+        const lease = context.assignmentKernelV2;
+        const payload = {
+          total: 509,
+          groups: [{ family: "Supply Diffuser - Square - Hosted", type: "12 x 12", count: 82 }]
+        };
+        return {
+          content: [{ type: "text", text: "Inventory complete." }],
+          structuredContent: {
+            schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+            operation_result_v2: {
+              schema: OPERATION_RESULT_V2_SCHEMA,
+              result_id: `result-${lease.operation_id}`,
+              operation_id: lease.operation_id,
+              binding: lease.binding,
+              status: "succeeded",
+              dispatch_state: "dispatched",
+              persistent_effect: "none",
+              native_transaction_state: "not_applicable",
+              authority: "native-host",
+              result_schema_id: "operator-native/POST:/revit/quantify/v2",
+              observation_required: true,
+              raw_payload_hash: createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex"),
+              receipt_id: `receipt-${lease.operation_id}`,
+              native_correlation_id: `native-${lease.operation_id}`,
+              request_identity: lease.request_identity,
+              completed_at: "2026-09-02T05:25:29.979Z"
+            },
+            observation: {
+              raw_payload: payload,
+              semantic_facts: [
+                { fact_id: "inventory.complete", fact_class: "domain", value: true },
+                { fact_id: "inventory.total", fact_class: "domain", value: 509 },
+                {
+                  fact_id: "inventory.group",
+                  fact_class: "domain",
+                  value: 82,
+                  dimensions: { family: "Supply Diffuser - Square - Hosted", type: "12 x 12" },
+                  cardinality: "one"
+                }
+              ],
+              verification_relevance: ["task_result"]
+            }
+          }
+        };
+      },
+      queueAssignmentKernelV2TurnStop: (_turnId: unknown, reason: string) => { queuedStops.push(reason); }
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate49-message",
+      user_text: "Count all air devices and group the inventory by family and type.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    const terminalBarrier = beginAssignmentKernelTerminalBarrierV2({
+      binding,
+      barrier_id: "candidate49-active-provider-turn"
+    });
+    const dynamicRequest = (id: string, callId: string, includeParameters: boolean) => ({
+      id,
+      method: "item/tool/call",
+      params: {
+        namespace: "revit_operator",
+        threadId: "candidate49-thread",
+        turnId: "candidate49-turn",
+        callId,
+        tool: "revit_call_tool",
+        arguments: {
+          method: "POST",
+          path: "/revit/quantify",
+          body: {
+            categories: ["OST_DuctTerminal"],
+            group_by: ["family", "type"],
+            intent: "count_and_list",
+            scope: "host",
+            includeParameters
+          }
+        }
+      }
+    });
+    try {
+      const first = await handleCodexServerRequest(runtime as any,
+        dynamicRequest("candidate49-request-1", "candidate49-call-1", false) as any) as any;
+      assert.equal(first.success, true);
+      const afterFirst = getAssignmentKernelSnapshotV2(goal.id)!;
+      assert.equal(afterFirst.outcome, "complete",
+        "the first authoritative task Observation must be evaluated at the settlement boundary");
+      assert.equal(afterFirst.terminal, false,
+        "the provider receipt barrier may defer terminal commit but never criterion evaluation");
+      assert.equal(afterFirst.criteria[afterFirst.spec.criteria[0]!.criterion_id]?.status, "pass");
+      assert.ok(queuedStops.length > 0, "the provider turn must be stopped after completion becomes derivable");
+
+      const second = await handleCodexServerRequest(runtime as any,
+        dynamicRequest("candidate49-request-2", "candidate49-call-2", true) as any) as any;
+      assert.equal(second.success, false);
+      assert.match(JSON.stringify(second), /already terminal|operation_admission_after_terminal_outcome/);
+      assert.equal(runtimeCalls, 1, "the redundant second quantify call must never reach MCP or Revit");
+      const final = getAssignmentKernelSnapshotV2(goal.id)!;
+      assert.equal(Object.keys(final.operations).length, 1);
+      assert.equal(Object.keys(final.observations).length, 1);
+      assert.equal(final.criteria[final.spec.criteria[0]!.criterion_id]?.supporting_operation_ids.length, 1);
+    } finally {
+      endAssignmentKernelTerminalBarrierV2(terminalBarrier);
       endTeammateLoopOwner(teammate);
     }
   });
