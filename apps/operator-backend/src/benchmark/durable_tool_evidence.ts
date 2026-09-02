@@ -5,6 +5,7 @@ import {
   resolveSessionReceiptOperationV2,
   sessionReceiptAuthorityPolicyV2
 } from "./v2_session_receipt_binding.js";
+import { assignmentKernelNativeEvidenceProjectionV2 } from "./assignment_kernel_v2_native_evidence.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -341,10 +342,43 @@ export async function loadDurableToolEvidence(
   let maximumConnectorFailedCount = 0;
   let maximumReportedOpenPhysicalConnectors = 0;
   const openPhysicalConnectorOwnerIds = new Set<string>();
+  const sessionResultReceiptAuthority = sessionReceiptAuthorityPolicyV2({
+    assignmentKernelV2,
+    expectedSessionId
+  });
+  const canonicalV2NativeEvidence = assignmentKernelNativeEvidenceProjectionV2(assignmentKernelV2);
+  const canonicalV2ByOperationId = new Map(canonicalV2NativeEvidence.operations
+    .map((operation) => [operation.operation_id, operation]));
+  if (sessionResultReceiptAuthority.mode === "exact_v2_operation_binding"
+      && canonicalV2NativeEvidence.present && !canonicalV2NativeEvidence.malformed) {
+    for (const operation of canonicalV2NativeEvidence.operations) {
+      const path = canonicalBenchmarkRevitPath(operation.path);
+      const tool = operation.capability_id;
+      if (operation.outcome === "completed") {
+        successfulPaths.add(path);
+        successfulTools.add(tool);
+        const retryOf = operation.retry_of_operation_id
+          ? canonicalV2ByOperationId.get(operation.retry_of_operation_id) : null;
+        if (retryOf && ["failed", "rejected_no_effect", "outcome_unknown"].includes(retryOf.outcome)) {
+          recoveredPaths.add(path);
+          recoveredTools.add(tool);
+        }
+      } else if (operation.outcome === "rejected_no_effect") {
+        rejectedNoEffectPaths.add(path);
+        rejectedNoEffectTools.add(tool);
+      } else if (operation.outcome === "failed" || operation.outcome === "outcome_unknown") {
+        failedPaths.add(path);
+        failedTools.add(tool);
+        historicalFailedPaths.add(path);
+        historicalFailedTools.add(tool);
+      }
+    }
+  }
 
   // Benchmark code consumes the generic production projection. It does not
   // infer effect truth again from assistant text or caller-shaped receipts.
-  for (const assignment of selectedAssignments) {
+  for (const assignment of sessionResultReceiptAuthority.mode === "legacy_v1_notification_projection"
+    ? selectedAssignments : []) {
     const goalId = String(assignment.source_record_id || "").trim();
     const controlPlane = asRecord(assignment.control_plane);
     const attempts = Array.isArray(controlPlane.attempts) ? controlPlane.attempts.map(asRecord) : [];
@@ -425,6 +459,8 @@ export async function loadDurableToolEvidence(
     canonical_binding_state?: "bound";
     canonical_assignment_id?: string;
     canonical_operation_id?: string;
+    authority?: "assignment_kernel_v2_bound_notification";
+    integrity_only?: true;
   };
   type SessionOutcome = {
     path: string; tool: string; outcome: "completed" | "failed" | "rejected_no_effect";
@@ -432,10 +468,6 @@ export async function loadDurableToolEvidence(
   };
   const sessionResultReceipts: SessionReceipt[] = [];
   const sessionResultReceiptRejections: JsonRecord[] = [];
-  const sessionResultReceiptAuthority = sessionReceiptAuthorityPolicyV2({
-    assignmentKernelV2,
-    expectedSessionId
-  });
   const sessionOutcomes = new Map<string, SessionOutcome>();
   if (expectedSessionId) {
     try {
@@ -515,10 +547,15 @@ export async function loadDurableToolEvidence(
             requested_effect_source: "assignment_kernel_v2" as const,
             canonical_binding_state: "bound" as const,
             canonical_assignment_id: v2Resolution.assignment_id,
-            canonical_operation_id: v2Resolution.operation_id
+            canonical_operation_id: v2Resolution.operation_id,
+            authority: "assignment_kernel_v2_bound_notification" as const,
+            integrity_only: true as const
           } : {})
         };
         sessionResultReceipts.push(receipt);
+        // A known-V2 notification is a bound transport/integrity receipt only.
+        // Execution, effect, and result truth comes from the exact publication.
+        if (sessionResultReceiptAuthority.mode === "exact_v2_operation_binding") continue;
         const outcomeKey = `${toolName}\n${path}\n${effect}`;
         const prior = sessionOutcomes.get(outcomeKey);
         const outcome: SessionOutcome["outcome"] = succeeded
@@ -560,7 +597,8 @@ export async function loadDurableToolEvidence(
   }
 
   const sessionMutationVerifications: JsonRecord[] = [];
-  for (const [index, applyReceipt] of sessionResultReceipts.entries()) {
+  for (const [index, applyReceipt] of sessionResultReceiptAuthority.mode === "legacy_v1_notification_projection"
+    ? sessionResultReceipts.entries() : []) {
     if (!applyReceipt.envelope_succeeded || applyReceipt.request_effect !== "apply") continue;
     const before = asRecord(applyReceipt.parsed_result.before);
     const after = asRecord(applyReceipt.parsed_result.after);
@@ -589,7 +627,8 @@ export async function loadDurableToolEvidence(
     });
   }
 
-  for (const goalId of goalIds) {
+  for (const goalId of sessionResultReceiptAuthority.mode === "legacy_v1_notification_projection"
+    ? goalIds : []) {
     let response: JsonRecord;
     try {
       response = await requestGoal(baseUrl, goalId);
@@ -883,6 +922,12 @@ export async function loadDurableToolEvidence(
       rejected_count: sessionResultReceiptRejections.length
     },
     session_result_receipt_rejections: sessionResultReceiptRejections,
-    session_mutation_verifications: sessionMutationVerifications
+    session_mutation_verifications: sessionMutationVerifications,
+    assignment_kernel_v2_native_evidence: {
+      present: canonicalV2NativeEvidence.present,
+      malformed: canonicalV2NativeEvidence.malformed,
+      operation_count: canonicalV2NativeEvidence.operations.length,
+      operations: canonicalV2NativeEvidence.operations
+    }
   };
 }

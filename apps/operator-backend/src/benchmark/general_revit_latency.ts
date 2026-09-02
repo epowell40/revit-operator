@@ -1,3 +1,5 @@
+import { assignmentKernelNativeEvidenceProjectionV2 } from "./assignment_kernel_v2_native_evidence.js";
+
 type JsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): JsonRecord {
@@ -27,28 +29,25 @@ function durationStats(values: number[]) {
   };
 }
 
-function canonicalV2OperationRows(toolResults: JsonRecord): Array<{ path: string; duration_ms: number; failed: boolean }> {
-  const bundle = asRecord(toolResults.durable_assignment_kernel_v2);
-  const publications = Array.isArray(bundle.assignments) ? bundle.assignments.map(asRecord) : [];
-  return publications.flatMap((publication) => {
-    const snapshot = asRecord(publication.snapshot);
-    return Object.values(asRecord(snapshot.operations)).map(asRecord).flatMap((operation) => {
-      const requestIdentity = asRecord(operation.request_identity);
-      const input = asRecord(operation.input);
-      const path = String(requestIdentity.path || input.path || "");
-      if (!path.startsWith("/revit/") || operation.dispatch_state !== "dispatched") return [];
-      const result = asRecord(operation.result);
+function canonicalV2OperationRows(toolResults: JsonRecord): {
+  present: boolean;
+  rows: Array<{ path: string; duration_ms: number; failed: boolean }>;
+} {
+  const projection = assignmentKernelNativeEvidenceProjectionV2(toolResults.durable_assignment_kernel_v2);
+  if (!projection.present || projection.malformed) return { present: projection.present, rows: [] };
+  return {
+    present: true,
+    rows: projection.operations.map((operation) => {
       const startedAt = Date.parse(String(operation.dispatched_at || ""));
-      const finishedAt = Date.parse(String(result.completed_at || operation.settled_at || ""));
-      const duration = Number.isFinite(startedAt) && Number.isFinite(finishedAt)
-        ? Math.max(0, finishedAt - startedAt)
-        : 0;
-      const failed = result.status !== "succeeded"
-        || result.dispatch_state !== "dispatched"
-        || operation.persistent_effect === "unknown";
-      return [{ path, duration_ms: duration, failed }];
-    });
-  });
+      const finishedAt = Date.parse(String(operation.completed_at || ""));
+      return {
+        path: operation.path,
+        duration_ms: Number.isFinite(startedAt) && Number.isFinite(finishedAt)
+          ? Math.max(0, finishedAt - startedAt) : 0,
+        failed: operation.outcome !== "completed"
+      };
+    })
+  };
 }
 
 export function summarizeGeneralRevitLatency(tracesValue: unknown[], suiteContextValue: unknown): JsonRecord {
@@ -66,9 +65,9 @@ export function summarizeGeneralRevitLatency(tracesValue: unknown[], suiteContex
     const caseId = String(trace.case_id || "unknown");
     const toolResults = asRecord(trace.tool_results);
     const durable = asRecord(toolResults.durable_tool_evidence);
-    const canonicalV2Rows = canonicalV2OperationRows(toolResults);
-    const receipts: JsonRecord[] = canonicalV2Rows.length > 0
-      ? canonicalV2Rows.map((row) => ({ path: row.path, duration_ms: row.duration_ms, failed: row.failed } as JsonRecord))
+    const canonicalV2 = canonicalV2OperationRows(toolResults);
+    const receipts: JsonRecord[] = canonicalV2.present
+      ? canonicalV2.rows.map((row) => ({ path: row.path, duration_ms: row.duration_ms, failed: row.failed } as JsonRecord))
       : Array.isArray(durable.result_receipts) ? durable.result_receipts.map(asRecord) : [];
     const pathCounts = new Map<string, number>();
     for (const receipt of receipts) {

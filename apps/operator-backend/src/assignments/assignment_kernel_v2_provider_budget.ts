@@ -69,6 +69,7 @@ function providerReceiptAgrees(call: ProviderCallV2, receipt: ModelCallReceipt):
     && call.model === receipt.model
     && call.reasoning_effort === receipt.reasoning_effort
     && call.admitted_at === receipt.started_at_utc
+    && (call.provider_duration_ms ?? null) === receipt.duration_ms
     && call.success === receipt.success
     && (!receipt.turn_id || call.controller_turn_id === receipt.turn_id)
     && canonicalJsonV2(call.usage ?? null) === canonicalJsonV2(providerUsage(receipt));
@@ -141,6 +142,7 @@ export function createAssignmentKernelV2ModelReceiptRecorder(input: Readonly<{
       criterion_ids: admissionBasis.criterion_ids,
       expected_information: admissionBasis.expected_information,
       admitted_at: receipt.started_at_utc,
+      provider_duration_ms: receipt.duration_ms,
       usage: providerUsage(receipt),
       success: receipt.success,
       ...(receipt.success ? {} : { error_class: "provider" as const })

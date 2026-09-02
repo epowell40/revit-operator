@@ -109,6 +109,7 @@ export function recordCompletedAssignmentProviderReceiptV2(input: Readonly<{
   expected_information: readonly string[];
   admitted_at: string;
   completed_at?: string;
+  provider_duration_ms: number | null;
   usage: ProviderUsageV2;
   success: boolean;
   error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
@@ -131,6 +132,7 @@ export function recordCompletedAssignmentProviderReceiptV2(input: Readonly<{
     response_started_at: input.admitted_at,
     usage_received_at: completedAt,
     completed_at: completedAt,
+    provider_duration_ms: input.provider_duration_ms,
     usage: structuredClone(input.usage),
     success: input.success,
     ...(input.error_class ? { error_class: input.error_class } : {})

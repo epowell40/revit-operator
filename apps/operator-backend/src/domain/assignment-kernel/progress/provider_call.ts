@@ -35,6 +35,8 @@ export interface ProviderCallV2 {
   response_started_at?: string;
   usage_received_at?: string;
   completed_at?: string;
+  /** Exact provider-only duration from the upstream receipt; null when unavailable. */
+  provider_duration_ms?: number | null;
   response_transport_completed_at?: string;
   usage?: ProviderUsageV2;
   success?: boolean;

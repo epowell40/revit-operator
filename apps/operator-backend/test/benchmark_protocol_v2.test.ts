@@ -440,14 +440,46 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     settlement_state: "settled",
     observation_ids: ["observation-inventory"],
     result: {
+      schema: "revit-operator.operation-result/v2",
       result_id: "result-inventory",
       operation_id: "operation-direct-read",
+      binding: {
+        assignment_id: "assignment-1", run_id: "assignment-run-1", generation: 1,
+        session_id: "suite-session-v2", principal_id: "suite-principal-v2"
+      },
       status: "succeeded",
       dispatch_state: "dispatched",
       persistent_effect: "none",
+      native_transaction_state: "not_applicable",
       authority: "native-host",
+      result_schema_id: "operator-native/POST:/revit/quantify/v2",
+      observation_required: true,
+      request_identity: {
+        capability_id: "revit.quantify", method: "POST", path: "/revit/quantify",
+        request_signature: "request-inventory"
+      },
       receipt_id: "receipt-inventory",
       completed_at: FINISH
+    }
+  };
+  const supportOperation = {
+    ...operation,
+    operation_id: "operation-tool-documentation",
+    capability_id: "revit_tool_doc",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    observation_ids: [],
+    result: {
+      ...operation.result,
+      result_id: "result-tool-documentation",
+      operation_id: "operation-tool-documentation",
+      authority: "mcp",
+      result_schema_id: "operator-capability/revit_tool_doc/v2",
+      observation_required: false,
+      request_identity: {
+        capability_id: "revit_tool_doc", method: "POST", path: "/revit/quantify",
+        request_signature: "request-tool-documentation"
+      }
     }
   };
   const providerCall = {
@@ -469,7 +501,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     schema: "revit-operator.assignment-snapshot/v2",
     assignment_version: 9,
     current_binding: operation.binding,
-    operations: { [operation.operation_id]: operation },
+    operations: { [operation.operation_id]: operation, [supportOperation.operation_id]: supportOperation },
     observations: {
       "observation-inventory": {
         schema: "revit-operator.observation/v2",
@@ -477,10 +509,11 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
         operation_id: operation.operation_id,
         binding: operation.binding,
         authority: "native-host",
+        result_schema_id: "operator-native/POST:/revit/quantify/v2",
         semantic_facts: [{ fact_id: "inventory.total", value: 2 }]
       }
     },
-    operation_ids: [operation.operation_id],
+    operation_ids: [operation.operation_id, supportOperation.operation_id],
     in_flight_operation_ids: [],
     unresolved_unknown_operation_ids: [],
     quiescent: true,
@@ -495,6 +528,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
   delete toolResults.durable_assignment_projection;
   toolResults.durable_assignment_kernel_v2 = {
     schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignment_ids: ["assignment-1"],
     assignments: [{
       schema: "revit-operator.assignment-kernel-publication/v2",
       assignment_id: "assignment-1",
@@ -509,7 +543,8 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
         calls: { [providerCall.call_id]: providerCall },
         in_flight_call_ids: []
       }
-    }]
+    }],
+    failures: []
   };
   trace.model_call_receipts = [];
   trace.tool_calls = [];

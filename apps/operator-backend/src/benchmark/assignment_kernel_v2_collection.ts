@@ -36,12 +36,6 @@ function nonNegativeIntegerOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
 }
 
-function providerDurationMs(call: JsonRecord): number | null {
-  const start = Date.parse(String(call.admitted_at ?? ""));
-  const finish = Date.parse(String(call.completed_at ?? ""));
-  return Number.isFinite(start) && Number.isFinite(finish) && finish >= start ? finish - start : null;
-}
-
 /**
  * Read-only telemetry adapter over the canonical V2 provider ledger. This is
  * used to preserve provider accounting when the ordinary chat response is
@@ -71,7 +65,7 @@ export function modelCallReceiptsFromAssignmentKernelPublicationsV2(value: unkno
         model: String(call.model ?? "unknown"),
         reasoning_effort: call.reasoning_effort ?? null,
         started_at_utc: String(call.admitted_at ?? ""),
-        duration_ms: providerDurationMs(call),
+        duration_ms: nonNegativeIntegerOrNull(call.provider_duration_ms),
         success: call.success === true,
         response_status: call.success === true ? "completed" : "failed",
         error_code: call.error_class ?? null,

@@ -1,4 +1,5 @@
 import type { GeneralRevitExpectedEffect } from "./general_revit_capability_acceptance.js";
+import { nativeOperationIdentityFromResultSchemaV2 } from "./assignment_kernel_v2_native_evidence.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -18,12 +19,6 @@ function strings(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map((entry) => String(entry ?? "").trim()).filter(Boolean)
     : [];
-}
-
-function nativePathFromResultSchema(resultSchemaId: unknown): string | null {
-  const match = /^operator-native\/(?:GET|POST):(\/revit\/[a-z0-9][a-z0-9/-]*)\/v\d+$/i
-    .exec(String(resultSchemaId ?? "").trim());
-  return match ? match[1]!.toLowerCase() : null;
 }
 
 function bindingMatches(left: JsonRecord, right: JsonRecord): boolean {
@@ -162,7 +157,7 @@ export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKer
       if (!supported) continue;
 
       successfulTaskOperationIds.add(operationId);
-      const path = nativePathFromResultSchema(result.result_schema_id);
+      const path = nativeOperationIdentityFromResultSchemaV2(result.result_schema_id)?.path ?? null;
       if (path) successfulTaskPaths.add(path);
     }
 

@@ -18,6 +18,7 @@ import {
   type BenchmarkStageV2
 } from "./protocol_v2_types.js";
 import { canonicalAttemptRequestedEffect } from "./durable_tool_evidence.js";
+import { assignmentKernelNativeEvidenceProjectionV2 } from "./assignment_kernel_v2_native_evidence.js";
 import { kernelPublicationsV2 } from "./protocol_v2_kernel.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -460,20 +461,19 @@ export function buildBenchmarkCaseResultV2(args: {
   const efficiency = record(args.trace.efficiency);
   const modelSummary = record(efficiency.model_call_summary);
   const toolCalls = records(args.trace.tool_calls);
-  const canonicalRevitCalls = records(record(record(args.trace.tool_results).durable_tool_evidence).canonical_attempt_receipts)
+  const toolResults = record(args.trace.tool_results);
+  const canonicalRevitCalls = records(record(toolResults.durable_tool_evidence).canonical_attempt_receipts)
     .filter((entry) => String(entry.path || "").startsWith("/revit/")
       && ["acknowledged", "dispatched"].includes(String(entry.dispatch_state || ""))).length;
-  const kernelRevitCalls = kernelOperations(args.trace).filter(({ operation }) => {
-    const requestIdentity = record(operation.request_identity);
-    const input = record(operation.input);
-    const path = String(requestIdentity.path || input.path || "");
-    return path.startsWith("/revit/") && operation.dispatch_state === "dispatched";
-  }).length;
-  const revitCalls = Math.max(
-    toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/") && entry.request_dispatched !== false).length,
-    canonicalRevitCalls,
-    kernelRevitCalls
-  );
+  const kernelNativeEvidence = assignmentKernelNativeEvidenceProjectionV2(toolResults.durable_assignment_kernel_v2);
+  const kernelRevitCalls = kernelNativeEvidence.malformed ? 0 : kernelNativeEvidence.operations
+    .filter((operation) => operation.outcome !== "rejected_no_effect").length;
+  const revitCalls = kernelNativeEvidence.present
+    ? kernelRevitCalls
+    : Math.max(
+      toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/") && entry.request_dispatched !== false).length,
+      canonicalRevitCalls
+    );
   const evaluatorVersion = args.evaluatorVersion || GENERAL_REVIT_EVALUATOR_V2;
   const presentation = stages.at(-1)!;
   const identity = transformedIdentity({

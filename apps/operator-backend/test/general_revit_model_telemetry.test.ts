@@ -119,6 +119,7 @@ test("benchmark telemetry recovers every provider call from the exact V2 publica
     reasoning_effort: "medium",
     admitted_at: `2026-09-02T00:00:0${index}.000Z`,
     completed_at: `2026-09-02T00:00:0${index}.250Z`,
+    provider_duration_ms: 250,
     success: true,
     usage: { input_tokens: index * 100, output_tokens: index * 10, reasoning_tokens: index * 5, total_tokens: index * 110 }
   }]));
@@ -141,4 +142,35 @@ test("benchmark telemetry recovers every provider call from the exact V2 publica
   assert.equal((recovered[2]?.tokens as Record<string, unknown>).reasoning_output_tokens, 15);
   assert.equal(recovered[2]?.duration_ms, 250);
   assert.equal(aggregateModelCallReceipts(recovered).call_count, 3);
+});
+
+test("V2 telemetry never fabricates per-call provider durations from shared controller-turn admission", () => {
+  const calls = Object.fromEntries([1, 2].map((index) => [`resp_shared_${index}`, {
+    schema: "revit-operator.provider-call/v2",
+    call_id: `resp_shared_${index}`,
+    controller_turn_id: "turn-shared",
+    state: "completed",
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    reasoning_effort: "medium",
+    admitted_at: "2026-09-02T00:00:00.000Z",
+    completed_at: `2026-09-02T00:00:${index}0.000Z`,
+    success: true,
+    usage: { input_tokens: 100, output_tokens: 10, reasoning_tokens: 5, total_tokens: 110 }
+  }]));
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2({
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignments: [{
+      schema: "revit-operator.assignment-kernel-publication/v2",
+      assignment_id: "assignment-shared-admission",
+      assignment_version: 20,
+      provider_ledger: {
+        schema: "revit-operator.assignment-provider-ledger/v2",
+        call_ids: Object.keys(calls),
+        calls,
+        in_flight_call_ids: []
+      }
+    }]
+  });
+  assert.deepEqual(recovered.map((entry) => entry.duration_ms), [null, null]);
 });

@@ -326,6 +326,35 @@ foreach ($relativePath in @(
   }
 }
 
+# Native execution identity in V2 publications comes from the result-schema
+# contract. Request identities on controller wrappers may describe a target
+# route and must not be promoted into actual Revit execution by consumers.
+$nativeEvidenceAdapter = Resolve-RepoPath "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts"
+if (-not (Test-Path -LiteralPath $nativeEvidenceAdapter -PathType Leaf)) {
+  $violations.Add("Shared Assignment Kernel V2 native-evidence projection is missing")
+} else {
+  $nativeEvidenceContent = Get-Content -Raw -LiteralPath $nativeEvidenceAdapter
+  if ($nativeEvidenceContent -notmatch 'nativeOperationIdentityFromResultSchemaV2') {
+    $violations.Add("Shared V2 native-evidence projection no longer owns native result-schema identity")
+  }
+}
+$nativeEvidenceConsumers = @(
+  @{ Path = "apps/operator-backend/src/benchmark/assignment_kernel_v2_acceptance.ts"; Function = "nativeOperationIdentityFromResultSchemaV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/durable_tool_evidence.ts"; Function = "assignmentKernelNativeEvidenceProjectionV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/general_revit_latency.ts"; Function = "assignmentKernelNativeEvidenceProjectionV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/protocol_v2_case.ts"; Function = "assignmentKernelNativeEvidenceProjectionV2" }
+)
+foreach ($consumer in $nativeEvidenceConsumers) {
+  $path = Resolve-RepoPath $consumer.Path
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch [regex]::Escape($consumer.Function)) {
+    $violations.Add("$($consumer.Path) does not consume the shared V2 native-evidence contract")
+  }
+  if ($content -match 'operation\.request_identity') {
+    $violations.Add("$($consumer.Path) reconstructs native execution from a wrapper request identity")
+  }
+}
+
 # The registry is the reviewed inventory of authoritative effect/outcome fields.
 # These declaration checks make introducing another mutable owner an explicit
 # architecture change instead of an unnoticed TypeScript addition.
