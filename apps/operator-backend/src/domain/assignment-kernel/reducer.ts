@@ -621,7 +621,8 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const operation = snapshot.operations[event.operation_id];
         kernelAssertV2(operation && operation.settlement_state === "open" && operation.dispatch_state === "not_dispatched", "operation_dispatch_start_invalid", "Dispatch start requires one newly admitted operation.");
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
-          ...operation, dispatch_state: "dispatching", settlement_state: "awaiting_result"
+          ...operation, dispatch_state: "dispatching", settlement_state: "awaiting_result",
+          dispatch_started_at: event.occurred_at
         } } };
         break;
       }
@@ -637,7 +638,15 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(unresolvedBlockingChildren.length === 0,
           "operation_parent_blocked_by_child", "A parent operation cannot dispatch while a blocking child operation is unresolved.");
         const persistentEffect = operation.requested_effect === "read" ? "none" : "unknown";
-        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: { ...operation, dispatch_state: "dispatched", dispatch_authority: "native", persistent_effect: persistentEffect, settlement_state: "awaiting_result", dispatched_at: event.occurred_at } } };
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
+          ...operation,
+          dispatch_state: "dispatched",
+          dispatch_authority: "native",
+          persistent_effect: persistentEffect,
+          settlement_state: "awaiting_result",
+          dispatch_started_at: operation.dispatch_started_at ?? event.occurred_at,
+          dispatched_at: operation.dispatch_started_at ?? event.occurred_at
+        } } };
         break;
       }
       case "operation_dispatch_recorded": {
@@ -654,7 +663,9 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(operation.requested_effect === "read", "operation_non_native_mutation_dispatch_forbidden", "A mutation cannot establish dispatch without native or dynamic-runtime authority.");
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
           ...operation, dispatch_state: "dispatched", dispatch_authority: event.authority,
-          persistent_effect: "none", settlement_state: "awaiting_result", dispatched_at: event.occurred_at
+          persistent_effect: "none", settlement_state: "awaiting_result",
+          dispatch_started_at: operation.dispatch_started_at ?? event.occurred_at,
+          dispatched_at: operation.dispatch_started_at ?? event.occurred_at
         } } };
         break;
       }

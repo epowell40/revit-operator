@@ -145,6 +145,33 @@ test("V2 operation identity survives admission, MCP acceptance, native result, e
   assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), settled.snapshot);
 }));
 
+test("native dispatch settlement preserves the causal pre-call start time", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate54-dispatch-clock",
+    provider_turn_id: "candidate54-provider-turn",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: {}
+  });
+  const dispatchStartedAt = "2026-09-02T14:00:00.000Z";
+  appendCurrentAssignmentKernelEventV2({
+    goal_id: goal.id,
+    binding: lease.binding,
+    event_id: `operation-dispatch-started:${lease.operation_id}`,
+    actor: "mcp-client",
+    occurred_at: dispatchStartedAt,
+    body: { event_type: "operation_dispatch_started", operation_id: lease.operation_id }
+  });
+  const resultEnvelope = envelope(lease.operation_id, lease.binding, { total: 1 });
+  resultEnvelope.structuredContent.operation_result_v2.completed_at = "2026-09-02T14:00:01.000Z";
+  const settled = settleAssignmentKernelOperationV2(lease, resultEnvelope);
+  const operation = settled.snapshot.operations[lease.operation_id]!;
+  assert.equal(operation.dispatched_at, dispatchStartedAt);
+  assert.ok(Date.parse(operation.dispatched_at!) <= Date.parse(operation.result!.completed_at));
+}));
+
 test("duplicate native delivery is idempotent and does not create a second operation or observation", () => workspace(() => {
   const { goal, snapshot } = setup();
   const lease = openAssignmentKernelOperationV2({

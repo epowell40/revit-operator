@@ -69,6 +69,7 @@ export interface OperationV2 {
   retry_basis?: "corrected_input" | "corrected_admission" | "new_target" | "reconciled_none" | "changed_plan" | "authorization_restored" | "host_recovered";
   reconciliation_of_operation_id?: OperationIdV2;
   opened_at: string;
+  dispatch_started_at?: string;
   dispatched_at?: string;
   dispatch_authority?: "mcp" | "backend" | "native" | "dynamic_runtime" | "courier";
   deadline_at: string;
