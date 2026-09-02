@@ -27,10 +27,17 @@ import { createHash } from "node:crypto";
 import { storeEvidence } from "../src/evidence/evidence_store.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal, transitionGoal } from "../src/goals/service.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "../src/assignments/model_call_budget.js";
+import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import {
   assignmentKernelV2ModelReceiptObserver,
+  createAssignmentKernelV2ModelReceiptRecorder,
   settleAssignmentKernelProviderBudgetAtQuiescenceV2
 } from "../src/assignments/assignment_kernel_v2_provider_budget.js";
+import {
+  assignmentKernelTerminalSettlementDeferredV2,
+  beginAssignmentKernelTerminalBarrierV2,
+  endAssignmentKernelTerminalBarrierV2
+} from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
 import {
   advanceAssignmentKernelProgressV2,
   recordAssignmentProgressEpochV2
@@ -518,55 +525,48 @@ test("operation admission rejects an identical retry of structured schema-invali
     classified_effect: "read",
     arguments: invalidArguments
   });
-  const admitted = getAssignmentKernelSnapshotV2(goal.id)!.operations[first.operation_id]!;
-  const rejected = {
-    ...admitted,
-    settlement_state: "settled" as const,
-    result: {
-      schema: OPERATION_RESULT_V2_SCHEMA,
-      result_id: `result-${first.operation_id}`,
+  const rejectedResult: OperationResultV2 = {
+    schema: OPERATION_RESULT_V2_SCHEMA,
+    result_id: `result-${first.operation_id}`,
+    operation_id: first.operation_id,
+    binding: first.binding,
+    status: "failed_before_dispatch",
+    dispatch_state: "not_dispatched",
+    persistent_effect: "none",
+    native_transaction_state: "not_applicable",
+    authority: "operator-mcp-transport",
+    result_schema_id: "operator-capability/revit_call_tool/v2",
+    observation_required: false,
+    request_identity: first.request_identity,
+    error_code: "mcp_tool_failed",
+    input_schema_gap: {
+      schema: "revit-operator.operation-input-schema-gap/v2",
+      gap_id: `input-schema:${first.operation_id}`,
       operation_id: first.operation_id,
-      binding: first.binding,
-      status: "failed_before_dispatch" as const,
-      dispatch_state: "not_dispatched" as const,
-      persistent_effect: "none" as const,
-      native_transaction_state: "not_applicable" as const,
-      authority: "operator-mcp-transport",
-      result_schema_id: "operator-capability/revit_call_tool/v2",
-      observation_required: false,
-      request_identity: first.request_identity,
-      error_code: "mcp_tool_failed",
-      input_schema_gap: {
-        schema: "revit-operator.operation-input-schema-gap/v2" as const,
-        gap_id: `input-schema:${first.operation_id}`,
-        operation_id: first.operation_id,
-        capability_id: "revit_call_tool",
-        input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
-        input_schema_digest: "quantify-input-schema-digest",
-        method: "POST" as const,
-        path: "/revit/quantify",
-        request_signature: first.request_identity.request_signature,
-        dispatch: false as const,
-        effect: "none" as const,
-        issues: [{
-          field_path: "body.intent",
-          expected_type: "enum",
-          actual_type: "string",
-          safe_correction_eligibility: "provider_corrected_arguments_required" as const,
-          correction_action: "provider_resubmit" as const,
-          expected_constraint: { kind: "enum" as const, allowed_values: ["count", "list", "count_and_list"] }
-        }]
-      },
-      completed_at: "2026-08-28T21:27:05.927Z"
+      capability_id: "revit_call_tool",
+      input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+      input_schema_digest: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: first.request_identity.request_signature,
+      dispatch: false,
+      effect: "none",
+      issues: [{
+        field_path: "body.intent",
+        expected_type: "enum",
+        actual_type: "string",
+        safe_correction_eligibility: "provider_corrected_arguments_required",
+        correction_action: "provider_resubmit",
+        expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+      }]
     },
-    settled_at: "2026-08-28T21:27:05.927Z"
+    completed_at: "2026-08-28T21:27:05.927Z"
   };
-  const rejectedSnapshot = {
-    ...getAssignmentKernelSnapshotV2(goal.id)!,
-    operations: { [first.operation_id]: rejected },
-    in_flight_operation_ids: [],
-    quiescent: true
-  };
+  settleAssignmentKernelOperationV2(first, {
+    content: [],
+    structuredContent: { schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: rejectedResult }
+  });
+  const rejectedSnapshot = getAssignmentKernelSnapshotV2(goal.id)!;
 
   assert.throws(() => openAssignmentKernelOperationV2({
     snapshot: rejectedSnapshot,
@@ -893,7 +893,8 @@ test("V2 provider budget is durable resource truth and cannot terminalize an in-
   }
   const exhausted = getAssignmentKernelSnapshotV2(goal.id)!;
   assert.equal(exhausted.provider_call_ids.length, ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT);
-  assert.equal(exhausted.provider_budget_exhausted, true);
+  assert.equal(exhausted.provider_budget_exhausted, false,
+    "reaching the cap stops new reasoning but must not pre-judge an admitted operation still in flight");
   assert.equal(exhausted.quiescent, false);
   assert.equal(exhausted.terminal, false);
   assert.equal(interruptions, 1);
@@ -903,8 +904,51 @@ test("V2 provider budget is durable resource truth and cannot terminalize an in-
   const terminal = settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding)!;
   assert.equal(terminal.quiescent, true);
   assert.equal(terminal.outcome, "failed");
+  assert.equal(terminal.provider_budget_exhausted, true);
   assert.equal(terminal.terminal, true);
   assert.equal(terminal.terminal_reason, "absolute_model_call_limit_reached");
+}));
+
+test("provider cap cannot invalidate a successful final admitted operation", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "budget-final-success",
+    provider_turn_id: "budget-final-turn",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: {}
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const observe = assignmentKernelV2ModelReceiptObserver(lease.binding, () => {});
+  for (let index = 0; index < ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT; index += 1) {
+    observe({
+      schema: "revit-operator.model-call-receipt.v1",
+      call_id: `provider-final-success-${index}`,
+      provider: "openai",
+      route: "codex_agent",
+      requested_model: "gpt-test",
+      model: "gpt-test",
+      reasoning_effort: "medium",
+      started_at_utc: "2026-08-26T16:00:00.000Z",
+      duration_ms: null,
+      success: true,
+      response_status: "completed",
+      error_code: null,
+      tokens: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 2 }
+    });
+  }
+  assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.provider_budget_exhausted, false);
+  settleAssignmentKernelOperationV2(lease, envelope(
+    lease.operation_id,
+    lease.binding,
+    { result: "authoritative" }
+  ));
+  const terminal = settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding)!;
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
+  assert.equal(terminal.provider_budget_exhausted, false);
+  assert.equal(terminal.provider_call_ids.length, ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT);
 }));
 
 test("late provider receipt evaluates an already-retained Observation instead of admitting another reasoning turn", () => workspace(() => {
@@ -964,6 +1008,202 @@ test("late provider receipt evaluates an already-retained Observation instead of
   assert.equal(provider.dispatched_at, provider.admitted_at);
   assert.equal(provider.response_started_at, provider.admitted_at);
   assert.equal(provider.usage?.total_tokens, 120);
+}));
+
+test("Candidate 46 provider receipt cannot be overtaken by terminal settlement", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const barrier = beginAssignmentKernelTerminalBarrierV2({
+    binding: snapshot.current_binding,
+    barrier_id: "candidate46-provider-turn"
+  });
+  try {
+    const recorder = createAssignmentKernelV2ModelReceiptRecorder({
+      binding: snapshot.current_binding,
+      admission_snapshot: snapshot,
+      onStop: () => {}
+    });
+    for (let index = 1; index <= 4; index += 1) {
+      recorder.observe({
+        schema: "revit-operator.model-call-receipt.v1",
+        call_id: `candidate46-prior-${index}`,
+        provider: "openai",
+        route: "codex_agent",
+        requested_model: "gpt-test",
+        model: "gpt-test",
+        reasoning_effort: "medium",
+        started_at_utc: "2026-09-02T00:46:17.390Z",
+        duration_ms: null,
+        success: true,
+        response_status: "completed",
+        error_code: null,
+        tokens: { input_tokens: 10, cached_input_tokens: 0, output_tokens: 2, reasoning_output_tokens: 1, total_tokens: 12 },
+        turn_id: "candidate46-turn"
+      });
+    }
+
+    const beforeOperation = getAssignmentKernelSnapshotV2(goal.id)!;
+    const lease = openAssignmentKernelOperationV2({
+      snapshot: beforeOperation,
+      controller_request_id: "candidate46-quantify",
+      provider_turn_id: "candidate46-turn",
+      capability_id: "inventory.read",
+      classified_effect: "read",
+      arguments: {}
+    });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const settled = settleAssignmentKernelOperationV2(lease, envelope(
+      lease.operation_id,
+      lease.binding,
+      { result: "authoritative" }
+    ));
+    const epoch = recordAssignmentProgressEpochV2({
+      before: beforeOperation,
+      after: settled.snapshot,
+      stated_gap_ids: deriveProgressGapsV2(beforeOperation).map(gap => gap.gap_id),
+      admitted_operation_ids: [lease.operation_id]
+    });
+    const candidate = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
+    assert.equal(candidate.snapshot.outcome, "complete");
+    assert.equal(candidate.snapshot.terminal, false,
+      "terminal commit must wait for receipts from the active provider turn");
+
+    const currentReceipt = {
+      schema: "revit-operator.model-call-receipt.v1" as const,
+      call_id: "candidate46-current-response",
+      provider: "openai" as const,
+      route: "codex_agent" as const,
+      requested_model: "gpt-test",
+      model: "gpt-test",
+      reasoning_effort: "medium" as const,
+      started_at_utc: "2026-09-02T00:46:17.390Z",
+      duration_ms: null,
+      success: true,
+      response_status: "completed",
+      error_code: null,
+      tokens: { input_tokens: 33_175, cached_input_tokens: 0, output_tokens: 92, reasoning_output_tokens: 10, total_tokens: 33_267 },
+      turn_id: "candidate46-turn"
+    };
+    // Simulate a delayed raw-response notification: the end-of-turn ledger is
+    // the independent second sink and must recover the receipt exactly once.
+    recorder.reconcile([currentReceipt]);
+    const retained = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(retained.provider_call_ids.length, 5);
+    assert.ok(retained.provider_calls[currentReceipt.call_id]);
+    assert.equal(retained.terminal, false);
+    assert.throws(() => openAssignmentKernelOperationV2({
+      snapshot: retained,
+      controller_request_id: "candidate46-obsolete-follow-up",
+      provider_turn_id: "candidate46-turn",
+      capability_id: "inventory.read",
+      classified_effect: "read",
+      arguments: {}
+    }), /operation_admission_after_terminal_outcome/,
+    "a receipt-complete but barrier-delayed terminal outcome cannot admit more work");
+    assert.throws(() => recorder.reconcile([{
+      ...currentReceipt,
+      tokens: { ...currentReceipt.tokens, total_tokens: currentReceipt.tokens.total_tokens + 1 }
+    }]), /provider_receipt_conflict/,
+    "a duplicate response identity with different usage must fail closed");
+  } finally {
+    endAssignmentKernelTerminalBarrierV2(barrier);
+  }
+  const terminal = advanceAssignmentKernelProgressV2({ binding: snapshot.current_binding }).snapshot;
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
+  assert.equal(terminal.provider_call_ids.length, 5);
+  const packet = listVerifiedWorkPackets(goal.id).at(-1);
+  assert.equal(packet?.performance.model_calls, 5,
+    "terminal artifacts must be generated from the receipt-complete snapshot");
+}));
+
+test("terminal barriers are exclusive per request and all independent provider turns must release", () => workspace(() => {
+  const { snapshot } = setup();
+  const first = beginAssignmentKernelTerminalBarrierV2({
+    binding: snapshot.current_binding,
+    barrier_id: "concurrent-provider-request-1"
+  });
+  assert.throws(() => beginAssignmentKernelTerminalBarrierV2({
+    binding: snapshot.current_binding,
+    barrier_id: "concurrent-provider-request-1"
+  }), /terminal_barrier_already_active/,
+  "a duplicate live request must fail closed instead of sharing a releasable lease");
+  const second = beginAssignmentKernelTerminalBarrierV2({
+    binding: snapshot.current_binding,
+    barrier_id: "concurrent-provider-request-2"
+  });
+  assert.equal(assignmentKernelTerminalSettlementDeferredV2(snapshot.current_binding), true);
+  endAssignmentKernelTerminalBarrierV2(first);
+  assert.equal(assignmentKernelTerminalSettlementDeferredV2(snapshot.current_binding), true,
+    "one completed provider turn cannot release another provider turn's barrier");
+  endAssignmentKernelTerminalBarrierV2(second);
+  assert.equal(assignmentKernelTerminalSettlementDeferredV2(snapshot.current_binding), false);
+}));
+
+test("process loss at the provider terminal barrier recovers without replaying completed work", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const barrier = beginAssignmentKernelTerminalBarrierV2({
+    binding: snapshot.current_binding,
+    barrier_id: "provider-request-before-restart"
+  });
+  const recorder = createAssignmentKernelV2ModelReceiptRecorder({
+    binding: snapshot.current_binding,
+    admission_snapshot: snapshot,
+    onStop: () => {}
+  });
+  const lease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "restart-final-operation",
+    provider_turn_id: "restart-provider-turn",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: {}
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const settled = settleAssignmentKernelOperationV2(lease, envelope(
+    lease.operation_id,
+    lease.binding,
+    { result: "authoritative-before-restart" }
+  ));
+  recordAssignmentProgressEpochV2({
+    before: snapshot,
+    after: settled.snapshot,
+    stated_gap_ids: deriveProgressGapsV2(snapshot).map(gap => gap.gap_id),
+    admitted_operation_ids: [lease.operation_id]
+  });
+  recorder.reconcile([{
+    schema: "revit-operator.model-call-receipt.v1",
+    call_id: "restart-final-receipt",
+    provider: "openai",
+    route: "codex_agent",
+    requested_model: "gpt-test",
+    model: "gpt-test",
+    reasoning_effort: "medium",
+    started_at_utc: "2026-09-02T00:46:17.390Z",
+    duration_ms: null,
+    success: true,
+    response_status: "completed",
+    error_code: null,
+    tokens: { input_tokens: 40, cached_input_tokens: 0, output_tokens: 8, reasoning_output_tokens: 2, total_tokens: 48 },
+    turn_id: "restart-provider-turn"
+  }]);
+  const beforeLoss = advanceAssignmentKernelProgressV2({ binding: snapshot.current_binding }).snapshot;
+  assert.equal(beforeLoss.outcome, "complete");
+  assert.equal(beforeLoss.terminal, false);
+  assert.equal(Object.keys(beforeLoss.operations).length, 1);
+  assert.equal(beforeLoss.provider_call_ids.length, 1);
+
+  // A process loss drops only the in-memory lease. Canonical result,
+  // Observation, criterion, and receipt events are reloaded from disk.
+  endAssignmentKernelTerminalBarrierV2(barrier);
+  __testOnlyResetGoalListCache();
+  const recovered = advanceAssignmentKernelProgressV2({ binding: snapshot.current_binding }).snapshot;
+  assert.equal(recovered.terminal, true);
+  assert.equal(recovered.outcome, "complete");
+  assert.equal(Object.keys(recovered.operations).length, 1);
+  assert.equal(recovered.operations[lease.operation_id]!.result?.result_id, `result-${lease.operation_id}`);
+  assert.equal(Object.keys(recovered.observations).length, 1);
+  assert.equal(recovered.provider_call_ids.length, 1);
+  assert.equal(listVerifiedWorkPackets(goal.id).at(-1)?.performance.model_calls, 1);
 }));
 
 test("provider receipt without a tool result is durable but waits for the quiescent turn checkpoint", () => workspace(() => {

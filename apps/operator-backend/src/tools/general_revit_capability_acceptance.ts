@@ -2,14 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  evaluateGeneralRevitCapabilityAttempt,
-  generalRevitExecutionCase,
-  generalRevitGroundingDemand,
-  generalRevitPromptSpecificity,
-  generalRevitResearchDemand,
-  summarizeGeneralRevitCapabilityReport,
-  type GeneralRevitCapabilityCase,
-  type GeneralRevitAttempt
+  evaluateGeneralRevitCapabilityAttempt, generalRevitExecutionCase, generalRevitGroundingDemand,
+  generalRevitPromptSpecificity, generalRevitResearchDemand, summarizeGeneralRevitCapabilityReport,
+  type GeneralRevitCapabilityCase, type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
 import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
@@ -19,15 +14,17 @@ import {
   waitForExactRevitFixtureHealth,
   type ExactRevitFixtureHealthResult
 } from "../benchmark/revit_fixture_readiness.js";
-import { localRevitProcessGuardTarget,
-  type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
-import { aggregateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
+import { localRevitProcessGuardTarget, type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
+import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
   modelTelemetryCaseCoverage, requestedComputerAgentConfig, requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
-import { loadAssignmentKernelPublicationsV2 } from "../benchmark/assignment_kernel_v2_collection.js";
+import {
+  loadAssignmentKernelPublicationsV2,
+  modelCallReceiptsFromAssignmentKernelPublicationsV2
+} from "../benchmark/assignment_kernel_v2_collection.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
 import { bindComputerClarificationResponse, executeGeneralRevitComputerTurn, modelCallReceiptsFromComputerTurns, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
@@ -718,7 +715,10 @@ async function runCase(
   };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);
   const toolCalls = extractToolCalls(attempt);
-  const modelCallReceipts = modelCallReceiptsFromSources(attempt, attempt.computer_state);
+  const modelCallReceipts = deduplicateModelCallReceipts([
+    ...modelCallReceiptsFromSources(attempt, attempt.computer_state),
+    ...modelCallReceiptsFromAssignmentKernelPublicationsV2(assignmentKernelV2)
+  ]);
   const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
   const computerState = asRecord(attempt.computer_state);
   const sidecarRequestedSpeedSettings = asRecord(computerState.requestedSpeedSettings);

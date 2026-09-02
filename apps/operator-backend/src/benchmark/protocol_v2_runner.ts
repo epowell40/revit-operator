@@ -128,12 +128,61 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const publications = kernelPublicationsV2(toolResults);
     const v2AssignmentRows = publications.map(assignmentRowFromKernelPublicationV2);
     if (directPublications.length > 0) {
+      const observedProviderReceipts = records(trace.model_call_receipts);
+      const observedProviderCallIds = observedProviderReceipts
+        .map((receipt) => String(receipt.call_id ?? receipt.response_id ?? "").trim())
+        .filter(Boolean);
+      const canonicalProviderCalls = new Map<string, JsonRecord>();
+      const canonicalProviderCallIds = directPublications.flatMap((publication) => {
+        const ledger = record(publication.provider_ledger);
+        const calls = record(ledger.calls);
+        const ids = Array.isArray(ledger.call_ids) ? ledger.call_ids.map(String).filter(Boolean) : [];
+        for (const callId of ids) canonicalProviderCalls.set(callId, record(calls[callId]));
+        return ids;
+      });
+      const observedSet = new Set(observedProviderCallIds);
+      const canonicalSet = new Set(canonicalProviderCallIds);
+      const missingFromCanonical = [...observedSet].filter((callId) => !canonicalSet.has(callId));
+      const conflictingObserved = observedProviderReceipts.flatMap((receipt) => {
+        const callId = String(receipt.call_id ?? receipt.response_id ?? "").trim();
+        const call = canonicalProviderCalls.get(callId);
+        if (!call) return [];
+        const tokens = record(receipt.tokens);
+        const usage = record(call.usage);
+        const conflicts = [
+          ["provider", receipt.provider, call.provider],
+          ["model", receipt.model, call.model],
+          ["reasoning_effort", receipt.reasoning_effort, call.reasoning_effort],
+          ["started_at_utc", receipt.started_at_utc, call.admitted_at],
+          ["success", receipt.success, call.success],
+          ["input_tokens", tokens.input_tokens, usage.input_tokens],
+          ["output_tokens", tokens.output_tokens, usage.output_tokens],
+          ["reasoning_tokens", tokens.reasoning_output_tokens, usage.reasoning_tokens],
+          ["total_tokens", tokens.total_tokens, usage.total_tokens]
+        ].filter(([, observed, canonical]) => observed !== undefined && observed !== null
+          && canonical !== undefined && canonical !== null && observed !== canonical)
+          .map(([field]) => String(field));
+        return conflicts.length > 0 ? [`${callId}[${conflicts.join(",")}]`] : [];
+      });
+      if (observedSet.size !== observedProviderCallIds.length
+        || canonicalSet.size !== canonicalProviderCallIds.length
+        || missingFromCanonical.length > 0
+        || conflictingObserved.length > 0) {
+        throw new Error(
+          `Canonical provider ledger conflict for ${caseId}: `
+          + `observed_not_canonical=${missingFromCanonical.join(",") || "none"}; `
+          + `field_conflicts=${conflictingObserved.join(",") || "none"}.`
+        );
+      }
       for (const publication of directPublications) {
         const ledger = record(publication.provider_ledger);
         const callIds = Array.isArray(ledger.call_ids) ? ledger.call_ids.map(String) : [];
         const calls = record(ledger.calls);
         const inFlight = Array.isArray(ledger.in_flight_call_ids) ? ledger.in_flight_call_ids.map(String) : [];
-        if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => record(calls[id]).state !== "completed")) {
+        if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => {
+          const call = record(calls[id]);
+          return call.call_id !== id || call.state !== "completed";
+        })) {
           throw new Error(`Benchmark Protocol V2 fails closed on incomplete provider telemetry for ${caseId}.`);
         }
       }
@@ -218,6 +267,7 @@ function finalizationFailureDetails(message: string): {
   code: string; stage: string; missing: string[]; telemetry: BenchmarkFinalizationFailureV2["telemetry_completeness"];
 } {
   if (/v2_publication_missing/i.test(message)) return { code: "v2_publication_missing", stage: "v2_publication", missing: ["v2_assignment_publication"], telemetry: "collection_failed" };
+  if (/provider ledger conflict/i.test(message)) return { code: "provider_ledger_conflict", stage: "provider_telemetry", missing: [], telemetry: "conflicting_or_quarantined" };
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
   if (/settlement still in flight/i.test(message)) return { code: "assignment_settlement_in_flight", stage: "settlement_barrier", missing: ["settled_revit_receipt"], telemetry: "still_in_flight" };
   if (/missing a complete Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };

@@ -511,6 +511,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
       }
     }]
   };
+  trace.model_call_receipts = [];
   trace.tool_calls = [];
   toolResults.durable_tool_evidence = {
     schema: "revit-operator.benchmark-durable-tool-evidence/v1",
@@ -520,6 +521,21 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
     task_traces: [trace]
   }, [readCase.case_id]));
+  trace.model_call_receipts = [
+    { call_id: providerCall.call_id },
+    { call_id: "candidate46-receipt-missing-from-canonical-ledger" }
+  ];
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /provider.*ledger.*conflict/i);
+  trace.model_call_receipts = [{ call_id: providerCall.call_id, tokens: { total_tokens: 151 } }];
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /provider.*ledger.*conflict/i,
+  "raw transport telemetry that contradicts canonical usage must fail closed");
+  trace.model_call_receipts = [{ call_id: providerCall.call_id }];
   const result = buildBenchmarkCaseResultV2({
     runId: "run-v2", lane: "controlled_capability", testCase: readCase, trace,
     rawTraceRef: "trace.json", judgedAt: FINISH

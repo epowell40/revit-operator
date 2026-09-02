@@ -205,6 +205,34 @@ test("V2 projections cannot write journal events and V2 completion has no specia
   assert.doesNotMatch(evaluator, /EvidenceProjection|evidence_projection|payload\.items|content\[0\]/);
 });
 
+test("V2 terminal commit has one owner and provider turns reconcile before releasing its barrier", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const terminalWriters = sourceFiles(sourceRoot).filter((file) =>
+    /body:\s*\{\s*event_type:\s*"assignment_terminal"/.test(readFileSync(file, "utf8")));
+  assert.deepEqual(terminalWriters.map((file) => path.relative(process.cwd(), file).replaceAll("\\", "/")), [
+    "src/assignments/assignment_kernel_v2_lifecycle.ts"
+  ]);
+
+  const lifecycle = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_lifecycle.ts"), "utf8");
+  assert.match(lifecycle, /assignmentKernelTerminalSettlementDeferredV2/);
+  const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
+  const barrierAdmissionAt = brain.indexOf("assignmentTerminalBarrier = beginAssignmentKernelTerminalBarrierV2");
+  const notificationBindAt = brain.indexOf("bindTurnNotificationSource(activeClient);", barrierAdmissionAt);
+  const providerStartAt = brain.indexOf("return await activeClient.startTurn({", barrierAdmissionAt);
+  assert.ok(barrierAdmissionAt >= 0 && notificationBindAt > barrierAdmissionAt && providerStartAt > notificationBindAt,
+    "terminality must be barred and provider notifications captured before provider execution starts");
+  const reconcileAt = brain.indexOf("providerReceiptRecorder.reconcile(modelTelemetry.receipts)");
+  const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(false)", reconcileAt);
+  assert.ok(reconcileAt >= 0 && normalReleaseAt > reconcileAt,
+    "completed provider receipts must reconcile before the immutable terminal barrier is released");
+  const setupBindAt = brain.indexOf("bindBackendAuthLeaseTurn(backendAuthLease, turnId)", providerStartAt);
+  const abnormalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(true)", setupBindAt);
+  assert.ok(setupBindAt > providerStartAt && abnormalReleaseAt > setupBindAt,
+    "every failure after provider start must interrupt and release the exact started turn");
+  assert.match(brain, /const releaseStartedProviderTurn = async[\s\S]*interruptTurn[\s\S]*endAssignmentKernelTerminalBarrierV2[\s\S]*endAssignmentKernelV2Lease/,
+    "started-turn cleanup must own interruption, terminal barrier release, and lease release as one idempotent path");
+});
+
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {
   const source = readFileSync(path.join(process.cwd(), "src/assignments/assignment_kernel_v2_execution.ts"), "utf8");
   const identity = /const operationId = `opv2_\$\{stableHash\(\{([\s\S]*?)\}\)\}`;/.exec(source)?.[1] ?? "";

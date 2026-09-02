@@ -10,6 +10,7 @@ import {
   speedSettingsForRequestedConfig
 } from "../src/benchmark/general_revit_model_telemetry.js";
 import { createCodexRawModelCallReceipt } from "../src/model_call_telemetry.js";
+import { modelCallReceiptsFromAssignmentKernelPublicationsV2 } from "../src/benchmark/assignment_kernel_v2_collection.js";
 
 function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -80,6 +81,23 @@ test("deduplication, exact pricing, and unified configuration comparison are com
   assert.equal(comparison.comparable_configuration, true);
 });
 
+test("duplicate provider receipts merge missing fields but reject contradictory accounting", () => {
+  const merged = modelCallReceiptsFromSources(
+    { model_call_receipts: [receipt({ duration_ms: 250 })] },
+    { model_call_receipts: [receipt({ duration_ms: null, canonical_source: "assignment_kernel_v2_provider_ledger" })] }
+  );
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.duration_ms, 250);
+  assert.equal(merged[0]?.canonical_source, "assignment_kernel_v2_provider_ledger");
+  assert.throws(() => modelCallReceiptsFromSources(
+    { model_call_receipts: [receipt()] },
+    { model_call_receipts: [receipt({
+      tokens: { input_tokens: 100, cached_input_tokens: null, output_tokens: 40,
+        reasoning_output_tokens: 20, total_tokens: 141 }
+    })] }
+  ), /model_call_receipt_conflict:openai:resp_1:total_tokens/);
+});
+
 test("missing usage remains unknown and never becomes zero cost", () => {
   const summary = aggregateModelCallReceipts(modelCallReceiptsFromTraces([{ model_call_receipts: [receipt({
     tokens: { input_tokens: null, cached_input_tokens: null, output_tokens: null,
@@ -88,4 +106,39 @@ test("missing usage remains unknown and never becomes zero cost", () => {
   assert.equal(summary.total_tokens, null);
   assert.equal(summary.cost_usd, null);
   assert.equal(summary.cost_status, "incomplete");
+});
+
+test("benchmark telemetry recovers every provider call from the exact V2 publication ledger", () => {
+  const calls = Object.fromEntries([1, 2, 3].map((index) => [`resp_${index}`, {
+    schema: "revit-operator.provider-call/v2",
+    call_id: `resp_${index}`,
+    controller_turn_id: "turn-canonical",
+    state: "completed",
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    reasoning_effort: "medium",
+    admitted_at: `2026-09-02T00:00:0${index}.000Z`,
+    completed_at: `2026-09-02T00:00:0${index}.250Z`,
+    success: true,
+    usage: { input_tokens: index * 100, output_tokens: index * 10, reasoning_tokens: index * 5, total_tokens: index * 110 }
+  }]));
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2({
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignments: [{
+      schema: "revit-operator.assignment-kernel-publication/v2",
+      assignment_id: "assignment-telemetry",
+      assignment_version: 40,
+      provider_ledger: {
+        schema: "revit-operator.assignment-provider-ledger/v2",
+        call_ids: Object.keys(calls),
+        calls,
+        in_flight_call_ids: []
+      }
+    }]
+  });
+  assert.deepEqual(recovered.map((entry) => entry.call_id), ["resp_1", "resp_2", "resp_3"]);
+  assert.equal(recovered[0]?.canonical_source, "assignment_kernel_v2_provider_ledger");
+  assert.equal((recovered[2]?.tokens as Record<string, unknown>).reasoning_output_tokens, 15);
+  assert.equal(recovered[2]?.duration_ms, 250);
+  assert.equal(aggregateModelCallReceipts(recovered).call_count, 3);
 });
