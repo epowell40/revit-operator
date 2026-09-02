@@ -5,7 +5,7 @@ import { kernelAssertV2 } from "./errors.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import { appliedOperationHasVerifiedPostconditionV2, deriveAssignmentOutcomeV2 } from "./outcome.js";
-import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
+import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
 import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
 import { criteriaPendingEvaluationV2, deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
@@ -371,6 +371,28 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
         : issue.correction_action === "provider_resubmit",
       "operation_input_schema_correction_invalid", "Input-schema correction action must match the declared safe correction eligibility.");
     }
+  }
+  if (result.result_semantic_gap) {
+    const gap = result.result_semantic_gap;
+    kernelAssertV2(operation.requested_effect === "preview"
+      && operation.fulfillment_role === "delegated_task_execution"
+      && result.status === "failed_after_dispatch"
+      && result.dispatch_state === "dispatched"
+      && result.persistent_effect === "none"
+      && result.native_transaction_state === "rolled_back"
+      && result.observation_required === true,
+    "operation_result_semantic_gap_effect_invalid", "A result-semantic gap is valid only for a safely rolled-back task preview with durable native evidence.");
+    kernelAssertV2(gap.schema === OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA
+      && gap.gap_id === `result-semantics:${operation.operation_id}`
+      && gap.operation_id === operation.operation_id
+      && gap.capability_id === operation.capability_id
+      && gap.result_schema_id === result.result_schema_id
+      && gap.reason_code === result.error_code
+      && ["preview_semantic_adapter_missing", "preview_result_contract_invalid"].includes(gap.reason_code)
+      && gap.retryable === false
+      && gap.provider_correctable === false
+      && gap.native_replay_allowed === false,
+    "operation_result_semantic_gap_invalid", "A result-semantic gap must bind the exact operation/result contract and prohibit provider correction or native replay.");
   }
 }
 

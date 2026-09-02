@@ -19,6 +19,7 @@ export type BenchmarkInteractionCaseV1 = {
   evaluator_oracle: {
     protected_identity: string;
     sha256: string;
+    required_result_variable_ids: string[];
   };
 };
 
@@ -70,18 +71,36 @@ function suppliedValues(value: unknown): Record<string, string | number | boolea
   return result;
 }
 
+function identifiers(value: unknown, name: string): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`Benchmark interaction manifest requires ${name} to be an array.`);
+  const result = value.map((item, index) => version(item, `${name}[${index}]`));
+  if (new Set(result).size !== result.length) throw new Error(`Benchmark interaction manifest requires unique ${name}.`);
+  return result;
+}
+
 function normalizeCase(value: unknown): BenchmarkInteractionCaseV1 {
   const row = object(value);
   const response = object(row.clarification_response);
   const oracle = object(row.evaluator_oracle);
   const direct = object(row.direct_variant);
+  const values = suppliedValues(response.supplied_values);
+  const requiredResultVariableIds = identifiers(
+    oracle.required_result_variable_ids,
+    "evaluator_oracle.required_result_variable_ids"
+  );
+  for (const variableId of requiredResultVariableIds) {
+    if (!Object.prototype.hasOwnProperty.call(values, variableId) || values[variableId] === null) {
+      throw new Error(`Benchmark interaction result assertion references missing supplied value '${variableId}'.`);
+    }
+  }
   return {
     source_case_id: version(row.source_case_id, "source_case_id"),
     transformation_id: version(row.transformation_id, "transformation_id"),
     transformation_version: version(row.transformation_version, "transformation_version"),
     clarification_response: {
       candidate_visible_user_text: text(response.candidate_visible_user_text, "clarification_response.candidate_visible_user_text"),
-      supplied_values: suppliedValues(response.supplied_values)
+      supplied_values: values
     },
     ...(Object.keys(direct).length > 0 ? { direct_variant: {
       candidate_visible_user_text: text(direct.candidate_visible_user_text, "direct_variant.candidate_visible_user_text"),
@@ -90,9 +109,24 @@ function normalizeCase(value: unknown): BenchmarkInteractionCaseV1 {
     } } : {}),
     evaluator_oracle: {
       protected_identity: version(oracle.protected_identity, "evaluator_oracle.protected_identity"),
-      sha256: sha256(oracle.sha256, "evaluator_oracle.sha256")
+      sha256: sha256(oracle.sha256, "evaluator_oracle.sha256"),
+      required_result_variable_ids: requiredResultVariableIds
     }
   };
+}
+
+function escapePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Candidate-visible values explicitly named by the evaluator must survive the final handoff. */
+export function benchmarkInteractionResultPatternsV1(interaction: BenchmarkInteractionCaseV1): string[] {
+  return interaction.evaluator_oracle.required_result_variable_ids.map(variableId => {
+    const value = interaction.clarification_response.supplied_values[variableId];
+    if (typeof value !== "string") return escapePattern(String(value));
+    const canonicalLines = value.replace(/\r\n?/g, "\n").replace(/\n+$/g, "").split("\n");
+    return canonicalLines.map(line => escapePattern(line)).join("\\s+");
+  });
 }
 
 export function parseBenchmarkInteractionManifestV1(value: unknown): BenchmarkInteractionManifestV1 {

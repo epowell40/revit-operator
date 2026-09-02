@@ -169,7 +169,10 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.equal(path.basename(file), "semantic_admissibility.ts", file);
+      assert.ok(["operation.ts", "semantic_admissibility.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === "operation.ts") {
+        assert.match(source, /OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA/);
+      }
     }
     const withoutSharedContracts = source
       .replaceAll("@revitoperator/payload-digest-v2", "assignment-kernel-payload-contract")

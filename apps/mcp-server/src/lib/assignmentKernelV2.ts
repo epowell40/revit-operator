@@ -5,10 +5,12 @@ import {
   payloadRepresentationDigestV2
 } from "@revitoperator/payload-digest-v2";
 import {
+  OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
   assignmentKernelControlEvidenceFactsV2,
   isAssignmentKernelDurableControlEvidenceProducerV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { createOperatorBackendClient } from "./operatorBackendClient.js";
+import { previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -521,7 +523,8 @@ function semanticFacts(
   requestBody?: unknown,
   requestedEffect?: Context["requested_effect"],
   authoritativePreview = false,
-  controlCapabilityId?: string
+  controlCapabilityId?: string,
+  taskResultAdmitted = true
 ): Array<Record<string, unknown>> {
   const domainSucceeded = !nativeDomainFailure(payload);
   const facts: Array<Record<string, unknown>> = [
@@ -530,32 +533,28 @@ function semanticFacts(
     { fact_id: "control.native_call_count", fact_class: "control", value: nativeCallCount },
     { fact_id: "control.payload_hash", fact_class: "control", value: sha256(payload) }
   ];
-  if (evidence === "task_result" && domainSucceeded) {
+  if (evidence === "task_result" && domainSucceeded && taskResultAdmitted) {
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
-    if (requestedEffect === "preview" && authoritativePreview) {
-      facts.push({ fact_id: "task.preview_valid", fact_class: "domain", value: true });
-    }
   }
   const root = object(payload);
   const textNoteResult = evidence === "task_result"
     && domainSucceeded
-    && path.toLowerCase() === "/revit/replace-text-note";
+    && ["/revit/replace-text-note", "/revit/set-text-note-text"].includes(path.toLowerCase());
   if (textNoteResult) {
-    const elementId = aliasedField(root, ["text_note_id", "textNoteId", "element_id", "elementId", "id"]);
-    const before = aliasedField(root, ["before", "old_text", "oldText", "previous_text", "previousText"]);
-    const after = aliasedField(root, ["after", "new_text", "newText", "text", "value"]);
-    const changed = aliasedField(root, ["changed", "was_changed", "wasChanged"]);
-    if (scalar(elementId)) facts.push({ fact_id: "text_note.element_id", fact_class: "domain", value: elementId });
-    if (scalar(before)) facts.push({ fact_id: "text_note.before", fact_class: "domain", value: before });
-    if (scalar(after)) facts.push({ fact_id: "text_note.after", fact_class: "domain", value: after });
-    if (typeof changed === "boolean") facts.push({ fact_id: "text_note.changed", fact_class: "domain", value: changed });
+    facts.push(...previewSemanticEvidenceV2({
+      path,
+      payload,
+      requestBody,
+      requestedEffect,
+      authoritativePreview
+    }).facts);
   }
   const summary = object(aliasedField(root, ["summary"]));
   const rootTotal = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
   const total = rootTotal === undefined
     ? aliasedField(summary, ["total", "total_count", "totalCount", "count"])
     : rootTotal;
-  const inventory = evidence === "task_result" && domainSucceeded && path.toLowerCase() === "/revit/quantify";
+  const inventory = evidence === "task_result" && domainSucceeded && taskResultAdmitted && path.toLowerCase() === "/revit/quantify";
   if (inventory && typeof total === "number" && Number.isFinite(total)) {
     facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
     facts.push({ fact_id: "inventory.total", fact_class: "domain", value: total });
@@ -670,17 +669,35 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
     throw new Error("assignment_kernel_v2_observation_payload_not_captured");
   }
+  const resultSchemaId = `operator-native/${call.method}:${call.path}/v2`;
+  const authoritativeTaskPreview = !failed
+    && call.lease.fulfillment_role === "delegated_task_execution"
+    && call.lease.requested_effect === "preview"
+    && dispatched
+    && persistentEffect === "none"
+    && nativeTransactionState === "rolled_back";
+  const previewEvidence = authoritativeTaskPreview ? previewSemanticEvidenceV2({
+    path: call.path,
+    payload: call.observation_payload,
+    requestBody: call.body,
+    requestedEffect: call.lease.requested_effect,
+    authoritativePreview: true
+  }) : null;
+  const resultSemanticReason = previewEvidence && !previewEvidence.admitted
+    ? previewEvidence.recognized ? "preview_result_contract_invalid" : "preview_semantic_adapter_missing"
+    : null;
+  const resultFailed = failed || resultSemanticReason !== null;
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
-    result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed })}`,
+    result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed: resultFailed, result_semantic_reason: resultSemanticReason })}`,
     operation_id: call.operation_id,
     binding: call.lease.binding,
-    status: failed ? dispatched ? "failed_after_dispatch" : "failed_before_dispatch" : "succeeded",
+    status: resultFailed ? dispatched ? "failed_after_dispatch" : "failed_before_dispatch" : "succeeded",
     dispatch_state: dispatchState,
     persistent_effect: persistentEffect,
     native_transaction_state: nativeTransactionState,
     authority: "native-host",
-    result_schema_id: `operator-native/${call.method}:${call.path}/v2`,
+    result_schema_id: resultSchemaId,
     observation_required: !transportFailed,
     ...(!transportFailed && provenance ? {
       raw_payload_hash: provenance.normalized.digest,
@@ -690,9 +707,21 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     native_correlation_id: call.request_id,
     request_identity: call.lease.request_identity,
     completed_at: new Date().toISOString(),
+    ...(resultSemanticReason ? { result_semantic_gap: {
+      schema: OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+      gap_id: `result-semantics:${call.operation_id}`,
+      operation_id: call.operation_id,
+      capability_id: call.lease.capability_id,
+      result_schema_id: resultSchemaId,
+      reason_code: resultSemanticReason,
+      retryable: false,
+      provider_correctable: false,
+      native_replay_allowed: false
+    } } : {}),
     ...(transportFailed ? { error_code: "native_operation_failed" }
       : domainFailed ? { error_code: nativeDomainFailureCode(call.observation_payload) }
-        : {})
+        : resultSemanticReason ? { error_code: resultSemanticReason }
+          : {})
   };
 }
 
@@ -718,7 +747,9 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
             call.path,
             call.body,
             call.lease.requested_effect,
-            authoritativePreview
+            authoritativePreview,
+            undefined,
+            operationResult.status === "succeeded"
           ),
           target_scope: {},
           verification_relevance: [observationClass],
@@ -848,7 +879,9 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
              parentCall.path,
              parentCall.body,
              parentCall.lease.requested_effect,
-             authoritativeParentPreview
+             authoritativeParentPreview,
+             undefined,
+             operationResult.status === "succeeded"
            ),
           target_scope: {},
            verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],

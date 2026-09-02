@@ -37,7 +37,7 @@ foreach ($file in $domainFiles) {
   foreach ($match in [regex]::Matches($content, '(?m)^\s*(?:import|export)\b[^\r\n]*?from\s+["'']([^"'']+)["'']')) {
     $specifier = $match.Groups[1].Value
     $sharedPayloadContract = $specifier -eq "@revitoperator/payload-digest-v2" -and @("canonical.ts", "payload_provenance.ts") -contains $relative
-    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and $relative -eq "semantic_admissibility.ts"
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "semantic_admissibility.ts") -contains $relative
     if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
@@ -251,6 +251,36 @@ if ($mcpKernel -notmatch 'currentAssignmentKernelTaskFulfillmentRoleV2') {
 }
 if ($mcpKernel -notmatch 'expected\.request_signature\s*===\s*sha256') {
   $violations.Add("Generic native parent claiming is not bound to the exact canonical request signature")
+}
+$previewEvidenceContract = Resolve-RepoPath "apps/mcp-server/src/lib/previewSemanticEvidenceV2.ts"
+if (-not (Test-Path -LiteralPath $previewEvidenceContract -PathType Leaf)) {
+  $violations.Add("Typed V2 preview semantic-evidence contract is missing")
+} else {
+  $previewEvidence = Get-Content -Raw -LiteralPath $previewEvidenceContract
+  if ($previewEvidence -notmatch 'return\s+\{\s*recognized:\s*false,\s*admitted:\s*false,\s*facts:\s*\[\]\s*\}') {
+    $violations.Add("Unknown V2 preview routes no longer deny semantic completion by default")
+  }
+  if ($previewEvidence -notmatch 'control\.preview_proposal_matches_request' -or
+      $previewEvidence -notmatch 'control\.preview_actual_state_unchanged' -or
+      $previewEvidence -notmatch 'task\.preview_valid') {
+    $violations.Add("Typed V2 preview evidence no longer binds proposal identity and persistent-state truth")
+  }
+}
+if ($mcpKernel -notmatch 'previewSemanticEvidenceV2' -or $mcpKernel -match 'fact_id:\s*["'']task\.preview_valid["'']') {
+  $violations.Add("Generic MCP settlement may not mint task.preview_valid outside the typed preview adapter")
+}
+$previewFactWriters = @(
+  (Get-ChildItem -LiteralPath (Resolve-RepoPath "apps/mcp-server/src") -Recurse -File -Filter "*.ts") +
+  (Get-ChildItem -LiteralPath (Resolve-RepoPath "apps/operator-backend/src") -Recurse -File -Filter "*.ts") |
+  Where-Object { (Get-Content -Raw -LiteralPath $_.FullName) -match 'fact_id\s*:\s*["'']task\.preview_valid["'']' }
+)
+$expectedPreviewFactWriter = [System.IO.Path]::GetFullPath($previewEvidenceContract)
+if ($previewFactWriters.Count -ne 1 -or $previewFactWriters[0].FullName -ne $expectedPreviewFactWriter) {
+  $violations.Add("task.preview_valid may be minted only by the reviewed typed preview adapter")
+}
+$progressController = Get-Content -Raw -LiteralPath (Join-Path $domainRoot "progress/controller.ts")
+if ($progressController -notmatch 'preview_semantic_proof_missing' -or $progressController -notmatch 'task\.preview_valid') {
+  $violations.Add("Transport-neutral progress no longer blocks a settled task preview without typed semantic proof")
 }
 foreach ($relativePath in @(
   "apps/mcp-server/src/server.ts",

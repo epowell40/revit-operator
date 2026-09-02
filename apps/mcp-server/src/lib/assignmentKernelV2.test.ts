@@ -185,7 +185,8 @@ test("Candidate 48 shared classification lets an authoritative native preview cl
         dryRun: true,
         textNoteId: 1421361,
         before: "***An Autodesk Revit sample project***\r",
-        after: "Issued for Construction",
+        after: "***An Autodesk Revit sample project***\r",
+        proposedText: "Issued for Construction",
         changed: true,
         canonical_attempt_settlement: {
           schema: "revit-operator.native-attempt-settlement.v1",
@@ -209,8 +210,118 @@ test("Candidate 48 shared classification lets an authoritative native preview cl
   assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
   assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.element_id" && fact.value === 1421361));
   assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.before" && fact.value === "***An Autodesk Revit sample project***\r"));
-  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.after" && fact.value === "Issued for Construction"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.after" && fact.value === "***An Autodesk Revit sample project***\r"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.proposed" && fact.value === "Issued for Construction"));
   assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.changed" && fact.value === true));
+});
+
+test("Candidate 56 rolled-back preview without native proposal proof cannot satisfy the preview criterion", async () => {
+  const requestedText = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+  const before = "***An Autodesk Revit sample project***\r";
+  const body = {
+    elementId: 1421361,
+    expectedOldText: before,
+    newText: requestedText,
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
+        classified_effect: revitRouteEffect("/revit/replace-text-note", "POST", body)
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true,
+        status: "Dry Run",
+        dryRun: true,
+        textNoteId: 1421361,
+        before,
+        after: before,
+        text: before,
+        normalizedText: "***An Autodesk Revit sample project***\n",
+        changed: true,
+        transaction: {
+          status: "rolled_back",
+          committed: false,
+          modified_element_ids: [],
+          affected_element_ids: [1421361]
+        },
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "candidate56-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const result = decorated.structuredContent.operation_result_v2;
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.error_code, "preview_result_contract_invalid");
+  assert.equal(result.result_semantic_gap?.native_replay_allowed, false);
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.after" && fact.value === before));
+  assert.equal(facts.some((fact: any) => fact.fact_id === "text_note.proposed"), false);
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.preview_valid"), false);
+});
+
+test("text-note preview admits only an explicit native proposal matching the admitted request", async () => {
+  const requestedText = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+  const before = "***An Autodesk Revit sample project***\r";
+  const body = {
+    elementId: 1421361,
+    expectedOldText: before,
+    newText: requestedText,
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
+        classified_effect: revitRouteEffect("/revit/replace-text-note", "POST", body)
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true,
+        status: "Dry Run",
+        dryRun: true,
+        textNoteId: 1421361,
+        before,
+        after: before,
+        proposedText: requestedText,
+        changed: true,
+        transaction: {
+          status: "rolled_back",
+          committed: false,
+          modified_element_ids: [],
+          affected_element_ids: [1421361]
+        },
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "proposal-bound-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
+  assert.equal(decorated.structuredContent.operation_result_v2.result_semantic_gap, undefined);
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.proposed" && fact.value === requestedText));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
 });
 
 test("Candidate 40 action-specific read cannot claim a preview parent or emit task preview evidence", async () => {

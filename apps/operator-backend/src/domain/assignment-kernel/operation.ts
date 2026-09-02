@@ -8,11 +8,15 @@ import type {
 } from "./identity.js";
 import type { PayloadProvenanceV2 } from "./payload_provenance.js";
 import type { OperationFulfillmentRoleV2 } from "./semantic_admissibility.js";
+// This package contains transport-neutral wire identifiers shared with the MCP
+// producer. The OperationV2 domain still owns the shape and reducer rules.
+import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA as SHARED_OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export const OPERATION_V2_SCHEMA = "revit-operator.operation/v2" as const;
 export const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const;
 export const OBSERVATION_COMMIT_INPUT_V2_SCHEMA = "revit-operator.observation-commit-input/v2" as const;
 export const OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA = "revit-operator.operation-input-schema-gap/v2" as const;
+export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA = SHARED_OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA;
 
 export type OperationAdmissionStateV2 = "proposed" | "admitted" | "rejected";
 export type OperationDispatchStateV2 = "not_dispatched" | "dispatching" | "dispatched";
@@ -111,6 +115,19 @@ export interface OperationResultV2 {
   diagnostics?: readonly string[];
   request_identity?: OperationRequestIdentityV2;
   input_schema_gap?: OperationInputSchemaGapV2;
+  result_semantic_gap?: OperationResultSemanticGapV2;
+}
+
+export interface OperationResultSemanticGapV2 {
+  schema: typeof OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA;
+  gap_id: string;
+  operation_id: OperationIdV2;
+  capability_id: string;
+  result_schema_id: string;
+  reason_code: "preview_semantic_adapter_missing" | "preview_result_contract_invalid";
+  retryable: false;
+  provider_correctable: false;
+  native_replay_allowed: false;
 }
 
 export interface OperationInputSchemaIssueV2 {

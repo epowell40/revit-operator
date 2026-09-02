@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   BENCHMARK_INTERACTION_MANIFEST_V1,
   benchmarkInteractionCaseV1,
+  benchmarkInteractionResultPatternsV1,
   parseBenchmarkInteractionManifestV1
 } from "../src/benchmark/protocol_v2_interaction.js";
 
@@ -25,7 +26,11 @@ function manifest(): Record<string, any> {
         transformation_id: "fully-specified-direct",
         transformation_version: "v1"
       },
-      evaluator_oracle: { protected_identity: "oracle-note-v1", sha256: oracleHash }
+      evaluator_oracle: {
+        protected_identity: "oracle-note-v1",
+        sha256: oracleHash,
+        required_result_variable_ids: ["replacement_text"]
+      }
     }]
   };
 }
@@ -36,6 +41,9 @@ test("interactive manifest keeps candidate-visible input separate from protected
   assert.equal(entry?.clarification_response.supplied_values.replacement_text, "Approved issue wording");
   assert.equal(entry?.evaluator_oracle.sha256, oracleHash);
   assert.equal(JSON.stringify(entry?.clarification_response).includes(oracleHash), false);
+  const [pattern] = benchmarkInteractionResultPatternsV1(entry!);
+  assert.match("Previewed replacement. Proposed: Approved issue wording", new RegExp(pattern!, "i"));
+  assert.doesNotMatch("Previewed replacement. Proposed: old wording", new RegExp(pattern!, "i"));
 });
 
 test("interactive manifest rejects duplicate cases, credential-like values, and invalid oracle hashes", () => {
@@ -48,6 +56,9 @@ test("interactive manifest rejects duplicate cases, credential-like values, and 
   const invalidHash = manifest();
   invalidHash.cases[0]!.evaluator_oracle.sha256 = "not-a-hash";
   assert.throws(() => parseBenchmarkInteractionManifestV1(invalidHash), /SHA-256/i);
+  const missingResultValue = manifest();
+  missingResultValue.cases[0]!.evaluator_oracle.required_result_variable_ids = ["missing_value"];
+  assert.throws(() => parseBenchmarkInteractionManifestV1(missingResultValue), /missing supplied value/i);
 });
 
 test("interactive manifest does not invent a direct variant", () => {

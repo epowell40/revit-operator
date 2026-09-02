@@ -325,6 +325,7 @@ namespace RevitBridge.Common.Tests
             var replaceHandler = ReadSharedSource("revit-bridge-addin", "RevitBridge.Logic", "Handlers", "Families", "ReplaceTextNoteHandler.cs");
             Assert.Contains("OperatorNativeTransactionReceipt", setHandler);
             Assert.Contains("transaction = transactionReceipt", setHandler);
+            Assert.Contains("proposedText = nextText", setHandler);
             Assert.Contains("new SetTextNoteTextHandler().Handle", replaceHandler);
 
             var introspection = ReadSharedSource("revit-bridge-addin", "RevitBridge", "Operator", "OperatorToolIntrospection.cs");

@@ -47,14 +47,20 @@ function inventorySummary(facts: readonly SemanticFactV2[]): string | null {
 
 function textNoteSummary(facts: readonly SemanticFactV2[], requestedEffect: string): string | null {
   const after = facts.find(fact => fact.fact_id === "text_note.after");
-  if (!after) return null;
+  const proposed = facts.find(fact => fact.fact_id === "text_note.proposed");
+  if (requestedEffect === "preview" ? !proposed : !after) return null;
   const id = facts.find(fact => fact.fact_id === "text_note.element_id");
   const before = facts.find(fact => fact.fact_id === "text_note.before");
   const changed = facts.find(fact => fact.fact_id === "text_note.changed");
   const action = requestedEffect === "preview" ? "Previewed" : changed?.value === false ? "Verified" : "Updated";
   const lines = [`${action} TextNote${id ? ` ${scalar(id.value)}` : ""}.`];
   if (before) lines.push(`- Before: ${scalar(before.value)}`);
-  lines.push(`- After: ${scalar(after.value)}`);
+  if (requestedEffect === "preview") {
+    lines.push(`- Proposed: ${scalar(proposed!.value)}`);
+    lines.push("- Model unchanged; the native preview transaction was rolled back.");
+  } else {
+    lines.push(`- After: ${scalar(after!.value)}`);
+  }
   if (facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"
       && fact.fact_class === "verification" && fact.value === true)) {
     lines.push("- Postcondition verified against the Revit readback.");

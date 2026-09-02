@@ -106,6 +106,33 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
   for (const operation of Object.values(snapshot.operations)) {
+    const semanticGap = operation.result?.result_semantic_gap;
+    const settledPreviewWithoutTypedProof = operation.requested_effect === "preview"
+      && operation.fulfillment_role === "delegated_task_execution"
+      && operation.settlement_state === "settled"
+      && operation.result?.status === "succeeded"
+      && !operation.observation_ids.some((observationId) =>
+        snapshot.observations[observationId]?.facts.some((fact) =>
+          fact.fact_id === "task.preview_valid"
+          && fact.fact_class === "domain"
+          && fact.value === true));
+    if (!semanticGap && !settledPreviewWithoutTypedProof) continue;
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA,
+      gap_id: semanticGap?.gap_id ?? `result-semantics:${operation.operation_id}`,
+      kind: "operation_result_semantic_invalid",
+      criterion_ids: operation.advances_criterion_ids,
+      work_unit_ids: [operation.work_unit_id],
+      required_fact_ids: [],
+      current_observation_ids: operation.observation_ids,
+      reason: semanticGap
+        ? `Operation ${operation.operation_id} returned safe native evidence that failed the admitted ${semanticGap.result_schema_id} semantic-result contract (${semanticGap.reason_code}). `
+          + "The exact native result remains durable, but provider correction and native replay are prohibited."
+        : `Operation ${operation.operation_id} settled a task preview without typed semantic proof (preview_semantic_proof_missing). `
+        + "The exact native result remains durable, but provider correction and native replay are prohibited."
+    });
+  }
+  for (const operation of Object.values(snapshot.operations)) {
     const inputGap = operation.result?.input_schema_gap;
     if (!inputGap) continue;
     const resolved = inputSchemaGapResolvedV2(snapshot, operation);
@@ -274,6 +301,15 @@ export function decideAssignmentProgressV2(input: Readonly<{
       decision: "evaluate_criteria",
       criterion_ids: criterionIds,
       observation_ids: unique(criterionIds.flatMap((id) => pendingCriteria[id] ?? []))
+    };
+  }
+  const semanticResultGaps = deriveProgressGapsV2(snapshot)
+    .filter((gap) => gap.kind === "operation_result_semantic_invalid");
+  if (semanticResultGaps.length > 0) {
+    return {
+      ...decisionBase(snapshot, now, "blocked", "operation_result_semantic_invalid"),
+      decision: "blocked", outcome: "blocked",
+      gap_ids: semanticResultGaps.map((gap) => gap.gap_id)
     };
   }
   if (snapshot.pending_input_variable_ids.length > 0 || snapshot.outcome === "awaiting_user_input") {

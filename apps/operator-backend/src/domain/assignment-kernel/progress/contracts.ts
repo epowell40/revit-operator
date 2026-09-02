@@ -15,6 +15,7 @@ export type ProgressGapKindV2 =
   | "criterion_fact_missing"
   | "criterion_uncertain"
   | "operation_input_schema_invalid"
+  | "operation_result_semantic_invalid"
   | "input_missing"
   | "review_required"
   | "operation_unsettled"

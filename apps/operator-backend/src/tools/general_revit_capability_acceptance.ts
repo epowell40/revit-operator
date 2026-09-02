@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  evaluateGeneralRevitCapabilityAttempt, generalRevitExecutionCase, generalRevitGroundingDemand,
+  evaluateGeneralRevitCapabilityAttempt, generalRevitGroundingDemand,
   generalRevitPromptSpecificity, generalRevitResearchDemand, summarizeGeneralRevitCapabilityReport,
   type GeneralRevitCapabilityCase, type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
@@ -20,6 +20,7 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
 import {
   loadAssignmentKernelPublicationsV2,
@@ -223,37 +224,6 @@ function dynamicReceiptActions(state: JsonRecord): JsonRecord[] {
       receipt
     };
   });
-}
-
-function rescoreTraceFromFlightRecord(trace: JsonRecord, testCase: GeneralRevitCapabilityCase, applyRequested: boolean): JsonRecord {
-  const toolResults = asRecord(trace.tool_results);
-  const rawAttempt = asRecord(toolResults.raw_sidecar_response);
-  if (Object.keys(rawAttempt).length === 0) return trace;
-  const assignmentProjection = asRecord(toolResults.durable_assignment_projection);
-  const executionCase = generalRevitExecutionCase(testCase, applyRequested);
-  const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, {
-    ...rawAttempt,
-    assignment_projection: assignmentProjection
-  } as GeneralRevitAttempt);
-  const modelCallReceipts = modelCallReceiptsFromSources(rawAttempt, rawAttempt.computer_state, trace);
-  const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
-  return {
-    ...trace,
-    model_call_receipts: modelCallReceipts,
-    efficiency: {
-      ...asRecord(trace.efficiency),
-      token_count: modelCallSummary.total_tokens,
-      model_call_summary: modelCallSummary
-    },
-    verification_results: { ...asRecord(trace.verification_results), evaluation },
-    success_failure_score: {
-      tier: evaluation.tier,
-      non_refusal: evaluation.non_refusal,
-      completed: evaluation.completed,
-      verified: evaluation.verified
-    },
-    rescored_from_flight_record: true
-  };
 }
 
 function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
@@ -631,7 +601,7 @@ async function runCase(
   const startedAt = nowIso();
   const startedMs = Date.now();
   const applyRequested = suiteContext.apply_requested === true;
-  const executionCase = generalRevitExecutionCase(testCase, applyRequested);
+  const executionCase = generalRevitExecutionCaseWithInteractionV1(testCase, applyRequested, interaction);
   const executionExpectedEffect = executionCase.expected_effect;
   const requestedSpeedSettings = asRecord(suiteContext.requested_speed_settings);
   const speedSettings = Object.keys(requestedSpeedSettings).length > 0 ? requestedSpeedSettings : null;
@@ -1021,7 +991,12 @@ async function main(): Promise<void> {
     .map(asRecord)
     .filter((trace) => selectedIds.has(String(trace.case_id || "")))
     .map((trace) => ({
-      ...rescoreTraceFromFlightRecord(trace, selectedById.get(String(trace.case_id || ""))!, applyRequested),
+      ...rescoreGeneralRevitInteractionTraceV1(
+        trace,
+        selectedById.get(String(trace.case_id || ""))!,
+        applyRequested,
+        benchmarkInteractionCaseV1(interactionManifest, String(trace.case_id || ""))
+      ),
       preferred_fixture: generalRevitFixtureForCase(fixtureConfig, String(trace.case_id || "")),
       fixture_applicability: fixtureApplicability(
         generalRevitFixtureForCase(fixtureConfig, String(trace.case_id || "")),

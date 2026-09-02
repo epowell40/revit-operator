@@ -109,6 +109,7 @@ namespace RevitBridge.Logic.Handlers
                             ownerViewId = SafeOwnerViewId(tn),
                             expectedOldText,
                             actualText = before,
+                            proposedText = nextText,
                             changed = false,
                             transaction = transactionReceipt,
                             requiredConfirm,
@@ -145,6 +146,10 @@ namespace RevitBridge.Logic.Handlers
                 elementId = p.textNoteId,
                 ownerViewId = SafeOwnerViewId(tn),
                 before,
+                // `after` and `text` describe persistent model truth. A dry-run
+                // rolls back, so the evaluated proposal is retained separately
+                // and can be bound to the admitted request by the V2 adapter.
+                proposedText = nextText,
                 after = apply ? nextText : before,
                 text = apply ? nextText : before,
                 normalizedText = TextNoteTextCanonicalizer.Normalize(apply ? nextText : before),
