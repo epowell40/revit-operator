@@ -140,9 +140,7 @@ namespace RevitBridge.Common.Tests
         public void NativeRegistryAndSearchPublishTheSameVersionedRankingFields()
         {
             var source = File.ReadAllText(Path.Combine(
-                FindRepositoryRoot(),
-                "apps",
-                "revit-bridge-addin",
+                FindRevitBridgeAddinRoot(),
                 "RevitBridge",
                 "Operator",
                 "OperatorToolIntrospection.cs"));
@@ -187,6 +185,21 @@ namespace RevitBridge.Common.Tests
                 current = current.Parent;
             }
             throw new DirectoryNotFoundException("Could not locate the public repository root.");
+        }
+
+        private static string FindRevitBridgeAddinRoot()
+        {
+            var repositoryRoot = FindRepositoryRoot();
+            var publicCompositionRoot = Path.Combine(repositoryRoot, "apps", "revit-bridge-addin");
+            var privateCompositionRoot = Path.Combine(repositoryRoot, "revit-bridge-addin");
+            var sourceSegments = new[] { "RevitBridge", "Operator", "OperatorToolIntrospection.cs" };
+            var publicSource = Path.Combine(new[] { publicCompositionRoot }.Concat(sourceSegments).ToArray());
+            if (File.Exists(publicSource)) return publicCompositionRoot;
+
+            var privateSource = Path.Combine(new[] { privateCompositionRoot }.Concat(sourceSegments).ToArray());
+            if (File.Exists(privateSource)) return privateCompositionRoot;
+
+            throw new DirectoryNotFoundException("Could not locate the Revit add-in source root.");
         }
     }
 }
