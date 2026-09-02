@@ -60,7 +60,7 @@ namespace RevitBridge.Operator
                 .Where(m => m.Score > 0)
                 .OrderByDescending(m => m.Score)
                 .ThenBy(m => m.Tool.RiskLevel)
-                .ThenBy(m => m.Tool.Path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.Tool.Path, StringComparer.Ordinal)
                 .Take(maxResults)
                 .Select(m => new
                 {
@@ -79,6 +79,7 @@ namespace RevitBridge.Operator
             return new
             {
                 version = SearchVersion,
+                ranking_version = OperatorToolSearchRanking.ContractVersion,
                 generated_at = DateTime.UtcNow.ToString("o"),
                 query = normalizedQuery,
                 filters = new
@@ -172,8 +173,10 @@ namespace RevitBridge.Operator
                 method = m,
                 path = p,
                 risk,
+                group = info?.Group ?? "",
                 title = info?.Title ?? "",
                 description = info?.Description ?? "",
+                example = info?.Example ?? "",
                 required_fields = required,
                 optional_fields = optional,
                 enums,

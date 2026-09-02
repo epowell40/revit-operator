@@ -52,7 +52,12 @@ import {
 } from "./lib/genericToolPreflight.js";
 import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
 import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
-import { compareToolSearchCandidatesV2, scoreToolSearchCandidateV2 } from "./lib/toolSearchRanking.js";
+import {
+  compareToolSearchCandidatesV3,
+  isToolSearchRankingVersionV3,
+  scoreToolSearchCandidateV3,
+  TOOL_SEARCH_RANKING_VERSION_V3
+} from "./lib/toolSearchRanking.js";
 import {
   buildToolSearchRiskFilterAdvisory,
   partitionRiskFilteredCandidates,
@@ -397,6 +402,7 @@ type RegistryToolEntry = {
   title?: string;
   description?: string;
   group?: string;
+  example?: string;
   risk?: string;
   required_fields?: string[];
   optional_fields?: string[];
@@ -490,6 +496,7 @@ function normalizeRegistryTool(entry: unknown): RegistryToolEntry | null {
     title: typeof e.title === "string" ? e.title.trim() : "",
     description: typeof e.description === "string" ? e.description.trim() : "",
     group: typeof e.group === "string" ? e.group.trim() : "",
+    example: typeof e.example === "string" ? e.example.trim() : "",
     risk: typeof e.risk === "string" ? e.risk.trim().toLowerCase() : "",
     required_fields,
     optional_fields,
@@ -503,7 +510,7 @@ function normalizeRegistryTool(entry: unknown): RegistryToolEntry | null {
 }
 
 function scoreToolMatch(t: RegistryToolEntry, query: string): number {
-  return scoreToolSearchCandidateV2(t, query);
+  return scoreToolSearchCandidateV3(t, query);
 }
 
 function compactToolForList(t: RegistryToolEntry, score?: number): Record<string, unknown> {
@@ -1245,6 +1252,9 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
           if (risk && !exposeBroaderRiskCandidates) directBody.risk = risk;
 
           const direct = await callRevit<Record<string, unknown>>("/revit/tool-search", "POST", directBody, { channel: "search" });
+          if (!isToolSearchRankingVersionV3((direct as any)?.ranking_version)) {
+            throw new Error("Native tool-search ranking contract is missing or incompatible.");
+          }
           const matchesRaw = Array.isArray((direct as any)?.matches) ? ((direct as any).matches as unknown[]) : [];
           const unpartitionedMatches = filterRegistryEntriesForSearch(matchesRaw.map(item => {
             const tool = normalizeRegistryTool(item);
@@ -1270,6 +1280,9 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
                   text: JSON.stringify(
                     {
                       source: "/revit/tool-search",
+                      ...(typeof (direct as any)?.ranking_version === "string"
+                        ? { ranking_version: String((direct as any).ranking_version) }
+                        : {}),
                       query,
                       total_matches: matches.length,
                       matches,
@@ -1299,7 +1312,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
         })
         .map(tool => ({ tool, score: scoreToolMatch(tool, query), path: tool.path, risk: tool.risk }))
         .filter(x => x.score > 0)
-        .sort(compareToolSearchCandidatesV2);
+        .sort(compareToolSearchCandidatesV3);
 
       const partitionedRanked = exposeBroaderRiskCandidates
         ? partitionRiskFilteredCandidates(unpartitionedRanked, risk, max)
@@ -1320,6 +1333,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
             text: JSON.stringify(
               {
                 source: "/revit/tool-registry",
+                ranking_version: TOOL_SEARCH_RANKING_VERSION_V3,
                 query,
                 total_matches: ranked.length,
                 matches,
