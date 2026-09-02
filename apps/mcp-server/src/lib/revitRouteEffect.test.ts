@@ -68,10 +68,15 @@ test("shared route-effect contract stays fail closed for unknown POST routes", (
 });
 
 test("MCP process satisfies the cross-runtime Revit action-effect golden vectors", () => {
-  const contract = JSON.parse(fs.readFileSync(new URL(
-    "../../../../packages/revit-action-effect-v1/golden-vectors.json",
-    import.meta.url
-  ), "utf8")) as { schema: string; vectors: EffectVector[] };
+  const contractUrl = [
+    new URL("../../../../packages/revit-action-effect-v1/golden-vectors.json", import.meta.url),
+    new URL("../../../packages/revit-action-effect-v1/golden-vectors.json", import.meta.url)
+  ].find(candidate => fs.existsSync(candidate));
+  assert.ok(contractUrl, "shared Revit action-effect golden vectors are missing");
+  const contract = JSON.parse(fs.readFileSync(contractUrl, "utf8")) as {
+    schema: string;
+    vectors: EffectVector[];
+  };
   assert.equal(contract.schema, "revit_action_effect_v1_golden_vectors");
   for (const vector of contract.vectors) {
     assert.equal(
