@@ -786,7 +786,12 @@ namespace RevitBridge.Server
                         {
                             deploymentGeneralAgentFinalReceipt = earlyReceipt;
                             effectiveRequest = sourceRequest;
-                            requestBody = earlyReceipt.CanonicalBodyJson;
+                            // The receipt's canonical body is the normalized
+                            // policy identity. The exact fenced source body is
+                            // the authorized domain payload and must reach the
+                            // native handler without semantic line-ending or
+                            // key-order rewriting.
+                            requestBody = sourceRequest.BodyJson;
                         }
                         else
                         {
@@ -1213,11 +1218,12 @@ namespace RevitBridge.Server
         {
             var finalReceipt = preauthorizedFinalReceipt
                 ?? await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
+            var expectedPolicyBody = preauthorizedFinalReceipt?.CanonicalBodyJson ?? expectedCanonicalBody;
             return await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
                 _nativeHttpAuthorizer,
                 finalReceipt,
                 effectiveRequest,
-                expectedCanonicalBody,
+                expectedPolicyBody,
                 cancellationToken).ConfigureAwait(false);
         }
 

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { callRevit, RevitBridgeCallError } from "./revitClient.js";
+import { callRevit, RevitBridgeCallError, revitBridgeFailurePayload } from "./revitClient.js";
 import { runWithRevitToolAlias, ToolExposurePolicyError } from "./toolExposurePolicy.js";
 import {
   NATIVE_TRANSPORT_ALGORITHM,
@@ -637,8 +637,24 @@ test("callRevit honors a structured pre-dispatch rejection for a mutation", asyn
         assert.equal(error.status, 422);
         assert.equal(error.retryable, true);
         assert.equal(error.outcome_unknown, false);
+        assert.equal(error.request_dispatched, false);
         assert.equal(error.phase, "pre_dispatch");
         assert.deepEqual(error.bridgeDetails, bridgeError);
+        assert.deepEqual(revitBridgeFailurePayload(error), {
+          schema: "revit-operator.revit-bridge-failure.v1",
+          ok: false,
+          code: "revit_bridge_http_error",
+          transport_code: "revit_bridge_http_error",
+          bridge_code: "request_validation_failed",
+          phase: "pre_dispatch",
+          retryable: true,
+          request_dispatched: false,
+          outcome_unknown: false,
+          method: "POST",
+          path: "/revit/walls",
+          status: 422,
+          error: error.message
+        });
         return true;
       },
     );

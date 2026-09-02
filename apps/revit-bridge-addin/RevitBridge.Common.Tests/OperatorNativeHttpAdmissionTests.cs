@@ -153,6 +153,14 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(RequestId, post.RequestId);
             Assert.True(post.BodyPresent);
             Assert.Matches("^sha256:[0-9a-f]{64}$", post.SourceBodySha256);
+            const string domainLineEndingsJson = "{\"expectedOldText\":\"Chase for Electrical Conduit\\r\",\"newText\":\"ISSUE\\nVERIFY\"}";
+            var domainLineEndings = Prepare("POST", "/revit/replace-text-note", domainLineEndingsJson);
+            Assert.Equal(domainLineEndingsJson, domainLineEndings.BodyJson);
+            using (var domainDocument = JsonDocument.Parse(domainLineEndings.BodyJson))
+            {
+                Assert.Equal("Chase for Electrical Conduit\r", domainDocument.RootElement.GetProperty("expectedOldText").GetString());
+                Assert.Equal("ISSUE\nVERIFY", domainDocument.RootElement.GetProperty("newText").GetString());
+            }
 
             var get = OperatorNativeHttpRequestFence.Prepare("GET", "/revit/context", false, false, Array.Empty<byte>(), RequestId);
             Assert.False(get.BodyPresent);
@@ -179,9 +187,32 @@ namespace RevitBridge.Common.Tests
             Reject(() => Prepare("POST", "/revit/ping", "{\"a\":1,\"a\":2}"));
             Reject(() => Prepare("POST", "/revit/ping", "{\"é\":1,\"é\":2}"));
             Reject(() => Prepare("POST", "/revit/ping", "{\"value\":\"é\"}"));
-            Reject(() => Prepare("POST", "/revit/ping", "{\"value\":\"line\\r\\nnext\"}"));
+            Reject(() => Prepare("POST", "/revit/ping", "{\r\n\"value\":\"line\"\n}"));
             Reject(() => OperatorNativeHttpRequestFence.Prepare("POST", "/revit/ping", false, true,
                 Enumerable.Repeat((byte)' ', OperatorNativeHttpRequestFence.MaximumBodyUtf8Bytes + 1).ToArray(), RequestId));
+        }
+
+        [Fact]
+        public async Task FinalAuthorizationValidatesPolicyIdentityButReturnsExactDomainBody()
+        {
+            const string sourceBody = "{\"z\":1,\"expectedOldText\":\"Chase for Electrical Conduit\\r\"}";
+            const string canonicalPolicyBody = "{\"expectedOldText\":\"Chase for Electrical Conduit\\n\",\"z\":1}";
+            var request = Prepare("POST", "/revit/replace-text-note", sourceBody);
+            var receipt = Verify(request, canonicalPolicyBody);
+            var authorizer = new CountingAuthorizer(receipt);
+
+            var dispatchBody = await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
+                authorizer,
+                receipt,
+                request,
+                canonicalPolicyBody,
+                CancellationToken.None);
+
+            Assert.Equal(sourceBody, dispatchBody);
+            Assert.NotEqual(canonicalPolicyBody, dispatchBody);
+            Assert.Equal(0, authorizer.Calls);
+            using var document = JsonDocument.Parse(dispatchBody);
+            Assert.Equal("Chase for Electrical Conduit\r", document.RootElement.GetProperty("expectedOldText").GetString());
         }
 
         [Fact]
@@ -371,7 +402,7 @@ namespace RevitBridge.Common.Tests
             RejectProtocol(() => VerifyResponse(request, With(baseline, "authorization_hash", "sha256:" + new string('0', 64)), rehash: false));
             RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"a\":1,\"a\":2}")));
             RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"value\":\"é\"}")));
-            RejectProtocol(() => VerifyResponse(request, AuthorizationValues(request, "{\"value\":\"line\\r\\nnext\"}")));
+            Assert.NotNull(VerifyResponse(request, AuthorizationValues(request, "{\"value\":\"line\\r\\nnext\"}")));
 
             Assert.NotNull(VerifyResponse(request, With(baseline, "exposure_profile", "general")));
 

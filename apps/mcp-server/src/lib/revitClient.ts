@@ -45,10 +45,28 @@ export type RevitBridgeErrorCode = RevitBridgeTransportErrorCode;
 
 export type RevitBridgeErrorDetails = Readonly<Record<string, unknown>>;
 
+export type RevitBridgeFailurePayload = Readonly<{
+  schema: "revit-operator.revit-bridge-failure.v1";
+  ok: false;
+  code: RevitBridgeErrorCode;
+  transport_code: RevitBridgeTransportErrorCode;
+  bridge_code?: string;
+  phase: string;
+  retryable: boolean;
+  request_dispatched: boolean;
+  outcome_unknown: boolean;
+  method: string;
+  path: string;
+  status?: number;
+  correlation_id?: string;
+  error: string;
+}>;
+
 export class RevitBridgeCallError extends Error {
   readonly code: RevitBridgeErrorCode;
   readonly transportCode: RevitBridgeTransportErrorCode;
   readonly retryable: boolean;
+  readonly request_dispatched: boolean;
   readonly outcome_unknown: boolean;
   readonly outcomeUnknown: boolean;
   readonly method: string;
@@ -68,6 +86,7 @@ export class RevitBridgeCallError extends Error {
     transportCode?: RevitBridgeTransportErrorCode;
     message: string;
     retryable: boolean;
+    requestDispatched?: boolean;
     outcomeUnknown?: boolean;
     method: string;
     path: string;
@@ -84,6 +103,10 @@ export class RevitBridgeCallError extends Error {
     this.code = input.code;
     this.transportCode = input.transportCode ?? input.code;
     this.retryable = retryable;
+    this.request_dispatched = input.requestDispatched
+      ?? booleanField(input.bridgeDetails, "request_dispatched")
+      ?? booleanField(input.bridgeDetails, "dispatched")
+      ?? outcomeUnknown;
     this.outcome_unknown = outcomeUnknown;
     this.outcomeUnknown = outcomeUnknown;
     this.method = input.method;
@@ -100,6 +123,28 @@ export class RevitBridgeCallError extends Error {
     this.deadline_class = stringField(details, "deadline_class");
     this.deadline_ms = numberField(details, "deadline_ms");
   }
+}
+
+/** Stable MCP-visible settlement metadata for bridge failures. */
+export function revitBridgeFailurePayload(error: RevitBridgeCallError): RevitBridgeFailurePayload {
+  const phase = error.phase
+    ?? (error.request_dispatched ? "dispatch" : "pre_dispatch");
+  return {
+    schema: "revit-operator.revit-bridge-failure.v1",
+    ok: false,
+    code: error.code,
+    transport_code: error.transportCode,
+    ...(error.bridgeCode ? { bridge_code: error.bridgeCode } : {}),
+    phase,
+    retryable: error.retryable,
+    request_dispatched: error.request_dispatched,
+    outcome_unknown: error.outcome_unknown,
+    method: error.method,
+    path: error.path,
+    ...(error.status === undefined ? {} : { status: error.status }),
+    ...(error.correlation_id ? { correlation_id: error.correlation_id } : {}),
+    error: error.message
+  };
 }
 
 function stringField(details: RevitBridgeErrorDetails | undefined, name: string): string | undefined {
@@ -328,6 +373,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           code: "revit_bridge_invalid_response",
           message: `${upperMethod} ${path} completed without an authenticated courier execution context. Reconcile the Revit outcome before any retry.`,
           retryable: false,
+          requestDispatched: true,
           outcomeUnknown: true,
           method: upperMethod,
           path,
@@ -463,6 +509,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           code: "revit_bridge_timeout",
           message: `${upperMethod} ${path} exceeded ${timeoutMs} ms while waiting for the Revit bridge. ${outcomeUnknown ? "The request may already have started; reconcile its outcome in Revit before any retry." : "Revit may be busy; inspect its UI before retrying."}`,
           retryable: !outcomeUnknown,
+          requestDispatched: true,
           outcomeUnknown,
           method: upperMethod,
           path,
@@ -476,6 +523,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           code: "revit_bridge_invalid_response",
           message: `${upperMethod} ${path} returned an unauthenticated, invalid, or incomplete protected response.${outcomeUnknown ? " The request may already have completed; reconcile its outcome in Revit before any retry." : ""}`,
           retryable: !outcomeUnknown,
+          requestDispatched: true,
           outcomeUnknown,
           method: upperMethod,
           path,
@@ -488,9 +536,18 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           code: "revit_bridge_unavailable",
           message: `${upperMethod} ${path} was not dispatched because certified native Revit transport discovery or request protection failed. Cause: ${errorDetail(error)}`,
           retryable: true,
+          requestDispatched: false,
           outcomeUnknown: false,
           method: upperMethod,
           path,
+          correlationId: protectedRequestId,
+          bridgeDetails: {
+            code: "native_transport_request_protection_failed",
+            phase: "pre_dispatch",
+            retryable: true,
+            request_dispatched: false,
+            outcome_unknown: false
+          },
           cause: error,
         });
       }
@@ -502,6 +559,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
           ? `${upperMethod} ${path} lost its connection to ${bridgeUrl()} after dispatch could not be ruled out. The request may already have started; reconcile its outcome in Revit before any retry. Cause: ${errorDetail(error)}`
           : `${upperMethod} ${path} could not reach ${bridgeUrl()}. Revit may be closed or the bridge may not be listening. Cause: ${errorDetail(error)}`,
         retryable: !mutating || preDispatchFailure,
+        requestDispatched: !preDispatchFailure,
         outcomeUnknown,
         method: upperMethod,
         path,
@@ -542,6 +600,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       transportCode: "revit_bridge_http_error",
       message: `${upperMethod} ${path} received HTTP ${response.status}${detailSuffix}`,
       retryable: outcomeUnknown ? false : (bridgeRetryable ?? statusRetryable),
+      requestDispatched: !preDispatchRejection,
       outcomeUnknown,
       method: upperMethod,
       path,
@@ -571,6 +630,7 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
       code: "revit_bridge_invalid_response",
       message: `${upperMethod} ${path} returned an invalid or incomplete JSON response.${outcomeUnknown ? " The request may already have completed; reconcile its outcome in Revit before any retry." : ""}`,
       retryable: !outcomeUnknown,
+      requestDispatched: true,
       outcomeUnknown,
       method: upperMethod,
       path,

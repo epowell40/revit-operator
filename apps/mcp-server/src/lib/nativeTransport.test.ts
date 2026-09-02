@@ -194,7 +194,22 @@ test("request protection mirrors the native request fence for strict JSON, norma
   });
   assert.throws(() => protectBody("{\"nested\":{\"a\":1,\"a\":2}}"), NativeTransportProtocolError);
   assert.throws(() => protectBody("{\"value\":\"e\\u0301\"}"), NativeTransportProtocolError);
-  assert.throws(() => protectBody("{\"value\":\"line\\rbreak\"}"), NativeTransportProtocolError);
+  const domainLineEndings = JSON.stringify({
+    expectedOldText: "Chase for Electrical Conduit\r",
+    newText: "ISSUE\nVERIFY"
+  });
+  const protectedDomainLineEndings = protectBody(domainLineEndings);
+  const openedDomainLineEndings = testProtectedResponse(
+    protectedDomainLineEndings.envelopeJson,
+    200,
+    "{}"
+  ).innerRequest;
+  assert.equal(openedDomainLineEndings.body_json, domainLineEndings);
+  assert.deepEqual(JSON.parse(openedDomainLineEndings.body_json), {
+    expectedOldText: "Chase for Electrical Conduit\r",
+    newText: "ISSUE\nVERIFY"
+  });
+  assert.throws(() => protectBody("{\r\n\"value\":\"line\"\n}"), NativeTransportProtocolError);
   assert.throws(() => protectBody(`${"[".repeat(64)}0${"]".repeat(64)}`), NativeTransportProtocolError);
   assert.throws(() => protectBody(JSON.stringify("x".repeat(2 * 1024 * 1024))), NativeTransportProtocolError);
   const exact = { operatorToken: TOKEN, serverEpoch: EPOCH, method: "GET", path: "/revit/context" } as const;

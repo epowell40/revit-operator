@@ -1057,6 +1057,67 @@ test("structured request-validation failures do not consume the mutation stage",
   }
 });
 
+test("structured native-transport pre-dispatch failure permits one corrected mutation without verification", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(
+    "Replace TextNote 1478627 with this exact text:\nISSUE\nVERIFY\nApply exactly that one change."
+  ));
+  const initial = {
+    method: "POST",
+    path: "/revit/replace-text-note",
+    body: {
+      elementId: 1478627,
+      expectedOldText: "Chase for Electrical Conduit\r",
+      newText: "ISSUE\nVERIFY",
+      dryRun: false,
+      apply: true,
+      confirm: "APPLY 1 TEXT NOTE CHANGE"
+    }
+  };
+  try {
+    const first = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: initial });
+    assert.equal(first.allowed, true);
+    assert.equal(first.call?.effect, "apply");
+    const transportFailure = {
+      schema: "revit-operator.revit-bridge-failure.v1",
+      ok: false,
+      code: "revit_bridge_unavailable",
+      transport_code: "revit_bridge_unavailable",
+      bridge_code: "native_transport_request_protection_failed",
+      phase: "pre_dispatch",
+      retryable: true,
+      request_dispatched: false,
+      outcome_unknown: false,
+      method: "POST",
+      path: "/revit/replace-text-note",
+      error: "The protected request was rejected before native dispatch."
+    };
+    recordTeammateMcpResult(owner, first, {
+      isError: true,
+      structuredContent: transportFailure,
+      content: [{ type: "text", text: JSON.stringify(transportFailure) }]
+    });
+    const afterFailure = teammateLoopReceiptForOwner(owner);
+    assert.equal(afterFailure?.blocked_reason, null);
+    assert.equal(afterFailure?.stage, "apply");
+    assert.equal(afterFailure?.verified, false);
+
+    const corrected = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        ...initial,
+        body: { ...initial.body, expectedOldText: "Chase for Electrical Conduit\n" }
+      }
+    });
+    assert.equal(corrected.allowed, true);
+    assert.equal(corrected.call?.effect, "apply");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("a version-incompatible first document open is reconciled as no effect and permits one corrected path", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};

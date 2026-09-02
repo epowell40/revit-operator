@@ -389,17 +389,22 @@ function validateRequest(method: string, requestPath: string, bodyJson: string |
 function validateStrictRequestJson(raw: string): void {
   let index = 0;
   const skipWhitespace = () => {
-    while (raw[index] === " " || raw[index] === "\t" || raw[index] === "\r" || raw[index] === "\n") index += 1;
+    while (raw[index] === " " || raw[index] === "\t" || raw[index] === "\n") index += 1;
   };
   const fail = (cause?: unknown): never => {
     throw new NativeTransportProtocolError(
-      "Certified native POST requests require strict, NFC, LF-only JSON with depth at most 64 and no duplicate keys.",
+      "Certified native POST requests require strict NFC JSON using LF-only source bytes, with depth at most 64 and no duplicate keys.",
       "pre_dispatch",
       cause
     );
   };
+  // LF-only is a property of the JSON source representation. An escaped
+  // `\\r` inside a JSON string is legitimate domain data and must survive the
+  // transport byte-for-byte after decoding; only a raw CR source byte is
+  // forbidden here.
+  if (raw.includes("\r")) fail();
   const requireNormalized = (value: string): void => {
-    if (value !== value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").normalize("NFC")) fail();
+    if (value !== value.normalize("NFC")) fail();
   };
   const readString = (): string => {
     const start = index;
@@ -433,7 +438,7 @@ function validateStrictRequestJson(raw: string): void {
       while (index < raw.length) {
         skipWhitespace();
         const key = readString();
-        const normalizedKey = key.replace(/\r\n/g, "\n").replace(/\r/g, "\n").normalize("NFC");
+        const normalizedKey = key.normalize("NFC");
         if (keys.has(normalizedKey)) fail();
         keys.add(normalizedKey);
         skipWhitespace();

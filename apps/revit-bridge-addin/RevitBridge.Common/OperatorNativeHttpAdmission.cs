@@ -179,6 +179,13 @@ namespace RevitBridge.Common
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit request body is not strict UTF-8.");
             }
 
+            // LF-only applies to source bytes, not to decoded JSON string
+            // values. A semantic carriage return represented as `\\r` is
+            // legitimate task data and must not be rewritten or rejected.
+            if (bodyJson.IndexOf('\r') >= 0)
+                throw OperatorNativeHttpAdmissionException.InvalidRequest(
+                    "Certified native Revit request body must use LF-only JSON source bytes.");
+
             try
             {
                 using (var document = JsonDocument.Parse(bodyJson, StrictJson))
@@ -289,12 +296,12 @@ namespace RevitBridge.Common
         {
             if (!string.Equals(value, NormalizeForPolicy(value), StringComparison.Ordinal))
                 throw OperatorNativeHttpAdmissionException.InvalidRequest(
-                    "Certified native Revit request " + location + " must already use NFC and LF-only policy normalization.");
+                    "Certified native Revit request " + location + " must already use NFC normalization.");
         }
 
         private static string NormalizeForPolicy(string value)
         {
-            return value.Replace("\r\n", "\n").Replace("\r", "\n").Normalize(NormalizationForm.FormC);
+            return value.Normalize(NormalizationForm.FormC);
         }
     }
 
@@ -409,7 +416,8 @@ namespace RevitBridge.Common
             var clock = utcNow ?? (() => DateTimeOffset.UtcNow);
             try
             {
-                return RequireFreshOneUse(receipt, request, clock(), expectedCanonicalBodyJson);
+                RequireFreshOneUse(receipt, request, clock(), expectedCanonicalBodyJson);
+                return request.BodyJson;
             }
             catch (OperatorNativeHttpAdmissionException error) when (
                 error.Code == "CERTIFICATION_DIRECT_AUTHORIZATION_EXPIRED"
@@ -422,7 +430,8 @@ namespace RevitBridge.Common
                 // handler has run, and every other integrity or replay failure stays
                 // fail-closed.
                 var refreshed = await authorizer.AuthorizeAsync(request, cancellationToken, "final").ConfigureAwait(false);
-                return RequireFreshOneUse(refreshed, request, clock(), expectedCanonicalBodyJson);
+                RequireFreshOneUse(refreshed, request, clock(), expectedCanonicalBodyJson);
+                return request.BodyJson;
             }
         }
 

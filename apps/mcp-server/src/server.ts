@@ -8,7 +8,12 @@ import mammoth from "mammoth";
 import { createRequire } from "module";
 
 xlsx.set_fs(fs);
-import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
+import {
+  callRevit,
+  readCertifiedMoveExecutionContext,
+  RevitBridgeCallError,
+  revitBridgeFailurePayload
+} from "./lib/revitClient.js";
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
@@ -1407,6 +1412,14 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
           };
       return { content: [{ type: "text", text: JSON.stringify(wrapped, null, 2) }] };
     } catch (e) {
+      if (e instanceof RevitBridgeCallError) {
+        const failure = revitBridgeFailurePayload(e);
+        return {
+          isError: true,
+          structuredContent: failure,
+          content: [{ type: "text", text: JSON.stringify(failure, null, 2) }]
+        };
+      }
       return { isError: true, content: [{ type: "text", text: String(e) }] };
     }
   }
