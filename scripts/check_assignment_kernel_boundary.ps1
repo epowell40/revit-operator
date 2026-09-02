@@ -7,6 +7,23 @@ $ErrorActionPreference = "Stop"
 if (-not $RepoRoot) { $RepoRoot = (& git rev-parse --show-toplevel | Select-Object -First 1) }
 if (-not $RepoRoot) { throw "Unable to resolve repository root." }
 $RepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
+
+# This boundary runs in both supported repository compositions: the public
+# monorepo keeps applications under apps/, while the private integration repo
+# mirrors them at its root. Resolve that composition once so every reviewed
+# path below follows the same deterministic rule.
+$usesAppsDirectory = Test-Path -LiteralPath (Join-Path $RepoRoot "apps/operator-backend") -PathType Container
+if (-not $usesAppsDirectory -and -not (Test-Path -LiteralPath (Join-Path $RepoRoot "operator-backend") -PathType Container)) {
+  throw "Unable to resolve the operator application layout under $RepoRoot."
+}
+function Resolve-RepoPath([string]$RelativePath) {
+  $normalized = $RelativePath.Replace('\', '/')
+  if (-not $usesAppsDirectory -and $normalized.StartsWith("apps/", [System.StringComparison]::Ordinal)) {
+    $normalized = $normalized.Substring(5)
+  }
+  return Join-Path $RepoRoot $normalized
+}
+
 $registryPath = Join-Path $RepoRoot "scripts/assignment_kernel_allowed_adapters.v2.json"
 $registry = Get-Content -Raw -LiteralPath $registryPath | ConvertFrom-Json
 $domainRoot = Join-Path $RepoRoot ([string]$registry.domain_root)
@@ -49,7 +66,7 @@ $payloadContractConsumers = @(
   "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts"
 )
 foreach ($relativePath in $payloadContractConsumers) {
-  $path = Join-Path $RepoRoot $relativePath
+  $path = Resolve-RepoPath $relativePath
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
     $violations.Add("Reviewed payload digest consumer is missing: $relativePath")
     continue
@@ -62,7 +79,7 @@ foreach ($relativePath in $payloadContractConsumers) {
     $violations.Add("$relativePath introduces a local V2 canonical-payload implementation")
   }
 }
-$mcpPayloadEdge = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "apps/mcp-server/src/lib/assignmentKernelV2.ts")
+$mcpPayloadEdge = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/mcp-server/src/lib/assignmentKernelV2.ts")
 if ($mcpPayloadEdge -match 'localeCompare\s*\(') {
   $violations.Add("MCP Assignment Kernel payload identity must not use locale-sensitive key ordering")
 }
@@ -82,7 +99,7 @@ foreach ($relativePath in @(
   "apps/operator-backend/src/action_path_mutability.ts",
   "apps/mcp-server/src/lib/revitRouteEffect.ts"
 )) {
-  $path = Join-Path $RepoRoot $relativePath
+  $path = Resolve-RepoPath $relativePath
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
     $violations.Add("Reviewed Revit action-effect consumer is missing: $relativePath")
     continue
@@ -134,7 +151,7 @@ $routeEffectRuntimeConsumers = @(
   }
 )
 foreach ($consumer in $routeEffectRuntimeConsumers) {
-  $path = Join-Path $RepoRoot $consumer.Path
+  $path = Resolve-RepoPath $consumer.Path
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
     $violations.Add("Reviewed Revit action-effect runtime consumer is missing: $($consumer.Path)")
     continue
@@ -172,7 +189,7 @@ $nativeEffectConsumers = @(
   }
 )
 foreach ($consumer in $nativeEffectConsumers) {
-  $path = Join-Path $RepoRoot $consumer.Path
+  $path = Resolve-RepoPath $consumer.Path
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
     $violations.Add("Reviewed native Revit action-effect consumer is missing: $($consumer.Path)")
     continue
@@ -191,7 +208,7 @@ foreach ($relativePath in @(
   "apps/operator-backend/test/endpoint_mutability.test.ts",
   "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorApprovalPolicyTests.cs"
 )) {
-  $path = Join-Path $RepoRoot $relativePath
+  $path = Resolve-RepoPath $relativePath
   $content = Get-Content -Raw -LiteralPath $path
   if ($content -notmatch 'revit_action_effect_v1_golden_vectors') {
     $violations.Add("$relativePath does not enforce the shared cross-runtime action-effect vectors")
@@ -211,7 +228,7 @@ $semanticProducers = @(
   "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"
 )
 foreach ($relativePath in $semanticProducers) {
-  $path = Join-Path $RepoRoot $relativePath
+  $path = Resolve-RepoPath $relativePath
   $content = Get-Content -Raw -LiteralPath $path
   if ($content -match '["'']result\.available["'']') {
     $violations.Add("$relativePath emits legacy generic result.available evidence")
@@ -224,7 +241,7 @@ foreach ($relativePath in $semanticProducers) {
 # Task fulfillment transfer is an explicit reviewed handler decision. A native
 # child defaults to control evidence; these production surfaces must opt in via
 # the shared current-operation helper instead of relying on route heuristics.
-$mcpKernel = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot "apps/mcp-server/src/lib/assignmentKernelV2.ts")
+$mcpKernel = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/mcp-server/src/lib/assignmentKernelV2.ts")
 if ($mcpKernel -notmatch 'return\s+"supporting_control"') {
   $violations.Add("Unclassified MCP native children no longer default to supporting_control")
 }
@@ -238,7 +255,7 @@ foreach ($relativePath in @(
   "apps/mcp-server/src/server.ts",
   "apps/mcp-server/src/skills/quantify.ts"
 )) {
-  $content = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot $relativePath)
+  $content = Get-Content -Raw -LiteralPath (Resolve-RepoPath $relativePath)
   if ($content -notmatch 'assignmentFulfillmentRole:\s*currentAssignmentKernelTaskFulfillmentRoleV2\(\)') {
     $violations.Add("$relativePath does not explicitly delegate its reviewed task-producing native action")
   }
@@ -247,7 +264,7 @@ foreach ($relativePath in @(
 # A successful read is not itself proof that an applied postcondition holds.
 # Live execution and restart recovery must share one deterministic value matcher,
 # and only the reviewed settlement edge may mint the typed verification fact.
-$postconditionContract = Join-Path $RepoRoot "apps/operator-backend/src/postcondition_verification_v2.ts"
+$postconditionContract = Resolve-RepoPath "apps/operator-backend/src/postcondition_verification_v2.ts"
 if (-not (Test-Path -LiteralPath $postconditionContract -PathType Leaf)) {
   $violations.Add("Shared postcondition verification V2 contract is missing")
 }
@@ -255,16 +272,16 @@ foreach ($relativePath in @(
   "apps/operator-backend/src/teammate_loop_runtime.ts",
   "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"
 )) {
-  $path = Join-Path $RepoRoot $relativePath
+  $path = Resolve-RepoPath $relativePath
   $content = Get-Content -Raw -LiteralPath $path
   if ($content -notmatch 'postcondition_verification_v2') {
     $violations.Add("$relativePath does not import the shared postcondition verification V2 contract")
   }
 }
-$verificationFactWriters = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "apps/operator-backend/src") -Recurse -File -Filter "*.ts" | Where-Object {
+$verificationFactWriters = @(Get-ChildItem -LiteralPath (Resolve-RepoPath "apps/operator-backend/src") -Recurse -File -Filter "*.ts" | Where-Object {
   (Get-Content -Raw -LiteralPath $_.FullName) -match 'fact_id\s*:\s*["'']verification\.postcondition_satisfied["'']'
 })
-$expectedVerificationWriter = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"))
+$expectedVerificationWriter = [System.IO.Path]::GetFullPath((Resolve-RepoPath "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts"))
 if ($verificationFactWriters.Count -ne 1 -or $verificationFactWriters[0].FullName -ne $expectedVerificationWriter) {
   $violations.Add("verification.postcondition_satisfied may be minted only by the reviewed V2 settlement edge")
 }
@@ -284,7 +301,7 @@ foreach ($relativePath in @(
   "apps/operator-backend/src/assignments/http_routes.ts",
   "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts"
 )) {
-  $path = Join-Path $RepoRoot $relativePath
+  $path = Resolve-RepoPath $relativePath
   $content = Get-Content -Raw -LiteralPath $path
   if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts') {
     $violations.Add("$relativePath does not import the shared V2 session-index contract")
@@ -326,7 +343,7 @@ if ($outcomeDeclarations.Count -ne 1 -or $outcomeDeclarations[0].Path -ne 'snaps
   $violations.Add("AssignmentSnapshotV2.outcome must remain the only independently stored Assignment outcome field")
 }
 
-$backendSource = Join-Path $RepoRoot "apps/operator-backend/src"
+$backendSource = Resolve-RepoPath "apps/operator-backend/src"
 $projectionRoots = @("work_returns", "work_packets", "benchmark")
 foreach ($projectionRoot in $projectionRoots) {
   $root = Join-Path $backendSource $projectionRoot
