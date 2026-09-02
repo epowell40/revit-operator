@@ -822,6 +822,127 @@ test("retained evidence retrieval settles as a non-native read and cannot claim 
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
 });
 
+test("Candidate 50 tool search retains exact control knowledge without acquiring task eligibility", async () => {
+  const operationMeta = meta("read", "discovery") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "revit_search_tools";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "revit_search_tools",
+    request_signature: "candidate50-r01-text-note-search"
+  };
+  const rawResult = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        query: "find and replace one text note",
+        count: 2,
+        matches: [
+          { method: "GET", path: "/revit/find-text-notes", title: "Find Text Notes", risk: "low" },
+          { method: "POST", path: "/revit/replace-text-note", title: "Replace Text Note", risk: "medium" }
+        ]
+      })
+    }]
+  };
+
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () =>
+    decorateAssignmentKernelMcpResultV2(rawResult, "revit_search_tools") as any);
+  const result = decorated.structuredContent.operation_result_v2;
+  const observation = decorated.structuredContent.observation;
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.authority, "operator-mcp-transport");
+  assert.equal(result.observation_required, true);
+  assert.deepEqual(observation.raw_payload, rawResult);
+  assert.equal(observation.evidence_class, "control");
+  assert.deepEqual(observation.eligible_criterion_ids ?? [], []);
+  assert.deepEqual(
+    observation.semantic_facts
+      .filter((fact: any) => fact.fact_id === "control.capability_available")
+      .map((fact: any) => fact.dimensions)
+      .sort((left: any, right: any) => left.path.localeCompare(right.path)),
+    [
+      { capability_id: "revit_search_tools", method: "GET", path: "/revit/find-text-notes" },
+      { capability_id: "revit_search_tools", method: "POST", path: "/revit/replace-text-note" }
+    ]
+  );
+  assert.equal(observation.semantic_facts.some((fact: any) => fact.fact_class === "domain"), false);
+  assert.equal(observation.semantic_facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+});
+
+test("capability search retains its transformed control result after a distinct registry prerequisite settles", async () => {
+  const settled: any[] = [];
+  const operationMeta = meta("read", "discovery") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "revit_search_tools";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "revit_search_tools",
+    request_signature: "search-with-registry-prerequisite"
+  };
+  const edge = {
+    async openChild(input: any) {
+      return {
+        ...operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "registry-prerequisite",
+        capability_id: input.capability_id,
+        purpose: "discovery",
+        operation_role: "prerequisite",
+        fulfillment_role: "prerequisite",
+        eligible_criterion_ids: [],
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "registry-prerequisite-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { operation_id: lease.operation_id, settled: true };
+    }
+  };
+  const rawResult = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        status: "available",
+        matches: [{ method: "POST", path: "/revit/replace-text-note" }]
+      })
+    }]
+  };
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () => {
+    const prerequisite = await beginAssignmentKernelNativeRequestV2("GET", "/revit/tool-registry", undefined, {
+      operation_role: "prerequisite"
+    });
+    await markAssignmentKernelNativeRequestDispatchingV2(prerequisite);
+    await recordAssignmentKernelNativeResultV2("GET", "/revit/tool-registry", {
+      tools: [{ method: "POST", path: "/revit/replace-text-note" }],
+      canonical_attempt_settlement: {
+        attempt_id: "registry-prerequisite-receipt",
+        requested_effect: "read",
+        effect_state: "none",
+        request_dispatched: true
+      }
+    }, prerequisite);
+    return decorateAssignmentKernelMcpResultV2(rawResult, "revit_search_tools") as any;
+  }, edge);
+
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].lease.operation_id, "registry-prerequisite");
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "prerequisite");
+  assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
+  assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
+  assert.deepEqual(decorated.structuredContent.observation.raw_payload, rawResult);
+  assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+    fact.fact_id === "control.capability_available"
+      && fact.dimensions.path === "/revit/replace-text-note"));
+  assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id, "registry-prerequisite");
+});
+
 test("read context rejects a contradictory native applied settlement", async () => {
   await assert.rejects(() => runWithAssignmentKernelV2(meta("read", "work", { method: "POST", path: "/transport-only" }), async () => {
     const request = await beginAssignmentKernelNativeRequestV2("POST", "/transport-only");

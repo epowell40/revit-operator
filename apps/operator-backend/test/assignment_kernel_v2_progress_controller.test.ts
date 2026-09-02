@@ -500,6 +500,118 @@ test("Candidate 25 flight 3 gives one bounded execution opportunity after the fi
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
 });
 
+test("Candidate 50 durable capability knowledge advances once and equivalent search output does not reset liveness", () => {
+  const initial = journal().snapshot();
+  const searchOperation: OperationV2 = {
+    ...operation("operation-search-control"),
+    capability_id: "revit_search_tools",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: { query: "find and replace one text note" },
+    dispatch_state: "dispatched",
+    dispatch_authority: "mcp",
+    settlement_state: "settled",
+    observation_ids: ["observation-search-control"],
+    result: {
+      ...result("operation-search-control"),
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_search_tools/v2",
+      raw_payload_hash: "hash-search-control"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const searchObservation: ObservationV2 = {
+    ...observation("operation-search-control", "observation-search-control"),
+    authority: "operator-mcp-transport",
+    result_schema_id: "operator-capability/revit_search_tools/v2",
+    raw_payload_hash: "hash-search-control",
+    facts: [
+      { fact_id: "control.result_available", fact_class: "control", value: true },
+      {
+        fact_id: "control.capability_available",
+        fact_class: "control",
+        value: true,
+        cardinality: "many",
+        identity_dimensions: ["capability_id", "method", "path"],
+        dimensions: { capability_id: "revit_search_tools", method: "GET", path: "/revit/find-text-notes" }
+      },
+      {
+        fact_id: "control.capability_available",
+        fact_class: "control",
+        value: true,
+        cardinality: "many",
+        identity_dimensions: ["capability_id", "method", "path"],
+        dimensions: { capability_id: "revit_search_tools", method: "POST", path: "/revit/replace-text-note" }
+      }
+    ],
+    verification_relevance: ["control"],
+    fulfillment_role: "supporting_control",
+    evidence_class: "control",
+    capability_id: "revit_search_tools",
+    eligible_criterion_ids: []
+  };
+  const afterSearch = {
+    ...initial,
+    operations: { [searchOperation.operation_id]: searchOperation },
+    observations: { [searchObservation.observation_id]: searchObservation },
+    observation_versions: { [searchObservation.observation_id]: 2 },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const searchEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterSearch,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [searchOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(searchEpoch.genuine_progress, true);
+  assert.deepEqual(searchEpoch.progress_reasons, ["controller_knowledge_added"]);
+  assert.equal(afterSearch.criteria["criterion-inventory"], undefined);
+  assert.equal(decideAssignmentProgressV2({
+    snapshot: { ...afterSearch, progress_epochs: [searchEpoch] },
+    budget,
+    now: "2026-08-26T20:00:03.000Z"
+  }).decision, "admit_reasoning_turn");
+
+  const repeatedOperation: OperationV2 = {
+    ...searchOperation,
+    operation_id: "operation-search-control-repeat",
+    observation_ids: ["observation-search-control-repeat"],
+    result: {
+      ...searchOperation.result!,
+      result_id: "result-operation-search-control-repeat",
+      operation_id: "operation-search-control-repeat",
+      raw_payload_hash: "hash-search-control-repeat"
+    }
+  };
+  const repeatedObservation: ObservationV2 = {
+    ...searchObservation,
+    observation_id: "observation-search-control-repeat",
+    operation_id: repeatedOperation.operation_id,
+    raw_payload_hash: "hash-search-control-repeat"
+  };
+  const beforeRepeat = { ...afterSearch, progress_epochs: [searchEpoch] };
+  const afterRepeat = {
+    ...beforeRepeat,
+    operations: { ...beforeRepeat.operations, [repeatedOperation.operation_id]: repeatedOperation },
+    observations: { ...beforeRepeat.observations, [repeatedObservation.observation_id]: repeatedObservation },
+    observation_versions: { ...beforeRepeat.observation_versions, [repeatedObservation.observation_id]: 3 }
+  };
+  const repeatedEpoch = buildProgressEpochV2({
+    before: beforeRepeat,
+    after: afterRepeat,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [repeatedOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:04.000Z"
+  });
+  assert.equal(repeatedEpoch.genuine_progress, false);
+  assert.deepEqual(repeatedEpoch.progress_reasons, []);
+});
+
 test("Candidate 13 flight 3 preserves one correction turn when a structured schema gap follows unrelated no-progress", () => {
   const initial = journal().snapshot();
   const scheduleOperation: OperationV2 = {

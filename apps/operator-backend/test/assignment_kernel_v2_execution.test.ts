@@ -160,6 +160,91 @@ test("duplicate native delivery is idempotent and does not create a second opera
   assert.equal(Object.keys(second.snapshot.observations).length, 1);
 }));
 
+test("Candidate 50 non-native capability result commits durable control evidence without advancing the task criterion", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  const lease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate50-tool-search",
+    provider_turn_id: "candidate50-provider-turn",
+    capability_id: "revit_search_tools",
+    classified_effect: "discovery",
+    arguments: { query: "find and replace one text note" }
+  });
+  assert.equal(lease.fulfillment_role, "supporting_control");
+  assert.deepEqual(lease.eligible_criterion_ids, []);
+  const rawPayload = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        status: "available",
+        matches: [
+          { method: "GET", path: "/revit/find-text-notes" },
+          { method: "POST", path: "/revit/replace-text-note" }
+        ]
+      })
+    }]
+  };
+  const result: OperationResultV2 = {
+    schema: OPERATION_RESULT_V2_SCHEMA,
+    result_id: `result-${lease.operation_id}`,
+    operation_id: lease.operation_id,
+    binding: lease.binding,
+    status: "succeeded",
+    dispatch_state: "dispatched",
+    persistent_effect: "none",
+    native_transaction_state: "not_applicable",
+    authority: "operator-mcp-transport",
+    result_schema_id: "operator-capability/revit_search_tools/v2",
+    observation_required: true,
+    raw_payload_hash: hash(rawPayload),
+    request_identity: lease.request_identity,
+    completed_at: "2026-09-02T07:30:00.000Z"
+  };
+  const settled = settleAssignmentKernelOperationV2(lease, {
+    content: rawPayload.content,
+    structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: result,
+      observation: {
+        raw_payload: rawPayload,
+        semantic_facts: [
+          { fact_id: "control.result_available", fact_class: "control", value: true },
+          {
+            fact_id: "control.capability_available",
+            fact_class: "control",
+            value: true,
+            cardinality: "many",
+            identity_dimensions: ["capability_id", "method", "path"],
+            dimensions: { capability_id: "revit_search_tools", method: "GET", path: "/revit/find-text-notes" }
+          },
+          {
+            fact_id: "control.capability_available",
+            fact_class: "control",
+            value: true,
+            cardinality: "many",
+            identity_dimensions: ["capability_id", "method", "path"],
+            dimensions: { capability_id: "revit_search_tools", method: "POST", path: "/revit/replace-text-note" }
+          }
+        ],
+        verification_relevance: ["control"],
+        evidence_class: "control"
+      }
+    }
+  });
+
+  assert.equal(settled.snapshot.operations[lease.operation_id]!.dispatch_authority, "mcp");
+  assert.equal(settled.snapshot.operations[lease.operation_id]!.settlement_state, "settled");
+  assert.equal(settled.observation?.authority, "operator-mcp-transport");
+  assert.equal(settled.observation?.evidence_class, "control");
+  assert.deepEqual(settled.observation?.eligible_criterion_ids, []);
+  assert.equal(settled.snapshot.criteria[settled.snapshot.spec.criteria[0]!.criterion_id], undefined);
+  assert.equal(settled.snapshot.observations[settled.observation!.observation_id]!.facts.some(
+    fact => fact.fact_class === "domain"), false);
+  __testOnlyResetGoalListCache();
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), settled.snapshot,
+    "restart must recover the same controller knowledge without rerunning Revit");
+}));
+
 test("Candidate 3 repaired sequence resolves only the schema gap before one corrected quantify task result", () => workspace(() => {
   const { goal, snapshot } = setup();
   const invalid = openAssignmentKernelOperationV2({

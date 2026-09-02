@@ -395,7 +395,10 @@ export function buildProgressEpochV2(input: Readonly<{
 }>): ProgressEpochV2 {
   const beforeFacts = new Set(Object.values(input.before.observations).flatMap((observation) => observation.facts.map(semanticFactIdentityV2)));
   const newObservations = Object.keys(input.after.observations).filter((id) => !input.before.observations[id]).sort();
-  const newFacts = unique(newObservations.flatMap((id) => input.after.observations[id]?.facts.map(semanticFactIdentityV2) ?? []).filter((identity) => !beforeFacts.has(identity)));
+  const newFactRecords = newObservations.flatMap((id) =>
+    input.after.observations[id]?.facts.map((fact) => ({ fact, identity: semanticFactIdentityV2(fact) })) ?? [])
+    .filter(({ identity }) => !beforeFacts.has(identity));
+  const newFacts = unique(newFactRecords.map(({ identity }) => identity));
   const criterionDeltas: CriterionDeltaV2[] = input.after.spec.criteria.map((criterion) => ({
     criterion_id: criterion.criterion_id,
     before_status: input.before.criteria[criterion.criterion_id]?.status ?? "unevaluated",
@@ -407,7 +410,8 @@ export function buildProgressEpochV2(input: Readonly<{
   if (criterionDeltas.some((delta) => statusRank(delta.after_status) > statusRank(delta.before_status))) progressReasons.push("criterion_advanced");
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
   if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");
-  if (newFacts.length > 0) progressReasons.push("authoritative_observation_added");
+  if (newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
+  if (newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
   if (input.after.pending_input_variable_ids.length > input.before.pending_input_variable_ids.length) progressReasons.push("input_requested");
   if (input.after.pending_input_variable_ids.length < input.before.pending_input_variable_ids.length) progressReasons.push("input_resolved");
   if (input.after.pending_review_ids.length > input.before.pending_review_ids.length) progressReasons.push("review_requested");

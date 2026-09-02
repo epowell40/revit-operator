@@ -93,6 +93,7 @@ export interface ProgressEpochV2 {
     | "gap_narrowed"
     | "correction_gap_identified"
     | "authoritative_observation_added"
+    | "controller_knowledge_added"
     | "input_requested"
     | "input_resolved"
     | "review_requested"

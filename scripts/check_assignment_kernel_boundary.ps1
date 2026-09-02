@@ -37,7 +37,8 @@ foreach ($file in $domainFiles) {
   foreach ($match in [regex]::Matches($content, '(?m)^\s*(?:import|export)\b[^\r\n]*?from\s+["'']([^"'']+)["'']')) {
     $specifier = $match.Groups[1].Value
     $sharedPayloadContract = $specifier -eq "@revitoperator/payload-digest-v2" -and @("canonical.ts", "payload_provenance.ts") -contains $relative
-    if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract) {
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and $relative -eq "semantic_admissibility.ts"
+    if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
   }
@@ -258,6 +259,20 @@ foreach ($relativePath in @(
   $content = Get-Content -Raw -LiteralPath (Resolve-RepoPath $relativePath)
   if ($content -notmatch 'assignmentFulfillmentRole:\s*currentAssignmentKernelTaskFulfillmentRoleV2\(\)') {
     $violations.Add("$relativePath does not explicitly delegate its reviewed task-producing native action")
+  }
+}
+$sharedControlEvidenceContract = Join-Path $RepoRoot "packages/assignment-kernel-v2-contracts/index.js"
+if (-not (Test-Path -LiteralPath $sharedControlEvidenceContract -PathType Leaf)) {
+  $violations.Add("Shared Assignment Kernel V2 control-evidence contract is missing")
+}
+foreach ($relativePath in @(
+  "apps/mcp-server/src/lib/assignmentKernelV2.ts",
+  "apps/operator-backend/src/domain/assignment-kernel/semantic_admissibility.ts"
+)) {
+  $path = Resolve-RepoPath $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts') {
+    $violations.Add("$relativePath does not import the shared V2 control-evidence contract")
   }
 }
 

@@ -34,3 +34,30 @@ export interface AssignmentKernelV2SessionIndexResponse {
 export function parseAssignmentKernelSessionIndexV2(value: unknown): AssignmentKernelV2SessionIndex;
 export function assignmentKernelSessionIndexResponseV2(value: unknown): AssignmentKernelV2SessionIndexResponse;
 export function parseAssignmentKernelSessionIndexResponseV2(value: unknown): AssignmentKernelV2SessionIndexResponse;
+
+export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA: "revit-operator.assignment-kernel-control-evidence/v2";
+
+export interface AssignmentKernelControlCapabilityV2 {
+  readonly capability_id: string;
+  readonly durable_result_evidence: boolean;
+  readonly collection_fields: readonly string[];
+}
+
+export interface AssignmentKernelControlEvidenceFactV2 {
+  readonly fact_id: "control.capability_discovery_status" | "control.capability_available";
+  readonly fact_class: "control";
+  readonly value: string | boolean;
+  readonly cardinality?: "many";
+  readonly identity_dimensions?: readonly string[];
+  readonly dimensions: Readonly<Record<string, string>>;
+}
+
+export const ASSIGNMENT_KERNEL_V2_CONTROL_CAPABILITY_IDS: readonly string[];
+export const ASSIGNMENT_KERNEL_V2_DURABLE_CONTROL_EVIDENCE_PRODUCER_IDS: readonly string[];
+export function assignmentKernelControlCapabilityV2(capabilityId: unknown): AssignmentKernelControlCapabilityV2 | null;
+export function isAssignmentKernelControlCapabilityV2(capabilityId: unknown): boolean;
+export function isAssignmentKernelDurableControlEvidenceProducerV2(capabilityId: unknown): boolean;
+export function assignmentKernelControlEvidenceFactsV2(
+  capabilityId: unknown,
+  value: unknown
+): readonly AssignmentKernelControlEvidenceFactV2[];

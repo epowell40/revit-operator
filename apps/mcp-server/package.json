@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "@revitoperator/assignment-kernel-v2-contracts": "file:../../packages/assignment-kernel-v2-contracts",
     "@revitoperator/payload-digest-v2": "file:../../packages/payload-digest-v2",
     "@revitoperator/revit-action-effect-v1": "file:../../packages/revit-action-effect-v1",
     "@types/pdf-parse": "^1.1.5",

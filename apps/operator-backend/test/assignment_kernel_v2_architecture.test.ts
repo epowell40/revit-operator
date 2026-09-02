@@ -168,8 +168,13 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
     if (source.includes("@revitoperator/payload-digest-v2")) {
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
-    const withoutSharedPayloadContract = source.replaceAll("@revitoperator/payload-digest-v2", "assignment-kernel-payload-contract");
-    assert.doesNotMatch(withoutSharedPayloadContract, /from\s+["'][^"']*(?:mcp|http|sidecar|revit|work_packets|work_returns|benchmark|evidence_projection)[^"']*["']/i, file);
+    if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
+      assert.equal(path.basename(file), "semantic_admissibility.ts", file);
+    }
+    const withoutSharedContracts = source
+      .replaceAll("@revitoperator/payload-digest-v2", "assignment-kernel-payload-contract")
+      .replaceAll("@revitoperator/assignment-kernel-v2-contracts", "assignment-kernel-control-evidence-contract");
+    assert.doesNotMatch(withoutSharedContracts, /from\s+["'][^"']*(?:mcp|http|sidecar|revit|work_packets|work_returns|benchmark|evidence_projection)[^"']*["']/i, file);
     assert.doesNotMatch(source, /(?:route|path)_string/i, file);
   }
 });

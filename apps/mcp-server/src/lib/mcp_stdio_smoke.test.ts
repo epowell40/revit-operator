@@ -492,6 +492,17 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(connectorRepairTool?.annotations?.destructiveHint, true);
   const runtimeProbe = await withTimeout(client.callTool({ name: "operator_runtime_probe", arguments: {} }), "probing MCP runtime");
   assert.match((runtimeProbe as any).content[0].text, /operator\.mcp\.runtime\.v1/);
+  const discovery = await withTimeout(client.callTool({
+    name: "operator_discover_capabilities",
+    arguments: { need: "inspect the current Revit context", maxResults: 4 }
+  }), "discovering live laboratory capabilities");
+  const discoveryPayload = JSON.parse((discovery as any).content[0].text);
+  assert.equal(discoveryPayload.schemaVersion, "revit-operator.general-agent-capability-discovery.v2");
+  assert.equal(discoveryPayload.exposureMode, "general");
+  assert.equal(discoveryPayload.runtimeMode, "development");
+  assert.equal(discoveryPayload.status, "available");
+  assert.ok(discoveryPayload.capabilities.some((capability: any) =>
+    capability.method === "GET" && capability.path === "/revit/context"));
   const connectorRepair = await withTimeout(client.callTool({
     name: "revit_dry_run_repair_mep_connectors",
     arguments: {

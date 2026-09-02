@@ -4,6 +4,7 @@ import type { CriterionEvaluationV2 } from "./criteria.js";
 import type { ObservationV2, SemanticFactV2 } from "./observation.js";
 import type { OperationPurposeV2, OperationV2 } from "./operation.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { isAssignmentKernelControlCapabilityV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export const CRITERION_EVIDENCE_POLICY_V2_SCHEMA = "revit-operator.criterion-evidence-policy/v2" as const;
 export const SEMANTIC_EVIDENCE_CONTRACT_V2 = "revit-operator.semantic-evidence-contract/v2" as const;
@@ -38,18 +39,6 @@ export interface CriterionEvidencePolicyV2 {
   require_current_generation: boolean;
 }
 
-const CONTROL_CAPABILITIES = new Set([
-  "operator_record_execution_strategy",
-  "revit_search_tools",
-  "revit_tool_registry",
-  "revit_tool_doc",
-  "revit_tool_examples",
-  "operator_native_tool_registry",
-  "operator_native_tool_search",
-  "operator_native_tool_doc",
-  "operator_native_tool_examples"
-]);
-
 export function operationFulfillmentRoleForAdmissionV2(input: Readonly<{
   purpose: OperationPurposeV2;
   capability_id: string;
@@ -59,7 +48,7 @@ export function operationFulfillmentRoleForAdmissionV2(input: Readonly<{
   if (input.purpose === "verification") return "verification";
   if (input.purpose === "reconciliation") return "reconciliation";
   if (input.purpose === "evidence_read") return "supporting_control";
-  if (CONTROL_CAPABILITIES.has(input.capability_id) || input.purpose === "discovery") return "supporting_control";
+  if (isAssignmentKernelControlCapabilityV2(input.capability_id) || input.purpose === "discovery") return "supporting_control";
   return "delegated_task_execution";
 }
 

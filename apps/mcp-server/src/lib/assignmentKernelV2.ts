@@ -4,6 +4,10 @@ import {
   payloadDigestV2,
   payloadRepresentationDigestV2
 } from "@revitoperator/payload-digest-v2";
+import {
+  assignmentKernelControlEvidenceFactsV2,
+  isAssignmentKernelDurableControlEvidenceProducerV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
 import { createOperatorBackendClient } from "./operatorBackendClient.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
@@ -516,7 +520,8 @@ function semanticFacts(
   path: string,
   requestBody?: unknown,
   requestedEffect?: Context["requested_effect"],
-  authoritativePreview = false
+  authoritativePreview = false,
+  controlCapabilityId?: string
 ): Array<Record<string, unknown>> {
   const domainSucceeded = !nativeDomainFailure(payload);
   const facts: Array<Record<string, unknown>> = [
@@ -599,6 +604,12 @@ function semanticFacts(
   })) {
     if (inventory) facts.push({ fact_id: "inventory.group", fact_class: "domain", value: group.count, dimensions: group.dimensions });
   }
+  if (evidence === "control" && controlCapabilityId) {
+    facts.push(...assignmentKernelControlEvidenceFactsV2(
+      controlCapabilityId,
+      semanticPayloadFromMcpResult(payload)
+    ).map(fact => ({ ...fact })));
+  }
   for (const [key, value] of Object.entries(root)) {
     if (scalar(value) && facts.length < 256) facts.push({ fact_id: `control.field.${normalizedFieldName(key)}`, fact_class: "control", value });
   }
@@ -614,6 +625,24 @@ function observationPayload(payload: unknown): unknown {
   return Object.fromEntries(Object.entries(payload as Record<string, unknown>)
     .filter(([key]) => key !== "canonical_attempt_settlement")
     .map(([key, value]) => [key, structuredClone(value)]));
+}
+
+function semanticPayloadFromMcpResult(payload: unknown): unknown {
+  const root = object(payload);
+  const structured = object(root.structuredContent ?? root.structured_content);
+  if (Object.keys(structured).length > 0) return structured;
+  const content = Array.isArray(root.content) ? root.content : [];
+  for (const itemValue of content.slice(0, 8)) {
+    const item = object(itemValue);
+    if (item.type !== "text" || typeof item.text !== "string") continue;
+    try {
+      return JSON.parse(item.text);
+    } catch {
+      // Non-JSON text remains part of the exact raw payload but cannot mint
+      // structured capability knowledge.
+    }
+  }
+  return root;
 }
 
 function operationResultForCall(call: NativeCall, transportFailed: boolean): Record<string, unknown> {
@@ -700,9 +729,14 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
   };
 }
 
-function transportOnlyResult(context: Context, payload: unknown, failed: boolean, evidenceRead: boolean): Record<string, unknown> {
-  const transportSucceeded = !failed;
-  const provenance = evidenceRead && !failed
+function transportOnlyResult(
+  context: Context,
+  payload: unknown,
+  failed: boolean,
+  observationAuthority?: "operator-evidence-store" | "operator-mcp-transport"
+): Record<string, unknown> {
+  const observationBearing = Boolean(observationAuthority) && !failed;
+  const provenance = observationBearing
     ? payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload")
     : undefined;
   const failure = object(object(payload).structuredContent ?? object(payload).structured_content);
@@ -747,14 +781,14 @@ function transportOnlyResult(context: Context, payload: unknown, failed: boolean
     operation_id: context.operation_id,
     binding: context.binding,
     status: failed ? "failed_before_dispatch"
-      : evidenceRead ? "succeeded" : "completed_without_native_dispatch",
-    dispatch_state: evidenceRead ? "dispatched" : "not_dispatched",
+      : observationBearing ? "succeeded" : "completed_without_native_dispatch",
+    dispatch_state: observationBearing ? "dispatched" : "not_dispatched",
     persistent_effect: "none",
     native_transaction_state: "not_applicable",
-    authority: evidenceRead ? "operator-evidence-store" : "operator-mcp-transport",
+    authority: observationAuthority ?? "operator-mcp-transport",
     result_schema_id: `operator-capability/${context.capability_id}/v2`,
-    observation_required: evidenceRead && !failed,
-    ...(evidenceRead && !failed && provenance ? {
+    observation_required: observationBearing,
+    ...(observationBearing && provenance ? {
       raw_payload_hash: provenance.normalized.digest,
       payload_provenance: provenance
     } : {}),
@@ -770,10 +804,18 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
   if (calls.some(call => call.state !== "completed")) throw new Error("assignment_kernel_v2_native_result_missing");
   const failed = Boolean(object(result).isError);
   const parentCall = calls.find(call => call.operation_role === "root");
-  const retainedEvidenceRead = calls.length === 0 && scope.context.purpose === "evidence_read" && !failed;
+  const retainedEvidenceRead = !parentCall && scope.context.purpose === "evidence_read" && !failed;
+  const retainedControlEvidence = !parentCall
+    && !failed
+    && scope.context.requested_effect === "read"
+    && capabilityId === scope.context.capability_id
+    && isAssignmentKernelDurableControlEvidenceProducerV2(scope.context.capability_id);
+  const observationAuthority = retainedEvidenceRead ? "operator-evidence-store" as const
+    : retainedControlEvidence ? "operator-mcp-transport" as const
+      : undefined;
   const operationResult = parentCall
     ? operationResultForCall(parentCall, failed)
-    : transportOnlyResult(scope.context, result, failed, retainedEvidenceRead);
+    : transportOnlyResult(scope.context, result, failed, observationAuthority);
   const authoritativeParentPreview = parentCall
     ? parentCall.classified_effect === "preview"
       && operationResult.status === "succeeded"
@@ -812,10 +854,19 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
            verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],
            evidence_class: evidenceClass(parentCall.lease.fulfillment_role)
         }
-      } : retainedEvidenceRead ? {
+      } : operationResult.observation_required ? {
         observation: {
           raw_payload: result,
-           semantic_facts: semanticFacts(result, 0, "control", "operator-evidence-store"),
+           semantic_facts: semanticFacts(
+             result,
+             0,
+             "control",
+             observationAuthority ?? "operator-mcp-transport",
+             undefined,
+             scope.context.requested_effect,
+             false,
+             retainedControlEvidence ? scope.context.capability_id : undefined
+           ),
           target_scope: {},
            verification_relevance: ["control"],
            evidence_class: "control"

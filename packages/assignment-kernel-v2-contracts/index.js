@@ -50,3 +50,144 @@ export function parseAssignmentKernelSessionIndexResponseV2(value) {
     [ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD]: parseAssignmentKernelSessionIndexV2(response[ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD])
   };
 }
+
+export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA = "revit-operator.assignment-kernel-control-evidence/v2";
+
+const CONTROL_CAPABILITY_DEFINITIONS_V2 = Object.freeze({
+  operator_record_execution_strategy: Object.freeze({
+    capability_id: "operator_record_execution_strategy",
+    durable_result_evidence: false,
+    collection_fields: Object.freeze([])
+  }),
+  operator_discover_capabilities: Object.freeze({
+    capability_id: "operator_discover_capabilities",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze(["capabilities"])
+  }),
+  revit_search_tools: Object.freeze({
+    capability_id: "revit_search_tools",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze(["matches", "tools", "results"])
+  }),
+  revit_tool_registry: Object.freeze({
+    capability_id: "revit_tool_registry",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze(["tools"])
+  }),
+  revit_tool_doc: Object.freeze({
+    capability_id: "revit_tool_doc",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  }),
+  revit_tool_examples: Object.freeze({
+    capability_id: "revit_tool_examples",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  }),
+  operator_native_tool_registry: Object.freeze({
+    capability_id: "operator_native_tool_registry",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze(["tools"])
+  }),
+  operator_native_tool_search: Object.freeze({
+    capability_id: "operator_native_tool_search",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze(["matches", "tools", "results"])
+  }),
+  operator_native_tool_doc: Object.freeze({
+    capability_id: "operator_native_tool_doc",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  }),
+  operator_native_tool_examples: Object.freeze({
+    capability_id: "operator_native_tool_examples",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  })
+});
+
+export const ASSIGNMENT_KERNEL_V2_CONTROL_CAPABILITY_IDS = Object.freeze(
+  Object.keys(CONTROL_CAPABILITY_DEFINITIONS_V2)
+);
+export const ASSIGNMENT_KERNEL_V2_DURABLE_CONTROL_EVIDENCE_PRODUCER_IDS = Object.freeze(
+  ASSIGNMENT_KERNEL_V2_CONTROL_CAPABILITY_IDS.filter(
+    capabilityId => CONTROL_CAPABILITY_DEFINITIONS_V2[capabilityId].durable_result_evidence
+  )
+);
+
+export function assignmentKernelControlCapabilityV2(capabilityId) {
+  return typeof capabilityId === "string"
+    ? CONTROL_CAPABILITY_DEFINITIONS_V2[capabilityId] ?? null
+    : null;
+}
+
+export function isAssignmentKernelControlCapabilityV2(capabilityId) {
+  return assignmentKernelControlCapabilityV2(capabilityId) !== null;
+}
+
+export function isAssignmentKernelDurableControlEvidenceProducerV2(capabilityId) {
+  return assignmentKernelControlCapabilityV2(capabilityId)?.durable_result_evidence === true;
+}
+
+function boundedControlText(value, maximum = 512) {
+  return typeof value === "string" ? value.trim().slice(0, maximum) : "";
+}
+
+function compareControlFacts(left, right) {
+  const leftIdentity = JSON.stringify([left.fact_id, left.dimensions ?? {}]);
+  const rightIdentity = JSON.stringify([right.fact_id, right.dimensions ?? {}]);
+  return leftIdentity < rightIdentity ? -1 : leftIdentity > rightIdentity ? 1 : 0;
+}
+
+/**
+ * Derives bounded controller facts from a parsed semantic result. The caller
+ * retains the original result object as raw evidence; this adapter never
+ * reconstructs or changes that payload and never emits domain/task facts.
+ */
+export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
+  const definition = assignmentKernelControlCapabilityV2(capabilityId);
+  if (!definition?.durable_result_evidence) return [];
+  const payload = record(value) ?? {};
+  const status = boundedControlText(payload.status, 80) || "completed";
+  const facts = [{
+    fact_id: "control.capability_discovery_status",
+    fact_class: "control",
+    value: status,
+    dimensions: { capability_id: definition.capability_id }
+  }];
+  const candidates = [];
+  for (const field of definition.collection_fields) {
+    const collection = payload[field];
+    if (Array.isArray(collection)) candidates.push(...collection.slice(0, 128));
+  }
+  if (boundedControlText(payload.path) || boundedControlText(payload.id)) candidates.push(payload);
+
+  const exact = new Set();
+  for (const candidateValue of candidates.slice(0, 128)) {
+    const candidate = record(candidateValue);
+    if (!candidate) continue;
+    const methodCandidate = boundedControlText(candidate.method, 16).toUpperCase();
+    const pathCandidate = boundedControlText(candidate.path, 512);
+    const method = methodCandidate === "GET" || methodCandidate === "POST" ? methodCandidate : "";
+    const path = method && pathCandidate.startsWith("/revit/") ? pathCandidate : "";
+    const discoveredCapabilityId = boundedControlText(candidate.capability_id ?? candidate.capabilityId ?? candidate.id, 256);
+    const dimensions = path
+      ? { capability_id: definition.capability_id, method, path }
+      : discoveredCapabilityId
+        ? { capability_id: definition.capability_id, discovered_capability_id: discoveredCapabilityId }
+        : null;
+    if (!dimensions) continue;
+    const identity = JSON.stringify(dimensions);
+    if (exact.has(identity)) continue;
+    exact.add(identity);
+    facts.push({
+      fact_id: "control.capability_available",
+      fact_class: "control",
+      value: true,
+      cardinality: "many",
+      identity_dimensions: Object.keys(dimensions).sort(),
+      dimensions
+    });
+  }
+  return facts.sort(compareControlFacts);
+}

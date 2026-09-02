@@ -580,12 +580,12 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
   };
 });
 
-server.tool("operator_discover_capabilities", "Discover a bounded set of available Revit capabilities for the active runtime. Hosted General Agent mode searches the live bridge registry; certified mode returns its certified projection. Discovery does not itself execute a mutation.", {
+server.tool("operator_discover_capabilities", "Discover a bounded set of available Revit capabilities for the active runtime. General Agent and development laboratory modes search the live bridge registry; certified mode returns its certified projection. Discovery does not itself execute a mutation.", {
   need: z.string().min(1).max(480).describe("A concise semantic capability need, not a tool name or route."),
   maxResults: z.number().int().min(1).max(8).optional().describe("Maximum certified capability descriptions to return (default 4).")
 }, async (args) => {
   const runtime = getToolExposureRuntimeDecision();
-  if (runtime.mode === "general") {
+  if (!runtime.certified) {
     const result = await discoverHostedGeneralAgentCapabilities(args, getToolRegistry);
     return { content: [{ type: "text", text: JSON.stringify({ ...result, runtimeMode: runtime.runtimeMode }, null, 2) }] };
   }
