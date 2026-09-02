@@ -707,7 +707,7 @@ async function runCase(
   const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
     session_id: sessionId,
     started_at: startedAt
-  });
+  }, assignmentKernelV2);
   const evaluatedAttempt = {
     ...attempt,
     assignment_projection: assignmentProjection, assignment_kernel_v2: assignmentKernelV2,

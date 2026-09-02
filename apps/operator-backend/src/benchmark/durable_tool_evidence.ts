@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { revitRouteEffect } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope, outcomeEnvelopeIsUnsafe } from "../outcome_envelope.js";
+import { resolveSessionReceiptOperationV2 } from "./v2_session_receipt_binding.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -275,7 +276,8 @@ export async function loadDurableToolEvidence(
   baseUrl: string,
   assignmentProjection: JsonRecord,
   executedPrompt: string,
-  runContext: { session_id?: string; started_at?: string } = {}
+  runContext: { session_id?: string; started_at?: string } = {},
+  assignmentKernelV2: JsonRecord = {}
 ): Promise<JsonRecord> {
   const assignments = Array.isArray(assignmentProjection.assignments)
     ? assignmentProjection.assignments.map(asRecord)
@@ -416,6 +418,11 @@ export async function loadDurableToolEvidence(
     envelope_succeeded: boolean; request_dispatched: boolean | null;
     outcome_unknown: boolean; reconciliation_required: boolean;
     result_sha256: string; parsed_result: JsonRecord;
+    requested_effect_source?: "assignment_kernel_v2" | "v2_binding_unresolved";
+    canonical_binding_state?: "bound" | "unresolved";
+    canonical_assignment_id?: string;
+    canonical_operation_id?: string;
+    canonical_binding_error?: string;
   };
   type SessionOutcome = {
     path: string; tool: string; outcome: "completed" | "failed" | "rejected_no_effect";
@@ -436,14 +443,30 @@ export async function loadDurableToolEvidence(
         const toolName = String(payload.tool || "");
         const argumentsRecord = asRecord(payload.arguments);
         const explicitPath = toolName === "revit_call_tool" ? String(argumentsRecord.path || "") : "";
-        const path = canonicalBenchmarkRevitPath(explicitPath || canonicalRevitToolPath("revit_operator", toolName));
-        if (!path) continue;
         const body = parsedRecord(argumentsRecord.body);
-        const effect = requestEffect(path, argumentsRecord, body);
         const parsed = resultRecord(payload.result);
+        const v2Resolution = resolveSessionReceiptOperationV2({
+          assignmentKernelV2,
+          expectedSessionId,
+          toolName,
+          explicitMethod: String(argumentsRecord.method || ""),
+          explicitPath,
+          parsedResult: parsed
+        });
+        const path = canonicalBenchmarkRevitPath(
+          (v2Resolution.state === "bound" ? v2Resolution.path : "")
+            || explicitPath
+            || canonicalRevitToolPath("revit_operator", toolName)
+        );
+        if (!path) continue;
+        const effect = v2Resolution.state === "bound"
+          ? v2Resolution.requested_effect
+          : requestEffect(path, argumentsRecord, body);
+        const v2BindingUnresolved = v2Resolution.state === "unresolved";
         const status = String(payload.status || "").trim().toLowerCase();
         const envelope = classifyOutcomeEnvelope(parsed);
-        const succeeded = ["success", "ok", "done", "completed"].includes(status)
+        const succeeded = !v2BindingUnresolved
+          && ["success", "ok", "done", "completed"].includes(status)
           && !String(payload.error || "").trim()
           && !parsedEnvelopeHasFailure(parsed)
           && !outcomeEnvelopeIsUnsafe(envelope);
@@ -469,7 +492,19 @@ export async function loadDurableToolEvidence(
           outcome_unknown: envelope.outcome_unknown,
           reconciliation_required: envelope.reconciliation_required,
           result_sha256: sha256(resultText),
-          parsed_result: parsed
+          parsed_result: parsed,
+          ...(v2Resolution.state === "bound" ? {
+            requested_effect_source: "assignment_kernel_v2" as const,
+            canonical_binding_state: "bound" as const,
+            canonical_assignment_id: v2Resolution.assignment_id,
+            canonical_operation_id: v2Resolution.operation_id
+          } : v2Resolution.state === "unresolved" ? {
+            requested_effect_source: "v2_binding_unresolved" as const,
+            canonical_binding_state: "unresolved" as const,
+            canonical_assignment_id: v2Resolution.assignment_id || undefined,
+            canonical_operation_id: v2Resolution.operation_id || undefined,
+            canonical_binding_error: v2Resolution.reason || "v2_binding_unresolved"
+          } : {})
         };
         sessionResultReceipts.push(receipt);
         const outcomeKey = `${toolName}\n${path}\n${effect}`;

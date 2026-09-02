@@ -712,7 +712,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/durable_tool_evidence.ts",
-      "sha256": "sha256:08b2c4873c94a327e94a0dc91ce056b843fb69f1deada06a89d3cb0a525c3fa3"
+      "sha256": "sha256:923756fed9ff97b8d49bce8d1d3f079a141629c90e08c456a6b73e2d53fe2ec4"
     },
     {
       "path": "apps/operator-backend/src/benchmark/environment.ts",
@@ -965,6 +965,10 @@
     {
       "path": "apps/operator-backend/src/benchmark/types.ts",
       "sha256": "sha256:8051c13e4381cc8fdd0e597bbe98aaa167dcbdbc3295046e948bd9e3fc4ffa15"
+    },
+    {
+      "path": "apps/operator-backend/src/benchmark/v2_session_receipt_binding.ts",
+      "sha256": "sha256:9730df32e4b5439a6c1946ef4d32b02eff3242c1ce1db494c7686f227e6d3e45"
     },
     {
       "path": "apps/operator-backend/src/benchmark/work_packet_collection.ts",
@@ -2569,7 +2573,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:b75e27d70aac9113c0ba285e0c99b011cb5b36e146457a7946587be05baea6ba"
+      "sha256": "sha256:94acdbd32dbad37e81cdcb274073804b0e07354aa12ce602e578b2b046b30d00"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -2958,6 +2962,10 @@
     {
       "path": "apps/operator-backend/test/brain.test.ts",
       "sha256": "sha256:f13817a7599edec13f0ff3c504c1b6466d789ded3d2576f893851ba4c79a674a"
+    },
+    {
+      "path": "apps/operator-backend/test/candidate51_v2_session_receipt_coherence.test.ts",
+      "sha256": "sha256:c4083a3962d5731500ff509c3eeaedba226448d6d27e5685814149ed6590fa68"
     },
     {
       "path": "apps/operator-backend/test/certified_sidecar_capability.test.ts",
@@ -5953,7 +5961,7 @@
       "sha256": "sha256:f9edb46c52ceb1904dbe68a7bd996f0aa491f7a55f7c9299e8924d2523069d03"
     }
   ],
-  "inputs_hash": "sha256:7f2b5ca2a79a207aa60b5484a42795d0cacaaff950b4ae8954f068f7f9801749",
+  "inputs_hash": "sha256:16e0e7ccbdd62a6b137c97f483d845ba664986b9eb803890d16077f6b3383a55",
   "result": {
     "passed": true,
     "checks": [
