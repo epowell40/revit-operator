@@ -178,15 +178,23 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     const present = new Set(observations.flatMap((id) => snapshot.observations[id]?.facts.map((fact) => fact.fact_id) ?? []));
     const missing = criterion.semantic_fact_requirements.filter((factId) => !present.has(factId));
     const workUnits = snapshot.spec.work_units.filter((unit) => unit.criterion_ids.includes(criterion.criterion_id));
+    const policy = criterion.evidence_policy;
+    const missingFacts = missing.length > 0 ? missing : criterion.semantic_fact_requirements;
+    const evidenceContract = policy
+      ? `Allowed fulfillment roles: ${policy.allowed_fulfillment_roles.join(", ")}; evidence classes: ${policy.allowed_evidence_classes.join(", ")}.`
+      : "No typed evidence policy is available.";
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA,
       gap_id: `criterion:${criterion.criterion_id}`,
       kind: evaluation?.status === "uncertain" ? "criterion_uncertain" : "criterion_fact_missing",
       criterion_ids: [criterion.criterion_id],
       work_unit_ids: workUnits.map((unit) => unit.work_unit_id).sort(),
-      required_fact_ids: missing.length > 0 ? missing : criterion.semantic_fact_requirements,
+      required_fact_ids: missingFacts,
       current_observation_ids: observations,
-      reason: evaluation?.reason ?? "Required criterion has not been evaluated from authoritative facts."
+      reason: `${evaluation?.reason ?? "Required criterion has not been evaluated from authoritative facts."} `
+        + `Missing authoritative facts: ${missingFacts.join(", ")}. ${evidenceContract} `
+        + `An operation must be explicitly eligible for this criterion; ordinary fulfillment must perform the Assignment's ${snapshot.spec.requested_effect} effect. `
+        + "Supporting control, discovery, and evidence-read operations may inform the next action but cannot replace task fulfillment."
     });
   }
   return gaps.sort((left, right) => left.gap_id.localeCompare(right.gap_id));

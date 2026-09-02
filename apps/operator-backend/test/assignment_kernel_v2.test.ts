@@ -784,6 +784,19 @@ test("apply completion requires a committed native result and task-level criteri
     .map((gap) => gap.gap_id), ["verification:operation-2"]);
 });
 
+test("the kernel rejects effect-mismatched task eligibility unless desired-state equivalence is explicit", () => {
+  const previewSpec: AssignmentSpecV2 = {
+    ...spec("preview"),
+    work_units: [{ ...spec("read").work_units[0]!, work_unit_id: "work-preview-support-read" }]
+  };
+  const journal = createJournal(previewSpec);
+  assert.throws(() => journal.append(event(journal, {
+    event_type: "operation_admitted",
+    operation: { ...operation("read", "work"), work_unit_id: "work-preview-support-read" }
+  })), (error: unknown) => error instanceof AssignmentKernelErrorV2
+    && error.code === "operation_eligible_criterion_effect_mismatch");
+});
+
 test("a successful target-bound read without a positive postcondition fact cannot verify an apply", () => {
   const applySpec = spec("apply");
   const journal = createJournal({
@@ -827,7 +840,7 @@ test("a successful target-bound read without a positive postcondition fact canno
   assert.equal(projected.terminal, false);
 });
 
-test("an apply criterion cannot pass from a rolled-back preview observation", () => {
+test("a rolled-back preview support observation cannot pass an apply criterion", () => {
   const applySpec = spec("apply");
   const journal = createJournal({
     ...applySpec,
@@ -838,7 +851,11 @@ test("an apply criterion cannot pass from a rolled-back preview observation", ()
   });
   journal.append(event(journal, {
     event_type: "operation_admitted",
-    operation: { ...operation("preview"), work_unit_id: "work-preview" }
+    operation: {
+      ...operation("preview", "discovery"),
+      work_unit_id: "work-preview",
+      eligible_criterion_ids: []
+    }
   }));
   journal.append(event(journal, { event_type: "native_dispatch_recorded", operation_id: "operation-1", native_correlation_id: "native-preview" }));
   retainResult(journal, { total: 1 }, "preview");

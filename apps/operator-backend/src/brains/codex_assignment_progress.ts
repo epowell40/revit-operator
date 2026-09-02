@@ -18,14 +18,24 @@ function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProg
   return `The deterministic Assignment controller did not admit another reasoning turn: ${decision.reason}.`;
 }
 
-function progressPrompt(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
+function progressPrompt(
+  snapshot: AssignmentSnapshotV2,
+  decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]
+): string {
   if (decision.decision === "admit_reasoning_turn") {
+    const gapIds = new Set(decision.gap_ids);
+    const gapDetails = deriveProgressGapsV2(snapshot)
+      .filter((gap) => gapIds.has(gap.gap_id))
+      .map((gap) => `- ${gap.gap_id}: ${gap.reason}`);
     return [
       "DETERMINISTIC ASSIGNMENT PROGRESS DECISION:",
       `Decision: ${decision.decision}`,
+      `Requested Assignment effect: ${snapshot.spec.requested_effect}`,
       `Unresolved gaps: ${decision.gap_ids.join(", ")}`,
       `Criteria: ${decision.criterion_ids.join(", ")}`,
       `Expected authoritative information: ${decision.expected_information.join(", ")}`,
+      ...(gapDetails.length > 0 ? ["Gap contracts:", ...gapDetails] : []),
+      `Only an explicitly eligible ${snapshot.spec.requested_effect} task operation may fulfill a task criterion; supporting reads and control evidence may only prepare that operation.`,
       "Propose only operations that advance these criteria or resolve these exact gaps. Stop when the canonical controller reports a terminal, clarification, review, or blocker outcome."
     ].join("\n");
   }
@@ -48,7 +58,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2): 
   const progression = advanceAssignmentKernelProgressV2({ binding });
   return {
     snapshot: progression.snapshot,
-    prompt: progressPrompt(progression.decision),
+    prompt: progressPrompt(progression.snapshot, progression.decision),
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
       : progressMessage(progression.decision)

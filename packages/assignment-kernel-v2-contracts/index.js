@@ -64,6 +64,11 @@ const CONTROL_CAPABILITY_DEFINITIONS_V2 = Object.freeze({
     durable_result_evidence: true,
     collection_fields: Object.freeze(["capabilities"])
   }),
+  operator_retrieve_evidence: Object.freeze({
+    capability_id: "operator_retrieve_evidence",
+    durable_result_evidence: true,
+    collection_fields: Object.freeze([])
+  }),
   revit_search_tools: Object.freeze({
     capability_id: "revit_search_tools",
     durable_result_evidence: true,
@@ -149,12 +154,45 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
   if (!definition?.durable_result_evidence) return [];
   const payload = record(value) ?? {};
   const status = boundedControlText(payload.status, 80) || "completed";
-  const facts = [{
+  const evidenceResult = definition.capability_id === "operator_retrieve_evidence"
+    ? record(payload.result) ?? payload
+    : null;
+  const evidenceRef = record(evidenceResult?.evidence_ref ?? evidenceResult?.evidenceRef);
+  const evidenceId = boundedControlText(evidenceRef?.evidence_id ?? evidenceRef?.evidenceId, 256);
+  const facts = [definition.capability_id === "operator_retrieve_evidence" ? {
+    fact_id: "control.evidence_retrieval_status",
+    fact_class: "control",
+    value: status,
+    dimensions: {
+      capability_id: definition.capability_id,
+      ...(evidenceId ? { evidence_id: evidenceId } : {})
+    }
+  } : {
     fact_id: "control.capability_discovery_status",
     fact_class: "control",
     value: status,
     dimensions: { capability_id: definition.capability_id }
   }];
+  if (evidenceResult && evidenceId) {
+    const selection = record(evidenceResult.selection);
+    for (const selectionPath of Object.keys(selection ?? {}).sort().slice(0, 64)) {
+      const boundedPath = boundedControlText(selectionPath, 512);
+      if (!boundedPath) continue;
+      const dimensions = {
+        capability_id: definition.capability_id,
+        evidence_id: evidenceId,
+        selection_path: boundedPath
+      };
+      facts.push({
+        fact_id: "control.evidence_selection_available",
+        fact_class: "control",
+        value: true,
+        cardinality: "many",
+        identity_dimensions: Object.keys(dimensions).sort(),
+        dimensions
+      });
+    }
+  }
   const candidates = [];
   for (const field of definition.collection_fields) {
     const collection = payload[field];

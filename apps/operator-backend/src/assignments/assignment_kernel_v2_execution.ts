@@ -11,6 +11,7 @@ import {
   evidenceClassForFulfillmentRoleV2,
   fulfillmentRoleCanCarryTaskCriteriaV2,
   normalizeSemanticFactsForEvidenceV2,
+  operationEffectAdmissibleForCriterionV2,
   operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
   sameAssignmentBindingV2,
@@ -138,7 +139,7 @@ function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2): Opera
         && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))) {
     return "verification";
   }
-  if (effect === "read" && snapshot.spec.requested_effect === "apply") return "discovery";
+  if (effect === "read" && snapshot.spec.requested_effect !== "read") return "discovery";
   return "work";
 }
 
@@ -199,6 +200,7 @@ function criterionIdsAdmittedForOperationV2(input: Readonly<{
   snapshot: AssignmentSnapshotV2;
   criterion_ids: readonly string[];
   capability_id: string;
+  operation_effect: RequestedEffectV2;
   request_identity: OperationRequestIdentityV2;
 }>): readonly string[] {
   const nativeCapabilityId = input.request_identity.method && input.request_identity.path
@@ -210,6 +212,11 @@ function criterionIdsAdmittedForOperationV2(input: Readonly<{
     const criterion = input.snapshot.spec.criteria.find(candidate => candidate.criterion_id === criterionId);
     const policy = criterion?.evidence_policy;
     if (!policy) return false;
+    if (!operationEffectAdmissibleForCriterionV2({
+      assignment_requested_effect: input.snapshot.spec.requested_effect,
+      operation_requested_effect: input.operation_effect,
+      criterion
+    })) return false;
     const capabilityAllowed = policy.allowed_capability_ids.length === 0
       || policy.allowed_capability_ids.includes(input.capability_id)
       || Boolean(nativeCapabilityId && policy.allowed_capability_ids.includes(nativeCapabilityId));
@@ -302,6 +309,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     snapshot,
     criterion_ids: unit.criterion_ids,
     capability_id: input.capability_id,
+    operation_effect: effect,
     request_identity: currentIdentity
   });
   const fulfillmentRole = proposedFulfillmentRole === "delegated_task_execution" && admittedCriterionIds.length === 0

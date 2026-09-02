@@ -42,6 +42,7 @@ import {
   advanceAssignmentKernelProgressV2,
   recordAssignmentProgressEpochV2
 } from "../src/assignments/assignment_kernel_v2_progress.js";
+import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -57,10 +58,14 @@ function workspace(fn: () => void): void {
   }
 }
 
-function setup(effect: "read" | "apply" = "read") {
+function setup(effect: "read" | "preview" | "apply" = "read") {
+  const read = effect === "read";
+  const preview = effect === "preview";
   const goal = createGoal({
-    title: effect === "read" ? "Inventory elements" : "Update selected element",
-    objective: effect === "read" ? "Return the requested inventory." : "Update the selected element.",
+    title: read ? "Inventory elements" : preview ? "Preview selected element update" : "Update selected element",
+    objective: read ? "Return the requested inventory."
+      : preview ? "Preview the selected element update without applying it."
+        : "Update the selected element.",
     acceptance_criteria: ["The requested result is authoritatively established."],
     status: "active",
     related_session_id: "session-execution",
@@ -270,6 +275,64 @@ test("Candidate 50 non-native capability result commits durable control evidence
   __testOnlyResetGoalListCache();
   assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), settled.snapshot,
     "restart must recover the same controller knowledge without rerunning Revit");
+}));
+
+test("Candidate 55 effect causality admits preview support reads without task eligibility and reserves fulfillment for preview", () => workspace(() => {
+  const { goal, snapshot } = setup("preview");
+  const criterionId = snapshot.spec.criteria[0]!.criterion_id;
+  const prepared = prepareCodexAssignmentProgressV2(snapshot.current_binding);
+  assert.match(prepared.prompt, /Requested Assignment effect: preview/);
+  assert.match(prepared.prompt, /Only an explicitly eligible preview task operation may fulfill a task criterion/);
+  assert.match(prepared.prompt, /Supporting control, discovery, and evidence-read operations[\s\S]*cannot replace task fulfillment/);
+  const read = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate55-find-note",
+    provider_turn_id: "candidate55-provider-find-note",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    arguments: { method: "POST", path: "/revit/find-text-notes", body: { max: 1 } }
+  });
+
+  assert.equal(read.requested_effect, "read");
+  assert.equal(read.purpose, "discovery");
+  assert.equal(read.fulfillment_role, "supporting_control");
+  assert.deepEqual(read.eligible_criterion_ids, []);
+  assert.equal(read.delegation_authority_id, undefined);
+
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  const readPayload = {
+    ok: true,
+    itemsComplete: false,
+    elementIds: [1421361],
+    textSamples: ["Existing note"],
+    items: [{ elementId: 1421361, text: "Existing note" }]
+  };
+  const readEnvelope = envelope(read.operation_id, read.binding, readPayload) as any;
+  readEnvelope.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/find-text-notes/v2";
+  readEnvelope.structuredContent.observation.verification_relevance = ["control"];
+  readEnvelope.structuredContent.observation.evidence_class = "control";
+  const afterRead = settleAssignmentKernelOperationV2(read, readEnvelope).snapshot;
+  assert.equal(afterRead.criteria[criterionId], undefined,
+    "a successful support read must not evaluate or satisfy the preview criterion");
+  assert.equal(afterRead.observations[afterRead.operations[read.operation_id]!.observation_ids[0]!]!.evidence_class, "control");
+
+  const previewLease = openAssignmentKernelOperationV2({
+    snapshot: afterRead,
+    controller_request_id: "candidate55-preview-note",
+    provider_turn_id: "candidate55-provider-preview-note",
+    capability_id: "revit_call_tool",
+    classified_effect: "preview",
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1421361, newText: "Replacement", expectedOldText: "Existing note", dryRun: true, apply: false }
+    }
+  });
+  assert.equal(previewLease.requested_effect, "preview");
+  assert.equal(previewLease.purpose, "work");
+  assert.equal(previewLease.fulfillment_role, "delegated_task_execution");
+  assert.deepEqual(previewLease.eligible_criterion_ids, [criterionId]);
+  assert.equal(previewLease.delegation_authority_id, `delegation:${previewLease.operation_id}`);
 }));
 
 test("Candidate 3 repaired sequence resolves only the schema gap before one corrected quantify task result", () => workspace(() => {

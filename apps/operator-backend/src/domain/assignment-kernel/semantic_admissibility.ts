@@ -1,5 +1,5 @@
 import { sameAssignmentBindingV2 } from "./identity.js";
-import type { AssignmentCriterionSpecV2 } from "./assignment_spec.js";
+import type { AssignmentCriterionSpecV2, RequestedEffectV2 } from "./assignment_spec.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import type { ObservationV2, SemanticFactV2 } from "./observation.js";
 import type { OperationPurposeV2, OperationV2 } from "./operation.js";
@@ -54,6 +54,26 @@ export function operationFulfillmentRoleForAdmissionV2(input: Readonly<{
 
 export function fulfillmentRoleCanCarryTaskCriteriaV2(role: OperationFulfillmentRoleV2): boolean {
   return role === "delegated_task_execution" || role === "verification";
+}
+
+/**
+ * One effect-causality predicate shared by admission and evaluation. Ordinary
+ * task fulfillment requires the operation to perform the Assignment's exact
+ * requested effect. The only narrower-effect exception is a criterion whose
+ * immutable spec explicitly defines desired-state equivalence and whose
+ * evaluator selects that basis.
+ */
+export function operationEffectAdmissibleForCriterionV2(input: Readonly<{
+  assignment_requested_effect: RequestedEffectV2;
+  operation_requested_effect: RequestedEffectV2;
+  criterion: AssignmentCriterionSpecV2;
+  basis?: CriterionEvaluationV2["basis"];
+}>): boolean {
+  if (input.operation_requested_effect === input.assignment_requested_effect) return true;
+  return input.basis === "desired_state_equivalence"
+    && input.assignment_requested_effect === "apply"
+    && input.operation_requested_effect === "read"
+    && (input.criterion.desired_state_comparisons?.length ?? 0) > 0;
 }
 
 export function evidenceClassForFulfillmentRoleV2(role: OperationFulfillmentRoleV2): ObservationEvidenceClassV2 {
@@ -123,13 +143,19 @@ export function observationAdmissibilityForCriterionV2(input: Readonly<{
   if (!operation.fulfillment_role || !operation.eligible_criterion_ids) return denied("operation_fulfillment_contract_missing", operation);
   if (!operation.eligible_criterion_ids.includes(input.criterion.criterion_id)) return denied("operation_not_eligible_for_criterion", operation);
   if (operation.fulfillment_role === "delegated_task_execution") {
-    const desiredStateRead = input.basis === "desired_state_equivalence"
-      && input.snapshot.spec.requested_effect === "apply"
-      && operation.requested_effect === "read"
-      && operation.persistent_effect === "none"
-      && operation.result.native_transaction_state === "not_applicable";
-    if (!desiredStateRead && operation.requested_effect !== input.snapshot.spec.requested_effect) {
+    const effectAdmissible = operationEffectAdmissibleForCriterionV2({
+      assignment_requested_effect: input.snapshot.spec.requested_effect,
+      operation_requested_effect: operation.requested_effect,
+      criterion: input.criterion,
+      basis: input.basis
+    });
+    if (!effectAdmissible) {
       return denied("task_operation_effect_mismatch", operation);
+    }
+    const desiredStateRead = operation.requested_effect !== input.snapshot.spec.requested_effect;
+    if (desiredStateRead && (operation.persistent_effect !== "none"
+        || operation.result.native_transaction_state !== "not_applicable")) {
+      return denied("desired_state_read_effect_invalid", operation);
     }
     if (!desiredStateRead && input.snapshot.spec.requested_effect === "apply"
         && (operation.persistent_effect !== "applied"

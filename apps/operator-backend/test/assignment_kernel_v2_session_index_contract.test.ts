@@ -132,3 +132,35 @@ test("shared control-evidence contract separates control roles, durable producer
   );
   assert.deepEqual(assignmentKernelControlEvidenceFactsV2("untrusted_tool", semanticPayload), []);
 });
+
+test("Candidate 55 focused evidence selections create stable controller knowledge without domain authority", () => {
+  const payload = {
+    ok: true,
+    result: {
+      schema: "revit-operator.evidence-retrieval.v1",
+      evidence_ref: { evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG" },
+      selection: {
+        "payload.items": [{ elementId: 1421361, text: "Existing note" }],
+        "payload.elementIds": [1421361],
+        "payload.textSamples": ["Existing note"]
+      },
+      returned_bytes: 733,
+      complete: false
+    }
+  };
+  const facts = assignmentKernelControlEvidenceFactsV2("operator_retrieve_evidence", payload);
+  assert.equal(isAssignmentKernelDurableControlEvidenceProducerV2("operator_retrieve_evidence"), true);
+  assert.equal(facts.every(fact => fact.fact_class === "control"), true);
+  assert.deepEqual(
+    facts.filter(fact => String(fact.fact_id) === "control.evidence_selection_available").map(fact => fact.dimensions),
+    [
+      { capability_id: "operator_retrieve_evidence", evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", selection_path: "payload.elementIds" },
+      { capability_id: "operator_retrieve_evidence", evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", selection_path: "payload.items" },
+      { capability_id: "operator_retrieve_evidence", evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", selection_path: "payload.textSamples" }
+    ]
+  );
+  assert.equal(facts.some(fact => fact.fact_id.startsWith("task.") || fact.fact_id.startsWith("inventory.")), false);
+  assert.deepEqual(assignmentKernelControlEvidenceFactsV2(
+    "operator_retrieve_evidence", JSON.parse(JSON.stringify(payload))), facts,
+    "JSON transport must preserve focused evidence-selection knowledge identity");
+});

@@ -44,7 +44,11 @@ export interface AssignmentKernelControlCapabilityV2 {
 }
 
 export interface AssignmentKernelControlEvidenceFactV2 {
-  readonly fact_id: "control.capability_discovery_status" | "control.capability_available";
+  readonly fact_id:
+    | "control.capability_discovery_status"
+    | "control.capability_available"
+    | "control.evidence_retrieval_status"
+    | "control.evidence_selection_available";
   readonly fact_class: "control";
   readonly value: string | boolean;
   readonly cardinality?: "many";

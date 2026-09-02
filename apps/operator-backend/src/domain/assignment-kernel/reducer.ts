@@ -14,7 +14,8 @@ import {
   SEMANTIC_EVIDENCE_CONTRACT_V2,
   evidenceClassForFulfillmentRoleV2,
   fulfillmentRoleCanCarryTaskCriteriaV2,
-  observationAdmissibilityForCriterionV2
+  observationAdmissibilityForCriterionV2,
+  operationEffectAdmissibleForCriterionV2
 } from "./semantic_admissibility.js";
 
 const EFFECT_RANK = { read: 0, preview: 1, apply: 2 } as const;
@@ -177,6 +178,16 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       kernelAssertV2(Boolean(operation.delegation_authority_id), "operation_delegation_authority_missing", "A criterion-fulfillment root must issue one delegation authority.");
     }
     for (const criterionId of eligible) {
+      const criterion = snapshot.spec.criteria.find((candidate) => candidate.criterion_id === criterionId);
+      kernelAssertV2(Boolean(criterion) && operationEffectAdmissibleForCriterionV2({
+        assignment_requested_effect: snapshot.spec.requested_effect,
+        operation_requested_effect: operation.requested_effect,
+        criterion: criterion!,
+        ...((criterion!.desired_state_comparisons?.length ?? 0) > 0
+          ? { basis: "desired_state_equivalence" as const }
+          : {})
+      }), "operation_eligible_criterion_effect_mismatch",
+      "Criterion eligibility requires the Assignment effect or an explicit desired-state-equivalence contract.");
       kernelAssertV2(workUnit.criterion_ids.includes(criterionId), "operation_eligible_criterion_unbound", "Operation criterion eligibility is outside its admitted work unit.");
       kernelAssertV2(operation.advances_criterion_ids.includes(criterionId), "operation_eligible_criterion_progress_unbound", "Eligible criterion must retain its progress binding.");
     }

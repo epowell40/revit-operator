@@ -612,6 +612,102 @@ test("Candidate 50 durable capability knowledge advances once and equivalent sea
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
 });
 
+test("Candidate 55 a new focused evidence selection resets liveness once while an unrelated next step does not", () => {
+  const initial = journal().snapshot();
+  const evidenceOperation: OperationV2 = {
+    ...operation("operation-focused-evidence"),
+    capability_id: "operator_retrieve_evidence",
+    purpose: "evidence_read",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: { evidenceId: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", fields: ["payload.items"] },
+    dispatch_state: "dispatched",
+    dispatch_authority: "mcp",
+    settlement_state: "settled",
+    observation_ids: ["observation-focused-evidence"],
+    result: {
+      ...result("operation-focused-evidence"),
+      authority: "operator-evidence-store",
+      result_schema_id: "operator-capability/operator_retrieve_evidence/v2",
+      raw_payload_hash: "hash-focused-evidence"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const evidenceObservation: ObservationV2 = {
+    ...observation("operation-focused-evidence", "observation-focused-evidence"),
+    authority: "operator-evidence-store",
+    result_schema_id: "operator-capability/operator_retrieve_evidence/v2",
+    raw_payload_hash: "hash-focused-evidence",
+    facts: [{
+      fact_id: "control.evidence_selection_available",
+      fact_class: "control",
+      value: true,
+      cardinality: "many",
+      identity_dimensions: ["capability_id", "evidence_id", "selection_path"],
+      dimensions: {
+        capability_id: "operator_retrieve_evidence",
+        evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG",
+        selection_path: "payload.items"
+      }
+    }],
+    verification_relevance: ["control"],
+    fulfillment_role: "supporting_control",
+    evidence_class: "control",
+    capability_id: "operator_retrieve_evidence",
+    eligible_criterion_ids: []
+  };
+  const afterEvidence = {
+    ...initial,
+    operations: { [evidenceOperation.operation_id]: evidenceOperation },
+    observations: { [evidenceObservation.observation_id]: evidenceObservation },
+    observation_versions: { [evidenceObservation.observation_id]: 2 },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const evidenceEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterEvidence,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [evidenceOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(evidenceEpoch.genuine_progress, true);
+  assert.deepEqual(evidenceEpoch.progress_reasons, ["controller_knowledge_added"]);
+
+  const supportRead = {
+    ...operation("operation-duplicate-check"),
+    purpose: "discovery" as const,
+    fulfillment_role: "supporting_control" as const,
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    settlement_state: "settled" as const,
+    result: result("operation-duplicate-check"),
+    settled_at: "2026-08-26T20:00:03.000Z"
+  };
+  const afterSupportRead = {
+    ...afterEvidence,
+    operations: { ...afterEvidence.operations, [supportRead.operation_id]: supportRead }
+  };
+  const supportEpoch = buildProgressEpochV2({
+    before: afterEvidence,
+    after: afterSupportRead,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [supportRead.operation_id],
+    recorded_at: "2026-08-26T20:00:03.000Z"
+  });
+  assert.equal(supportEpoch.genuine_progress, false);
+  const decision = decideAssignmentProgressV2({
+    snapshot: { ...afterSupportRead, progress_epochs: [evidenceEpoch, supportEpoch] },
+    budget,
+    now: "2026-08-26T20:00:04.000Z"
+  });
+  assert.equal(decision.decision, "admit_reasoning_turn",
+    "one later support step must leave a bounded turn for the exact task-effect operation");
+});
+
 test("Candidate 13 flight 3 preserves one correction turn when a structured schema gap follows unrelated no-progress", () => {
   const initial = journal().snapshot();
   const scheduleOperation: OperationV2 = {

@@ -814,12 +814,36 @@ test("same native route with a different canonical body cannot claim the admitte
   assert.equal(admission.delegation_authority_id, "delegation:operation-1");
 });
 
-test("retained evidence retrieval settles as a non-native read and cannot claim mutation", async () => {
-  const decorated = await runWithAssignmentKernelV2(meta("read", "evidence_read"), async () =>
-    decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: "focused retained selection" }] }, "operator_retrieve_evidence") as any);
+test("retained evidence retrieval settles as a non-native read and records one stable focused selection", async () => {
+  const operationMeta = meta("read", "evidence_read") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "operator_retrieve_evidence";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "operator_retrieve_evidence",
+    request_signature: "candidate55-focused-evidence-selection"
+  };
+  const selection = {
+    ok: true,
+    result: {
+      schema: "revit-operator.evidence-retrieval.v1",
+      evidence_ref: { evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG" },
+      selection: { "payload.items": [{ elementId: 1421361, text: "Existing note" }] },
+      returned_bytes: 128,
+      complete: false
+    }
+  };
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () =>
+    decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(selection) }] }, "operator_retrieve_evidence") as any);
   assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-evidence-store");
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
+  assert.equal(decorated.structuredContent.observation.evidence_class, "control");
+  assert.deepEqual(
+    decorated.structuredContent.observation.semantic_facts
+      .filter((fact: any) => fact.fact_id === "control.evidence_selection_available")
+      .map((fact: any) => fact.dimensions),
+    [{ capability_id: "operator_retrieve_evidence", evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", selection_path: "payload.items" }]
+  );
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_class === "domain"), false);
 });
 
 test("Candidate 50 tool search retains exact control knowledge without acquiring task eligibility", async () => {
