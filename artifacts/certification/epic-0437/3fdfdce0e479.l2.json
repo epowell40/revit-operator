@@ -15,7 +15,7 @@
   "inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
-      "sha256": "sha256:9aec46e74603825e689b57623e3bfb662ffd9c5ea15ac6633c547304510ddc9e"
+      "sha256": "sha256:e075ecbab069241e2bb91cc8f55d8a31b7703eef444c13c40aab5a90e5d6971a"
     },
     {
       "path": "apps/mcp-server/package.json",
@@ -468,7 +468,7 @@
     },
     {
       "path": "apps/operator-backend/package-lock.json",
-      "sha256": "sha256:240c14762516eb7ba89671c75675ce02c704f44335e033182730629fdb78693d"
+      "sha256": "sha256:d92c4ee4c555a7632cdcb59f283684acb2a82cc80ddd7369c4e678ebb71932c9"
     },
     {
       "path": "apps/operator-backend/package.json",
@@ -5973,7 +5973,7 @@
       "sha256": "sha256:f9edb46c52ceb1904dbe68a7bd996f0aa491f7a55f7c9299e8924d2523069d03"
     }
   ],
-  "inputs_hash": "sha256:a050239ae26855b5a9b2765a049916dce31e3f11159b72dcc802b9de5f937a33",
+  "inputs_hash": "sha256:a4420b3f8697f4ae5b4227f1a6a189e51ec87ff201ed015d87a607993094502c",
   "result": {
     "passed": true,
     "checks": [
