@@ -74,6 +74,10 @@ $routeEffectPackage = Join-Path $RepoRoot "packages/revit-action-effect-v1/index
 if (-not (Test-Path -LiteralPath $routeEffectPackage -PathType Leaf)) {
   $violations.Add("Shared Revit action-effect package is missing")
 }
+$routeEffectGoldenVectors = Join-Path $RepoRoot "packages/revit-action-effect-v1/golden-vectors.json"
+if (-not (Test-Path -LiteralPath $routeEffectGoldenVectors -PathType Leaf)) {
+  $violations.Add("Cross-runtime Revit action-effect golden vectors are missing")
+}
 foreach ($relativePath in @(
   "apps/operator-backend/src/action_path_mutability.ts",
   "apps/mcp-server/src/lib/revitRouteEffect.ts"
@@ -89,6 +93,108 @@ foreach ($relativePath in @(
   }
   if ($content -match 'READ_ONLY_(?:POST_)?PATHS' -or $content -match 'new\s+Set') {
     $violations.Add("$relativePath introduces local Revit action-effect metadata")
+  }
+}
+
+$routeEffectRuntimeConsumers = @(
+  @{
+    Path = "apps/operator-backend/src/teammate_loop_runtime.ts"
+    Import = './action_path_mutability.js'
+    Function = 'revitRouteEffect'
+  },
+  @{
+    Path = "apps/operator-backend/src/assignments/turn_journal.ts"
+    Import = '../action_path_mutability.js'
+    Function = 'revitRouteEffect'
+  },
+  @{
+    Path = "apps/operator-backend/src/revit_batch/tool_result_normalization.ts"
+    Import = '../action_path_mutability.js'
+    Function = 'revitRouteEffect'
+  },
+  @{
+    Path = "apps/operator-backend/src/benchmark/durable_tool_evidence.ts"
+    Import = '../action_path_mutability.js'
+    Function = 'revitRouteEffect'
+  },
+  @{
+    Path = "apps/operator-backend/src/goals/auto_goal_runtime.ts"
+    Import = '../action_path_mutability.js'
+    Function = 'revitRouteEffect'
+  },
+  @{
+    Path = "apps/mcp-server/src/lib/revitClient.ts"
+    Import = './revitRouteEffect.js'
+    Function = 'revitRouteEffect'
+  },
+  @{
+    Path = "apps/mcp-server/src/lib/toolExposurePolicy.ts"
+    Import = './revitRouteEffect.js'
+    Function = 'revitRouteCertificationEffect'
+  }
+)
+foreach ($consumer in $routeEffectRuntimeConsumers) {
+  $path = Join-Path $RepoRoot $consumer.Path
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $violations.Add("Reviewed Revit action-effect runtime consumer is missing: $($consumer.Path)")
+    continue
+  }
+  $content = Get-Content -Raw -LiteralPath $path
+  $functionPattern = '\b' + [regex]::Escape($consumer.Function) + '\s*\('
+  if ($content -notmatch [regex]::Escape($consumer.Import) -or $content -notmatch $functionPattern) {
+    $violations.Add("$($consumer.Path) does not classify native requests through the shared Revit action-effect contract")
+  }
+  if ($content -match '\bconditionalActionPathEffect\s*\(' -or $content -match '\bpathLooksWrite\s*\(') {
+    $violations.Add("$($consumer.Path) independently composes native route-effect classification")
+  }
+}
+
+# Native transports use one C# policy adapter and prove parity with the same
+# vectors as the MCP and backend processes. Risk/grant policy remains separate
+# from requested-effect identity, so a safe rollback can be low-risk without
+# being mislabeled as a read.
+$nativeEffectConsumers = @(
+  @{
+    Path = "apps/revit-bridge-addin/RevitBridge/Server/RevitHttpServer.cs"
+    Required = 'OperatorApprovalPolicy.GetEffectWireValue(effectiveMethod, path, requestBody)'
+  },
+  @{
+    Path = "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionRunner.cs"
+    Required = 'OperatorApprovalPolicy.ResolveRequestedEffectWireValue(action.RequestEffect, method, path, jsonBody)'
+  },
+  @{
+    Path = "apps/revit-bridge-addin/RevitBridge/Operator/OperatorRevitCourierWorker.cs"
+    Required = 'OperatorApprovalPolicy.GetEffectWireValue(method, path, bodyJson)'
+  },
+  @{
+    Path = "apps/revit-bridge-addin/RevitBridge/Operator/OperatorPaneControl.cs"
+    Required = 'OperatorApprovalPolicy.GetEffectWireValue(action.Method, action.Path, bodyJson)'
+  }
+)
+foreach ($consumer in $nativeEffectConsumers) {
+  $path = Join-Path $RepoRoot $consumer.Path
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $violations.Add("Reviewed native Revit action-effect consumer is missing: $($consumer.Path)")
+    continue
+  }
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch [regex]::Escape($consumer.Required)) {
+    $violations.Add("$($consumer.Path) does not classify requested effect through OperatorApprovalPolicy")
+  }
+  if ($content -match 'private\s+static\s+string\s+Resolve(?:Canonical)?RequestedEffect\s*\(') {
+    $violations.Add("$($consumer.Path) reintroduces an independent native requested-effect classifier")
+  }
+}
+
+foreach ($relativePath in @(
+  "apps/mcp-server/src/lib/revitRouteEffect.test.ts",
+  "apps/operator-backend/test/endpoint_mutability.test.ts",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorApprovalPolicyTests.cs"
+)) {
+  $path = Join-Path $RepoRoot $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch 'revit_action_effect_v1_golden_vectors') {
+    $violations.Add("$relativePath does not enforce the shared cross-runtime action-effect vectors")
   }
 }
 

@@ -166,7 +166,7 @@ namespace RevitBridge.Operator
         public static OperatorActionRisk GetRisk(string method, string path)
         {
             var m = (method ?? "").Trim().ToUpperInvariant();
-            var p = (path ?? "").Trim();
+            var p = CanonicalPath(path);
 
             if (m == "GET") return OperatorActionRisk.Low;
 
@@ -413,7 +413,7 @@ namespace RevitBridge.Operator
         public static OperatorActionRisk GetRisk(string method, string path, string? body)
         {
             var m = (method ?? "").Trim().ToUpperInvariant();
-            var p = (path ?? "").Trim();
+            var p = CanonicalPath(path);
 
             if (m == "POST" && HasMutatingBody(p, body))
             {
@@ -435,17 +435,75 @@ namespace RevitBridge.Operator
         public static OperatorActionEffect GetEffect(string method, string path, string? body)
         {
             var m = (method ?? "").Trim().ToUpperInvariant();
-            var p = (path ?? "").Trim();
+            var p = CanonicalPath(path);
 
-            if (m == "GET") return OperatorActionEffect.Read;
+            if (m == "GET" || m == "HEAD" || m == "OPTIONS") return OperatorActionEffect.Read;
+            if (m != "POST") return OperatorActionEffect.Apply;
 
-            if (m == "POST" &&
-                string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(p, "/revit/transaction-plan", StringComparison.OrdinalIgnoreCase))
             {
                 return OperatorActionEffect.Preview;
             }
 
-            if (m == "POST" && HasMutatingBody(p, body))
+            var hasObjectBody = TryParseBodyObject(body, out var root);
+            if (hasObjectBody && string.Equals(p, "/revit/move-elements", StringComparison.OrdinalIgnoreCase))
+            {
+                if (GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply) return OperatorActionEffect.Apply;
+                return HasTrueValue(root, "dryRun") ? OperatorActionEffect.Preview : OperatorActionEffect.Apply;
+            }
+
+            if (IsArtifactPublicationPath(p))
+            {
+                if (!hasObjectBody) return OperatorActionEffect.Apply;
+                if (GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply) return OperatorActionEffect.Apply;
+                bool dryRun;
+                if (TryGetBoolean(root, "dryRun", out dryRun))
+                    return dryRun ? OperatorActionEffect.Preview : OperatorActionEffect.Apply;
+                if (string.Equals(p, "/revit/export-pdf", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TryGetBoolean(root, "preflightOnly", out dryRun) || TryGetBoolean(root, "preflight", out dryRun))
+                        return dryRun ? OperatorActionEffect.Preview : OperatorActionEffect.Apply;
+                }
+                return OperatorActionEffect.Apply;
+            }
+
+            if (string.Equals(p, "/revit/print", StringComparison.OrdinalIgnoreCase))
+            {
+                return hasObjectBody && GenericConditionalIntentEffect(root) == OperatorActionEffect.Apply
+                    ? OperatorActionEffect.Apply
+                    : OperatorActionEffect.Preview;
+            }
+
+            if (string.Equals(p, "/revit/visibility", StringComparison.OrdinalIgnoreCase))
+            {
+                var action = hasObjectBody ? GetStringValue(root, "action", "get") : "get";
+                if (string.Equals(action, "get", StringComparison.OrdinalIgnoreCase)) return OperatorActionEffect.Read;
+                return hasObjectBody && GenericConditionalIntentEffect(root) == OperatorActionEffect.Preview
+                    ? OperatorActionEffect.Preview
+                    : OperatorActionEffect.Apply;
+            }
+
+            if (hasObjectBody && string.Equals(p, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase))
+            {
+                return GenericConditionalIntentEffect(root) == OperatorActionEffect.Preview
+                    ? OperatorActionEffect.Preview
+                    : OperatorActionEffect.Apply;
+            }
+
+            if (hasObjectBody && string.Equals(p, "/revit/create-text", StringComparison.OrdinalIgnoreCase))
+            {
+                var action = GetStringValue(root, "action", "create");
+                if (string.Equals(action, "list_types", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(action, "inspect", StringComparison.OrdinalIgnoreCase))
+                {
+                    return OperatorActionEffect.Read;
+                }
+                return GenericConditionalIntentEffect(root) == OperatorActionEffect.Preview
+                    ? OperatorActionEffect.Preview
+                    : OperatorActionEffect.Apply;
+            }
+
+            if (HasMutatingBody(p, body))
             {
                 if (string.Equals(p, "/revit/list-element-types", StringComparison.OrdinalIgnoreCase) &&
                     BodyHasTrueProperty(body, "dryRun"))
@@ -456,8 +514,7 @@ namespace RevitBridge.Operator
                 return OperatorActionEffect.Apply;
             }
 
-            if (m == "POST" &&
-                string.Equals(p, "/revit/delete", StringComparison.OrdinalIgnoreCase) &&
+            if (string.Equals(p, "/revit/delete", StringComparison.OrdinalIgnoreCase) &&
                 HasExactDeletePreviewContract(body))
             {
                 return OperatorActionEffect.Preview;
@@ -465,7 +522,11 @@ namespace RevitBridge.Operator
 
             var risk = GetRisk(m, p, body);
             if (risk == OperatorActionRisk.Low) return OperatorActionEffect.Read;
-            if (m == "POST" && BodyRequestsPreview(body)) return OperatorActionEffect.Preview;
+            if (hasObjectBody)
+            {
+                var intent = GenericConditionalIntentEffect(root);
+                if (intent.HasValue) return intent.Value;
+            }
             return OperatorActionEffect.Apply;
         }
 
@@ -480,6 +541,97 @@ namespace RevitBridge.Operator
                 default:
                     return "apply";
             }
+        }
+
+        public static string ResolveRequestedEffectWireValue(string? declared, string method, string path, string? body)
+        {
+            var normalized = (declared ?? "").Trim().ToLowerInvariant();
+            var derived = GetEffectWireValue(method, path, body);
+            if (string.IsNullOrWhiteSpace(normalized)) return derived;
+            if (normalized != "read" && normalized != "preview" && normalized != "apply")
+            {
+                throw new InvalidOperationException("Declared request_effect is not a recognized canonical effect.");
+            }
+            if (!string.Equals(normalized, derived, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Declared request_effect '{normalized}' does not match native request effect '{derived}'.");
+            }
+            return derived;
+        }
+
+        private static string CanonicalPath(string? path)
+        {
+            var normalized = (path ?? "").Trim().ToLowerInvariant();
+            switch (normalized)
+            {
+                case "/revit/list-views":
+                case "/revit/query-views":
+                    return "/revit/views";
+                case "/revit/list-sheets":
+                    return "/revit/sheets";
+                case "/revit/list-schedules":
+                    return "/revit/schedules";
+                case "/revit/query-elements":
+                    return "/revit/query";
+                case "/revit/delete-elements":
+                    return "/revit/delete";
+                case "/revit/set-parameters":
+                    return "/revit/set-parameter";
+                default:
+                    return normalized;
+            }
+        }
+
+        private static bool IsArtifactPublicationPath(string path)
+        {
+            return string.Equals(path, "/revit/export-pdf", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/export-dwg", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/export-ifc", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(path, "/revit/export-elements-xlsx", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryParseBodyObject(string? body, out JsonElement root)
+        {
+            root = default;
+            if (string.IsNullOrWhiteSpace(body)) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(body!);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+                root = document.RootElement.Clone();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static OperatorActionEffect? GenericConditionalIntentEffect(JsonElement root)
+        {
+            var mode = "";
+            if (root.TryGetProperty("transaction", out var transaction) &&
+                transaction.ValueKind == JsonValueKind.Object)
+            {
+                mode = GetStringValue(transaction, "mode", "");
+            }
+            if (string.IsNullOrWhiteSpace(mode)) mode = GetStringValue(root, "mode", "");
+            mode = mode.Trim().ToLowerInvariant();
+
+            var previewRequested = HasTrueValue(root, "dryRun") ||
+                                   HasTrueValue(root, "dry_run") ||
+                                   HasTrueValue(root, "preview") ||
+                                   mode == "rollback" || mode == "preview" || mode == "dry_run" || mode == "dry-run";
+            var applyRequested = HasTrueValue(root, "apply") ||
+                                 HasFalseValue(root, "dryRun") ||
+                                 HasFalseValue(root, "dry_run") ||
+                                 HasTrueValue(root, "commit") ||
+                                 HasTrueValue(root, "execute") ||
+                                 mode == "commit" || mode == "apply" || mode == "execute";
+
+            if (applyRequested) return OperatorActionEffect.Apply;
+            return previewRequested ? OperatorActionEffect.Preview : (OperatorActionEffect?)null;
         }
 
         private static bool HasMutatingBody(string path, string? body)
@@ -528,6 +680,35 @@ namespace RevitBridge.Operator
             return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.True;
         }
 
+        private static bool HasFalseValue(JsonElement root, string propertyName)
+        {
+            return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.False;
+        }
+
+        private static bool TryGetBoolean(JsonElement root, string propertyName, out bool value)
+        {
+            value = false;
+            if (!root.TryGetProperty(propertyName, out var property)) return false;
+            if (property.ValueKind == JsonValueKind.True)
+            {
+                value = true;
+                return true;
+            }
+            if (property.ValueKind == JsonValueKind.False)
+            {
+                value = false;
+                return true;
+            }
+            return false;
+        }
+
+        private static string GetStringValue(JsonElement root, string propertyName, string fallback)
+        {
+            return root.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+                ? (property.GetString() ?? "").Trim().ToLowerInvariant()
+                : fallback;
+        }
+
         private static bool BodyHasTrueProperty(string? body, string propertyName)
         {
             if (string.IsNullOrWhiteSpace(body)) return false;
@@ -536,24 +717,6 @@ namespace RevitBridge.Operator
                 using var document = JsonDocument.Parse(body!);
                 return document.RootElement.ValueKind == JsonValueKind.Object &&
                        HasTrueValue(document.RootElement, propertyName);
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static bool BodyRequestsPreview(string? body)
-        {
-            if (string.IsNullOrWhiteSpace(body)) return false;
-            try
-            {
-                using var document = JsonDocument.Parse(body!);
-                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
-                var root = document.RootElement;
-                return HasTrueValue(root, "dryRun") ||
-                       HasTrueValue(root, "dry_run") ||
-                       (root.TryGetProperty("apply", out var apply) && apply.ValueKind == JsonValueKind.False);
             }
             catch
             {

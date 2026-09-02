@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
+import { revitRouteEffect } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope, outcomeEnvelopeIsUnsafe } from "../outcome_envelope.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -56,15 +56,7 @@ function recoveryTarget(value: JsonRecord): JsonRecord | null {
 function requestEffect(path: string, argumentsRecord: JsonRecord, body: JsonRecord): "read" | "preview" | "apply" {
   const declared = String(argumentsRecord.request_effect || argumentsRecord.requestEffect || "").trim().toLowerCase();
   if (declared === "read" || declared === "preview" || declared === "apply") return declared;
-  const conditional = conditionalActionPathEffect(path, body);
-  if (conditional) return conditional;
-  if (!pathLooksWrite(path, body, String(argumentsRecord.method || "POST"))) return "read";
-  const transaction = asRecord(body.transaction);
-  const mode = String(transaction.mode || body.mode || "").trim().toLowerCase();
-  return body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
-    || ["rollback", "preview", "dry_run", "dry-run"].includes(mode)
-    ? "preview"
-    : "apply";
+  return revitRouteEffect(path, String(argumentsRecord.method || "POST"), body);
 }
 
 function trustedRecoveryKey(path: string, effect: string, argumentsRecord: JsonRecord, body: JsonRecord): string | null {

@@ -809,7 +809,7 @@ namespace RevitBridge.Server
                 var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;
                 actionMethod = effectiveMethod;
                 actionPath = path;
-                requestedEffect = ResolveCanonicalRequestedEffect(effectiveMethod, path, requestBody);
+                requestedEffect = OperatorApprovalPolicy.GetEffectWireValue(effectiveMethod, path, requestBody);
                 var isGet = string.Equals(effectiveMethod, "GET", StringComparison.OrdinalIgnoreCase);
                 if (!isGet && path != "/revit/ping" && path != "/revit/capabilities")
                 {
@@ -1203,23 +1203,6 @@ namespace RevitBridge.Server
             }
             await resp.OutputStream.WriteAsync(data, 0, data.Length);
             resp.Close();
-        }
-
-        private static string ResolveCanonicalRequestedEffect(string method, string path, string bodyJson)
-        {
-            var risk = GetRequestRisk(method, path, bodyJson);
-            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) || risk < OperatorActionRisk.Medium) return "read";
-            try
-            {
-                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(bodyJson) ? "{}" : bodyJson);
-                var root = document.RootElement;
-                if (root.ValueKind == JsonValueKind.Object
-                    && ((root.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True)
-                        || (root.TryGetProperty("dry_run", out var snakeDryRun) && snakeDryRun.ValueKind == JsonValueKind.True)
-                        || (root.TryGetProperty("preview", out var preview) && preview.ValueKind == JsonValueKind.True))) return "preview";
-            }
-            catch { }
-            return "apply";
         }
 
         private async Task<string> RequireFinalNativeAuthorizationAsync(

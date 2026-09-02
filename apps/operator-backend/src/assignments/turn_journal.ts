@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { ActionCall, ToolResult } from "../contracts.js";
 import type { AutoGoalToolObservation } from "../goals/auto_goal_runtime.js";
-import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
+import { revitRouteEffect } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope } from "../outcome_envelope.js";
 import { getActiveGoalForSession, getGoal } from "../goals/service.js";
 import {
@@ -60,9 +60,7 @@ function actionEffect(action: Pick<ActionCall, "method" | "path" | "body">): Ass
   if ((action as ActionCall).request_effect === "read" || (action as ActionCall).request_effect === "preview" || (action as ActionCall).request_effect === "apply") {
     return (action as ActionCall).request_effect!;
   }
-  const conditional = conditionalActionPathEffect(action.path, action.body);
-  if (conditional) return conditional;
-  return pathLooksWrite(action.path, action.body, action.method) ? "apply" : "read";
+  return revitRouteEffect(action.path, action.method, action.body);
 }
 
 function targetFingerprint(action: Pick<ActionCall, "path" | "body">, documentFingerprint: unknown): string {

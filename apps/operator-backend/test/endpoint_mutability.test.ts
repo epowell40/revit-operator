@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { conditionalActionPathEffect, pathLooksWrite, revitRouteEffect } from "../src/action_path_mutability.js";
+import {
+  conditionalActionPathEffect,
+  pathLooksWrite,
+  revitRouteEffect,
+  revitRouteEffectWhenBodyUnavailable
+} from "../src/action_path_mutability.js";
 import { findRepoRoot } from "../src/tools/audit_tool_registry.js";
 
 test("scoped duct resize is classified as a write", () => {
@@ -52,6 +57,49 @@ test("typed MCP and backend classify schedule reads through the same contract", 
   assert.equal(revitRouteEffect("/revit/schedules", "POST", { action: "list", max: 200 }), "read");
   assert.equal(revitRouteEffect("/revit/list-schedules", "POST", { action: "list", max: 200 }), "read");
   assert.equal(revitRouteEffect("/revit/unknown-future-route", "POST", {}), "apply");
+});
+
+test("Candidate 48 conditional native intent is shared across object and JSON request bodies", () => {
+  const previewBody = {
+    elementId: 1421361,
+    newText: "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX",
+    expectedOldText: "***An Autodesk Revit sample project***\r",
+    dryRun: true,
+    apply: false
+  };
+  const applyBody = { ...previewBody, dryRun: false, apply: true };
+
+  for (const body of [previewBody, JSON.stringify(previewBody)]) {
+    assert.equal(conditionalActionPathEffect("/revit/replace-text-note", body), "preview");
+    assert.equal(revitRouteEffect("/revit/replace-text-note", "POST", body), "preview");
+  }
+  assert.equal(conditionalActionPathEffect("/revit/replace-text-note", applyBody), "apply");
+  assert.equal(revitRouteEffect("/revit/replace-text-note", "POST", applyBody), "apply");
+});
+
+test("generic conditional intent remains deny-by-default and explicit handlers retain authority", () => {
+  const conditionalRoutes = [
+    "/revit/set-parameter",
+    "/revit/update-parameter-by-query",
+    "/revit/update-panel-parameter",
+    "/revit/edit-mep-route-elements",
+    "/revit/reroute-mep-route-segment"
+  ];
+  for (const route of conditionalRoutes) {
+    assert.equal(revitRouteEffect(route, "POST", { dryRun: true, apply: false }), "preview", `${route} preview`);
+    assert.equal(revitRouteEffect(route, "POST", { dryRun: false, apply: true }), "apply", `${route} apply`);
+    assert.equal(revitRouteEffect(route, "POST", {}), "apply", `${route} unqualified request`);
+  }
+  assert.equal(revitRouteEffect("/revit/get-parameters", "POST", { dryRun: true, apply: false }), "read");
+  assert.equal(revitRouteEffect("/revit/set-parameter", "POST", { dryRun: true, apply: true }), "apply");
+  assert.equal(revitRouteEffect("/revit/lighting-audit", "POST", { visualize: true, apply: false }), "apply");
+});
+
+test("bodyless recovery is distinct from an authoritative empty request and fails closed", () => {
+  assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/fire-damper-audit", "POST"), "apply");
+  assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/visibility", "POST"), "apply");
+  assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/schedules", "POST"), "read");
+  assert.equal(revitRouteEffectWhenBodyUnavailable("/revit/transaction-plan", "POST"), "preview");
 });
 
 test("backend read classification covers every low-risk Revit POST in the add-in manifest", () => {
@@ -141,4 +189,32 @@ test("read methods stay read-only without weakening body-aware POST effects", ()
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }, "GET"), false);
   assert.equal(pathLooksWrite("/revit/fire-damper-audit", { command: "fix" }, "POST"), true);
   assert.equal(pathLooksWrite("/revit/list-element-types", { action: "rename_types", dryRun: true }, "POST"), true);
+});
+
+test("backend process satisfies the cross-runtime Revit action-effect golden vectors", () => {
+  const root = findRepoRoot(process.cwd());
+  const contractRoot = fs.existsSync(path.join(root, "packages", "revit-action-effect-v1"))
+    ? root
+    : path.dirname(root);
+  const contract = JSON.parse(fs.readFileSync(
+    path.join(contractRoot, "packages", "revit-action-effect-v1", "golden-vectors.json"),
+    "utf8"
+  )) as {
+    schema: string;
+    vectors: Array<{
+      id: string;
+      method: string;
+      path: string;
+      body: unknown;
+      expected_effect: "read" | "preview" | "apply";
+    }>;
+  };
+  assert.equal(contract.schema, "revit_action_effect_v1_golden_vectors");
+  for (const vector of contract.vectors) {
+    assert.equal(
+      revitRouteEffect(vector.path, vector.method, vector.body),
+      vector.expected_effect,
+      vector.id
+    );
+  }
 });

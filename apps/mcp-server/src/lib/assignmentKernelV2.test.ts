@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import { revitRouteEffect } from "./revitRouteEffect.js";
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
@@ -163,7 +164,7 @@ test("Candidate 39 explicit native domain failure is retained without becoming t
   assert.equal(facts.some((fact: any) => fact.fact_id === "task.preview_valid"), false);
 });
 
-test("an authoritative successful native preview retains explicit task preview evidence", async () => {
+test("Candidate 48 shared classification lets an authoritative native preview claim its exact parent", async () => {
   const body = {
     elementId: 1421361,
     expectedOldText: "***An Autodesk Revit sample project***\r",
@@ -175,7 +176,7 @@ test("an authoritative successful native preview retains explicit task preview e
     meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
     async () => {
       const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
-        classified_effect: "preview"
+        classified_effect: revitRouteEffect("/revit/replace-text-note", "POST", body)
       });
       await markAssignmentKernelNativeRequestDispatchingV2(request);
       await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
+import { revitRouteEffect } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope, outcomeEnvelopeIsUnsafe } from "../outcome_envelope.js";
 import {
   appendGoalAction,
@@ -649,16 +649,12 @@ function observationEffect(observation: AutoGoalToolObservation): AutoGoalObserv
     if (/\/(?:ping|context|tool-search|tool-registry|tool-doc|tool-examples|discover|strategy|capabilities|write-grant)(?:\/|$)/.test(route)) return "discovery";
     if (route === "/revit/regenerate") return "discovery";
     if (route === "/revit/transaction-plan") return "discovery";
+    // Historical V1 observations may lack a route identity. Preserve their
+    // legacy read-only interpretation at this compatibility edge; canonical V2
+    // native operations always carry an exact path and never use this fallback.
+    if (!route) return "read";
     const method = `${args.method || "POST"}`.trim().toUpperCase() || "POST";
-    const conditional = conditionalActionPathEffect(route, body);
-    if (conditional !== undefined) return conditional;
-    // Route mutability is authoritative for the generic dispatcher. A false
-    // dryRun flag on an observational export/capture endpoint means "perform
-    // the evidence capture", not "mutate the Revit model".
-    if (!pathLooksWrite(route, body, method)) return "read";
-    if (body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
-        || ["rollback", "preview", "dry_run", "dry-run"].includes(transactionMode)) return "preview";
-    return "apply";
+    return revitRouteEffect(route, method, body);
   }
   if (body.apply === true || body.dryRun === false || body.dry_run === false
       || ["apply", "commit", "committed"].includes(transactionMode)) return "apply";

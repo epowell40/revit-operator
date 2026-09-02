@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { conditionalActionPathEffect, pathLooksWrite } from "./action_path_mutability.js";
+import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
@@ -485,14 +485,9 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (isTeammateDiscoveryPath(path)) return call("discovery");
   if (methodName === "GET") return call("read");
-  if (methodName === "POST" && path === "/revit/transaction-plan") return call("preview");
   if (methodName === "POST" && !path.startsWith("/revit/")) return call("unknown");
-  const conditionalEffect = methodName === "POST" ? conditionalActionPathEffect(path, normalizedBody) : undefined;
-  if (conditionalEffect !== undefined) return call(conditionalEffect);
-  if (methodName === "POST" && !pathLooksWrite(path, normalizedBody)) return call("read");
   if (methodName !== "POST" || !path.startsWith("/revit/")) return call("unknown");
-  const flags = previewFlags(normalizedBody);
-  return call(flags.preview ? "preview" : "apply");
+  return call(revitRouteEffect(path, methodName, normalizedBody));
 }
 
 function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {

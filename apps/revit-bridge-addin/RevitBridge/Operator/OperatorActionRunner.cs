@@ -276,7 +276,7 @@ namespace RevitBridge.Operator
                 }
             }
             var risk = OperatorApprovalPolicy.GetRisk(method, path, jsonBody);
-            var requestedEffect = ResolveRequestedEffect(action.RequestEffect, method, risk, jsonBody);
+            var requestedEffect = OperatorApprovalPolicy.ResolveRequestedEffectWireValue(action.RequestEffect, method, path, jsonBody);
             var correlationId = OperatorCorrelationId.NormalizeOrCreate(action.CorrelationId, action.ActionId);
             action.CorrelationId = correlationId;
 
@@ -498,24 +498,6 @@ namespace RevitBridge.Operator
                 action.AssignmentGeneration,
                 action.ActionSignature,
                 action.TargetFingerprint);
-
-        private static string ResolveRequestedEffect(string? declared, string method, OperatorActionRisk risk, string jsonBody)
-        {
-            var normalized = (declared ?? "").Trim().ToLowerInvariant();
-            if (normalized == "read" || normalized == "preview" || normalized == "apply") return normalized;
-            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) || risk < OperatorActionRisk.Medium) return "read";
-            try
-            {
-                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonBody) ? "{}" : jsonBody);
-                var root = document.RootElement;
-                if (root.ValueKind == JsonValueKind.Object
-                    && ((root.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True)
-                        || (root.TryGetProperty("dry_run", out var snakeDryRun) && snakeDryRun.ValueKind == JsonValueKind.True)
-                        || (root.TryGetProperty("preview", out var preview) && preview.ValueKind == JsonValueKind.True))) return "preview";
-            }
-            catch { }
-            return "apply";
-        }
 
         private static void ValidateCourierFinalExecutionAuthorization(
             OperatorActionCall action,
