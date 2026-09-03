@@ -763,6 +763,10 @@
       "sha256": "sha256:cb9e9d1dfaa5ca6e4e19f451002392e41bbac0bc02d6eae89844665f0007675e"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/general_revit_candidate_identity_preflight.ts",
+      "sha256": "sha256:24c78d58432789f5663f8e9307b2950d13830eb44f3b210a97fa4aeaf9f7ab88"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/general_revit_capability_acceptance.ts",
       "sha256": "sha256:3e3b600ec29c16138b0ce3d27e8ee4d1e2ebf98cb640e68ae1e40d015f663844"
     },
@@ -2593,7 +2597,7 @@
     },
     {
       "path": "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts",
-      "sha256": "sha256:854b494deee10db98795ba6c8c0ea8a4ad5b05f6c3a9a38b5216a06f39cc4836"
+      "sha256": "sha256:5e7cce52a25f781f480f7ac0db638c9d6b3db9aaa076d49481d981ab5192dc24"
     },
     {
       "path": "apps/operator-backend/src/tools/generate_tool_exposure_policy.ts",
@@ -3482,6 +3486,10 @@
     {
       "path": "apps/operator-backend/test/gemini_redline_package.test.ts",
       "sha256": "sha256:beba6eb68f42039c8677886899d3a106fe113622745fe888d0c821f230314951"
+    },
+    {
+      "path": "apps/operator-backend/test/general_revit_candidate_identity_preflight.test.ts",
+      "sha256": "sha256:c9b5da2f96af526ca10302fcffd83c0bdf32b0e7d4181603edaad82ef4ad27a1"
     },
     {
       "path": "apps/operator-backend/test/general_revit_capability_acceptance.test.ts",
@@ -6017,7 +6025,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:6f252f9f26c8448b5882c889c1225911b0e938bf33f0be8a092da6102d350395",
+  "inputs_hash": "sha256:d79cddf339ce6afc228fcbf96d0177cf888353c46f20cbd8791590df0cc1f5ff",
   "result": {
     "passed": true,
     "checks": [

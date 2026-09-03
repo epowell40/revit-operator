@@ -49,6 +49,17 @@ new generic replay and neighboring boundary coverage whenever live testing
 finds a new failure family. Run the frontier first, the complete private
 integration gate once from stable source, and the real Revit UI last.
 
+The live capability runner also verifies every candidate-envelope identity it
+can reproduce before contacting Sidecar or opening a fixture. A new run must
+bind the clean owning Git revision, the private public-core pin when applicable,
+the exact certification/exposure policy bytes, canonical corpus and selected
+case hashes, original manifest bytes, evaluator and fixture-adapter versions,
+requested model settings, and selected `.rvt` bytes. Do not hand-copy hashes
+from an older candidate. Runtime-only claims such as the installed process and
+Revit version remain subject to checks at their authoritative runtime boundary.
+Historical rescore-only runs keep their retained envelope and do not acquire
+the identity of the current checkout.
+
 Hosted authentication, private deployment, EC2, production packaging, and
 commercial integration are owned by `revit-operator-private`. Do not add those
 details or secrets to this repository.

@@ -6,7 +6,7 @@ import {
   generalRevitPromptSpecificity, generalRevitResearchDemand, summarizeGeneralRevitCapabilityReport,
   type GeneralRevitCapabilityCase, type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
-import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
+import { backendRoot, nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
@@ -21,6 +21,7 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
 import { assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
+import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
 import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
 import {
@@ -32,7 +33,7 @@ import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
 import { bindComputerClarificationResponse, executeGeneralRevitComputerTurn, modelCallReceiptsFromComputerTurns, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
 import { benchmarkInteractionCaseV1, benchmarkInteractionTraceV1, loadBenchmarkInteractionManifestV1,
   type BenchmarkInteractionCaseV1, type BenchmarkInteractionManifestV1 } from "../benchmark/protocol_v2_interaction.js";
-import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
+import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, generalRevitProtocolManifestPathV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
 import { baselineCaseDeltas, computerPerformanceSummary, groupedMultiSummary,
   groupedSummary } from "../benchmark/general_revit_trace_reporting.js";
 
@@ -895,6 +896,22 @@ async function main(): Promise<void> {
   const priorSuiteTiming = asRecord(resumedCheckpoint?.suite_timing);
   const requestedComputerAgent = requestedComputerAgentConfig(process.argv, priorComputerAgent);
   const requestedSpeedSettings = speedSettingsForRequestedConfig(requestedComputerAgent);
+  if (protocolDraft) {
+    assertGeneralRevitCandidateIdentity({
+      backend_root: backendRoot(),
+      draft: protocolDraft,
+      corpus_value: externalHoldout?.manifest ?? corpus,
+      original_manifest_path: generalRevitProtocolManifestPathV2(protocolInputs),
+      selected_cases: selected,
+      fixture_adapter_version: fixtureConfig.schema,
+      selected_fixtures: generalRevitCandidateFixtureFiles(generalRevitProtocolFixtureRootV2(protocolInputs,
+        flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples")), fixtureConfig.fixtures, selectedFixtureKeys),
+      requested_agent: { model: requestedComputerAgent.agent_model,
+        reasoning_effort: requestedComputerAgent.agent_reasoning_effort },
+      source_identity: rescoreOnly ? null : generalRevitCandidateSourceIdentity(backendRoot()),
+      rescore_only: rescoreOnly
+    });
+  }
   const suiteStartedAt = String(priorSuiteTiming.started_at_utc || invocationStartedAt);
   const priorActiveWallClockMs = numberValue(priorSuiteTiming.active_wall_clock_ms);
   const [config, grant] = rescoreOnly
