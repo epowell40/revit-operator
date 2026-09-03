@@ -402,3 +402,205 @@ export function assignmentKernelControlEvidenceFactsV2(capabilityId, value) {
   }
   return facts.sort(compareControlFacts);
 }
+
+export const EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA = "revit-operator.evidence-retrieval-selector-contract/v1";
+
+function evidenceSelectorInvalid(reason) {
+  throw new TypeError(`evidence_retrieval_selector_invalid:${reason}`);
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function boundedSelectorString(value, maximum, field) {
+  if (typeof value !== "string") evidenceSelectorInvalid(`${field} must be a string`);
+  const text = value.trim();
+  if (!text) evidenceSelectorInvalid(`${field} must not be empty`);
+  if (text.length > maximum) evidenceSelectorInvalid(`${field} exceeds ${maximum} characters`);
+  if (/[\u0000-\u001f]/.test(text)) evidenceSelectorInvalid(`${field} contains control characters`);
+  return text;
+}
+
+/**
+ * Parses the one-selector evidence-retrieval contract shared by MCP and the
+ * backend. Optional properties which are present are validated rather than
+ * silently ignored, and multiple active selectors fail before evidence bytes
+ * are read.
+ */
+export function parseEvidenceRetrievalSelectorV1(value) {
+  const request = record(value);
+  if (!request) evidenceSelectorInvalid("request must be an object");
+  const active = [];
+
+  if (hasOwn(request, "fields")) {
+    if (!Array.isArray(request.fields) || request.fields.length < 1 || request.fields.length > 64) {
+      evidenceSelectorInvalid("fields must contain 1..64 paths");
+    }
+    const fields = request.fields.map((field, index) => boundedSelectorString(field, 512, `fields[${index}]`));
+    active.push({ kind: "fields", fields });
+  }
+  if (hasOwn(request, "item_range")) {
+    const itemRange = record(request.item_range);
+    if (!itemRange
+        || !Number.isSafeInteger(itemRange.start) || itemRange.start < 0
+        || !Number.isSafeInteger(itemRange.count) || itemRange.count < 1 || itemRange.count > 256) {
+      evidenceSelectorInvalid("item_range requires path, start >= 0, and count 1..256");
+    }
+    active.push({
+      kind: "item_range",
+      item_range: {
+        path: boundedSelectorString(itemRange.path, 512, "item_range.path"),
+        start: itemRange.start,
+        count: itemRange.count
+      }
+    });
+  }
+  if (hasOwn(request, "text_range")) {
+    const textRange = record(request.text_range);
+    if (!textRange
+        || !Number.isSafeInteger(textRange.start) || textRange.start < 0
+        || !Number.isSafeInteger(textRange.length) || textRange.length < 1 || textRange.length > 1_048_576) {
+      evidenceSelectorInvalid("text_range requires start >= 0 and length 1..1048576");
+    }
+    active.push({ kind: "text_range", text_range: { start: textRange.start, length: textRange.length } });
+  }
+  if (hasOwn(request, "target_subset")) {
+    if (!Array.isArray(request.target_subset) || request.target_subset.length < 1 || request.target_subset.length > 64) {
+      evidenceSelectorInvalid("target_subset must contain 1..64 target identities");
+    }
+    const targetSubset = [...new Set(request.target_subset.map((target, index) =>
+      boundedSelectorString(target, 160, `target_subset[${index}]`)))];
+    active.push({ kind: "target_subset", target_subset: targetSubset });
+  }
+  if (hasOwn(request, "image")) {
+    if (request.image !== true) evidenceSelectorInvalid("image must be true when supplied");
+    active.push({ kind: "image", image: true });
+  }
+  if (active.length !== 1) {
+    evidenceSelectorInvalid("exactly one active selector is required: fields, item_range, text_range, target_subset, or image=true");
+  }
+  return Object.freeze(active[0]);
+}
+
+/** Returns true only for reviewed scalar/collection identity field names. */
+export function isEvidenceTargetIdentityFieldV1(value) {
+  if (typeof value !== "string" || !value) return false;
+  const compact = value.replace(/[_-]/g, "").toLowerCase();
+  if (/^(?:uniqueid|uniqueids)$/.test(compact)) return true;
+  return /(?:element|target|view|sheet|room|space|system|circuit|level|host|textnote|connector|fitting|sourcescoped)(?:id|ids|uniqueid|uniqueids|name|names)?$/.test(compact);
+}
+
+export function evidenceTargetIdentityValuesV1(value) {
+  const candidates = Array.isArray(value) ? value : [value];
+  const identities = [];
+  for (const candidate of candidates) {
+    const identity = typeof candidate === "string"
+      ? candidate.trim()
+      : Number.isSafeInteger(candidate)
+        ? String(candidate)
+        : "";
+    if (identity && identity.length <= 160 && !/[\u0000-\u001f]/.test(identity) && !identities.includes(identity)) {
+      identities.push(identity);
+    }
+  }
+  return identities;
+}
+
+function matchingScalarRecordTargets(value, targets) {
+  const row = record(value);
+  const matches = new Set();
+  if (!row) return matches;
+  for (const [key, fieldValue] of Object.entries(row)) {
+    if (!isEvidenceTargetIdentityFieldV1(key) || Array.isArray(fieldValue)) continue;
+    for (const identity of evidenceTargetIdentityValuesV1(fieldValue)) {
+      if (targets.has(identity)) matches.add(identity);
+    }
+  }
+  return matches;
+}
+
+function isEvidenceTargetIdentityMapFieldV1(value) {
+  if (typeof value !== "string" || !value) return false;
+  const compact = value.replace(/[_-]/g, "").toLowerCase();
+  return /^(?:by(?:id|uniqueid|target)|(?:item|items|element|elements|target|targets|view|views|sheet|sheets|room|rooms|space|spaces|system|systems|circuit|circuits|level|levels|host|hosts|textnote|textnotes|connector|connectors|fitting|fittings)by(?:id|uniqueid|target))$/.test(compact);
+}
+
+/**
+ * Selects complete rows and scalar identity-array members which are bound to
+ * every requested target. Arbitrary prose and partial substrings are never
+ * evidence of target identity. The caller retains the original immutable raw
+ * object and applies the final byte cap to this deterministic selection.
+ */
+export function selectExactEvidenceTargetsV1(payload, targetSubset) {
+  const parsed = parseEvidenceRetrievalSelectorV1({ target_subset: targetSubset });
+  const requested = parsed.target_subset;
+  const targets = new Set(requested);
+  const matched = new Set();
+  const selections = new Map();
+  const queue = [{ value: payload, path: "payload", field: "payload" }];
+  let cursor = 0;
+  let visited = 0;
+
+  while (cursor < queue.length) {
+    const current = queue[cursor++];
+    if (++visited > 100_000) evidenceSelectorInvalid("target_subset structural scan exceeds 100000 nodes");
+    if (Array.isArray(current.value)) {
+      if (isEvidenceTargetIdentityFieldV1(current.field)) {
+        const selected = current.value.filter(item => {
+          const identity = evidenceTargetIdentityValuesV1(item)[0];
+          if (!identity || !targets.has(identity)) return false;
+          matched.add(identity);
+          return true;
+        });
+        if (selected.length > 0) selections.set(current.path, selected);
+      }
+      const selectedRows = [];
+      for (const item of current.value) {
+        const matches = matchingScalarRecordTargets(item, targets);
+        if (matches.size === 0) continue;
+        selectedRows.push(item);
+        for (const identity of matches) matched.add(identity);
+      }
+      if (selectedRows.length > 0) {
+        selections.set(current.path, selectedRows);
+        continue;
+      }
+      for (let index = 0; index < current.value.length; index += 1) {
+        const item = current.value[index];
+        if (item && typeof item === "object") queue.push({ value: item, path: `${current.path}[${index}]`, field: current.field });
+      }
+      continue;
+    }
+
+    const row = record(current.value);
+    if (!row) continue;
+    const rowMatches = matchingScalarRecordTargets(row, targets);
+    if (rowMatches.size > 0) {
+      selections.set(current.path, row);
+      for (const identity of rowMatches) matched.add(identity);
+      continue;
+    }
+    for (const [key, fieldValue] of Object.entries(row)) {
+      if (targets.has(key) && isEvidenceTargetIdentityMapFieldV1(current.field)) {
+        selections.set(`${current.path}.${key}`, fieldValue);
+        matched.add(key);
+        continue;
+      }
+      if (fieldValue && typeof fieldValue === "object") {
+        queue.push({ value: fieldValue, path: `${current.path}.${key}`, field: key });
+      }
+    }
+  }
+
+  const missing = requested.filter(identity => !matched.has(identity));
+  if (missing.length > 0) {
+    evidenceSelectorInvalid(`target_subset did not match exact target identities: ${missing.join(", ")}`);
+  }
+  return Object.freeze({
+    schema: EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA,
+    selection: Object.freeze(Object.fromEntries(selections)),
+    matched_target_ids: Object.freeze([...requested]),
+    selection_paths: Object.freeze([...selections.keys()])
+  });
+}

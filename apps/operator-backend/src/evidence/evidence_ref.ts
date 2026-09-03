@@ -107,7 +107,7 @@ export type EvidenceRetrievalRequest = {
   item_range?: { path: string; start: number; count: number };
   text_range?: { start: number; length: number };
   target_subset?: string[];
-  image?: boolean;
+  image?: true;
   max_bytes?: number;
   purpose: string;
 };

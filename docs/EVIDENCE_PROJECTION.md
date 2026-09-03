@@ -50,11 +50,23 @@ purpose, and one selector:
 - a focused target subset; or
 - one selected image/capture.
 
+The versioned selector contract is shared by the MCP and backend processes.
+Supplying no selector or composing two selectors is invalid; the backend never
+silently gives one selector precedence over another. A target subset matches
+only exact values in reviewed identity fields (or exact keys in an
+identity-keyed map). It returns complete target-bound rows and matching members
+of identity arrays. Arbitrary prose, partial identifiers, and nearby unrelated
+rows cannot establish target identity. Every requested target must match or the
+selection fails atomically.
+
 The backend rejects unbounded retrieval, “all evidence” requests, cross-scope
 lookups, unsafe field paths, and selections above the requested/hard byte cap.
-The MCP `operator_retrieve_evidence` tool exposes the same authenticated
-interface. Deterministic and visual verifiers can instead read the full
-authoritative bytes through the internal hash-verifying API.
+Target selection scans the normalized semantic payload once; it does not scan
+or duplicate a synthetic envelope alias. The MCP `operator_retrieve_evidence`
+tool exposes the same authenticated interface and validates the shared
+selector contract before transport. Deterministic and visual verifiers can
+instead read the full authoritative bytes through the internal hash-verifying
+API.
 
 ## Telemetry
 

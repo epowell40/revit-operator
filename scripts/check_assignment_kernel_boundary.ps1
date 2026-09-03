@@ -306,6 +306,47 @@ foreach ($relativePath in @(
   }
 }
 
+# Focused evidence retrieval is one cross-process selector protocol. MCP may
+# translate camelCase transport fields, but selector cardinality and exact
+# target identity semantics belong only to the shared contract package.
+$evidenceSelectorContract = Join-Path $RepoRoot "packages/assignment-kernel-v2-contracts/index.js"
+$evidenceSelectorVectors = Join-Path $RepoRoot "packages/assignment-kernel-v2-contracts/evidence-retrieval-selector-golden-vectors.json"
+if (-not (Test-Path -LiteralPath $evidenceSelectorVectors -PathType Leaf)) {
+  $violations.Add("Shared evidence-retrieval selector golden vectors are missing")
+}
+$evidenceSelectorSource = Get-Content -Raw -LiteralPath $evidenceSelectorContract
+foreach ($symbol in @(
+  "EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA",
+  "parseEvidenceRetrievalSelectorV1",
+  "isEvidenceTargetIdentityFieldV1",
+  "selectExactEvidenceTargetsV1"
+)) {
+  if ($evidenceSelectorSource -notmatch [regex]::Escape($symbol)) {
+    $violations.Add("Shared evidence-retrieval selector contract is missing $symbol")
+  }
+}
+$evidenceSelectorConsumers = @{
+  "apps/mcp-server/src/server.ts" = @("parseEvidenceRetrievalSelectorV1")
+  "apps/operator-backend/src/evidence/evidence_store.ts" = @("parseEvidenceRetrievalSelectorV1", "selectExactEvidenceTargetsV1")
+  "apps/operator-backend/src/evidence/evidence_projection.ts" = @("isEvidenceTargetIdentityFieldV1", "evidenceTargetIdentityValuesV1")
+}
+foreach ($relativePath in $evidenceSelectorConsumers.Keys) {
+  $path = Resolve-RepoPath $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts') {
+    $violations.Add("$relativePath does not import the shared evidence-retrieval selector contract")
+  }
+  foreach ($symbol in $evidenceSelectorConsumers[$relativePath]) {
+    if ($content -notmatch [regex]::Escape($symbol)) {
+      $violations.Add("$relativePath does not use shared evidence-selector symbol $symbol")
+    }
+  }
+  if ($content -match '(?m)function\s+filterTargets\s*\(' -or
+      $content -match 'JSON\.stringify\s*\([^\r\n]*\)\.includes\s*\(') {
+    $violations.Add("$relativePath reintroduces local substring-based target selection")
+  }
+}
+
 # A successful read is not itself proof that an applied postcondition holds.
 # Live execution and restart recovery must share one deterministic value matcher,
 # and only the reviewed settlement edge may mint the typed verification fact.

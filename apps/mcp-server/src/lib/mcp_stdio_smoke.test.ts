@@ -705,6 +705,42 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
     _meta: authMeta
   }), "retrieving principal-authenticated evidence through compiled MCP");
   assert.equal((evidence as any).isError, undefined, stderr.join(""));
+  const targetedEvidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"c".repeat(32)}`,
+      sessionId: "session-a",
+      assignmentId: "assignment-a",
+      runId: "run-a",
+      generation: 1,
+      purpose: "Read the one exact TextNote candidate selected by its native identity.",
+      targetSubset: ["1478627"],
+      maxBytes: 4096
+    },
+    _meta: authMeta
+  }), "retrieving exact target-bound evidence through compiled MCP");
+  assert.equal((targetedEvidence as any).isError, undefined, stderr.join(""));
+
+  const requestCountBeforeConflict = requests.length;
+  const ambiguousEvidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"d".repeat(32)}`,
+      sessionId: "session-a",
+      assignmentId: "assignment-a",
+      runId: "run-a",
+      generation: 1,
+      purpose: "Reject an ambiguous focused-evidence request before transport.",
+      fields: ["payload.items"],
+      targetSubset: ["1478627"],
+      maxBytes: 4096
+    },
+    _meta: authMeta
+  }), "rejecting an ambiguous evidence selector through compiled MCP");
+  assert.equal((ambiguousEvidence as any).isError, true);
+  assert.match((ambiguousEvidence as any).content.map((item: any) => item.text ?? "").join("\n"), /exactly one active selector/);
+  assert.equal(requests.length, requestCountBeforeConflict, "Ambiguous selectors must fail before backend transport.");
+
   const semantic = await withTimeout(client.callTool({
     name: "operator_plan_semantic_mep_route",
     arguments: { userText: "Route one bounded branch." },
@@ -715,8 +751,13 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
   assert.deepEqual(requests.map(request => request.path), [
     "/api/assignments/read-completion-claims",
     "/evidence/retrieve",
+    "/evidence/retrieve",
     "/tools/mep/semantic-route-plan"
   ]);
+  assert.deepEqual(JSON.parse(requests[1]!.body).fields, ["count"]);
+  assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(requests[1]!.body), "target_subset"), false);
+  assert.deepEqual(JSON.parse(requests[2]!.body).target_subset, ["1478627"]);
+  assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(requests[2]!.body), "fields"), false);
   for (const request of requests) {
     assert.equal(request.authorization, `Bearer ${credential}`);
     assert.equal(request.shared, "");

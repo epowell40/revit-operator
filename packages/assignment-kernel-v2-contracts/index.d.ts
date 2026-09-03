@@ -82,3 +82,24 @@ export function assignmentKernelControlEvidenceFactsV2(
   capabilityId: unknown,
   value: unknown
 ): readonly AssignmentKernelControlEvidenceFactV2[];
+
+export const EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA: "revit-operator.evidence-retrieval-selector-contract/v1";
+
+export type EvidenceRetrievalSelectorV1 =
+  | Readonly<{ kind: "fields"; fields: readonly string[] }>
+  | Readonly<{ kind: "item_range"; item_range: Readonly<{ path: string; start: number; count: number }> }>
+  | Readonly<{ kind: "text_range"; text_range: Readonly<{ start: number; length: number }> }>
+  | Readonly<{ kind: "target_subset"; target_subset: readonly string[] }>
+  | Readonly<{ kind: "image"; image: true }>;
+
+export interface ExactEvidenceTargetSelectionV1 {
+  readonly schema: typeof EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA;
+  readonly selection: Readonly<Record<string, unknown>>;
+  readonly matched_target_ids: readonly string[];
+  readonly selection_paths: readonly string[];
+}
+
+export function parseEvidenceRetrievalSelectorV1(value: unknown): EvidenceRetrievalSelectorV1;
+export function isEvidenceTargetIdentityFieldV1(value: unknown): boolean;
+export function evidenceTargetIdentityValuesV1(value: unknown): readonly string[];
+export function selectExactEvidenceTargetsV1(payload: unknown, targetSubset: unknown): ExactEvidenceTargetSelectionV1;

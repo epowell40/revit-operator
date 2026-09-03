@@ -1,10 +1,13 @@
 import { EVIDENCE_PROJECTION_SCHEMA, type EvidenceProjectionV1, type EvidenceRefV1 } from "./evidence_ref.js";
 import { extractMcpStructuredPayload, parseBoundedStructuredJson } from "./structured_payload.js";
+import {
+  evidenceTargetIdentityValuesV1,
+  isEvidenceTargetIdentityFieldV1
+} from "@revitoperator/assignment-kernel-v2-contracts";
 
 const COUNT_KEY = /(?:^|_)(?:count|total|length|matched|created|updated|deleted|failed|succeeded)$/i;
 const ACCEPTANCE_KEY = /(?:^|_)(?:id|name|number|value|status|state|result|effect_state|before_hash|after_hash|sha256|hash|level|host|side|system|orientation|circuit|category|type)$/i;
 const DIAGNOSTIC_KEY = /(?:error|warning|diagnostic|failure|reason|message)/i;
-const TARGET_KEY = /(?:element|target|view|sheet|room|space|system|circuit|level|host)(?:_?ids?|_?names?)?$/i;
 const STRUCTURED_TEXT_KEY = /^(?:text|output|result_json|structuredContent)$/i;
 const IDENTITY_ARRAY_KEY = /^(?:items|elements|results)$/i;
 const MAX_IDENTITY_ROWS = 20_000;
@@ -101,12 +104,9 @@ function identityInventories(row: Record<string, unknown>, path: string): Identi
 }
 
 function pushTarget(out: string[], value: unknown): void {
-  const values = Array.isArray(value) ? value : [value];
-  for (const item of values) {
-    const normalized = scalar(item);
-    if (normalized === undefined || normalized === null) continue;
-    const text = boundedText(normalized, 120);
-    if (text && !out.includes(text) && out.length < 32) out.push(text);
+  for (const identity of evidenceTargetIdentityValuesV1(value)) {
+    const text = boundedText(identity, 120);
+    if (!out.includes(text) && out.length < 32) out.push(text);
   }
 }
 
@@ -171,7 +171,7 @@ export function extractDeterministicEvidenceFacts(raw: unknown): {
         && value !== null && typeof value === "object";
       const valueScalar = scalar(value);
       if (COUNT_KEY.test(key) && typeof value === "number" && Number.isFinite(value) && Object.keys(counts).length < 24) counts[path] = value;
-      if (TARGET_KEY.test(key)) pushTarget(targets, value);
+      if (isEvidenceTargetIdentityFieldV1(key)) pushTarget(targets, value);
       if (/^before_?(?:sha256|hash)$/i.test(key) && typeof value === "string") beforeHash = boundedText(value, 128);
       if (/^after_?(?:sha256|hash)$/i.test(key) && typeof value === "string") afterHash = boundedText(value, 128);
       if (/^(?:effect_?)?state$/i.test(key) && (value === "none" || value === "unknown" || value === "applied")) effectState = value;
@@ -237,7 +237,16 @@ export function projectEvidence(ref: EvidenceRefV1, raw: unknown, maxBytes = 8_1
     additional_evidence: true,
     retrieval: {
       tool_name: "operator_retrieve_evidence",
-      selector_forms: ["fields", "itemRange", "textRange", "targetSubset", "image", "JSON payload fields: payload.<field>", "JSON payload arrays: payload.<array>"],
+      selector_forms: [
+        "EXACTLY ONE selector is required",
+        "fields",
+        "itemRange",
+        "textRange",
+        "targetSubset (exact reviewed target identities only)",
+        "image",
+        "JSON payload fields: payload.<field>",
+        "JSON payload arrays: payload.<array>"
+      ],
       max_bytes: 1_048_576
     },
     truncated: extracted.omitted

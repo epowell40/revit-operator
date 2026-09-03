@@ -147,6 +147,80 @@ test("normalized native payload retrieval honors the advertised payload root sel
   assert.deepEqual(JSON.parse(readAuthoritativeEvidence(stored.ref, scope).toString("utf8")), normalizedNativePayload);
 }));
 
+test("Candidate 63 exact target retrieval stays bounded and rejects ambiguous selector contracts", { concurrency: false }, () => withWorkspace(() => {
+  const selectedId = 1_478_627;
+  const items = Array.from({ length: 50 }, (_, index) => ({
+    textNoteId: 1_478_604 + index,
+    elementId: 1_478_604 + index,
+    uniqueId: `candidate63-text-note-${index.toString().padStart(2, "0")}`,
+    text: index === 0
+      ? `Unrelated prose containing the partial digits ${selectedId} must not establish target identity.`
+      : `Candidate 63 TextNote ${index}`,
+    textNormalized: `candidate 63 textnote ${index}`,
+    textTypeId: 10_352,
+    ownerViewId: 1_363_433,
+    ownerViewName: "L4",
+    diagnosticPadding: "x".repeat(720)
+  }));
+  const selected = items.find(item => item.elementId === selectedId)!;
+  const stored = storeEvidence({
+    scope,
+    source: "candidate63:find-text-notes",
+    media_type: "application/json",
+    trust_level: "authoritative_native",
+    verification_relevance: "required",
+    raw: {
+      ok: true,
+      scope: "active_project",
+      itemsComplete: true,
+      elementIds: items.map(item => item.elementId),
+      textSamples: items.slice(0, 20).map(item => item.text),
+      items
+    }
+  }, 4_096);
+  assert.ok(stored.ref.byte_count > 30_000);
+
+  assert.throws(() => retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "Read the exact identity, text, type, and owner-view facts for the selected project TextNote candidate.",
+    fields: ["payload.items", "payload.count", "payload.total", "payload.truncated"],
+    target_subset: [String(selectedId)],
+    max_bytes: 8_000
+  }), /exactly one active selector/);
+
+  const focused = retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "Read the exact identity, text, type, and owner-view facts for the selected project TextNote candidate.",
+    target_subset: [String(selectedId)],
+    max_bytes: 30_000
+  });
+  assert.deepEqual(focused.selection, {
+    "payload.elementIds": [selectedId],
+    "payload.items": [selected]
+  });
+  assert.ok(focused.returned_bytes < 2_000);
+  assert.equal(focused.complete, false);
+
+  for (const target of ["147862", "14786270", "missing-target"]) {
+    assert.throws(() => retrieveEvidence({
+      evidence_id: stored.ref.evidence_id,
+      scope,
+      purpose: "Reject a target which has no exact identity match.",
+      target_subset: [target],
+      max_bytes: 4_096
+    }), /did not match exact target identities/);
+  }
+  assert.throws(() => retrieveEvidence({
+    evidence_id: stored.ref.evidence_id,
+    scope,
+    purpose: "Reject a partially matched multi-target request atomically.",
+    target_subset: [String(selectedId), "missing-target"],
+    max_bytes: 4_096
+  }), /missing-target/);
+}));
+
 test("projection-advertised dotted selection keys remain retrievable from a stored retrieval result", { concurrency: false }, () => withWorkspace(() => {
   const items = [
     { textNoteId: 1_421_361, text: "Autodesk Revit sample project\r" },

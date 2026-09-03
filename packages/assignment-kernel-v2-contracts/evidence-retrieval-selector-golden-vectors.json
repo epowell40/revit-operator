@@ -1,0 +1,136 @@
+{
+  "schema": "revit-operator.evidence-retrieval-selector-golden-vectors/v1",
+  "selector_schema": "revit-operator.evidence-retrieval-selector-contract/v1",
+  "valid_selectors": [
+    {
+      "id": "fields",
+      "input": { "fields": [" payload.items ", "payload.total"] },
+      "expected": { "kind": "fields", "fields": ["payload.items", "payload.total"] }
+    },
+    {
+      "id": "item-range",
+      "input": { "item_range": { "path": " payload.items ", "start": 2, "count": 4 } },
+      "expected": { "kind": "item_range", "item_range": { "path": "payload.items", "start": 2, "count": 4 } }
+    },
+    {
+      "id": "text-range",
+      "input": { "text_range": { "start": 7, "length": 128 } },
+      "expected": { "kind": "text_range", "text_range": { "start": 7, "length": 128 } }
+    },
+    {
+      "id": "target-subset-normalized",
+      "input": { "target_subset": [" 1478627 ", "1478627", "UID-α"] },
+      "expected": { "kind": "target_subset", "target_subset": ["1478627", "UID-α"] }
+    },
+    {
+      "id": "image",
+      "input": { "image": true },
+      "expected": { "kind": "image", "image": true }
+    }
+  ],
+  "invalid_selectors": [
+    { "id": "none", "input": {}, "error": "exactly one active selector" },
+    { "id": "multiple", "input": { "fields": ["payload.items"], "target_subset": ["1478627"] }, "error": "exactly one active selector" },
+    { "id": "empty-fields", "input": { "fields": [] }, "error": "fields must contain 1..64 paths" },
+    { "id": "empty-target-subset", "input": { "target_subset": [] }, "error": "target_subset must contain 1..64 target identities" },
+    { "id": "false-image", "input": { "image": false }, "error": "image must be true" },
+    { "id": "fractional-item-start", "input": { "item_range": { "path": "payload.items", "start": 0.5, "count": 1 } }, "error": "item_range requires" },
+    { "id": "zero-item-count", "input": { "item_range": { "path": "payload.items", "start": 0, "count": 0 } }, "error": "item_range requires" },
+    { "id": "oversize-text-range", "input": { "text_range": { "start": 0, "length": 1048577 } }, "error": "text_range requires" }
+  ],
+  "target_selection_vectors": [
+    {
+      "id": "candidate-63-text-note-shape",
+      "payload": {
+        "elementIds": [1478625, 1478627, 1478629],
+        "textSamples": ["decoy prose 1478627", "near-match 14786270"],
+        "items": [
+          { "elementId": 1478625, "text": "decoy containing 1478627", "ownerViewName": "L4" },
+          { "elementId": 1478627, "textNoteId": 1478627, "uniqueId": "candidate63-target", "text": "Selected note", "ownerViewName": "L4" },
+          { "elementId": 1478629, "text": "another decoy", "ownerViewName": "L4" }
+        ]
+      },
+      "target_subset": ["1478627"],
+      "expected_selection": {
+        "payload.elementIds": [1478627],
+        "payload.items": [
+          { "elementId": 1478627, "textNoteId": 1478627, "uniqueId": "candidate63-target", "text": "Selected note", "ownerViewName": "L4" }
+        ]
+      },
+      "expected_paths": ["payload.elementIds", "payload.items"]
+    },
+    {
+      "id": "reviewed-identity-field-spellings-and-keyed-map",
+      "payload": {
+        "camelRows": [{ "elementId": 11, "label": "camel" }],
+        "snakeRows": [{ "element_id": "snake-1", "label": "snake" }],
+        "hyphenRows": [{ "target-id": "hyphen-1", "label": "hyphen" }],
+        "upperRows": [{ "sheetUniqueID": "sheet-1", "label": "upper" }],
+        "byTarget": { "map-key": { "label": "keyed" } },
+        "decoys": [{ "message": "snake-1", "value": "hyphen-1", "description": "sheet-1" }]
+      },
+      "target_subset": ["11", "snake-1", "hyphen-1", "sheet-1", "map-key"],
+      "expected_selection": {
+        "payload.camelRows": [{ "elementId": 11, "label": "camel" }],
+        "payload.snakeRows": [{ "element_id": "snake-1", "label": "snake" }],
+        "payload.hyphenRows": [{ "target-id": "hyphen-1", "label": "hyphen" }],
+        "payload.upperRows": [{ "sheetUniqueID": "sheet-1", "label": "upper" }],
+        "payload.byTarget.map-key": { "label": "keyed" }
+      },
+      "expected_paths": ["payload.camelRows", "payload.snakeRows", "payload.hyphenRows", "payload.upperRows", "payload.byTarget.map-key"]
+    },
+    {
+      "id": "direct-record",
+      "payload": { "elementId": 42, "name": "direct target", "status": "found" },
+      "target_subset": ["42"],
+      "expected_selection": { "payload": { "elementId": 42, "name": "direct target", "status": "found" } },
+      "expected_paths": ["payload"]
+    },
+    {
+      "id": "nested-array",
+      "payload": { "result": { "items": [{ "target_id": "nested-a", "value": 1 }, { "target_id": "nested-b", "value": 2 }] } },
+      "target_subset": ["nested-b"],
+      "expected_selection": { "payload.result.items": [{ "target_id": "nested-b", "value": 2 }] },
+      "expected_paths": ["payload.result.items"]
+    },
+    {
+      "id": "unicode-exact-identity",
+      "payload": { "items": [{ "uniqueId": "要素-α-é", "label": "Unicode target" }, { "uniqueId": "要素-α-e", "label": "decoy" }] },
+      "target_subset": ["要素-α-é"],
+      "expected_selection": { "payload.items": [{ "uniqueId": "要素-α-é", "label": "Unicode target" }] },
+      "expected_paths": ["payload.items"]
+    }
+  ],
+  "rejected_target_vectors": [
+    {
+      "id": "prose-is-not-identity",
+      "payload": { "items": [{ "message": "target-7", "description": "The target-7 item returned." }] },
+      "target_subset": ["target-7"],
+      "error": "did not match exact target identities"
+    },
+    {
+      "id": "partial-id-is-not-identity",
+      "payload": { "items": [{ "elementId": 1478627, "text": "selected" }] },
+      "target_subset": ["147862"],
+      "error": "did not match exact target identities"
+    },
+    {
+      "id": "multi-target-is-atomic",
+      "payload": { "items": [{ "elementId": 1478627, "text": "selected" }] },
+      "target_subset": ["1478627", "missing-target"],
+      "error": "missing-target"
+    },
+    {
+      "id": "control-identities-are-not-domain-targets",
+      "payload": { "metadata": { "operationId": "opv2-control", "assignment_id": "assignment-control" } },
+      "target_subset": ["opv2-control"],
+      "error": "did not match exact target identities"
+    },
+    {
+      "id": "arbitrary-object-keys-are-not-identity-maps",
+      "payload": { "metadata": { "target-7": { "secret": "not target evidence" } } },
+      "target_subset": ["target-7"],
+      "error": "did not match exact target identities"
+    }
+  ]
+}

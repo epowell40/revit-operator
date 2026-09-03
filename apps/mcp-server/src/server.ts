@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import * as fs from "fs";
 import * as path from "path";
 import * as xlsx from "xlsx";
@@ -945,7 +946,7 @@ server.tool("revit_tool_registry", "List/search Revit HTTP primitives from the b
   }
 );
 
-server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Never use this to request all evidence.",
+server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Supply exactly one selector. Use targetSubset for exact target-bound rows; never use this to request all evidence.",
   {
     evidenceId: z.string().describe("Named ev1_ evidence identity from a model-facing projection."),
     sessionId: z.string().describe("Current session identity."),
@@ -954,15 +955,23 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     attemptId: z.string().nullable().optional(),
     generation: z.number().int().min(0).nullable().optional(),
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
-    fields: z.array(z.string()).max(64).optional(),
-    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).optional(),
-    textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).optional(),
-    targetSubset: z.array(z.string()).max(64).optional(),
-    image: z.boolean().optional(),
+    fields: z.array(z.string()).min(1).max(64).describe("One or more typed paths. Mutually exclusive with itemRange, textRange, targetSubset, and image.").optional(),
+    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).describe("One bounded array page. Mutually exclusive with every other selector.").optional(),
+    textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
+    targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
+    image: z.literal(true).describe("Select one image. Mutually exclusive with every other selector.").optional(),
     maxBytes: z.number().int().min(64).max(1_048_576).optional()
   },
   async (args) => {
     try {
+      const selectorRequest = {
+        ...(args.fields ? { fields: args.fields } : {}),
+        ...(args.itemRange ? { item_range: args.itemRange } : {}),
+        ...(args.textRange ? { text_range: args.textRange } : {}),
+        ...(args.targetSubset ? { target_subset: args.targetSubset } : {}),
+        ...(args.image !== undefined ? { image: args.image } : {})
+      };
+      parseEvidenceRetrievalSelectorV1(selectorRequest);
       const result = await createOperatorBackendClient().retrieveEvidence({
         schema: "revit-operator.evidence-retrieval.v1",
         evidence_id: args.evidenceId,
@@ -974,11 +983,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
           generation: args.generation ?? null
         },
         purpose: args.purpose,
-        ...(args.fields ? { fields: args.fields } : {}),
-        ...(args.itemRange ? { item_range: args.itemRange } : {}),
-        ...(args.textRange ? { text_range: args.textRange } : {}),
-        ...(args.targetSubset ? { target_subset: args.targetSubset } : {}),
-        ...(args.image !== undefined ? { image: args.image } : {}),
+        ...selectorRequest,
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
