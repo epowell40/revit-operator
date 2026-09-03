@@ -515,7 +515,6 @@ foreach ($requiredVerificationSymbol in @(
 }
 $teammateVerificationEvidence = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/teammate_verification_evidence.ts")
 foreach ($requiredVerificationEvidenceSymbol in @(
-  "EXCLUDED_EVIDENCE_CONTAINERS",
   "VERIFIER_CONTAINERS",
   "verificationObservationPayloadV2",
   "explicitVerificationV2",
@@ -525,13 +524,46 @@ foreach ($requiredVerificationEvidenceSymbol in @(
     $violations.Add("Reviewed verification-evidence extractor is missing $requiredVerificationEvidenceSymbol")
   }
 }
+$verificationPayloadBoundaryPath = Resolve-RepoPath "apps/operator-backend/src/verification/verification_payload_boundary_v2.ts"
+if (-not (Test-Path -LiteralPath $verificationPayloadBoundaryPath -PathType Leaf)) {
+  $violations.Add("Shared verification-payload evidence boundary is missing")
+} else {
+  $verificationPayloadBoundary = Get-Content -Raw -LiteralPath $verificationPayloadBoundaryPath
+  foreach ($requiredBoundarySymbol in @(
+    "EXCLUDED_EVIDENCE_CONTAINERS_V2",
+    "normalizedEvidenceKeyV2",
+    "isExcludedEvidenceContainerV2"
+  )) {
+    if ($verificationPayloadBoundary -notmatch [regex]::Escape($requiredBoundarySymbol)) {
+      $violations.Add("Shared verification-payload evidence boundary is missing $requiredBoundarySymbol")
+    }
+  }
+  foreach ($requiredExcludedContainer in @(
+    "arguments", "body", "control", "input", "metadata", "provenance", "request"
+  )) {
+    if ($verificationPayloadBoundary -notmatch ('["'']' + [regex]::Escape($requiredExcludedContainer) + '["'']')) {
+      $violations.Add("Shared verification-payload evidence boundary no longer excludes $requiredExcludedContainer")
+    }
+  }
+}
+foreach ($verificationBoundaryConsumer in @(
+  "apps/operator-backend/src/teammate_verification_evidence.ts",
+  "apps/operator-backend/src/postcondition_verification_v2.ts",
+  "apps/operator-backend/src/verification/verification_capability_admission_v2.ts"
+)) {
+  $consumerContent = Get-Content -Raw -LiteralPath (Resolve-RepoPath $verificationBoundaryConsumer)
+  if (($consumerContent -notmatch 'verification_payload_boundary_v2\.js') -or
+      ($consumerContent -notmatch 'isExcludedEvidenceContainerV2')) {
+    $violations.Add("$verificationBoundaryConsumer does not consume the shared verification-payload evidence boundary")
+  }
+}
 if (($teammateVerificationRuntime -match 'function\s+explicitVerification') -or
     ($teammateVerificationEvidence -match 'normalized\s*===\s*["'']complete["'']') -or
     ($teammateVerificationEvidence -match '["'']complete["'']\s*,\s*["'']allpassed["'']')) {
   $violations.Add("Generic completion metadata can be reintroduced as V2 postcondition proof")
 }
 $postconditionContract = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/postcondition_verification_v2.ts")
-if (($postconditionContract -notmatch 'excludedContainers') -or
+if (($postconditionContract -notmatch 'isExcludedEvidenceContainerV2') -or
     ($postconditionContract -notmatch 'schedule_filter:') -or
     ($postconditionContract -notmatch 'Parameter\\\.Set') -or
     ($postconditionContract -notmatch 'args\.length\s*===\s*1')) {
