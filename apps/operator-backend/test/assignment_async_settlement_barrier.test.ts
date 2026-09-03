@@ -43,6 +43,7 @@ import {
 } from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+  markAssignmentKernelOperationDispatchStartedV2,
   openAssignmentKernelOperationV2,
   settleAssignmentKernelOperationV2
 } from "../src/assignments/assignment_kernel_v2_execution.js";
@@ -767,6 +768,105 @@ test("Candidate 42 operation-admission rejection remains structured and never be
       assert.equal(runtimeCalls, 0, "rejected admission must not invoke the MCP or Revit runtime");
       assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
         "rejected admission must not open another OperationV2");
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 66 incapable postcondition readback is rejected across the dynamic-handler seam before dispatch", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate66-verifier-admission-seam";
+    const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+    const goal = createGoal({
+      title: "Replace one TextNote",
+      objective: `Replace TextNote 1478627 with exactly: ${replacement}`,
+      acceptance_criteria: ["The exact admitted result is retained and verified."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate66-regression",
+      work_budget: {
+        requested_effect: "apply", document_fingerprint: "document-candidate66",
+        source_user_request: `Replace TextNote 1478627 with exactly: ${replacement}`
+      }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate66" });
+    const applyLease = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: "candidate66-apply",
+      provider_turn_id: "candidate66-apply-turn",
+      capability_id: "revit_call_tool",
+      classified_effect: "apply",
+      target_tokens: ["elementid:1478627", "id:1478627"],
+      arguments: {
+        method: "POST", path: "/revit/replace-text-note",
+        body: { elementId: 1478627, newText: replacement, apply: true }
+      }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const payload = { status: "Applied", elementId: 1478627, before: "OLD", after: replacement, changed: true };
+    settleAssignmentKernelOperationV2(applyLease, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: {
+          schema: OPERATION_RESULT_V2_SCHEMA,
+          result_id: `result-${applyLease.operation_id}`,
+          operation_id: applyLease.operation_id,
+          binding: applyLease.binding,
+          status: "succeeded",
+          dispatch_state: "dispatched",
+          persistent_effect: "applied",
+          native_transaction_state: "committed",
+          authority: "native-host",
+          result_schema_id: "operator-native/POST:/revit/replace-text-note/v2",
+          observation_required: true,
+          raw_payload_hash: createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex"),
+          receipt_id: `receipt-${applyLease.operation_id}`,
+          native_correlation_id: `native-${applyLease.operation_id}`,
+          request_identity: applyLease.request_identity,
+          completed_at: "2026-09-03T18:33:04.518Z"
+        },
+        observation: {
+          raw_payload: payload,
+          semantic_facts: [],
+          verification_relevance: ["task_result"]
+        }
+      }
+    });
+
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async () => {
+        runtimeCalls += 1;
+        return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+      },
+      queueAssignmentKernelV2TurnStop: () => {}
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate66-message",
+      user_text: `Replace the selected note with ${replacement}.`,
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      const response = await handleCodexServerRequest(runtime as any, {
+        id: "candidate66-incapable-readback-request",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator", threadId: "candidate66-thread", turnId: "candidate66-verification-turn",
+          callId: "candidate66-incapable-readback", tool: "revit_call_tool",
+          arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [1478627] } }
+        }
+      } as any) as { success?: boolean; contentItems?: Array<{ text?: string }> };
+      assert.equal(response.success, false);
+      assert.match(response.contentItems?.[0]?.text ?? "", /assignment_kernel_v2_verification_capability_inadmissible/);
+      assert.match(response.contentItems?.[0]?.text ?? "", /\/revit\/find-text-notes/);
+      assert.equal(runtimeCalls, 0, "incapable verification must be rejected before MCP or Revit dispatch");
+      assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
+        "rejected verification must not consume another OperationV2 identity");
     } finally {
       endTeammateLoopOwner(teammate);
     }

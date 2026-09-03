@@ -15,6 +15,7 @@ import {
   operationMatchesTargetIdentityV2,
   operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
+  verificationCapabilityAdmissionV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type AssignmentSnapshotV2,
@@ -287,6 +288,27 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
   const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  if (verifies) {
+    const verificationAdmission = verificationCapabilityAdmissionV2({
+      apply: {
+        capability_id: verifies.capability_id,
+        method: verifies.request_identity?.method,
+        path: verifies.request_identity?.path,
+        tool: verifies.input.tool
+      },
+      verification: {
+        capability_id: input.capability_id,
+        method: currentIdentity.method,
+        path: currentIdentity.path,
+        tool: object(input.arguments).tool
+      }
+    });
+    if (!verificationAdmission.admissible) {
+      throw new Error(`assignment_kernel_v2_verification_capability_inadmissible:${verificationAdmission.reason}`
+        + `:required=${verificationAdmission.required_semantic_outputs.join(",")}`
+        + `:admissible_readback_paths=${verificationAdmission.admissible_readback_paths.join(",")}`);
+    }
+  }
   const correctedPredecessor = Object.values(snapshot.operations)
     .filter(candidate => candidate.settlement_state === "settled"
       && candidate.persistent_effect === "none"

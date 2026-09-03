@@ -1097,6 +1097,53 @@ test("Candidate 59 Revit TextNote readback normalizes native paragraph delimiter
   assert.equal(verified.snapshot.outcome, "complete");
 }));
 
+test("Candidate 66 rejects a verification route whose result contract cannot expose the required TextNote value", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate66-text-apply",
+    provider_turn_id: "candidate66-apply-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "apply",
+    target_tokens: ["elementid:1478627", "id:1478627"],
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1478627, newText: replacement, apply: true }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease,
+    envelope(applyLease.operation_id, applyLease.binding, {
+      status: "Applied", elementId: 1478627, before: "Chase for Electrical Conduit\r", after: replacement, changed: true
+    }, "applied")
+  ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+
+  assert.throws(() => openAssignmentKernelOperationV2({
+    snapshot: readyForVerification,
+    controller_request_id: "candidate66-incapable-summary-readback",
+    provider_turn_id: "candidate66-verification-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    target_tokens: ["elementid:1478627", "id:1478627"],
+    arguments: {
+      method: "POST",
+      path: "/revit/get-element-summary",
+      body: { elementIds: [1478627] }
+    }
+  }), /assignment_kernel_v2_verification_capability_inadmissible:text_note_value_unavailable.*\/revit\/find-text-notes/);
+  const retained = getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!;
+  assert.equal(Object.values(retained.operations).filter(operation => operation.fulfillment_role === "verification").length, 0,
+    "an incapable read must not consume an OperationV2 identity or native dispatch opportunity");
+  const gap = deriveProgressGapsV2(retained).find(candidate => candidate.gap_id === `verification:${applyLease.operation_id}`);
+  assert.ok(gap);
+  assert.match(gap.reason, /Required semantic outputs: text_note\.value/);
+  assert.match(gap.reason, /\/revit\/find-text-notes/);
+}));
+
 test("a successful verification read with the wrong value cannot mint a postcondition fact", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

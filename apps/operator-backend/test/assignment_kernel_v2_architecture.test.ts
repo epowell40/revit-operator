@@ -319,6 +319,24 @@ test("apply progress exposes one typed verification gap per unverified persisten
   assert.doesNotMatch(outcome, /appliedOperations\.some\(/);
 });
 
+test("verification admission is capability-contract based before any OperationV2 is appended", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const admission = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "verification_admission.ts"), "utf8");
+  assert.match(admission, /VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA/);
+  assert.match(admission, /\/revit\/find-text-notes[\s\S]*text_note\.value/);
+  assert.match(admission, /\/revit\/get-element-summary[\s\S]*element\.identity/);
+  assert.doesNotMatch(admission, /\/revit\/get-element-summary[^\n]*text_note\.value/,
+    "an element identity/classification summary must not claim it can expose TextNote content");
+  const execution = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution.ts"), "utf8");
+  const admissionAt = execution.indexOf("verificationCapabilityAdmissionV2({");
+  const appendAt = execution.indexOf("event_id: `operation-admitted:${operationId}`");
+  assert.ok(admissionAt >= 0 && appendAt > admissionAt,
+    "verification capability eligibility must fail closed before an operation identity or dispatch opportunity is consumed");
+  const controller = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "progress", "controller.ts"), "utf8");
+  assert.match(controller, /verificationCapabilityGuidanceV2/,
+    "the same reviewed contract must describe the unresolved gap to bounded provider reasoning");
+});
+
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {
   const source = readFileSync(path.join(process.cwd(), "src/assignments/assignment_kernel_v2_execution.ts"), "utf8");
   const identity = /const operationId = `opv2_\$\{stableHash\(\{([\s\S]*?)\}\)\}`;/.exec(source)?.[1] ?? "";
