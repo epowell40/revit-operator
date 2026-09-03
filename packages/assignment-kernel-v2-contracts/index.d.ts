@@ -4,7 +4,10 @@ export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD: "assignment_kernel_v2_ses
 export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA: "revit-operator.assignment-snapshot/v2";
 export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA: "revit-operator.assignment-kernel-publication/v2";
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA: "revit-operator.assignment-provider-ledger/v2";
+export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA: "revit-operator.provider-call/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA: "revit-operator.operation-result-semantic-gap/v2";
+export type TerminalProviderCallStateV2 = "completed" | "response_transport_completed";
+export function isTerminalProviderCallStateV2(value: unknown): value is TerminalProviderCallStateV2;
 
 export interface AssignmentKernelV2SessionIndexBinding {
   assignment_id: string;

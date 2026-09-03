@@ -4,7 +4,22 @@ export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD = "assignment_kernel_v2_se
 export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA = "revit-operator.assignment-snapshot/v2";
 export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignment-kernel-publication/v2";
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2";
+export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA = "revit-operator.provider-call/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA = "revit-operator.operation-result-semantic-gap/v2";
+
+const PROVIDER_CALL_STATES_V2 = new Set([
+  "admitted",
+  "dispatched",
+  "response_started",
+  "usage_received",
+  "completed",
+  "response_transport_completed"
+]);
+const PROVIDER_ERROR_CLASSES_V2 = new Set(["provider", "transport", "canceled", "resource_exhausted"]);
+
+export function isTerminalProviderCallStateV2(value) {
+  return value === "completed" || value === "response_transport_completed";
+}
 
 function record(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -47,6 +62,40 @@ function sameJsonValue(left, right) {
   const rightKeys = Object.keys(rightRecord).sort();
   return sameStrings(leftKeys, rightKeys)
     && leftKeys.every((key) => sameJsonValue(leftRecord[key], rightRecord[key]));
+}
+
+function sameAssignmentBinding(leftValue, right) {
+  const left = record(leftValue);
+  return Boolean(left)
+    && left.assignment_id === right.assignment_id
+    && left.run_id === right.run_id
+    && left.generation === right.generation
+    && left.session_id === right.session_id
+    && left.principal_id === right.principal_id
+    && (left.document_fingerprint ?? null) === (right.document_fingerprint ?? null);
+}
+
+function validOptionalTimestamp(value) {
+  return value === undefined || requiredString(value) !== null;
+}
+
+function validOptionalNonNegativeInteger(value) {
+  return value === undefined || value === null || (Number.isSafeInteger(value) && value >= 0);
+}
+
+function validOptionalNonNegativeNumber(value) {
+  return value === undefined || value === null || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+}
+
+function validProviderUsage(value) {
+  if (value === undefined) return true;
+  const usage = record(value);
+  return Boolean(usage)
+    && validOptionalNonNegativeInteger(usage.input_tokens)
+    && validOptionalNonNegativeInteger(usage.output_tokens)
+    && validOptionalNonNegativeInteger(usage.reasoning_tokens)
+    && validOptionalNonNegativeInteger(usage.total_tokens)
+    && validOptionalNonNegativeNumber(usage.estimated_cost_usd);
 }
 
 export function parseAssignmentKernelSessionIndexV2(value) {
@@ -138,6 +187,39 @@ export function parseAssignmentKernelPublicationV2(value) {
       publicationInvalid("provider_call_identity");
     }
     if (!sameJsonValue(call, snapshotCall)) publicationInvalid("provider_call_projection");
+    const gapIds = requiredStringArray(call.gap_ids);
+    const criterionIds = requiredStringArray(call.criterion_ids);
+    const expectedInformation = requiredStringArray(call.expected_information);
+    if (!sameAssignmentBinding(call.binding, binding)) publicationInvalid("provider_call_binding");
+    if (call.schema !== ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA
+        || !PROVIDER_CALL_STATES_V2.has(call.state)
+        || !requiredString(call.provider) || !requiredString(call.model)
+        || !(call.reasoning_effort === null || requiredString(call.reasoning_effort))
+        || !gapIds || !criterionIds || !expectedInformation
+        || new Set(gapIds).size !== gapIds.length
+        || new Set(criterionIds).size !== criterionIds.length
+        || new Set(expectedInformation).size !== expectedInformation.length
+        || !requiredString(call.admitted_at)
+        || !validOptionalTimestamp(call.dispatched_at)
+        || !validOptionalTimestamp(call.response_started_at)
+        || !validOptionalTimestamp(call.usage_received_at)
+        || !validOptionalTimestamp(call.completed_at)
+        || !validOptionalTimestamp(call.response_transport_completed_at)
+        || !validOptionalNonNegativeInteger(call.provider_duration_ms)
+        || !validProviderUsage(call.usage)
+        || (call.controller_turn_id !== undefined && !requiredString(call.controller_turn_id))
+        || (call.success !== undefined && typeof call.success !== "boolean")
+        || (call.error_class !== undefined && !PROVIDER_ERROR_CLASSES_V2.has(call.error_class))) {
+      publicationInvalid("provider_call_shape");
+    }
+    const completed = requiredString(call.completed_at) !== null;
+    const terminalState = isTerminalProviderCallStateV2(call.state);
+    const listedInFlight = inFlightCallIds.includes(callId);
+    if (completed !== terminalState || listedInFlight === completed
+        || (completed && typeof call.success !== "boolean")
+        || (call.state === "response_transport_completed" && !requiredString(call.response_transport_completed_at))) {
+      publicationInvalid("provider_call_state");
+    }
   }
   return structuredClone(publication);
 }

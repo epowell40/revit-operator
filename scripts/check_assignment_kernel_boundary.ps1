@@ -37,7 +37,7 @@ foreach ($file in $domainFiles) {
   foreach ($match in [regex]::Matches($content, '(?m)^\s*(?:import|export)\b[^\r\n]*?from\s+["'']([^"'']+)["'']')) {
     $specifier = $match.Groups[1].Value
     $sharedPayloadContract = $specifier -eq "@revitoperator/payload-digest-v2" -and @("canonical.ts", "payload_provenance.ts") -contains $relative
-    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "semantic_admissibility.ts", "snapshot.ts") -contains $relative
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "progress/provider_call.ts", "semantic_admissibility.ts", "snapshot.ts") -contains $relative
     if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
@@ -404,7 +404,8 @@ foreach ($consumer in $publicationContractConsumers) {
 $v2SchemaLiterals = @(
   'revit-operator\.assignment-kernel-publication/v2',
   'revit-operator\.assignment-provider-ledger/v2',
-  'revit-operator\.assignment-snapshot/v2'
+  'revit-operator\.assignment-snapshot/v2',
+  'revit-operator\.provider-call/v2'
 )
 $publicationProductionFiles = @(
   (Get-ChildItem -LiteralPath (Resolve-RepoPath "apps/operator-backend/src") -Recurse -File -Filter "*.ts")

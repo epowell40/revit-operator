@@ -12,7 +12,7 @@ import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
 import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
 import { verifyVerifiedWorkPacketHash } from "../work_packets/generator.js";
-import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, isTerminalProviderCallStateV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import type {
   BenchmarkLaneV2,
@@ -182,7 +182,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         const inFlight = Array.isArray(ledger.in_flight_call_ids) ? ledger.in_flight_call_ids.map(String) : [];
         if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => {
           const call = record(calls[id]);
-          return call.call_id !== id || call.state !== "completed";
+          return call.call_id !== id || !isTerminalProviderCallStateV2(call.state);
         })) {
           throw new Error(`Benchmark Protocol V2 fails closed on incomplete provider telemetry for ${caseId}.`);
         }
@@ -267,6 +267,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
 function finalizationFailureDetails(message: string): {
   code: string; stage: string; missing: string[]; telemetry: BenchmarkFinalizationFailureV2["telemetry_completeness"];
 } {
+  if (/v2_direct_publication_invalid|direct_publication_invalid/i.test(message)) return { code: "v2_publication_invalid", stage: "v2_publication", missing: [], telemetry: "conflicting_or_quarantined" };
   if (/v2_publication_missing/i.test(message)) return { code: "v2_publication_missing", stage: "v2_publication", missing: ["v2_assignment_publication"], telemetry: "collection_failed" };
   if (/provider ledger conflict/i.test(message)) return { code: "provider_ledger_conflict", stage: "provider_telemetry", missing: [], telemetry: "conflicting_or_quarantined" };
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };

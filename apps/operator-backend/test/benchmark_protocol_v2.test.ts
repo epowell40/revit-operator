@@ -485,7 +485,8 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
   const providerCall = {
     schema: "revit-operator.provider-call/v2",
     call_id: "provider-call-direct-read",
-    state: "completed",
+    binding: operation.binding,
+    state: "response_transport_completed",
     provider: "openai",
     model: "gpt-5.6-sol",
     reasoning_effort: "medium",
@@ -494,6 +495,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     expected_information: ["inventory.total"],
     admitted_at: START,
     completed_at: FINISH,
+    response_transport_completed_at: FINISH,
     success: true,
     usage: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 30, total_tokens: 150 }
   };
@@ -606,6 +608,33 @@ test("Protocol V2 reports a missing direct V2 publication instead of falling bac
     model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
     task_traces: [trace]
   }, [readCase.case_id]), /v2_publication_missing/);
+});
+
+test("Protocol V2 reports a malformed direct V2 publication instead of treating its provider ledger as absent", () => {
+  const readCase = benchmarkCase({
+    case_id: "q01_v2_publication_invalid",
+    operation_family: "inventory",
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const trace = traceFor(readCase);
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_kernel_v2 = {
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignment_ids: ["assignment-1"],
+    assignments: [{
+      schema: "revit-operator.assignment-kernel-publication/v2",
+      assignment_id: "assignment-1",
+      assignment_version: 9,
+      provider_ledger: { schema: "revit-operator.assignment-provider-ledger/v2" }
+    }],
+    failures: []
+  };
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /assignment_kernel_v2_direct_publication_invalid/);
 });
 
 test("canonical attempt effect accessor is backward compatible but rejects conflicting dual fields", () => {

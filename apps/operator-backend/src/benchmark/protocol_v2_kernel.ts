@@ -20,11 +20,15 @@ export function directKernelPublicationsV2(toolResultsValue: unknown): JsonRecor
   const toolResults = record(toolResultsValue);
   const bundle = record(toolResults.durable_assignment_kernel_v2);
   if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) return [];
-  return records(bundle.assignments).flatMap((candidate) => {
+  if (!Array.isArray(bundle.assignments)) {
+    throw new TypeError("assignment_kernel_v2_direct_publication_invalid:assignments");
+  }
+  return bundle.assignments.map((candidate, index) => {
     try {
-      return [record(parseAssignmentKernelPublicationV2(candidate))];
-    } catch {
-      return [];
+      return record(parseAssignmentKernelPublicationV2(candidate));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new TypeError(`assignment_kernel_v2_direct_publication_invalid:${index}:${detail}`);
     }
   });
 }

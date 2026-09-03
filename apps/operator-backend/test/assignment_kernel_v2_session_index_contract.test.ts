@@ -139,6 +139,26 @@ test("exact V2 publication contract survives JSON transport and rejects provider
       }
     }
   }), /assignment_kernel_v2_publication_invalid:provider_call_projection/);
+  const foreignCall = {
+    ...publication.provider_ledger.calls["call-1"],
+    binding: { ...index.assignments[0]!.binding, run_id: "foreign-run" }
+  };
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...publication,
+    snapshot: {
+      ...publication.snapshot,
+      provider_calls: { ...publication.snapshot.provider_calls, "call-1": foreignCall }
+    },
+    provider_ledger: {
+      ...publication.provider_ledger,
+      calls: { ...publication.provider_ledger.calls, "call-1": foreignCall }
+    }
+  }), /assignment_kernel_v2_publication_invalid:provider_call_binding/);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...publication,
+    snapshot: { ...publication.snapshot, in_flight_provider_call_ids: ["call-1"] },
+    provider_ledger: { ...publication.provider_ledger, in_flight_call_ids: ["call-1"] }
+  }), /assignment_kernel_v2_publication_invalid:provider_call_state/);
 });
 
 test("historical or malformed session-index aliases fail explicitly for new V2 traffic", () => {

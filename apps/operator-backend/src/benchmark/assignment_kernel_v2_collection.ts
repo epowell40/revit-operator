@@ -2,6 +2,7 @@ import {
   ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
   ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+  isTerminalProviderCallStateV2,
   parseAssignmentKernelPublicationV2,
   parseAssignmentKernelSessionIndexResponseV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -43,22 +44,28 @@ function nonNegativeIntegerOrNull(value: unknown): number | null {
 export function modelCallReceiptsFromAssignmentKernelPublicationsV2(value: unknown): JsonRecord[] {
   const bundle = record(value);
   if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) return [];
-  return records(bundle.assignments).flatMap((candidate) => {
+  if (!Array.isArray(bundle.assignments)) {
+    throw new TypeError("assignment_kernel_v2_telemetry_invalid:assignments");
+  }
+  return bundle.assignments.flatMap((candidate, index) => {
     let publication: JsonRecord;
     try {
       publication = record(parseAssignmentKernelPublicationV2(candidate));
-    } catch {
-      return [];
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new TypeError(`assignment_kernel_v2_telemetry_invalid:publication:${index}:${detail}`);
     }
     const ledger = record(publication.provider_ledger);
-    if (ledger.schema !== ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA) return [];
+    if (ledger.schema !== ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA) {
+      throw new TypeError(`assignment_kernel_v2_telemetry_invalid:provider_ledger:${index}`);
+    }
     const calls = record(ledger.calls);
     const callIds = Array.isArray(ledger.call_ids)
       ? ledger.call_ids.map(String).map((id) => id.trim()).filter(Boolean)
       : [];
     return callIds.flatMap((callId) => {
       const call = record(calls[callId]);
-      if (call.call_id !== callId || call.state !== "completed") return [];
+      if (call.call_id !== callId || !isTerminalProviderCallStateV2(call.state)) return [];
       const usage = record(call.usage);
       return [{
         schema: "revit-operator.model-call-receipt.v1",

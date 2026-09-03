@@ -1,6 +1,7 @@
 import type { AssignmentBindingV2, CriterionIdV2 } from "../identity.js";
+import { ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
-export const PROVIDER_CALL_V2_SCHEMA = "revit-operator.provider-call/v2" as const;
+export const PROVIDER_CALL_V2_SCHEMA = ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA;
 
 export type ProviderCallStateV2 =
   | "admitted"

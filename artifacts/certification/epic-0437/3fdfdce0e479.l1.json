@@ -700,7 +700,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts",
-      "sha256": "sha256:f36993ee91d7b575f785849a8b9806bfaf200cc62ddf5f23020915e1404d1c20"
+      "sha256": "sha256:8fef1cd2404a0011538cafb5ee5ae6f7094261368ca777cae7cd8bca7c0a5f09"
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts",
@@ -848,7 +848,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_kernel.ts",
-      "sha256": "sha256:6b3351a4a74aa27b34a77cad58acdd7c694bbf05715b8fe2c3bb8dad6207c123"
+      "sha256": "sha256:564bc79105520bc4b0ebcfffed7bcef6cfb51e28793efcae8ce66d16890a69af"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_maintenance.ts",
@@ -864,7 +864,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:248e44ed7b9e63508213c02c1a75d2f6ce362e26e577cf8a9a1f72612a8541eb"
+      "sha256": "sha256:fcbfde22d94344cb04a42fb4175573a1ff68cf9caa255a0197ed64ef47e4099d"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
@@ -1781,7 +1781,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/provider_call.ts",
-      "sha256": "sha256:75ae3b7604af774bb345d47776ed2b5743c876d6c09b3a9afa4c3811a8651f64"
+      "sha256": "sha256:1b1ab24ece483ebbdbde7a29c91a37cf6374e6675d1bb5989fb33850ddb16bc4"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/replay.ts",
@@ -2861,7 +2861,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:ab644b462da85a8fafcbf07fdfd2eada5f89d3cbc464a0fd1a3278e8e4c71d39"
+      "sha256": "sha256:590e93aee0181cd46f377d266a6dc3b97f448eceb6dff4f041c47c6a599ae0d2"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -2893,7 +2893,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_session_index_contract.test.ts",
-      "sha256": "sha256:0f3ad36311fe0e918073e08db107723cfc2ac845450e0c58c25df02fb815e564"
+      "sha256": "sha256:8e6a4dcd0026e16a85ae23c511830bec0feea6181046520501f78594bf0e657a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_store.test.ts",
@@ -2961,7 +2961,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:69d090f9bde90a885e0017e5ebaa00b1665a11a6c190c3ac87a38cde98c8a068"
+      "sha256": "sha256:c4044c8233aa84a9c894c49c4cfb7ee68a45019641a341c2df3406032d0645aa"
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2_interaction.test.ts",
@@ -3493,7 +3493,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_model_telemetry.test.ts",
-      "sha256": "sha256:ef0bc31b14652498e040062f62d4d79e441d12c051eac90140ca5475b5938821"
+      "sha256": "sha256:b8b143839a936f39d6e04b31692a89ca12332e79ce17fe05b5c7652a3224ecd3"
     },
     {
       "path": "apps/operator-backend/test/goal_endpoint_security.test.ts",
@@ -5942,11 +5942,11 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.d.ts",
-      "sha256": "sha256:ecfa26aa053cdaa8dda5cc20e50ef4679a7feb5d5746ffd6ef2faa592e8a5561"
+      "sha256": "sha256:826e860e58bae025070c7c4470156e29a2151e1f7ec2db86d16d94cbaaec2732"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.js",
-      "sha256": "sha256:6544c5b4e9d79c05daa65429d497ac29233ddfcffde81ea812a25a8ffaab1d12"
+      "sha256": "sha256:b6d989b984e8e753a592b0b7c7f5ec8376e4a547ffe50f85506b9586920a0b35"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/package.json",
@@ -5985,7 +5985,7 @@
       "sha256": "sha256:f9edb46c52ceb1904dbe68a7bd996f0aa491f7a55f7c9299e8924d2523069d03"
     }
   ],
-  "inputs_hash": "sha256:59db94ce048642bb1e2147dca6ba1ad6b92191d3d2655268edcc489f46305248",
+  "inputs_hash": "sha256:1b64c53339d930b5c296fb92cac7be27987d1187777264d92c0c2379b86d8dbc",
   "result": {
     "passed": true,
     "checks": [
