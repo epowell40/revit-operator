@@ -123,7 +123,7 @@ test("an exact authenticated replacement value permits preview and apply", () =>
     const apply = guardTeammateMcpCall(owner, replaceCall(replacement, { dryRun: false, apply: true }));
     assert.equal(apply.allowed, true);
     assert.equal(apply.call?.effect, "apply");
-    assert.deepEqual(apply.call?.expected_values, [JSON.stringify(replacement)]);
+    assert.deepEqual(apply.call?.expected_values, [`revit_text:${JSON.stringify(replacement)}`]);
   });
 });
 

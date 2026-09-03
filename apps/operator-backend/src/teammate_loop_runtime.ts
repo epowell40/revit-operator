@@ -480,7 +480,7 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   const signature = actionSignature(path, normalizedBody);
   const target_tokens = targetTokens(normalizedBody);
   const operation = operationFor(path, normalizedBody);
-  const expected_values = [...expectedPostconditionValuesV2(normalizedBody, operation !== "create")];
+  const expected_values = [...expectedPostconditionValuesV2(normalizedBody, operation !== "create", { path })];
   const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation, raw_body: normalizedBody });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (isTeammateDiscoveryPath(path)) return call("discovery");
@@ -501,7 +501,7 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
   const target_tokens = targetTokens(args);
   const operation = operationFor(tool, args);
-  const expected_values = [...expectedPostconditionValuesV2(args, operation !== "create")];
+  const expected_values = [...expectedPostconditionValuesV2(args, operation !== "create", { tool })];
   const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation, raw_body: args });
   if (isTeammateDiscoveryTool(tool)) return call("discovery");
   // Durable EvidenceRef expansion is a bounded certified host read. It neither

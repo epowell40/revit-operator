@@ -617,7 +617,11 @@ function commitInput(
       && lease.fulfillment_role === "verification"
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
-      && postconditionSatisfiedByPayloadV2(verificationSubject.input, envelope.observation.raw_payload)
+      && postconditionSatisfiedByPayloadV2(
+        verificationSubject.input,
+        envelope.observation.raw_payload,
+        { capability_id: verificationSubject.capability_id }
+      )
   );
   if (trustedVerification) {
     if (lease.purpose !== "verification"

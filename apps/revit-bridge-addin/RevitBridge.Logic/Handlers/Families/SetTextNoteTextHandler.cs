@@ -55,7 +55,7 @@ namespace RevitBridge.Logic.Handlers
             if (tn == null) throw new InvalidOperationException($"TextNote {p.textNoteId} not found.");
 
             var before = tn.Text ?? "";
-            var changed = !string.Equals(before, nextText, StringComparison.Ordinal);
+            var changed = !TextNoteTextCanonicalizer.IsExactRevitRoundTrip(nextText, before);
             var expectedOldText = p.expectedOldText == null ? null : TextNoteTextCanonicalizer.Normalize(p.expectedOldText);
 
             var requiredConfirm = (string?)null;
@@ -83,12 +83,12 @@ namespace RevitBridge.Logic.Handlers
                 {
                     tx.Start();
                     before = tn.Text ?? "";
-                    changed = !string.Equals(before, nextText, StringComparison.Ordinal);
+                    changed = !TextNoteTextCanonicalizer.IsExactRevitRoundTrip(nextText, before);
                     // Revit can surface semantically identical TextNote line endings as CR,
                     // CRLF, or LF depending on how the note was created/read. Bind the
                     // stale-state guard to the same canonical text form used for requests,
                     // while retaining the raw `before` value in the receipt.
-                    if (expectedOldText != null && !string.Equals(TextNoteTextCanonicalizer.Normalize(before), expectedOldText, StringComparison.Ordinal))
+                    if (expectedOldText != null && !TextNoteTextCanonicalizer.IsExactRevitRoundTrip(expectedOldText, before))
                     {
                         var rollbackStatus = tx.RollBack();
                         transactionReceipt = rollbackStatus == TransactionStatus.RolledBack

@@ -335,6 +335,48 @@ if ($outcomeSource -notmatch 'verification\.postcondition_satisfied') {
   $violations.Add("Applied V2 completion no longer requires the typed positive postcondition fact")
 }
 
+# TextNote content has a native Revit representation rule. Backend settlement,
+# benchmark verification, and MCP preview evidence must share one TypeScript
+# implementation, while native C# proves parity against the same versioned
+# vectors. Field-name heuristics may not grow another normalization algorithm.
+$textNoteContract = Join-Path $RepoRoot "packages/text-note-round-trip-v1/index.js"
+$textNoteVectors = Join-Path $RepoRoot "packages/text-note-round-trip-v1/golden-vectors.json"
+if (-not (Test-Path -LiteralPath $textNoteContract -PathType Leaf)) {
+  $violations.Add("Shared TextNote round-trip contract is missing")
+}
+if (-not (Test-Path -LiteralPath $textNoteVectors -PathType Leaf)) {
+  $violations.Add("Shared TextNote round-trip golden vectors are missing")
+}
+foreach ($relativePath in @(
+  "apps/operator-backend/src/postcondition_verification_v2.ts",
+  "apps/operator-backend/src/benchmark/revit_workflows.ts",
+  "apps/mcp-server/src/lib/previewSemanticEvidenceV2.ts"
+)) {
+  $path = Resolve-RepoPath $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/text-note-round-trip-v1') {
+    $violations.Add("$relativePath does not import the shared TextNote round-trip contract")
+  }
+  if ($content -match '(?s)function\s+canonicalRevitText\s*\(' -or $content -match '(?s)function\s+normalizeTextNoteTextV2[\s\S]{0,500}replace(?:All)?\s*\(') {
+    $violations.Add("$relativePath introduces an independent TextNote normalization implementation")
+  }
+}
+foreach ($relativePath in @(
+  "apps/operator-backend/test/postcondition_verification_v2.test.ts",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/TextNoteCanonicalizationTests.cs"
+)) {
+  $content = Get-Content -Raw -LiteralPath (Resolve-RepoPath $relativePath)
+  if ($content -notmatch 'text-note-round-trip-v1') {
+    $violations.Add("$relativePath does not enforce the shared cross-runtime TextNote vectors")
+  }
+}
+$textNoteHandler = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/Families/SetTextNoteTextHandler.cs")
+$roundTripAdmissionCount = [regex]::Matches($textNoteHandler, 'TextNoteTextCanonicalizer\.IsExactRevitRoundTrip\s*\(').Count
+$usesLegacyExactNormalizedAdmission = $textNoteHandler -match 'string\.Equals\s*\(\s*TextNoteTextCanonicalizer\.Normalize\s*\(\s*before'
+if ($roundTripAdmissionCount -lt 3 -or $usesLegacyExactNormalizedAdmission) {
+  $violations.Add("Native TextNote mutation no longer uses the shared round-trip rule for no-op and stale-state admission")
+}
+
 # Every new V2 session-index producer and consumer must share one response
 # schema and field name. Historical artifact readers may live elsewhere, but
 # production traffic cannot grow another alias.

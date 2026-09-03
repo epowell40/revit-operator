@@ -974,6 +974,50 @@ test("verification recovery re-derives the exact postcondition from durable appl
   }
 });
 
+test("Candidate 59 Revit TextNote readback normalizes native paragraph delimiters without weakening value verification", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "candidate59-text-apply", provider_turn_id: "candidate59-apply-turn",
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1478627"],
+    arguments: {
+      method: "POST", path: "/revit/replace-text-note",
+      body: { elementId: 1478627, newText: replacement, expectedOldText: "Chase for Electrical Conduit\r", apply: true }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease,
+    envelope(applyLease.operation_id, applyLease.binding, {
+      status: "Applied", elementId: 1478627, before: "Chase for Electrical Conduit\r", after: replacement, changed: true
+    }, "applied")
+  ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  const verificationLease = openAssignmentKernelOperationV2({
+    snapshot: readyForVerification,
+    controller_request_id: "candidate59-text-readback",
+    provider_turn_id: "candidate59-verification-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    target_tokens: ["id:1478627"],
+    arguments: { method: "POST", path: "/revit/find-text-notes", body: { elementId: 1478627, max: 1 } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(verificationLease);
+  const verified = settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, {
+      ok: true,
+      requestedElementIds: [1478627],
+      exactElementFilterApplied: true,
+      itemsComplete: true,
+      items: [{ elementId: 1478627, text: replacement.replace(/\n/g, "\r") + "\r" }]
+    })
+  );
+  assert.ok(verified.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"
+    && fact.fact_class === "verification" && fact.value === true));
+  assert.equal(verified.snapshot.outcome, "complete");
+}));
+
 test("a successful verification read with the wrong value cannot mint a postcondition fact", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

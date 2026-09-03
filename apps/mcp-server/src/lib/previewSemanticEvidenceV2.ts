@@ -1,3 +1,5 @@
+import { normalizeTextNoteTextV1, textNoteRoundTripMatchesV1 } from "@revitoperator/text-note-round-trip-v1";
+
 type Scalar = string | number | boolean | null;
 
 export type PreviewSemanticFactV2 = Readonly<{
@@ -45,11 +47,7 @@ function field(row: Record<string, unknown>, names: readonly string[]): Field {
 
 /** Mirrors TextNoteTextCanonicalizer.Normalize without trimming user content. */
 export function normalizeTextNoteTextV2(value: string): string {
-  let normalized = value;
-  if (normalized.includes("\\n") || normalized.includes("\\r")) {
-    normalized = normalized.replaceAll("\\r\\n", "\n").replaceAll("\\n", "\n").replaceAll("\\r", "\n");
-  }
-  return normalized.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+  return normalizeTextNoteTextV1(value);
 }
 
 function text(fieldValue: Field): string | null {
@@ -100,7 +98,7 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   const stateUnchanged = before !== null && after !== null
     && normalizeTextNoteTextV2(before) === normalizeTextNoteTextV2(after);
   const changedConsistent = before !== null && proposed !== null && changed !== null
-    && changed === (normalizeTextNoteTextV2(before) !== normalizeTextNoteTextV2(proposed));
+    && changed === !textNoteRoundTripMatchesV1(proposed, before);
   const admitted = input.requestedEffect === "preview"
     && input.authoritativePreview
     && dryRun === true

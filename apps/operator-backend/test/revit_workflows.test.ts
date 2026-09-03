@@ -11051,12 +11051,12 @@ test("documentation primitives workflow edits existing text note with readback c
       textNoteId: 4401,
       ownerViewId: 8101,
       before: "COUNTERBALANCED",
-      after: "MOTORIZED",
-      text: "MOTORIZED"
+      after: "MOTORIZED\rVERIFY\r",
+      text: "MOTORIZED\rVERIFY\r"
     },
     "/revit/find-text-notes:2": {
       status: "Success",
-      items: [{ textNoteId: 4401, ownerViewId: 8101, text: "MOTORIZED" }]
+      items: [{ textNoteId: 4401, ownerViewId: 8101, text: "MOTORIZED\rVERIFY\r" }]
     },
     "/revit/export-image": {
       status: "Success",
@@ -11071,14 +11071,14 @@ test("documentation primitives workflow edits existing text note with readback c
       dryRun: true,
       textNoteId: 4401,
       ownerViewId: 8101,
-      before: "MOTORIZED",
-      after: "MOTORIZED"
+      before: "MOTORIZED\rVERIFY\r",
+      after: "MOTORIZED\rVERIFY\r"
     },
     "/revit/replace-text-note:4": {
       status: "Applied",
       textNoteId: 4401,
       ownerViewId: 8101,
-      before: "MOTORIZED",
+      before: "MOTORIZED\rVERIFY\r",
       after: "COUNTERBALANCED",
       text: "COUNTERBALANCED"
     },
@@ -11101,7 +11101,7 @@ test("documentation primitives workflow edits existing text note with readback c
           viewId: 8101,
           textNoteId: 4401,
           expectedExistingText: "COUNTERBALANCED",
-          text: "MOTORIZED",
+          text: "MOTORIZED\nVERIFY",
           readbackRequired: true,
           revertAfterVerify: true
         }
@@ -11120,7 +11120,7 @@ test("documentation primitives workflow edits existing text note with readback c
   assert.equal(bridge.calls.some((call) => call.pathname === "/revit/create-text"), false);
   assert.equal(bridge.calls.filter((call) => call.pathname === "/revit/replace-text-note").length, 4);
   const textReplaceCalls = bridge.calls.filter((call) => call.pathname === "/revit/replace-text-note");
-  assert.deepEqual(textReplaceCalls.map((call) => (call.body as any).expectedOldText), ["COUNTERBALANCED", "COUNTERBALANCED", "MOTORIZED", "MOTORIZED"]);
+  assert.deepEqual(textReplaceCalls.map((call) => (call.body as any).expectedOldText), ["COUNTERBALANCED", "COUNTERBALANCED", "MOTORIZED\nVERIFY", "MOTORIZED\nVERIFY"]);
 });
 
 test("documentation primitives workflow rejects existing text note edit without same-id readback", async () => {

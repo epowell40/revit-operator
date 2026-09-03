@@ -1,0 +1,17 @@
+{
+  "schema": "revit-operator.text-note-round-trip/v1",
+  "vectors": [
+    { "id": "exact", "requested": "one", "actual": "one", "matches": true },
+    { "id": "native-terminal-cr", "requested": "one", "actual": "one\r", "matches": true },
+    { "id": "lf-to-native-cr", "requested": "one\ntwo", "actual": "one\rtwo\r", "matches": true },
+    { "id": "crlf-to-native-cr", "requested": "one\r\ntwo", "actual": "one\rtwo\r", "matches": true },
+    { "id": "double-escaped-newline", "requested": "one\\ntwo", "actual": "one\rtwo\r", "matches": true },
+    { "id": "requested-terminal-plus-native-terminal", "requested": "one\n", "actual": "one\r\r", "matches": true },
+    { "id": "two-added-terminal-markers", "requested": "one", "actual": "one\r\r", "matches": false },
+    { "id": "three-versus-requested-one", "requested": "one\n", "actual": "one\r\r\r", "matches": false },
+    { "id": "case-change", "requested": "ONE", "actual": "One\r", "matches": false },
+    { "id": "space-change", "requested": "one\ntwo", "actual": "one\rtwo \r", "matches": false },
+    { "id": "interior-paragraph-change", "requested": "one\ntwo", "actual": "one\r\rtwo\r", "matches": false },
+    { "id": "content-substitution", "requested": "one\ntwo", "actual": "one\rsubstituted\r", "matches": false }
+  ]
+}

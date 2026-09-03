@@ -44,6 +44,18 @@ test("typed text-note adapter binds proposal, target, rollback state, and change
   assert.ok(evidence.facts.some(fact => fact.fact_id === "task.preview_valid" && fact.value === true));
 });
 
+test("preview change truth uses the native one-terminal-paragraph round-trip contract", () => {
+  const evidence = previewSemanticEvidenceV2({
+    path: "/revit/replace-text-note",
+    payload: result({ before: "SAME\r", after: "SAME\r", proposedText: "SAME", changed: false }),
+    requestBody: { ...request, newText: "SAME" },
+    requestedEffect: "preview",
+    authoritativePreview: true
+  });
+  assert.equal(evidence.admitted, true);
+  assert.ok(evidence.facts.some(fact => fact.fact_id === "control.preview_changed_consistent" && fact.value === true));
+});
+
 test("proposal mismatch, missing echo, target mismatch, changed contradiction, and changed persistent state fail closed", () => {
   const invalid = [
     result({ proposedText: "DIFFERENT" }),
