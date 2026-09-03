@@ -228,10 +228,14 @@ export function currentEpic0437SourceInputs(repoRoot: string): Epic0437SourceInp
   });
 }
 
-export function createEpic0437NativeBuildManifest(repoRoot: string, candidateSourceHash: string): Epic0437NativeBuildManifest {
+export function createEpic0437NativeBuildManifest(
+  repoRoot: string,
+  candidateSourceHash: string,
+  expectedPolicyHash: string
+): Epic0437NativeBuildManifest {
   const sourceInputs = currentEpic0437SourceInputs(repoRoot);
   const policy = parseTrustedToolExposurePolicy(JSON.parse(fs.readFileSync(path.join(repoRoot, "apps/operator-backend/config/tool_exposure_policy.v1.json"), "utf8")));
-  if (policy.policy_hash !== BUNDLED_TOOL_EXPOSURE_POLICY_HASH) throw new Error("EPIC-0437 build manifest policy is not the current bundled trust anchor");
+  if (policy.policy_hash !== expectedPolicyHash) throw new Error("EPIC-0437 build manifest policy is not the generated certification policy");
   const binary = (relative: string) => ({ path: relative, sha256: sha256Bytes(path.join(repoRoot, relative)) });
   const runtimeDependencies = EPIC_0437_NATIVE_RUNTIME_DEPENDENCY_NAMES.map(name => {
     const relative = `${EPIC_0437_NATIVE_RUNTIME_DIRECTORY}/${name}`;

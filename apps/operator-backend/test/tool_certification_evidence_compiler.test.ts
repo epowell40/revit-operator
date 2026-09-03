@@ -62,6 +62,20 @@ test("source provenance binds every shared cross-process semantic contract", () 
   }
 });
 
+test("source certification seals only the final anchor-bound native build", () => {
+  const source = fs.readFileSync(path.join(backendRoot, "src/tools/certify_epic_0437_source.ts"), "utf8");
+  const anchorUpdate = source.indexOf("updateCompiledPolicyHash(generatedPolicy");
+  const finalNativeBuild = source.indexOf('await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj"', anchorUpdate);
+  const manifestSeal = source.indexOf("createEpic0437NativeBuildManifest(repoRoot, candidateHash, generatedPolicyHash)", finalNativeBuild);
+  const manifestValidation = source.indexOf("validate_epic_0437_source_certification.js", manifestSeal);
+  const explicitRootBinding = source.indexOf("candidateHash, repoRoot", manifestValidation);
+  assert.ok(anchorUpdate >= 0, "native policy anchor update is absent");
+  assert.ok(finalNativeBuild > anchorUpdate, "native output is not rebuilt after the generated policy anchor changes");
+  assert.ok(manifestSeal > finalNativeBuild, "native manifest is sealed before the final anchor-bound build");
+  assert.ok(manifestValidation > manifestSeal, "freshly sealed native manifest is not validated in a fresh process before certification succeeds");
+  assert.ok(explicitRootBinding > manifestValidation, "fresh certification validation can depend on the child process working directory");
+});
+
 test("runtime provenance admits only the exact deployed digest or reviewed Revit-host path and digest", () => {
   const manifest = {
     runtime_dependencies: [{

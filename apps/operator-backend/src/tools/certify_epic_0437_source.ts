@@ -85,9 +85,6 @@ async function main(): Promise<void> {
   const inputs = currentEpic0437SourceInputs(repoRoot);
   const artifactRoot = path.join(repoRoot, "artifacts", "certification", "epic-0437");
   fs.mkdirSync(artifactRoot, { recursive: true });
-  const buildManifest = createEpic0437NativeBuildManifest(repoRoot, candidateHash);
-  fs.writeFileSync(path.join(repoRoot, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH), canonical(buildManifest), "utf8");
-
   for (const profile of proofIndex.records) {
     profile.artifacts = [];
     for (const level of ["L0", "L1", "L2"] as CertificationLevel[]) {
@@ -140,6 +137,11 @@ async function main(): Promise<void> {
   // transaction so a successful certification command cannot leave CI one
   // generation behind.
   const generatedPolicy = generatePolicyBytes(renderedEvidence, candidateRaw, catalogRoot);
+  const generatedPolicyDocument = json(generatedPolicy) as Record<string, unknown>;
+  const generatedPolicyHash = generatedPolicyDocument.policy_hash;
+  if (typeof generatedPolicyHash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(generatedPolicyHash)) {
+    throw new Error("Generated certification policy has no valid policy hash");
+  }
   fs.writeFileSync(path.join(backendRoot, "config", "tool_exposure_policy.v1.json"), generatedPolicy, "utf8");
   const backendAuthorityPath = path.join(backendRoot, "src", "capabilities", "trusted_tool_exposure_policy.ts");
   fs.writeFileSync(
@@ -161,6 +163,18 @@ async function main(): Promise<void> {
   );
   await run(gateNode, [path.join(backendRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], backendRoot);
   await run(gateNode, [path.join(mcpRoot, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"], mcpRoot);
+  // The generated policy hash is compiled into the native authority. Rebuild
+  // after updating that anchor so the sealed manifest cannot describe a binary
+  // from the preceding policy generation.
+  await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj", "-c", "Release", "-f", "net8.0-windows", "--no-restore"], nativeRoot);
+  await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj", "-c", "Release", "-f", "net48", "--no-restore"], nativeRoot);
+  const buildManifest = createEpic0437NativeBuildManifest(repoRoot, candidateHash, generatedPolicyHash);
+  fs.writeFileSync(path.join(repoRoot, EPIC_0437_NATIVE_BUILD_MANIFEST_PATH), canonical(buildManifest), "utf8");
+  // Validate in a fresh process. This certification process imported the
+  // previous on-disk trust anchor before regenerating it; the fresh validator
+  // proves that compiled JavaScript, generated policy, source inputs, manifest,
+  // and final native binaries all agree as a single candidate.
+  await run(gateNode, [path.join(backendRoot, "dist", "src", "tools", "validate_epic_0437_source_certification.js"), candidateHash, repoRoot], backendRoot);
   await run(gateNode, ["--test", "--test-reporter=dot", "--test-concurrency=1", "dist/test/tool_certification_evidence_compiler.test.js"], backendRoot);
   console.log(`Wrote converged L0-L2 proof artifacts, certification evidence, generated policy, and trust anchors for ${proofIndex.records.length} exact candidate identities.`);
 }
