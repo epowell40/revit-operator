@@ -26,9 +26,11 @@
     "dynamic_runtime_orchestration.test.ts",
     "endpoint_mutability.test.ts",
     "general_revit_model_telemetry.test.ts",
+    "general_revit_qualification_preflight.test.ts",
     "openai_brain_recovery.test.ts",
     "payload_digest_v2.test.ts",
     "postcondition_verification_v2.test.ts",
+    "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
     "teammate_mutation_intent_binding.test.ts",
     "tool_result_normalization.test.ts",
@@ -75,6 +77,7 @@
     { "id": "work-return-and-work-packet", "coverage": ["backend:verified_work_packet.test.ts", "backend:benchmark_protocol_v2_interaction.test.ts"] },
     { "id": "capability-ranking-and-risk", "coverage": ["mcp:lib/toolSearchRanking.test.ts", "mcp:lib/toolSearchRiskSemantics.test.ts", "dotnet:OperatorToolSearchRankingTests"] },
     { "id": "native-admission-and-mutation-scope", "coverage": ["dotnet:OperatorApprovalPolicyTests", "dotnet:OperatorNativeMutationScopePolicyTests"] },
-    { "id": "textnote-cross-runtime-postcondition", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "dotnet:TextNoteCanonicalizationTests"] }
+    { "id": "textnote-cross-runtime-postcondition", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "dotnet:TextNoteCanonicalizationTests"] },
+    { "id": "qualification-write-authorization-preflight", "coverage": ["backend:general_revit_qualification_preflight.test.ts", "backend:revit_preflight.test.ts"] }
   ]
 }

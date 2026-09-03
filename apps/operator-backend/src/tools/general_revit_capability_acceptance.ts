@@ -20,6 +20,7 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
 import {
@@ -907,6 +908,13 @@ async function main(): Promise<void> {
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
+  if (!rescoreOnly) {
+    assertGeneralRevitQualificationWriteGrant({
+      cases: selected,
+      apply_requested: applyRequested,
+      grant
+    });
+  }
   let fixturePreflight: JsonRecord = {};
   let fixturePreflightAttempts = 0;
   if (requestedFixture && !rescoreOnly) {
