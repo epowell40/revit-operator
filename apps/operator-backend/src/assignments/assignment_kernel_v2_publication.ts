@@ -1,13 +1,15 @@
 import type { AssignmentSnapshotV2, ProviderCallV2 } from "../domain/assignment-kernel/index.js";
 import {
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA,
+  ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+  parseAssignmentKernelPublicationV2,
   type AssignmentKernelV2SessionIndex,
   type AssignmentKernelV2SessionIndexEntry
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { getAssignmentKernelSnapshotV2, listAssignmentKernelIndexV2 } from "./assignment_kernel_v2_store.js";
 
-export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignment-kernel-publication/v2" as const;
-export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2" as const;
+export { ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA, ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA };
 export const ASSIGNMENT_KERNEL_SESSION_INDEX_V2_SCHEMA = ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA;
 
 export interface AssignmentProviderLedgerPublicationV2 {
@@ -40,7 +42,7 @@ export function buildAssignmentKernelPublicationV2(snapshot: AssignmentSnapshotV
   const calls = Object.fromEntries(snapshot.provider_call_ids
     .filter((callId) => Boolean(snapshot.provider_calls[callId]))
     .map((callId) => [callId, structuredClone(snapshot.provider_calls[callId]!) ]));
-  return {
+  const publication: AssignmentKernelPublicationV2 = {
     schema: ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
     assignment_id: snapshot.current_binding.assignment_id,
     assignment_version: snapshot.assignment_version,
@@ -55,6 +57,8 @@ export function buildAssignmentKernelPublicationV2(snapshot: AssignmentSnapshotV
       in_flight_call_ids: [...snapshot.in_flight_provider_call_ids]
     }
   };
+  parseAssignmentKernelPublicationV2(publication);
+  return publication;
 }
 
 export function getAssignmentKernelPublicationV2(assignmentId: string): AssignmentKernelPublicationV2 | null {

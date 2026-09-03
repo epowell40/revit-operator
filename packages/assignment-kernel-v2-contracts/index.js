@@ -1,6 +1,9 @@
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA = "revit-operator.assignment-kernel-session-index/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA = "revit-operator.assignment-kernel-session-index-response/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD = "assignment_kernel_v2_session_index";
+export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA = "revit-operator.assignment-snapshot/v2";
+export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignment-kernel-publication/v2";
+export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA = "revit-operator.operation-result-semantic-gap/v2";
 
 function record(value) {
@@ -9,6 +12,41 @@ function record(value) {
 
 function invalid(reason) {
   throw new TypeError(`assignment_kernel_v2_session_index_invalid:${reason}`);
+}
+
+function publicationInvalid(reason) {
+  throw new TypeError(`assignment_kernel_v2_publication_invalid:${reason}`);
+}
+
+function requiredString(value) {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function requiredStringArray(value) {
+  if (!Array.isArray(value)) return null;
+  const values = value.map(requiredString);
+  if (values.some((entry) => entry === null)) return null;
+  return values;
+}
+
+function sameStrings(left, right) {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function sameJsonValue(left, right) {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right)
+      && left.length === right.length
+      && left.every((entry, index) => sameJsonValue(entry, right[index]));
+  }
+  const leftRecord = record(left);
+  const rightRecord = record(right);
+  if (!leftRecord || !rightRecord) return false;
+  const leftKeys = Object.keys(leftRecord).sort();
+  const rightKeys = Object.keys(rightRecord).sort();
+  return sameStrings(leftKeys, rightKeys)
+    && leftKeys.every((key) => sameJsonValue(leftRecord[key], rightRecord[key]));
 }
 
 export function parseAssignmentKernelSessionIndexV2(value) {
@@ -50,6 +88,58 @@ export function parseAssignmentKernelSessionIndexResponseV2(value) {
     ok: true,
     [ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD]: parseAssignmentKernelSessionIndexV2(response[ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD])
   };
+}
+
+/**
+ * Validates the exact-ID V2 publication shared by backend, Sidecar, recovery,
+ * benchmark, Work Packet, and Protocol V2 consumers. This checks envelope and
+ * provider-ledger coherence without reconstructing canonical Assignment truth.
+ */
+export function parseAssignmentKernelPublicationV2(value) {
+  const publication = record(value);
+  if (!publication || publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) publicationInvalid("schema");
+  const assignmentId = requiredString(publication.assignment_id);
+  const assignmentVersion = publication.assignment_version;
+  const snapshot = record(publication.snapshot);
+  const binding = record(snapshot?.current_binding);
+  const ledger = record(publication.provider_ledger);
+  if (!assignmentId || !Number.isSafeInteger(assignmentVersion) || assignmentVersion < 1) publicationInvalid("identity");
+  if (!snapshot || snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA
+      || snapshot.assignment_version !== assignmentVersion) publicationInvalid("snapshot");
+  const runId = requiredString(binding?.run_id);
+  const generation = binding?.generation;
+  if (binding?.assignment_id !== assignmentId || !runId
+      || !Number.isSafeInteger(generation) || generation < 1
+      || !requiredString(binding?.session_id) || !requiredString(binding?.principal_id)) publicationInvalid("binding");
+  if (!ledger || ledger.schema !== ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA
+      || ledger.assignment_id !== assignmentId || ledger.run_id !== runId
+      || ledger.generation !== generation) publicationInvalid("provider_ledger_binding");
+
+  const callIds = requiredStringArray(ledger.call_ids);
+  const inFlightCallIds = requiredStringArray(ledger.in_flight_call_ids);
+  const snapshotCallIds = requiredStringArray(snapshot.provider_call_ids);
+  const snapshotInFlightCallIds = requiredStringArray(snapshot.in_flight_provider_call_ids);
+  const calls = record(ledger.calls);
+  const snapshotCalls = record(snapshot.provider_calls);
+  if (!callIds || !inFlightCallIds || !snapshotCallIds || !snapshotInFlightCallIds || !calls || !snapshotCalls
+      || new Set(callIds).size !== callIds.length || new Set(inFlightCallIds).size !== inFlightCallIds.length
+      || !sameStrings(callIds, snapshotCallIds) || !sameStrings(inFlightCallIds, snapshotInFlightCallIds)
+      || inFlightCallIds.some((callId) => !callIds.includes(callId))) publicationInvalid("provider_ledger_index");
+  const callKeys = Object.keys(calls).sort();
+  const snapshotCallKeys = Object.keys(snapshotCalls).sort();
+  const expectedCallKeys = [...callIds].sort();
+  if (!sameStrings(callKeys, expectedCallKeys) || !sameStrings(snapshotCallKeys, expectedCallKeys)) {
+    publicationInvalid("provider_ledger_calls");
+  }
+  for (const callId of callIds) {
+    const call = record(calls[callId]);
+    const snapshotCall = record(snapshotCalls[callId]);
+    if (!call || !snapshotCall || call.call_id !== callId || snapshotCall.call_id !== callId) {
+      publicationInvalid("provider_call_identity");
+    }
+    if (!sameJsonValue(call, snapshotCall)) publicationInvalid("provider_call_projection");
+  }
+  return structuredClone(publication);
 }
 
 export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA = "revit-operator.assignment-kernel-control-evidence/v2";

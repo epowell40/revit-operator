@@ -31,6 +31,7 @@ Public-core validation commonly includes:
 npm --prefix apps/operator-backend run build
 npm --prefix apps/operator-backend test
 npm --prefix apps/mcp-server run build
+./scripts/run_release_frontier_gate.ps1
 ./scripts/check_backend_module_size.ps1
 ./scripts/deploy/check_revit_version_compatibility.ps1
 ```
@@ -39,6 +40,14 @@ Run the smallest relevant tests after each edit and the complete applicable
 local gate before the consolidated push. Changes that affect the add-in,
 Sidecar, operations, or user-visible behavior also require a real local Revit UI
 test against an authorized disposable fixture.
+
+Raw test count does not prove cross-process coherence. Before a live candidate,
+the machine-readable `scripts/release_frontier.v1.json` selects historical
+failure families across backend, MCP, and native boundaries; every family must
+name at least two tests that actually execute in this public composition. Add a
+new generic replay and neighboring boundary coverage whenever live testing
+finds a new failure family. Run the frontier first, the complete private
+integration gate once from stable source, and the real Revit UI last.
 
 Hosted authentication, private deployment, EC2, production packaging, and
 commercial integration are owned by `revit-operator-private`. Do not add those

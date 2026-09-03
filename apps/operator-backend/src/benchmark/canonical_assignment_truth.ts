@@ -1,3 +1,5 @@
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
+
 type JsonRecord = Record<string, unknown>;
 
 function object(value: unknown): JsonRecord {
@@ -12,7 +14,7 @@ export function canonicalAssignmentLifecycleTruth(assignment: JsonRecord): {
   const truth = object(assignment.truth);
   const controlPlane = object(assignment.control_plane);
   const kernel = object(assignment.assignment_snapshot_v2);
-  if (kernel.schema === "revit-operator.assignment-snapshot/v2") {
+  if (kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA) {
     return {
       canonical: true,
       outcome_unknown: Array.isArray(kernel.unresolved_unknown_operation_ids)

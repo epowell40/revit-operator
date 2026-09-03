@@ -12,6 +12,7 @@ import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
 import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
 import { verifyVerifiedWorkPacketHash } from "../work_packets/generator.js";
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import type {
   BenchmarkLaneV2,
@@ -41,7 +42,7 @@ function records(value: unknown): JsonRecord[] {
 function workPacketStatusMatchesTerminal(packet: JsonRecord, assignment: JsonRecord): boolean {
   const status = String(packet.status || "");
   const kernel = record(assignment.assignment_snapshot_v2);
-  if (kernel.schema === "revit-operator.assignment-snapshot/v2") {
+  if (kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA) {
     const outcome = String(kernel.outcome || "");
     const terminal = kernel.terminal === true;
     const hasUnknown = records(kernel.unresolved_unknown_operation_ids).length > 0
@@ -190,7 +191,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const activeControls = assignmentRows.map(row => record(row.control_plane)).filter(control =>
       Number(control.in_flight_count || 0) > 0 || control.quiescent === false);
     const activeKernels = publications.map(row => record(row.snapshot))
-      .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2"
+      .filter(kernel => kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA
         && (kernel.quiescent === false || (Array.isArray(kernel.in_flight_operation_ids) && kernel.in_flight_operation_ids.length > 0)));
     if (activeControls.length > 0 || activeKernels.length > 0) {
       const ids = activeControls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
@@ -219,7 +220,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
       const validKernelRead = publications.some(row => {
         const kernel = record(row.snapshot);
-        if (kernel.schema !== "revit-operator.assignment-snapshot/v2" || kernel.terminal !== true) return false;
+        if (kernel.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA || kernel.terminal !== true) return false;
         const observations = record(kernel.observations);
         return Object.values(record(kernel.operations)).map(record).some(operation =>
           operation.requested_effect === "read" && operation.dispatch_state === "dispatched"
@@ -241,7 +242,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     }
     const terminalAssignments = [...v2AssignmentRows, ...assignmentRows].filter(row => {
       const kernel = record(row.assignment_snapshot_v2);
-      return kernel.schema === "revit-operator.assignment-snapshot/v2"
+      return kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA
         ? kernel.terminal === true
         : String(record(row.control_plane).terminal_state || "") !== "open";
     });
@@ -250,7 +251,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       const assignment = terminalAssignments.find(row => {
         const assignmentId = String(row.id || row.source_record_id || "").replace(/^goal:/, "");
         const kernel = record(row.assignment_snapshot_v2);
-        const binding = kernel.schema === "revit-operator.assignment-snapshot/v2" ? record(kernel.current_binding) : record(row.control_plane);
+        const binding = kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA ? record(kernel.current_binding) : record(row.control_plane);
         return identity.assignment_id === assignmentId && identity.run_id === binding.run_id
           && identity.generation === binding.generation;
       });
@@ -310,7 +311,7 @@ function bestEffortFailureArtifact(args: {
   const directKernels = traces.flatMap(trace => directKernelPublicationsV2(record(trace.tool_results)))
     .map(publication => record(publication.snapshot));
   const kernels = (directKernels.length > 0 ? directKernels : assignmentRows.map(row => record(row.assignment_snapshot_v2)))
-    .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2");
+    .filter(kernel => kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA);
   const inFlightAttemptIds = controls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
   inFlightAttemptIds.push(...kernels.flatMap(kernel => Array.isArray(kernel.in_flight_operation_ids) ? kernel.in_flight_operation_ids : []).map(String));
   const nextDeadline = controls.map(control => String(control.next_in_flight_deadline || "")).filter(Boolean).sort()[0] ?? null;

@@ -71,6 +71,9 @@ test("Candidate 51 V2-tagged discovery notification uses the exact published ope
         schema: "revit-operator.assignment-snapshot/v2",
         assignment_version: 14,
         current_binding: binding,
+        provider_call_ids: [],
+        provider_calls: {},
+        in_flight_provider_call_ids: [],
         operations: {
           [operationId]: {
             schema: "revit-operator.operation/v2",
@@ -98,9 +101,12 @@ test("Candidate 51 V2-tagged discovery notification uses the exact published ope
       provider_ledger: {
         schema: "revit-operator.assignment-provider-ledger/v2",
         assignment_id: assignmentId,
+        run_id: binding.run_id,
+        generation: binding.generation,
         assignment_version: 14,
         call_ids: [],
-        calls: {}
+        calls: {},
+        in_flight_call_ids: []
       }
     }],
     failures: []

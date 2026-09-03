@@ -5,10 +5,14 @@ import {
   ASSIGNMENT_KERNEL_V2_DURABLE_CONTROL_EVIDENCE_PRODUCER_IDS,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA,
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+  ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+  ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   assignmentKernelControlEvidenceFactsV2,
   assignmentKernelSessionIndexResponseV2,
   isAssignmentKernelControlCapabilityV2,
   isAssignmentKernelDurableControlEvidenceProducerV2,
+  parseAssignmentKernelPublicationV2,
   parseAssignmentKernelSessionIndexResponseV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { loadAssignmentKernelPublicationsV2 } from "../src/benchmark/assignment_kernel_v2_collection.js";
@@ -31,18 +35,52 @@ const index = {
   }]
 };
 
+function exactPublication(callIds: readonly string[]) {
+  const calls = Object.fromEntries(callIds.map(callId => [callId, {
+    schema: "revit-operator.provider-call/v2",
+    call_id: callId,
+    binding: index.assignments[0]!.binding,
+    state: "completed",
+    provider: "openai",
+    model: "test-model",
+    reasoning_effort: "medium",
+    gap_ids: [],
+    criterion_ids: [],
+    expected_information: [],
+    admitted_at: "2026-09-02T00:00:00.000Z",
+    completed_at: "2026-09-02T00:00:01.000Z",
+    success: true
+  }]));
+  return {
+    schema: ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+    assignment_id: "assignment-v2",
+    assignment_version: 29,
+    snapshot: {
+      schema: ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
+      assignment_version: 29,
+      current_binding: index.assignments[0]!.binding,
+      provider_call_ids: [...callIds],
+      provider_calls: calls,
+      in_flight_provider_call_ids: []
+    },
+    provider_ledger: {
+      schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+      assignment_id: "assignment-v2",
+      run_id: "run-v2",
+      generation: 1,
+      call_ids: [...callIds],
+      calls,
+      in_flight_call_ids: []
+    }
+  };
+}
+
 test("shared V2 session-index response is the only new producer/consumer contract", async () => {
   const response = assignmentKernelSessionIndexResponseV2(index);
   assert.equal(response.schema, ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA);
   assert.deepEqual(parseAssignmentKernelSessionIndexResponseV2(response)[ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD], index);
 
-  const publication = {
-    schema: "revit-operator.assignment-kernel-publication/v2",
-    assignment_id: "assignment-v2",
-    assignment_version: 29,
-    snapshot: { provider_call_ids: ["call-1", "call-2", "call-3"] },
-    provider_ledger: { call_ids: ["call-1", "call-2", "call-3"] }
-  };
+  const publication = exactPublication(["call-1", "call-2", "call-3"]);
   const collected = await loadAssignmentKernelPublicationsV2("http://operator", "session-v2", async (_base, pathname) =>
     pathname.startsWith("/api/assignments/v2?")
       ? response as unknown as Record<string, unknown>
@@ -54,13 +92,7 @@ test("shared V2 session-index response is the only new producer/consumer contrac
 
 test("V2 publication collection recovers transient session-index and exact-publication fetch failures without replaying work", async () => {
   const response = assignmentKernelSessionIndexResponseV2(index);
-  const publication = {
-    schema: "revit-operator.assignment-kernel-publication/v2",
-    assignment_id: "assignment-v2",
-    assignment_version: 29,
-    snapshot: { schema: "revit-operator.assignment-snapshot/v2", terminal: true, outcome: "complete" },
-    provider_ledger: { schema: "revit-operator.assignment-provider-ledger/v2", call_ids: ["call-1"] }
-  };
+  const publication = exactPublication(["call-1"]);
   let indexAttempts = 0;
   let publicationAttempts = 0;
   const collected = await loadAssignmentKernelPublicationsV2(
@@ -84,6 +116,29 @@ test("V2 publication collection recovers transient session-index and exact-publi
   assert.deepEqual(collected.assignment_ids, ["assignment-v2"]);
   assert.deepEqual(collected.failures, []);
   assert.deepEqual(collected.assignments, [publication]);
+});
+
+test("exact V2 publication contract survives JSON transport and rejects provider-ledger drift", () => {
+  const publication = exactPublication(["call-1", "call-2", "call-3"]);
+  assert.deepEqual(parseAssignmentKernelPublicationV2(JSON.parse(JSON.stringify(publication))), publication);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...publication,
+    provider_ledger: { ...publication.provider_ledger, run_id: "another-run" }
+  }), /assignment_kernel_v2_publication_invalid:provider_ledger_binding/);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...publication,
+    snapshot: { ...publication.snapshot, provider_call_ids: ["call-1", "call-2"] }
+  }), /assignment_kernel_v2_publication_invalid:provider_ledger_index/);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...publication,
+    provider_ledger: {
+      ...publication.provider_ledger,
+      calls: {
+        ...publication.provider_ledger.calls,
+        "call-1": { ...publication.provider_ledger.calls["call-1"], model: "drifted-model" }
+      }
+    }
+  }), /assignment_kernel_v2_publication_invalid:provider_call_projection/);
 });
 
 test("historical or malformed session-index aliases fail explicitly for new V2 traffic", () => {

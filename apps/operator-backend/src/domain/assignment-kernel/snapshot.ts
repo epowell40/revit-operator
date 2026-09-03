@@ -5,8 +5,9 @@ import type { ObservationV2 } from "./observation.js";
 import type { OperationV2 } from "./operation.js";
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallV2 } from "./progress/provider_call.js";
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
-export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA = "revit-operator.assignment-snapshot/v2" as const;
+export { ASSIGNMENT_SNAPSHOT_V2_SCHEMA };
 
 export interface AssignmentSnapshotV2 {
   schema: typeof ASSIGNMENT_SNAPSHOT_V2_SCHEMA;

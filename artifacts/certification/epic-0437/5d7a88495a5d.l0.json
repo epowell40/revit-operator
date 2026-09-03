@@ -552,7 +552,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_publication.ts",
-      "sha256": "sha256:c43a7e35633ccc8b86c9b254b043e20362068b97fb80c3b19bb887f2f910e8a0"
+      "sha256": "sha256:12eb081d498f1c51cd550a02c34516ee24faf93e3cee5084510e2f4f519679f9"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_store.ts",
@@ -696,19 +696,19 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_acceptance.ts",
-      "sha256": "sha256:ad9a6bd35a4e4672456dd317068d6763d965d1b24ce2a1a57ce146bd54842a77"
+      "sha256": "sha256:c5b81aaf68a292124acca5918c4aa76e56fc7ade67d76d6a0640a741f4f722f7"
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts",
-      "sha256": "sha256:9cb48ca98c03c3003cb44876079519e4f38e1e027066a4eefd94acc8e69d4b43"
+      "sha256": "sha256:f36993ee91d7b575f785849a8b9806bfaf200cc62ddf5f23020915e1404d1c20"
     },
     {
       "path": "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts",
-      "sha256": "sha256:822bb240f92606f41f638bfb3850464677875bb2cd4796a343e06fe1169b7c71"
+      "sha256": "sha256:bf7a7b5c348e295de615c086e836e90ad081294d5315ffc466c7370d96ce5f70"
     },
     {
       "path": "apps/operator-backend/src/benchmark/canonical_assignment_truth.ts",
-      "sha256": "sha256:60c86e2d867209e9ec7c05b8ea8b1eb112bd2e8c75ca62e1df165eee2e291771"
+      "sha256": "sha256:5a82f299ef4ab33e4648acf6dac6f6de75bb1eb1c905efd34704a0ed38c48d8f"
     },
     {
       "path": "apps/operator-backend/src/benchmark/computer_run_settlement.ts",
@@ -848,7 +848,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_kernel.ts",
-      "sha256": "sha256:95f05ad8ea8f66d35ee4fa7a92582b608be2eabe79ed1fe0b7c30e1b7dd20b96"
+      "sha256": "sha256:6b3351a4a74aa27b34a77cad58acdd7c694bbf05715b8fe2c3bb8dad6207c123"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_maintenance.ts",
@@ -864,7 +864,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:a352b774cf2033f7a272f8bd6c80d432c86f615004bb523b0b7c794281e7a06e"
+      "sha256": "sha256:248e44ed7b9e63508213c02c1a75d2f6ce362e26e577cf8a9a1f72612a8541eb"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
@@ -984,11 +984,11 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/v2_session_receipt_binding.ts",
-      "sha256": "sha256:2daac45ddcc4c9411b8c7d282be8887a0449860e686ded01f9e4c00a91be51af"
+      "sha256": "sha256:8477991a8dcf70e1c1e156f0ecc448f79c23ae88746bc0718a0c8c7fbad07f22"
     },
     {
       "path": "apps/operator-backend/src/benchmark/work_packet_collection.ts",
-      "sha256": "sha256:41460bacc3a812302915a697a6de762f8e939937f7e41c81d17f0d696e3a8607"
+      "sha256": "sha256:c673596bec686623e40e58065e0ac6a0acca3d1fd01fc18089c55f89d0d58c84"
     },
     {
       "path": "apps/operator-backend/src/brain.ts",
@@ -1801,7 +1801,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/snapshot.ts",
-      "sha256": "sha256:7ab4fe960f00c85801cd7a871734e9117bb83e60fa93d3857a2bbd167feb653b"
+      "sha256": "sha256:8f4523d77c3af25439b7d056f3d277a27c4290b44ffdb19dc9975fb4752016fe"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/admission.ts",
@@ -2861,11 +2861,11 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:fe61dbf4e15d4a0b14768a7536622357c29c2c463777ef3a02268b5d3006d81e"
+      "sha256": "sha256:ab644b462da85a8fafcbf07fdfd2eada5f89d3cbc464a0fd1a3278e8e4c71d39"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
-      "sha256": "sha256:8585f89215c4070f6c8f329fdb4f0448f5ed1fa78e76d2ab27b8d9f5e3d91649"
+      "sha256": "sha256:615b50dbbb3e8e79fe4320e1510842136ab096ce0d1cc2b00c0659d2e3e81e5d"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_candidate3_semantic_replay.test.ts",
@@ -2893,7 +2893,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_session_index_contract.test.ts",
-      "sha256": "sha256:174155cc30078513d8a97ac11b9d92b2178d4bacd5bcaa4799b149f6d3b1d58f"
+      "sha256": "sha256:0f3ad36311fe0e918073e08db107723cfc2ac845450e0c58c25df02fb815e564"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_store.test.ts",
@@ -2981,15 +2981,15 @@
     },
     {
       "path": "apps/operator-backend/test/candidate51_v2_session_receipt_coherence.test.ts",
-      "sha256": "sha256:83c19cdc4d2e2a56211c4e6a97586f072c49b0fb8cdbcf20b6a0c594a275d2da"
+      "sha256": "sha256:362e07a93ceb50c59651fbe19dd4647c9c0ab15baf4d819cf63d35cbde85ffe1"
     },
     {
       "path": "apps/operator-backend/test/candidate52_v2_session_receipt_authority.test.ts",
-      "sha256": "sha256:043a560d6db4e5851977e5c16c578af51d422d550ef08fe862e52b07ec627448"
+      "sha256": "sha256:03e4b000078c2a69e00942e5c782b4721aab0602c2c613c4826935e1c3b93a57"
     },
     {
       "path": "apps/operator-backend/test/candidate53_v2_native_evidence_authority.test.ts",
-      "sha256": "sha256:941029edfdd86a13e2c73a1daed29de568921717453e9d8d1d73e27dc91f1c0f"
+      "sha256": "sha256:b8321eeaada53f72e9d15089d572396200d11b8792bc7e73fb2639499a0c61b9"
     },
     {
       "path": "apps/operator-backend/test/certified_sidecar_capability.test.ts",
@@ -5942,11 +5942,11 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.d.ts",
-      "sha256": "sha256:1595fde77f7c2fee8277f2697c20ceea3f784c901199f29f9ab7f521a5f16495"
+      "sha256": "sha256:ecfa26aa053cdaa8dda5cc20e50ef4679a7feb5d5746ffd6ef2faa592e8a5561"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/index.js",
-      "sha256": "sha256:22df6a89d227924bca787e3055cd744fd14001905713b6d9cbb92c88c1969915"
+      "sha256": "sha256:6544c5b4e9d79c05daa65429d497ac29233ddfcffde81ea812a25a8ffaab1d12"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/package.json",
@@ -5985,7 +5985,7 @@
       "sha256": "sha256:f9edb46c52ceb1904dbe68a7bd996f0aa491f7a55f7c9299e8924d2523069d03"
     }
   ],
-  "inputs_hash": "sha256:bbbd0fb8d5b06fb5f564d753070186a80e1c6a0047931ab7a80107ab377e7aea",
+  "inputs_hash": "sha256:59db94ce048642bb1e2147dca6ba1ad6b92191d3d2655268edcc489f46305248",
   "result": {
     "passed": true,
     "checks": [

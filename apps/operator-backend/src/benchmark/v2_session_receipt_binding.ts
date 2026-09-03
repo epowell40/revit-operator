@@ -1,7 +1,10 @@
-import { ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA } from "../assignments/assignment_kernel_v2_publication.js";
-import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "../domain/assignment-kernel/index.js";
+import {
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+  ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA,
+  ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
+  parseAssignmentKernelPublicationV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
 import { BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA } from "./assignment_kernel_v2_collection.js";
-import { ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
 type JsonRecord = Record<string, unknown>;
 type RequestedEffect = "read" | "preview" | "apply";
@@ -72,6 +75,17 @@ function sessionPublicationPresenceV2(value: unknown, expectedSessionId: string)
       assignment_ids: bundleIds,
       reason: "v2_session_index_invalid"
     };
+  }
+  try {
+    const publicationIds = publications.map((publication) =>
+      normalizedText(record(parseAssignmentKernelPublicationV2(publication)).assignment_id));
+    if (publicationIds.length !== bundleIds.length
+        || new Set(publicationIds).size !== publicationIds.length
+        || publicationIds.some((assignmentId) => !bundleIds.includes(assignmentId))) {
+      return { state: "invalid", assignment_ids: bundleIds, reason: "v2_exact_publication_set_invalid" };
+    }
+  } catch {
+    return { state: "invalid", assignment_ids: bundleIds, reason: "v2_exact_publication_invalid" };
   }
   const entries = (Array.isArray(sessionIndex.assignments) ? sessionIndex.assignments : []).map(record);
   const indexedIds = [...new Set(entries.map((entry) => normalizedText(entry.assignment_id)).filter(Boolean))];
@@ -234,7 +248,12 @@ export function resolveSessionReceiptOperationV2(input: {
   if (publications.length !== 1 || publications[0]?.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) {
     return unresolved("v2_exact_publication_missing");
   }
-  const publication = publications[0]!;
+  let publication: JsonRecord;
+  try {
+    publication = record(parseAssignmentKernelPublicationV2(publications[0]));
+  } catch {
+    return unresolved("v2_exact_publication_invalid");
+  }
   const snapshot = record(publication.snapshot);
   if (snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA
       || !sameBinding(snapshot.current_binding, { ...reference, session_id: input.expectedSessionId })) {

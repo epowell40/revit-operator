@@ -1,6 +1,9 @@
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA: "revit-operator.assignment-kernel-session-index/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA: "revit-operator.assignment-kernel-session-index-response/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD: "assignment_kernel_v2_session_index";
+export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA: "revit-operator.assignment-snapshot/v2";
+export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA: "revit-operator.assignment-kernel-publication/v2";
+export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA: "revit-operator.assignment-provider-ledger/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA: "revit-operator.operation-result-semantic-gap/v2";
 
 export interface AssignmentKernelV2SessionIndexBinding {
@@ -35,6 +38,16 @@ export interface AssignmentKernelV2SessionIndexResponse {
 export function parseAssignmentKernelSessionIndexV2(value: unknown): AssignmentKernelV2SessionIndex;
 export function assignmentKernelSessionIndexResponseV2(value: unknown): AssignmentKernelV2SessionIndexResponse;
 export function parseAssignmentKernelSessionIndexResponseV2(value: unknown): AssignmentKernelV2SessionIndexResponse;
+
+export interface AssignmentKernelPublicationV2Contract {
+  readonly schema: typeof ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA;
+  readonly assignment_id: string;
+  readonly assignment_version: number;
+  readonly snapshot: Readonly<Record<string, unknown>>;
+  readonly provider_ledger: Readonly<Record<string, unknown>>;
+}
+
+export function parseAssignmentKernelPublicationV2(value: unknown): AssignmentKernelPublicationV2Contract;
 
 export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA: "revit-operator.assignment-kernel-control-evidence/v2";
 

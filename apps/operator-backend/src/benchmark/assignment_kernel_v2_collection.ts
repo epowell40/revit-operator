@@ -1,9 +1,8 @@
 import {
   ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
-  ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA
-} from "../assignments/assignment_kernel_v2_publication.js";
-import {
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
+  ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+  parseAssignmentKernelPublicationV2,
   parseAssignmentKernelSessionIndexResponseV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
 
@@ -44,8 +43,13 @@ function nonNegativeIntegerOrNull(value: unknown): number | null {
 export function modelCallReceiptsFromAssignmentKernelPublicationsV2(value: unknown): JsonRecord[] {
   const bundle = record(value);
   if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) return [];
-  return records(bundle.assignments).flatMap((publication) => {
-    if (publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA) return [];
+  return records(bundle.assignments).flatMap((candidate) => {
+    let publication: JsonRecord;
+    try {
+      publication = record(parseAssignmentKernelPublicationV2(candidate));
+    } catch {
+      return [];
+    }
     const ledger = record(publication.provider_ledger);
     if (ledger.schema !== ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA) return [];
     const calls = record(ledger.calls);
@@ -138,10 +142,10 @@ export async function loadAssignmentKernelPublicationsV2(
           requestJson,
           options
         );
-        const publication = record(response.assignment_kernel_v2);
-        return publication.schema === ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA
+        const publication = record(parseAssignmentKernelPublicationV2(response.assignment_kernel_v2));
+        return publication.assignment_id === assignmentId
           ? { publication }
-          : { failure: { assignment_id: assignmentId, error: "v2_publication_missing" } };
+          : { failure: { assignment_id: assignmentId, error: "v2_publication_identity_mismatch" } };
       } catch (error) {
         return { failure: { assignment_id: assignmentId, error: error instanceof Error ? error.message : String(error) } };
       }

@@ -37,7 +37,7 @@ foreach ($file in $domainFiles) {
   foreach ($match in [regex]::Matches($content, '(?m)^\s*(?:import|export)\b[^\r\n]*?from\s+["'']([^"'']+)["'']')) {
     $specifier = $match.Groups[1].Value
     $sharedPayloadContract = $specifier -eq "@revitoperator/payload-digest-v2" -and @("canonical.ts", "payload_provenance.ts") -contains $relative
-    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "semantic_admissibility.ts") -contains $relative
+    $sharedControlEvidenceContract = $specifier -eq "@revitoperator/assignment-kernel-v2-contracts" -and @("operation.ts", "semantic_admissibility.ts", "snapshot.ts") -contains $relative
     if (-not $specifier.StartsWith("./") -and -not $specifier.StartsWith("../") -and -not $sharedPayloadContract -and -not $sharedControlEvidenceContract) {
       $violations.Add("$relative imports non-domain dependency '$specifier'")
     }
@@ -342,10 +342,14 @@ $sessionIndexContract = Join-Path $RepoRoot "packages/assignment-kernel-v2-contr
 if (-not (Test-Path -LiteralPath $sessionIndexContract -PathType Leaf)) {
   $violations.Add("Shared Assignment Kernel V2 session-index contract is missing")
 }
-foreach ($relativePath in @(
+$sessionIndexConsumers = @(
   "apps/operator-backend/src/assignments/http_routes.ts",
   "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts"
-)) {
+)
+if (Test-Path -LiteralPath (Resolve-RepoPath "apps/operator-desktop/server.js") -PathType Leaf) {
+  $sessionIndexConsumers += "apps/operator-desktop/server.js"
+}
+foreach ($relativePath in $sessionIndexConsumers) {
   $path = Resolve-RepoPath $relativePath
   $content = Get-Content -Raw -LiteralPath $path
   if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts') {
@@ -366,6 +370,164 @@ if (-not (Test-Path -LiteralPath $nativeEvidenceAdapter -PathType Leaf)) {
   $nativeEvidenceContent = Get-Content -Raw -LiteralPath $nativeEvidenceAdapter
   if ($nativeEvidenceContent -notmatch 'nativeOperationIdentityFromResultSchemaV2') {
     $violations.Add("Shared V2 native-evidence projection no longer owns native result-schema identity")
+  }
+}
+
+# Exact-ID publication, snapshot, and provider-ledger identities are one shared
+# wire contract. Every new V2 consumer validates that contract rather than
+# copying schema strings or accepting a merely plausible wrapper.
+$publicationContractConsumers = @(
+  @{ Path = "apps/operator-backend/src/assignments/assignment_kernel_v2_publication.ts"; Token = "parseAssignmentKernelPublicationV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts"; Token = "parseAssignmentKernelPublicationV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/assignment_kernel_v2_acceptance.ts"; Token = "parseAssignmentKernelPublicationV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/assignment_kernel_v2_native_evidence.ts"; Token = "parseAssignmentKernelPublicationV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/v2_session_receipt_binding.ts"; Token = "parseAssignmentKernelPublicationV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/protocol_v2_kernel.ts"; Token = "parseAssignmentKernelPublicationV2" },
+  @{ Path = "apps/operator-backend/src/benchmark/protocol_v2_runner.ts"; Token = "ASSIGNMENT_SNAPSHOT_V2_SCHEMA" },
+  @{ Path = "apps/operator-backend/src/benchmark/canonical_assignment_truth.ts"; Token = "ASSIGNMENT_SNAPSHOT_V2_SCHEMA" }
+)
+if (Test-Path -LiteralPath (Resolve-RepoPath "apps/operator-desktop/server.js") -PathType Leaf) {
+  $publicationContractConsumers += @{ Path = "apps/operator-desktop/server.js"; Token = "parseAssignmentKernelPublicationV2" }
+}
+foreach ($consumer in $publicationContractConsumers) {
+  $path = Resolve-RepoPath ([string]$consumer.Path)
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $violations.Add("Reviewed V2 publication consumer is missing: $($consumer.Path)")
+    continue
+  }
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts' -or
+      $content -notmatch [regex]::Escape([string]$consumer.Token)) {
+    $violations.Add("$($consumer.Path) does not consume the shared exact V2 publication contract")
+  }
+}
+$v2SchemaLiterals = @(
+  'revit-operator\.assignment-kernel-publication/v2',
+  'revit-operator\.assignment-provider-ledger/v2',
+  'revit-operator\.assignment-snapshot/v2'
+)
+$publicationProductionFiles = @(
+  (Get-ChildItem -LiteralPath (Resolve-RepoPath "apps/operator-backend/src") -Recurse -File -Filter "*.ts")
+)
+$desktopProductionPath = Resolve-RepoPath "apps/operator-desktop/server.js"
+if (Test-Path -LiteralPath $desktopProductionPath -PathType Leaf) {
+  $publicationProductionFiles += Get-Item -LiteralPath $desktopProductionPath
+}
+foreach ($file in $publicationProductionFiles) {
+  $content = Get-Content -Raw -LiteralPath $file.FullName
+  if ($v2SchemaLiterals | Where-Object { $content -match $_ }) {
+    $relative = $file.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
+    $violations.Add("$relative copies an exact V2 publication schema literal outside the shared contract")
+  }
+  if (($content -match 'ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA' -or $content -match '\bprovider_ledger\b') -and
+      $content -notmatch 'parseAssignmentKernelPublicationV2' -and
+      $content -notmatch 'directKernelPublicationsV2\s*\(') {
+    $relative = $file.FullName.Substring($RepoRoot.Length).TrimStart('\', '/').Replace('\', '/')
+    $violations.Add("$relative reads exact V2 publication truth without the shared publication parser")
+  }
+}
+$benchmarkBundleLiteral = 'revit-operator\.benchmark-assignment-kernel-v2/v1'
+$benchmarkBundleOwners = @(Get-ChildItem -LiteralPath (Resolve-RepoPath "apps/operator-backend/src") -Recurse -File -Filter "*.ts" | Where-Object {
+  (Get-Content -Raw -LiteralPath $_.FullName) -match $benchmarkBundleLiteral
+})
+$expectedBenchmarkBundleOwner = [System.IO.Path]::GetFullPath((Resolve-RepoPath "apps/operator-backend/src/benchmark/assignment_kernel_v2_collection.ts"))
+if ($benchmarkBundleOwners.Count -ne 1 -or $benchmarkBundleOwners[0].FullName -ne $expectedBenchmarkBundleOwner) {
+  $violations.Add("The benchmark V2 bundle schema must have exactly one production owner")
+}
+
+# Tool retrieval relevance is a cross-process behavioral contract. Native and
+# MCP implementations must remain vector-equivalent, ordinal, schema-size
+# immune, and explicitly version-gated at the mixed-release boundary.
+$rankingPackage = Join-Path $RepoRoot "packages/revit-tool-search-ranking-v3"
+$rankingReadme = Join-Path $rankingPackage "README.md"
+$rankingVectorsPath = Join-Path $rankingPackage "golden-vectors.json"
+if (-not (Test-Path -LiteralPath $rankingReadme -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $rankingVectorsPath -PathType Leaf)) {
+  $violations.Add("Shared tool-search ranking V3 contract or golden vectors are missing")
+} else {
+  try {
+    $rankingVectors = Get-Content -Raw -LiteralPath $rankingVectorsPath | ConvertFrom-Json
+    if ([string]$rankingVectors.schema -cne "revit_operator.tool_search_ranking_golden_vectors/v3" -or
+        [string]$rankingVectors.ranking_version -cne "operator.tool_search_ranking.v3" -or
+        @($rankingVectors.candidates).Count -lt 2 -or @($rankingVectors.queries).Count -lt 2) {
+      $violations.Add("Shared tool-search ranking V3 vectors have the wrong identity or insufficient coverage")
+    }
+  } catch {
+    $violations.Add("Shared tool-search ranking V3 vectors are not valid JSON")
+  }
+}
+$rankingTsPath = Resolve-RepoPath "apps/mcp-server/src/lib/toolSearchRanking.ts"
+$rankingCsPath = Resolve-RepoPath "apps/revit-bridge-addin/RevitBridge.Common/OperatorToolSearchRanking.cs"
+$rankingMcpServerPath = Resolve-RepoPath "apps/mcp-server/src/server.ts"
+$rankingNativeConsumerPath = Resolve-RepoPath "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolIntrospection.cs"
+foreach ($path in @($rankingTsPath, $rankingCsPath, $rankingMcpServerPath, $rankingNativeConsumerPath)) {
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    $violations.Add("Reviewed tool-search ranking file is missing: $path")
+  }
+}
+if (Test-Path -LiteralPath $rankingTsPath -PathType Leaf) {
+  $rankingTs = Get-Content -Raw -LiteralPath $rankingTsPath
+  if ($rankingTs -notmatch 'scoreToolSearchCandidateV3' -or
+      $rankingTs -notmatch 'compareToolSearchCandidatesV3' -or
+      $rankingTs -notmatch 'normalize\("NFKC"\)' -or
+      $rankingTs -match 'localeCompare\s*\(' -or
+      $rankingTs -match 'candidate\.(?:required_fields|optional_fields)') {
+    $violations.Add("MCP tool-search ranking no longer follows the reviewed ordinal, schema-size-immune V3 contract")
+  }
+}
+if (Test-Path -LiteralPath $rankingCsPath -PathType Leaf) {
+  $rankingCs = Get-Content -Raw -LiteralPath $rankingCsPath
+  if ($rankingCs -notmatch 'public const string ContractVersion' -or
+      $rankingCs -notmatch 'public static int Score\s*\(' -or
+      $rankingCs -notmatch 'NormalizationForm\.FormKC' -or
+      $rankingCs -notmatch 'StringComparer\.Ordinal' -or
+      $rankingCs -notmatch 'ToLowerInvariant') {
+    $violations.Add("Native tool-search ranking no longer follows the reviewed ordinal V3 contract")
+  }
+}
+if (Test-Path -LiteralPath $rankingMcpServerPath -PathType Leaf) {
+  $rankingMcpServer = Get-Content -Raw -LiteralPath $rankingMcpServerPath
+  if ($rankingMcpServer -notmatch 'scoreToolSearchCandidateV3' -or
+      $rankingMcpServer -notmatch 'sort\(compareToolSearchCandidatesV3\)' -or
+      $rankingMcpServer -notmatch '!isToolSearchRankingVersionV3\(' -or
+      $rankingMcpServer -notmatch 'ranking_version:\s*TOOL_SEARCH_RANKING_VERSION_V3') {
+    $violations.Add("MCP tool search does not enforce and publish the shared ranking V3 contract")
+  }
+}
+if (Test-Path -LiteralPath $rankingNativeConsumerPath -PathType Leaf) {
+  $rankingNativeConsumer = Get-Content -Raw -LiteralPath $rankingNativeConsumerPath
+  if ($rankingNativeConsumer -notmatch 'OperatorToolSearchRanking\.Score\(' -or
+      $rankingNativeConsumer -notmatch 'ranking_version\s*=\s*OperatorToolSearchRanking\.ContractVersion' -or
+      $rankingNativeConsumer -notmatch 'ThenBy\(m\s*=>\s*m\.Tool\.RiskLevel\)' -or
+      $rankingNativeConsumer -notmatch 'ThenBy\(m\s*=>\s*m\.Tool\.Path,\s*StringComparer\.Ordinal\)') {
+    $violations.Add("Native tool search does not score, version, and tie-break with the shared ranking V3 contract")
+  }
+}
+$rankingLiteralOwners = @()
+foreach ($root in @(
+  (Resolve-RepoPath "apps/mcp-server/src"),
+  (Resolve-RepoPath "apps/revit-bridge-addin/RevitBridge.Common"),
+  (Resolve-RepoPath "apps/revit-bridge-addin/RevitBridge/Operator")
+)) {
+  if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+  $rankingLiteralOwners += Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
+    $_.Name -notmatch '\.test\.' -and $_.FullName -notmatch 'Common\.Tests' -and
+    (Get-Content -Raw -LiteralPath $_.FullName) -match 'operator\.tool_search_ranking\.v3'
+  }
+}
+$expectedRankingOwners = @([System.IO.Path]::GetFullPath($rankingTsPath), [System.IO.Path]::GetFullPath($rankingCsPath)) | Sort-Object
+$actualRankingOwners = @($rankingLiteralOwners | ForEach-Object { $_.FullName } | Sort-Object -Unique)
+if (@(Compare-Object -ReferenceObject $expectedRankingOwners -DifferenceObject $actualRankingOwners).Count -ne 0) {
+  $violations.Add("Tool-search ranking V3 must have exactly the reviewed MCP and native algorithm owners")
+}
+foreach ($relativePath in @(
+  "apps/mcp-server/src/lib/toolSearchRanking.test.ts",
+  "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorToolSearchRankingTests.cs"
+)) {
+  $path = Resolve-RepoPath $relativePath
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+      (Get-Content -Raw -LiteralPath $path) -notmatch 'revit_operator\.tool_search_ranking_golden_vectors/v3') {
+    $violations.Add("$relativePath does not enforce the shared cross-process ranking vectors")
   }
 }
 $nativeEvidenceConsumers = @(

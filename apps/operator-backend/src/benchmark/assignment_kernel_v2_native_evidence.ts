@@ -1,10 +1,13 @@
-import { ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA } from "../assignments/assignment_kernel_v2_publication.js";
 import {
-  ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   OBSERVATION_V2_SCHEMA,
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA
 } from "../domain/assignment-kernel/index.js";
+import {
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+  ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
+  parseAssignmentKernelPublicationV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
 import { BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA } from "./assignment_kernel_v2_collection.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -85,7 +88,14 @@ export function assignmentKernelNativeEvidenceProjectionV2(value: unknown): Assi
 
   let malformed = false;
   const projected: AssignmentKernelNativeOperationEvidenceV2[] = [];
-  for (const publication of publications) {
+  for (const publicationValue of publications) {
+    let publication: JsonRecord;
+    try {
+      publication = record(parseAssignmentKernelPublicationV2(publicationValue));
+    } catch {
+      malformed = true;
+      continue;
+    }
     const assignmentId = String(publication.assignment_id ?? "").trim();
     const snapshot = record(publication.snapshot);
     const binding = record(snapshot.current_binding);

@@ -35,8 +35,14 @@ From the repository root, run the backend build and test suite with:
 ```powershell
 npm --prefix apps/operator-backend run build
 npm --prefix apps/operator-backend test
+./scripts/run_release_frontier_gate.ps1
 ./scripts/check_backend_module_size.ps1
 ```
+
+The release-frontier gate selects cross-process regressions by historical
+first-bad-transition family and enforces shared contract ownership. It is the
+pre-live diagnostic gate; it does not replace the complete private integration
+release gate or a real Revit UI test.
 
 On a Windows development machine with Revit installed, compile against all installed supported API versions with:
 

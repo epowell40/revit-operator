@@ -62,6 +62,9 @@ function publicationBundle(options: { evidenceClass?: string; outcome?: string; 
     terminal: options.terminal ?? true,
     quiescent: true,
     outcome: options.outcome ?? "complete",
+    provider_call_ids: [],
+    provider_calls: {},
+    in_flight_provider_call_ids: [],
     in_flight_operation_ids: [],
     unresolved_unknown_operation_ids: []
   };
@@ -73,7 +76,15 @@ function publicationBundle(options: { evidenceClass?: string; outcome?: string; 
       assignment_id: binding.assignment_id,
       assignment_version: 26,
       snapshot,
-      provider_ledger: { assignment_id: binding.assignment_id }
+      provider_ledger: {
+        schema: "revit-operator.assignment-provider-ledger/v2",
+        assignment_id: binding.assignment_id,
+        run_id: binding.run_id,
+        generation: binding.generation,
+        call_ids: [],
+        calls: {},
+        in_flight_call_ids: []
+      }
     }],
     failures: []
   };

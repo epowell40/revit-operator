@@ -1,11 +1,13 @@
 import type { GeneralRevitExpectedEffect } from "./general_revit_capability_acceptance.js";
 import { nativeOperationIdentityFromResultSchemaV2 } from "./assignment_kernel_v2_native_evidence.js";
+import {
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+  ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
+  parseAssignmentKernelPublicationV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
+import { BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA } from "./assignment_kernel_v2_collection.js";
 
 type JsonRecord = Record<string, unknown>;
-
-const BUNDLE_SCHEMA = "revit-operator.benchmark-assignment-kernel-v2/v1";
-const PUBLICATION_SCHEMA = "revit-operator.assignment-kernel-publication/v2";
-const SNAPSHOT_SCHEMA = "revit-operator.assignment-snapshot/v2";
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
@@ -62,7 +64,7 @@ const EMPTY: AssignmentKernelAcceptanceTruthV2 = Object.freeze({
 export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKernelAcceptanceTruthV2 {
   const bundle = record(value);
   if (Object.keys(bundle).length === 0) return EMPTY;
-  if (bundle.schema !== BUNDLE_SCHEMA) return { ...EMPTY, present: true, malformed: true };
+  if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) return { ...EMPTY, present: true, malformed: true };
 
   const publications = records(bundle.assignments);
   const assignmentIds = strings(bundle.assignment_ids);
@@ -84,14 +86,21 @@ export function assignmentKernelAcceptanceTruthV2(value: unknown): AssignmentKer
   const requestedEffects = new Set<GeneralRevitExpectedEffect>();
   const successfulTaskPaths = new Set<string>();
 
-  for (const publication of publications) {
+  for (const candidate of publications) {
+    let publication: JsonRecord;
+    try {
+      publication = record(parseAssignmentKernelPublicationV2(candidate));
+    } catch {
+      malformed = true;
+      continue;
+    }
     const snapshot = record(publication.snapshot);
     const binding = record(snapshot.current_binding);
     const providerLedger = record(publication.provider_ledger);
     const assignmentId = String(publication.assignment_id ?? "").trim();
     const snapshotVersion = Number(snapshot.assignment_version);
-    if (publication.schema !== PUBLICATION_SCHEMA
-        || snapshot.schema !== SNAPSHOT_SCHEMA
+    if (publication.schema !== ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA
+        || snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA
         || !assignmentId
         || !assignmentIds.includes(assignmentId)
         || binding.assignment_id !== assignmentId

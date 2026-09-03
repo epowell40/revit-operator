@@ -103,15 +103,21 @@ function bundle(entries: ReturnType<typeof operation>[]) {
         schema: "revit-operator.assignment-snapshot/v2",
         assignment_version: 12,
         current_binding: binding,
+        provider_call_ids: [],
+        provider_calls: {},
+        in_flight_provider_call_ids: [],
         operations: Object.fromEntries(entries.map((entry) => [entry.operation.operation_id, entry.operation])),
         observations: Object.fromEntries(entries.map((entry) => [entry.observation.observation_id, entry.observation]))
       },
       provider_ledger: {
         schema: "revit-operator.assignment-provider-ledger/v2",
         assignment_id: assignmentId,
+        run_id: binding.run_id,
+        generation: binding.generation,
         assignment_version: 12,
         call_ids: [],
-        calls: {}
+        calls: {},
+        in_flight_call_ids: []
       }
     }],
     failures: []
