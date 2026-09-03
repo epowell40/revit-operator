@@ -105,6 +105,7 @@ export function journalProviderDynamicRuntimeSettlement(
         }
       } : {}),
       ...(receipt.evidence_sha256 ? { receipt_id: `dynamic-evidence:${receipt.evidence_sha256}` } : {}),
+      affected_target_identities: receipt.affected_target_identities ?? [],
       request_identity: v2Lease.request_identity,
       completed_at: new Date().toISOString(),
       ...(!completed ? { error_code: receipt.failure || "dynamic_runtime_not_completed" } : {})
@@ -155,7 +156,7 @@ export function journalProviderDynamicRuntimeSettlement(
       ? program.apply ? "trusted_dynamic_runtime_apply_receipt" : "trusted_dynamic_runtime_no_persistent_effect"
       : receipt.failure || "dynamic_runtime_not_completed",
     effect_authority: completed ? "native_receipt" : receipt.outcome_unknown ? "native_host" : "transport_pre_dispatch",
-    affected_target_identities: [],
+    affected_target_identities: receipt.affected_target_identities ?? [],
     receipt_refs: [
       ...(receipt.evidence_sha256 ? [`dynamic-evidence:sha256:${receipt.evidence_sha256.replace(/^sha256:/, "")}`] : []),
       ...(receipt.evidence_binding_sha256 ? [`dynamic-binding:${receipt.evidence_binding_sha256}`] : [])

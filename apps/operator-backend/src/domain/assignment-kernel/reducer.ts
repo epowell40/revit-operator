@@ -6,6 +6,7 @@ import { sameAssignmentBindingV2 } from "./identity.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
 import { appliedOperationHasVerifiedPostconditionV2, deriveAssignmentOutcomeV2 } from "./outcome.js";
 import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
+import { operationMatchesTargetIdentityV2 } from "./operation_target_identity.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
 import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
 import { criteriaPendingEvaluationV2, deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
@@ -274,7 +275,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && subject.settlement_state === "settled",
     "operation_verification_subject_invalid", "Verification must bind to one settled applied operation.");
     kernelAssertV2(Boolean(operation.target.target_id)
-      && operation.target.target_id === subject.target.target_id
+      && operationMatchesTargetIdentityV2(subject, [operation.target.target_id!])
       && operation.target.document_fingerprint === subject.target.document_fingerprint,
     "operation_verification_target_mismatch", "Verification must inspect the exact applied target in the same document.");
   } else {
@@ -371,6 +372,18 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
         : issue.correction_action === "provider_resubmit",
       "operation_input_schema_correction_invalid", "Input-schema correction action must match the declared safe correction eligibility.");
     }
+  }
+  if (result.affected_target_identities !== undefined) {
+    kernelAssertV2(Array.isArray(result.affected_target_identities)
+      && result.affected_target_identities.length <= 256
+      && result.affected_target_identities.every(identity => typeof identity === "string"
+        && identity === identity.trim() && identity.length > 0 && identity.length <= 500
+        && !/[\u0000-\u001f\u007f]/.test(identity))
+      && new Set(result.affected_target_identities).size === result.affected_target_identities.length
+      && result.affected_target_identities.every((identity, index, identities) => index === 0 || identities[index - 1]! < identity)
+      && (result.affected_target_identities.length === 0
+        || (result.dispatch_state === "dispatched" && ["native-host", "dynamic-runtime"].includes(result.authority))),
+    "operation_result_affected_targets_invalid", "Affected targets require a bounded, unique, ordinal native settlement identity set.");
   }
   if (result.result_semantic_gap) {
     const gap = result.result_semantic_gap;

@@ -12,6 +12,7 @@ import {
   fulfillmentRoleCanCarryTaskCriteriaV2,
   normalizeSemanticFactsForEvidenceV2,
   operationEffectAdmissibleForCriterionV2,
+  operationMatchesTargetIdentityV2,
   operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
   sameAssignmentBindingV2,
@@ -233,14 +234,12 @@ function canonicalTargetId(targetTokens: readonly string[]): string | undefined 
 }
 
 function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: readonly string[]): OperationV2 | null {
-  const tokens = new Set(targetTokens);
   return Object.values(snapshot.operations)
     .filter(operation => operation.requested_effect === "apply"
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
       && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
-      && Boolean(operation.target.target_id)
-      && tokens.has(operation.target.target_id!))
+      && operationMatchesTargetIdentityV2(operation, targetTokens))
     .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
       .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0] ?? null;
 }
@@ -632,8 +631,14 @@ function commitInput(
         || !/^sha256:[a-f0-9]{64}$/.test(trustedVerification.evidence_sha256)) {
       throw new Error("assignment_kernel_v2_trusted_verification_invalid");
     }
+    if (trustedVerification.evidence_sha256 !== `sha256:${result.raw_payload_hash}`) {
+      throw new Error("assignment_kernel_v2_trusted_verification_evidence_mismatch");
+    }
+    if (!deterministicallySatisfied) {
+      throw new Error("assignment_kernel_v2_trusted_verification_postcondition_not_satisfied");
+    }
   }
-  if (trustedVerification || deterministicallySatisfied) {
+  if (deterministicallySatisfied) {
     semanticFacts.push({
       fact_id: "verification.postcondition_satisfied",
       fact_class: "verification",

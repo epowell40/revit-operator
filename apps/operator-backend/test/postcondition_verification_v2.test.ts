@@ -143,3 +143,83 @@ test("comparison vectors are deterministic across object and JSON transport repr
   assert.deepEqual([...observedPostconditionValuesV2(output)], [...observedPostconditionValuesV2(JSON.parse(JSON.stringify(output)))]);
   assert.equal(postconditionSatisfiedByPayloadV2(JSON.parse(JSON.stringify(input)), JSON.parse(JSON.stringify(output))), true);
 });
+
+test("native Parameter.Set verification admits the assigned argument but not transaction-scope identities", () => {
+  const input = {
+    operations: [
+      { id: "p", op: "call", memberId: "method:Autodesk.Revit.DB.Element.LookupParameter(System.String)", target: "view", args: ["Sheet Name"] },
+      { id: "set", op: "call", memberId: "method:Autodesk.Revit.DB.Parameter.Set(System.String)", target: "$p", args: ["NEW NAME"] }
+    ],
+    transaction: { mode: "commit", allowedExistingElementIds: [10, 11, 12] }
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    sheetViewId: 10,
+    matches: [{ source: "sheet", value: { value: "NEW NAME" } }]
+  }, { path: "/revit/native-api-mutation-ops" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    sheetViewId: 10,
+    matches: [{ source: "sheet", value: { value: "OLD NAME" } }]
+  }, { path: "/revit/native-api-mutation-ops" }), false);
+});
+
+test("schedule appearance verification binds the requested property instead of an unrelated true flag", () => {
+  const input = { scheduleId: 1542984, appearance: { stripedRows: true }, dryRun: false };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1542984 },
+    appearance: { stripedRows: true }
+  }, { path: "/revit/configure-schedule" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1542984 },
+    appearance: { stripedRows: false },
+    table: { body: { rows: [{ stripedRows: true }] } }
+  }, { path: "/revit/configure-schedule" }), false);
+});
+
+test("schedule filter verification requires the actual filter definition, not rows that happen to match", () => {
+  const input = {
+    scheduleId: 1543072,
+    filters: [{ field: "Mark", op: "begins-with", value: "OPERATOR-SMOKE" }],
+    replaceFilters: true,
+    dryRun: false
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1543072 },
+    table: { body: { rows: [{ cells: ["OPERATOR-SMOKE-001"] }] } }
+  }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1543072 },
+    filterDefinitions: [{ field: "mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
+    filterDefinitionsComplete: true
+  }, { path: "/revit/configure-schedule" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1543072 },
+    filterDefinitions: [
+      { field: "mark", op: "begins_with", value: "OPERATOR-SMOKE" },
+      { field: "level", op: "equals", value: "Level 1" }
+    ],
+    filterDefinitionsComplete: true
+  }, { path: "/revit/configure-schedule" }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1543072 },
+    metadata: { request: { filters: [{ field: "Mark", op: "begins_with", value: "OPERATOR-SMOKE" }] } }
+  }, { path: "/revit/configure-schedule" }), false);
+});
+
+test("schedule field and settings verification consume only the typed detail contract", () => {
+  const input = {
+    scheduleId: 1543072,
+    addFields: ["Count"],
+    showGrandTotals: true,
+    filterBySheet: false,
+    dryRun: false
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1543072 },
+    fields: [{ name: "Count" }],
+    settings: { showGrandTotals: true, filterBySheet: false }
+  }, { path: "/revit/configure-schedule" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, {
+    schedule: { id: 1543072 },
+    table: { body: { rows: [{ name: "Count", showGrandTotals: true, filterBySheet: false }] } }
+  }, { path: "/revit/configure-schedule" }), false);
+});

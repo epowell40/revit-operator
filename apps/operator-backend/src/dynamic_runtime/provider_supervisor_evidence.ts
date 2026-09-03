@@ -22,6 +22,7 @@ export type NormalizedProviderSupervisorEvidence = {
   target_revit_year: "2023" | "2024" | "2025" | "2026";
   document_session_id: string;
   runtime_instance_id: string;
+  affected_target_identities: string[];
 };
 
 function record(value: unknown, label: string): JsonRecord {
@@ -175,6 +176,7 @@ export function normalizeProviderSupervisorEvidence(rawBytes: Buffer, expected: 
   const preview = parseReceipt(top.previewReceipt, "preview receipt");
   const readReport = preview.value.schema === "dynamic-revit-read-report-receipt/v0";
   let bindingHash: string;
+  let affectedTargetIdentities: string[] = [];
   if (readReport) {
     if (expected.applyRequested) throw new Error("apply execution cannot terminate with a read-only report");
     bindingHash = validateReadReport(top, worker, admission, graph);
@@ -182,6 +184,7 @@ export function normalizeProviderSupervisorEvidence(rawBytes: Buffer, expected: 
     const verified = verifyDynamicRevitLiveEvidenceReceipt(rawBytes);
     if (!verified.completed) throw new Error("supervisor receipt chain did not establish completion");
     bindingHash = verified.bindingHash;
+    affectedTargetIdentities = verified.affectedTargetIdentities;
   }
   if (expected.applyRequested) {
     const v1 = record(top.v1Admission, "v1 admission");
@@ -199,6 +202,7 @@ export function normalizeProviderSupervisorEvidence(rawBytes: Buffer, expected: 
     worker_runtime_package_sha256: expected.workerRuntimePackageSha256,
     target_revit_year: expected.targetRevitYear,
     document_session_id: sessionId,
-    runtime_instance_id: runtimeId
+    runtime_instance_id: runtimeId,
+    affected_target_identities: affectedTargetIdentities
   };
 }

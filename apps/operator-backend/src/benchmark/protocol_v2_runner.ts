@@ -85,16 +85,23 @@ export function observedProviderRoutesV2(legacyReport: JsonRecord): BenchmarkRun
   })).filter((row) => row.route && row.model && row.reasoning_effort && Number.isInteger(row.call_count) && row.call_count > 0);
 }
 
-export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selectedCaseIds: readonly string[]): void {
+export function assertCompleteProtocolV2Receipts(
+  legacyReport: JsonRecord,
+  selectedCaseIds: readonly string[],
+  options: { require_assignment_kernel_v2?: boolean } = {}
+): void {
+  const requireAssignmentKernelV2 = options.require_assignment_kernel_v2 === true;
   const traces = records(legacyReport.task_traces);
   for (const caseId of selectedCaseIds) {
     const trace = traces.find((entry) => entry.case_id === caseId);
     if (!trace) continue;
     const toolResults = record(trace.tool_results);
     const expectedIds = expectedDirectKernelAssignmentIdsV2(toolResults);
-    const receivedIds = new Set(directKernelPublicationsV2(toolResults).map((publication) => String(publication.assignment_id ?? "")));
+    const directPublications = directKernelPublicationsV2(toolResults);
+    const receivedIds = new Set(directPublications.map((publication) => String(publication.assignment_id ?? "")));
     const failures = records(record(toolResults.durable_assignment_kernel_v2).failures);
-    if (expectedIds.some((assignmentId) => !receivedIds.has(assignmentId)) || failures.length > 0) {
+    if ((requireAssignmentKernelV2 && (expectedIds.length === 0 || directPublications.length === 0))
+        || expectedIds.some((assignmentId) => !receivedIds.has(assignmentId)) || failures.length > 0) {
       throw new Error(`Benchmark Protocol V2 v2_publication_missing for ${caseId}.`);
     }
   }
@@ -103,6 +110,9 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     return trace ? directKernelPublicationsV2(record(trace.tool_results)).length > 0 : false;
   });
   if (!allDirect) {
+    if (requireAssignmentKernelV2) {
+      throw new Error("Benchmark Protocol V2 v2_publication_missing for a V2-declared run.");
+    }
     const telemetry = record(legacyReport.model_telemetry_coverage);
     if (telemetry.complete !== true || Number(telemetry.cases_with_model_receipts || 0) !== selectedCaseIds.length) {
       throw new Error("Benchmark Protocol V2 fails closed on incomplete provider telemetry.");
@@ -126,7 +136,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         throw new Error(`Benchmark Protocol V2 v2_publication_missing for ${caseId}: ${missingIds.join(",") || "direct publication read failed"}.`);
       }
     }
-    const publications = kernelPublicationsV2(toolResults);
+    const publications = requireAssignmentKernelV2 ? directPublications : kernelPublicationsV2(toolResults);
     const v2AssignmentRows = publications.map(assignmentRowFromKernelPublicationV2);
     if (directPublications.length > 0) {
       const observedProviderReceipts = records(trace.model_call_receipts);
@@ -377,7 +387,11 @@ export function buildProtocolV2ReportFromFlight(args: {
   const traces = records(args.legacyReport.task_traces);
   const byId = new Map(args.cases.map((entry) => [entry.case_id, entry]));
   const traceIds = traces.map((entry) => String(entry.case_id || ""));
-  if (args.requireCompleteReceipts !== false) assertCompleteProtocolV2Receipts(args.legacyReport, traceIds);
+  if (args.requireCompleteReceipts !== false) {
+    assertCompleteProtocolV2Receipts(args.legacyReport, traceIds, {
+      require_assignment_kernel_v2: args.draft.feature_flags.assignment_kernel_v2 === true
+    });
+  }
   for (const caseId of traceIds) {
     const testCase = byId.get(caseId);
     if (!testCase) throw new Error(`Flight contains case ${caseId}, which is absent from the bound corpus.`);

@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
 import type { AssignmentSnapshotV2, OperationV2 } from "../domain/assignment-kernel/index.js";
+import {
+  affectedOperationTargetIdentitiesV2,
+  reportedOperationTargetIdentitiesV2
+} from "../domain/assignment-kernel/operation_target_identity.js";
 import { readEvidenceRef } from "../evidence/evidence_store.js";
 import type { EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import type { GoalRecord } from "../goals/service.js";
@@ -73,8 +77,8 @@ function purpose(operation: OperationV2): VerifiedWorkAction["purpose"] {
 function actions(snapshot: AssignmentSnapshotV2): VerifiedWorkAction[] {
   return Object.values(snapshot.operations).sort((left, right) => left.opened_at.localeCompare(right.opened_at)).map(operation => {
     const refs = operationEvidence(snapshot, operation);
-    const targetIds = [operation.target.target_id, ...Object.values(operation.target.semantic_scope ?? {})]
-      .filter((value): value is string => typeof value === "string" && Boolean(value));
+    const targetIds = reportedOperationTargetIdentitiesV2(operation);
+    const affectedTargetIds = affectedOperationTargetIdentitiesV2(operation);
     const authority = operation.result?.authority === "native-host" ? "native_host"
       : operation.result?.authority === "dynamic-runtime" ? "worker" : "control_plane";
     const verification = operation.purpose === "verification"
@@ -92,8 +96,8 @@ function actions(snapshot: AssignmentSnapshotV2): VerifiedWorkAction[] {
       tool_identity: operation.capability_id,
       action_signature: `sha256:${digest({ capability_id: operation.capability_id, input: operation.input })}`,
       target_fingerprint: `sha256:${digest(operation.target)}`,
-      target_identities: [...new Set(targetIds)],
-      affected_target_identities: operation.persistent_effect === "applied" ? [...new Set(targetIds)] : [],
+      target_identities: [...targetIds],
+      affected_target_identities: [...affectedTargetIds],
       attempt_state: operation.settlement_state,
       admission: { state: operation.admission_state, reason: null, authority: "assignment-spec-v2" },
       dispatch: { state: operation.dispatch_state, reason: operation.result?.error_code ?? null, dispatch_id: operation.result?.native_correlation_id ?? null },

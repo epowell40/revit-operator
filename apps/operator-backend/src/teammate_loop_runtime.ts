@@ -8,6 +8,13 @@ import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPrev
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
+import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import {
+  explicitTargetAbsenceV2,
+  explicitVerificationV2,
+  substantiveReadbackV2,
+  verificationObservationPayloadV2
+} from "./teammate_verification_evidence.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -748,48 +755,14 @@ function resultSucceeded(result: ToolResult): boolean {
   return body.ok !== false && body.success !== false;
 }
 
-function explicitVerification(value: unknown): boolean {
-  if (typeof value === "string") {
-    const text = value.trim();
-    if (text.length < 2 || text.length > 1_000_000 || (!text.startsWith("{") && !text.startsWith("["))) return false;
-    try { return explicitVerification(JSON.parse(text)); } catch { return false; }
-  }
-  if (Array.isArray(value)) return value.some(explicitVerification);
-  if (!value || typeof value !== "object") return false;
-  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-    if (["verified", "complete", "allpassed", "notexists"].includes(normalized) && item === true) return true;
-    if (normalized === "exists" && item === false) return true;
-    if (explicitVerification(item)) return true;
-  }
-  return false;
-}
-
-function substantiveReadback(value: unknown, depth = 0): boolean {
-  if (value === null || value === undefined || depth > 8) return false;
-  if (typeof value === "string" && /^[\[{]/.test(value.trim())) {
-    try { return substantiveReadback(JSON.parse(value), depth + 1); } catch { return false; }
-  }
-  if (Array.isArray(value)) return value.length > 0 && value.some(item => substantiveReadback(item, depth + 1));
-  if (typeof value !== "object") return false;
-  const ignored = new Set(["ok", "success", "status", "action", "message", "open_prints_folder_url"]);
-  return Object.entries(value as Record<string, unknown>).some(([key, item]) => {
-    if (ignored.has(key.toLowerCase())) return false;
-    if (item === null || item === undefined || item === "") return false;
-    if (Array.isArray(item)) return item.length > 0;
-    if (typeof item === "object") return Object.keys(item as Record<string, unknown>).length > 0;
-    return true;
-  });
-}
-
 function verificationMatches(state: TeammateLoopState, evidence: unknown, requireExplicit: boolean): boolean {
-  if (requireExplicit && !explicitVerification(evidence)) return false;
+  if (requireExplicit && !explicitVerificationV2(evidence)) return false;
   const observed = observedPostconditionValuesV2(evidence);
   if (state.apply_expected_values.size > 0) return [...state.apply_expected_values].every(value => observed.has(value));
-  return explicitVerification(evidence) || (!requireExplicit && substantiveReadback(evidence));
+  return explicitVerificationV2(evidence) || (!requireExplicit && substantiveReadbackV2(evidence));
 }
 
-function accumulatedReadbackMatches(state: TeammateLoopState): boolean {
+function accumulatedReadbackMatches(state: TeammateLoopState, evidence: unknown): boolean {
   if (!state.verification_has_substantive_readback) return false;
   if (state.apply_expected_values.size > 0
       && ![...state.apply_expected_values].every(value => state.verification_observed_values.has(value))) return false;
@@ -799,13 +772,25 @@ function accumulatedReadbackMatches(state: TeammateLoopState): boolean {
     : [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   if (applyIdentityTokens.length > 0) {
     if (state.apply_target_tokens_inferred) {
-      return applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token));
+      const inferredMatch = applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token));
+      if (!inferredMatch) return false;
+      if (state.apply_expected_values.size > 0 || state.apply_operation === "create") return true;
+      if (state.apply_operation === "delete") return explicitTargetAbsenceV2(evidence);
+      return explicitVerificationV2(evidence);
     }
-    return state.apply_operation === "create"
+    const identityMatches = state.apply_operation === "create"
       ? applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token))
       : applyIdentityTokens.every(token => state.verification_observed_target_tokens.has(token));
+    if (!identityMatches) return false;
+    if (state.apply_expected_values.size > 0 || state.apply_operation === "create") return true;
+    if (state.apply_operation === "delete") return explicitTargetAbsenceV2(evidence);
+    return explicitVerificationV2(evidence);
   }
-  return [...state.apply_target_tokens].some(token => state.verification_observed_target_tokens.has(token));
+  const targetMatches = [...state.apply_target_tokens].some(token => state.verification_observed_target_tokens.has(token));
+  if (!targetMatches) return false;
+  if (state.apply_expected_values.size > 0 || state.apply_operation === "create") return true;
+  if (state.apply_operation === "delete") return explicitTargetAbsenceV2(evidence);
+  return explicitVerificationV2(evidence);
 }
 
 function explicitDocumentOpenCompletion(call: PendingCall, evidence: unknown): boolean {
@@ -848,7 +833,7 @@ function markVerified(
   state.verified = true;
   state.verification_mode = mode;
   state.verification_action_id = actionId;
-  state.verification_evidence_sha256 = `sha256:${sha256(JSON.stringify(stableValue(evidence)))}`;
+  state.verification_evidence_sha256 = `sha256:${payloadDigestV2(verificationObservationPayloadV2(evidence)).digest}`;
   if (state.apply_signature) state.completed_apply_signatures.add(state.apply_signature);
   state.contract.stage = "report";
 }
@@ -905,27 +890,24 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
       } else state.contract.stage = "verify";
     }
   }
-  const verificationIdentityTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
+  const verificationPayload = verificationObservationPayloadV2(evidence);
+  const verificationIdentityTokens = [...new Set([...pending.target_tokens, ...targetTokens(verificationPayload)])]
     .filter(token => !token.startsWith("parameter:"));
   const applyIdentityTokens = [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   const targetBound = applyIdentityTokens.length > 0
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
     : pending.target_tokens.some(token => state.apply_target_tokens.has(token));
-  if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && substantiveReadback(evidence)) {
-    for (const token of [...pending.target_tokens, ...targetTokens(evidence)]) {
+  if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && substantiveReadbackV2(verificationPayload)) {
+    for (const token of [...pending.target_tokens, ...targetTokens(verificationPayload)]) {
       state.verification_observed_target_tokens.add(token);
     }
-    for (const value of observedPostconditionValuesV2(evidence)) state.verification_observed_values.add(value);
+    for (const value of observedPostconditionValuesV2(verificationPayload)) state.verification_observed_values.add(value);
     state.verification_has_substantive_readback = true;
-    if (accumulatedReadbackMatches(state)) {
-      markVerified(state, "target_bound_readback", actionId, {
-        verification_action_ids: state.verification_action_ids,
-        target_tokens: [...state.verification_observed_target_tokens].sort(),
-        observed_values: [...state.verification_observed_values].sort()
-      });
+    if (accumulatedReadbackMatches(state, verificationPayload)) {
+      markVerified(state, "target_bound_readback", actionId, verificationPayload);
     }
   }
-  if (state.preview_restoration_required && succeeded && pending.effect === "read" && substantiveReadback(evidence)) {
+  if (state.preview_restoration_required && succeeded && pending.effect === "read" && substantiveReadbackV2(evidence)) {
     const observedTargetTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
       .filter(token => !token.startsWith("parameter:"));
     const restorationTargetBound = observedTargetTokens.some(token => state.preview_restoration_target_tokens.has(token));

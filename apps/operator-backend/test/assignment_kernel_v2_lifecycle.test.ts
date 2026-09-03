@@ -210,6 +210,32 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   }), /terminal_immutable/);
 }));
 
+test("Work Packet and Work Return preserve native affected identities from the terminal V2 result", () => workspace(() => {
+  const { goal, binding } = setup();
+  const settled = settleRead(goal.id).settled;
+  const terminal = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{
+      criterion_id: settled.snapshot.spec.criteria[0]!.criterion_id,
+      observation_ids: [settled.observation!.observation_id]
+    }]
+  });
+  const projected = structuredClone(terminal);
+  const operation = Object.values(projected.operations)[0]!;
+  operation.persistent_effect = "applied";
+  operation.result!.persistent_effect = "applied";
+  operation.result!.affected_target_identities = ["element_id:4242"];
+
+  const persistedGoal = getGoal(goal.id)!;
+  const packet = generateVerifiedWorkPacketFromKernelV2(persistedGoal, projected, null);
+  const workReturn = generateWorkReturnFromKernelV2(persistedGoal, projected, null, packet);
+  assert.deepEqual(packet.actions[0]!.affected_target_identities, ["element_id:4242"]);
+  assert.ok(packet.actions[0]!.target_identities.includes("element_id:4242"));
+  assert.ok(packet.grounded_targets.some(target => target.identity === "element_id:4242"));
+  assert.deepEqual(packet.rollback.affected_target_identities, ["element_id:4242"]);
+  assert.ok(workReturn.affected_targets.includes("element_id:4242"));
+}));
+
 test("Protocol V2 recognizes the same terminal V2 snapshot and native read Observation", () => workspace(() => {
   const { goal, binding } = setup();
   const settled = settleRead(goal.id).settled;

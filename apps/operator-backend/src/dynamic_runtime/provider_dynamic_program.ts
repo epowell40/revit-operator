@@ -91,6 +91,7 @@ export type ProviderDynamicProgramExecutionReceipt = {
   worker_runtime_package_sha256?: string | null;
   evidence_binding_sha256?: string | null;
   target_revit_year?: "2023" | "2024" | "2025" | "2026" | null;
+  affected_target_identities?: string[];
 };
 
 type SupervisorExecution = {
@@ -457,7 +458,8 @@ function receipt(args: Partial<ProviderDynamicProgramExecutionReceipt> & Pick<Pr
     ...(args.supervisor_package_sha256 !== undefined ? { supervisor_package_sha256: args.supervisor_package_sha256 } : {}),
     ...(args.worker_runtime_package_sha256 !== undefined ? { worker_runtime_package_sha256: args.worker_runtime_package_sha256 } : {}),
     ...(args.evidence_binding_sha256 !== undefined ? { evidence_binding_sha256: args.evidence_binding_sha256 } : {}),
-    ...(args.target_revit_year !== undefined ? { target_revit_year: args.target_revit_year } : {})
+    ...(args.target_revit_year !== undefined ? { target_revit_year: args.target_revit_year } : {}),
+    affected_target_identities: args.affected_target_identities ?? []
   };
 }
 
@@ -613,7 +615,8 @@ export async function runTrustedProviderDynamicProgram(
         supervisor_package_sha256: normalizedEvidence.supervisor_package_sha256,
         worker_runtime_package_sha256: normalizedEvidence.worker_runtime_package_sha256,
         evidence_binding_sha256: normalizedEvidence.binding_sha256,
-        target_revit_year: normalizedEvidence.target_revit_year
+        target_revit_year: normalizedEvidence.target_revit_year,
+        affected_target_identities: normalizedEvidence.affected_target_identities
       })
     );
   } catch (error) {

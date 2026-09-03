@@ -20,7 +20,7 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
-import { assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
+import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
 import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
@@ -914,17 +914,26 @@ async function main(): Promise<void> {
   }
   const suiteStartedAt = String(priorSuiteTiming.started_at_utc || invocationStartedAt);
   const priorActiveWallClockMs = numberValue(priorSuiteTiming.active_wall_clock_ms);
-  const [config, grant] = rescoreOnly
+  const [config, grant, backendHealth] = rescoreOnly
     ? [{
       runtimeProfile: asRecord(priorSuiteContext.runtime_profile),
       computerModel: requestedComputerAgent.agent_model
-    }, asRecord(priorSuiteContext.write_grant)]
+    }, asRecord(priorSuiteContext.write_grant), {}]
     : await Promise.all([
       requestJson(sidecar, "/api/config", {}, 30_000),
-      requestJson(sidecar, "/api/revit/write-grant", {}, 30_000)
+      requestJson(sidecar, "/api/revit/write-grant", {}, 30_000),
+      requestJson(sidecar, "/api/backend/health", {}, 30_000)
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
+  const assignmentKernelRuntime = rescoreOnly
+    ? (Object.keys(asRecord(priorSuiteContext.assignment_kernel_runtime)).length > 0
+      ? asRecord(priorSuiteContext.assignment_kernel_runtime)
+      : null)
+    : assertGeneralRevitQualificationRuntime({
+      required_assignment_kernel_v2: protocolDraft?.feature_flags.assignment_kernel_v2 === true,
+      backend_health: backendHealth
+    });
   if (!rescoreOnly) {
     assertGeneralRevitQualificationWriteGrant({
       cases: selected,
@@ -944,6 +953,7 @@ async function main(): Promise<void> {
     sidecar,
     execution_surface: executionSurface(),
     runtime_profile: runtimeProfile,
+    assignment_kernel_runtime: assignmentKernelRuntime,
     write_grant: safeGrant(grant),
     computer_agent: {
       configuration_source: requestedSpeedSettings ? (resumedCheckpoint ? "resume_or_cli" : "benchmark_cli") : "unspecified",

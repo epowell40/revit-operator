@@ -131,6 +131,22 @@ function text(value: unknown, max = 500): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
 
+function affectedTargetIdentities(settlement: Record<string, unknown>): string[] {
+  const source = settlement.affected_target_identities;
+  if (source === undefined) return [];
+  if (!Array.isArray(source) || source.length > 256) {
+    throw new Error("assignment_kernel_v2_native_affected_targets_invalid");
+  }
+  const identities = source.map(value => {
+    if (typeof value !== "string" || value !== value.trim() || value.length === 0 || value.length > 500
+        || /[\u0000-\u001f\u007f]/.test(value)) {
+      throw new Error("assignment_kernel_v2_native_affected_targets_invalid");
+    }
+    return value;
+  });
+  return [...new Set(identities)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
 function parseContext(meta: unknown): Context | null {
   const source = object(object(meta)[ASSIGNMENT_KERNEL_V2_META_KEY]);
   if (source.schema !== ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA) return null;
@@ -699,6 +715,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     authority: "native-host",
     result_schema_id: resultSchemaId,
     observation_required: !transportFailed,
+    affected_target_identities: affectedTargetIdentities(settlement),
     ...(!transportFailed && provenance ? {
       raw_payload_hash: provenance.normalized.digest,
       payload_provenance: provenance

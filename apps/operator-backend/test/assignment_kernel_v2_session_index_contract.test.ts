@@ -3,16 +3,19 @@ import test from "node:test";
 import {
   ASSIGNMENT_KERNEL_V2_CONTROL_CAPABILITY_IDS,
   ASSIGNMENT_KERNEL_V2_DURABLE_CONTROL_EVIDENCE_PRODUCER_IDS,
+  ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD,
   ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA,
   ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
   ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
   ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   assignmentKernelControlEvidenceFactsV2,
+  assignmentKernelRuntimeAttestationV2,
   assignmentKernelSessionIndexResponseV2,
   isAssignmentKernelControlCapabilityV2,
   isAssignmentKernelDurableControlEvidenceProducerV2,
   parseAssignmentKernelPublicationV2,
+  parseAssignmentKernelRuntimeAttestationV2,
   parseAssignmentKernelSessionIndexResponseV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { loadAssignmentKernelPublicationsV2 } from "../src/benchmark/assignment_kernel_v2_collection.js";
@@ -34,6 +37,30 @@ const index = {
     terminal: true
   }]
 };
+
+test("shared runtime attestation binds lifecycle, progression, publication, ledger, and evidence policy", () => {
+  const enabled = assignmentKernelRuntimeAttestationV2(true);
+  assert.equal(enabled.schema, ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA);
+  assert.equal(enabled.assignment_kernel_v2_enabled, true);
+  assert.equal(enabled.lifecycle_owner, "assignment_kernel_v2");
+  assert.equal(enabled.progress_owner, "deterministic_progress_controller_v2");
+  assert.deepEqual(parseAssignmentKernelRuntimeAttestationV2(JSON.parse(JSON.stringify(enabled))), enabled);
+
+  const disabled = assignmentKernelRuntimeAttestationV2(false);
+  assert.equal(disabled.assignment_kernel_v2_enabled, false);
+  assert.equal(disabled.lifecycle_owner, "legacy_goal_v1");
+  assert.equal(disabled.exact_publication_schema, null);
+  assert.deepEqual(parseAssignmentKernelRuntimeAttestationV2(disabled), disabled);
+
+  assert.throws(() => parseAssignmentKernelRuntimeAttestationV2({
+    ...enabled,
+    lifecycle_owner: "legacy_goal_v1"
+  }), /assignment_kernel_v2_runtime_attestation_invalid:coherence/);
+  assert.throws(() => parseAssignmentKernelRuntimeAttestationV2({
+    ...enabled,
+    unreviewed_runtime_claim: true
+  }), /assignment_kernel_v2_runtime_attestation_invalid:fields/);
+});
 
 function exactPublication(callIds: readonly string[]) {
   const calls = Object.fromEntries(callIds.map(callId => [callId, {

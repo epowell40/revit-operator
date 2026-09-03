@@ -2,9 +2,55 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import {
+  assertGeneralRevitQualificationRuntime,
   assertGeneralRevitQualificationWriteGrant,
   generalRevitQualificationWriteGrantRequirement
 } from "../src/benchmark/general_revit_qualification_preflight.js";
+import { assignmentKernelRuntimeAttestationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+
+function backendHealth(enabled: boolean): Record<string, unknown> {
+  return {
+    ok: true,
+    backend: {
+      status: "ok",
+      assignment_kernel_runtime: assignmentKernelRuntimeAttestationV2(enabled)
+    }
+  };
+}
+
+test("V2 qualification admits only the exact shared live-runtime attestation", () => {
+  assert.deepEqual(assertGeneralRevitQualificationRuntime({
+    required_assignment_kernel_v2: true,
+    backend_health: backendHealth(true)
+  }), assignmentKernelRuntimeAttestationV2(true));
+  assert.throws(() => assertGeneralRevitQualificationRuntime({
+    required_assignment_kernel_v2: true,
+    backend_health: backendHealth(false)
+  }), /runtime preflight failed before fixture, Assignment, provider, or Revit work.*disabled/i);
+});
+
+test("missing, malformed, or internally contradictory runtime claims fail before live work", () => {
+  const enabled = assignmentKernelRuntimeAttestationV2(true);
+  for (const value of [
+    {},
+    { ok: false, backend: { status: "ok", assignment_kernel_runtime: enabled } },
+    { ok: true, backend: { status: "unavailable", assignment_kernel_runtime: enabled } },
+    { ok: true, backend: { status: "ok" } },
+    { ok: true, backend: { status: "ok", assignment_kernel_runtime: { ...enabled, progress_owner: "legacy_agent_loop_v1" } } }
+  ]) {
+    assert.throws(() => assertGeneralRevitQualificationRuntime({
+      required_assignment_kernel_v2: true,
+      backend_health: value
+    }), /runtime preflight failed before fixture, Assignment, provider, or Revit work/i);
+  }
+});
+
+test("historical non-V2 qualification remains isolated from the new runtime requirement", () => {
+  assert.equal(assertGeneralRevitQualificationRuntime({
+    required_assignment_kernel_v2: false,
+    backend_health: {}
+  }), null);
+});
 
 test("read-only qualification does not require a write grant", () => {
   const requirement = generalRevitQualificationWriteGrantRequirement([
@@ -62,8 +108,11 @@ test("partial or malformed grant state fails closed", () => {
 
 test("the live capability runner invokes the shared preflight before fixture readiness", () => {
   const source = fs.readFileSync("src/tools/general_revit_capability_acceptance.ts", "utf8");
+  const runtimePreflight = source.indexOf("assertGeneralRevitQualificationRuntime({");
   const preflight = source.indexOf("assertGeneralRevitQualificationWriteGrant({");
   const fixtureReadiness = source.indexOf("let fixturePreflight: JsonRecord = {};");
+  assert.ok(runtimePreflight >= 0, "runner must invoke shared runtime preflight");
   assert.ok(preflight >= 0, "runner must invoke shared write-grant preflight");
+  assert.ok(fixtureReadiness > runtimePreflight, "runtime preflight must precede fixture and live task work");
   assert.ok(fixtureReadiness > preflight, "write-grant preflight must precede fixture and live task work");
 });

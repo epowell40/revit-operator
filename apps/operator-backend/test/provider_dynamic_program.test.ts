@@ -18,6 +18,7 @@ import { decideAnthropic, decideGemini } from "../src/brains/external_provider_b
 import { decideOpenAi } from "../src/brains/openai_brain.js";
 import { guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
 import { computeDynamicRuntimePackageDirectoryIdentity } from "../src/dynamic_runtime/runtime_package_directory_identity.js";
+import { normalizeProviderSupervisorEvidence } from "../src/dynamic_runtime/provider_supervisor_evidence.js";
 import { createGoal } from "../src/goals/service.js";
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import {
@@ -75,6 +76,30 @@ function sha256(value: string | Buffer): string {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
+function dynamicCanonicalJoin(values: string[]): string {
+  return values.map(value => `+${Buffer.from(value, "utf8").toString("base64")}\n`).join("");
+}
+
+function dynamicCanonicalSet(values: string[]): string {
+  return dynamicCanonicalJoin([...values].sort());
+}
+
+function dynamicEffectBudgetHash(budget: Record<string, unknown>): string {
+  return sha256(dynamicCanonicalJoin([
+    String(budget.Schema), String(budget.BudgetId),
+    dynamicCanonicalSet(budget.TargetDocumentFingerprints as string[]),
+    dynamicCanonicalSet(budget.AllowedCategories as string[]),
+    dynamicCanonicalSet(budget.ExplicitTargetUniqueIds as string[]),
+    dynamicCanonicalSet(budget.AllowedSdkDomains as string[]),
+    dynamicCanonicalSet(budget.AllowedExternalEffectClasses as string[]),
+    String(budget.ViewScopeHash), String(budget.LevelScopeHash), String(budget.WorksetScopeHash), String(budget.PhaseScopeHash),
+    String(budget.MaximumOperationCount), String(budget.MaximumAffectedElements), String(budget.MaximumCreates),
+    String(budget.MaximumModifications), String(budget.MaximumDeletes), String(budget.MaximumExecutionMilliseconds),
+    String(budget.MaximumRegenerations), String(budget.MaximumOutputCount), String(budget.MaximumOutputBytes),
+    String(budget.FileCapabilitySetHash)
+  ]));
+}
+
 function supervisorPackage(root: string) {
   const directory = path.join(root, "supervisor"); const executable = path.join(directory, "DynamicRevitSandboxSupervisor.exe");
   fs.mkdirSync(path.join(directory, "manifests"), { recursive: true });
@@ -100,6 +125,7 @@ function supervisorEvidence(args: {
   supervisorPackageSha256: string;
   workerRuntimePackageSha256: string;
   targetRevitYear?: "2023" | "2024" | "2025";
+  applyRequested?: boolean;
 }): Record<string, unknown> {
   const runtimeId = "runtime-1";
   const sessionId = "session-1";
@@ -141,6 +167,37 @@ function supervisorEvidence(args: {
     projected_changes: [], failures: [], warnings: [], rollback_status: "rolled_back",
     rollback_truth: true, elapsed_milliseconds: 1
   });
+  const previewHash = sha256(previewReceipt);
+  const effectBudget = {
+    Schema: "dynamic-revit-effect-budget/v1", BudgetId: "budget-1",
+    TargetDocumentFingerprints: [fingerprint], AllowedCategories: ["OST_MechanicalEquipment"],
+    ExplicitTargetUniqueIds: ["target-1"], AllowedSdkDomains: ["core"], AllowedExternalEffectClasses: [],
+    ViewScopeHash: `sha256:${"1".repeat(64)}`, LevelScopeHash: `sha256:${"2".repeat(64)}`,
+    WorksetScopeHash: `sha256:${"3".repeat(64)}`, PhaseScopeHash: `sha256:${"4".repeat(64)}`,
+    MaximumOperationCount: 1, MaximumAffectedElements: 1, MaximumCreates: 0, MaximumModifications: 1,
+    MaximumDeletes: 0, MaximumExecutionMilliseconds: 5000, MaximumRegenerations: 1,
+    MaximumOutputCount: 1, MaximumOutputBytes: 4096, FileCapabilitySetHash: `sha256:${"5".repeat(64)}`
+  };
+  const effectBudgetHash = dynamicEffectBudgetHash(effectBudget);
+  const finalAuthorizationHash = `sha256:${"f".repeat(64)}`;
+  const applyAuthorizationReceipt = JSON.stringify({
+    schema: "dynamic-revit-apply-authorization-receipt/v1", preview_id: "preview-1",
+    preview_receipt_hash: previewHash,
+    admission_expectations: { OperationGraphHash: graphHash, PreviewReceiptHash: previewHash, EffectBudgetHash: effectBudgetHash },
+    effect_budget: effectBudget, authorization_granted: true
+  });
+  const v1Admission = {
+    schema: "dynamic_program_admission/v1", admissionId: "admission-1", previewReceiptHash: previewHash,
+    operationGraphHash: graphHash, documentFingerprint: fingerprint, documentSessionId: sessionId,
+    effectBudgetHash, finalAuthorizationHash, workerRuntimePackageHash: args.workerRuntimePackageSha256,
+    targetRevitVersion: args.targetRevitYear ?? "2024"
+  };
+  const applyReceipt = JSON.stringify({
+    schema: "dynamic-revit-apply-receipt/v1", outcome: "committed_verified", admission_id: "admission-1",
+    preview_id: "preview-1", preview_receipt_hash: previewHash, final_authorization_hash: finalAuthorizationHash,
+    graph_hash: graphHash, effect_budget_hash: effectBudgetHash, document_fingerprint: fingerprint,
+    document_session_id: sessionId, changed_element_ids: [1]
+  });
   const authenticated = (purpose: string, raw: string) => JSON.stringify({
     schema: "dynamic-revit-authenticated-receipt/v0", runtime_instance_id: runtimeId, purpose,
     expires_unix_seconds: 4_000_000_000, receipt_hash: sha256(raw),
@@ -154,18 +211,44 @@ function supervisorEvidence(args: {
   });
   const target = args.targetRevitYear ?? "2024";
   const host = `C:\\Program Files\\Autodesk\\Revit ${target}\\Revit.exe`;
+  const applyRequested = args.applyRequested === true;
   return {
-    schema: "dynamic-revit-phase2-live-evidence/v0", ok: true,
+    schema: applyRequested ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", ok: true,
     startedUtc: "2026-08-09T10:00:00.000Z", completedUtc: "2026-08-09T10:00:01.000Z",
     sandboxProfile: "windows-lpac-v1-zero-capabilities", taskDirectory: "C:\\fixture\\task",
     registrationReceipt, snapshotReceipt, workerOutput, admission, previewReceipt,
-    applyAuthorizationReceipt: null, v1Admission: null, applyReceipt: null,
-    hostAuthenticationReceipts: [bootstrap, authenticated("snapshot-receipt", snapshotReceipt), authenticated("register-worker-receipt", registrationReceipt), authenticated("preview-receipt", previewReceipt)],
+    applyAuthorizationReceipt: applyRequested ? applyAuthorizationReceipt : null,
+    v1Admission: applyRequested ? v1Admission : null,
+    applyReceipt: applyRequested ? applyReceipt : null,
+    hostAuthenticationReceipts: [
+      bootstrap, authenticated("snapshot-receipt", snapshotReceipt), authenticated("register-worker-receipt", registrationReceipt),
+      authenticated("preview-receipt", previewReceipt),
+      ...(applyRequested ? [authenticated("authorize-apply-receipt", applyAuthorizationReceipt), authenticated("apply-receipt", applyReceipt)] : [])
+    ],
     replayEvidence: null, failure: null, runtimeImageDirectory: "C:\\fixture\\runtime",
     runtimeImageIdentity: args.workerRuntimePackageSha256, runtimeDependencyCount: 5,
     targetRevitYear: target, expectedHostExecutable: host, observedHostExecutable: host
   };
 }
+
+test("authenticated Dynamic Runtime apply evidence exposes its exact affected target identities", () => {
+  const supervisorPackageSha256 = `sha256:${"a".repeat(64)}`;
+  const workerRuntimePackageSha256 = `sha256:${"b".repeat(64)}`;
+  const evidence = supervisorEvidence({
+    source: program({ apply: true }).source,
+    supervisorPackageSha256,
+    workerRuntimePackageSha256,
+    applyRequested: true
+  });
+  const normalized = normalizeProviderSupervisorEvidence(Buffer.from(JSON.stringify(evidence), "utf8"), {
+    applyRequested: true,
+    targetRevitYear: "2024",
+    source: program({ apply: true }).source,
+    supervisorPackageSha256,
+    workerRuntimePackageSha256
+  });
+  assert.deepEqual((normalized as any).affected_target_identities, ["element_id:1"]);
+});
 
 function restoreEnvironment(snapshot: Record<string, string | undefined>): void {
   for (const [name, value] of Object.entries(snapshot)) {

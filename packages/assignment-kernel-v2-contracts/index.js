@@ -6,6 +6,8 @@ export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignmen
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2";
 export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA = "revit-operator.provider-call/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA = "revit-operator.operation-result-semantic-gap/v2";
+export const ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA = "revit-operator.assignment-kernel-runtime-attestation/v2";
+export const ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2 = "typed-deny-by-default/v2";
 
 const PROVIDER_CALL_STATES_V2 = new Set([
   "admitted",
@@ -31,6 +33,10 @@ function invalid(reason) {
 
 function publicationInvalid(reason) {
   throw new TypeError(`assignment_kernel_v2_publication_invalid:${reason}`);
+}
+
+function runtimeAttestationInvalid(reason) {
+  throw new TypeError(`assignment_kernel_v2_runtime_attestation_invalid:${reason}`);
 }
 
 function requiredString(value) {
@@ -73,6 +79,42 @@ function sameAssignmentBinding(leftValue, right) {
     && left.session_id === right.session_id
     && left.principal_id === right.principal_id
     && (left.document_fingerprint ?? null) === (right.document_fingerprint ?? null);
+}
+
+/**
+ * Publishes the effective lifecycle configuration of the running backend. This
+ * is intentionally a small behavioral contract rather than a copy of process
+ * environment variables: qualification consumers need to prove which runtime
+ * owns canonical state, progression, publication, and evidence admission.
+ */
+export function assignmentKernelRuntimeAttestationV2(enabledValue) {
+  const enabled = enabledValue === true;
+  return Object.freeze({
+    schema: ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA,
+    assignment_kernel_v2_enabled: enabled,
+    lifecycle_owner: enabled ? "assignment_kernel_v2" : "legacy_goal_v1",
+    progress_owner: enabled ? "deterministic_progress_controller_v2" : "legacy_agent_loop_v1",
+    session_index_response_schema: enabled ? ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA : null,
+    exact_publication_schema: enabled ? ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA : null,
+    provider_ledger_schema: enabled ? ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA : null,
+    semantic_evidence_policy: enabled ? ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2 : null
+  });
+}
+
+export function parseAssignmentKernelRuntimeAttestationV2(value) {
+  const attestation = record(value);
+  if (!attestation || attestation.schema !== ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA) {
+    runtimeAttestationInvalid("schema");
+  }
+  const keys = Object.keys(attestation).sort();
+  const expectedKeys = Object.keys(assignmentKernelRuntimeAttestationV2(true)).sort();
+  if (!sameStrings(keys, expectedKeys)) runtimeAttestationInvalid("fields");
+  if (typeof attestation.assignment_kernel_v2_enabled !== "boolean") {
+    runtimeAttestationInvalid("enabled");
+  }
+  const expected = assignmentKernelRuntimeAttestationV2(attestation.assignment_kernel_v2_enabled);
+  if (!sameJsonValue(attestation, expected)) runtimeAttestationInvalid("coherence");
+  return structuredClone(attestation);
 }
 
 function validOptionalTimestamp(value) {

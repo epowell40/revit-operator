@@ -1057,6 +1057,90 @@ test("structured request-validation failures do not consume the mutation stage",
   }
 });
 
+test("a deleted target that is still present cannot be mistaken for postcondition verification", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Delete element 42 from the current model."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/delete-elements", body: { elementIds: [42], apply: true } }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, deletedElementIds: [42] }) }]
+    });
+
+    const contradictoryReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { elementIds: [42] } }
+    });
+    assert.equal(contradictoryReadback.allowed, true);
+    assert.equal(recordTeammateMcpResult(owner, contradictoryReadback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        requestedElementIds: [42],
+        exactElementFilterApplied: true,
+        items: [{ elementId: 42, name: "Still present" }]
+      }) }]
+    }), null);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+
+    const absentReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { elementIds: [42] } }
+    });
+    assert.equal(absentReadback.allowed, true);
+    assert.ok(recordTeammateMcpResult(owner, absentReadback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        requestedElementIds: [42],
+        exactElementFilterApplied: true,
+        exists: false,
+        items: []
+      }) }]
+    }));
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("request and metadata echoes cannot supply a generic postcondition assertion", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Move element 42 one foot east."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/move-elements",
+        body: { elementIds: [42], delta: { x: 1, y: 0, z: 0 }, apply: true }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42] }) }]
+    });
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { elementIds: [42] } }
+    });
+    assert.equal(readback.allowed, true);
+    assert.equal(recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        items: [{ elementId: 42, location: { x: 0, y: 0, z: 0 } }],
+        metadata: { request: { verified: true } }
+      }) }]
+    }), null);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
 test("structured native-transport pre-dispatch failure permits one corrected mutation without verification", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
@@ -2440,7 +2524,7 @@ test("read-only native API operations verify an applied target without consuming
   }
 });
 
-test("schedule filter predicates do not masquerade as exact written values during verification", () => {
+test("schedule rows do not masquerade as filter configuration and an exact filter-definition readback verifies", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Filter schedule OPERATOR SMOKE ME EQUIPMENT where Mark begins with OPERATOR-SMOKE."));
@@ -2478,6 +2562,24 @@ test("schedule filter predicates do not masquerade as exact written values durin
         status: "Ok",
         schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT", fieldCount: 3 },
         table: { body: { rows: [{ cells: ["HeatRecoveryUnit", "OPERATOR-SMOKE-001", "L2"] }] } }
+      }) }]
+    });
+
+    const rowsOnly = teammateLoopReceiptForOwner(owner);
+    assert.equal(rowsOnly?.verified, false);
+    assert.equal(rowsOnly?.stage, "verify");
+
+    const filterReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_list_schedules",
+      arguments: { action: "detail", scheduleId: 1543072, includeFields: true }
+    });
+    assert.equal(filterReadback.allowed, true);
+    recordTeammateMcpResult(owner, filterReadback, {
+      content: [{ type: "text", text: JSON.stringify({
+        status: "Ok",
+        schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT", fieldCount: 3 },
+        filterDefinitions: [{ field: "Mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
+        filterDefinitionsComplete: true
       }) }]
     });
 

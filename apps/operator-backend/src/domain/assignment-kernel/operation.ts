@@ -108,6 +108,7 @@ export interface OperationResultV2 {
   observation_required: boolean;
   raw_payload_hash?: string;
   payload_provenance?: PayloadProvenanceV2;
+  affected_target_identities?: readonly string[];
   receipt_id?: string;
   native_correlation_id?: string;
   completed_at: string;

@@ -22,7 +22,7 @@ test("dynamic runner supports authenticated hosted execution, remains bounded, a
       const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
       fs.writeFileSync(config.evidencePath, JSON.stringify({ ok: true, taskDirectory: "secret-task", runtimeImageDirectory: "secret-runtime",
         applyReceipt: JSON.stringify({ schema: "dynamic-revit-apply-receipt/v1", outcome: "committed_verified", graph_hash: graphHash,
-          document_fingerprint: documentFingerprint, document_session_id: documentSessionId }),
+          document_fingerprint: documentFingerprint, document_session_id: documentSessionId, changed_element_ids: [42, 7] }),
         admission: { documentFingerprint, documentSessionId }, workerOutput: { sourceHash: sha256("public class Program {}"), executionStatus: "completed",
           graph: { graphHash }, diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle } }));
       return { exitCode: 0, stdout: "", stderr: "" };
@@ -34,6 +34,7 @@ test("dynamic runner supports authenticated hosted execution, remains bounded, a
     assert.equal(result.canonical_attempt_settlement!.requested_effect, "apply");
     assert.equal(result.canonical_attempt_settlement!.effect_state, "applied");
     assert.equal(result.canonical_attempt_settlement!.effect_authority, "native_receipt");
+    assert.deepEqual(result.canonical_attempt_settlement!.affected_target_identities, ["element_id:42", "element_id:7"]);
     const hosted = await runDynamicRevitProgram({ source: "public class HostedProgram {}", mode: "preview" },
       { ...env, REVIT_OPERATOR_MODE: "hosted" }, async (_file, args) => {
         const config = JSON.parse(fs.readFileSync(args[1]!, "utf8"));
@@ -157,7 +158,10 @@ test("dynamic runner exposes a bounded non-authorizing needs-facts continuation"
         executionIdentityHash: digest("d"), diagnostics: [], diagnosticBundleHash: emptyDiagnosticBundle,
         resultReferenceProgramResult: { graph: { graphHash: digest("e"), documentFingerprint: digest("5"), documentSessionId: "session-facts" } }
       }, applyReceipt: JSON.stringify({ schema: "dynamic-revit-mep-result-apply-receipt-envelope/v1", outcome: "committed_verified",
-        graph_hash: digest("e"), source_hash: sha256("public class Program {}"), apply_receipt: { documentRevisionAfter: 2 } }) }));
+        graph_hash: digest("e"), source_hash: sha256("public class Program {}"), apply_receipt: {
+          documentRevisionAfter: 2,
+          effects: [{ addedElementIds: [101], modifiedElementIds: [202], deletedElementIds: [] }]
+        } }) }));
       return { exitCode: 0, stdout: "", stderr: "" };
     });
     assert.equal(resumed.execution_status, "completed");
@@ -165,6 +169,7 @@ test("dynamic runner exposes a bounded non-authorizing needs-facts continuation"
     assert.equal(resumed.iteration.resume_mode, "facts");
     assert.equal(resumed.iteration.parent?.run_id, result.run_id);
     assert.equal(resumed.iteration.parent?.iteration_sha256, result.iteration.iteration_sha256);
+    assert.deepEqual(resumed.canonical_attempt_settlement?.affected_target_identities, ["element_id:101", "element_id:202"]);
     assert.equal(resumed.iteration.authorization_granted, false);
     assert.equal(resumed.iteration.progress.classification, "completed");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

@@ -307,7 +307,7 @@ test("candidate identity rejects each stale reproducible envelope surface before
 test("the live runner verifies candidate identity before Sidecar, fixture, Assignment, provider, or Revit work", () => {
   const source = fs.readFileSync("src/tools/general_revit_capability_acceptance.ts", "utf8");
   const identityPreflight = source.indexOf("assertGeneralRevitCandidateIdentity({");
-  const configRequest = source.indexOf("const [config, grant] = rescoreOnly");
+  const configRequest = source.indexOf("const [config, grant, backendHealth] = rescoreOnly");
   const fixtureReadiness = source.indexOf("let fixturePreflight: JsonRecord = {};");
   assert.ok(identityPreflight >= 0, "runner must invoke the shared candidate-policy identity preflight");
   assert.ok(configRequest > identityPreflight, "identity preflight must precede Sidecar and all live task work");

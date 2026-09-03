@@ -867,9 +867,10 @@ test("read after committed apply is canonically a verification operation", () =>
   assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
     .operations[applyLease.operation_id]!.target.target_id, "id:1478627");
   markAssignmentKernelOperationDispatchStartedV2(verificationLease);
-  const verified = settleAssignmentKernelOperationV2(
+  const verificationPayload = { elementId: 1478627, value: "new" };
+  assert.throws(() => settleAssignmentKernelOperationV2(
     verificationLease,
-    envelope(verificationLease.operation_id, verificationLease.binding, { elementId: 1478627, value: "new" }),
+    envelope(verificationLease.operation_id, verificationLease.binding, verificationPayload),
     undefined,
     {
       schema: "revit-operator.teammate-verification-assertion/v2",
@@ -878,11 +879,89 @@ test("read after committed apply is canonically a verification operation", () =>
       mode: "target_bound_readback",
       evidence_sha256: `sha256:${"a".repeat(64)}`
     }
+  ), /assignment_kernel_v2_trusted_verification_evidence_mismatch/,
+  "a controller assertion must not mint proof for different Observation bytes");
+  const contradictoryPayload = { elementId: 1478627, value: "old" };
+  assert.throws(() => settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, contradictoryPayload),
+    undefined,
+    {
+      schema: "revit-operator.teammate-verification-assertion/v2",
+      operation_id: verificationLease.operation_id,
+      action_id: "mcp:verification-readback",
+      mode: "target_bound_readback",
+      evidence_sha256: `sha256:${hash(contradictoryPayload)}`
+    }
+  ), /assignment_kernel_v2_trusted_verification_postcondition_not_satisfied/,
+  "a verifier assertion may cite exact bytes but cannot override contradictory postcondition semantics");
+  const verified = settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, verificationPayload),
+    undefined,
+    {
+      schema: "revit-operator.teammate-verification-assertion/v2",
+      operation_id: verificationLease.operation_id,
+      action_id: "mcp:verification-readback",
+      mode: "target_bound_readback",
+      evidence_sha256: `sha256:${hash(verificationPayload)}`
+    }
   );
   assert.ok(verified.observation?.facts.some((fact) => fact.fact_id === "verification.postcondition_satisfied"
     && fact.fact_class === "verification" && fact.value === true));
   assert.equal(verified.snapshot.outcome, "complete");
   assert.equal(verified.snapshot.work_unit_states["work-verification"], "complete");
+}));
+
+test("authoritative affected identity from a targetless create binds its verification read", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "create-with-native-target",
+    provider_turn_id: "create-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "apply",
+    arguments: {
+      method: "POST",
+      path: "/revit/create-text-note",
+      body: { text: "Created by bounded verification test", apply: true }
+    }
+  });
+  assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
+    .operations[applyLease.operation_id]!.target.target_id, undefined);
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const appliedEnvelope = envelope(
+    applyLease.operation_id,
+    applyLease.binding,
+    { createdElementId: 4242, text: "Created by bounded verification test" },
+    "applied"
+  );
+  (appliedEnvelope.structuredContent.operation_result_v2 as any).affected_target_identities = ["element_id:4242"];
+  const applied = settleAssignmentKernelOperationV2(applyLease, appliedEnvelope).snapshot;
+  assert.deepEqual(applied.operations[applyLease.operation_id]!.result?.affected_target_identities, ["element_id:4242"]);
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+
+  assert.throws(() => openAssignmentKernelOperationV2({
+    snapshot: readyForVerification,
+    controller_request_id: "wrong-created-target-read",
+    provider_turn_id: "verification-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    target_tokens: ["id:9999"],
+    arguments: { method: "POST", path: "/revit/find-text-notes", body: { elementIds: [9999] } }
+  }), /verification_target_unbound/);
+
+  const verificationLease = openAssignmentKernelOperationV2({
+    snapshot: readyForVerification,
+    controller_request_id: "created-target-read",
+    provider_turn_id: "verification-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    target_tokens: ["elementid:4242", "id:4242"],
+    arguments: { method: "POST", path: "/revit/find-text-notes", body: { elementIds: [4242] } }
+  });
+  assert.equal(getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
+    .operations[verificationLease.operation_id]!.verification_of_operation_id, applyLease.operation_id);
 }));
 
 test("operation admission cannot overtake retained evidence awaiting criterion evaluation", () => workspace(() => {

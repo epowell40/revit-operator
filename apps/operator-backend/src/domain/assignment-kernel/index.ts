@@ -8,6 +8,7 @@ export * from "./feature_flag.js";
 export * from "./identity.js";
 export * from "./observation.js";
 export * from "./operation.js";
+export * from "./operation_target_identity.js";
 export * from "./outcome.js";
 export * from "./payload_provenance.js";
 export * from "./semantic_admissibility.js";

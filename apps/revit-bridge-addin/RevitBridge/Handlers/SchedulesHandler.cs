@@ -139,6 +139,9 @@ namespace RevitBridge.Handlers
             var summary = BuildScheduleSummary(doc, schedule);
             var details = includeFields ? BuildFieldDetails(doc, schedule) : null;
             var table = includeData ? BuildTableData(schedule, p) : null;
+            var filterDefinitions = BuildFilterDefinitions(doc, schedule, out var filterDefinitionsComplete);
+            var appearance = BuildAppearance(schedule);
+            var settings = BuildSettings(schedule);
 
             return new
             {
@@ -146,7 +149,84 @@ namespace RevitBridge.Handlers
                 action = "detail",
                 schedule = summary,
                 fields = details,
+                filterDefinitions,
+                filterDefinitionsComplete,
+                appearance,
+                settings,
                 table
+            };
+        }
+
+        private static List<object> BuildFilterDefinitions(
+            Document doc,
+            ViewSchedule schedule,
+            out bool complete)
+        {
+            var definitions = new List<object>();
+            complete = true;
+            var definition = schedule.Definition;
+            var count = SafeGetFilterCount(definition, out var countRead);
+            if (!countRead)
+            {
+                complete = false;
+                return definitions;
+            }
+
+            for (var index = 0; index < count; index++)
+            {
+                try
+                {
+                    var filter = definition.GetFilter(index);
+                    ScheduleField? field = null;
+                    try { field = definition.GetField(filter.FieldId); }
+                    catch { }
+
+                    definitions.Add(new
+                    {
+                        index,
+                        fieldId = filter.FieldId.IntegerValue,
+                        field = field == null ? null : ReadFieldName(field, doc),
+                        op = NormalizeFilterType(filter.FilterType),
+                        value = ReadFilterValue(filter),
+                        readable = true
+                    });
+                }
+                catch (Exception ex)
+                {
+                    complete = false;
+                    definitions.Add(new
+                    {
+                        index,
+                        fieldId = (int?)null,
+                        field = (string?)null,
+                        op = (string?)null,
+                        value = (object?)null,
+                        readable = false,
+                        error = ex.Message
+                    });
+                }
+            }
+
+            return definitions;
+        }
+
+        private static object BuildAppearance(ViewSchedule schedule)
+        {
+            return new
+            {
+                showTitle = TryGetScheduleBoolProperty(schedule, new[] { "ShowTitle", "IsTitleVisible", "ShowScheduleTitle" }),
+                showHeaders = TryGetScheduleBoolProperty(schedule, new[] { "ShowHeaders", "IsHeaderVisible", "ShowColumnHeaders", "ShowHeadersOnSheet" }),
+                stripedRows = TryGetScheduleBoolProperty(schedule, new[] { "HasStripedRows" }),
+                freezeHeaders = TryGetScheduleBoolProperty(schedule, new[] { "FreezeHeaders", "FreezeColumnHeaders", "FreezeGridHeaders" })
+            };
+        }
+
+        private static object BuildSettings(ViewSchedule schedule)
+        {
+            return new
+            {
+                showGrandTotals = TryGetScheduleBoolProperty(schedule, new[] { "ShowGrandTotal", "ShowGrandTotals" }),
+                filterBySheet = TryGetScheduleBoolProperty(schedule, new[] { "IsFilteredBySheet", "FilterBySheet", "FilteredBySheet" })
             };
         }
 
@@ -345,6 +425,65 @@ namespace RevitBridge.Handlers
             catch { return 0; }
         }
 
+        private static int SafeGetFilterCount(ScheduleDefinition definition, out bool read)
+        {
+            try
+            {
+                read = true;
+                return definition.GetFilterCount();
+            }
+            catch
+            {
+                read = false;
+                return 0;
+            }
+        }
+
+        private static object? ReadFilterValue(ScheduleFilter filter)
+        {
+            try { if (filter.IsStringValue) return filter.GetStringValue(); }
+            catch { }
+            try { if (filter.IsIntegerValue) return filter.GetIntegerValue(); }
+            catch { }
+            try { if (filter.IsDoubleValue) return filter.GetDoubleValue(); }
+            catch { }
+            try
+            {
+                if (filter.IsElementIdValue)
+                {
+                    var id = filter.GetElementIdValue();
+                    return id == null ? null : RevitBridge.Common.ElementIdCompat.GetValue(id);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static string NormalizeFilterType(ScheduleFilterType filterType)
+        {
+            var name = filterType.ToString();
+            switch (name)
+            {
+                case "Equal": return "equals";
+                case "NotEqual": return "not_equals";
+                case "Contains": return "contains";
+                case "NotContains": return "not_contains";
+                case "BeginsWith": return "begins_with";
+                case "EndsWith": return "ends_with";
+                case "HasValue": return "has_value";
+                case "HasNoValue": return "has_no_value";
+            }
+
+            var characters = new List<char>(name.Length + 8);
+            for (var index = 0; index < name.Length; index++)
+            {
+                var character = name[index];
+                if (index > 0 && char.IsUpper(character) && !char.IsUpper(name[index - 1])) characters.Add('_');
+                characters.Add(char.ToLowerInvariant(character));
+            }
+            return new string(characters.ToArray());
+        }
+
         private static long? TryGetCategoryId(ScheduleDefinition definition)
         {
             try
@@ -404,6 +543,23 @@ namespace RevitBridge.Handlers
             }
 
             return null;
+        }
+
+        private static bool? TryGetBoolProperty(object obj, IEnumerable<string> propNames)
+        {
+            foreach (var propName in propNames)
+            {
+                var value = TryGetBoolProperty(obj, propName);
+                if (value.HasValue) return value;
+            }
+            return null;
+        }
+
+        private static bool? TryGetScheduleBoolProperty(ViewSchedule schedule, IEnumerable<string> propNames)
+        {
+            var names = propNames.ToArray();
+            var value = TryGetBoolProperty(schedule, names);
+            return value ?? TryGetBoolProperty(schedule.Definition, names);
         }
 
         private static string? TryGetStringProperty(object obj, string propName)

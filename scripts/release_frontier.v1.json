@@ -33,14 +33,18 @@
     "openai_brain_recovery.test.ts",
     "payload_digest_v2.test.ts",
     "postcondition_verification_v2.test.ts",
+    "provider_dynamic_program.test.ts",
     "revit_preflight.test.ts",
     "session_creation_idempotency.test.ts",
     "teammate_mutation_intent_binding.test.ts",
+    "teammate_loop_runtime.test.ts",
+    "teammate_verification_evidence.test.ts",
     "tool_result_normalization.test.ts",
     "verified_work_packet.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
+    "lib/dynamicRevitProgramRunner.test.ts",
     "lib/evidenceRetrievalSelectorContract.test.ts",
     "lib/genericToolPreflight.test.ts",
     "lib/nativeTransport.test.ts",
@@ -63,6 +67,7 @@
     "OperatorNativeToolExposureAuthorityTests",
     "OperatorNativeTransportTests",
     "OperatorToolSearchRankingTests",
+    "ScheduleAppearanceContractTests",
     "TextNoteCanonicalizationTests"
   ],
   "failure_families": [
@@ -78,12 +83,17 @@
     { "id": "structured-input-repair", "coverage": ["backend:assignment_mcp_error_settlement.test.ts", "mcp:lib/genericToolPreflight.test.ts", "mcp:skills/quantify.test.ts"] },
     { "id": "preview-apply-and-postcondition-truth", "coverage": ["backend:assignment_typed_native_settlement.test.ts", "backend:teammate_mutation_intent_binding.test.ts", "mcp:lib/previewSemanticEvidenceV2.test.ts"] },
     { "id": "recovery-and-idempotency", "coverage": ["backend:assignment_kernel_v2_store.test.ts", "backend:openai_brain_recovery.test.ts"] },
-    { "id": "work-return-and-work-packet", "coverage": ["backend:verified_work_packet.test.ts", "backend:benchmark_protocol_v2_interaction.test.ts"] },
+    { "id": "work-return-and-work-packet", "coverage": ["backend:verified_work_packet.test.ts", "backend:benchmark_protocol_v2_interaction.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts"] },
     { "id": "capability-ranking-and-risk", "coverage": ["mcp:lib/toolSearchRanking.test.ts", "mcp:lib/toolSearchRiskSemantics.test.ts", "dotnet:OperatorToolSearchRankingTests"] },
     { "id": "native-admission-and-mutation-scope", "coverage": ["dotnet:OperatorApprovalPolicyTests", "dotnet:OperatorNativeMutationScopePolicyTests"] },
     { "id": "textnote-cross-runtime-postcondition", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "dotnet:TextNoteCanonicalizationTests"] },
     { "id": "qualification-write-authorization-preflight", "coverage": ["backend:general_revit_qualification_preflight.test.ts", "backend:revit_preflight.test.ts"] },
     { "id": "qualification-candidate-identity-preflight", "coverage": ["backend:general_revit_candidate_identity_preflight.test.ts", "backend:benchmark_protocol_v2.test.ts"] },
-    { "id": "focused-evidence-selector-and-exact-target-binding", "coverage": ["backend:evidence_retrieval_selector_contract.test.ts", "backend:evidence_projection.test.ts", "mcp:lib/evidenceRetrievalSelectorContract.test.ts"] }
+    { "id": "focused-evidence-selector-and-exact-target-binding", "coverage": ["backend:evidence_retrieval_selector_contract.test.ts", "backend:evidence_projection.test.ts", "mcp:lib/evidenceRetrievalSelectorContract.test.ts"] },
+    { "id": "runtime-mode-and-v2-qualification-attestation", "coverage": ["backend:assignment_kernel_v2_session_index_contract.test.ts", "backend:general_revit_qualification_preflight.test.ts", "backend:benchmark_protocol_v2.test.ts"] },
+    { "id": "verification-assertion-provenance-and-predicate", "coverage": ["backend:teammate_verification_evidence.test.ts", "backend:teammate_loop_runtime.test.ts", "backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts"] },
+    { "id": "native-affected-target-to-verification-binding", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },
+    { "id": "dynamic-runtime-affected-target-publication", "coverage": ["backend:provider_dynamic_program.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/dynamicRevitProgramRunner.test.ts"] },
+    { "id": "typed-schedule-configuration-readback", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:teammate_loop_runtime.test.ts", "dotnet:ScheduleAppearanceContractTests"] }
   ]
 }

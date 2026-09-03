@@ -15,6 +15,10 @@ import {
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
 import {
+  assignmentKernelRuntimeAttestationV2,
+  parseAssignmentKernelRuntimeAttestationV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
+import {
   createPrincipalBoundSessionIdForRequest,
   getRequestAssignmentPrincipalId,
   requestMatchesAssignmentPrincipalId,
@@ -813,6 +817,13 @@ test("shared-token local V2 checkpoint publishes the exact externally started As
   const tokenHeaders = { "x-operator-token": token };
   const jsonHeaders = { ...tokenHeaders, "content-type": "application/json" };
   assert.equal(await waitForServer(base, tokenHeaders, child), true, "backend must report ready");
+  const healthResponse = await fetch(`${base}/health`, { headers: tokenHeaders });
+  assert.equal(healthResponse.status, 200);
+  const healthBody = await healthResponse.json() as { assignment_kernel_runtime?: unknown };
+  assert.deepEqual(
+    parseAssignmentKernelRuntimeAttestationV2(healthBody.assignment_kernel_runtime),
+    assignmentKernelRuntimeAttestationV2(true)
+  );
   const sessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: tokenHeaders });
   assert.equal(sessionResponse.status, 200);
   const sessionId = (await sessionResponse.json() as { session_id: string }).session_id;

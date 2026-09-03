@@ -117,6 +117,8 @@ import {
   DirectRevitExecutionAuthorizationError
 } from "./capabilities/direct_revit_execution_authorization.js";
 import { getSidecarAgentProfileState } from "./capabilities/sidecar_agent_profile.js";
+import { assignmentKernelRuntimeAttestationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { assignmentKernelV2Enabled } from "./domain/assignment-kernel/feature_flag.js";
 import {
   getSafeReadCapabilityService,
   SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT,
@@ -3948,6 +3950,7 @@ const server = http.createServer(async (req, res) => {
         revit_transport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase(),
         revit_courier_enabled: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase() === "courier",
         sidecar_agent_profile: getSidecarAgentProfileState(),
+        assignment_kernel_runtime: assignmentKernelRuntimeAttestationV2(assignmentKernelV2Enabled()),
         codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,

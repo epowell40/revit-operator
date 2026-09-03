@@ -154,8 +154,11 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
     retryable: structuredDiagnostics.some(diagnostic => diagnostic.retryable), diagnostics: structuredDiagnostics, resume,
     checkpointParent: activeCheckpoint?.parent ?? null });
   fs.writeFileSync(path.join(runRoot, "iteration.json"), JSON.stringify(iteration, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
-  const committedCheckpoint = input.mode === "apply" && executionStatus === "completed" ? createCheckpoint({
-    runId, sourceHash, evidence, evidenceSha256, iteration, prior: activeCheckpoint?.receipt ?? null
+  const committedApplyEvidence = input.mode === "apply" && executionStatus === "completed"
+    ? verifyCommittedApplyEvidence(evidence, sourceHash)
+    : null;
+  const committedCheckpoint = committedApplyEvidence ? createCheckpoint({
+    runId, sourceHash, evidenceSha256, iteration, prior: activeCheckpoint?.receipt ?? null, verified: committedApplyEvidence
   }) : null;
   if (committedCheckpoint !== null) fs.writeFileSync(path.join(runRoot, "checkpoint.json"), JSON.stringify(committedCheckpoint, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
   const canonicalAttemptSettlement = executionStatus === "completed" ? {
@@ -175,7 +178,7 @@ export async function runDynamicRevitProgram(input: DynamicRevitProgramRunInput,
       ? "trusted_dynamic_runtime_committed_checkpoint"
       : "trusted_dynamic_runtime_preview_noncommit",
     effect_authority: input.mode === "apply" ? "native_receipt" as const : "native_rollback" as const,
-    affected_target_identities: [],
+    affected_target_identities: committedApplyEvidence?.affectedTargetIdentities ?? [],
     receipt_refs: [
       `dynamic-run:${runId}`,
       `dynamic-evidence:${evidenceSha256}`,
@@ -324,9 +327,9 @@ function loadCheckpointParent(parent: CheckpointParent, runsRoot: string): Loade
   return { receipt, parent };
 }
 
-function createCheckpoint(input: { runId: string; sourceHash: string; evidence: Record<string, unknown>; evidenceSha256: string;
-  iteration: IterationReceipt; prior: CheckpointReceipt | null }): CheckpointReceipt {
-  const verified = verifyCommittedApplyEvidence(input.evidence, input.sourceHash);
+function createCheckpoint(input: { runId: string; sourceHash: string; evidenceSha256: string;
+  iteration: IterationReceipt; prior: CheckpointReceipt | null; verified: ReturnType<typeof verifyCommittedApplyEvidence> }): CheckpointReceipt {
+  const verified = input.verified;
   const index = (input.prior?.checkpoint_index ?? 0) + 1;
   if (index > 64) throw new Error("Dynamic task sessions are limited to 64 verified committed checkpoints.");
   const parent = input.prior === null ? null : { task_session_id: input.prior.task_session_id, checkpoint_index: input.prior.checkpoint_index,
@@ -368,8 +371,9 @@ function verifyCommittedApplyEvidence(evidence: Record<string, unknown>, expecte
   if (receiptSource !== null && receiptSource !== expectedSourceHash) throw new Error("Checkpoint apply receipt is bound to substituted source bytes.");
   const inner = receipt.apply_receipt && typeof receipt.apply_receipt === "object" && !Array.isArray(receipt.apply_receipt) ? receipt.apply_receipt as Record<string, unknown> : null;
   const revision = recordInteger(inner, "documentRevisionAfter") ?? recordInteger(receipt, "document_revision_after");
+  const affectedTargetIdentities = committedAffectedTargetIdentities(schema, receipt, inner);
   const value = { schema, applyReceiptHash: sha256(Buffer.from(evidence.applyReceipt, "utf8")), graphHash,
-    documentFingerprint, documentSessionId, documentRevisionAfter: revision };
+    documentFingerprint, documentSessionId, documentRevisionAfter: revision, affectedTargetIdentities };
   if (expected && (expected.apply_receipt_sha256 !== value.applyReceiptHash || expected.apply_receipt_schema !== schema ||
     expected.graph_sha256 !== graphHash || expected.document_fingerprint !== documentFingerprint || expected.document_session_id !== documentSessionId ||
     expected.document_revision_after !== revision)) throw new Error("Retained checkpoint fields do not match the authenticated apply evidence.");
@@ -458,6 +462,44 @@ function validateCheckpointEcho(evidence: Record<string, unknown>, receipt: Chec
 
 function recordString(value: Record<string, unknown> | null, key: string): string | null { const item = value?.[key]; return typeof item === "string" ? item : null; }
 function recordInteger(value: Record<string, unknown> | null, key: string): number | null { const item = value?.[key]; return Number.isSafeInteger(item) && (item as number) >= 0 ? item as number : null; }
+
+function committedAffectedTargetIdentities(schema: string, receipt: Record<string, unknown>, inner: Record<string, unknown> | null): string[] {
+  const ids: string[] = [];
+  if (schema === "dynamic-revit-apply-receipt/v1") {
+    ids.push(...optionalElementIds(receipt, "changed_element_ids", "apply receipt"));
+  } else if (inner !== null && schema === "dynamic-revit-annotation-result-apply-receipt-envelope/v1") {
+    ids.push(...optionalElementIds(inner, "addedElementIds", "annotation apply receipt"));
+    ids.push(...optionalElementIds(inner, "modifiedElementIds", "annotation apply receipt"));
+  } else if (inner !== null) {
+    const effects = inner.effects;
+    if (effects !== undefined) {
+      if (!Array.isArray(effects) || effects.length > 256) throw new Error("Committed apply receipt effects are malformed or unbounded.");
+      for (const [index, value] of effects.entries()) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Committed apply receipt effect ${index} is malformed.`);
+        const effect = value as Record<string, unknown>;
+        ids.push(...optionalElementIds(effect, "addedElementIds", `apply receipt effect ${index}`));
+        ids.push(...optionalElementIds(effect, "modifiedElementIds", `apply receipt effect ${index}`));
+        ids.push(...optionalElementIds(effect, "deletedElementIds", `apply receipt effect ${index}`));
+      }
+    }
+  }
+  const identities = [...new Set(ids.map(id => `element_id:${id}`))].sort();
+  if (identities.length > 256) throw new Error("Committed apply receipt affected target set is unbounded.");
+  return identities;
+}
+
+function optionalElementIds(value: Record<string, unknown>, key: string, label: string): string[] {
+  if (!(key in value)) return [];
+  const entries = value[key];
+  if (!Array.isArray(entries) || entries.length > 256) throw new Error(`${label} ${key} is malformed or unbounded.`);
+  const ids = entries.map(entry => {
+    if (typeof entry === "number" && Number.isSafeInteger(entry) && entry >= 0) return String(entry);
+    if (typeof entry === "string" && /^(0|[1-9][0-9]{0,18})$/.test(entry)) return entry;
+    throw new Error(`${label} ${key} contains a malformed element id.`);
+  });
+  if (new Set(ids).size !== ids.length) throw new Error(`${label} ${key} contains duplicate element ids.`);
+  return ids;
+}
 
 function loadResume(input: DynamicExecutionResumeInput, runsRoot: string, sourceHash: string, requestedMode: "preview" | "apply",
   lane: ExecutionLane, currentSelector: NormalizedSelector | undefined): LoadedResume {

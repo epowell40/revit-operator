@@ -6,8 +6,24 @@ export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA: "revit-operator.assignment
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA: "revit-operator.assignment-provider-ledger/v2";
 export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA: "revit-operator.provider-call/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA: "revit-operator.operation-result-semantic-gap/v2";
+export const ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA: "revit-operator.assignment-kernel-runtime-attestation/v2";
+export const ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2: "typed-deny-by-default/v2";
 export type TerminalProviderCallStateV2 = "completed" | "response_transport_completed";
 export function isTerminalProviderCallStateV2(value: unknown): value is TerminalProviderCallStateV2;
+
+export type AssignmentKernelRuntimeAttestationV2 = Readonly<{
+  schema: typeof ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA;
+  assignment_kernel_v2_enabled: boolean;
+  lifecycle_owner: "assignment_kernel_v2" | "legacy_goal_v1";
+  progress_owner: "deterministic_progress_controller_v2" | "legacy_agent_loop_v1";
+  session_index_response_schema: typeof ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA | null;
+  exact_publication_schema: typeof ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA | null;
+  provider_ledger_schema: typeof ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA | null;
+  semantic_evidence_policy: typeof ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2 | null;
+}>;
+
+export function assignmentKernelRuntimeAttestationV2(enabled: unknown): AssignmentKernelRuntimeAttestationV2;
+export function parseAssignmentKernelRuntimeAttestationV2(value: unknown): AssignmentKernelRuntimeAttestationV2;
 
 export interface AssignmentKernelV2SessionIndexBinding {
   assignment_id: string;

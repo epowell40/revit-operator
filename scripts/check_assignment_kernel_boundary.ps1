@@ -452,6 +452,120 @@ foreach ($relativePath in $sessionIndexConsumers) {
   }
 }
 
+# A qualification run must prove the effective canonical runtime before doing
+# fixture, provider, or Revit work. The backend publishes one shared behavioral
+# attestation and both the live preflight and Protocol V2 fail closed when a
+# V2-declared run has only legacy lifecycle evidence.
+$runtimeAttestationContract = Get-Content -Raw -LiteralPath $sessionIndexContract
+foreach ($symbol in @(
+  "ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA",
+  "assignmentKernelRuntimeAttestationV2",
+  "parseAssignmentKernelRuntimeAttestationV2"
+)) {
+  if ($runtimeAttestationContract -notmatch [regex]::Escape($symbol)) {
+    $violations.Add("Shared Assignment Kernel runtime-attestation contract is missing $symbol")
+  }
+}
+$runtimeAttestationConsumers = @{
+  "apps/operator-backend/src/index.ts" = @("assignmentKernelRuntimeAttestationV2", "assignmentKernelV2Enabled")
+  "apps/operator-backend/src/benchmark/general_revit_qualification_preflight.ts" = @("parseAssignmentKernelRuntimeAttestationV2")
+}
+foreach ($relativePath in $runtimeAttestationConsumers.Keys) {
+  $path = Resolve-RepoPath $relativePath
+  $content = Get-Content -Raw -LiteralPath $path
+  if ($content -notmatch '@revitoperator/assignment-kernel-v2-contracts') {
+    $violations.Add("$relativePath does not import the shared runtime-attestation contract")
+  }
+  foreach ($symbol in $runtimeAttestationConsumers[$relativePath]) {
+    if ($content -notmatch [regex]::Escape($symbol)) {
+      $violations.Add("$relativePath does not use shared runtime-attestation symbol $symbol")
+    }
+  }
+}
+$qualificationRunner = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/tools/general_revit_capability_acceptance.ts")
+if (($qualificationRunner -notmatch 'assertGeneralRevitQualificationRuntime\s*\(') -or
+    ($qualificationRunner -notmatch '/api/backend/health')) {
+  $violations.Add("General Revit qualification does not attest the live V2 runtime before work")
+}
+$protocolRunner = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/benchmark/protocol_v2_runner.ts")
+if (($protocolRunner -notmatch 'require_assignment_kernel_v2') -or
+    ($protocolRunner -notmatch 'feature_flags\.assignment_kernel_v2\s*===\s*true') -or
+    ($protocolRunner -notmatch 'v2_publication_missing')) {
+  $violations.Add("Protocol V2 does not fail closed when a V2-declared run lacks direct publication")
+}
+
+# A host/controller assertion may identify and bind exact evidence, but it may
+# never override the kernel's typed postcondition semantics. This keeps a
+# future model-assisted verifier advisory rather than a second lifecycle owner.
+$kernelExecution = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts")
+if (($kernelExecution -notmatch 'trustedVerification\.evidence_sha256\s*!==\s*`sha256:\$\{result\.raw_payload_hash\}`') -or
+    ($kernelExecution -notmatch 'assignment_kernel_v2_trusted_verification_postcondition_not_satisfied') -or
+    ($kernelExecution -match 'trustedVerification\s*\|\|\s*deterministicallySatisfied')) {
+  $violations.Add("Trusted verification assertions can bypass exact payload binding or typed postcondition validation")
+}
+$teammateVerificationRuntime = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/teammate_loop_runtime.ts")
+foreach ($requiredVerificationSymbol in @(
+  "payloadDigestV2",
+  "verificationObservationPayloadV2",
+  "explicitTargetAbsenceV2"
+)) {
+  if ($teammateVerificationRuntime -notmatch [regex]::Escape($requiredVerificationSymbol)) {
+    $violations.Add("Teammate verification boundary is missing $requiredVerificationSymbol")
+  }
+}
+$teammateVerificationEvidence = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/teammate_verification_evidence.ts")
+foreach ($requiredVerificationEvidenceSymbol in @(
+  "EXCLUDED_EVIDENCE_CONTAINERS",
+  "VERIFIER_CONTAINERS",
+  "verificationObservationPayloadV2",
+  "explicitVerificationV2",
+  "explicitTargetAbsenceV2"
+)) {
+  if ($teammateVerificationEvidence -notmatch [regex]::Escape($requiredVerificationEvidenceSymbol)) {
+    $violations.Add("Reviewed verification-evidence extractor is missing $requiredVerificationEvidenceSymbol")
+  }
+}
+if (($teammateVerificationRuntime -match 'function\s+explicitVerification') -or
+    ($teammateVerificationEvidence -match 'normalized\s*===\s*["'']complete["'']') -or
+    ($teammateVerificationEvidence -match '["'']complete["'']\s*,\s*["'']allpassed["'']')) {
+  $violations.Add("Generic completion metadata can be reintroduced as V2 postcondition proof")
+}
+$postconditionContract = Get-Content -Raw -LiteralPath (Resolve-RepoPath "apps/operator-backend/src/postcondition_verification_v2.ts")
+if (($postconditionContract -notmatch 'excludedContainers') -or
+    ($postconditionContract -notmatch 'schedule_filter:') -or
+    ($postconditionContract -notmatch 'Parameter\\\.Set') -or
+    ($postconditionContract -notmatch 'args\.length\s*===\s*1')) {
+  $violations.Add("Typed postcondition contract no longer excludes echoed control input or binds reviewed native/schedule semantics")
+}
+
+# Native affected identities are result truth. Verification matching, Work
+# Packet, and Work Return must share the reviewed identity adapter rather than
+# reconstructing or dropping the result at projection boundaries.
+$targetIdentityConsumers = @{
+  "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts" = "operationMatchesTargetIdentityV2"
+  "apps/operator-backend/src/domain/assignment-kernel/reducer.ts" = "operationMatchesTargetIdentityV2"
+  "apps/operator-backend/src/work_packets/assignment_kernel_v2_generator.ts" = "affectedOperationTargetIdentitiesV2"
+  "apps/operator-backend/src/work_returns/assignment_kernel_v2_generator.ts" = "reportedOperationTargetIdentitiesV2"
+}
+foreach ($relativePath in $targetIdentityConsumers.Keys) {
+  $path = Resolve-RepoPath $relativePath
+  if ((Get-Content -Raw -LiteralPath $path) -notmatch [regex]::Escape($targetIdentityConsumers[$relativePath])) {
+    $violations.Add("$relativePath does not consume the reviewed V2 operation-target identity contract")
+  }
+}
+$dynamicTargetIdentityEdges = @{
+  "apps/operator-backend/src/dynamic_runtime/live_evidence_receipt_verifier.ts" = "affectedTargetIdentities"
+  "apps/operator-backend/src/dynamic_runtime/provider_supervisor_evidence.ts" = "affected_target_identities"
+  "apps/operator-backend/src/assignments/dynamic_runtime_settlement.ts" = "receipt.affected_target_identities"
+  "apps/mcp-server/src/lib/dynamicRevitProgramRunner.ts" = "committedAffectedTargetIdentities"
+}
+foreach ($relativePath in $dynamicTargetIdentityEdges.Keys) {
+  $path = Resolve-RepoPath $relativePath
+  if ((Get-Content -Raw -LiteralPath $path) -notmatch [regex]::Escape($dynamicTargetIdentityEdges[$relativePath])) {
+    $violations.Add("$relativePath drops authenticated Dynamic Runtime affected-target identities")
+  }
+}
+
 # Native execution identity in V2 publications comes from the result-schema
 # contract. Request identities on controller wrappers may describe a target
 # route and must not be promoted into actual Revit execution by consumers.

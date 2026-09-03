@@ -610,6 +610,57 @@ test("Protocol V2 reports a missing direct V2 publication instead of falling bac
   }, [readCase.case_id]), /v2_publication_missing/);
 });
 
+test("Candidate 64 replay rejects a V2-declared flight that ran entirely on the legacy lifecycle", () => {
+  const readCase = benchmarkCase({
+    case_id: "q01_candidate64_runtime_drift",
+    operation_family: "inventory",
+    prompt: "Return the requested authoritative inventory.",
+    probe_prompt: "Return the requested authoritative inventory without editing.",
+    capability_paths: ["/revit/quantify"],
+    dispatch_any_of: ["/revit/quantify"],
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const attempt = canonicalAttempt({
+    requested_effect: "read",
+    target_identities: ["document:fixture"],
+    affected_target_identities: [],
+    effect: { state: "none", authority: "native_receipt", reason: "read_only" }
+  });
+  const trace = traceFor(readCase, {
+    attempts: [attempt],
+    mutationRequested: false,
+    actionRows: [{
+      path: "/revit/quantify", request_effect: "read", request_dispatched: true,
+      status: "success", receipt: { total: 509, groups: [] }
+    }]
+  });
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_kernel_v2 = {
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    session_index: {
+      schema: "revit-operator.assignment-kernel-session-index/v2",
+      session_id: "suite-session-v2",
+      assignments: []
+    },
+    assignment_ids: [],
+    assignments: [],
+    failures: []
+  };
+
+  const assertReceipts = assertCompleteProtocolV2Receipts as unknown as (
+    report: JsonRecord,
+    caseIds: readonly string[],
+    options: { require_assignment_kernel_v2: boolean }
+  ) => void;
+  assert.throws(() => assertReceipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id], { require_assignment_kernel_v2: true }), /v2_publication_missing/,
+  "legacy completion and complete transport telemetry must not qualify a V2-declared run");
+});
+
 test("Protocol V2 reports a malformed direct V2 publication instead of treating its provider ledger as absent", () => {
   const readCase = benchmarkCase({
     case_id: "q01_v2_publication_invalid",

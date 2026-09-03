@@ -117,6 +117,60 @@ test("quantify result is normalized once into an explicit task-result Observatio
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.group" && fact.value === 2));
 });
 
+test("native affected target identities survive the MCP OperationResultV2 boundary", async () => {
+  const decorated = await runWithAssignmentKernelV2(
+    meta("apply", "work", { method: "POST", path: "/revit/create-text-note", body: { text: "Created" } }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-text-note", { text: "Created" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/create-text-note", {
+        ok: true,
+        createdElementId: 4242,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-create-4242",
+          requested_effect: "apply",
+          effect_state: "applied",
+          effect_authority: "native_transaction",
+          request_dispatched: true,
+          affected_target_identities: ["element_id:4242", "element_id:4242"]
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+  assert.deepEqual(
+    decorated.structuredContent.operation_result_v2.affected_target_identities,
+    ["element_id:4242"]
+  );
+});
+
+test("malformed native affected target identities fail closed before settlement publication", async () => {
+  await assert.rejects(
+    () => runWithAssignmentKernelV2(
+      meta("apply", "work", { method: "POST", path: "/revit/create-text-note", body: { text: "Created" } }),
+      async () => {
+        const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-text-note", { text: "Created" });
+        await markAssignmentKernelNativeRequestDispatchingV2(request);
+        await recordAssignmentKernelNativeResultV2("POST", "/revit/create-text-note", {
+          ok: true,
+          canonical_attempt_settlement: {
+            schema: "revit-operator.native-attempt-settlement.v1",
+            attempt_id: "native-create-malformed-target",
+            requested_effect: "apply",
+            effect_state: "applied",
+            effect_authority: "native_transaction",
+            request_dispatched: true,
+            affected_target_identities: [4242]
+          }
+        }, request);
+        return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+      }
+    ),
+    /assignment_kernel_v2_native_affected_targets_invalid/
+  );
+});
+
 test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
   const body = {
     elementId: 1421361,
