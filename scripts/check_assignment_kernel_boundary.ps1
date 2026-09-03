@@ -376,6 +376,15 @@ $usesLegacyExactNormalizedAdmission = $textNoteHandler -match 'string\.Equals\s*
 if ($roundTripAdmissionCount -lt 3 -or $usesLegacyExactNormalizedAdmission) {
   $violations.Add("Native TextNote mutation no longer uses the shared round-trip rule for no-op and stale-state admission")
 }
+$sourceProvenancePath = Resolve-RepoPath "apps/operator-backend/src/capabilities/epic_0437_source_provenance.ts"
+if (Test-Path -LiteralPath $sourceProvenancePath -PathType Leaf) {
+  $sourceProvenance = Get-Content -Raw -LiteralPath $sourceProvenancePath
+  if ($sourceProvenance -notmatch 'packages/text-note-round-trip-v1') {
+    $violations.Add("Exact source certification does not bind the shared TextNote round-trip contract")
+  }
+} elseif ($usesAppsDirectory) {
+  $violations.Add("Exact source-certification provenance authority is missing")
+}
 
 # Every new V2 session-index producer and consumer must share one response
 # schema and field name. Historical artifact readers may live elsewhere, but

@@ -28,7 +28,8 @@ const EPIC_0437_SOURCE_ROOTS = [
   "apps/revit-bridge-addin",
   "packages/assignment-kernel-v2-contracts",
   "packages/payload-digest-v2",
-  "packages/revit-action-effect-v1"
+  "packages/revit-action-effect-v1",
+  "packages/text-note-round-trip-v1"
 ] as const;
 
 const EPIC_0437_SOURCE_ROOT_FILES = [
