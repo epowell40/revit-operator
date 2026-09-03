@@ -321,7 +321,7 @@ test("apply progress exposes one typed verification gap per unverified persisten
 
 test("verification admission is capability-contract based before any OperationV2 is appended", () => {
   const sourceRoot = path.join(process.cwd(), "src");
-  const admission = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "verification_admission.ts"), "utf8");
+  const admission = readFileSync(path.join(sourceRoot, "verification", "verification_capability_admission_v2.ts"), "utf8");
   assert.match(admission, /VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA/);
   assert.match(admission, /\/revit\/find-text-notes[\s\S]*text_note\.value/);
   assert.match(admission, /\/revit\/get-element-summary[\s\S]*element\.identity/);
@@ -332,9 +332,9 @@ test("verification admission is capability-contract based before any OperationV2
   const appendAt = execution.indexOf("event_id: `operation-admitted:${operationId}`");
   assert.ok(admissionAt >= 0 && appendAt > admissionAt,
     "verification capability eligibility must fail closed before an operation identity or dispatch opportunity is consumed");
-  const controller = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "progress", "controller.ts"), "utf8");
-  assert.match(controller, /verificationCapabilityGuidanceV2/,
-    "the same reviewed contract must describe the unresolved gap to bounded provider reasoning");
+  const progress = readFileSync(path.join(sourceRoot, "brains", "codex_assignment_progress.ts"), "utf8");
+  assert.match(progress, /verificationCapabilityGuidanceV2/,
+    "the application adapter must describe the unresolved gap to bounded provider reasoning without leaking Revit routes into the kernel domain");
 });
 
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {

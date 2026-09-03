@@ -15,7 +15,6 @@ import {
   operationMatchesTargetIdentityV2,
   operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
-  verificationCapabilityAdmissionV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type AssignmentSnapshotV2,
@@ -31,6 +30,7 @@ import {
   type RequestedEffectV2,
   type SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
+import { verificationCapabilityAdmissionV2 } from "../verification/verification_capability_admission_v2.js";
 import { assertEvidenceStoreInputSafe, storeEvidence } from "../evidence/evidence_store.js";
 import type { EvidenceStoreInput, EvidenceStoreResult } from "../evidence/evidence_ref.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";

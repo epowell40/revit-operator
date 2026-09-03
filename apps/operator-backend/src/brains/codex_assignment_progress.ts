@@ -7,6 +7,19 @@ import { settleAssignmentKernelProviderBudgetAtQuiescenceV2 } from "../assignmen
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
 import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
+
+function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
+  if (!gapId.startsWith("verification:")) return "";
+  const operation = snapshot.operations[gapId.slice("verification:".length)];
+  if (!operation) return "";
+  return verificationCapabilityGuidanceV2({
+    capability_id: operation.capability_id,
+    method: operation.request_identity?.method,
+    path: operation.request_identity?.path,
+    tool: operation.input.tool
+  }) ?? "";
+}
 
 function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
   if (decision.decision === "request_user_input") return "The canonical Assignment is waiting for the required authenticated user input before any more provider work is allowed.";
@@ -26,7 +39,7 @@ function progressPrompt(
     const gapIds = new Set(decision.gap_ids);
     const gapDetails = deriveProgressGapsV2(snapshot)
       .filter((gap) => gapIds.has(gap.gap_id))
-      .map((gap) => `- ${gap.gap_id}: ${gap.reason}`);
+      .map((gap) => `- ${gap.gap_id}: ${gap.reason}${applicationGapGuidance(snapshot, gap.gap_id)}`);
     return [
       "DETERMINISTIC ASSIGNMENT PROGRESS DECISION:",
       `Decision: ${decision.decision}`,

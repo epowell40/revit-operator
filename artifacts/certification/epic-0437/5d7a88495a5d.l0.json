@@ -532,7 +532,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution.ts",
-      "sha256": "sha256:be80c7cf10cd3135b927eab371257106e40de62ef2fe7957a019348416fe19ce"
+      "sha256": "sha256:967c034208916bc257a13d96ceeff1f93c7e687dd7635a53890b480e315cf98d"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_execution_failure.ts",
@@ -1020,7 +1020,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_assignment_progress.ts",
-      "sha256": "sha256:682d40f83d4d70912a257bb85488982e575474e5f80e8aa80e2de4e043f228f6"
+      "sha256": "sha256:96b4000d1728dfb0c63d38cc8e73fabb136b79e9f0f269f147b49256c86d2593"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_brain.ts",
@@ -1773,7 +1773,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/index.ts",
-      "sha256": "sha256:de353ebc06894acaaf4e028aaae4281d9516741d8b6ccb30ddf3b2455b58fb7b"
+      "sha256": "sha256:6a2fe276e1153eda7bca3c9295fdbc71d2c359062f5eccb2c4a4c40ef98e75f7"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/observation.ts",
@@ -1801,7 +1801,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/controller.ts",
-      "sha256": "sha256:70801109412893390e99578b794f8d6ca02688789a9d442077f4e3427b3957c2"
+      "sha256": "sha256:7ae14043e64b1c04119df56bf2bddbaef3e8e7987e79055de369e16c26d32ac1"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/progress/execution_failure.ts",
@@ -1830,10 +1830,6 @@
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/snapshot.ts",
       "sha256": "sha256:b5b96e028f7097801655962d0444b3e64c2352ef8b2579331051e0f5c17565d0"
-    },
-    {
-      "path": "apps/operator-backend/src/domain/assignment-kernel/verification_admission.ts",
-      "sha256": "sha256:d241b56fc78b8b5bbefbcb4dad731d0e1df424e65f28fa66a1ff4baa0103e10e"
     },
     {
       "path": "apps/operator-backend/src/dynamic_runtime/admission.ts",
@@ -2724,6 +2720,10 @@
       "sha256": "sha256:ff3a4d343fb6da642931afeb03f8b57fcc71994cc80985d9430d6f55cdbaeca1"
     },
     {
+      "path": "apps/operator-backend/src/verification/verification_capability_admission_v2.ts",
+      "sha256": "sha256:9d402060810e120bd936047346a1293297686ecdc5fec926a7eb2a3ff355d563"
+    },
+    {
       "path": "apps/operator-backend/src/vision/gemini_agentic_vision.ts",
       "sha256": "sha256:ddf82cc67660abea793d0cf05a58274d297d90fc271f7658fb053d6cf2f34c23"
     },
@@ -2905,7 +2905,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_architecture.test.ts",
-      "sha256": "sha256:749e8821cb6e7f4a9e88747f7a5999d806a5ca218d800653c7b8a80e2adf3232"
+      "sha256": "sha256:a67843225d1d463d16c3b0fae36ce8907edfac7d34e754e7637489c6266fafd5"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_benchmark_consumers.test.ts",
@@ -2917,7 +2917,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:978b372fdb803ce57157f6a7b417a0251f0a55de6aa45e780b9de31ac0d711cc"
+      "sha256": "sha256:fa72026bdf4c2ec4a88da11a9c2f19556854fd90f685340bf0c8738635193acf"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
@@ -3913,7 +3913,7 @@
     },
     {
       "path": "apps/operator-backend/test/verification_capability_admission_v2.test.ts",
-      "sha256": "sha256:f82d8b524eea97fea4527273461090b9ba7ea949e50e421fb4c928c23f9c4d91"
+      "sha256": "sha256:d2aaad36d462c3c446fd2adec1798e507b13a13deb0016625caa0675e1b9b3bc"
     },
     {
       "path": "apps/operator-backend/test/verified_work_packet.test.ts",
@@ -6077,7 +6077,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:9e60ce20b65fb5816709111561e804b0a4b39f3ce8ed3e409c6c3375342b8a58",
+  "inputs_hash": "sha256:54888f0fc090ac30ccc53f2ab49e1eaa4002f0d13f77f4ee1e616dd5476eb59b",
   "result": {
     "passed": true,
     "checks": [

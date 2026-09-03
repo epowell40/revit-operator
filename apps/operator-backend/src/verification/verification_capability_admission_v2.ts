@@ -1,9 +1,10 @@
 /**
- * Versioned kernel admission contract for post-apply verification operations.
+ * Versioned application contract for post-apply verification capabilities.
  *
- * A read is useful verification only when its reviewed result contract can
- * expose the semantic value changed by the applied operation. Target identity,
- * HTTP success, and a generic result payload are necessary but insufficient.
+ * The Assignment Kernel owns the generic rule that postconditions require
+ * target-bound authoritative evidence. This adapter owns Revit-specific
+ * knowledge about which reviewed capability result shapes can expose each
+ * desired-state semantic output.
  */
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
@@ -30,11 +31,7 @@ const TEXT_NOTE_MUTATION_PATHS = new Set([
   "/revit/set-text-note-text"
 ]);
 
-/**
- * These are result-schema capabilities, not route-name guesses. Each entry is
- * reviewed against the authoritative native response shape. Keep this registry
- * deny-by-default for semantic families represented here.
- */
+/** Reviewed semantic outputs of the authoritative native response shapes. */
 const REVIT_ROUTE_SEMANTIC_OUTPUTS = new Map<string, readonly string[]>([
   ["/revit/find-text-notes", ["text_note.value"]],
   ["/revit/find-family-text-notes", ["text_note.value"]],

@@ -4,7 +4,6 @@ import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
 import { appliedOperationHasVerifiedPostconditionV2 } from "../outcome.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
-import { verificationCapabilityGuidanceV2 } from "../verification_admission.js";
 import type { OperationInputSchemaIssueV2, OperationV2 } from "../operation.js";
 import {
   EXECUTION_STRATEGY_EVIDENCE_V1,
@@ -184,12 +183,6 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
         || appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)) continue;
     const verificationOperationIds = operation.verification_operation_ids
       .filter((operationId) => Boolean(snapshot.operations[operationId]));
-    const verificationGuidance = verificationCapabilityGuidanceV2({
-      capability_id: operation.capability_id,
-      method: operation.request_identity?.method,
-      path: operation.request_identity?.path,
-      tool: operation.input.tool
-    });
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA,
       gap_id: `verification:${operation.operation_id}`,
@@ -203,7 +196,6 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
         .flatMap((operationId) => snapshot.operations[operationId]?.observation_ids ?? [])
         .sort(),
       reason: `Applied operation ${operation.operation_id} requires a successful target-bound readback before completion.`
-        + (verificationGuidance ?? "")
     });
   }
   for (const criterion of snapshot.spec.criteria.filter((candidate) => candidate.required)) {

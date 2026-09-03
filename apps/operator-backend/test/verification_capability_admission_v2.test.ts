@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA,
   verificationCapabilityAdmissionV2
-} from "../src/domain/assignment-kernel/verification_admission.js";
+} from "../src/verification/verification_capability_admission_v2.js";
 
 test("reviewed TextNote verification requires a result schema that exposes TextNote value", () => {
   const apply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/replace-text-note" };

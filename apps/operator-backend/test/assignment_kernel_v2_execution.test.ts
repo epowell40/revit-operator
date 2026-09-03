@@ -1140,8 +1140,9 @@ test("Candidate 66 rejects a verification route whose result contract cannot exp
     "an incapable read must not consume an OperationV2 identity or native dispatch opportunity");
   const gap = deriveProgressGapsV2(retained).find(candidate => candidate.gap_id === `verification:${applyLease.operation_id}`);
   assert.ok(gap);
-  assert.match(gap.reason, /Required semantic outputs: text_note\.value/);
-  assert.match(gap.reason, /\/revit\/find-text-notes/);
+  const providerProgress = prepareCodexAssignmentProgressV2(retained.current_binding);
+  assert.match(providerProgress.prompt, /Required semantic outputs: text_note\.value/);
+  assert.match(providerProgress.prompt, /\/revit\/find-text-notes/);
 }));
 
 test("a successful verification read with the wrong value cannot mint a postcondition fact", () => workspace(() => {
