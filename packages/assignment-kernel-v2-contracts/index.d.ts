@@ -5,6 +5,7 @@ export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA: "revit-operator.assignment-snapshot/
 export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA: "revit-operator.assignment-kernel-publication/v2";
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA: "revit-operator.assignment-provider-ledger/v2";
 export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA: "revit-operator.provider-call/v2";
+export const ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA: "revit-operator.assignment-execution-failure/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA: "revit-operator.operation-result-semantic-gap/v2";
 export const ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA: "revit-operator.assignment-kernel-runtime-attestation/v2";
 export const ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2: "typed-deny-by-default/v2";

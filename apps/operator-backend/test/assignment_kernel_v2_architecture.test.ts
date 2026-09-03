@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_FEATURE_FLAG,
+  ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA,
   ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   ASSIGNMENT_SPEC_V2_SCHEMA,
   OBSERVATION_V2_SCHEMA,
@@ -38,6 +39,7 @@ test("Assignment Kernel V2 schemas are versioned independently of transports", (
   assert.equal(ASSIGNMENT_SPEC_V2_SCHEMA, "revit-operator.assignment-spec/v2");
   assert.equal(ASSIGNMENT_EVENT_V2_SCHEMA, "revit-operator.assignment-event/v2");
   assert.equal(ASSIGNMENT_SNAPSHOT_V2_SCHEMA, "revit-operator.assignment-snapshot/v2");
+  assert.equal(ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA, "revit-operator.assignment-execution-failure/v2");
   assert.equal(OPERATION_V2_SCHEMA, "revit-operator.operation/v2");
   assert.equal(OPERATION_RESULT_V2_SCHEMA, "revit-operator.operation-result/v2");
   assert.equal(OBSERVATION_V2_SCHEMA, "revit-operator.observation/v2");
@@ -169,7 +171,7 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
     if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
-      assert.ok(["operation.ts", "provider_call.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
       if (path.basename(file) === "operation.ts") {
         assert.match(source, /OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA/);
       }
@@ -178,6 +180,9 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
       }
       if (path.basename(file) === "provider_call.ts") {
         assert.match(source, /ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA/);
+      }
+      if (path.basename(file) === "execution_failure.ts") {
+        assert.match(source, /ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA/);
       }
     }
     const withoutSharedContracts = source
@@ -245,6 +250,44 @@ test("V2 terminal commit has one owner and provider turns reconcile before relea
     "every failure after provider start must interrupt and release the exact started turn");
   assert.match(brain, /const releaseStartedProviderTurn = async[\s\S]*interruptTurn[\s\S]*endAssignmentKernelTerminalBarrierV2[\s\S]*endAssignmentKernelV2Lease/,
     "started-turn cleanup must own interruption, terminal barrier release, and lease release as one idempotent path");
+});
+
+test("every V2 provider exit records canonical failure or returns already-earned terminal truth", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const router = readFileSync(path.join(sourceRoot, "brain.ts"), "utf8");
+  const route = readFileSync(path.join(sourceRoot, "index.ts"), "utf8");
+  const boundary = readFileSync(path.join(sourceRoot, "assignments", "chat_execution_failure_boundary.ts"), "utf8");
+  const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
+  const failure = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution_failure.ts"), "utf8");
+  const reducer = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "reducer.ts"), "utf8");
+  const outcome = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "outcome.ts"), "utf8");
+
+  assert.match(route, /handleChatExecutionFailureBoundaryV2\(\{[\s\S]{0,180}canceled:\s*true/,
+    "stream cancellation must settle the exact V2 binding");
+  assert.ok((route.match(/handleChatExecutionFailureBoundaryV2\(\{/g) ?? []).length >= 3,
+    "streaming and non-streaming provider failures must share one V2 settlement boundary");
+  assert.match(boundary, /terminal[\s\S]*renderTerminalResultV2[\s\S]*deriveTerminalResultV2/,
+    "an already-complete Assignment must return its terminal result instead of an infrastructure error");
+  assert.match(brain, /turnCancelled[\s\S]*settleAssignmentKernelExecutionFailureV2[\s\S]*error_class:\s*"canceled"/,
+    "a normally returned interrupted Codex turn must not bypass V2 settlement");
+  const progressDecisionAt = brain.indexOf("prepareCodexAssignmentProgressV2(assignmentKernelV2.binding)");
+  const providerBootstrapAt = brain.indexOf("c = await getClient(workspaceRoot, threadProfile)");
+  assert.ok(progressDecisionAt >= 0 && providerBootstrapAt > progressDecisionAt,
+    "canonical progress must admit reasoning before any provider connection or thread bootstrap");
+  assert.match(brain, /provider-start:\$\{req\.message_id\}[\s\S]*"provider_start"[\s\S]*classifyAssignmentKernelExecutionFailureV2/,
+    "provider bootstrap failure must retain its precise canonical phase without reaching the outer generic catch");
+  assert.ok((brain.match(/endRequirementsPlanningLease\(requirementsLease\);[\s\S]{0,120}requirementsLease = null;[\s\S]{0,240}return stopBeforeProvider/g) ?? []).length >= 2,
+    "pre-provider runtime exits must release durable-requirements planning leases");
+  assert.ok((router.match(/requestHasExactAssignmentKernelV2Binding\(req\)/g) ?? []).length >= 2,
+    "streaming and non-streaming V2 requests must bypass every legacy deterministic shortcut");
+  assert.match(router, /requireCanonicalV2BrainRoute[\s\S]*route !== "codex"[\s\S]*assignment_kernel_v2_brain_route_unsupported/,
+    "a V2 request cannot silently route through a provider without V2 lifecycle ownership");
+  assert.match(failure, /evaluatePendingAssignmentCriteriaV2[\s\S]*terminalSuccess[\s\S]*execution_failure_recorded/,
+    "earned evidence is evaluated before infrastructure failure is admitted");
+  assert.match(reducer, /execution_failure_after_success_forbidden/,
+    "the canonical reducer must independently reject failure-over-success relabeling");
+  assert.ok(outcome.indexOf("unresolved_unknown_operation_ids") < outcome.indexOf("execution_failure_ids"),
+    "unknown persistent effect must remain ahead of provider-failure terminalization");
 });
 
 test("settled task evidence cannot be overtaken by another root operation", () => {

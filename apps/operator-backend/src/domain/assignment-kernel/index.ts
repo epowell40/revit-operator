@@ -15,6 +15,7 @@ export * from "./semantic_admissibility.js";
 export * from "./progress/contracts.js";
 export * from "./progress/controller.js";
 export * from "./progress/provider_call.js";
+export * from "./progress/execution_failure.js";
 export * from "./progress/telemetry.js";
 export * from "./progress/replay.js";
 export * from "./reducer.js";

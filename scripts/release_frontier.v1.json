@@ -10,6 +10,7 @@
     "assignment_kernel_v2_lifecycle.test.ts",
     "assignment_kernel_v2_progress_contracts.test.ts",
     "assignment_kernel_v2_progress_controller.test.ts",
+    "assignment_kernel_v2_provider_failure.test.ts",
     "assignment_kernel_v2_publication.test.ts",
     "assignment_kernel_v2_session_index_contract.test.ts",
     "assignment_kernel_v2_store.test.ts",
@@ -94,6 +95,7 @@
     { "id": "verification-assertion-provenance-and-predicate", "coverage": ["backend:teammate_verification_evidence.test.ts", "backend:teammate_loop_runtime.test.ts", "backend:postcondition_verification_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts"] },
     { "id": "native-affected-target-to-verification-binding", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },
     { "id": "dynamic-runtime-affected-target-publication", "coverage": ["backend:provider_dynamic_program.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/dynamicRevitProgramRunner.test.ts"] },
-    { "id": "typed-schedule-configuration-readback", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:teammate_loop_runtime.test.ts", "dotnet:ScheduleAppearanceContractTests"] }
+    { "id": "typed-schedule-configuration-readback", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:teammate_loop_runtime.test.ts", "dotnet:ScheduleAppearanceContractTests"] },
+    { "id": "post-admission-execution-failure-and-provider-bootstrap", "coverage": ["backend:assignment_kernel_v2_provider_failure.test.ts", "backend:assignment_kernel_v2_architecture.test.ts", "backend:assignment_kernel_v2_session_index_contract.test.ts"] }
   ]
 }

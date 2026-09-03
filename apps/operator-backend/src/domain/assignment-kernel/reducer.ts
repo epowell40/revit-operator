@@ -9,6 +9,7 @@ import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, OPERATION_RESULT_SEMANTIC_GAP_V2_
 import { operationMatchesTargetIdentityV2 } from "./operation_target_identity.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
 import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
+import { ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA, executionFailureCodeV2 } from "./progress/execution_failure.js";
 import { criteriaPendingEvaluationV2, deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
 import {
   CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
@@ -536,6 +537,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       work_unit_states: Object.fromEntries(event.spec.work_units.map((unit) => [unit.work_unit_id, "pending"])),
       pending_review_ids: [],
       provider_call_ids: [], provider_calls: {}, in_flight_provider_call_ids: [], provider_budget_exhausted: false,
+      execution_failure_ids: [], execution_failures: {},
       progress_epochs: [],
       operations: {}, observations: {}, observation_versions: {}, criteria: {}, criterion_evaluation_versions: {}, outcome: "active", terminal: false,
       operation_children: {}, blocking_child_operation_ids: [],
@@ -639,6 +641,31 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           provider_call_ids: [...new Set([...snapshot.provider_call_ids, event.call.call_id])].sort()
         };
         break;
+      case "execution_failure_recorded": {
+        const failure = event.failure;
+        kernelAssertV2(failure.schema === ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA,
+          "execution_failure_schema_invalid", "Execution failure requires the shared V2 schema.");
+        kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, failure.binding),
+          "execution_failure_binding_mismatch", "Execution failure binding is not current.");
+        kernelAssertV2(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(failure.failure_id),
+          "execution_failure_identity_invalid", "Execution failure requires one bounded stable identity.");
+        kernelAssertV2(["provider", "transport", "runtime", "canceled", "resource_exhausted"].includes(failure.error_class),
+          "execution_failure_class_invalid", "Execution failure requires one recognized typed class.");
+        kernelAssertV2(["request_validation", "runtime_setup", "provider_start", "provider_turn", "response_handoff"].includes(failure.phase),
+          "execution_failure_phase_invalid", "Execution failure requires one recognized boundary phase.");
+        kernelAssertV2(failure.code === executionFailureCodeV2(failure.error_class),
+          "execution_failure_code_invalid", "Execution failure code must be derived from its typed class.");
+        kernelAssertV2(!snapshot.execution_failures[failure.failure_id],
+          "execution_failure_duplicate", "Execution failure identity is already retained.");
+        kernelAssertV2(!["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome),
+          "execution_failure_after_success_forbidden", "An execution failure cannot replace already-derived successful work.");
+        snapshot = {
+          ...snapshot,
+          execution_failure_ids: [...snapshot.execution_failure_ids, failure.failure_id],
+          execution_failures: { ...snapshot.execution_failures, [failure.failure_id]: structuredClone(failure) }
+        };
+        break;
+      }
       case "provider_budget_exhausted":
         kernelAssertV2(event.limit > 0 && snapshot.provider_call_ids.length >= event.limit,
           "provider_budget_exhaustion_invalid", "Provider budget exhaustion requires the durable call count to reach the configured limit.");

@@ -5,6 +5,7 @@ export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA = "revit-operator.assignment-snapshot
 export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA = "revit-operator.assignment-kernel-publication/v2";
 export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA = "revit-operator.assignment-provider-ledger/v2";
 export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA = "revit-operator.provider-call/v2";
+export const ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA = "revit-operator.assignment-execution-failure/v2";
 export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA = "revit-operator.operation-result-semantic-gap/v2";
 export const ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA = "revit-operator.assignment-kernel-runtime-attestation/v2";
 export const ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2 = "typed-deny-by-default/v2";
@@ -18,6 +19,21 @@ const PROVIDER_CALL_STATES_V2 = new Set([
   "response_transport_completed"
 ]);
 const PROVIDER_ERROR_CLASSES_V2 = new Set(["provider", "transport", "canceled", "resource_exhausted"]);
+const EXECUTION_FAILURE_CLASSES_V2 = new Set(["provider", "transport", "runtime", "canceled", "resource_exhausted"]);
+const EXECUTION_FAILURE_PHASES_V2 = new Set([
+  "request_validation",
+  "runtime_setup",
+  "provider_start",
+  "provider_turn",
+  "response_handoff"
+]);
+const EXECUTION_FAILURE_CODES_V2 = Object.freeze({
+  provider: "provider_execution_failed",
+  transport: "provider_transport_failed",
+  runtime: "assignment_runtime_failed",
+  canceled: "execution_canceled",
+  resource_exhausted: "provider_resource_exhausted"
+});
 
 export function isTerminalProviderCallStateV2(value) {
   return value === "completed" || value === "response_transport_completed";
@@ -261,6 +277,33 @@ export function parseAssignmentKernelPublicationV2(value) {
         || (completed && typeof call.success !== "boolean")
         || (call.state === "response_transport_completed" && !requiredString(call.response_transport_completed_at))) {
       publicationInvalid("provider_call_state");
+    }
+  }
+
+  const hasExecutionFailureIndex = snapshot.execution_failure_ids !== undefined
+    || snapshot.execution_failures !== undefined;
+  // Publications retained before the execution-failure ledger was introduced
+  // have neither field. Current producers always publish both; partial or
+  // incoherent ledgers fail closed without rewriting historical evidence.
+  if (hasExecutionFailureIndex) {
+    const executionFailureIds = requiredStringArray(snapshot.execution_failure_ids);
+    const executionFailures = record(snapshot.execution_failures);
+    if (!executionFailureIds || !executionFailures
+        || new Set(executionFailureIds).size !== executionFailureIds.length
+        || !sameStrings(Object.keys(executionFailures).sort(), [...executionFailureIds].sort())) {
+      publicationInvalid("execution_failure_index");
+    }
+    for (const failureId of executionFailureIds) {
+      const failure = record(executionFailures[failureId]);
+      const errorClass = failure?.error_class;
+      if (!failure || failure.schema !== ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA
+          || failure.failure_id !== failureId
+          || !sameAssignmentBinding(failure.binding, binding)
+          || !EXECUTION_FAILURE_CLASSES_V2.has(errorClass)
+          || !EXECUTION_FAILURE_PHASES_V2.has(failure.phase)
+          || failure.code !== EXECUTION_FAILURE_CODES_V2[errorClass]) {
+        publicationInvalid("execution_failure_shape");
+      }
     }
   }
   return structuredClone(publication);

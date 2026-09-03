@@ -1,6 +1,7 @@
 import type { AssignmentInputVariableV2, AssignmentSpecV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { executionFailureOutcomeV2 } from "./progress/execution_failure.js";
 
 function requiredInputsKnown(spec: AssignmentSpecV2, snapshot: AssignmentSnapshotV2): boolean {
   return spec.input_variables.every((input: AssignmentInputVariableV2) => !input.required
@@ -54,6 +55,9 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   if (!snapshot.quiescent) return "active";
   if (snapshot.progress_blocker) return "blocked";
   if (snapshot.unresolved_unknown_operation_ids.length > 0) return "active";
+  const executionFailureId = snapshot.execution_failure_ids.at(-1);
+  const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
+  if (executionFailure) return executionFailureOutcomeV2(executionFailure.error_class);
   if (snapshot.provider_budget_exhausted) return "failed";
 
   const requiredSpecs = snapshot.spec.criteria.filter((criterion) => criterion.required);

@@ -167,6 +167,15 @@ function status(snapshot: AssignmentSnapshotV2): VerifiedWorkPacketStatus {
 
 function issues(snapshot: AssignmentSnapshotV2, rows: VerifiedWorkAcceptanceCriterion[]): VerifiedWorkIssue[] {
   const output: VerifiedWorkIssue[] = [];
+  const executionFailureId = snapshot.execution_failure_ids.at(-1);
+  const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
+  if (executionFailure) output.push({
+    kind: "execution_failure",
+    summary: `Execution stopped at ${executionFailure.phase}: ${executionFailure.code}.`,
+    affected_attempt_ids: [],
+    evidence_references: [],
+    user_action_required: null
+  });
   if (snapshot.pending_input_variable_ids.length > 0) output.push({
     kind: "user_action_required", summary: `Required input: ${snapshot.pending_input_variable_ids.join(", ")}.`,
     affected_attempt_ids: [], evidence_references: [], user_action_required: "Supply the requested value to resume this Assignment."

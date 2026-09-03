@@ -44,6 +44,10 @@ import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
 import { createAssignmentKernelV2ModelReceiptRecorder } from "../assignments/assignment_kernel_v2_provider_budget.js";
+import {
+  classifyAssignmentKernelExecutionFailureV2,
+  settleAssignmentKernelExecutionFailureV2
+} from "../assignments/assignment_kernel_v2_execution_failure.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
@@ -431,6 +435,34 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     : null;
   const threadProfile = getCodexThreadStartProfileForTest(req);
   const agentSettings = resolveAgentModelSettings(req.context);
+  const stopBeforeProvider = (
+    message: string,
+    failureId: string,
+    phase: "request_validation" | "runtime_setup" | "provider_start",
+    errorClass: "provider" | "transport" | "runtime" | "canceled" | "resource_exhausted" = "runtime"
+  ): ChatResponse => {
+    const snapshot = assignmentKernelV2
+      ? settleAssignmentKernelExecutionFailureV2({
+          binding: assignmentKernelV2.binding,
+          failure_id: failureId,
+          error_class: errorClass,
+          phase
+        }).snapshot
+      : null;
+    const assistantMessage = snapshot
+      && snapshot.terminal
+      && ["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome)
+      ? finalCodexAssignmentMessageV2(snapshot, message)
+      : message;
+    cb.onDone?.(assistantMessage);
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: assistantMessage,
+      actions: [],
+      ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
+      ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {})
+    };
+  };
   const requestBackendAuth = getRequestOperatorBackendAuth();
   const certifiedDirect = threadProfile.certified;
   let courierTarget: ReturnType<typeof revitCourierTargetFromContext> | undefined;
@@ -439,16 +471,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       courierTarget = revitCourierTargetFromContext(req.context);
     } catch (error) {
       const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
-      cb.onDone?.(message);
-      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+      return stopBeforeProvider(message, `request-validation:${req.message_id}`, "request_validation");
     }
   }
   const workspaceRoot = getWorkspaceRoot();
-  let c = await getClient(workspaceRoot, threadProfile);
-  let threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
-    c = activeClient;
-    return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
-  });
+  let c: CodexAppServer;
+  let threadId: string;
 
 
   const text = (req.user_text ?? "").toString();
@@ -477,13 +505,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   if (requirementsError) {
     const message = `Durable requirements could not be read safely (${requirementsError}). I stopped before planning or tool actions.`;
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+    return stopBeforeProvider(message, `requirements-read:${req.message_id}`, "request_validation");
   }
   if (requirementsReceipt && requirementsReceipt.status !== "resolved") {
     const message = `Durable requirements are ${requirementsReceipt.status}. I stopped before planning or tool actions; resolve or narrow the attached receipt first.`;
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
+    return {
+      ...stopBeforeProvider(message, `requirements-unresolved:${req.message_id}`, "request_validation"),
+      requirements_receipt: requirementsReceipt
+    };
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
@@ -567,25 +596,38 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         const message = leasedReceipt.status === "resolved"
           ? "Durable requirements changed while the planning lease was being acquired. I stopped before tool actions; re-run the request against the attached current receipt."
           : `Durable requirements became ${leasedReceipt.status} while the planning lease was being acquired. I stopped before tool actions; resolve or narrow the attached receipt first.`;
-        cb.onDone?.(message);
-        return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: leasedReceipt };
+        return {
+          ...stopBeforeProvider(message, `requirements-changed:${req.message_id}`, "request_validation"),
+          requirements_receipt: leasedReceipt
+        };
       }
       requirementsReceipt = leasedReceipt;
     } catch (error) {
       endRequirementsPlanningLease(requirementsLease);
       requirementsLease = null;
       const message = `Durable requirements could not be leased and revalidated safely (${error instanceof Error ? error.message : String(error)}). I stopped before planning or tool actions.`;
-      cb.onDone?.(message);
-      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
+      return {
+        ...stopBeforeProvider(message, `requirements-lease:${req.message_id}`, "request_validation"),
+        requirements_receipt: requirementsReceipt
+      };
     }
   }
   const mcpRuntime = threadProfile.startRevitTurnRuntime ? mcpRuntimesByWorkspace.get(workspaceRoot) : null;
-  if (threadProfile.startRevitTurnRuntime && !mcpRuntime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+  if (threadProfile.startRevitTurnRuntime && !mcpRuntime) {
+    endRequirementsPlanningLease(requirementsLease);
+    requirementsLease = null;
+    return stopBeforeProvider(
+      "Revit Operator MCP runtime is not configured for this workspace. I stopped before the provider or any Revit tool was called.",
+      `runtime-missing:${req.message_id}`,
+      "runtime_setup"
+    );
+  }
   const backendAuth = threadProfile.startRevitTurnRuntime ? requestBackendAuth : undefined;
   if (threadProfile.startRevitTurnRuntime && !backendAuth) {
+    endRequirementsPlanningLease(requirementsLease);
+    requirementsLease = null;
     const message = "Authenticated Operator backend transport is unavailable. I stopped before the provider or any Revit tool was called.";
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+    return stopBeforeProvider(message, `backend-transport-missing:${req.message_id}`, "runtime_setup", "transport");
   }
   let backendAuthLease: OperatorBackendAuthLease | null = null;
   let assignmentKernelV2Lease: AssignmentKernelTurnLeaseV2 | null = null;
@@ -671,6 +713,30 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         assignmentProgressTurnStart = progression.snapshot;
         input.push({ type: "text", text: progression.prompt, text_elements: [] as any[] });
       }
+    }
+    try {
+      c = await getClient(workspaceRoot, threadProfile);
+      threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+        c = activeClient;
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+      });
+    } catch (error) {
+      mcpRuntime?.endBackendAuthLease(backendAuthLease);
+      backendAuthLease = null;
+      mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
+      assignmentKernelV2Lease = null;
+      endTeammateLoopOwner(teammateContext);
+      teammateContext = null;
+      endRevitCourierTurnContext(courierContext);
+      courierContext = null;
+      endRequirementsPlanningLease(requirementsLease);
+      requirementsLease = null;
+      return stopBeforeProvider(
+        "The provider connection could not be initialized. I stopped before planning or any Revit tool action.",
+        `provider-start:${req.message_id}`,
+        "provider_start",
+        classifyAssignmentKernelExecutionFailureV2(error)
+      );
     }
     providerReceiptRecorder = assignmentKernelV2
       ? createAssignmentKernelV2ModelReceiptRecorder({
@@ -947,10 +1013,19 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
       if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
     }
-    const snapshot = assignmentKernelV2 ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding) : null;
+    const snapshot = assignmentKernelV2
+      ? assignmentControllerStopReason
+        ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding)
+        : settleAssignmentKernelExecutionFailureV2({
+            binding: assignmentKernelV2.binding,
+            failure_id: `canceled:${req.message_id}`,
+            error_class: "canceled",
+            phase: "provider_turn"
+          }).snapshot
+      : null;
     const budgetMessage = assignmentControllerStopReason
       ? codexAssignmentControllerStopMessage(snapshot, assignmentControllerStopReason)
-      : "";
+      : finalCodexAssignmentMessageV2(snapshot, "");
     cb.onDone?.(budgetMessage);
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,

@@ -5,6 +5,7 @@ import type { ObservationV2 } from "./observation.js";
 import type { OperationV2 } from "./operation.js";
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallV2 } from "./progress/provider_call.js";
+import type { ExecutionFailureV2 } from "./progress/execution_failure.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export { ASSIGNMENT_SNAPSHOT_V2_SCHEMA };
@@ -29,6 +30,8 @@ export interface AssignmentSnapshotV2 {
   provider_calls: Readonly<Record<string, ProviderCallV2>>;
   in_flight_provider_call_ids: readonly string[];
   provider_budget_exhausted: boolean;
+  execution_failure_ids: readonly string[];
+  execution_failures: Readonly<Record<string, ExecutionFailureV2>>;
   progress_epochs: readonly ProgressEpochV2[];
   progress_blocker?: Readonly<{ code: string; gap_ids: readonly string[]; recorded_at: string }>;
   operations: Readonly<Record<OperationIdV2, OperationV2>>;

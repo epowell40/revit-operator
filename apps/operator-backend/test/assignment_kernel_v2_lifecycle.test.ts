@@ -26,6 +26,11 @@ import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { listWorkReturns } from "../src/work_returns/store.js";
 import { deriveTerminalResultV2, renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
 import { prepareCodexAssignmentProgressV2, settleCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { settleAssignmentKernelExecutionFailureV2 } from "../src/assignments/assignment_kernel_v2_execution_failure.js";
+import {
+  beginAssignmentKernelTerminalBarrierV2,
+  endAssignmentKernelTerminalBarrierV2
+} from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
 import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
 import { generateWorkReturnFromKernelV2 } from "../src/work_returns/assignment_kernel_v2_generator.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
@@ -208,6 +213,34 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   assert.throws(() => evaluateAssignmentObservationCriteriaV2({
     binding, claims: [{ criterion_id: criterionId, observation_ids: [observationId] }]
   }), /terminal_immutable/);
+}));
+
+test("provider failure cannot replace task success derived while terminal handoff was deferred", () => workspace(() => {
+  const { goal, binding } = setup();
+  const barrier = beginAssignmentKernelTerminalBarrierV2({ binding, barrier_id: "provider-request:terminal-handoff" });
+  const settled = settleRead(goal.id).settled;
+  const derived = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{
+      criterion_id: settled.snapshot.spec.criteria[0]!.criterion_id,
+      observation_ids: [settled.observation!.observation_id]
+    }]
+  });
+  assert.equal(derived.outcome, "complete");
+  assert.equal(derived.terminal, false);
+  endAssignmentKernelTerminalBarrierV2(barrier);
+
+  const recovered = settleAssignmentKernelExecutionFailureV2({
+    binding,
+    failure_id: "response-handoff-lost-after-success",
+    error_class: "transport",
+    phase: "response_handoff"
+  });
+  assert.equal(recovered.disposition, "terminal_preserved");
+  assert.equal(recovered.snapshot.terminal, true);
+  assert.equal(recovered.snapshot.outcome, "complete");
+  assert.equal(recovered.snapshot.execution_failure_ids.length, 0);
+  assert.equal(recovered.snapshot.terminal_reason, "terminal_outcome_derived_before_execution_failure");
 }));
 
 test("Work Packet and Work Return preserve native affected identities from the terminal V2 result", () => workspace(() => {

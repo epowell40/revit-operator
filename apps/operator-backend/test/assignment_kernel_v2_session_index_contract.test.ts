@@ -88,7 +88,9 @@ function exactPublication(callIds: readonly string[]) {
       current_binding: index.assignments[0]!.binding,
       provider_call_ids: [...callIds],
       provider_calls: calls,
-      in_flight_provider_call_ids: []
+      in_flight_provider_call_ids: [],
+      execution_failure_ids: [],
+      execution_failures: {}
     },
     provider_ledger: {
       schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
@@ -186,6 +188,46 @@ test("exact V2 publication contract survives JSON transport and rejects provider
     snapshot: { ...publication.snapshot, in_flight_provider_call_ids: ["call-1"] },
     provider_ledger: { ...publication.provider_ledger, in_flight_call_ids: ["call-1"] }
   }), /assignment_kernel_v2_publication_invalid:provider_call_state/);
+
+  const failure = {
+    schema: "revit-operator.assignment-execution-failure/v2",
+    failure_id: "failed:message-1",
+    binding: index.assignments[0]!.binding,
+    error_class: "transport",
+    phase: "provider_start",
+    code: "provider_transport_failed"
+  };
+  const withFailure = {
+    ...publication,
+    snapshot: {
+      ...publication.snapshot,
+      execution_failure_ids: [failure.failure_id],
+      execution_failures: { [failure.failure_id]: failure }
+    }
+  };
+  assert.deepEqual(parseAssignmentKernelPublicationV2(JSON.parse(JSON.stringify(withFailure))), withFailure);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...withFailure,
+    snapshot: {
+      ...withFailure.snapshot,
+      execution_failures: {
+        [failure.failure_id]: { ...failure, binding: { ...failure.binding, run_id: "foreign-run" } }
+      }
+    }
+  }), /assignment_kernel_v2_publication_invalid:execution_failure_shape/);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...withFailure,
+    snapshot: {
+      ...withFailure.snapshot,
+      execution_failures: {
+        [failure.failure_id]: { ...failure, code: "provider_execution_failed" }
+      }
+    }
+  }), /assignment_kernel_v2_publication_invalid:execution_failure_shape/);
+  assert.throws(() => parseAssignmentKernelPublicationV2({
+    ...publication,
+    snapshot: { ...publication.snapshot, execution_failures: undefined }
+  }), /assignment_kernel_v2_publication_invalid:execution_failure_index/);
 });
 
 test("historical or malformed session-index aliases fail explicitly for new V2 traffic", () => {

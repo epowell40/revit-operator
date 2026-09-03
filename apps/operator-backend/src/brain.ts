@@ -41,6 +41,7 @@ import {
 } from "./existing_conditions/one_action_execution_ledger.js";
 import { ensureWorkspaceLayout } from "./workspace.js";
 import { buildCertifiedReadDisposition, filterCertifiedSidecarActions, isCertifiedSidecarRequest } from "./capabilities/certified_sidecar_capability.js";
+import { assignmentKernelV2ForBinding } from "./assignments/assignment_kernel_v2_factory.js";
 
 const EXISTING_CONDITIONS_SESSION_LIMIT = 256;
 const existingConditionsReconstructionSessions = new Map<string, true>();
@@ -387,6 +388,22 @@ export function resolveOperatorBrainRoute(): OperatorBrainRoute {
   return "codex";
 }
 
+function requestHasExactAssignmentKernelV2Binding(req: ChatRequest): boolean {
+  if (!req.assignment_id || !req.assignment_run_id || !Number.isSafeInteger(req.assignment_generation)) return false;
+  return Boolean(assignmentKernelV2ForBinding({
+    session_id: req.session_id,
+    assignment_id: req.assignment_id,
+    run_id: req.assignment_run_id,
+    generation: req.assignment_generation!
+  }));
+}
+
+function requireCanonicalV2BrainRoute(): "codex" {
+  const route = resolveOperatorBrainRoute();
+  if (route !== "codex") throw new Error(`assignment_kernel_v2_brain_route_unsupported:${route}`);
+  return route;
+}
+
 async function decideWithSelectedBrain(
   route: OperatorBrainRoute,
   req: ChatRequest,
@@ -418,6 +435,13 @@ async function decideWithSelectedBrainStreaming(
 
 export async function decide(req: ChatRequest, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   req = withLatestExistingConditionsSourceDispositionContext(req);
+  if (requestHasExactAssignmentKernelV2Binding(req)) {
+    requireCanonicalV2BrainRoute();
+    const decision = await (dependencies.codexBrain ?? decideCodex)(req);
+    return isCertifiedSidecarRequest(req)
+      ? finalizeDecision(req, decision)
+      : finalizeGenericDecision(req, decision);
+  }
   const sourceDispositionInspection = maybeBuildExistingConditionsSourceDispositionInspection(req);
   if (sourceDispositionInspection) return finalizeDecision(req, sourceDispositionInspection);
   const explicitAction = maybeBuildExplicitExistingConditionsAction(req);
@@ -525,6 +549,22 @@ export async function decide(req: ChatRequest, dependencies: BrainDecisionDepend
 
 export async function decideStreaming(req: ChatRequest, cb: StreamCallbacks, dependencies: BrainDecisionDependencies = {}): Promise<ChatResponse> {
   req = withLatestExistingConditionsSourceDispositionContext(req);
+  if (requestHasExactAssignmentKernelV2Binding(req)) {
+    requireCanonicalV2BrainRoute();
+    if (isCertifiedSidecarRequest(req)) {
+      return finalizeDecision(
+        req,
+        await (dependencies.codexStreamingBrain ?? decideCodexStreaming)(req, cb)
+      );
+    }
+    const streamGate = genericStreamGate(req, cb);
+    const decision = finalizeGenericDecision(
+      req,
+      await (dependencies.codexStreamingBrain ?? decideCodexStreaming)(req, streamGate.callbacks)
+    );
+    if (streamGate.buffered) emitBufferedGenericDecision(cb, decision);
+    return decision;
+  }
   const sourceDispositionInspection = maybeBuildExistingConditionsSourceDispositionInspection(req);
   if (sourceDispositionInspection) {
     const decision = finalizeDecision(req, sourceDispositionInspection);
