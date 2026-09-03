@@ -30,7 +30,10 @@ import {
   type RequestedEffectV2,
   type SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
-import { verificationCapabilityAdmissionV2 } from "../verification/verification_capability_admission_v2.js";
+import {
+  operationTargetSelectorV2,
+  verificationCapabilityAdmissionV2
+} from "../verification/verification_capability_admission_v2.js";
 import { assertEvidenceStoreInputSafe, storeEvidence } from "../evidence/evidence_store.js";
 import type { EvidenceStoreInput, EvidenceStoreResult } from "../evidence/evidence_ref.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
@@ -633,11 +636,25 @@ function commitInput(
   const verificationSubject = operation?.verification_of_operation_id
     ? snapshot?.operations[operation.verification_of_operation_id]
     : undefined;
+  const observedTarget = operationTargetSelectorV2({
+    operation: {
+      capability_id: operation?.capability_id,
+      method: operation?.request_identity?.method,
+      path: operation?.request_identity?.path,
+      tool: operation?.input.tool
+    },
+    value: envelope.observation.raw_payload
+  });
+  const deterministicallyTargetBound = observedTarget.source !== "reviewed_capability_contract"
+    || Boolean(verificationSubject
+      && observedTarget.principal_target_tokens.length > 0
+      && operationMatchesTargetIdentityV2(verificationSubject, observedTarget.principal_target_tokens));
   const deterministicallySatisfied = Boolean(
     lease.purpose === "verification"
       && lease.fulfillment_role === "verification"
       && verificationSubject?.requested_effect === "apply"
       && verificationSubject.persistent_effect === "applied"
+      && deterministicallyTargetBound
       && postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
         envelope.observation.raw_payload,

@@ -17,7 +17,8 @@ function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): 
     capability_id: operation.capability_id,
     method: operation.request_identity?.method,
     path: operation.request_identity?.path,
-    tool: operation.input.tool
+    tool: operation.input.tool,
+    target_id: operation.target.target_id
   }) ?? "";
 }
 

@@ -138,7 +138,7 @@ export interface OperationInputSchemaIssueV2 {
   safe_correction_eligibility: "provider_corrected_arguments_required" | "declared_deterministic_coercion";
   correction_action: "provider_resubmit" | "wrap_scalar_as_singleton_array";
   expected_constraint: Readonly<{
-    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "schema_depth" | "schema_bounds";
+    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "property_set" | "schema_depth" | "schema_bounds";
     type?: string;
     allowed_values?: readonly (string | number | boolean | null)[];
     minimum?: number;

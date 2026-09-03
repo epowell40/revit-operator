@@ -37,6 +37,7 @@ import {
 } from "../src/assignments/interaction.js";
 import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { advanceAssignmentKernelProgressV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import {
   beginAssignmentKernelTerminalBarrierV2,
   endAssignmentKernelTerminalBarrierV2
@@ -867,6 +868,109 @@ test("Candidate 66 incapable postcondition readback is rejected across the dynam
       assert.equal(runtimeCalls, 0, "incapable verification must be rejected before MCP or Revit dispatch");
       assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
         "rejected verification must not consume another OperationV2 identity");
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 68 contextual view scope cannot displace the affected TextNote at the dynamic-handler seam", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate68-principal-target-seam";
+    const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+    const goal = createGoal({
+      title: "Replace one TextNote and verify it",
+      objective: `Replace TextNote 1478627 with exactly: ${replacement}`,
+      acceptance_criteria: ["The exact admitted result is retained and verified."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate68-regression",
+      work_budget: {
+        requested_effect: "apply", document_fingerprint: "document-candidate68",
+        source_user_request: `Replace TextNote 1478627 with exactly: ${replacement}`
+      }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate68" });
+    const applyLease = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: "candidate68-apply",
+      provider_turn_id: "candidate68-apply-turn",
+      capability_id: "revit_call_tool",
+      classified_effect: "apply",
+      target_tokens: ["elementid:1478627", "id:1478627"],
+      arguments: {
+        method: "POST", path: "/revit/replace-text-note",
+        body: { elementId: 1478627, newText: replacement, apply: true }
+      }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const payload = { status: "Applied", elementId: 1478627, before: "OLD", after: replacement, changed: true };
+    settleAssignmentKernelOperationV2(applyLease, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: {
+          schema: OPERATION_RESULT_V2_SCHEMA,
+          result_id: `result-${applyLease.operation_id}`,
+          operation_id: applyLease.operation_id,
+          binding: applyLease.binding,
+          status: "succeeded",
+          dispatch_state: "dispatched",
+          persistent_effect: "applied",
+          native_transaction_state: "committed",
+          authority: "native-host",
+          result_schema_id: "operator-native/POST:/revit/replace-text-note/v2",
+          observation_required: true,
+          raw_payload_hash: createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex"),
+          receipt_id: `receipt-${applyLease.operation_id}`,
+          native_correlation_id: `native-${applyLease.operation_id}`,
+          request_identity: applyLease.request_identity,
+          completed_at: "2026-09-03T23:03:04.518Z"
+        },
+        observation: { raw_payload: payload, semantic_facts: [], verification_relevance: ["task_result"] }
+      }
+    });
+    advanceAssignmentKernelProgressV2({ binding });
+
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async () => {
+        runtimeCalls += 1;
+        throw new Error("candidate68_mcp_preflight_boundary");
+      },
+      queueAssignmentKernelV2TurnStop: () => {}
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate68-message",
+      user_text: `Replace TextNote 1478627 with exactly: ${replacement}`,
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      const response = await handleCodexServerRequest(runtime as any, {
+        id: "candidate68-scoped-readback-request",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator", threadId: "candidate68-thread", turnId: "candidate68-verification-turn",
+          callId: "candidate68-scoped-readback", tool: "revit_call_tool",
+          arguments: {
+            method: "POST", path: "/revit/find-text-notes",
+            body: { elementIds: [1478627], viewId: 1363433, query: replacement, matchMode: "exact", max: 1 }
+          }
+        }
+      } as any) as { success?: boolean; contentItems?: Array<{ text?: string }> };
+      assert.equal(response.success, false);
+      assert.match(response.contentItems?.[0]?.text ?? "", /candidate68_mcp_preflight_boundary/);
+      assert.doesNotMatch(response.contentItems?.[0]?.text ?? "", /operation_admission_blocked|verification_target_mismatch/);
+      assert.equal(runtimeCalls, 1, "the exact target must reach normal MCP schema validation instead of dying at admission");
+      const snapshot = getAssignmentKernelSnapshotV2(goal.id)!;
+      const verification = Object.values(snapshot.operations).find(operation => operation.purpose === "verification");
+      assert.equal(verification?.target.target_id, "id:1478627");
+      assert.equal(verification?.verification_of_operation_id, applyLease.operation_id);
+      assert.equal(verification?.dispatch_state, "not_dispatched");
+      assert.equal(verification?.persistent_effect, "none");
     } finally {
       endTeammateLoopOwner(teammate);
     }

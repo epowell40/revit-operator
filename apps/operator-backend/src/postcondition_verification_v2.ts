@@ -6,6 +6,10 @@
  */
 
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
+import {
+  isExcludedEvidenceContainerV2,
+  normalizedEvidenceKeyV2
+} from "./verification/verification_payload_boundary_v2.js";
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -47,12 +51,8 @@ const REVIT_TEXT_OBSERVATION_KEYS = new Set([
   "after", "currenttext", "text", "texts"
 ]);
 
-function normalizedKey(value: string): string {
-  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
-
 function canonicalPostconditionField(value: string): string {
-  const normalized = normalizedKey(value);
+  const normalized = normalizedEvidenceKeyV2(value);
   switch (normalized) {
     case "hasstripedrows": return "stripedrows";
     case "showgrandtotal": return "showgrandtotals";
@@ -93,10 +93,6 @@ function scheduleFilterSetToken(values: readonly string[]): string {
 
 function observedScheduleContractTokens(value: unknown): readonly string[] {
   const tokens = new Set<string>();
-  const excludedContainers = new Set([
-    "arguments", "body", "canonicalattemptsettlement", "control", "input", "meta", "metadata",
-    "operationresultv2", "payloadprovenance", "provenance", "request", "requestbody", "requestinput"
-  ]);
   const appearanceProperties = new Set(["showtitle", "showheaders", "stripedrows", "hasstripedrows", "freezeheaders"]);
   const settingProperties = new Set(["showgrandtotal", "showgrandtotals", "filterbysheet", "isfilteredbysheet"]);
   const visit = (node: unknown, depth = 0): void => {
@@ -112,23 +108,23 @@ function observedScheduleContractTokens(value: unknown): readonly string[] {
     if (typeof node !== "object") return;
     const row = node as Record<string, unknown>;
     const entries = Object.entries(row);
-    const filterEntry = entries.find(([key]) => normalizedKey(key) === "filterdefinitions");
+    const filterEntry = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitions");
     if (filterEntry && Array.isArray(filterEntry[1])) {
       const filterTokens = filterEntry[1]
         .map(scheduleFilterToken)
         .filter((token): token is string => token !== null);
       for (const token of filterTokens) tokens.add(token);
-      const complete = entries.find(([key]) => normalizedKey(key) === "filterdefinitionscomplete")?.[1] === true;
+      const complete = entries.find(([key]) => normalizedEvidenceKeyV2(key) === "filterdefinitionscomplete")?.[1] === true;
       if (complete && filterTokens.length === filterEntry[1].length) tokens.add(scheduleFilterSetToken(filterTokens));
     }
     for (const [key, child] of entries) {
-      const normalized = normalizedKey(key);
-      if (excludedContainers.has(normalized)) continue;
+      const normalized = normalizedEvidenceKeyV2(key);
+      if (isExcludedEvidenceContainerV2(key)) continue;
       if ((normalized === "appearance" || normalized === "settings" || normalized === "schedulesettings")
           && child && typeof child === "object" && !Array.isArray(child)) {
         const allowed = normalized === "appearance" ? appearanceProperties : settingProperties;
         for (const [property, propertyValue] of Object.entries(child as Record<string, unknown>)) {
-          if (propertyValue !== null && propertyValue !== undefined && allowed.has(normalizedKey(property))) {
+          if (propertyValue !== null && propertyValue !== undefined && allowed.has(normalizedEvidenceKeyV2(property))) {
             tokens.add(schedulePropertyValueToken(property, propertyValue));
           }
         }
@@ -140,7 +136,7 @@ function observedScheduleContractTokens(value: unknown): readonly string[] {
       if (normalized === "schedule" && child && typeof child === "object" && !Array.isArray(child)) {
         for (const [property, propertyValue] of Object.entries(child as Record<string, unknown>)) {
           if (propertyValue !== null && propertyValue !== undefined
-              && (appearanceProperties.has(normalizedKey(property)) || settingProperties.has(normalizedKey(property)))) {
+              && (appearanceProperties.has(normalizedEvidenceKeyV2(property)) || settingProperties.has(normalizedEvidenceKeyV2(property)))) {
             tokens.add(schedulePropertyValueToken(property, propertyValue));
           }
         }
@@ -212,8 +208,8 @@ export function expectedPostconditionValuesV2(
       return;
     }
     if (node === null || node === undefined) return;
-    const normalizedChildKey = normalizedKey(key);
-    const normalizedParent = normalizedKey(parent);
+    const normalizedChildKey = normalizedEvidenceKeyV2(key);
+    const normalizedParent = normalizedEvidenceKeyV2(parent);
     const valueIsPredicate = /(?:filter|condition|rule|criterion|criteria)/.test(normalizedParent);
     const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedChildKey);
     const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedChildKey);
@@ -271,10 +267,6 @@ export function expectedPostconditionValuesV2(
 export function observedPostconditionValuesV2(value: unknown): ReadonlySet<string> {
   const values = new Set<string>();
   for (const token of observedScheduleContractTokens(value)) values.add(token);
-  const excludedContainers = new Set([
-    "arguments", "body", "canonicalattemptsettlement", "control", "input", "meta", "metadata",
-    "operationresultv2", "payloadprovenance", "provenance", "request", "requestbody", "requestinput"
-  ]);
   const controlLeaves = new Set([
     "action", "complete", "dryrun", "error", "failure", "message", "ok", "status", "success", "verified"
   ]);
@@ -286,8 +278,7 @@ export function observedPostconditionValuesV2(value: unknown): ReadonlySet<strin
     }
     if (node && typeof node === "object") {
       for (const [childKey, item] of Object.entries(node as Record<string, unknown>)) {
-        const normalizedChild = normalizedKey(childKey);
-        if (excludedContainers.has(normalizedChild)) continue;
+        if (isExcludedEvidenceContainerV2(childKey)) continue;
         visit(item, childKey, key, depth + 1);
       }
       return;
@@ -300,7 +291,7 @@ export function observedPostconditionValuesV2(value: unknown): ReadonlySet<strin
         // The string itself remains valid observable evidence.
       }
     }
-    const normalizedChildKey = normalizedKey(key);
+    const normalizedChildKey = normalizedEvidenceKeyV2(key);
     // Native adapters do not share one field vocabulary: a parameter can be
     // returned as `value`, `values`, or its actual parameter name, while sheet
     // and TextNote reads use names such as `afterName` and `text`. Treat those

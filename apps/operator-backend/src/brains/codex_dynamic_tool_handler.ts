@@ -180,7 +180,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
         capability_id: String(params.tool || "unknown-capability"),
         classified_effect: teammateGate.call?.effect ?? "unknown",
-        target_tokens: teammateGate.call?.target_tokens,
+        target_tokens: teammateGate.call?.principal_target_tokens,
         arguments: boundArguments.arguments
       });
     } catch (error) {

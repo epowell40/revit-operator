@@ -325,6 +325,12 @@ test("verification admission is capability-contract based before any OperationV2
   assert.match(admission, /VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA/);
   assert.match(admission, /\/revit\/find-text-notes[\s\S]*text_note\.value/);
   assert.match(admission, /\/revit\/get-element-summary[\s\S]*element\.identity/);
+  assert.match(admission, /principal_target_fields/,
+    "reviewed Revit capability contracts must distinguish the affected subject from contextual scope");
+  assert.match(admission, /contextual_scope_fields/,
+    "view, owner, and document scope must not be inferred as the affected operation target");
+  assert.match(admission, /operationTargetSelectorV2/,
+    "one reviewed selector must own target extraction across admission, execution, and result validation");
   assert.doesNotMatch(admission, /\/revit\/get-element-summary[^\n]*text_note\.value/,
     "an element identity/classification summary must not claim it can expose TextNote content");
   const execution = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution.ts"), "utf8");
@@ -335,6 +341,25 @@ test("verification admission is capability-contract based before any OperationV2
   const progress = readFileSync(path.join(sourceRoot, "brains", "codex_assignment_progress.ts"), "utf8");
   assert.match(progress, /verificationCapabilityGuidanceV2/,
     "the application adapter must describe the unresolved gap to bounded provider reasoning without leaking Revit routes into the kernel domain");
+  const dynamicHandler = readFileSync(path.join(sourceRoot, "brains", "codex_dynamic_tool_handler.ts"), "utf8");
+  assert.match(dynamicHandler, /target_tokens:\s*teammateGate\.call\?\.principal_target_tokens/,
+    "OperationV2 admission must use principal target identity rather than broad scope tokens");
+  assert.doesNotMatch(dynamicHandler, /target_tokens:\s*teammateGate\.call\?\.target_tokens/,
+    "contextual scope identifiers must not re-enter canonical target admission through the dynamic handler");
+  const preflight = readFileSync(path.join(process.cwd(), "..", "mcp-server", "src", "lib", "genericToolPreflight.ts"), "utf8");
+  assert.match(preflight, /schema\.additionalProperties === false/,
+    "published closed request schemas must reject unknown fields before native dispatch");
+  const evidenceBoundary = readFileSync(path.join(sourceRoot, "verification", "verification_payload_boundary_v2.ts"), "utf8");
+  assert.match(evidenceBoundary, /request/);
+  assert.match(evidenceBoundary, /metadata/);
+  assert.match(evidenceBoundary, /provenance/,
+    "one reviewed boundary must exclude echoed input, control metadata, and provenance from verification evidence");
+  const teammateEvidence = readFileSync(path.join(sourceRoot, "teammate_verification_evidence.ts"), "utf8");
+  const postcondition = readFileSync(path.join(sourceRoot, "postcondition_verification_v2.ts"), "utf8");
+  for (const consumer of [admission, teammateEvidence, postcondition]) {
+    assert.match(consumer, /verification_payload_boundary_v2/,
+      "every verifier-side semantic traversal must share the same evidence-envelope boundary");
+  }
 });
 
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {

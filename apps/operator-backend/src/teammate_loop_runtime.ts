@@ -15,6 +15,7 @@ import {
   substantiveReadbackV2,
   verificationObservationPayloadV2
 } from "./teammate_verification_evidence.js";
+import { operationTargetSelectorV2 } from "./verification/verification_capability_admission_v2.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -38,7 +39,16 @@ export type TeammateTurnContract = {
 };
 
 export type TeammateMcpEffect = "read" | "evidence_read" | "interaction" | "completion_claim" | "navigation" | "discovery" | "preview" | "apply" | "unknown";
-export type TeammatePendingCall = { effect: TeammateMcpEffect; signature: string; path: string; target_tokens: string[]; expected_values: string[]; operation: string; raw_body: unknown };
+export type TeammatePendingCall = {
+  effect: TeammateMcpEffect;
+  signature: string;
+  path: string;
+  target_tokens: string[];
+  principal_target_tokens: string[];
+  expected_values: string[];
+  operation: string;
+  raw_body: unknown;
+};
 type Effect = TeammateMcpEffect;
 type PendingCall = TeammatePendingCall;
 type DocumentedToolRoute = { method: "GET" | "POST"; path: string };
@@ -486,9 +496,14 @@ function classifyPathCall(method: unknown, pathValue: unknown, body: unknown): P
   const normalizedBody = structuredActionBody(body);
   const signature = actionSignature(path, normalizedBody);
   const target_tokens = targetTokens(normalizedBody);
+  const principal_target_tokens = [...operationTargetSelectorV2({
+    operation: { capability_id: "revit_call_tool", method: methodName, path },
+    value: normalizedBody,
+    fallback_target_tokens: target_tokens
+  }).principal_target_tokens];
   const operation = operationFor(path, normalizedBody);
   const expected_values = [...expectedPostconditionValuesV2(normalizedBody, operation !== "create", { path })];
-  const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, expected_values, operation, raw_body: normalizedBody });
+  const call = (effect: Effect): PendingCall => ({ effect, signature, path, target_tokens, principal_target_tokens, expected_values, operation, raw_body: normalizedBody });
   if (NAVIGATION_PATHS.has(path)) return call("navigation");
   if (isTeammateDiscoveryPath(path)) return call("discovery");
   if (methodName === "GET") return call("read");
@@ -507,9 +522,14 @@ function classifyMcpCall(toolValue: unknown, argsValue: unknown): PendingCall {
   // preflight evidence.
   if (tool === "revit_export_pdf") return classifyPathCall("POST", "/revit/export-pdf", args);
   const target_tokens = targetTokens(args);
+  const principal_target_tokens = [...operationTargetSelectorV2({
+    operation: { capability_id: tool, tool },
+    value: args,
+    fallback_target_tokens: target_tokens
+  }).principal_target_tokens];
   const operation = operationFor(tool, args);
   const expected_values = [...expectedPostconditionValuesV2(args, operation !== "create", { tool })];
-  const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, expected_values, operation, raw_body: args });
+  const call = (effect: Effect, signaturePath = tool): PendingCall => ({ effect, signature: actionSignature(signaturePath, args), path: tool, target_tokens, principal_target_tokens, expected_values, operation, raw_body: args });
   if (isTeammateDiscoveryTool(tool)) return call("discovery");
   // Durable EvidenceRef expansion is a bounded certified host read. It neither
   // calls Revit nor creates fresh truth or consumes the Revit discovery budget.
@@ -734,8 +754,8 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
     state.stage_apply_attempts += 1;
     state.apply_action_id = actionId;
     state.apply_signature = call.signature;
-    state.apply_target_tokens = new Set(call.target_tokens);
-    state.apply_target_tokens_inferred = call.target_tokens.filter(token => token.startsWith("id:")).length === 0;
+    state.apply_target_tokens = new Set(call.principal_target_tokens);
+    state.apply_target_tokens_inferred = call.principal_target_tokens.filter(token => token.startsWith("id:")).length === 0;
     state.apply_expected_values = new Set(call.expected_values);
     state.apply_operation = call.operation;
     state.contract.stage = "apply";
@@ -880,7 +900,12 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
         state.contract.stage = "blocked";
       }
     } else {
-      for (const token of targetTokens(evidence)) state.apply_target_tokens.add(token);
+      const resultTargets = operationTargetSelectorV2({
+        operation: { path: pending.path },
+        value: evidence,
+        fallback_target_tokens: targetTokens(evidence)
+      });
+      for (const token of resultTargets.principal_target_tokens) state.apply_target_tokens.add(token);
       // An apply response is execution evidence, not an independent observation.
       // Admit same-call verification only when the primitive returns an explicit
       // verified/complete receipt (and, when present, the requested values). A
@@ -891,14 +916,22 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     }
   }
   const verificationPayload = verificationObservationPayloadV2(evidence);
-  const verificationIdentityTokens = [...new Set([...pending.target_tokens, ...targetTokens(verificationPayload)])]
+  const verificationResultTargets = operationTargetSelectorV2({
+    operation: { path: pending.path },
+    value: verificationPayload,
+    fallback_target_tokens: targetTokens(verificationPayload)
+  });
+  const verificationIdentityTokens = [...new Set([
+    ...pending.principal_target_tokens,
+    ...verificationResultTargets.principal_target_tokens
+  ])]
     .filter(token => !token.startsWith("parameter:"));
   const applyIdentityTokens = [...state.apply_target_tokens].filter(token => !token.startsWith("parameter:"));
   const targetBound = applyIdentityTokens.length > 0
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
-    : pending.target_tokens.some(token => state.apply_target_tokens.has(token));
+    : pending.principal_target_tokens.some(token => state.apply_target_tokens.has(token));
   if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && substantiveReadbackV2(verificationPayload)) {
-    for (const token of [...pending.target_tokens, ...targetTokens(verificationPayload)]) {
+    for (const token of verificationIdentityTokens) {
       state.verification_observed_target_tokens.add(token);
     }
     for (const value of observedPostconditionValuesV2(verificationPayload)) state.verification_observed_values.add(value);
@@ -908,7 +941,15 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     }
   }
   if (state.preview_restoration_required && succeeded && pending.effect === "read" && substantiveReadbackV2(evidence)) {
-    const observedTargetTokens = [...new Set([...pending.target_tokens, ...targetTokens(evidence)])]
+    const restorationResultTargets = operationTargetSelectorV2({
+      operation: { path: pending.path },
+      value: evidence,
+      fallback_target_tokens: targetTokens(evidence)
+    });
+    const observedTargetTokens = [...new Set([
+      ...pending.principal_target_tokens,
+      ...restorationResultTargets.principal_target_tokens
+    ])]
       .filter(token => !token.startsWith("parameter:"));
     const restorationTargetBound = observedTargetTokens.some(token => state.preview_restoration_target_tokens.has(token));
     if (restorationTargetBound) markVerified(state, "target_bound_readback", actionId, evidence);

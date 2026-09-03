@@ -100,6 +100,7 @@
     { "id": "typed-schedule-configuration-readback", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:teammate_loop_runtime.test.ts", "dotnet:ScheduleAppearanceContractTests"] },
     { "id": "post-admission-execution-failure-and-provider-bootstrap", "coverage": ["backend:assignment_kernel_v2_provider_failure.test.ts", "backend:assignment_kernel_v2_architecture.test.ts", "backend:assignment_kernel_v2_session_index_contract.test.ts"] },
     { "id": "postcondition-verifier-capability-admission", "coverage": ["backend:verification_capability_admission_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "backend:assignment_kernel_v2_architecture.test.ts"] },
-    { "id": "provider-response-output-drain-before-budget-settlement", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "backend:codex_app_server_compatibility.test.ts", "backend:openai_brain_recovery.test.ts"] }
+    { "id": "provider-response-output-drain-before-budget-settlement", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "backend:codex_app_server_compatibility.test.ts", "backend:openai_brain_recovery.test.ts"] },
+    { "id": "typed-principal-target-and-context-scope-separation", "coverage": ["backend:assignment_kernel_v2_architecture.test.ts", "backend:verification_capability_admission_v2.test.ts", "backend:teammate_mutation_intent_binding.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "mcp:lib/genericToolPreflight.test.ts"] }
   ]
 }

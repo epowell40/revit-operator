@@ -352,7 +352,7 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
         "kind", "type", "allowed_values", "minimum", "maximum", "min_length", "max_length", "min_items", "max_items"
       ]);
       kernelAssertV2([
-        "required", "json_type", "enum", "numeric_range", "string_length", "array_length", "schema_depth", "schema_bounds"
+        "required", "json_type", "enum", "numeric_range", "string_length", "array_length", "property_set", "schema_depth", "schema_bounds"
       ].includes(constraint.kind)
         && Object.keys(constraint).every((key) => allowedConstraintKeys.has(key))
         && canonicalJsonV2(constraint).length <= 4_096,

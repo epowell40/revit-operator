@@ -7,6 +7,8 @@
  * desired-state semantic output.
  */
 
+import { isExcludedEvidenceContainerV2 } from "./verification_payload_boundary_v2.js";
+
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
 
@@ -19,11 +21,22 @@ export type VerificationCapabilityAdmissionV2 = Readonly<{
   admissible_readback_paths: readonly string[];
 }>;
 
+export const OPERATION_TARGET_SELECTOR_V2_SCHEMA =
+  "revit-operator.operation-target-selector/v2" as const;
+
+export type OperationTargetSelectorV2 = Readonly<{
+  schema: typeof OPERATION_TARGET_SELECTOR_V2_SCHEMA;
+  source: "reviewed_capability_contract" | "legacy_generic_fallback";
+  principal_target_tokens: readonly string[];
+  contextual_scope_tokens: readonly string[];
+}>;
+
 type OperationContract = Readonly<{
   capability_id?: unknown;
   method?: unknown;
   path?: unknown;
   tool?: unknown;
+  target_id?: unknown;
 }>;
 
 const TEXT_NOTE_MUTATION_PATHS = new Set([
@@ -31,11 +44,47 @@ const TEXT_NOTE_MUTATION_PATHS = new Set([
   "/revit/set-text-note-text"
 ]);
 
-/** Reviewed semantic outputs of the authoritative native response shapes. */
-const REVIT_ROUTE_SEMANTIC_OUTPUTS = new Map<string, readonly string[]>([
-  ["/revit/find-text-notes", ["text_note.value"]],
-  ["/revit/find-family-text-notes", ["text_note.value"]],
-  ["/revit/get-element-summary", ["element.identity", "element.classification", "element.location"]]
+type RevitRouteContractV2 = Readonly<{
+  semantic_outputs: readonly string[];
+  principal_target_fields?: readonly string[];
+  contextual_scope_fields?: readonly string[];
+  preferred_target_field?: string;
+}>;
+
+/**
+ * One reviewed contract owns both what a route can prove and which identifiers
+ * name the affected subject. Scope/filter identifiers deliberately stay
+ * separate: a view containing an element is not the element changed by an
+ * apply, and therefore cannot bind its postcondition readback.
+ */
+const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/find-text-notes", {
+    semantic_outputs: ["text_note.value"],
+    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    contextual_scope_fields: ["viewId", "ownerViewId"],
+    preferred_target_field: "elementId"
+  }],
+  ["/revit/find-family-text-notes", {
+    semantic_outputs: ["text_note.value"],
+    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    contextual_scope_fields: ["familyDocumentId", "ownerViewId"],
+    preferred_target_field: "elementId"
+  }],
+  ["/revit/get-element-summary", {
+    semantic_outputs: ["element.identity", "element.classification", "element.location"],
+    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    contextual_scope_fields: ["viewId"]
+  }],
+  ["/revit/replace-text-note", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"],
+    contextual_scope_fields: ["viewId", "ownerViewId"]
+  }],
+  ["/revit/set-text-note-text", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"],
+    contextual_scope_fields: ["viewId", "ownerViewId"]
+  }]
 ]);
 
 function normalizedText(value: unknown): string {
@@ -46,19 +95,81 @@ function pathOf(value: OperationContract): string {
   return normalizedText(value.path ?? value.tool);
 }
 
+function normalizedField(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function tokensFromReviewedFields(value: unknown, fields: readonly string[]): readonly string[] {
+  const admitted = new Map(fields.map((field) => [normalizedField(field), normalizedField(field)]));
+  const tokens = new Set<string>();
+  const visit = (node: unknown, key = "", depth = 0): void => {
+    if (depth > 10 || tokens.size >= 128 || node === null || node === undefined) return;
+    if (typeof node === "string" && /^[\[{]/.test(node.trim())) {
+      try { visit(JSON.parse(node), key, depth + 1); return; } catch {}
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item, key, depth + 1);
+      return;
+    }
+    if (typeof node === "object") {
+      for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+        if (isExcludedEvidenceContainerV2(childKey)) continue;
+        visit(child, childKey, depth + 1);
+      }
+      return;
+    }
+    const field = admitted.get(normalizedField(key));
+    if (!field) return;
+    const scalar = String(node).trim().toLowerCase();
+    if (!scalar || scalar.length > 260 || /[\u0000-\u001f\u007f]/.test(scalar)) return;
+    tokens.add(`${field}:${scalar}`);
+    if (/^-?\d+$/.test(scalar)) tokens.add(`id:${scalar}`);
+  };
+  visit(value);
+  return [...tokens].sort();
+}
+
+/**
+ * Extract the principal affected identity using the same reviewed capability
+ * contract that admits the verification result. Unknown routes retain the
+ * bounded legacy fallback; known routes fail closed instead of treating a
+ * scope/filter ID as the affected subject.
+ */
+export function operationTargetSelectorV2(input: Readonly<{
+  operation: OperationContract;
+  value: unknown;
+  fallback_target_tokens?: readonly string[];
+}>): OperationTargetSelectorV2 {
+  const contract = REVIT_ROUTE_CONTRACTS.get(pathOf(input.operation));
+  if (!contract) {
+    return {
+      schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
+      source: "legacy_generic_fallback",
+      principal_target_tokens: [...new Set(input.fallback_target_tokens ?? [])].sort(),
+      contextual_scope_tokens: []
+    };
+  }
+  return {
+    schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
+    source: "reviewed_capability_contract",
+    principal_target_tokens: tokensFromReviewedFields(input.value, contract.principal_target_fields ?? []),
+    contextual_scope_tokens: tokensFromReviewedFields(input.value, contract.contextual_scope_fields ?? [])
+  };
+}
+
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   return TEXT_NOTE_MUTATION_PATHS.has(pathOf(apply)) ? ["text_note.value"] : [];
 }
 
 function providedSemanticOutputs(verification: OperationContract): readonly string[] {
   if (normalizedText(verification.capability_id) !== "revit_call_tool") return [];
-  return REVIT_ROUTE_SEMANTIC_OUTPUTS.get(pathOf(verification)) ?? [];
+  return REVIT_ROUTE_CONTRACTS.get(pathOf(verification))?.semantic_outputs ?? [];
 }
 
 function routesProviding(required: readonly string[]): readonly string[] {
   if (required.length === 0) return [];
-  return [...REVIT_ROUTE_SEMANTIC_OUTPUTS.entries()]
-    .filter(([, outputs]) => required.every((semanticOutput) => outputs.includes(semanticOutput)))
+  return [...REVIT_ROUTE_CONTRACTS.entries()]
+    .filter(([, contract]) => required.every((semanticOutput) => contract.semantic_outputs.includes(semanticOutput)))
     .map(([path]) => path)
     .sort();
 }
@@ -107,5 +218,14 @@ export function verificationCapabilityGuidanceV2(apply: OperationContract): stri
   const required = requiredSemanticOutputs(apply);
   if (required.length === 0) return null;
   const paths = routesProviding(required);
-  return ` Required semantic outputs: ${required.join(", ")}. Reviewed readback routes: ${paths.join(", ")}.`;
+  const target = normalizedText(apply.target_id);
+  const numericTarget = target.match(/^id:(\d+)$/)?.[1];
+  const selectors = paths.flatMap((path) => {
+    const contract = REVIT_ROUTE_CONTRACTS.get(path);
+    return contract?.preferred_target_field ? [`${path}.${contract.preferred_target_field}`] : [];
+  });
+  const exactSelector = numericTarget && selectors.length > 0
+    ? ` Bind the exact affected subject with ${selectors.join(" or ")}=${numericTarget}; contextual scope fields such as viewId do not establish affected-target identity.`
+    : "";
+  return ` Required semantic outputs: ${required.join(", ")}. Reviewed readback routes: ${paths.join(", ")}.${exactSelector}`;
 }

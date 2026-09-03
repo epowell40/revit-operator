@@ -1,16 +1,12 @@
+import {
+  isExcludedEvidenceContainerV2,
+  normalizedEvidenceKeyV2
+} from "./verification/verification_payload_boundary_v2.js";
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
-}
-
-const EXCLUDED_EVIDENCE_CONTAINERS = new Set([
-  "arguments", "body", "canonicalattemptsettlement", "control", "input", "meta", "metadata",
-  "operationresultv2", "payloadprovenance", "provenance", "request", "requestbody", "requestinput"
-]);
-
-function normalizedKey(value: string): string {
-  return value.replace(/[^a-z0-9]/gi, "").toLowerCase();
 }
 
 /**
@@ -38,8 +34,8 @@ function explicitVerificationNodeV2(value: unknown, depth: number, verifierScope
   if (Array.isArray(value)) return value.some(item => explicitVerificationNodeV2(item, depth + 1, verifierScope, false));
   if (!value || typeof value !== "object") return false;
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-    const normalized = normalizedKey(key);
-    if (EXCLUDED_EVIDENCE_CONTAINERS.has(normalized)) continue;
+    const normalized = normalizedEvidenceKeyV2(key);
+    if (isExcludedEvidenceContainerV2(key)) continue;
     const childVerifierScope = verifierScope || VERIFIER_CONTAINERS.has(normalized);
     if (normalized === "verified" && item === true && (documentRoot || verifierScope)) return true;
     if (childVerifierScope && ["allpassed", "passed", "satisfied"].includes(normalized) && item === true) return true;
@@ -69,14 +65,14 @@ export function explicitTargetAbsenceV2(value: unknown): boolean {
       return;
     }
     if (Array.isArray(node)) {
-      if (resultCollections.has(normalizedKey(key)) && node.length > 0) contradictoryCollection = true;
+      if (resultCollections.has(normalizedEvidenceKeyV2(key)) && node.length > 0) contradictoryCollection = true;
       for (const item of node) visit(item, key, depth + 1);
       return;
     }
     if (typeof node !== "object") return;
     for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
-      const normalized = normalizedKey(childKey);
-      if (EXCLUDED_EVIDENCE_CONTAINERS.has(normalized)) continue;
+      const normalized = normalizedEvidenceKeyV2(childKey);
+      if (isExcludedEvidenceContainerV2(childKey)) continue;
       if ((normalized === "exists" || normalized === "found") && child === false) absent = true;
       if ((normalized === "notexists" || normalized === "notfound") && child === true) absent = true;
       visit(child, childKey, depth + 1);

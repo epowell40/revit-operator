@@ -1172,6 +1172,37 @@ test("a successful verification read with the wrong value cannot mint a postcond
   assert.ok(!settled.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
 }));
 
+test("a reviewed verification payload with the right value from the wrong target cannot mint a postcondition fact", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "wrong-target-apply", provider_turn_id: "wrong-target-apply-turn",
+    capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1478627"],
+    arguments: { method: "POST", path: "/revit/replace-text-note", body: { elementId: 1478627, newText: "expected" } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease, envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, changed: true }, "applied")
+  ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  const verificationLease = openAssignmentKernelOperationV2({
+    snapshot: readyForVerification, controller_request_id: "wrong-target-read", provider_turn_id: "wrong-target-read-turn",
+    capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1478627"],
+    arguments: { method: "POST", path: "/revit/find-text-notes", body: { elementId: 1478627, max: 1 } }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(verificationLease);
+  const settled = settleAssignmentKernelOperationV2(
+    verificationLease,
+    envelope(verificationLease.operation_id, verificationLease.binding, {
+      ok: true,
+      request: { elementId: 1478627 },
+      items: [{ elementId: 9999, ownerViewId: 1363433, text: "expected" }]
+    })
+  );
+  assert.ok(!settled.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
+  assert.equal(settled.snapshot.outcome, "active");
+  assert.ok(deriveProgressGapsV2(settled.snapshot).some(gap => gap.gap_id === `verification:${applyLease.operation_id}`));
+}));
+
 test("request echoes and metadata cannot impersonate an authoritative postcondition readback", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({
