@@ -40,6 +40,7 @@ import {
 } from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
 import {
   advanceAssignmentKernelProgressV2,
+  DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2,
   recordAssignmentProgressEpochV2
 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { prepareCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
@@ -1293,7 +1294,8 @@ test("V2 provider budget is durable resource truth and cannot terminalize an in-
     "reaching the cap stops new reasoning but must not pre-judge an admitted operation still in flight");
   assert.equal(exhausted.quiescent, false);
   assert.equal(exhausted.terminal, false);
-  assert.equal(interruptions, 1);
+  assert.equal(interruptions, 0,
+    "the receipt observer must not interrupt before the current response's emitted items have drained");
   assert.equal(settleAssignmentKernelProviderBudgetAtQuiescenceV2(lease.binding)?.terminal, false);
 
   failAssignmentKernelOperationV2(lease, new Error("provider interrupted at hard cap"), "dispatching");
@@ -1345,6 +1347,65 @@ test("provider cap cannot invalidate a successful final admitted operation", () 
   assert.equal(terminal.outcome, "complete");
   assert.equal(terminal.provider_budget_exhausted, false);
   assert.equal(terminal.provider_call_ids.length, ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT);
+}));
+
+test("Candidate 67 final permitted provider response can dispatch its returned operation before budget settlement", () => workspace(() => {
+  const { goal, snapshot } = setup();
+  let stops = 0;
+  const recorder = createAssignmentKernelV2ModelReceiptRecorder({
+    binding: snapshot.current_binding,
+    admission_snapshot: snapshot,
+    onStop: () => { stops += 1; }
+  });
+  for (let index = 0; index < DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_reasoning_turns; index += 1) {
+    recorder.observe({
+      schema: "revit-operator.model-call-receipt.v1",
+      call_id: `candidate67-provider-${index}`,
+      provider: "openai",
+      route: "codex_agent",
+      requested_model: "gpt-test",
+      model: "gpt-test",
+      reasoning_effort: "medium",
+      started_at_utc: "2026-09-03T21:11:23.378Z",
+      duration_ms: null,
+      success: true,
+      response_status: "completed",
+      error_code: null,
+      tokens: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0, total_tokens: 2 },
+      turn_id: "candidate67-provider-turn"
+    });
+  }
+
+  const responseComplete = getAssignmentKernelSnapshotV2(goal.id)!;
+  assert.equal(responseComplete.provider_call_ids.length, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_reasoning_turns);
+  assert.equal(responseComplete.terminal, false, "the receipt precedes processing of the operation item returned by that response");
+  assert.equal(responseComplete.progress_blocker, undefined);
+  assert.equal(stops, 0, "the final permitted response must drain its already-produced output before the turn is stopped");
+
+  const lease = openAssignmentKernelOperationV2({
+    snapshot: responseComplete,
+    controller_request_id: "candidate67-final-response-operation",
+    provider_turn_id: "candidate67-provider-turn",
+    capability_id: "inventory.read",
+    classified_effect: "read",
+    arguments: {}
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const settled = settleAssignmentKernelOperationV2(lease, envelope(
+    lease.operation_id,
+    lease.binding,
+    { result: "authoritative-from-final-permitted-response" }
+  ));
+  recordAssignmentProgressEpochV2({
+    before: responseComplete,
+    after: settled.snapshot,
+    stated_gap_ids: deriveProgressGapsV2(responseComplete).map((gap) => gap.gap_id),
+    admitted_operation_ids: [lease.operation_id]
+  });
+  const terminal = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
+  assert.equal(terminal.provider_call_ids.length, DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2.max_reasoning_turns);
 }));
 
 test("late provider receipt evaluates an already-retained Observation instead of admitting another reasoning turn", () => workspace(() => {

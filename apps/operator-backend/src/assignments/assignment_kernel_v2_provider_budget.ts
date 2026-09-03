@@ -5,14 +5,12 @@ import {
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
   type AssignmentSnapshotV2,
-  type ProgressDecisionV2,
   type ProviderCallV2,
   type ProviderUsageV2
 } from "../domain/assignment-kernel/index.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "./model_call_budget.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
 import {
-  advanceAssignmentKernelProgressV2,
   evaluatePendingAssignmentCriteriaV2,
   recordCompletedAssignmentProviderReceiptV2
 } from "./assignment_kernel_v2_progress.js";
@@ -20,8 +18,9 @@ import { appendCurrentAssignmentKernelEventV2, getAssignmentKernelSnapshotV2 } f
 
 /**
  * Provider receipts are durable resource accounting, not semantic progress.
- * The hard cap interrupts inference, but terminal settlement is deferred to a
- * known quiescent boundary so a response-selected tool cannot lose its result.
+ * A completed receipt is observed before every item emitted by that response
+ * has necessarily crossed the dynamic-tool boundary. Budget exhaustion can
+ * prevent the next provider call only after those already-produced items drain.
  */
 export function assignmentKernelV2ModelReceiptObserver(
   binding: AssignmentBindingV2,
@@ -47,10 +46,6 @@ function providerAdmissionBasis(snapshot: AssignmentSnapshotV2): ProviderAdmissi
     criterion_ids: criterionIds,
     expected_information: expectedInformation.length > 0 ? expectedInformation : gapIds
   };
-}
-
-function stopsProviderTurn(decision: ProgressDecisionV2): boolean {
-  return ["terminal", "blocked", "request_user_input", "request_user_review"].includes(decision.decision);
 }
 
 function providerUsage(receipt: ModelCallReceipt): ProviderUsageV2 {
@@ -147,18 +142,16 @@ export function createAssignmentKernelV2ModelReceiptRecorder(input: Readonly<{
       success: receipt.success,
       ...(receipt.success ? {} : { error_class: "provider" as const })
     });
+    // The provider completion notification precedes dispatch of a tool item
+    // returned by that same response. Evaluate already-retained authoritative
+    // evidence, which may make terminal truth derivable, but do not run the
+    // general budget/no-progress controller here. The operation-settlement or
+    // end-of-turn boundary owns that decision after the response has drained.
     let current = call;
-    const absoluteLimitReached = call.provider_call_ids.length >= ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT;
     if (call.in_flight_operation_ids.length === 0) {
-      if (absoluteLimitReached) {
-        current = settleAssignmentKernelProviderBudgetAtQuiescenceV2(call.current_binding) ?? call;
-      } else {
-        const advanced = advanceAssignmentKernelProgressV2({ binding: call.current_binding });
-        current = advanced.snapshot;
-        if (stopsProviderTurn(advanced.decision)) notifyStop();
-      }
+      current = evaluatePendingAssignmentCriteriaV2({ binding: call.current_binding });
+      if (current.terminal || ["awaiting_user_input", "awaiting_user_review"].includes(current.outcome)) notifyStop();
     }
-    if (absoluteLimitReached) notifyStop();
     return current;
   };
 
