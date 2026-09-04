@@ -19,6 +19,9 @@ import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { parseAssignmentKernelPublicationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { handleCodexDynamicToolCall } from "../src/brains/codex_dynamic_tool_handler.js";
 import { checkpointCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
+import { canonicalTeammateInputs } from "../src/teammate_assignment_inputs.js";
+import { mutationIntentBlockReason } from "../src/teammate_mutation_intent_binding.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -104,6 +107,13 @@ test("pending answers survive pause and resume into the same normal chat binding
   const request = bindPreparedAssignmentToRequest({ session_id: binding.session_id, message_id: "second-turn", user_text: "Continue saved work", tool_results: [] } as any, continued);
   assert.match(request.user_text!, /Issued for Construction/);
   assert.equal(request.assignment_id, binding.assignment_id);
+  assert.deepEqual(buildTeammateTurnContract(request).required_user_inputs, [], "saved answers must resolve the legacy execution guard too");
+  const savedText = canonicalTeammateInputs(request).replacement_text as string;
+  assert.equal(savedText, "Issued for Construction");
+  assert.equal(mutationIntentBlockReason("apply", "/revit/replace-text-note", { newText: savedText }, "approved wording", savedText), null);
+  assert.equal(mutationIntentBlockReason("apply", "/revit/replace-text-note", { newText: "invented wording" }, "approved wording", savedText), "desired_postcondition_conflicts_with_authenticated_input");
+  assert.deepEqual(canonicalTeammateInputs({ ...request, assignment_generation: 999 }), {});
+  assert.deepEqual(canonicalTeammateInputs({ user_text: "approved wording", context: { input_values: { replacement_text: "forged" } } }), {});
 }));
 
 test("canonical control HTTP boundary rejects foreign sessions and malformed bindings", () => workspace(async () => {

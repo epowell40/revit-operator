@@ -7,6 +7,7 @@ import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveH
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
 import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teammate_mutation_intent_binding.js";
+import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import {
@@ -88,6 +89,7 @@ type TeammateLoopState = {
   blocked_reason: string | null;
   active_host_version_year: string;
   authoritative_user_text: string;
+  authenticated_replacement_text?: string;
 };
 
 export type TeammateLoopOwnerLease = { owner: object; state: TeammateLoopState; turn_id: string | null };
@@ -128,13 +130,6 @@ function boundedString(value: unknown, max: number): string {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function normalizedUserText(req: Pick<ChatRequest, "user_text" | "context">): string {
-  const context = objectValue(req.context);
-  const ui = objectValue(context.ui);
-  const authoritative = boundedString(ui.authoritative_user_text, 20_000);
-  return (authoritative || `${req.user_text || ""}`).replace(/\s+/g, " ").trim();
 }
 
 function isConceptualQuestion(text: string): boolean {
@@ -309,14 +304,15 @@ function contextIdentity(contextValue: unknown, kind: AgentTurnKind): { state: T
   return { state: "missing", signature: null };
 }
 
-export function buildTeammateTurnContract(req: Pick<ChatRequest, "user_text" | "context">): TeammateTurnContract {
+export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTurnContract {
   const text = normalizedUserText(req);
   const turnKind = classifyAgentTurn(text);
   const identity = contextIdentity(req.context, turnKind);
   const ambiguity = ambiguityFor(text, turnKind);
   const noWrite = hasNoWriteAuthority(text);
   const authorized = writeAuthorized(text, turnKind, noWrite);
-  const opaqueMutationInputs = missingOpaqueMutationInputs(text); const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind) || (/\bpreview\b/i.test(text) && opaqueMutationInputs.length > 0);
+  const savedInputs = canonicalTeammateInputs(req);
+  const opaqueMutationInputs = missingOpaqueMutationInputs(text).filter(key => !(typeof savedInputs[key] === "string" && (savedInputs[key] as string).trim())); const previewRequired = explicitlyRequestsExecutablePreview(text, turnKind) || (/\bpreview\b/i.test(text) && opaqueMutationInputs.length > 0);
   const requiredUserInputs = turnKind === "mutation" || previewRequired ? opaqueMutationInputs : [];
   const stage: TeammateLoopStage = ambiguity === "material"
     ? "clarify"
@@ -623,6 +619,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     existing.expires_at_ms = now + MAX_STATE_AGE_MS;
     return existing;
   }
+  const replacementInput = canonicalTeammateInputs(req).replacement_text;
   const state: TeammateLoopState = {
     key,
     contract,
@@ -657,7 +654,8 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     attempt_budget: newTeammateLoopAttemptBudget(),
     blocked_reason: null,
     active_host_version_year: activeHostVersionYear(req.context),
-    authoritative_user_text: incomingText
+    authoritative_user_text: incomingText,
+    ...(typeof replacementInput === "string" ? { authenticated_replacement_text: replacementInput } : {})
   };
   statesByTurn.set(key, state);
   return state;
@@ -680,7 +678,7 @@ function isContextFreeDocumentBootstrapCall(call: PendingCall): boolean {
 function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
   const contract = state.contract;
   if (call.effect === "interaction") return null;
-  const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text); if (mutationIntentReason) return mutationIntentReason;
+  const mutationIntentReason = mutationIntentBlockReason(call.effect, call.path, call.raw_body, state.authoritative_user_text, state.authenticated_replacement_text); if (mutationIntentReason) return mutationIntentReason;
   const attemptBudgetReason = gateTeammateLoopAttempt(state.attempt_budget, call.effect, call.signature);
   if (attemptBudgetReason) return attemptBudgetReason;
   if (contract.ambiguity === "material") return "material_ambiguity_requires_clarification";
