@@ -98,6 +98,57 @@ test("newline equivalence is limited to TextNote content and does not weaken arb
   ), true);
 });
 
+test("generic parameter verification binds the requested property instead of any coincident scalar", () => {
+  const apply = {
+    path: "/revit/set-parameters",
+    body: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true }
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, {
+    items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+  }, { path: "/revit/set-parameters" }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, {
+    items: [{ id: 42, parameters: { Manufacturer: "JOSAM", Comments: "WATTS" } }]
+  }, { path: "/revit/set-parameters" }), false);
+});
+
+test("change-list verification binds each parameter name to its requested value", () => {
+  const apply = {
+    changes: [
+      { elementId: 42, parameterName: "Drawn By", value: "EP" },
+      { elementId: 42, parameterName: "Checked By", value: "QA" }
+    ],
+    apply: true
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, {
+    items: [{ id: 42, parameters: { "Drawn By": "EP", "Checked By": "QA" } }]
+  }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, {
+    items: [{ id: 42, parameters: { "Drawn By": "QA", "Checked By": "EP" } }]
+  }), false);
+});
+
+test("change-list verification binds each parameter value to its requested element", () => {
+  const apply = {
+    changes: [
+      { elementId: 42, parameterName: "Mark", value: "ERU-42" },
+      { elementId: 43, parameterName: "Mark", value: "ERU-43" }
+    ],
+    apply: true
+  };
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, {
+    items: [
+      { id: 42, parameters: { Mark: "ERU-42" } },
+      { id: 43, parameters: { Mark: "ERU-43" } }
+    ]
+  }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(apply, {
+    items: [
+      { id: 42, parameters: { Mark: "ERU-43" } },
+      { id: 43, parameters: { Mark: "ERU-42" } }
+    ]
+  }), false);
+});
+
 test("TextNote newline semantics require an explicit admitted TextNote operation contract", () => {
   const expected = "ISSUE\nVERIFY";
   const observed = { items: [{ elementId: 1478627, text: "ISSUE\rVERIFY\r" }] };

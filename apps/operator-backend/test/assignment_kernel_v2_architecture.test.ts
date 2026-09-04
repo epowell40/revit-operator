@@ -325,6 +325,8 @@ test("verification admission is capability-contract based before any OperationV2
   assert.match(admission, /VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA/);
   assert.match(admission, /\/revit\/find-text-notes[\s\S]*text_note\.value/);
   assert.match(admission, /\/revit\/get-element-summary[\s\S]*element\.identity/);
+  assert.match(admission, /\/revit\/get-parameters[\s\S]*element\.parameter_values/,
+    "parameter mutations must admit only readbacks whose reviewed schema exposes parameter values");
   assert.match(admission, /principal_target_fields/,
     "reviewed Revit capability contracts must distinguish the affected subject from contextual scope");
   assert.match(admission, /contextual_scope_fields/,
@@ -360,6 +362,10 @@ test("verification admission is capability-contract based before any OperationV2
     assert.match(consumer, /verification_payload_boundary_v2/,
       "every verifier-side semantic traversal must share the same evidence-envelope boundary");
   }
+  assert.match(postcondition, /parameterMapTokens[\s\S]*propertyValueToken/,
+    "generic parameter verification must bind each value to its named property");
+  assert.doesNotMatch(postcondition, /values\.add\(JSON\.stringify\(node\)\)/,
+    "bare scalar coincidence must not satisfy a property-bound postcondition");
 });
 
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {

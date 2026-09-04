@@ -30,6 +30,49 @@ test("reviewed TextNote verification requires a result schema that exposes TextN
   assert.deepEqual(capable.provided_semantic_outputs, ["text_note.value"]);
 });
 
+test("parameter mutation verification requires a reviewed parameter-value readback", () => {
+  const genericApply = { capability_id: "revit_call_tool", method: "POST", path: "/revit/set-parameter" };
+  const incapable = verificationCapabilityAdmissionV2({
+    apply: genericApply,
+    verification: { capability_id: "revit_call_tool", method: "POST", path: "/revit/get-element-summary" }
+  });
+  assert.equal(incapable.admissible, false);
+  assert.equal(incapable.reason, "required_semantic_output_unavailable");
+  assert.deepEqual(incapable.required_semantic_outputs, ["element.parameter_values"]);
+
+  const genericReadback = verificationCapabilityAdmissionV2({
+    apply: genericApply,
+    verification: { capability_id: "revit_call_tool", method: "POST", path: "/revit/get-parameters" }
+  });
+  assert.equal(genericReadback.admissible, true);
+  assert.deepEqual(genericReadback.provided_semantic_outputs, ["element.parameter_values"]);
+
+  const typedReadback = verificationCapabilityAdmissionV2({
+    apply: { capability_id: "revit_set_parameters" },
+    verification: { capability_id: "revit_get_parameters" }
+  });
+  assert.equal(typedReadback.admissible, true);
+  assert.deepEqual(typedReadback.required_semantic_outputs, ["element.parameter_values"]);
+  assert.deepEqual(typedReadback.provided_semantic_outputs, ["element.parameter_values"]);
+
+  const arbitraryTypedRead = verificationCapabilityAdmissionV2({
+    apply: { capability_id: "revit_set_parameters" },
+    verification: { capability_id: "revit_list_elements" }
+  });
+  assert.equal(arbitraryTypedRead.admissible, false);
+  assert.equal(arbitraryTypedRead.reason, "required_semantic_output_unavailable");
+});
+
+test("typed TextNote aliases use the same reviewed semantic contract as generic routing", () => {
+  const admitted = verificationCapabilityAdmissionV2({
+    apply: { capability_id: "revit_replace_text_note" },
+    verification: { capability_id: "revit_find_text_notes" }
+  });
+  assert.equal(admitted.admissible, true);
+  assert.deepEqual(admitted.required_semantic_outputs, ["text_note.value"]);
+  assert.deepEqual(admitted.provided_semantic_outputs, ["text_note.value"]);
+});
+
 test("unrelated and named typed capabilities keep their own verifier contracts", () => {
   assert.equal(verificationCapabilityAdmissionV2({
     apply: { capability_id: "revit_call_tool", path: "/revit/configure-schedule" },
@@ -73,6 +116,19 @@ test("reviewed target selection fails closed on a scope-only read and ignores re
   assert.deepEqual(result.contextual_scope_tokens, ["id:1363433", "ownerviewid:1363433"]);
 });
 
+test("parameter readback target identity comes from native items, not echoed request metadata", () => {
+  const selected = operationTargetSelectorV2({
+    operation: { capability_id: "revit_call_tool", path: "/revit/get-parameters" },
+    value: {
+      request: { body: { elementIds: [99] } },
+      metadata: { requestedElementIds: [99] },
+      items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+    }
+  });
+  assert.equal(selected.source, "reviewed_capability_contract");
+  assert.deepEqual(selected.principal_target_tokens, ["id:42"]);
+});
+
 test("unknown capabilities retain bounded fallback identity while verifier guidance names the exact selector", () => {
   const fallback = operationTargetSelectorV2({
     operation: { capability_id: "another.read", path: "/revit/another-read" },
@@ -85,5 +141,5 @@ test("unknown capabilities retain bounded fallback identity while verifier guida
     capability_id: "revit_call_tool",
     path: "/revit/replace-text-note",
     target_id: "id:1478627"
-  }) ?? "", /find-text-notes\.elementId=1478627.*viewId do not establish affected-target identity/);
+  }) ?? "", /Bind the exact affected subject.*elementId.*1478627.*viewId do not establish affected-target identity/);
 });

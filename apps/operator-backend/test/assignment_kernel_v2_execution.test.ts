@@ -1203,6 +1203,75 @@ test("a reviewed verification payload with the right value from the wrong target
   assert.ok(deriveProgressGapsV2(settled.snapshot).some(gap => gap.gap_id === `verification:${applyLease.operation_id}`));
 }));
 
+test("parameter verification requires the requested property on the exact native target", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "parameter-apply",
+    provider_turn_id: "parameter-apply-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "apply",
+    target_tokens: ["elementids:42", "id:42"],
+    arguments: {
+      method: "POST",
+      path: "/revit/set-parameters",
+      body: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease,
+    envelope(applyLease.operation_id, applyLease.binding, { elementId: 42, changed: true }, "applied")
+  ).snapshot;
+  const readyForVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+
+  const wrongPropertyRead = openAssignmentKernelOperationV2({
+    snapshot: readyForVerification,
+    controller_request_id: "parameter-wrong-property-read",
+    provider_turn_id: "parameter-verification-turn-1",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    target_tokens: ["elementids:42", "id:42"],
+    arguments: {
+      method: "POST",
+      path: "/revit/get-parameters",
+      body: { elementIds: [42], parameterNames: ["Manufacturer", "Comments"] }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(wrongPropertyRead);
+  const notVerified = settleAssignmentKernelOperationV2(
+    wrongPropertyRead,
+    envelope(wrongPropertyRead.operation_id, wrongPropertyRead.binding, {
+      items: [{ id: 42, parameters: { Manufacturer: "JOSAM", Comments: "WATTS" } }]
+    })
+  );
+  assert.ok(!notVerified.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
+  assert.equal(notVerified.snapshot.outcome, "active");
+
+  const correctRead = openAssignmentKernelOperationV2({
+    snapshot: notVerified.snapshot,
+    controller_request_id: "parameter-correct-property-read",
+    provider_turn_id: "parameter-verification-turn-2",
+    capability_id: "revit_call_tool",
+    classified_effect: "read",
+    target_tokens: ["elementids:42", "id:42"],
+    arguments: {
+      method: "POST",
+      path: "/revit/get-parameters",
+      body: { elementIds: [42], parameterNames: ["Manufacturer"] }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(correctRead);
+  const verified = settleAssignmentKernelOperationV2(
+    correctRead,
+    envelope(correctRead.operation_id, correctRead.binding, {
+      items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+    })
+  );
+  assert.ok(verified.observation?.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"));
+  assert.equal(verified.snapshot.outcome, "complete");
+}));
+
 test("request echoes and metadata cannot impersonate an authoritative postcondition readback", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

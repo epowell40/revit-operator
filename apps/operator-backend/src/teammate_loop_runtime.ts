@@ -15,7 +15,7 @@ import {
   substantiveReadbackV2,
   verificationObservationPayloadV2
 } from "./teammate_verification_evidence.js";
-import { operationTargetSelectorV2 } from "./verification/verification_capability_admission_v2.js";
+import { operationTargetSelectorV2, verificationCapabilityAdmissionForPathsV2 } from "./verification/verification_capability_admission_v2.js";
 
 export type AgentTurnKind = "conversation" | "inspection" | "navigation" | "mutation";
 export type TeammateContextState = "not_required" | "live" | "missing" | "invalid";
@@ -77,7 +77,7 @@ type TeammateLoopState = {
   verification_observed_target_tokens: Set<string>;
   verification_observed_values: Set<string>;
   verification_has_substantive_readback: boolean;
-  apply_operation: string;
+  apply_call: PendingCall | null;
   verified: boolean;
   verification_mode: "none" | "explicit_apply_receipt" | "target_bound_readback" | "trusted_dynamic_program_receipt";
   verification_action_id: string | null;
@@ -647,7 +647,7 @@ function stateFor(req: ChatRequest): TeammateLoopState {
     verification_observed_target_tokens: new Set(),
     verification_observed_values: new Set(),
     verification_has_substantive_readback: false,
-    apply_operation: "",
+    apply_call: null,
     verified: false,
     verification_mode: "none",
     verification_action_id: null,
@@ -713,7 +713,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
       state.apply_target_tokens.clear();
       state.apply_target_tokens_inferred = false;
       state.apply_expected_values.clear();
-      state.apply_operation = "";
+      state.apply_call = null;
       clearVerification(state);
       state.blocked_reason = null;
     }
@@ -730,7 +730,7 @@ function gateCall(state: TeammateLoopState, call: PendingCall): string | null {
     state.apply_target_tokens.clear();
     state.apply_target_tokens_inferred = false;
     state.apply_expected_values.clear();
-    state.apply_operation = "";
+    state.apply_call = null;
     state.blocked_reason = null;
   }
   if ((call.effect === "read" || call.effect === "navigation")
@@ -757,7 +757,7 @@ function registerPending(state: TeammateLoopState, actionId: string, call: Pendi
     state.apply_target_tokens = new Set(call.principal_target_tokens);
     state.apply_target_tokens_inferred = call.principal_target_tokens.filter(token => token.startsWith("id:")).length === 0;
     state.apply_expected_values = new Set(call.expected_values);
-    state.apply_operation = call.operation;
+    state.apply_call = call;
     state.contract.stage = "apply";
   } else if ((state.stage_apply_attempts > 0 || state.preview_restoration_required)
       && (call.effect === "read" || call.effect === "navigation")) {
@@ -794,22 +794,22 @@ function accumulatedReadbackMatches(state: TeammateLoopState, evidence: unknown)
     if (state.apply_target_tokens_inferred) {
       const inferredMatch = applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token));
       if (!inferredMatch) return false;
-      if (state.apply_expected_values.size > 0 || state.apply_operation === "create") return true;
-      if (state.apply_operation === "delete") return explicitTargetAbsenceV2(evidence);
+      if (state.apply_expected_values.size > 0 || state.apply_call?.operation === "create") return true;
+      if (state.apply_call?.operation === "delete") return explicitTargetAbsenceV2(evidence);
       return explicitVerificationV2(evidence);
     }
-    const identityMatches = state.apply_operation === "create"
+    const identityMatches = state.apply_call?.operation === "create"
       ? applyIdentityTokens.some(token => state.verification_observed_target_tokens.has(token))
       : applyIdentityTokens.every(token => state.verification_observed_target_tokens.has(token));
     if (!identityMatches) return false;
-    if (state.apply_expected_values.size > 0 || state.apply_operation === "create") return true;
-    if (state.apply_operation === "delete") return explicitTargetAbsenceV2(evidence);
+    if (state.apply_expected_values.size > 0 || state.apply_call?.operation === "create") return true;
+    if (state.apply_call?.operation === "delete") return explicitTargetAbsenceV2(evidence);
     return explicitVerificationV2(evidence);
   }
   const targetMatches = [...state.apply_target_tokens].some(token => state.verification_observed_target_tokens.has(token));
   if (!targetMatches) return false;
-  if (state.apply_expected_values.size > 0 || state.apply_operation === "create") return true;
-  if (state.apply_operation === "delete") return explicitTargetAbsenceV2(evidence);
+  if (state.apply_expected_values.size > 0 || state.apply_call?.operation === "create") return true;
+  if (state.apply_call?.operation === "delete") return explicitTargetAbsenceV2(evidence);
   return explicitVerificationV2(evidence);
 }
 
@@ -866,7 +866,7 @@ function clearKnownNoEffectApply(state: TeammateLoopState): void {
   state.apply_target_tokens.clear();
   state.apply_target_tokens_inferred = false;
   state.apply_expected_values.clear();
-  state.apply_operation = "";
+  state.apply_call = null;
   clearVerification(state);
   state.blocked_reason = null;
   state.contract.stage = state.successful_preview_signatures.size > 0 ? "preview" : "apply";
@@ -916,6 +916,7 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
     }
   }
   const verificationPayload = verificationObservationPayloadV2(evidence);
+  const verificationAdmission = verificationCapabilityAdmissionForPathsV2(state.apply_call?.path ?? "", pending.path);
   const verificationResultTargets = operationTargetSelectorV2({
     operation: { path: pending.path },
     value: verificationPayload,
@@ -930,7 +931,8 @@ function recordResult(state: TeammateLoopState, actionId: string, succeeded: boo
   const targetBound = applyIdentityTokens.length > 0
     ? verificationIdentityTokens.some(token => state.apply_target_tokens.has(token))
     : pending.principal_target_tokens.some(token => state.apply_target_tokens.has(token));
-  if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read" && substantiveReadbackV2(verificationPayload)) {
+  if (state.apply_succeeded && succeeded && targetBound && pending.effect === "read"
+      && verificationAdmission.admissible && substantiveReadbackV2(verificationPayload)) {
     for (const token of verificationIdentityTokens) {
       state.verification_observed_target_tokens.add(token);
     }

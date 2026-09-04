@@ -41,7 +41,18 @@ type OperationContract = Readonly<{
 
 const TEXT_NOTE_MUTATION_PATHS = new Set([
   "/revit/replace-text-note",
-  "/revit/set-text-note-text"
+  "/revit/set-text-note-text",
+  "revit_replace_text_note"
+]);
+
+const PARAMETER_MUTATION_PATHS = new Set([
+  "/revit/set-parameter",
+  "/revit/set-parameters",
+  "/revit/set-type-parameters",
+  "/revit/update-panel-parameter",
+  "/revit/update-parameter-by-query",
+  "revit_set_parameters",
+  "revit_set_type_parameters"
 ]);
 
 type RevitRouteContractV2 = Readonly<{
@@ -64,6 +75,12 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     contextual_scope_fields: ["viewId", "ownerViewId"],
     preferred_target_field: "elementId"
   }],
+  ["revit_find_text_notes", {
+    semantic_outputs: ["text_note.value"],
+    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    contextual_scope_fields: ["viewId", "ownerViewId"],
+    preferred_target_field: "elementId"
+  }],
   ["/revit/find-family-text-notes", {
     semantic_outputs: ["text_note.value"],
     principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
@@ -75,7 +92,57 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
     principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
+  ["revit_get_element_summary", {
+    semantic_outputs: ["element.identity", "element.classification", "element.location"],
+    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    contextual_scope_fields: ["viewId"]
+  }],
+  ["/revit/get-parameters", {
+    semantic_outputs: ["element.parameter_values"],
+    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"]
+  }],
+  ["revit_get_parameters", {
+    semantic_outputs: ["element.parameter_values"],
+    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"]
+  }],
+  ["/revit/verify-parameter-on-sheet", {
+    semantic_outputs: ["element.parameter_values", "sheet.identity"],
+    principal_target_fields: ["sheetViewId", "sheetId", "elementId"]
+  }],
+  ["/revit/set-parameter", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"]
+  }],
+  ["/revit/set-parameters", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"]
+  }],
+  ["revit_set_parameters", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"]
+  }],
+  ["/revit/set-type-parameters", {
+    semantic_outputs: [],
+    principal_target_fields: ["typeId", "typeIds", "affectedElementIds", "updatedElementIds"]
+  }],
+  ["revit_set_type_parameters", {
+    semantic_outputs: [],
+    principal_target_fields: ["typeId", "typeIds", "affectedElementIds", "updatedElementIds"]
+  }],
+  ["/revit/update-panel-parameter", {
+    semantic_outputs: [],
+    principal_target_fields: ["panelId", "elementId", "affectedElementIds", "updatedElementIds"]
+  }],
+  ["/revit/update-parameter-by-query", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"]
+  }],
   ["/revit/replace-text-note", {
+    semantic_outputs: [],
+    principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"],
+    contextual_scope_fields: ["viewId", "ownerViewId"]
+  }],
+  ["revit_replace_text_note", {
     semantic_outputs: [],
     principal_target_fields: ["elementId", "elementIds", "affectedElementIds", "updatedElementIds"],
     contextual_scope_fields: ["viewId", "ownerViewId"]
@@ -92,7 +159,10 @@ function normalizedText(value: unknown): string {
 }
 
 function pathOf(value: OperationContract): string {
-  return normalizedText(value.path ?? value.tool);
+  // Typed MCP operations carry the alias in capability_id and do not persist a
+  // duplicate path/tool field. Treat that alias as the reviewed contract key
+  // so typed and generic compositions make the same admission decision.
+  return normalizedText(value.path ?? value.tool ?? value.capability_id);
 }
 
 function normalizedField(value: string): string {
@@ -158,12 +228,18 @@ export function operationTargetSelectorV2(input: Readonly<{
 }
 
 function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
-  return TEXT_NOTE_MUTATION_PATHS.has(pathOf(apply)) ? ["text_note.value"] : [];
+  const path = pathOf(apply);
+  if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
+  if (PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
+  return [];
 }
 
 function providedSemanticOutputs(verification: OperationContract): readonly string[] {
-  if (normalizedText(verification.capability_id) !== "revit_call_tool") return [];
-  return REVIT_ROUTE_CONTRACTS.get(pathOf(verification))?.semantic_outputs ?? [];
+  const contract = REVIT_ROUTE_CONTRACTS.get(pathOf(verification));
+  if (!contract) return [];
+  if (normalizedText(verification.capability_id) !== "revit_call_tool"
+      && pathOf(verification).startsWith("/revit/")) return [];
+  return contract.semantic_outputs;
 }
 
 function routesProviding(required: readonly string[]): readonly string[] {
@@ -191,18 +267,6 @@ export function verificationCapabilityAdmissionV2(input: Readonly<{
       admissible_readback_paths: []
     };
   }
-  // Named non-generic capabilities retain their own typed adapter contract.
-  // Generic Revit routing must use the reviewed native response registry above.
-  if (normalizedText(input.verification.capability_id) !== "revit_call_tool") {
-    return {
-      schema: VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA,
-      admissible: true,
-      reason: "typed_capability_contract",
-      required_semantic_outputs: required,
-      provided_semantic_outputs: [],
-      admissible_readback_paths: admissibleReadbackPaths
-    };
-  }
   const missing = required.filter((semanticOutput) => !provided.includes(semanticOutput));
   return {
     schema: VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA,
@@ -212,6 +276,16 @@ export function verificationCapabilityAdmissionV2(input: Readonly<{
     provided_semantic_outputs: provided,
     admissible_readback_paths: admissibleReadbackPaths
   };
+}
+
+export function verificationCapabilityAdmissionForPathsV2(
+  applyPath: string,
+  verificationPath: string
+): VerificationCapabilityAdmissionV2 {
+  const contract = (path: string): OperationContract => path.startsWith("/")
+    ? { capability_id: "revit_call_tool", path }
+    : { capability_id: path, tool: path };
+  return verificationCapabilityAdmissionV2({ apply: contract(applyPath), verification: contract(verificationPath) });
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {

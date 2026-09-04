@@ -39,7 +39,7 @@ test("verified mutation stages may continue while retries and unverified chainin
     assert.equal(firstApply.allowed, true);
     record(firstApply, { ok: true, elementIds: [42] });
     const firstRead = run({ method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] } });
-    record(firstRead, { ok: true, elementIds: [42], values: ["WATTS"] });
+    record(firstRead, { ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }] });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
 
     const secondPreview = run({ method: "POST", path: "/revit/set-parameters", body: { elementIds: [43], parameters: { Manufacturer: "JOSAM" }, dryRun: true } });
@@ -49,7 +49,7 @@ test("verified mutation stages may continue while retries and unverified chainin
     assert.equal(secondApply.allowed, true);
     record(secondApply, { ok: true, elementIds: [43] });
     const secondRead = run({ method: "POST", path: "/revit/get-parameters", body: { elementIds: [43], parameterNames: ["Manufacturer"] } });
-    record(secondRead, { ok: true, elementIds: [43], values: ["JOSAM"] });
+    record(secondRead, { ok: true, items: [{ id: 43, parameters: { Manufacturer: "JOSAM" } }] });
     const finalReceipt = teammateLoopReceiptForOwner(owner);
     assert.equal(finalReceipt?.apply_attempts, 2);
     assert.equal(finalReceipt?.verified, true);
@@ -712,7 +712,8 @@ test("generic provider loop binds preview to one apply and requires post-apply v
   assert.equal(verify.teammate_loop_receipt?.stage, "verify");
 
   const complete = guardGenericTeammateDecision(request(text, [{
-    action_id: "verify-1", method: "POST", path: "/revit/get-parameters", status: "done", result_json: { ok: true, values: ["WATTS"] }
+    action_id: "verify-1", method: "POST", path: "/revit/get-parameters", status: "done",
+    result_json: { ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }] }
   }]), response([], "Updated and verified."));
   assert.equal(complete.teammate_loop_receipt?.verified, true);
   assert.equal(complete.teammate_loop_receipt?.stage, "report");
@@ -879,7 +880,9 @@ test("Codex MCP host guard supports preview while blocking an unverified repeate
       arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] } }
     });
     assert.equal(readback.allowed, true);
-    recordTeammateMcpResult(owner, readback, { content: [{ type: "text", text: JSON.stringify({ ok: true, values: ["WATTS"] }) }] });
+    recordTeammateMcpResult(owner, readback, { content: [{ type: "text", text: JSON.stringify({
+      ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+    }) }] });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
   } finally {
     endTeammateLoopOwner(lease);
@@ -1573,7 +1576,9 @@ test("retained evidence stays readable after Revit context loss and cannot verif
     });
     assert.equal(retrieval.allowed, true);
     recordTeammateMcpResult(mutationOwner, retrieval, {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+      }) }]
     });
     const receipt = teammateLoopReceiptForOwner(mutationOwner);
     assert.equal(receipt?.verified, false);
@@ -1720,7 +1725,7 @@ test("Codex MCP host guard recognizes generated-program preview mode in serializ
   }
 });
 
-test("Codex MCP host guard accepts independently returned target identity during readback", () => {
+test("Codex MCP host guard requires an admitted parameter readback with independently returned target identity", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
@@ -1739,13 +1744,24 @@ test("Codex MCP host guard accepts independently returned target identity during
     assert.equal(apply.allowed, true);
     recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
 
-    const readback = guardTeammateMcpCall(owner, {
+    const incapable = guardTeammateMcpCall(owner, {
       tool: "revit_list_elements",
       arguments: { query: "target element" }
     });
+    assert.equal(incapable.allowed, true);
+    assert.equal(recordTeammateMcpResult(owner, incapable, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [{ elementId: 42, Manufacturer: "WATTS" }] }) }]
+    }), null);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false,
+      "an arbitrary read schema must not prove a parameter mutation even when it contains coincident fields");
+
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_get_parameters",
+      arguments: { elementIds: [42], names: ["Manufacturer"] }
+    });
     assert.equal(readback.allowed, true);
     const assertion = recordTeammateMcpResult(owner, readback, {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [{ elementId: 42, Manufacturer: "WATTS" }] }) }]
+      content: [{ type: "text", text: JSON.stringify({ ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }] }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
     assert.deepEqual(assertion, {
@@ -2100,7 +2116,9 @@ test("a generic successful apply payload cannot impersonate independent verifica
     });
     assert.equal(readback.allowed, true);
     recordTeammateMcpResult(owner, readback, {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+      }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
   } finally {
@@ -2130,7 +2148,7 @@ test("post-apply verification ignores echoed request values outside authoritativ
       content: [{ type: "text", text: JSON.stringify({
         ok: true,
         elementIds: [42],
-        values: ["JOSAM"],
+        items: [{ id: 42, parameters: { Manufacturer: "JOSAM" } }],
         metadata: { request: { parameters: { Manufacturer: "WATTS" } } }
       }) }]
     });
@@ -2320,8 +2338,8 @@ test("two sequential sheet renames finish after each write receives a fresh targ
       sheetViewId: 1420963,
       sheetNumber: "M000",
       matches: [
-        { source: "titleblock_instance", value: { value: "Cover Sheet - READBACK SMOKE" } },
-        { source: "sheet", value: { value: "Cover Sheet - READBACK SMOKE" } }
+        { source: "titleblock_instance", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } },
+        { source: "sheet", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } }
       ]
     }));
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
@@ -2360,8 +2378,8 @@ test("two sequential sheet renames finish after each write receives a fresh targ
       sheetViewId: 1420963,
       sheetNumber: "M000",
       matches: [
-        { source: "titleblock_instance", value: { value: "Cover Sheet - READBACK SMOKE" } },
-        { source: "sheet", value: { value: "Cover Sheet - READBACK SMOKE" } }
+        { source: "titleblock_instance", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } },
+        { source: "sheet", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } }
       ]
     }));
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
@@ -2409,8 +2427,8 @@ test("two sequential sheet renames finish after each write receives a fresh targ
       sheetViewId: 1420963,
       sheetNumber: "M000",
       matches: [
-        { source: "titleblock_instance", value: { value: "Cover Sheet" } },
-        { source: "sheet", value: { value: "Cover Sheet" } }
+        { source: "titleblock_instance", parameterName: "Sheet Name", value: { value: "Cover Sheet" } },
+        { source: "sheet", parameterName: "Sheet Name", value: { value: "Cover Sheet" } }
       ],
       capture: { export: { viewId: 1420963, path: "artifacts/captures/M000-titleblock.png" } }
     }));
@@ -2670,6 +2688,9 @@ test("continuation identity, transaction binding, and expected-value verificatio
   guardGenericTeammateDecision(request(text, [{ action_id: "apply-value", method: "POST", path: "/revit/set-parameters", status: "done", result_json: { ok: true } }]), response([{
     action_id: "wrong-value", method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] }
   }]));
-  const wrongValue = guardGenericTeammateDecision(request(text, [{ action_id: "wrong-value", method: "POST", path: "/revit/get-parameters", status: "done", result_json: { ok: true, values: ["JOSAM"] } }]), response([], "Verified."));
+  const wrongValue = guardGenericTeammateDecision(request(text, [{
+    action_id: "wrong-value", method: "POST", path: "/revit/get-parameters", status: "done",
+    result_json: { ok: true, items: [{ id: 42, parameters: { Manufacturer: "JOSAM", Comments: "WATTS" } }] }
+  }]), response([], "Verified."));
   assert.equal(wrongValue.teammate_loop_receipt?.verified, false);
 });

@@ -56,12 +56,33 @@ function canonicalPostconditionField(value: string): string {
   switch (normalized) {
     case "hasstripedrows": return "stripedrows";
     case "showgrandtotal": return "showgrandtotals";
+    case "newname":
+    case "aftername":
+    case "currentname": return "name";
+    case "newnumber":
+    case "afternumber":
+    case "currentnumber": return "number";
+    case "newvalue":
+    case "aftervalue":
+    case "currentvalue":
+    case "targetvalue":
+    case "values": return "value";
+    case "newtext":
+    case "replacementtext":
+    case "currenttext":
+    case "texts": return "text";
+    case "replaceto":
+    case "replacewith": return "after";
     default: return normalized;
   }
 }
 
 function propertyValueToken(field: string, value: unknown): string {
   return `property:${canonicalPostconditionField(field)}:${JSON.stringify(value)}`;
+}
+
+function targetPropertyValueToken(target: string, field: string, value: unknown): string {
+  return `target_property:${JSON.stringify(target)}:${canonicalPostconditionField(field)}:${JSON.stringify(value)}`;
 }
 
 function schedulePropertyValueToken(field: string, value: unknown): string {
@@ -89,6 +110,73 @@ function scheduleFilterToken(value: unknown): string | null {
 
 function scheduleFilterSetToken(values: readonly string[]): string {
   return `schedule_filter_set:${JSON.stringify([...new Set(values)].sort())}`;
+}
+
+function scalarParameterRepresentations(value: unknown): readonly unknown[] {
+  if (value === null || value === undefined) return [];
+  if (typeof value !== "object" || Array.isArray(value)) return [value];
+  const row = value as Record<string, unknown>;
+  return [row.value, row.valueString, row.displayValue]
+    .filter((candidate) => candidate !== null && candidate !== undefined
+      && (typeof candidate !== "object" || candidate instanceof Date));
+}
+
+function parameterTargetIdentities(value: unknown): readonly string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const row = value as Record<string, unknown>;
+  const candidates = [row.elementId, row.element_id, row.typeId, row.type_id];
+  for (const key of ["elementIds", "element_ids", "ids", "typeIds", "type_ids"] as const) {
+    const candidate = row[key];
+    if (Array.isArray(candidate)) candidates.push(...candidate);
+    else if (candidate !== undefined && candidate !== null) candidates.push(candidate);
+  }
+  if (candidates.every((candidate) => candidate === undefined || candidate === null)) candidates.push(row.id);
+  return [...new Set(candidates
+    .filter((candidate) => typeof candidate === "string" || typeof candidate === "number" || typeof candidate === "bigint")
+    .map((candidate) => String(candidate).trim().toLowerCase())
+    .filter(Boolean))].sort();
+}
+
+function parameterMapTokens(
+  value: unknown,
+  targets: readonly string[] = [],
+  includeGeneric = targets.length === 0
+): readonly string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const tokens = new Set<string>();
+  for (const [name, parameterValue] of Object.entries(value as Record<string, unknown>)) {
+    for (const candidate of scalarParameterRepresentations(parameterValue)) {
+      if (includeGeneric) tokens.add(propertyValueToken(name, candidate));
+      for (const target of targets) tokens.add(targetPropertyValueToken(target, name, candidate));
+    }
+  }
+  return [...tokens].sort();
+}
+
+function namedParameterTokens(
+  value: unknown,
+  allowDetailName = false,
+  targets: readonly string[] = [],
+  includeGeneric = targets.length === 0
+): readonly string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const row = value as Record<string, unknown>;
+  const parameterName = row.parameterName ?? row.parameter_name ?? row.fieldName ?? row.field_name
+    ?? (allowDetailName ? row.name : undefined);
+  const name = typeof parameterName === "string" ? parameterName.trim() : "";
+  if (!name) return [];
+  const parameterValue = Object.prototype.hasOwnProperty.call(row, "value") ? row.value
+    : Object.prototype.hasOwnProperty.call(row, "newValue") ? row.newValue
+      : Object.prototype.hasOwnProperty.call(row, "new_value") ? row.new_value
+        : Object.prototype.hasOwnProperty.call(row, "targetValue") ? row.targetValue
+          : Object.prototype.hasOwnProperty.call(row, "target_value") ? row.target_value
+            : undefined;
+  const tokens = new Set<string>();
+  for (const candidate of scalarParameterRepresentations(parameterValue)) {
+    if (includeGeneric) tokens.add(propertyValueToken(name, candidate));
+    for (const target of targets) tokens.add(targetPropertyValueToken(target, name, candidate));
+  }
+  return [...tokens].sort();
 }
 
 function observedScheduleContractTokens(value: unknown): readonly string[] {
@@ -202,7 +290,18 @@ export function expectedPostconditionValuesV2(
       return;
     }
     if (node && typeof node === "object") {
-      for (const [childKey, child] of Object.entries(node as Record<string, unknown>)) {
+      const row = node as Record<string, unknown>;
+      const targets = parameterTargetIdentities(row);
+      if (row.parameters && typeof row.parameters === "object" && !Array.isArray(row.parameters)) {
+        for (const token of parameterMapTokens(row.parameters, targets)) values.add(token);
+      }
+      const namedParameter = namedParameterTokens(row, false, targets);
+      if (namedParameter.length > 0) {
+        for (const token of namedParameter) values.add(token);
+        return;
+      }
+      for (const [childKey, child] of Object.entries(row)) {
+        if (normalizedEvidenceKeyV2(childKey) === "parameters") continue;
         visit(child, childKey, key, depth + 1);
       }
       return;
@@ -214,9 +313,14 @@ export function expectedPostconditionValuesV2(
     const identityRename = includeIdentityRenames && ["newname", "newnumber"].includes(normalizedChildKey);
     const assignedValue = ["value", "newvalue", "replaceto", "targetvalue", "newtext", "replacementtext", "replacewith"].includes(normalizedChildKey);
     if (normalizedParent === "parameters" || (!valueIsPredicate && (identityRename || assignedValue))) {
+      const expectedField = operationPath === "/revit/renumber-sheets" && normalizedChildKey === "newname"
+        ? "sheetName"
+        : operationPath === "/revit/renumber-sheets" && normalizedChildKey === "newnumber"
+          ? "sheetNumber"
+          : key;
       values.add(useRevitTextSemantics && typeof node === "string" && REVIT_TEXT_ASSIGNMENT_KEYS.has(normalizedChildKey)
         ? revitTextToken(node)
-        : JSON.stringify(node));
+        : propertyValueToken(expectedField, node));
     }
     if (operationPath === "/revit/configure-schedule" && normalizedParent === "appearance") {
       values.add(schedulePropertyValueToken(key, node));
@@ -257,7 +361,7 @@ export function expectedPostconditionValuesV2(
       // Parameter.Set has one semantic assignment argument. Local program
       // handles and transaction-scope IDs are not desired-state values.
       if (/Autodesk\.Revit\.DB\.Parameter\.Set\s*\(/i.test(memberId) && args.length === 1) {
-        values.add(JSON.stringify(args[0]));
+        values.add(propertyValueToken("value", args[0]));
       }
     }
   }
@@ -270,22 +374,35 @@ export function observedPostconditionValuesV2(value: unknown): ReadonlySet<strin
   const controlLeaves = new Set([
     "action", "complete", "dryrun", "error", "failure", "message", "ok", "status", "success", "verified"
   ]);
-  const visit = (node: unknown, key = "", parent = "", depth = 0): void => {
+  const visit = (node: unknown, key = "", parent = "", inheritedTargets: readonly string[] = [], depth = 0): void => {
     if (depth > 8 || values.size >= 512 || node === null || node === undefined) return;
     if (Array.isArray(node)) {
-      for (const item of node) visit(item, key, parent, depth + 1);
+      for (const item of node) visit(item, key, parent, inheritedTargets, depth + 1);
       return;
     }
     if (node && typeof node === "object") {
-      for (const [childKey, item] of Object.entries(node as Record<string, unknown>)) {
+      const normalizedContainer = normalizedEvidenceKeyV2(key);
+      const row = node as Record<string, unknown>;
+      const directTargets = parameterTargetIdentities(row);
+      const targets = directTargets.length > 0 ? directTargets : inheritedTargets;
+      if (row.parameters && typeof row.parameters === "object" && !Array.isArray(row.parameters)) {
+        for (const token of parameterMapTokens(row.parameters, targets, true)) values.add(token);
+      }
+      const namedParameter = namedParameterTokens(row, normalizedContainer === "parameterdetails", targets, true);
+      if (namedParameter.length > 0) {
+        for (const token of namedParameter) values.add(token);
+        return;
+      }
+      for (const [childKey, item] of Object.entries(row)) {
         if (isExcludedEvidenceContainerV2(childKey)) continue;
-        visit(item, childKey, key, depth + 1);
+        if (normalizedEvidenceKeyV2(childKey) === "parameters") continue;
+        visit(item, childKey, key, targets, depth + 1);
       }
       return;
     }
     if (typeof node === "string" && /^[\[{]/.test(node.trim())) {
       try {
-        visit(JSON.parse(node), key, parent, depth + 1);
+        visit(JSON.parse(node), key, parent, inheritedTargets, depth + 1);
         return;
       } catch {
         // The string itself remains valid observable evidence.
@@ -298,7 +415,6 @@ export function observedPostconditionValuesV2(value: unknown): ReadonlySet<strin
     // result fields as observable but exclude lifecycle/control leaves and all
     // request/input/provenance containers above.
     if (normalizedChildKey && !controlLeaves.has(normalizedChildKey)) {
-      values.add(JSON.stringify(node));
       values.add(propertyValueToken(key, node));
       if (typeof node === "string" && REVIT_TEXT_OBSERVATION_KEYS.has(normalizedChildKey)) {
         for (const token of observedRevitTextTokens(node)) values.add(token);
