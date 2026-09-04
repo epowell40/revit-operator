@@ -614,9 +614,9 @@ test("callRevit does not replay an unstructured mutation rejection", async () =>
   }
 });
 
-test("a known busy read retries identical bytes within one call; ambiguous or mutating requests do not", async () => {
+test("known pre-dispatch busy requests retry identical bytes; edits require native no-effect settlement", async () => {
   const requests: string[] = [];
-  let busy = { ok: false, code: "revit_external_event_busy", phase: "revit_external_event",
+  let busy: Record<string, unknown> = { ok: false, code: "revit_external_event_busy", phase: "revit_external_event",
     request_dispatched: false, outcome_unknown: false, retryable: true };
   const server = http.createServer(async (request, response) => {
     let body = "";
@@ -634,12 +634,29 @@ test("a known busy read retries identical bytes within one call; ambiguous or mu
     assert.equal(requests[0], requests[1]);
     requests.length = 0;
     await assert.rejects(callRevit("/revit/walls", "POST", { action: "create" }));
-    assert.equal(requests.length, 1, "an edit is never retried by the read queue recovery");
-    for (const change of [{ request_dispatched: true }, { outcome_unknown: true }, { code: "other_conflict" }, { retryable: false }]) {
+    assert.equal(requests.length, 1, "an edit without native no-effect settlement is never retried");
+    busy.canonical_attempt_settlement = { request_dispatched: false, effect_state: "none", effect_authority: "native_host" };
+    for (const body of [
+      { elementId: 1478627, newText: "saved wording", dryRun: true, apply: false },
+      { elementId: 1478627, newText: "saved wording", dryRun: false, apply: true },
+    ]) {
+      requests.length = 0;
+      assert.deepEqual(await callRevit("/revit/replace-text-note", "POST", body), { ok: true, text: "saved wording" });
+      assert.equal(requests.length, 2);
+      assert.equal(requests[0], requests[1]);
+    }
+    for (const change of [{ request_dispatched: true }, { outcome_unknown: true }, { code: "other_conflict" }, { retryable: false },
+      { canonical_attempt_settlement: { request_dispatched: true, effect_state: "none", effect_authority: "native_host" } },
+      { canonical_attempt_settlement: { request_dispatched: false, effect_state: "unknown", effect_authority: "native_host" } },
+      { canonical_attempt_settlement: { request_dispatched: false, effect_state: "applied", effect_authority: "native_host" } },
+    ]) {
       requests.length = 0;
       const original = busy;
       busy = { ...busy, ...change };
       await assert.rejects(callRevit("/revit/find-text-notes", "POST", { elementIds: [1478627] }));
+      assert.equal(requests.length, 1);
+      requests.length = 0;
+      await assert.rejects(callRevit("/revit/replace-text-note", "POST", { elementId: 1478627, newText: "saved wording", apply: true }));
       assert.equal(requests.length, 1);
       busy = original;
     }
