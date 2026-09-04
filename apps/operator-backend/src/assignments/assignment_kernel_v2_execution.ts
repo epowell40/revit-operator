@@ -856,7 +856,9 @@ export function failAssignmentKernelOperationV2(
     error_code: error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240),
     request_identity: structuredClone(lease.request_identity)
   };
-  recordNativeDispatchIfNeeded(lease, result);
+  // Known dispatch was recorded above (or was already durable). Recording it
+  // again as an MCP dispatch conflicts with that transition and prevents the
+  // unknown-effect result from settling after transport loss.
   appendCurrentAssignmentKernelEventV2({
     goal_id: lease.assignment_id, binding: lease.binding,
     event_id: `operation-result:${result.result_id}`,

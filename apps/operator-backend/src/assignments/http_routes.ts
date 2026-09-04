@@ -1,4 +1,5 @@
 import type http from "node:http";
+import { controlAssignmentExecutionV2 } from "./assignment_kernel_v2_controls.js";
 import { assignmentKernelSessionIndexResponseV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { readJson, writeJson } from "../http.js";
 import { handleVerifiedWorkPacketHttpRoute } from "../work_packets/http_routes.js";
@@ -61,6 +62,23 @@ export async function handleAssignmentHttpRoute(
 ): Promise<boolean> {
   if (handleVerifiedWorkPacketHttpRoute(req, res, url, authorizeSession)) return true;
   if (handleWorkReturnHttpRoute(req, res, url, authorizeSession)) return true;
+  if (req.method === "POST" && url.pathname === "/api/assignments/v2/execution-control") {
+    try {
+      const body = await readJson(req, 16_000) as JsonMap | null;
+      const binding = v2Binding(body);
+      if (!authorizeSession(binding.session_id)) return true;
+      requireV2Principal(getAssignmentKernelSnapshotV2(binding.assignment_id));
+      const snapshot = controlAssignmentExecutionV2({
+        binding, command_id: body?.command_id as string,
+        expected_command_id: body?.expected_command_id as string | null,
+        action: body?.action as "pause" | "resume"
+      });
+      writeJson(res, 200, { ok: true, assignment_snapshot_v2: snapshot });
+    } catch (error) {
+      writeJson(res, 409, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/assignments/v2") {
     const sessionId = (url.searchParams.get("session_id") ?? "").trim().slice(0, 180);
     if (!sessionId) {

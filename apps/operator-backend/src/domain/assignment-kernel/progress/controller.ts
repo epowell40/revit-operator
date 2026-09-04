@@ -281,10 +281,16 @@ export function decideAssignmentProgressV2(input: Readonly<{
     return { ...decisionBase(snapshot, now, "terminal", "Assignment is already terminal."), decision: "terminal", outcome: snapshot.outcome as "complete" | "complete_with_issues" | "verified_noop" | "blocked" | "failed" };
   }
   if (snapshot.in_flight_provider_call_ids.length > 0) {
+    if (snapshot.execution_control?.state === "paused" && snapshot.in_flight_operation_ids.length === 0) {
+      return { ...decisionBase(snapshot, now, "paused", "user_requested_pause"), decision: "paused" };
+    }
     return { ...decisionBase(snapshot, now, "await_provider", "Canonical provider requests remain in flight."), decision: "await_provider", provider_call_ids: snapshot.in_flight_provider_call_ids };
   }
   if (snapshot.in_flight_operation_ids.length > 0) {
     return { ...decisionBase(snapshot, now, "await_operation", "Canonical operations remain in flight."), decision: "await_operation", operation_ids: snapshot.in_flight_operation_ids };
+  }
+  if (snapshot.execution_control?.state === "paused") {
+    return { ...decisionBase(snapshot, now, "paused", "user_requested_pause"), decision: "paused" };
   }
   if (snapshot.unresolved_unknown_operation_ids.length > 0) {
     const reconciliationAttempts = Object.values(snapshot.operations).filter((operation) => operation.purpose === "reconciliation").length;

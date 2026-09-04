@@ -213,6 +213,14 @@ export function parseAssignmentKernelPublicationV2(value) {
   if (!assignmentId || !Number.isSafeInteger(assignmentVersion) || assignmentVersion < 1) publicationInvalid("identity");
   if (!snapshot || snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA
       || snapshot.assignment_version !== assignmentVersion) publicationInvalid("snapshot");
+  if (snapshot.execution_control !== undefined) {
+    const control = record(snapshot.execution_control);
+    if (!control || !["paused", "running"].includes(control.state)
+        || typeof control.command_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(control.command_id)
+        || typeof control.changed_at !== "string" || !Number.isFinite(Date.parse(control.changed_at))) {
+      publicationInvalid("execution_control");
+    }
+  }
   const runId = requiredString(binding?.run_id);
   const generation = binding?.generation;
   if (binding?.assignment_id !== assignmentId || !runId

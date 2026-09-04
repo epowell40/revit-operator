@@ -64,7 +64,7 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
   // open until its receipt is reconciled; delaying evaluation itself permits
   // another operation to overtake already-authoritative task evidence.
   const advanced = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
-  if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
+  if (["terminal", "blocked", "paused", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
     // The canonical decision is already durable, but interrupting the Codex
     // turn here races the item/tool/call response and can make a successful
     // native result appear as a failed dynamic tool item. Arm the stop now;
@@ -114,6 +114,10 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
       ? runtime.assignmentKernelV2Binding(params.turnId, sessionId)
       : null;
   const v2Snapshot = v2Binding ? getAssignmentKernelSnapshotV2(v2Binding.assignment_id) : null;
+  if (v2Snapshot?.execution_control?.state === "paused") {
+    runtime.queueAssignmentKernelV2TurnStop(params.turnId, "user_requested_pause");
+    return { contentItems: [{ type: "inputText", text: "Task paused by the user. No new work was dispatched; retain completed work for resume." }], success: false };
+  }
   const journalContext = v2Binding ? null : currentAssignmentJournalContext(sessionId);
   if (!v2Snapshot && !journalContext) {
     return {

@@ -20,8 +20,21 @@ export type PreparedAssignmentTurn = {
 
 export function bindPreparedAssignmentToRequest(request: ChatRequest, prepared: PreparedAssignmentTurn | null): ChatRequest {
   if (!prepared) return request;
+  const canonical = prepared.kernelVersion === 2 && prepared.bindingV2
+    ? assignmentKernelV2ForBinding(prepared.bindingV2)?.snapshot : null;
+  const inputContext = canonical && Object.keys(canonical.input_values).length > 0
+    ? `\nAuthenticated exact task input values (JSON data): ${JSON.stringify(canonical.input_values)}` : "";
+  const requestContext = request.context && typeof request.context === "object" ? request.context : {};
+  const ui = (requestContext as Record<string, unknown>).ui;
   return {
     ...request,
+    ...(inputContext ? { user_text: `${request.user_text}${inputContext}` } : {}),
+    ...(canonical ? { context: { ...requestContext, ui: {
+      ...(ui && typeof ui === "object" ? ui : {}),
+      // Resume uses the immutable objective and authenticated journal answers,
+      // never a stale desktop computer transcript or caller-supplied values.
+      authoritative_user_text: `${canonical.spec.source_user_request}${inputContext}`
+    } } } : {}),
     assignment_id: prepared.assignmentId,
     assignment_run_id: prepared.runId,
     assignment_generation: prepared.generation

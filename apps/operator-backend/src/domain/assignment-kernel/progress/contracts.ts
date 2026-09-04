@@ -58,6 +58,7 @@ interface ProgressDecisionBaseV2 {
 }
 
 export type ProgressDecisionV2 = ProgressDecisionBaseV2 & (
+  | { decision: "paused" }
   | { decision: "evaluate_criteria"; criterion_ids: readonly CriterionIdV2[]; observation_ids: readonly ObservationIdV2[] }
   | { decision: "request_user_input"; gap_ids: readonly string[]; criterion_ids: readonly CriterionIdV2[] }
   | { decision: "request_user_review"; gap_ids: readonly string[]; work_unit_ids: readonly WorkUnitIdV2[] }

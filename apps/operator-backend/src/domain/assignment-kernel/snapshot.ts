@@ -15,6 +15,7 @@ export interface AssignmentSnapshotV2 {
   assignment_version: number;
   spec: AssignmentSpecV2;
   current_binding: AssignmentBindingV2;
+  execution_control?: Readonly<{ state: "paused" | "running"; command_id: string; changed_at: string }>;
   input_values: Readonly<Record<InputVariableIdV2, unknown>>;
   pending_input_variable_ids: readonly InputVariableIdV2[];
   clarifications: Readonly<Record<string, Readonly<{

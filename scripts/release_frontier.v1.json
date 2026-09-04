@@ -2,6 +2,7 @@
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
     "assignment_auto_goal_admission.test.ts",
+    "assignment_kernel_v2_controls.test.ts",
     "assignment_async_settlement_barrier.test.ts",
     "assignment_kernel_v2.test.ts",
     "assignment_kernel_v2_architecture.test.ts",
@@ -76,6 +77,7 @@
     "TextNoteCanonicalizationTests"
   ],
   "failure_families": [
+    { "id": "canonical-pause-resume-and-pending-input-continuation", "coverage": ["backend:assignment_kernel_v2_controls.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "backend:codex_app_server_compatibility.test.ts"] },
     { "id": "durable-discovery-and-idle-continuation", "coverage": ["backend:assignment_kernel_v2_store.test.ts", "backend:assignment_kernel_v2_progress_controller.test.ts"] },
     { "id": "normal-chat-auto-goal-admission", "coverage": ["backend:assignment_auto_goal_admission.test.ts", "backend:assignment_kernel_v2_store.test.ts"] },
     { "id": "kernel-liveness-and-operation-ownership", "coverage": ["backend:assignment_kernel_v2_architecture.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },

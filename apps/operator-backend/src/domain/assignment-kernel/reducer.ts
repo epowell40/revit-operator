@@ -45,6 +45,7 @@ function applyProviderState(snapshot: AssignmentSnapshotV2, event: Extract<Assig
   const previous = snapshot.provider_calls[event.call_id];
   kernelAssertV2(event.call_id.trim().length > 0, "provider_call_identity_missing", "Provider call requires a stable identity.");
   if (!previous) {
+    kernelAssertV2(snapshot.execution_control?.state !== "paused", "assignment_execution_paused", "Paused work cannot admit another provider request.");
     kernelAssertV2(event.state === "admitted", "provider_call_not_admitted", "The first provider-call state must be admitted.");
     kernelAssertV2(Boolean(event.provider?.trim()) && Boolean(event.model?.trim()), "provider_call_route_missing", "Provider admission requires the selected provider and model.");
     kernelAssertV2((event.gap_ids?.length ?? 0) > 0 && (event.criterion_ids?.length ?? 0) > 0, "provider_call_progress_binding_missing", "Provider admission requires unresolved gap and criterion bindings.");
@@ -151,6 +152,8 @@ function requireCurrentBinding(snapshot: AssignmentSnapshotV2, event: Assignment
 }
 
 function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: OperationV2): void {
+  kernelAssertV2(snapshot.execution_control?.state !== "paused" || Boolean(operation.parent_operation_id),
+    "assignment_execution_paused", "Paused work cannot admit another root operation; admitted children may settle.");
   kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, operation.binding), "operation_binding_mismatch", "Operation binding is not current.");
   kernelAssertV2(!snapshot.operations[operation.operation_id], "operation_duplicate", "Operation identity already exists.");
   kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0 || operation.purpose === "reconciliation",
@@ -563,6 +566,17 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
     requireCurrentBinding(snapshot, event);
     snapshot = { ...snapshot, assignment_version: event.assignment_version };
     switch (event.event_type) {
+      case "execution_control_requested":
+        kernelAssertV2(event.actor === "authenticated-user", "assignment_control_authority_invalid", "Execution controls require an authenticated user.");
+        kernelAssertV2(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(event.command_id), "assignment_control_identity_invalid", "Execution controls require a bounded command identity.");
+        kernelAssertV2(event.expected_command_id === (snapshot.execution_control?.command_id ?? null), "assignment_control_stale", "Execution control changed since this command was prepared.");
+        kernelAssertV2(event.action === "pause" || event.action === "resume", "assignment_control_action_invalid", "Unknown execution control.");
+        if (event.action === "resume") {
+          kernelAssertV2(snapshot.quiescent, "assignment_resume_not_quiescent", "Admitted work must settle before resuming.");
+          kernelAssertV2(snapshot.unresolved_unknown_operation_ids.length === 0, "assignment_resume_reconciliation_required", "Unknown effects must be reconciled before resuming ordinary work.");
+        }
+        snapshot = { ...snapshot, execution_control: { state: event.action === "pause" ? "paused" : "running", command_id: event.command_id, changed_at: event.occurred_at } };
+        break;
       case "run_superseded":
         kernelAssertV2(event.superseded_by_generation > event.binding.generation, "assignment_generation_not_advanced", "Supersession must advance generation.");
         kernelAssertV2(snapshot.quiescent, "assignment_run_not_quiescent", "A run cannot be superseded while operations are unresolved.");

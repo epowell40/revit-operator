@@ -1014,7 +1014,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
     }
     const snapshot = assignmentKernelV2
-      ? assignmentControllerStopReason
+      ? assignmentControllerStopReason || currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding)?.execution_control?.state === "paused"
         ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding)
         : settleAssignmentKernelExecutionFailureV2({
             binding: assignmentKernelV2.binding,

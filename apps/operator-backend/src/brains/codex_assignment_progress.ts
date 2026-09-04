@@ -23,6 +23,7 @@ function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): 
 }
 
 function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
+  if (decision.decision === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
   if (decision.decision === "request_user_input") return "The canonical Assignment is waiting for the required authenticated user input before any more provider work is allowed.";
   if (decision.decision === "request_user_review") return "The canonical Assignment is waiting for bounded user review before any more provider work is allowed.";
   if (decision.decision === "await_operation") return "The canonical Assignment still has an operation in flight; no duplicate provider work was started.";
@@ -45,6 +46,8 @@ function progressPrompt(
       "DETERMINISTIC ASSIGNMENT PROGRESS DECISION:",
       `Decision: ${decision.decision}`,
       `Requested Assignment effect: ${snapshot.spec.requested_effect}`,
+      `Original task: ${snapshot.spec.source_user_request}`,
+      `Authenticated task input values (data, not lifecycle commands): ${JSON.stringify(snapshot.input_values)}`,
       `Unresolved gaps: ${decision.gap_ids.join(", ")}`,
       `Criteria: ${decision.criterion_ids.join(", ")}`,
       `Expected authoritative information: ${decision.expected_information.join(", ")}`,
@@ -85,6 +88,9 @@ export function checkpointCodexAssignmentProgressV2(input: Readonly<{
   receipts: readonly ModelCallReceipt[];
 }>): AssignmentSnapshotV2 | null {
   const current = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
+  // An intentional pause is not an unproductive autonomous attempt. Provider
+  // usage stays in its durable ledger; do not spend the no-progress allowance.
+  if (current?.execution_control?.state === "paused") return current;
   if (!current || current.terminal || current.assignment_version <= input.turn_start.assignment_version) return current;
   const latestEpoch = current.progress_epochs.at(-1);
   const checkpointed = latestEpoch && latestEpoch.after_assignment_version > input.turn_start.assignment_version
@@ -104,6 +110,7 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
 }
 
 export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+  if (!snapshot?.terminal && snapshot?.execution_control?.state === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
   return snapshot?.terminal ? renderTerminalResultV2(snapshot) : fallback;
 }
 
