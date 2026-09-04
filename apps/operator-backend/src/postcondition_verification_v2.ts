@@ -130,7 +130,8 @@ function parameterTargetIdentities(value: unknown): readonly string[] {
     if (Array.isArray(candidate)) candidates.push(...candidate);
     else if (candidate !== undefined && candidate !== null) candidates.push(candidate);
   }
-  if (candidates.every((candidate) => candidate === undefined || candidate === null)) candidates.push(row.id);
+  const hasExplicitTarget = candidates.some((candidate) => candidate !== undefined && candidate !== null);
+  if (!hasExplicitTarget) candidates.push(row.id);
   return [...new Set(candidates
     .filter((candidate) => typeof candidate === "string" || typeof candidate === "number" || typeof candidate === "bigint")
     .map((candidate) => String(candidate).trim().toLowerCase())
