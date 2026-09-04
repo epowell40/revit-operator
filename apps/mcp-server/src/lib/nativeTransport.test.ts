@@ -139,7 +139,7 @@ test("Node request and response exactly match the executable C# ROSB/1 vector", 
   });
 });
 
-test("only exact raw development plus laboratory enables legacy transport", () => {
+test("only exact raw development plus laboratory identifies the laboratory runtime", () => {
   assert.equal(isExactDevelopmentLaboratory({ REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }), true);
   for (const env of [
     { REVIT_OPERATOR_MODE: "Development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" },
@@ -194,7 +194,22 @@ test("request protection mirrors the native request fence for strict JSON, norma
   });
   assert.throws(() => protectBody("{\"nested\":{\"a\":1,\"a\":2}}"), NativeTransportProtocolError);
   assert.throws(() => protectBody("{\"value\":\"e\\u0301\"}"), NativeTransportProtocolError);
-  assert.throws(() => protectBody("{\"value\":\"line\\rbreak\"}"), NativeTransportProtocolError);
+  const domainLineEndings = JSON.stringify({
+    expectedOldText: "Chase for Electrical Conduit\r",
+    newText: "ISSUE\nVERIFY"
+  });
+  const protectedDomainLineEndings = protectBody(domainLineEndings);
+  const openedDomainLineEndings = testProtectedResponse(
+    protectedDomainLineEndings.envelopeJson,
+    200,
+    "{}"
+  ).innerRequest;
+  assert.equal(openedDomainLineEndings.body_json, domainLineEndings);
+  assert.deepEqual(JSON.parse(openedDomainLineEndings.body_json), {
+    expectedOldText: "Chase for Electrical Conduit\r",
+    newText: "ISSUE\nVERIFY"
+  });
+  assert.throws(() => protectBody("{\r\n\"value\":\"line\"\n}"), NativeTransportProtocolError);
   assert.throws(() => protectBody(`${"[".repeat(64)}0${"]".repeat(64)}`), NativeTransportProtocolError);
   assert.throws(() => protectBody(JSON.stringify("x".repeat(2 * 1024 * 1024))), NativeTransportProtocolError);
   const exact = { operatorToken: TOKEN, serverEpoch: EPOCH, method: "GET", path: "/revit/context" } as const;

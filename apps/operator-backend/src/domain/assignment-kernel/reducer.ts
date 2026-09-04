@@ -1,19 +1,23 @@
 import { canonicalJsonV2 } from "./canonical.js";
+import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2 } from "./events.js";
 import { kernelAssertV2 } from "./errors.js";
 import { sameAssignmentBindingV2 } from "./identity.js";
 import type { CriterionEvaluationV2 } from "./criteria.js";
-import { deriveAssignmentOutcomeV2 } from "./outcome.js";
-import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
+import { appliedOperationHasVerifiedPostconditionV2, deriveAssignmentOutcomeV2 } from "./outcome.js";
+import { OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA, OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, type OperationResultV2, type OperationV2 } from "./operation.js";
+import { operationMatchesTargetIdentityV2 } from "./operation_target_identity.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, type AssignmentSnapshotV2 } from "./snapshot.js";
 import { PROVIDER_CALL_V2_SCHEMA, type ProviderCallStateV2, type ProviderCallV2 } from "./progress/provider_call.js";
-import { deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
+import { ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA, executionFailureCodeV2 } from "./progress/execution_failure.js";
+import { criteriaPendingEvaluationV2, deriveProgressGapsV2, operationProgressIdentityV2 } from "./progress/controller.js";
 import {
   CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
   SEMANTIC_EVIDENCE_CONTRACT_V2,
   evidenceClassForFulfillmentRoleV2,
   fulfillmentRoleCanCarryTaskCriteriaV2,
-  observationAdmissibilityForCriterionV2
+  observationAdmissibilityForCriterionV2,
+  operationEffectAdmissibleForCriterionV2
 } from "./semantic_admissibility.js";
 
 const EFFECT_RANK = { read: 0, preview: 1, apply: 2 } as const;
@@ -124,7 +128,7 @@ function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 
       && operation.settlement_state !== "settled")
     .map((operation) => operation.operation_id)
     .sort();
-  const next: AssignmentSnapshotV2 = {
+  const next = projectWorkUnitCriteria({
     ...snapshot,
     in_flight_operation_ids: inFlight,
     in_flight_provider_call_ids: inFlightProviders,
@@ -132,7 +136,7 @@ function withDerivedState(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 
     blocking_child_operation_ids: blockingChildren,
     unresolved_unknown_operation_ids: unknown,
     quiescent: inFlight.length === 0 && inFlightProviders.length === 0
-  };
+  });
   return { ...next, outcome: deriveAssignmentOutcomeV2(next) };
 }
 
@@ -176,6 +180,16 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       kernelAssertV2(Boolean(operation.delegation_authority_id), "operation_delegation_authority_missing", "A criterion-fulfillment root must issue one delegation authority.");
     }
     for (const criterionId of eligible) {
+      const criterion = snapshot.spec.criteria.find((candidate) => candidate.criterion_id === criterionId);
+      kernelAssertV2(Boolean(criterion) && operationEffectAdmissibleForCriterionV2({
+        assignment_requested_effect: snapshot.spec.requested_effect,
+        operation_requested_effect: operation.requested_effect,
+        criterion: criterion!,
+        ...((criterion!.desired_state_comparisons?.length ?? 0) > 0
+          ? { basis: "desired_state_equivalence" as const }
+          : {})
+      }), "operation_eligible_criterion_effect_mismatch",
+      "Criterion eligibility requires the Assignment effect or an explicit desired-state-equivalence contract.");
       kernelAssertV2(workUnit.criterion_ids.includes(criterionId), "operation_eligible_criterion_unbound", "Operation criterion eligibility is outside its admitted work unit.");
       kernelAssertV2(operation.advances_criterion_ids.includes(criterionId), "operation_eligible_criterion_progress_unbound", "Eligible criterion must retain its progress binding.");
     }
@@ -184,6 +198,8 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
     }
   }
   const role = operation.operation_role ?? "root";
+  kernelAssertV2(role !== "root" || Object.keys(criteriaPendingEvaluationV2(snapshot)).length === 0,
+    "operation_criterion_evaluation_pending", "Retained authoritative evidence must be evaluated before another root operation is admitted.");
   kernelAssertV2(role !== "root" || operation.advances_criterion_ids.length > 0 || operation.resolves_gap_ids.length > 0,
     "operation_progress_binding_missing", "A root operation must bind to unresolved criterion or gap work; nested work binds through its parent.");
   for (const criterionId of operation.advances_criterion_ids) {
@@ -260,7 +276,7 @@ function validateOperationAdmission(snapshot: AssignmentSnapshotV2, operation: O
       && subject.settlement_state === "settled",
     "operation_verification_subject_invalid", "Verification must bind to one settled applied operation.");
     kernelAssertV2(Boolean(operation.target.target_id)
-      && operation.target.target_id === subject.target.target_id
+      && operationMatchesTargetIdentityV2(subject, [operation.target.target_id!])
       && operation.target.document_fingerprint === subject.target.document_fingerprint,
     "operation_verification_target_mismatch", "Verification must inspect the exact applied target in the same document.");
   } else {
@@ -336,7 +352,7 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
         "kind", "type", "allowed_values", "minimum", "maximum", "min_length", "max_length", "min_items", "max_items"
       ]);
       kernelAssertV2([
-        "required", "json_type", "enum", "numeric_range", "string_length", "array_length", "schema_depth", "schema_bounds"
+        "required", "json_type", "enum", "numeric_range", "string_length", "array_length", "property_set", "schema_depth", "schema_bounds"
       ].includes(constraint.kind)
         && Object.keys(constraint).every((key) => allowedConstraintKeys.has(key))
         && canonicalJsonV2(constraint).length <= 4_096,
@@ -358,6 +374,40 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
       "operation_input_schema_correction_invalid", "Input-schema correction action must match the declared safe correction eligibility.");
     }
   }
+  if (result.affected_target_identities !== undefined) {
+    kernelAssertV2(Array.isArray(result.affected_target_identities)
+      && result.affected_target_identities.length <= 256
+      && result.affected_target_identities.every(identity => typeof identity === "string"
+        && identity === identity.trim() && identity.length > 0 && identity.length <= 500
+        && !/[\u0000-\u001f\u007f]/.test(identity))
+      && new Set(result.affected_target_identities).size === result.affected_target_identities.length
+      && result.affected_target_identities.every((identity, index, identities) => index === 0 || identities[index - 1]! < identity)
+      && (result.affected_target_identities.length === 0
+        || (result.dispatch_state === "dispatched" && ["native-host", "dynamic-runtime"].includes(result.authority))),
+    "operation_result_affected_targets_invalid", "Affected targets require a bounded, unique, ordinal native settlement identity set.");
+  }
+  if (result.result_semantic_gap) {
+    const gap = result.result_semantic_gap;
+    kernelAssertV2(operation.requested_effect === "preview"
+      && operation.fulfillment_role === "delegated_task_execution"
+      && result.status === "failed_after_dispatch"
+      && result.dispatch_state === "dispatched"
+      && result.persistent_effect === "none"
+      && result.native_transaction_state === "rolled_back"
+      && result.observation_required === true,
+    "operation_result_semantic_gap_effect_invalid", "A result-semantic gap is valid only for a safely rolled-back task preview with durable native evidence.");
+    kernelAssertV2(gap.schema === OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA
+      && gap.gap_id === `result-semantics:${operation.operation_id}`
+      && gap.operation_id === operation.operation_id
+      && gap.capability_id === operation.capability_id
+      && gap.result_schema_id === result.result_schema_id
+      && gap.reason_code === result.error_code
+      && ["preview_semantic_adapter_missing", "preview_result_contract_invalid"].includes(gap.reason_code)
+      && gap.retryable === false
+      && gap.provider_correctable === false
+      && gap.native_replay_allowed === false,
+    "operation_result_semantic_gap_invalid", "A result-semantic gap must bind the exact operation/result contract and prohibit provider correction or native replay.");
+  }
 }
 
 function mergeEvaluation(previous: CriterionEvaluationV2 | undefined, next: CriterionEvaluationV2): CriterionEvaluationV2 {
@@ -375,11 +425,27 @@ function mergeEvaluation(previous: CriterionEvaluationV2 | undefined, next: Crit
 
 function projectWorkUnitCriteria(snapshot: AssignmentSnapshotV2): AssignmentSnapshotV2 {
   const states = { ...snapshot.work_unit_states };
+  const appliedOperations = Object.values(snapshot.operations)
+    .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");
+  const verificationUnitIds = new Set([
+    ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
+    ...Object.values(snapshot.operations)
+      .filter((operation) => operation.purpose === "verification")
+      .map((operation) => operation.work_unit_id)
+  ]);
   for (const unit of snapshot.spec.work_units) {
     if (unit.criterion_ids.length === 0) continue;
     const evaluations = unit.criterion_ids.map(id => snapshot.criteria[id]).filter(Boolean);
     if (evaluations.length !== unit.criterion_ids.length) continue;
     if (evaluations.every(row => row!.status === "pass" || row!.status === "not_applicable")) {
+      if (snapshot.spec.requested_effect === "apply" && verificationUnitIds.has(unit.work_unit_id)) {
+        const verifiedNoop = appliedOperations.length === 0
+          && evaluations.some((evaluation) => evaluation!.basis === "desired_state_equivalence");
+        const everyApplyVerified = appliedOperations.length > 0
+          && appliedOperations.every((operation) =>
+            appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id));
+        if (!verifiedNoop && !everyApplyVerified) continue;
+      }
       states[unit.work_unit_id] = "complete";
     } else if (unit.safe_to_retain && evaluations.some(row => row!.status === "pass" || row!.status === "partial")) {
       states[unit.work_unit_id] = "retained";
@@ -471,6 +537,7 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       work_unit_states: Object.fromEntries(event.spec.work_units.map((unit) => [unit.work_unit_id, "pending"])),
       pending_review_ids: [],
       provider_call_ids: [], provider_calls: {}, in_flight_provider_call_ids: [], provider_budget_exhausted: false,
+      execution_failure_ids: [], execution_failures: {},
       progress_epochs: [],
       operations: {}, observations: {}, observation_versions: {}, criteria: {}, criterion_evaluation_versions: {}, outcome: "active", terminal: false,
       operation_children: {}, blocking_child_operation_ids: [],
@@ -562,6 +629,9 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
       case "provider_call_receipt_recorded":
         kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, event.call.binding), "provider_call_binding_mismatch", "Provider receipt binding is not current.");
         kernelAssertV2(event.call.state === "completed" && Boolean(event.call.completed_at), "provider_call_receipt_incomplete", "Provider receipt must represent a completed upstream call.");
+        kernelAssertV2(event.call.provider_duration_ms === undefined || event.call.provider_duration_ms === null
+          || (Number.isSafeInteger(event.call.provider_duration_ms) && event.call.provider_duration_ms >= 0),
+        "provider_call_duration_invalid", "Provider receipt duration must be an exact non-negative integer or unknown.");
         kernelAssertV2(event.call.gap_ids.length > 0 && event.call.criterion_ids.length > 0 && event.call.expected_information.length > 0,
           "provider_call_progress_binding_missing", "Provider receipt must retain its admission justification.");
         kernelAssertV2(!snapshot.provider_calls[event.call.call_id], "provider_call_duplicate_admission", "Provider call identity is already retained.");
@@ -571,6 +641,31 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
           provider_call_ids: [...new Set([...snapshot.provider_call_ids, event.call.call_id])].sort()
         };
         break;
+      case "execution_failure_recorded": {
+        const failure = event.failure;
+        kernelAssertV2(failure.schema === ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA,
+          "execution_failure_schema_invalid", "Execution failure requires the shared V2 schema.");
+        kernelAssertV2(sameAssignmentBindingV2(snapshot.current_binding, failure.binding),
+          "execution_failure_binding_mismatch", "Execution failure binding is not current.");
+        kernelAssertV2(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,239}$/.test(failure.failure_id),
+          "execution_failure_identity_invalid", "Execution failure requires one bounded stable identity.");
+        kernelAssertV2(["provider", "transport", "runtime", "canceled", "resource_exhausted"].includes(failure.error_class),
+          "execution_failure_class_invalid", "Execution failure requires one recognized typed class.");
+        kernelAssertV2(["request_validation", "runtime_setup", "provider_start", "provider_turn", "response_handoff"].includes(failure.phase),
+          "execution_failure_phase_invalid", "Execution failure requires one recognized boundary phase.");
+        kernelAssertV2(failure.code === executionFailureCodeV2(failure.error_class),
+          "execution_failure_code_invalid", "Execution failure code must be derived from its typed class.");
+        kernelAssertV2(!snapshot.execution_failures[failure.failure_id],
+          "execution_failure_duplicate", "Execution failure identity is already retained.");
+        kernelAssertV2(!["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome),
+          "execution_failure_after_success_forbidden", "An execution failure cannot replace already-derived successful work.");
+        snapshot = {
+          ...snapshot,
+          execution_failure_ids: [...snapshot.execution_failure_ids, failure.failure_id],
+          execution_failures: { ...snapshot.execution_failures, [failure.failure_id]: structuredClone(failure) }
+        };
+        break;
+      }
       case "provider_budget_exhausted":
         kernelAssertV2(event.limit > 0 && snapshot.provider_call_ids.length >= event.limit,
           "provider_budget_exhaustion_invalid", "Provider budget exhaustion requires the durable call count to reach the configured limit.");
@@ -599,7 +694,8 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const operation = snapshot.operations[event.operation_id];
         kernelAssertV2(operation && operation.settlement_state === "open" && operation.dispatch_state === "not_dispatched", "operation_dispatch_start_invalid", "Dispatch start requires one newly admitted operation.");
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
-          ...operation, dispatch_state: "dispatching", settlement_state: "awaiting_result"
+          ...operation, dispatch_state: "dispatching", settlement_state: "awaiting_result",
+          dispatch_started_at: event.occurred_at
         } } };
         break;
       }
@@ -615,7 +711,15 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(unresolvedBlockingChildren.length === 0,
           "operation_parent_blocked_by_child", "A parent operation cannot dispatch while a blocking child operation is unresolved.");
         const persistentEffect = operation.requested_effect === "read" ? "none" : "unknown";
-        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: { ...operation, dispatch_state: "dispatched", dispatch_authority: "native", persistent_effect: persistentEffect, settlement_state: "awaiting_result", dispatched_at: event.occurred_at } } };
+        snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
+          ...operation,
+          dispatch_state: "dispatched",
+          dispatch_authority: "native",
+          persistent_effect: persistentEffect,
+          settlement_state: "awaiting_result",
+          dispatch_started_at: operation.dispatch_started_at ?? event.occurred_at,
+          dispatched_at: operation.dispatch_started_at ?? event.occurred_at
+        } } };
         break;
       }
       case "operation_dispatch_recorded": {
@@ -632,7 +736,9 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         kernelAssertV2(operation.requested_effect === "read", "operation_non_native_mutation_dispatch_forbidden", "A mutation cannot establish dispatch without native or dynamic-runtime authority.");
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
           ...operation, dispatch_state: "dispatched", dispatch_authority: event.authority,
-          persistent_effect: "none", settlement_state: "awaiting_result", dispatched_at: event.occurred_at
+          persistent_effect: "none", settlement_state: "awaiting_result",
+          dispatch_started_at: operation.dispatch_started_at ?? event.occurred_at,
+          dispatched_at: operation.dispatch_started_at ?? event.occurred_at
         } } };
         break;
       }

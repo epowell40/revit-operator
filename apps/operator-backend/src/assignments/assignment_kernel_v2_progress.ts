@@ -3,6 +3,7 @@ import {
   buildAssignmentEfficiencyTraceV2,
   buildProgressEpochV2,
   canonicalJsonV2,
+  criteriaPendingEvaluationV2,
   decideAssignmentProgressV2,
   observationAdmissibilityForCriterionV2,
   type AssignmentBindingV2,
@@ -108,6 +109,7 @@ export function recordCompletedAssignmentProviderReceiptV2(input: Readonly<{
   expected_information: readonly string[];
   admitted_at: string;
   completed_at?: string;
+  provider_duration_ms: number | null;
   usage: ProviderUsageV2;
   success: boolean;
   error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
@@ -130,6 +132,7 @@ export function recordCompletedAssignmentProviderReceiptV2(input: Readonly<{
     response_started_at: input.admitted_at,
     usage_received_at: completedAt,
     completed_at: completedAt,
+    provider_duration_ms: input.provider_duration_ms,
     usage: structuredClone(input.usage),
     success: input.success,
     ...(input.error_class ? { error_class: input.error_class } : {})
@@ -164,6 +167,29 @@ export function recordAssignmentProgressEpochV2(input: Readonly<{
   }).snapshot;
 }
 
+export function evaluatePendingAssignmentCriteriaV2(input: Readonly<{
+  binding: AssignmentBindingV2;
+  now?: string;
+}>): AssignmentSnapshotV2 {
+  const now = input.now ?? new Date().toISOString();
+  const snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
+  if (!snapshot) throw new Error("assignment_kernel_v2_not_found");
+  const pendingCriteria = criteriaPendingEvaluationV2(snapshot);
+  const criterionIds = Object.keys(pendingCriteria).sort();
+  if (criterionIds.length === 0) return snapshot;
+  const claims = criterionIds.map((criterionId) => ({
+    criterion_id: criterionId,
+    observation_ids: (pendingCriteria[criterionId] ?? []).filter((observationId) => {
+      const observation = snapshot.observations[observationId];
+      const criterion = snapshot.spec.criteria.find((candidate) => candidate.criterion_id === criterionId);
+      return Boolean(observation && criterion
+        && observationAdmissibilityForCriterionV2({ snapshot, criterion, observation, evaluated_at: now }).admissible
+        && observation.facts.some((fact) => criterion.semantic_fact_requirements.includes(fact.fact_id)));
+    })
+  }));
+  return evaluateAssignmentObservationCriteriaV2({ binding: input.binding, claims });
+}
+
 export function advanceAssignmentKernelProgressV2(input: Readonly<{
   binding: AssignmentBindingV2;
   budget?: AssignmentProgressBudgetV2;
@@ -175,18 +201,7 @@ export function advanceAssignmentKernelProgressV2(input: Readonly<{
   let decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
   if (snapshot.terminal) return { snapshot, decision };
   if (decision.decision === "evaluate_criteria") {
-    const evaluationDecision = decision;
-    const claims = evaluationDecision.criterion_ids.map((criterionId) => ({
-      criterion_id: criterionId,
-      observation_ids: evaluationDecision.observation_ids.filter((observationId) => {
-        const observation = snapshot!.observations[observationId];
-        const criterion = snapshot!.spec.criteria.find((candidate) => candidate.criterion_id === criterionId);
-        return Boolean(observation && criterion
-          && observationAdmissibilityForCriterionV2({ snapshot: snapshot!, criterion, observation, evaluated_at: now }).admissible
-          && observation.facts.some((fact) => criterion.semantic_fact_requirements.includes(fact.fact_id)));
-      })
-    }));
-    snapshot = evaluateAssignmentObservationCriteriaV2({ binding: input.binding, claims });
+    snapshot = evaluatePendingAssignmentCriteriaV2({ binding: input.binding, now });
     if (snapshot.terminal) return { snapshot, decision: decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now }) };
     decision = decideAssignmentProgressV2({ snapshot, budget: input.budget ?? DEFAULT_ASSIGNMENT_PROGRESS_BUDGET_V2, now });
   }

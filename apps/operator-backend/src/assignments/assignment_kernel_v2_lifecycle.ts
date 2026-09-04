@@ -15,6 +15,7 @@ import {
   getAssignmentKernelSnapshotV2,
   normalizeAssignmentKernelJournalV2
 } from "./assignment_kernel_v2_store.js";
+import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kernel_v2_terminal_barrier.js";
 
 export type AssignmentKernelBindingInputV2 = Readonly<{
   session_id: string;
@@ -53,6 +54,10 @@ function persistTerminalArtifacts(assignmentId: string, snapshot: AssignmentSnap
 
 export function deriveAndSettleAssignmentKernelV2(binding: AssignmentKernelBindingInputV2, reason: string): AssignmentSnapshotV2 {
   let snapshot = context(binding).snapshot;
+  if (terminalOutcome(snapshot.outcome)
+    && assignmentKernelTerminalSettlementDeferredV2(snapshot.current_binding)) {
+    return snapshot;
+  }
   appendCurrentAssignmentKernelEventV2({
     goal_id: binding.assignment_id,
     binding: snapshot.current_binding,

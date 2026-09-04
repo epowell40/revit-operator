@@ -14,6 +14,17 @@ import {
 } from "../src/auth.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
 import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
+import {
+  assignmentKernelRuntimeAttestationV2,
+  parseAssignmentKernelRuntimeAttestationV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
+import {
+  createPrincipalBoundSessionIdForRequest,
+  getRequestAssignmentPrincipalId,
+  requestMatchesAssignmentPrincipalId,
+  type RequestContext,
+  type RequestPrincipal
+} from "../src/request_context.js";
 
 const READINESS_DEADLINE_MS = 20_000;
 const READINESS_FETCH_TIMEOUT_MS = 500;
@@ -750,10 +761,101 @@ test("shared-token local mode retains goal endpoint behavior without a multi-use
       user_text: "Update all marked receptacles and verify the completed model changes."
     })
   });
-  assert.equal(autoChatResponse.status, 200);
+  const autoChatBody = await autoChatResponse.text();
+  assert.equal(autoChatResponse.status, 200, autoChatBody);
   const autoGoalResponse = await fetch(`${base}/api/agent-goal?session_id=${encodeURIComponent(autoSessionId)}`, { headers: tokenHeaders });
   assert.equal(autoGoalResponse.status, 200);
   const autoGoal = (await autoGoalResponse.json() as { goal: { created_by: string; work_budget: { source: string } } }).goal;
   assert.equal(autoGoal.created_by, "auto_goal:chat");
   assert.equal(autoGoal.work_budget.source, "chat");
+});
+
+test("hosted V2 principal identity is tenant-qualified while legacy matching remains session-fenced", () => {
+  const principal = (tenant: string): RequestPrincipal => ({
+    sub: "alice",
+    user_id: "alice",
+    tenant_id: tenant,
+    license_id: tenant,
+    roles: ["operator"],
+    tier: null,
+    claims: {}
+  });
+  const contextA: RequestContext = { principal: principal("tenant-a") };
+  const contextB: RequestContext = { principal: principal("tenant-b") };
+  const idA = getRequestAssignmentPrincipalId(contextA);
+  const idB = getRequestAssignmentPrincipalId(contextB);
+  assert.match(idA ?? "", /^ap1_[A-Za-z0-9_-]{43}$/);
+  assert.match(idB ?? "", /^ap1_[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(idA, idB);
+  assert.equal(requestMatchesAssignmentPrincipalId(idA!, contextA), true);
+  assert.equal(requestMatchesAssignmentPrincipalId(idA!, contextB), false);
+
+  const sessionA = createPrincipalBoundSessionIdForRequest(contextA.principal!, "legacy-v2-session");
+  assert.equal(requestMatchesAssignmentPrincipalId("alice", contextA, sessionA), true);
+  assert.equal(requestMatchesAssignmentPrincipalId("alice", contextB, sessionA), false);
+});
+
+test("shared-token local V2 checkpoint publishes the exact externally started Assignment", async t => {
+  const port = await availablePort();
+  const token = "local-v2-shared-token";
+  const child = spawn(process.execPath, [path.join(process.cwd(), "dist", "src", "index.js")], {
+    env: {
+      ...process.env,
+      OPERATOR_BACKEND_PORT: String(port),
+      OPERATOR_AUTH_MODE: "shared_token",
+      OPERATOR_TOKEN: token,
+      OPERATOR_WORKSPACE_ROOT: fs.mkdtempSync(path.join(os.tmpdir(), "revitoperator-goal-local-v2-")),
+      OPERATOR_BRAIN: "rule",
+      OPERATOR_ASSIGNMENT_KERNEL_V2: "1"
+    },
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  captureChildDiagnostics(child);
+  t.after(async () => stop(child));
+
+  const base = `http://127.0.0.1:${port}`;
+  const tokenHeaders = { "x-operator-token": token };
+  const jsonHeaders = { ...tokenHeaders, "content-type": "application/json" };
+  assert.equal(await waitForServer(base, tokenHeaders, child), true, "backend must report ready");
+  const healthResponse = await fetch(`${base}/health`, { headers: tokenHeaders });
+  assert.equal(healthResponse.status, 200);
+  const healthBody = await healthResponse.json() as { assignment_kernel_runtime?: unknown };
+  assert.deepEqual(
+    parseAssignmentKernelRuntimeAttestationV2(healthBody.assignment_kernel_runtime),
+    assignmentKernelRuntimeAttestationV2(true)
+  );
+  const sessionResponse = await fetch(`${base}/session/new`, { method: "POST", headers: tokenHeaders });
+  assert.equal(sessionResponse.status, 200);
+  const sessionId = (await sessionResponse.json() as { session_id: string }).session_id;
+  const goalResponse = await fetch(`${base}/api/agent-goal`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({
+      session_id: sessionId,
+      title: "Local V2 inventory",
+      objective: "Return the requested inventory grouped by family and type.",
+      success_criteria: ["The requested inventory is authoritatively returned."],
+      work_budget: { requested_effect: "read" },
+      start_assignment_run: true,
+      assignment_run_id: "local-v2-http-run"
+    })
+  });
+  const goalBody = await goalResponse.json() as { assignment_run?: { assignment_id: string; kernel_version: number } };
+  assert.equal(goalResponse.status, 200, JSON.stringify(goalBody));
+  assert.equal(goalBody.assignment_run?.kernel_version, 2);
+
+  const v2IndexResponse = await fetch(`${base}/api/assignments/v2?session_id=${encodeURIComponent(sessionId)}`, { headers: tokenHeaders });
+  assert.equal(v2IndexResponse.status, 200);
+  const v2Index = await v2IndexResponse.json() as {
+    assignment_kernel_v2_session_index: { assignments: Array<{ assignment_id: string; binding: { principal_id: string } }> };
+  };
+  assert.deepEqual(v2Index.assignment_kernel_v2_session_index.assignments.map(row => row.assignment_id), [goalBody.assignment_run?.assignment_id]);
+  assert.equal(v2Index.assignment_kernel_v2_session_index.assignments[0]?.binding.principal_id, "local:shared-token");
+  const exactV2Response = await fetch(
+    `${base}/api/assignments/v2/${encodeURIComponent(v2Index.assignment_kernel_v2_session_index.assignments[0]!.assignment_id)}`,
+    { headers: tokenHeaders }
+  );
+  assert.equal(exactV2Response.status, 200);
+  assert.equal((await exactV2Response.json() as { assignment_kernel_v2: { snapshot: { current_binding: { principal_id: string } } } })
+    .assignment_kernel_v2.snapshot.current_binding.principal_id, "local:shared-token");
 });

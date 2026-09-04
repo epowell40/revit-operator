@@ -188,6 +188,7 @@ export type ChatResponse = {
     worker_runtime_package_sha256?: string | null;
     evidence_binding_sha256?: string | null;
     target_revit_year?: "2023" | "2024" | "2025" | "2026" | null;
+    affected_target_identities?: string[];
   };
   certified_capability_limitations?: Array<{
     code: "CERTIFIED_ACTION_DENIED";

@@ -7,7 +7,7 @@ import test from "node:test";
 import { canonicalJson, generateToolExposurePolicy, parseToolCertificationCandidates, parseToolCertificationEvidence, renderCanonicalDocument, sealEvidenceRecord, sha256NormalizedText, type JsonValue } from "../src/capabilities/tool_certification.js";
 import { assertEpic0437PromotableRecoveryState, compileArtifactBoundEvidence, parseCertificationProofIndex, validateEpic0437LiveEvidenceRun } from "../src/capabilities/tool_certification_evidence_compiler.js";
 import { EPIC_0437_PROMOTION_AUTHORITY_KEY_ID, parseAndVerifyEpic0437PromotionAuthorization } from "../src/capabilities/epic_0437_promotion_authority.js";
-import { epic0437RuntimeDependencyReceiptMatchesManifest, epic0437SourceInputHash, type Epic0437NativeBuildManifest } from "../src/capabilities/epic_0437_source_provenance.js";
+import { epic0437RuntimeDependencyReceiptMatchesManifest, epic0437SourceInputHash, epic0437SourceInputPaths, type Epic0437NativeBuildManifest } from "../src/capabilities/epic_0437_source_provenance.js";
 
 const backendRoot = process.cwd();
 const repoRoot = path.resolve(backendRoot, "../..");
@@ -47,6 +47,33 @@ test("source provenance is cross-platform for line endings but still binds exact
   const unsupported = path.join(root, "source.bin");
   fs.writeFileSync(unsupported, "text", "utf8");
   assert.throws(() => epic0437SourceInputHash(root, "source.bin"), /unsupported non-text build input/);
+});
+
+test("source provenance binds every shared cross-process semantic contract", () => {
+  const inputs = new Set(epic0437SourceInputPaths(repoRoot));
+  for (const relative of [
+    "packages/assignment-kernel-v2-contracts/index.js",
+    "packages/payload-digest-v2/index.js",
+    "packages/revit-action-effect-v1/index.js",
+    "packages/text-note-round-trip-v1/index.js",
+    "packages/text-note-round-trip-v1/golden-vectors.json"
+  ]) {
+    assert.equal(inputs.has(relative), true, `${relative} is absent from exact source provenance`);
+  }
+});
+
+test("source certification seals only the final anchor-bound native build", () => {
+  const source = fs.readFileSync(path.join(backendRoot, "src/tools/certify_epic_0437_source.ts"), "utf8");
+  const anchorUpdate = source.indexOf("updateCompiledPolicyHash(generatedPolicy");
+  const finalNativeBuild = source.indexOf('await run("dotnet", ["build", "RevitBridge/RevitBridge.csproj"', anchorUpdate);
+  const manifestSeal = source.indexOf("createEpic0437NativeBuildManifest(repoRoot, candidateHash, generatedPolicyHash)", finalNativeBuild);
+  const manifestValidation = source.indexOf("validate_epic_0437_source_certification.js", manifestSeal);
+  const explicitRootBinding = source.indexOf("candidateHash, repoRoot", manifestValidation);
+  assert.ok(anchorUpdate >= 0, "native policy anchor update is absent");
+  assert.ok(finalNativeBuild > anchorUpdate, "native output is not rebuilt after the generated policy anchor changes");
+  assert.ok(manifestSeal > finalNativeBuild, "native manifest is sealed before the final anchor-bound build");
+  assert.ok(manifestValidation > manifestSeal, "freshly sealed native manifest is not validated in a fresh process before certification succeeds");
+  assert.ok(explicitRootBinding > manifestValidation, "fresh certification validation can depend on the child process working directory");
 });
 
 test("runtime provenance admits only the exact deployed digest or reviewed Revit-host path and digest", () => {

@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { parseEvidenceRetrievalSelectorV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import * as fs from "fs";
 import * as path from "path";
 import * as xlsx from "xlsx";
@@ -8,7 +9,12 @@ import mammoth from "mammoth";
 import { createRequire } from "module";
 
 xlsx.set_fs(fs);
-import { callRevit, readCertifiedMoveExecutionContext } from "./lib/revitClient.js";
+import {
+  callRevit,
+  readCertifiedMoveExecutionContext,
+  RevitBridgeCallError,
+  revitBridgeFailurePayload
+} from "./lib/revitClient.js";
 import { certifiedMovePostDispatchVerificationFailurePayload, certifiedMoveTransportFailurePayload } from "./lib/certifiedMoveTransportFailure.js";
 import { assertCertifiedMoveExecutionReceipt, issueCertifiedMovePreviewReceipt, readCertifiedMoveOneTransportBinding } from "./lib/certifiedMoveOneRequestFamily.js";
 import { observeModelV1, readCertifiedMoveTargetsV1 } from "./spatialObservationV1.js";
@@ -46,6 +52,18 @@ import {
   preflightKnownGenericToolBody
 } from "./lib/genericToolPreflight.js";
 import { projectFindElementsResultForAgent } from "./lib/findElementsAgentProjection.js";
+import { registryLookupTransportContractV2 } from "./lib/registryLookupTransport.js";
+import {
+  compareToolSearchCandidatesV3,
+  isToolSearchRankingVersionV3,
+  scoreToolSearchCandidateV3,
+  TOOL_SEARCH_RANKING_VERSION_V3
+} from "./lib/toolSearchRanking.js";
+import {
+  buildToolSearchRiskFilterAdvisory,
+  partitionRiskFilteredCandidates,
+  shouldExposeBroaderRiskCandidates
+} from "./lib/toolSearchRiskSemantics.js";
 import {
   filterRegistryEntriesForSearch,
   getToolExposureRuntimeDecision,
@@ -385,6 +403,7 @@ type RegistryToolEntry = {
   title?: string;
   description?: string;
   group?: string;
+  example?: string;
   risk?: string;
   required_fields?: string[];
   optional_fields?: string[];
@@ -478,6 +497,7 @@ function normalizeRegistryTool(entry: unknown): RegistryToolEntry | null {
     title: typeof e.title === "string" ? e.title.trim() : "",
     description: typeof e.description === "string" ? e.description.trim() : "",
     group: typeof e.group === "string" ? e.group.trim() : "",
+    example: typeof e.example === "string" ? e.example.trim() : "",
     risk: typeof e.risk === "string" ? e.risk.trim().toLowerCase() : "",
     required_fields,
     optional_fields,
@@ -490,54 +510,8 @@ function normalizeRegistryTool(entry: unknown): RegistryToolEntry | null {
   };
 }
 
-function tokenizeForSearch(s: string): string[] {
-  return String(s ?? "")
-    .toLowerCase()
-    .split(/[^a-z0-9/_-]+/g)
-    .map(x => x.trim())
-    .filter(Boolean);
-}
-
-function searchableTextForTool(t: RegistryToolEntry): string {
-  const parts: string[] = [];
-  if (t.path) parts.push(t.path);
-  if (t.method) parts.push(t.method);
-  if (t.group) parts.push(t.group);
-  if (t.title) parts.push(t.title);
-  if (t.description) parts.push(t.description);
-  if (Array.isArray(t.required_fields) && t.required_fields.length > 0) parts.push(t.required_fields.join(" "));
-  if (Array.isArray(t.optional_fields) && t.optional_fields.length > 0) parts.push(t.optional_fields.join(" "));
-  return parts.join(" ").toLowerCase();
-}
-
 function scoreToolMatch(t: RegistryToolEntry, query: string): number {
-  const q = String(query ?? "").trim().toLowerCase();
-  if (!q) return 0;
-  const tokens = tokenizeForSearch(q);
-  if (tokens.length === 0) return 0;
-
-  const method = String(t.method ?? "").toLowerCase();
-  const path = String(t.path ?? "").toLowerCase();
-  const title = String(t.title ?? "").toLowerCase();
-  const desc = String(t.description ?? "").toLowerCase();
-  const hay = searchableTextForTool(t);
-
-  let score = 0;
-  if (q === path) score += 200;
-  if (q === `${method} ${path}`.trim()) score += 240;
-  if (path.startsWith(q)) score += 120;
-  if (title.includes(q)) score += 80;
-  if (desc.includes(q)) score += 40;
-
-  for (const tok of tokens) {
-    if (!tok) continue;
-    if (path === tok) score += 100;
-    else if (path.includes(tok)) score += 28;
-    if (title.includes(tok)) score += 20;
-    if (desc.includes(tok)) score += 8;
-    if (hay.includes(tok)) score += 3;
-  }
-  return score;
+  return scoreToolSearchCandidateV3(t, query);
 }
 
 function compactToolForList(t: RegistryToolEntry, score?: number): Record<string, unknown> {
@@ -564,10 +538,14 @@ async function getToolRegistry(forceRefresh = false, operationRole?: "prerequisi
       tools: filterRegistryEntriesForSearch(cached.tools ?? [])
     };
   }
-  const raw = await callRevit<unknown>("/revit/tool-registry", "GET", undefined, {
-    channel: "search",
+  const transport = registryLookupTransportContractV2(operationRole);
+  const invoke = () => callRevit<unknown>("/revit/tool-registry", "GET", undefined, {
+    channel: transport.channel,
     ...(operationRole ? { assignmentOperationRole: operationRole } : {})
   });
+  const raw = transport.alias
+    ? await runWithRevitToolAlias(transport.alias, invoke)
+    : await invoke();
   const root = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const toolsRaw = Array.isArray(root.tools) ? root.tools : [];
   const tools: RegistryToolEntry[] = [];
@@ -615,12 +593,12 @@ server.tool("operator_runtime_probe", "Check that the Revit Operator MCP runtime
   };
 });
 
-server.tool("operator_discover_capabilities", "Discover a bounded set of available Revit capabilities for the active runtime. Hosted General Agent mode searches the live bridge registry; certified mode returns its certified projection. Discovery does not itself execute a mutation.", {
+server.tool("operator_discover_capabilities", "Discover a bounded set of available Revit capabilities for the active runtime. General Agent and development laboratory modes search the live bridge registry; certified mode returns its certified projection. Discovery does not itself execute a mutation.", {
   need: z.string().min(1).max(480).describe("A concise semantic capability need, not a tool name or route."),
   maxResults: z.number().int().min(1).max(8).optional().describe("Maximum certified capability descriptions to return (default 4).")
 }, async (args) => {
   const runtime = getToolExposureRuntimeDecision();
-  if (runtime.mode === "general") {
+  if (!runtime.certified) {
     const result = await discoverHostedGeneralAgentCapabilities(args, getToolRegistry);
     return { content: [{ type: "text", text: JSON.stringify({ ...result, runtimeMode: runtime.runtimeMode }, null, 2) }] };
   }
@@ -968,7 +946,7 @@ server.tool("revit_tool_registry", "List/search Revit HTTP primitives from the b
   }
 );
 
-server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Never use this to request all evidence.",
+server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded selection from one named durable evidence item. Supply exactly one selector. Use targetSubset for exact target-bound rows; never use this to request all evidence.",
   {
     evidenceId: z.string().describe("Named ev1_ evidence identity from a model-facing projection."),
     sessionId: z.string().describe("Current session identity."),
@@ -977,15 +955,23 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
     attemptId: z.string().nullable().optional(),
     generation: z.number().int().min(0).nullable().optional(),
     purpose: z.string().describe("Specific decision or verification need; 'all evidence' is rejected."),
-    fields: z.array(z.string()).max(64).optional(),
-    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).optional(),
-    textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).optional(),
-    targetSubset: z.array(z.string()).max(64).optional(),
-    image: z.boolean().optional(),
+    fields: z.array(z.string()).min(1).max(64).describe("One or more typed paths. Mutually exclusive with itemRange, textRange, targetSubset, and image.").optional(),
+    itemRange: z.object({ path: z.string(), start: z.number().int().min(0), count: z.number().int().min(1).max(256) }).describe("One bounded array page. Mutually exclusive with every other selector.").optional(),
+    textRange: z.object({ start: z.number().int().min(0), length: z.number().int().min(1) }).describe("One bounded UTF-8 byte range. Mutually exclusive with every other selector.").optional(),
+    targetSubset: z.array(z.string()).min(1).max(64).describe("Exact target identities; arbitrary prose and partial substrings never match. Mutually exclusive with every other selector.").optional(),
+    image: z.literal(true).describe("Select one image. Mutually exclusive with every other selector.").optional(),
     maxBytes: z.number().int().min(64).max(1_048_576).optional()
   },
   async (args) => {
     try {
+      const selectorRequest = {
+        ...(args.fields ? { fields: args.fields } : {}),
+        ...(args.itemRange ? { item_range: args.itemRange } : {}),
+        ...(args.textRange ? { text_range: args.textRange } : {}),
+        ...(args.targetSubset ? { target_subset: args.targetSubset } : {}),
+        ...(args.image !== undefined ? { image: args.image } : {})
+      };
+      parseEvidenceRetrievalSelectorV1(selectorRequest);
       const result = await createOperatorBackendClient().retrieveEvidence({
         schema: "revit-operator.evidence-retrieval.v1",
         evidence_id: args.evidenceId,
@@ -997,11 +983,7 @@ server.tool("operator_retrieve_evidence", "Retrieve a focused, byte-bounded sele
           generation: args.generation ?? null
         },
         purpose: args.purpose,
-        ...(args.fields ? { fields: args.fields } : {}),
-        ...(args.itemRange ? { item_range: args.itemRange } : {}),
-        ...(args.textRange ? { text_range: args.textRange } : {}),
-        ...(args.targetSubset ? { target_subset: args.targetSubset } : {}),
-        ...(args.image !== undefined ? { image: args.image } : {}),
+        ...selectorRequest,
         ...(args.maxBytes !== undefined ? { max_bytes: args.maxBytes } : {})
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
@@ -1235,13 +1217,13 @@ server.tool("operator_submit_read_completion", "Submit a task-level read-complet
   }
 );
 
-server.tool("revit_search_tools", "Search Revit bridge primitives and return best matches for a natural-language task.",
+server.tool("revit_search_tools", "Search Revit bridge primitives and return best matches for a natural-language task. Registry risk describes a route's possible committed effect; omit the risk filter when discovering mutation previews because a typed high-risk route may still provide a safe dry-run or rollback mode.",
   {
     query: z.string().describe("What you need to do (or endpoint/path keywords)."),
     max: z.number().int().optional().default(20),
     method: z.enum(["GET", "POST"]).optional(),
     group: z.string().optional(),
-    risk: z.enum(["low", "medium", "high"]).optional(),
+    risk: z.enum(["low", "medium", "high"]).optional().describe("Exact endpoint/action-risk filter. This is not preview risk: omit it when searching for a mutation preview or dry-run capability."),
     pathPrefix: z.string().optional(),
     includeSchemas: z.boolean().optional().default(false),
     forceRefresh: z.boolean().optional().default(false)
@@ -1258,6 +1240,7 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
       const pathPrefix = String(args.pathPrefix ?? "").trim().toLowerCase();
       const max = Math.max(1, Math.min(100, Number(args.max ?? 20) || 20));
       const includeSchemas = !!args.includeSchemas;
+      const exposeBroaderRiskCandidates = shouldExposeBroaderRiskCandidates(query, risk);
 
       // If capability discovery already loaded the session registry, rank it
       // locally instead of issuing a second live Revit request for the same
@@ -1265,14 +1248,20 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
       // endpoint, and forceRefresh intentionally bypasses this reuse.
       if (!pathPrefix && !includeSchemas && !freshCachedToolRegistry() && !args.forceRefresh) {
         try {
-          const directBody: Record<string, unknown> = { query, max: Math.min(max, 12) };
+          const directBody: Record<string, unknown> = {
+            query,
+            max: exposeBroaderRiskCandidates ? Math.min(Math.max(max * 2, 12), 24) : Math.min(max, 12)
+          };
           if (method) directBody.method = method;
           if (group) directBody.group = group;
-          if (risk) directBody.risk = risk;
+          if (risk && !exposeBroaderRiskCandidates) directBody.risk = risk;
 
           const direct = await callRevit<Record<string, unknown>>("/revit/tool-search", "POST", directBody, { channel: "search" });
+          if (!isToolSearchRankingVersionV3((direct as any)?.ranking_version)) {
+            throw new Error("Native tool-search ranking contract is missing or incompatible.");
+          }
           const matchesRaw = Array.isArray((direct as any)?.matches) ? ((direct as any).matches as unknown[]) : [];
-          const matches = filterRegistryEntriesForSearch(matchesRaw.map(item => {
+          const unpartitionedMatches = filterRegistryEntriesForSearch(matchesRaw.map(item => {
             const tool = normalizeRegistryTool(item);
             if (!tool) return null;
             const raw = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
@@ -1280,7 +1269,15 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
             return compactToolForList(tool, score);
           }).filter((item): item is Record<string, unknown> => !!item));
 
-          if (matches.length > 0 || String((direct as any)?.version ?? "") === "operator.tool_search.v1") {
+          const partitioned = exposeBroaderRiskCandidates
+            ? partitionRiskFilteredCandidates(unpartitionedMatches, risk, max)
+            : { matches: unpartitionedMatches.slice(0, max), broaderRiskCandidates: [] as Record<string, unknown>[] };
+          const matches = partitioned.matches;
+          const riskFilterAdvisory = partitioned.broaderRiskCandidates.length > 0
+            ? buildToolSearchRiskFilterAdvisory(risk, partitioned.broaderRiskCandidates)
+            : null;
+
+          if (matches.length > 0 || riskFilterAdvisory || String((direct as any)?.version ?? "") === "operator.tool_search.v1") {
             return {
               content: [
                 {
@@ -1288,9 +1285,13 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
                   text: JSON.stringify(
                     {
                       source: "/revit/tool-search",
+                      ...(typeof (direct as any)?.ranking_version === "string"
+                        ? { ranking_version: String((direct as any).ranking_version) }
+                        : {}),
                       query,
                       total_matches: matches.length,
-                      matches
+                      matches,
+                      ...(riskFilterAdvisory ? { risk_filter_advisory: riskFilterAdvisory } : {})
                     },
                     null,
                     2
@@ -1306,18 +1307,28 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
 
       const registry = await getToolRegistry(!!args.forceRefresh);
       const base = Array.isArray(registry.tools) ? registry.tools : [];
-      const ranked = base
+      const unpartitionedRanked = base
         .filter(t => {
           if (method && String(t.method ?? "").toUpperCase() !== method) return false;
           if (group && String(t.group ?? "").toLowerCase() !== group) return false;
-          if (risk && String(t.risk ?? "").toLowerCase() !== risk) return false;
+          if (risk && !exposeBroaderRiskCandidates && String(t.risk ?? "").toLowerCase() !== risk) return false;
           if (pathPrefix && !String(t.path ?? "").toLowerCase().startsWith(pathPrefix)) return false;
           return true;
         })
-        .map(tool => ({ tool, score: scoreToolMatch(tool, query) }))
+        .map(tool => ({ tool, score: scoreToolMatch(tool, query), path: tool.path, risk: tool.risk }))
         .filter(x => x.score > 0)
-        .sort((a, b) => b.score - a.score || String(a.tool.path ?? "").localeCompare(String(b.tool.path ?? "")))
-        .slice(0, max);
+        .sort(compareToolSearchCandidatesV3);
+
+      const partitionedRanked = exposeBroaderRiskCandidates
+        ? partitionRiskFilteredCandidates(unpartitionedRanked, risk, max)
+        : { matches: unpartitionedRanked.slice(0, max), broaderRiskCandidates: [] as typeof unpartitionedRanked };
+      const ranked = partitionedRanked.matches;
+      const broaderRiskCandidates = includeSchemas
+        ? partitionedRanked.broaderRiskCandidates.map(x => ({ score: x.score, ...x.tool }))
+        : partitionedRanked.broaderRiskCandidates.map(x => compactToolForList(x.tool, x.score));
+      const riskFilterAdvisory = broaderRiskCandidates.length > 0
+        ? buildToolSearchRiskFilterAdvisory(risk, broaderRiskCandidates)
+        : null;
 
       const matches = includeSchemas ? ranked.map(x => ({ score: x.score, ...x.tool })) : ranked.map(x => compactToolForList(x.tool, x.score));
       return {
@@ -1327,9 +1338,11 @@ server.tool("revit_search_tools", "Search Revit bridge primitives and return bes
             text: JSON.stringify(
               {
                 source: "/revit/tool-registry",
+                ranking_version: TOOL_SEARCH_RANKING_VERSION_V3,
                 query,
                 total_matches: ranked.length,
-                matches
+                matches,
+                ...(riskFilterAdvisory ? { risk_filter_advisory: riskFilterAdvisory } : {})
               },
               null,
               2
@@ -1418,6 +1431,14 @@ server.tool("revit_call_tool", "Generic Revit bridge call by method/path. Use wh
           };
       return { content: [{ type: "text", text: JSON.stringify(wrapped, null, 2) }] };
     } catch (e) {
+      if (e instanceof RevitBridgeCallError) {
+        const failure = revitBridgeFailurePayload(e);
+        return {
+          isError: true,
+          structuredContent: failure,
+          content: [{ type: "text", text: JSON.stringify(failure, null, 2) }]
+        };
+      }
       return { isError: true, content: [{ type: "text", text: String(e) }] };
     }
   }
@@ -1864,7 +1885,9 @@ server.tool("revit_find_text_notes", "Find TextNotes by exact element identity, 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/find-text-notes", "POST", args);
+      const data = await callRevit("/revit/find-text-notes", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2237,7 +2260,9 @@ server.tool("revit_get_element_summary", "Get a lightweight summary (id/category
   async ({ ids }) => {
     try {
       // The Revit endpoint now prefers `elementIds` (legacy `ids` still supported).
-      const data = await callRevit("/revit/get-element-summary", "POST", { elementIds: ids });
+      const data = await callRevit("/revit/get-element-summary", "POST", { elementIds: ids }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3291,7 +3316,9 @@ server.tool("revit_get_parameters", "Read parameters for one or many elements. P
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/get-parameters", "POST", args);
+      const data = await callRevit("/revit/get-parameters", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });

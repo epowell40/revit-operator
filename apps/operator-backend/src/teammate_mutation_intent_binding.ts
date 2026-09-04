@@ -157,11 +157,19 @@ export function mutationIntentBlockReason(
 
 export function missingOpaqueMutationInputs(userText: string): string[] {
   const source = comparable(userText);
-  const replacementRequest = /\b(?:replace|update|correct|revise|change)\b.{0,180}\b(?:text\s*note|note|annotation|wording|text)\b/.test(source)
-    || /\b(?:text\s*note|note|annotation)\b.{0,180}\b(?:replace|update|correct|revise|change)\b/.test(source);
+  const replacementAction = "(?:replace(?:ment)?|update|correction?|revise|revision|change)";
+  const textArtifact = "(?:text\\s*note|note|annotation|wording|text)";
+  const replacementRequest = new RegExp(`\\b${replacementAction}\\b.{0,180}\\b${textArtifact}\\b`).test(source)
+    || new RegExp(`\\b${textArtifact}\\b.{0,180}\\b${replacementAction}\\b`).test(source);
   if (!replacementRequest) return [];
   if (containsUnresolvedChoice(userText)) return ["replacement_text"];
   const placeholder = source.match(/\b(?:with|to|using)\s+((?:(?:the\s+)?(?:current|correct|approved|latest|new|updated|revised|appropriate)\s+)+(?:issue\s+)?(?:wording|text|language|note|label|name|value))\b/);
   if (placeholder && !explicitlyLiteral(userText, placeholder[1] || "")) return ["replacement_text"];
+  const deterministicTransformation = quotedOperand(userText, "append") !== null
+    || quotedOperand(userText, "prepend") !== null
+    || /\b(?:convert|change|make|transform)\b.{0,100}\b(?:upper ?case|all caps|lower ?case)\b/.test(source);
+  const exactDelimitedValue = /\b(?:exact|literal|verbatim)\b.{0,100}\b(?:replacement\s+)?(?:wording|text|value)\s*[:=-]\s*\S/.test(source);
+  const explicitOperand = /\b(?:with|to|using)\s+(?!replace\b|replacement\b|update\b|correct\b|revise\b|change\b)[^.!?\n]{1,500}/.test(source);
+  if (!deterministicTransformation && !exactDelimitedValue && !explicitOperand) return ["replacement_text"];
   return [];
 }

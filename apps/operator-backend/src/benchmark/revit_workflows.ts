@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { execFileSync } from "node:child_process";
+import { textNoteRoundTripMatchesV1 } from "@revitoperator/text-note-round-trip-v1";
 import { getOrCreateOperatorToken } from "../operator_token.js";
 import { getWriteGrantToken } from "../operator_write_grant.js";
 import { assertExactDevelopmentLaboratoryNativeTransport } from "../brains/native_revit_transport.js";
@@ -6640,9 +6641,9 @@ function textNoteProofMatchesRequest(viewId: number, requestedText: string, requ
   const view = asObject(obj.view);
   const textType = asObject(obj.textType ?? obj.type);
   const appliedViewId = firstPositiveId(obj.viewId, obj.targetViewId, view.id, view.viewId);
-  const reportedText = firstPathLike(obj.text, obj.normalizedText, obj.value, asObject(obj.textNote).text);
+  const reportedText = firstTextNoteContent(obj.text, obj.normalizedText, obj.value, asObject(obj.textNote).text);
   const reportedTypeId = firstPositiveId(obj.textTypeId, obj.typeId, textType.id);
-  const textOk = !reportedText || normalizedTextProof(reportedText) === normalizedTextProof(requestedText);
+  const textOk = !reportedText || textNoteRoundTripMatchesV1(requestedText, reportedText);
   const typeOk = requestedTypeId === null || reportedTypeId === null || reportedTypeId === requestedTypeId;
   return appliedViewId === viewId && textOk && typeOk;
 }
@@ -6658,8 +6659,8 @@ function textNoteReadbackMatchesRequest(textRequest: JsonMap, viewId: number, re
   const appliedViewId = firstPositiveId(obj.viewId, obj.targetViewId, view.id, view.viewId, textNote.viewId, asObject(textNote.view).id);
   if (appliedViewId !== viewId) return false;
 
-  const reportedText = firstString(obj.text, obj.normalizedText, obj.normalized_text, obj.value, textNote.text, textNote.normalizedText, textNote.normalized_text, textNote.value);
-  if (!reportedText || normalizedTextProof(reportedText) !== normalizedTextProof(requestedText)) return false;
+  const reportedText = firstTextNoteContent(obj.text, obj.normalizedText, obj.normalized_text, obj.value, textNote.text, textNote.normalizedText, textNote.normalized_text, textNote.value);
+  if (!reportedText || !textNoteRoundTripMatchesV1(requestedText, reportedText)) return false;
 
   const reportedTypeId = firstPositiveId(obj.textTypeId, obj.text_type_id, obj.typeId, obj.type_id, textType.id);
   return requestedTypeId === null || reportedTypeId === requestedTypeId;
@@ -6673,6 +6674,13 @@ function textNoteItems(result: unknown): JsonMap[] {
   return Object.keys(textNote).length > 0 ? [textNote] : [];
 }
 
+function firstTextNoteContent(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0 && value.length <= 20_000) return value;
+  }
+  return "";
+}
+
 function textNoteItemMatches(item: JsonMap, textNoteId: number, viewId: number | null, expectedText: string): boolean {
   const id = firstPositiveId(item.textNoteId, item.text_note_id, item.elementId, item.element_id, item.id);
   if (id !== textNoteId) return false;
@@ -6682,8 +6690,8 @@ function textNoteItemMatches(item: JsonMap, textNoteId: number, viewId: number |
 function textNoteItemTextAndViewMatches(item: JsonMap, viewId: number | null, expectedText: string): boolean {
   const ownerViewId = firstPositiveId(item.ownerViewId, item.owner_view_id, item.viewId, item.view_id);
   if (viewId !== null && ownerViewId !== null && ownerViewId !== viewId) return false;
-  const text = firstString(item.text, item.normalizedText, item.normalized_text, item.value);
-  return Boolean(text && normalizedTextProof(text) === normalizedTextProof(expectedText));
+  const text = firstTextNoteContent(item.text, item.normalizedText, item.normalized_text, item.value);
+  return Boolean(text && textNoteRoundTripMatchesV1(expectedText, text));
 }
 
 function textNoteFindResultMatches(result: unknown, textNoteId: number, viewId: number | null, expectedText: string): boolean {
@@ -6696,8 +6704,8 @@ function textNoteReplaceResultMatches(result: unknown, textNoteId: number, viewI
   if (id !== null && id !== textNoteId) return false;
   const ownerViewId = firstPositiveId(obj.ownerViewId, obj.owner_view_id, obj.viewId, obj.view_id);
   if (viewId !== null && ownerViewId !== null && ownerViewId !== viewId) return false;
-  const text = firstString(obj.after, obj.text, obj.normalizedText, obj.normalized_text, obj.value);
-  return Boolean(text && normalizedTextProof(text) === normalizedTextProof(expectedText));
+  const text = firstTextNoteContent(obj.after, obj.text, obj.normalizedText, obj.normalized_text, obj.value);
+  return Boolean(text && textNoteRoundTripMatchesV1(expectedText, text));
 }
 
 function cadLinkSourceMatchesRequest(cadRequest: JsonMap, cadApplied: unknown): boolean {

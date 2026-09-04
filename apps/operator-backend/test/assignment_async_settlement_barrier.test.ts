@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +35,20 @@ import {
   ASSIGNMENT_CLARIFICATION_SCHEMA,
   requestAssignmentClarification
 } from "../src/assignments/interaction.js";
+import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
+import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
+import { advanceAssignmentKernelProgressV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
+import {
+  beginAssignmentKernelTerminalBarrierV2,
+  endAssignmentKernelTerminalBarrierV2
+} from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
+import {
+  ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+  markAssignmentKernelOperationDispatchStartedV2,
+  openAssignmentKernelOperationV2,
+  settleAssignmentKernelOperationV2
+} from "../src/assignments/assignment_kernel_v2_execution.js";
+import { canonicalJsonV2, OPERATION_RESULT_V2_SCHEMA } from "../src/domain/assignment-kernel/index.js";
 
 type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void };
 
@@ -638,6 +652,454 @@ test("canonical terminal truth blocks before teammate-gate registration", { conc
       assert.match(firstGate.call?.path ?? "", /^mcp:1\|/);
       recordTeammateMcpResult(runtime, firstGate, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
     } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 42 operation-admission rejection remains structured and never becomes a generic dynamic-tool failure", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate42-structured-admission";
+    const goal = createGoal({
+      title: "Return an inventory",
+      objective: "Count the requested Revit elements and group the result.",
+      acceptance_criteria: ["A complete inventory result is authoritatively established."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate42-regression",
+      work_budget: { requested_effect: "read", document_fingerprint: "document-candidate42" }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate42" });
+    const invalid = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: "candidate42-invalid-quantify",
+      provider_turn_id: "candidate42-turn-1",
+      capability_id: "revit_call_tool",
+      classified_effect: "read",
+      arguments: {
+        method: "POST",
+        path: "/revit/quantify",
+        body: {
+          categories: ["OST_DuctTerminal"],
+          group_by: ["family", "type"],
+          intent: "Count all air devices in the host project and group by family and type.",
+          scope: "host"
+        }
+      }
+    });
+    settleAssignmentKernelOperationV2(invalid, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: {
+          schema: OPERATION_RESULT_V2_SCHEMA,
+          result_id: `result-${invalid.operation_id}`,
+          operation_id: invalid.operation_id,
+          binding: invalid.binding,
+          status: "failed_before_dispatch",
+          dispatch_state: "not_dispatched",
+          persistent_effect: "none",
+          native_transaction_state: "not_applicable",
+          authority: "operator-mcp-transport",
+          result_schema_id: "operator-native/POST:/revit/quantify/input-validation/v1",
+          observation_required: false,
+          request_identity: invalid.request_identity,
+          completed_at: "2026-09-01T18:08:39.000Z",
+          error_code: "operator_native_input_schema_invalid",
+          input_schema_gap: {
+            schema: "revit-operator.operation-input-schema-gap/v2",
+            gap_id: `input-schema:${invalid.operation_id}`,
+            operation_id: invalid.operation_id,
+            capability_id: invalid.capability_id,
+            input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+            input_schema_digest: "a".repeat(64),
+            method: "POST",
+            path: "/revit/quantify",
+            request_signature: invalid.request_identity.request_signature,
+            dispatch: false,
+            effect: "none",
+            issues: [{
+              field_path: "body.intent",
+              expected_type: "enum",
+              actual_type: "string",
+              safe_correction_eligibility: "provider_corrected_arguments_required",
+              correction_action: "provider_resubmit",
+              expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+            }]
+          }
+        }
+      }
+    });
+
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async () => {
+        runtimeCalls += 1;
+        return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+      },
+      queueAssignmentKernelV2TurnStop: () => {}
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate42-message",
+      user_text: "Count all air devices and group the inventory by family and type.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      let response: { success?: boolean; contentItems?: Array<{ text?: string }> } | undefined;
+      await assert.doesNotReject(async () => {
+        response = await handleCodexServerRequest(runtime as any, {
+          id: "candidate42-unrelated-support-request",
+          method: "item/tool/call",
+          params: {
+            namespace: "revit_operator",
+            threadId: "candidate42-thread",
+            turnId: "candidate42-turn-2",
+            callId: "candidate42-support-call",
+            tool: "operator_discover_capabilities",
+            arguments: { need: "inventory" }
+          }
+        } as any) as typeof response;
+      });
+      assert.equal(response?.success, false);
+      assert.match(response?.contentItems?.[0]?.text ?? "", /assignment_kernel_v2_operation_admission_blocked/);
+      assert.match(response?.contentItems?.[0]?.text ?? "", /input_schema_gap_requires_corrected_operation_or_exact_schema_docs/);
+      assert.equal(runtimeCalls, 0, "rejected admission must not invoke the MCP or Revit runtime");
+      assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
+        "rejected admission must not open another OperationV2");
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 66 incapable postcondition readback is rejected across the dynamic-handler seam before dispatch", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate66-verifier-admission-seam";
+    const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+    const goal = createGoal({
+      title: "Replace one TextNote",
+      objective: `Replace TextNote 1478627 with exactly: ${replacement}`,
+      acceptance_criteria: ["The exact admitted result is retained and verified."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate66-regression",
+      work_budget: {
+        requested_effect: "apply", document_fingerprint: "document-candidate66",
+        source_user_request: `Replace TextNote 1478627 with exactly: ${replacement}`
+      }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate66" });
+    const applyLease = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: "candidate66-apply",
+      provider_turn_id: "candidate66-apply-turn",
+      capability_id: "revit_call_tool",
+      classified_effect: "apply",
+      target_tokens: ["elementid:1478627", "id:1478627"],
+      arguments: {
+        method: "POST", path: "/revit/replace-text-note",
+        body: { elementId: 1478627, newText: replacement, apply: true }
+      }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const payload = { status: "Applied", elementId: 1478627, before: "OLD", after: replacement, changed: true };
+    settleAssignmentKernelOperationV2(applyLease, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: {
+          schema: OPERATION_RESULT_V2_SCHEMA,
+          result_id: `result-${applyLease.operation_id}`,
+          operation_id: applyLease.operation_id,
+          binding: applyLease.binding,
+          status: "succeeded",
+          dispatch_state: "dispatched",
+          persistent_effect: "applied",
+          native_transaction_state: "committed",
+          authority: "native-host",
+          result_schema_id: "operator-native/POST:/revit/replace-text-note/v2",
+          observation_required: true,
+          raw_payload_hash: createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex"),
+          receipt_id: `receipt-${applyLease.operation_id}`,
+          native_correlation_id: `native-${applyLease.operation_id}`,
+          request_identity: applyLease.request_identity,
+          completed_at: "2026-09-03T18:33:04.518Z"
+        },
+        observation: {
+          raw_payload: payload,
+          semantic_facts: [],
+          verification_relevance: ["task_result"]
+        }
+      }
+    });
+
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async () => {
+        runtimeCalls += 1;
+        return { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] };
+      },
+      queueAssignmentKernelV2TurnStop: () => {}
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate66-message",
+      user_text: `Replace the selected note with ${replacement}.`,
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      const response = await handleCodexServerRequest(runtime as any, {
+        id: "candidate66-incapable-readback-request",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator", threadId: "candidate66-thread", turnId: "candidate66-verification-turn",
+          callId: "candidate66-incapable-readback", tool: "revit_call_tool",
+          arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [1478627] } }
+        }
+      } as any) as { success?: boolean; contentItems?: Array<{ text?: string }> };
+      assert.equal(response.success, false);
+      assert.match(response.contentItems?.[0]?.text ?? "", /assignment_kernel_v2_verification_capability_inadmissible/);
+      assert.match(response.contentItems?.[0]?.text ?? "", /\/revit\/find-text-notes/);
+      assert.equal(runtimeCalls, 0, "incapable verification must be rejected before MCP or Revit dispatch");
+      assert.equal(Object.keys(getAssignmentKernelSnapshotV2(goal.id)!.operations).length, 1,
+        "rejected verification must not consume another OperationV2 identity");
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 68 contextual view scope cannot displace the affected TextNote at the dynamic-handler seam", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate68-principal-target-seam";
+    const replacement = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+    const goal = createGoal({
+      title: "Replace one TextNote and verify it",
+      objective: `Replace TextNote 1478627 with exactly: ${replacement}`,
+      acceptance_criteria: ["The exact admitted result is retained and verified."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate68-regression",
+      work_budget: {
+        requested_effect: "apply", document_fingerprint: "document-candidate68",
+        source_user_request: `Replace TextNote 1478627 with exactly: ${replacement}`
+      }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate68" });
+    const applyLease = openAssignmentKernelOperationV2({
+      snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+      controller_request_id: "candidate68-apply",
+      provider_turn_id: "candidate68-apply-turn",
+      capability_id: "revit_call_tool",
+      classified_effect: "apply",
+      target_tokens: ["elementid:1478627", "id:1478627"],
+      arguments: {
+        method: "POST", path: "/revit/replace-text-note",
+        body: { elementId: 1478627, newText: replacement, apply: true }
+      }
+    });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const payload = { status: "Applied", elementId: 1478627, before: "OLD", after: replacement, changed: true };
+    settleAssignmentKernelOperationV2(applyLease, {
+      content: [],
+      structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: {
+          schema: OPERATION_RESULT_V2_SCHEMA,
+          result_id: `result-${applyLease.operation_id}`,
+          operation_id: applyLease.operation_id,
+          binding: applyLease.binding,
+          status: "succeeded",
+          dispatch_state: "dispatched",
+          persistent_effect: "applied",
+          native_transaction_state: "committed",
+          authority: "native-host",
+          result_schema_id: "operator-native/POST:/revit/replace-text-note/v2",
+          observation_required: true,
+          raw_payload_hash: createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex"),
+          receipt_id: `receipt-${applyLease.operation_id}`,
+          native_correlation_id: `native-${applyLease.operation_id}`,
+          request_identity: applyLease.request_identity,
+          completed_at: "2026-09-03T23:03:04.518Z"
+        },
+        observation: { raw_payload: payload, semantic_facts: [], verification_relevance: ["task_result"] }
+      }
+    });
+    advanceAssignmentKernelProgressV2({ binding });
+
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async () => {
+        runtimeCalls += 1;
+        throw new Error("candidate68_mcp_preflight_boundary");
+      },
+      queueAssignmentKernelV2TurnStop: () => {}
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate68-message",
+      user_text: `Replace TextNote 1478627 with exactly: ${replacement}`,
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    try {
+      const response = await handleCodexServerRequest(runtime as any, {
+        id: "candidate68-scoped-readback-request",
+        method: "item/tool/call",
+        params: {
+          namespace: "revit_operator", threadId: "candidate68-thread", turnId: "candidate68-verification-turn",
+          callId: "candidate68-scoped-readback", tool: "revit_call_tool",
+          arguments: {
+            method: "POST", path: "/revit/find-text-notes",
+            body: { elementIds: [1478627], viewId: 1363433, query: replacement, matchMode: "exact", max: 1 }
+          }
+        }
+      } as any) as { success?: boolean; contentItems?: Array<{ text?: string }> };
+      assert.equal(response.success, false);
+      assert.match(response.contentItems?.[0]?.text ?? "", /candidate68_mcp_preflight_boundary/);
+      assert.doesNotMatch(response.contentItems?.[0]?.text ?? "", /operation_admission_blocked|verification_target_mismatch/);
+      assert.equal(runtimeCalls, 1, "the exact target must reach normal MCP schema validation instead of dying at admission");
+      const snapshot = getAssignmentKernelSnapshotV2(goal.id)!;
+      const verification = Object.values(snapshot.operations).find(operation => operation.purpose === "verification");
+      assert.equal(verification?.target.target_id, "id:1478627");
+      assert.equal(verification?.verification_of_operation_id, applyLease.operation_id);
+      assert.equal(verification?.dispatch_state, "not_dispatched");
+      assert.equal(verification?.persistent_effect, "none");
+    } finally {
+      endTeammateLoopOwner(teammate);
+    }
+  });
+});
+
+test("Candidate 49 retained task evidence is evaluated before another task operation can dispatch", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "candidate49-observation-before-next-operation";
+    const goal = createGoal({
+      title: "Return an inventory",
+      objective: "Count the requested Revit elements and group the result by family and type.",
+      acceptance_criteria: ["A complete grouped inventory result is authoritatively established."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "candidate49-regression",
+      work_budget: { requested_effect: "read", document_fingerprint: "document-candidate49" }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate49" });
+    const queuedStops: string[] = [];
+    let runtimeCalls = 0;
+    const runtime = {
+      assignmentKernelV2Binding: () => binding,
+      callTool: async (_tool: string, _args: unknown, context: any) => {
+        runtimeCalls += 1;
+        context.onMcpAccepted?.();
+        const lease = context.assignmentKernelV2;
+        const payload = {
+          total: 509,
+          groups: [{ family: "Supply Diffuser - Square - Hosted", type: "12 x 12", count: 82 }]
+        };
+        return {
+          content: [{ type: "text", text: "Inventory complete." }],
+          structuredContent: {
+            schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+            operation_result_v2: {
+              schema: OPERATION_RESULT_V2_SCHEMA,
+              result_id: `result-${lease.operation_id}`,
+              operation_id: lease.operation_id,
+              binding: lease.binding,
+              status: "succeeded",
+              dispatch_state: "dispatched",
+              persistent_effect: "none",
+              native_transaction_state: "not_applicable",
+              authority: "native-host",
+              result_schema_id: "operator-native/POST:/revit/quantify/v2",
+              observation_required: true,
+              raw_payload_hash: createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex"),
+              receipt_id: `receipt-${lease.operation_id}`,
+              native_correlation_id: `native-${lease.operation_id}`,
+              request_identity: lease.request_identity,
+              completed_at: "2026-09-02T05:25:29.979Z"
+            },
+            observation: {
+              raw_payload: payload,
+              semantic_facts: [
+                { fact_id: "inventory.complete", fact_class: "domain", value: true },
+                { fact_id: "inventory.total", fact_class: "domain", value: 509 },
+                {
+                  fact_id: "inventory.group",
+                  fact_class: "domain",
+                  value: 82,
+                  dimensions: { family: "Supply Diffuser - Square - Hosted", type: "12 x 12" },
+                  cardinality: "one"
+                }
+              ],
+              verification_relevance: ["task_result"]
+            }
+          }
+        };
+      },
+      queueAssignmentKernelV2TurnStop: (_turnId: unknown, reason: string) => { queuedStops.push(reason); }
+    };
+    const teammate = beginTeammateLoopOwner(runtime, {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      session_id: sessionId,
+      message_id: "candidate49-message",
+      user_text: "Count all air devices and group the inventory by family and type.",
+      context: { revit: { source: { live: true }, process_id: 42, document: { title: "Fixture", path: "C:\\Fixture.rvt" } } }
+    });
+    const terminalBarrier = beginAssignmentKernelTerminalBarrierV2({
+      binding,
+      barrier_id: "candidate49-active-provider-turn"
+    });
+    const dynamicRequest = (id: string, callId: string, includeParameters: boolean) => ({
+      id,
+      method: "item/tool/call",
+      params: {
+        namespace: "revit_operator",
+        threadId: "candidate49-thread",
+        turnId: "candidate49-turn",
+        callId,
+        tool: "revit_call_tool",
+        arguments: {
+          method: "POST",
+          path: "/revit/quantify",
+          body: {
+            categories: ["OST_DuctTerminal"],
+            group_by: ["family", "type"],
+            intent: "count_and_list",
+            scope: "host",
+            includeParameters
+          }
+        }
+      }
+    });
+    try {
+      const first = await handleCodexServerRequest(runtime as any,
+        dynamicRequest("candidate49-request-1", "candidate49-call-1", false) as any) as any;
+      assert.equal(first.success, true);
+      const afterFirst = getAssignmentKernelSnapshotV2(goal.id)!;
+      assert.equal(afterFirst.outcome, "complete",
+        "the first authoritative task Observation must be evaluated at the settlement boundary");
+      assert.equal(afterFirst.terminal, false,
+        "the provider receipt barrier may defer terminal commit but never criterion evaluation");
+      assert.equal(afterFirst.criteria[afterFirst.spec.criteria[0]!.criterion_id]?.status, "pass");
+      assert.ok(queuedStops.length > 0, "the provider turn must be stopped after completion becomes derivable");
+
+      const second = await handleCodexServerRequest(runtime as any,
+        dynamicRequest("candidate49-request-2", "candidate49-call-2", true) as any) as any;
+      assert.equal(second.success, false);
+      assert.match(JSON.stringify(second), /already terminal|operation_admission_after_terminal_outcome/);
+      assert.equal(runtimeCalls, 1, "the redundant second quantify call must never reach MCP or Revit");
+      const final = getAssignmentKernelSnapshotV2(goal.id)!;
+      assert.equal(Object.keys(final.operations).length, 1);
+      assert.equal(Object.keys(final.observations).length, 1);
+      assert.equal(final.criteria[final.spec.criteria[0]!.criterion_id]?.supporting_operation_ids.length, 1);
+    } finally {
+      endAssignmentKernelTerminalBarrierV2(terminalBarrier);
       endTeammateLoopOwner(teammate);
     }
   });

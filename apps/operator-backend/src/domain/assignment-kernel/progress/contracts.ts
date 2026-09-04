@@ -15,10 +15,12 @@ export type ProgressGapKindV2 =
   | "criterion_fact_missing"
   | "criterion_uncertain"
   | "operation_input_schema_invalid"
+  | "operation_result_semantic_invalid"
   | "input_missing"
   | "review_required"
   | "operation_unsettled"
   | "effect_unknown"
+  | "verification_required"
   | "evidence_stale"
   | "evidence_conflicting"
   | "resource_exhausted";
@@ -90,12 +92,15 @@ export interface ProgressEpochV2 {
   progress_reasons: readonly (
     | "criterion_advanced"
     | "gap_narrowed"
+    | "correction_gap_identified"
     | "authoritative_observation_added"
+    | "controller_knowledge_added"
     | "input_requested"
     | "input_resolved"
     | "review_requested"
     | "review_resolved"
     | "uncertainty_reconciled"
+    | "execution_strategy_selected"
     | "work_unit_changed"
     | "terminal_derived"
   )[];

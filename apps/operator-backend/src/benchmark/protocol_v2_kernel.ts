@@ -1,3 +1,11 @@
+import {
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+  ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+  ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
+  parseAssignmentKernelPublicationV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
+import { BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA } from "./assignment_kernel_v2_collection.js";
+
 type JsonRecord = Record<string, unknown>;
 
 function record(value: unknown): JsonRecord {
@@ -11,15 +19,23 @@ function records(value: unknown): JsonRecord[] {
 export function directKernelPublicationsV2(toolResultsValue: unknown): JsonRecord[] {
   const toolResults = record(toolResultsValue);
   const bundle = record(toolResults.durable_assignment_kernel_v2);
-  if (bundle.schema !== "revit-operator.benchmark-assignment-kernel-v2/v1") return [];
-  return records(bundle.assignments).filter((publication) =>
-    record(publication.snapshot).schema === "revit-operator.assignment-snapshot/v2"
-      && record(publication.provider_ledger).schema === "revit-operator.assignment-provider-ledger/v2");
+  if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) return [];
+  if (!Array.isArray(bundle.assignments)) {
+    throw new TypeError("assignment_kernel_v2_direct_publication_invalid:assignments");
+  }
+  return bundle.assignments.map((candidate, index) => {
+    try {
+      return record(parseAssignmentKernelPublicationV2(candidate));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new TypeError(`assignment_kernel_v2_direct_publication_invalid:${index}:${detail}`);
+    }
+  });
 }
 
 export function expectedDirectKernelAssignmentIdsV2(toolResultsValue: unknown): string[] {
   const bundle = record(record(toolResultsValue).durable_assignment_kernel_v2);
-  if (bundle.schema !== "revit-operator.benchmark-assignment-kernel-v2/v1") return [];
+  if (bundle.schema !== BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA) return [];
   return Array.isArray(bundle.assignment_ids)
     ? [...new Set(bundle.assignment_ids.map(String).map((value) => value.trim()).filter(Boolean))]
     : [];
@@ -30,15 +46,15 @@ function legacyKernelPublicationsV2(toolResults: JsonRecord): JsonRecord[] {
   const projection = record(toolResults.durable_assignment_projection);
   return records(projection.assignments).flatMap((assignment) => {
     const snapshot = record(assignment.assignment_snapshot_v2);
-    if (snapshot.schema !== "revit-operator.assignment-snapshot/v2") return [];
+    if (snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA) return [];
     const binding = record(snapshot.current_binding);
     return [{
-      schema: "revit-operator.assignment-kernel-publication/v2",
+      schema: ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
       assignment_id: binding.assignment_id,
       assignment_version: snapshot.assignment_version,
       snapshot,
       provider_ledger: {
-        schema: "revit-operator.assignment-provider-ledger/v2",
+        schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
         assignment_id: binding.assignment_id,
         run_id: binding.run_id,
         generation: binding.generation,

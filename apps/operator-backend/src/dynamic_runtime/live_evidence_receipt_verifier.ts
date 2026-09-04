@@ -82,6 +82,12 @@ function sameStringSet(actual: unknown, expected: unknown, field: string): void 
   }
 }
 
+function affectedTargetIdentities(value: unknown, field: string): string[] {
+  const ids = elementIdArray(value, field);
+  if (new Set(ids).size !== ids.length) throw new Error(`${field} must not contain duplicate element ids.`);
+  return ids.map(id => `element_id:${id}`).sort();
+}
+
 /** Verifies the generic Dynamic Revit receipt chain. The historical EPIC-0439
  * harness consumes this production contract; production does not import the
  * benchmark harness. */
@@ -91,6 +97,7 @@ export function verifyDynamicRevitLiveEvidenceReceipt(rawBytes: Buffer): {
   executionTimeMs: number;
   recoveryOutcome: "not_needed" | "failed" | "outcome_uncertain";
   bindingHash: string;
+  affectedTargetIdentities: string[];
 } {
   let parsed: unknown;
   try { parsed = JSON.parse(rawBytes.toString("utf8")) as unknown; }
@@ -123,6 +130,7 @@ export function verifyDynamicRevitLiveEvidenceReceipt(rawBytes: Buffer): {
   const previewOk = booleanField(preview.receipt, "ok");
   if (previewOk && preview.receipt.rollback_truth !== true) throw new Error("A successful preview must prove rollback truth.");
   let receiptCompleted = topOk && previewOk;
+  let authoritativeAffectedTargets: string[] = [];
   const binding: JsonRecord = {
     evidence_schema: schema,
     source_hash: stringField(worker, "sourceHash"), program_hash: stringField(worker, "programHash"),
@@ -161,11 +169,13 @@ export function verifyDynamicRevitLiveEvidenceReceipt(rawBytes: Buffer): {
     sameStringSet(apply.receipt.changed_element_ids, preview.receipt.projected_changed_element_ids, "applyReceipt.changed_element_ids");
     receiptCompleted = receiptCompleted && booleanField(authorization.receipt, "authorization_granted")
       && apply.receipt.outcome === "committed_verified";
+    const changedElementIds = elementIdArray(apply.receipt.changed_element_ids, "applyReceipt.changed_element_ids").sort();
+    authoritativeAffectedTargets = affectedTargetIdentities(apply.receipt.changed_element_ids, "applyReceipt.changed_element_ids");
     Object.assign(binding, {
       admission_id: stringField(v1Admission, "admissionId"),
       final_authorization_hash: stringField(v1Admission, "finalAuthorizationHash"),
       apply_receipt_hash: sha256Bytes(apply.raw), effect_budget_hash: stringField(v1Admission, "effectBudgetHash"),
-      changed_element_ids: elementIdArray(apply.receipt.changed_element_ids, "applyReceipt.changed_element_ids").sort()
+      changed_element_ids: changedElementIds
     });
   }
   return {
@@ -173,6 +183,7 @@ export function verifyDynamicRevitLiveEvidenceReceipt(rawBytes: Buffer): {
     completed: receiptCompleted,
     executionTimeMs: completed - started,
     recoveryOutcome: top.failure == null ? "not_needed" : topOk ? "outcome_uncertain" : "failed",
-    bindingHash: sha256Bytes(canonicalJson(binding))
+    bindingHash: sha256Bytes(canonicalJson(binding)),
+    affectedTargetIdentities: authoritativeAffectedTargets
   };
 }

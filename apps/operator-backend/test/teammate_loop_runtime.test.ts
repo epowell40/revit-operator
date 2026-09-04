@@ -39,7 +39,7 @@ test("verified mutation stages may continue while retries and unverified chainin
     assert.equal(firstApply.allowed, true);
     record(firstApply, { ok: true, elementIds: [42] });
     const firstRead = run({ method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] } });
-    record(firstRead, { ok: true, elementIds: [42], values: ["WATTS"] });
+    record(firstRead, { ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }] });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
 
     const secondPreview = run({ method: "POST", path: "/revit/set-parameters", body: { elementIds: [43], parameters: { Manufacturer: "JOSAM" }, dryRun: true } });
@@ -49,7 +49,7 @@ test("verified mutation stages may continue while retries and unverified chainin
     assert.equal(secondApply.allowed, true);
     record(secondApply, { ok: true, elementIds: [43] });
     const secondRead = run({ method: "POST", path: "/revit/get-parameters", body: { elementIds: [43], parameterNames: ["Manufacturer"] } });
-    record(secondRead, { ok: true, elementIds: [43], values: ["JOSAM"] });
+    record(secondRead, { ok: true, items: [{ id: 43, parameters: { Manufacturer: "JOSAM" } }] });
     const finalReceipt = teammateLoopReceiptForOwner(owner);
     assert.equal(finalReceipt?.apply_attempts, 2);
     assert.equal(finalReceipt?.verified, true);
@@ -712,7 +712,8 @@ test("generic provider loop binds preview to one apply and requires post-apply v
   assert.equal(verify.teammate_loop_receipt?.stage, "verify");
 
   const complete = guardGenericTeammateDecision(request(text, [{
-    action_id: "verify-1", method: "POST", path: "/revit/get-parameters", status: "done", result_json: { ok: true, values: ["WATTS"] }
+    action_id: "verify-1", method: "POST", path: "/revit/get-parameters", status: "done",
+    result_json: { ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }] }
   }]), response([], "Updated and verified."));
   assert.equal(complete.teammate_loop_receipt?.verified, true);
   assert.equal(complete.teammate_loop_receipt?.stage, "report");
@@ -879,7 +880,9 @@ test("Codex MCP host guard supports preview while blocking an unverified repeate
       arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] } }
     });
     assert.equal(readback.allowed, true);
-    recordTeammateMcpResult(owner, readback, { content: [{ type: "text", text: JSON.stringify({ ok: true, values: ["WATTS"] }) }] });
+    recordTeammateMcpResult(owner, readback, { content: [{ type: "text", text: JSON.stringify({
+      ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+    }) }] });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
   } finally {
     endTeammateLoopOwner(lease);
@@ -1052,6 +1055,151 @@ test("structured request-validation failures do not consume the mutation stage",
     });
     assert.equal(corrected.allowed, true);
     assert.equal(corrected.call?.effect, "apply");
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("a deleted target that is still present cannot be mistaken for postcondition verification", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Delete element 42 from the current model."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/delete-elements", body: { elementIds: [42], apply: true } }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, deletedElementIds: [42] }) }]
+    });
+
+    const contradictoryReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { elementIds: [42] } }
+    });
+    assert.equal(contradictoryReadback.allowed, true);
+    assert.equal(recordTeammateMcpResult(owner, contradictoryReadback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        requestedElementIds: [42],
+        exactElementFilterApplied: true,
+        items: [{ elementId: 42, name: "Still present" }]
+      }) }]
+    }), null);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+
+    const absentReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { elementIds: [42] } }
+    });
+    assert.equal(absentReadback.allowed, true);
+    assert.ok(recordTeammateMcpResult(owner, absentReadback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        requestedElementIds: [42],
+        exactElementFilterApplied: true,
+        exists: false,
+        items: []
+      }) }]
+    }));
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("request and metadata echoes cannot supply a generic postcondition assertion", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Move element 42 one foot east."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/move-elements",
+        body: { elementIds: [42], delta: { x: 1, y: 0, z: 0 }, apply: true }
+      }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42] }) }]
+    });
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/find-elements", body: { elementIds: [42] } }
+    });
+    assert.equal(readback.allowed, true);
+    assert.equal(recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        items: [{ elementId: 42, location: { x: 0, y: 0, z: 0 } }],
+        metadata: { request: { verified: true } }
+      }) }]
+    }), null);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("structured native-transport pre-dispatch failure permits one corrected mutation without verification", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request(
+    "Replace TextNote 1478627 with this exact text:\nISSUE\nVERIFY\nApply exactly that one change."
+  ));
+  const initial = {
+    method: "POST",
+    path: "/revit/replace-text-note",
+    body: {
+      elementId: 1478627,
+      expectedOldText: "Chase for Electrical Conduit\r",
+      newText: "ISSUE\nVERIFY",
+      dryRun: false,
+      apply: true,
+      confirm: "APPLY 1 TEXT NOTE CHANGE"
+    }
+  };
+  try {
+    const first = guardTeammateMcpCall(owner, { tool: "revit_call_tool", arguments: initial });
+    assert.equal(first.allowed, true);
+    assert.equal(first.call?.effect, "apply");
+    const transportFailure = {
+      schema: "revit-operator.revit-bridge-failure.v1",
+      ok: false,
+      code: "revit_bridge_unavailable",
+      transport_code: "revit_bridge_unavailable",
+      bridge_code: "native_transport_request_protection_failed",
+      phase: "pre_dispatch",
+      retryable: true,
+      request_dispatched: false,
+      outcome_unknown: false,
+      method: "POST",
+      path: "/revit/replace-text-note",
+      error: "The protected request was rejected before native dispatch."
+    };
+    recordTeammateMcpResult(owner, first, {
+      isError: true,
+      structuredContent: transportFailure,
+      content: [{ type: "text", text: JSON.stringify(transportFailure) }]
+    });
+    const afterFailure = teammateLoopReceiptForOwner(owner);
+    assert.equal(afterFailure?.blocked_reason, null);
+    assert.equal(afterFailure?.stage, "apply");
+    assert.equal(afterFailure?.verified, false);
+
+    const corrected = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        ...initial,
+        body: { ...initial.body, expectedOldText: "Chase for Electrical Conduit\n" }
+      }
+    });
+    assert.equal(corrected.allowed, true);
+    assert.equal(corrected.call?.effect, "apply");
+    assert.equal(teammateLoopReceiptForOwner(owner)?.blocked_reason, null);
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -1428,7 +1576,9 @@ test("retained evidence stays readable after Revit context loss and cannot verif
     });
     assert.equal(retrieval.allowed, true);
     recordTeammateMcpResult(mutationOwner, retrieval, {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+      }) }]
     });
     const receipt = teammateLoopReceiptForOwner(mutationOwner);
     assert.equal(receipt?.verified, false);
@@ -1575,7 +1725,7 @@ test("Codex MCP host guard recognizes generated-program preview mode in serializ
   }
 });
 
-test("Codex MCP host guard accepts independently returned target identity during readback", () => {
+test("Codex MCP host guard requires an admitted parameter readback with independently returned target identity", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
@@ -1594,15 +1744,34 @@ test("Codex MCP host guard accepts independently returned target identity during
     assert.equal(apply.allowed, true);
     recordTeammateMcpResult(owner, apply, { content: [{ type: "text", text: JSON.stringify({ ok: true }) }] });
 
-    const readback = guardTeammateMcpCall(owner, {
+    const incapable = guardTeammateMcpCall(owner, {
       tool: "revit_list_elements",
       arguments: { query: "target element" }
     });
-    assert.equal(readback.allowed, true);
-    recordTeammateMcpResult(owner, readback, {
+    assert.equal(incapable.allowed, true);
+    assert.equal(recordTeammateMcpResult(owner, incapable, {
       content: [{ type: "text", text: JSON.stringify({ ok: true, elements: [{ elementId: 42, Manufacturer: "WATTS" }] }) }]
+    }), null);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false,
+      "an arbitrary read schema must not prove a parameter mutation even when it contains coincident fields");
+
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_get_parameters",
+      arguments: { elementIds: [42], names: ["Manufacturer"] }
+    });
+    assert.equal(readback.allowed, true);
+    const assertion = recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }] }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+    assert.deepEqual(assertion, {
+      schema: "revit-operator.teammate-verification-assertion/v2",
+      action_id: assertion?.action_id,
+      mode: "target_bound_readback",
+      evidence_sha256: assertion?.evidence_sha256
+    });
+    assert.match(assertion?.action_id ?? "", /^mcp:/);
+    assert.match(assertion?.evidence_sha256 ?? "", /^sha256:[a-f0-9]{64}$/);
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -1947,9 +2116,44 @@ test("a generic successful apply payload cannot impersonate independent verifica
     });
     assert.equal(readback.allowed, true);
     recordTeammateMcpResult(owner, readback, {
-      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], values: ["WATTS"] }) }]
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true, items: [{ id: 42, parameters: { Manufacturer: "WATTS" } }]
+      }) }]
     });
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
+  } finally {
+    endTeammateLoopOwner(lease);
+  }
+});
+
+test("post-apply verification ignores echoed request values outside authoritative result fields", () => {
+  __testOnlyResetTeammateLoopState();
+  const owner = {};
+  const lease = beginTeammateLoopOwner(owner, request("Set element 42 Manufacturer to WATTS."));
+  try {
+    const apply = guardTeammateMcpCall(owner, {
+      tool: "revit_set_parameters",
+      arguments: { elementIds: [42], parameters: { Manufacturer: "WATTS" }, apply: true, dryRun: false }
+    });
+    assert.equal(apply.allowed, true);
+    recordTeammateMcpResult(owner, apply, {
+      content: [{ type: "text", text: JSON.stringify({ ok: true, elementIds: [42], changed: true }) }]
+    });
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_get_parameters",
+      arguments: { elementIds: [42], parameterNames: ["Manufacturer"] }
+    });
+    assert.equal(readback.allowed, true);
+    recordTeammateMcpResult(owner, readback, {
+      content: [{ type: "text", text: JSON.stringify({
+        ok: true,
+        elementIds: [42],
+        items: [{ id: 42, parameters: { Manufacturer: "JOSAM" } }],
+        metadata: { request: { parameters: { Manufacturer: "WATTS" } } }
+      }) }]
+    });
+    assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+    assert.equal(teammateLoopReceiptForOwner(owner)?.stage, "verify");
   } finally {
     endTeammateLoopOwner(lease);
   }
@@ -2134,8 +2338,8 @@ test("two sequential sheet renames finish after each write receives a fresh targ
       sheetViewId: 1420963,
       sheetNumber: "M000",
       matches: [
-        { source: "titleblock_instance", value: { value: "Cover Sheet - READBACK SMOKE" } },
-        { source: "sheet", value: { value: "Cover Sheet - READBACK SMOKE" } }
+        { source: "titleblock_instance", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } },
+        { source: "sheet", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } }
       ]
     }));
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, true);
@@ -2174,8 +2378,8 @@ test("two sequential sheet renames finish after each write receives a fresh targ
       sheetViewId: 1420963,
       sheetNumber: "M000",
       matches: [
-        { source: "titleblock_instance", value: { value: "Cover Sheet - READBACK SMOKE" } },
-        { source: "sheet", value: { value: "Cover Sheet - READBACK SMOKE" } }
+        { source: "titleblock_instance", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } },
+        { source: "sheet", parameterName: "Sheet Name", value: { value: "Cover Sheet - READBACK SMOKE" } }
       ]
     }));
     assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
@@ -2223,8 +2427,8 @@ test("two sequential sheet renames finish after each write receives a fresh targ
       sheetViewId: 1420963,
       sheetNumber: "M000",
       matches: [
-        { source: "titleblock_instance", value: { value: "Cover Sheet" } },
-        { source: "sheet", value: { value: "Cover Sheet" } }
+        { source: "titleblock_instance", parameterName: "Sheet Name", value: { value: "Cover Sheet" } },
+        { source: "sheet", parameterName: "Sheet Name", value: { value: "Cover Sheet" } }
       ],
       capture: { export: { viewId: 1420963, path: "artifacts/captures/M000-titleblock.png" } }
     }));
@@ -2338,7 +2542,7 @@ test("read-only native API operations verify an applied target without consuming
   }
 });
 
-test("schedule filter predicates do not masquerade as exact written values during verification", () => {
+test("schedule rows do not masquerade as filter configuration and an exact filter-definition readback verifies", () => {
   __testOnlyResetTeammateLoopState();
   const owner = {};
   const lease = beginTeammateLoopOwner(owner, request("Filter schedule OPERATOR SMOKE ME EQUIPMENT where Mark begins with OPERATOR-SMOKE."));
@@ -2376,6 +2580,24 @@ test("schedule filter predicates do not masquerade as exact written values durin
         status: "Ok",
         schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT", fieldCount: 3 },
         table: { body: { rows: [{ cells: ["HeatRecoveryUnit", "OPERATOR-SMOKE-001", "L2"] }] } }
+      }) }]
+    });
+
+    const rowsOnly = teammateLoopReceiptForOwner(owner);
+    assert.equal(rowsOnly?.verified, false);
+    assert.equal(rowsOnly?.stage, "verify");
+
+    const filterReadback = guardTeammateMcpCall(owner, {
+      tool: "revit_list_schedules",
+      arguments: { action: "detail", scheduleId: 1543072, includeFields: true }
+    });
+    assert.equal(filterReadback.allowed, true);
+    recordTeammateMcpResult(owner, filterReadback, {
+      content: [{ type: "text", text: JSON.stringify({
+        status: "Ok",
+        schedule: { id: 1543072, name: "OPERATOR SMOKE ME EQUIPMENT", fieldCount: 3 },
+        filterDefinitions: [{ field: "Mark", op: "begins_with", value: "OPERATOR-SMOKE" }],
+        filterDefinitionsComplete: true
       }) }]
     });
 
@@ -2466,6 +2688,9 @@ test("continuation identity, transaction binding, and expected-value verificatio
   guardGenericTeammateDecision(request(text, [{ action_id: "apply-value", method: "POST", path: "/revit/set-parameters", status: "done", result_json: { ok: true } }]), response([{
     action_id: "wrong-value", method: "POST", path: "/revit/get-parameters", body: { elementIds: [42], parameterNames: ["Manufacturer"] }
   }]));
-  const wrongValue = guardGenericTeammateDecision(request(text, [{ action_id: "wrong-value", method: "POST", path: "/revit/get-parameters", status: "done", result_json: { ok: true, values: ["JOSAM"] } }]), response([], "Verified."));
+  const wrongValue = guardGenericTeammateDecision(request(text, [{
+    action_id: "wrong-value", method: "POST", path: "/revit/get-parameters", status: "done",
+    result_json: { ok: true, items: [{ id: 42, parameters: { Manufacturer: "JOSAM", Comments: "WATTS" } }] }
+  }]), response([], "Verified."));
   assert.equal(wrongValue.teammate_loop_receipt?.verified, false);
 });

@@ -15,7 +15,7 @@ export type GenericToolValidationIssue = {
   safe_correction_eligibility: "provider_corrected_arguments_required" | "declared_deterministic_coercion";
   correction_action: "provider_resubmit" | "wrap_scalar_as_singleton_array";
   expected_constraint: Readonly<{
-    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "schema_depth" | "schema_bounds";
+    kind: "required" | "json_type" | "enum" | "numeric_range" | "string_length" | "array_length" | "property_set" | "schema_depth" | "schema_bounds";
     type?: string;
     allowed_values?: readonly (string | number | boolean | null)[];
     minimum?: number;
@@ -184,6 +184,20 @@ function schemaViolations(value: unknown, schemaValue: unknown, field: string, v
   const objectValue = record(value);
   const properties = record(schema.properties);
   if (objectValue && properties) {
+    if (schema.additionalProperties === false) {
+      const allowed = Object.keys(properties).sort();
+      for (const name of Object.keys(objectValue).filter((candidate) => !Object.prototype.hasOwnProperty.call(properties, candidate)).sort()) {
+        pushIssue(violations, {
+          field_path: `${field}.${name}`,
+          expected_type: "declared_property",
+          actual_type: "unknown_property",
+          safe_correction_eligibility: "provider_corrected_arguments_required",
+          correction_action: "provider_resubmit",
+          expected_constraint: { kind: "property_set", allowed_values: allowed.slice(0, 32) },
+          message: `${field}.${name} is not a declared property`
+        });
+      }
+    }
     for (const [name, propertySchema] of Object.entries(properties)) {
       if (Object.prototype.hasOwnProperty.call(objectValue, name) && objectValue[name] !== undefined && objectValue[name] !== null) {
         schemaViolations(objectValue[name], propertySchema, `${field}.${name}`, violations, depth + 1);

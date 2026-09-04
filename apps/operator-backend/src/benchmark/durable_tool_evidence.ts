@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
-import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
+import { revitRouteEffect } from "../action_path_mutability.js";
 import { classifyOutcomeEnvelope, outcomeEnvelopeIsUnsafe } from "../outcome_envelope.js";
+import {
+  resolveSessionReceiptOperationV2,
+  sessionReceiptAuthorityPolicyV2
+} from "./v2_session_receipt_binding.js";
+import { assignmentKernelNativeEvidenceProjectionV2 } from "./assignment_kernel_v2_native_evidence.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -56,15 +61,7 @@ function recoveryTarget(value: JsonRecord): JsonRecord | null {
 function requestEffect(path: string, argumentsRecord: JsonRecord, body: JsonRecord): "read" | "preview" | "apply" {
   const declared = String(argumentsRecord.request_effect || argumentsRecord.requestEffect || "").trim().toLowerCase();
   if (declared === "read" || declared === "preview" || declared === "apply") return declared;
-  const conditional = conditionalActionPathEffect(path, body);
-  if (conditional) return conditional;
-  if (!pathLooksWrite(path, body, String(argumentsRecord.method || "POST"))) return "read";
-  const transaction = asRecord(body.transaction);
-  const mode = String(transaction.mode || body.mode || "").trim().toLowerCase();
-  return body.dryRun === true || body.dry_run === true || body.preview === true || body.apply === false
-    || ["rollback", "preview", "dry_run", "dry-run"].includes(mode)
-    ? "preview"
-    : "apply";
+  return revitRouteEffect(path, String(argumentsRecord.method || "POST"), body);
 }
 
 function trustedRecoveryKey(path: string, effect: string, argumentsRecord: JsonRecord, body: JsonRecord): string | null {
@@ -283,7 +280,8 @@ export async function loadDurableToolEvidence(
   baseUrl: string,
   assignmentProjection: JsonRecord,
   executedPrompt: string,
-  runContext: { session_id?: string; started_at?: string } = {}
+  runContext: { session_id?: string; started_at?: string } = {},
+  assignmentKernelV2: JsonRecord = {}
 ): Promise<JsonRecord> {
   const assignments = Array.isArray(assignmentProjection.assignments)
     ? assignmentProjection.assignments.map(asRecord)
@@ -344,10 +342,43 @@ export async function loadDurableToolEvidence(
   let maximumConnectorFailedCount = 0;
   let maximumReportedOpenPhysicalConnectors = 0;
   const openPhysicalConnectorOwnerIds = new Set<string>();
+  const sessionResultReceiptAuthority = sessionReceiptAuthorityPolicyV2({
+    assignmentKernelV2,
+    expectedSessionId
+  });
+  const canonicalV2NativeEvidence = assignmentKernelNativeEvidenceProjectionV2(assignmentKernelV2);
+  const canonicalV2ByOperationId = new Map(canonicalV2NativeEvidence.operations
+    .map((operation) => [operation.operation_id, operation]));
+  if (sessionResultReceiptAuthority.mode === "exact_v2_operation_binding"
+      && canonicalV2NativeEvidence.present && !canonicalV2NativeEvidence.malformed) {
+    for (const operation of canonicalV2NativeEvidence.operations) {
+      const path = canonicalBenchmarkRevitPath(operation.path);
+      const tool = operation.capability_id;
+      if (operation.outcome === "completed") {
+        successfulPaths.add(path);
+        successfulTools.add(tool);
+        const retryOf = operation.retry_of_operation_id
+          ? canonicalV2ByOperationId.get(operation.retry_of_operation_id) : null;
+        if (retryOf && ["failed", "rejected_no_effect", "outcome_unknown"].includes(retryOf.outcome)) {
+          recoveredPaths.add(path);
+          recoveredTools.add(tool);
+        }
+      } else if (operation.outcome === "rejected_no_effect") {
+        rejectedNoEffectPaths.add(path);
+        rejectedNoEffectTools.add(tool);
+      } else if (operation.outcome === "failed" || operation.outcome === "outcome_unknown") {
+        failedPaths.add(path);
+        failedTools.add(tool);
+        historicalFailedPaths.add(path);
+        historicalFailedTools.add(tool);
+      }
+    }
+  }
 
   // Benchmark code consumes the generic production projection. It does not
   // infer effect truth again from assistant text or caller-shaped receipts.
-  for (const assignment of selectedAssignments) {
+  for (const assignment of sessionResultReceiptAuthority.mode === "legacy_v1_notification_projection"
+    ? selectedAssignments : []) {
     const goalId = String(assignment.source_record_id || "").trim();
     const controlPlane = asRecord(assignment.control_plane);
     const attempts = Array.isArray(controlPlane.attempts) ? controlPlane.attempts.map(asRecord) : [];
@@ -421,9 +452,23 @@ export async function loadDurableToolEvidence(
   type SessionReceipt = {
     notification_id: number; notification_ts: string; source_session_id: string; action_id: string;
     path: string; request_effect: "read" | "preview" | "apply"; status: string;
-    envelope_succeeded: boolean; result_sha256: string; parsed_result: JsonRecord;
+    envelope_succeeded: boolean; request_dispatched: boolean | null;
+    outcome_unknown: boolean; reconciliation_required: boolean;
+    result_sha256: string; parsed_result: JsonRecord;
+    requested_effect_source?: "assignment_kernel_v2";
+    canonical_binding_state?: "bound";
+    canonical_assignment_id?: string;
+    canonical_operation_id?: string;
+    authority?: "assignment_kernel_v2_bound_notification";
+    integrity_only?: true;
+  };
+  type SessionOutcome = {
+    path: string; tool: string; outcome: "completed" | "failed" | "rejected_no_effect";
+    had_failure: boolean; had_rejection: boolean;
   };
   const sessionResultReceipts: SessionReceipt[] = [];
+  const sessionResultReceiptRejections: JsonRecord[] = [];
+  const sessionOutcomes = new Map<string, SessionOutcome>();
   if (expectedSessionId) {
     try {
       const notifications = await requestSessionNotifications(baseUrl, expectedSessionId);
@@ -437,17 +482,52 @@ export async function loadDurableToolEvidence(
         const toolName = String(payload.tool || "");
         const argumentsRecord = asRecord(payload.arguments);
         const explicitPath = toolName === "revit_call_tool" ? String(argumentsRecord.path || "") : "";
-        const path = canonicalBenchmarkRevitPath(explicitPath || canonicalRevitToolPath("revit_operator", toolName));
-        if (!path) continue;
         const body = parsedRecord(argumentsRecord.body);
-        const effect = requestEffect(path, argumentsRecord, body);
         const parsed = resultRecord(payload.result);
         const status = String(payload.status || "").trim().toLowerCase();
+        const v2Resolution = resolveSessionReceiptOperationV2({
+          assignmentKernelV2,
+          expectedSessionId,
+          toolName,
+          explicitMethod: String(argumentsRecord.method || ""),
+          explicitPath,
+          parsedResult: parsed
+        });
+        if (v2Resolution.state === "unresolved") {
+          sessionResultReceiptRejections.push({
+            notification_id: numberValue(notification.id),
+            notification_ts: ts,
+            source_session_id: expectedSessionId,
+            tool: toolName,
+            status,
+            assignment_id: v2Resolution.assignment_id,
+            operation_id: v2Resolution.operation_id,
+            reason: v2Resolution.reason || "v2_binding_unresolved"
+          });
+          continue;
+        }
+        const path = canonicalBenchmarkRevitPath(
+          (v2Resolution.state === "bound" ? v2Resolution.path : "")
+            || explicitPath
+            || canonicalRevitToolPath("revit_operator", toolName)
+        );
+        if (!path) continue;
+        const effect = v2Resolution.state === "bound"
+          ? v2Resolution.requested_effect
+          : requestEffect(path, argumentsRecord, body);
         const envelope = classifyOutcomeEnvelope(parsed);
         const succeeded = ["success", "ok", "done", "completed"].includes(status)
           && !String(payload.error || "").trim()
           && !parsedEnvelopeHasFailure(parsed)
           && !outcomeEnvelopeIsUnsafe(envelope);
+        const requestDispatched = envelope.request_dispatched_false
+          ? false
+          : envelope.request_dispatched_true ? true : null;
+        const rejectedNoEffect = !succeeded
+          && requestDispatched === false
+          && !envelope.outcome_unknown
+          && !envelope.reconciliation_required
+          && !envelope.classification_incomplete;
         const resultText = Object.keys(parsed).length > 0 ? canonicalJson(parsed) : canonicalJson(payload.result ?? null);
         const receipt: SessionReceipt = {
           notification_id: numberValue(notification.id),
@@ -458,20 +538,67 @@ export async function loadDurableToolEvidence(
           request_effect: effect,
           status: succeeded ? "completed" : "failed",
           envelope_succeeded: succeeded,
+          request_dispatched: requestDispatched,
+          outcome_unknown: envelope.outcome_unknown,
+          reconciliation_required: envelope.reconciliation_required,
           result_sha256: sha256(resultText),
-          parsed_result: parsed
+          parsed_result: parsed,
+          ...(v2Resolution.state === "bound" ? {
+            requested_effect_source: "assignment_kernel_v2" as const,
+            canonical_binding_state: "bound" as const,
+            canonical_assignment_id: v2Resolution.assignment_id,
+            canonical_operation_id: v2Resolution.operation_id,
+            authority: "assignment_kernel_v2_bound_notification" as const,
+            integrity_only: true as const
+          } : {})
         };
         sessionResultReceipts.push(receipt);
-        (succeeded ? successfulPaths : failedPaths).add(path);
-        (succeeded ? successfulTools : failedTools).add(toolName);
+        // A known-V2 notification is a bound transport/integrity receipt only.
+        // Execution, effect, and result truth comes from the exact publication.
+        if (sessionResultReceiptAuthority.mode === "exact_v2_operation_binding") continue;
+        const outcomeKey = `${toolName}\n${path}\n${effect}`;
+        const prior = sessionOutcomes.get(outcomeKey);
+        const outcome: SessionOutcome["outcome"] = succeeded
+          ? "completed"
+          : rejectedNoEffect ? "rejected_no_effect" : "failed";
+        sessionOutcomes.set(outcomeKey, {
+          path,
+          tool: toolName,
+          outcome,
+          had_failure: prior?.had_failure === true || outcome === "failed",
+          had_rejection: prior?.had_rejection === true || outcome === "rejected_no_effect"
+        });
+        if (outcome === "failed") {
+          historicalFailedPaths.add(path);
+          historicalFailedTools.add(toolName);
+        }
+        if (outcome === "rejected_no_effect") {
+          rejectedNoEffectPaths.add(path);
+          rejectedNoEffectTools.add(toolName);
+        }
       }
     } catch (error) {
       resultReceipts.push({ goal_id: null, status: "session_notifications_fetch_failed", error: String(error) });
     }
   }
 
+  for (const outcome of sessionOutcomes.values()) {
+    if (outcome.outcome === "completed") {
+      successfulPaths.add(outcome.path);
+      successfulTools.add(outcome.tool);
+      if (outcome.had_failure || outcome.had_rejection) {
+        recoveredPaths.add(outcome.path);
+        recoveredTools.add(outcome.tool);
+      }
+    } else if (outcome.outcome === "failed") {
+      failedPaths.add(outcome.path);
+      failedTools.add(outcome.tool);
+    }
+  }
+
   const sessionMutationVerifications: JsonRecord[] = [];
-  for (const [index, applyReceipt] of sessionResultReceipts.entries()) {
+  for (const [index, applyReceipt] of sessionResultReceiptAuthority.mode === "legacy_v1_notification_projection"
+    ? sessionResultReceipts.entries() : []) {
     if (!applyReceipt.envelope_succeeded || applyReceipt.request_effect !== "apply") continue;
     const before = asRecord(applyReceipt.parsed_result.before);
     const after = asRecord(applyReceipt.parsed_result.after);
@@ -500,7 +627,8 @@ export async function loadDurableToolEvidence(
     });
   }
 
-  for (const goalId of goalIds) {
+  for (const goalId of sessionResultReceiptAuthority.mode === "legacy_v1_notification_projection"
+    ? goalIds : []) {
     let response: JsonRecord;
     try {
       response = await requestGoal(baseUrl, goalId);
@@ -789,6 +917,17 @@ export async function loadDurableToolEvidence(
     canonical_attempt_receipts: canonicalAttemptReceipts,
     canonical_verified_mutation_paths: [...canonicalVerifiedMutationPaths].sort(),
     session_result_receipts: sessionResultReceipts.map(({ parsed_result: _parsed, ...receipt }) => receipt),
-    session_mutation_verifications: sessionMutationVerifications
+    session_result_receipt_policy: {
+      ...sessionResultReceiptAuthority,
+      rejected_count: sessionResultReceiptRejections.length
+    },
+    session_result_receipt_rejections: sessionResultReceiptRejections,
+    session_mutation_verifications: sessionMutationVerifications,
+    assignment_kernel_v2_native_evidence: {
+      present: canonicalV2NativeEvidence.present,
+      malformed: canonicalV2NativeEvidence.malformed,
+      operation_count: canonicalV2NativeEvidence.operations.length,
+      operations: canonicalV2NativeEvidence.operations
+    }
   };
 }

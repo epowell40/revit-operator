@@ -18,6 +18,7 @@ import {
   type BenchmarkStageV2
 } from "./protocol_v2_types.js";
 import { canonicalAttemptRequestedEffect } from "./durable_tool_evidence.js";
+import { assignmentKernelNativeEvidenceProjectionV2 } from "./assignment_kernel_v2_native_evidence.js";
 import { kernelPublicationsV2 } from "./protocol_v2_kernel.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -335,6 +336,10 @@ function deliveryVerdict(
       && stages.find((entry) => entry.stage === "postcondition_read_back")?.status === "pass") {
     return "verified_read_completion";
   }
+  if (truth.requested_effect === "preview" && truth.effect_state === "none" && evaluation.verified
+      && stages.find((entry) => entry.stage === "preview_correct_where_required")?.status === "pass") {
+    return "verified_preview_completion";
+  }
   if (truth.effect_state === "applied" && evaluation.verified) {
     const recovered = canonicalAttempts(trace).some(({ attempt }) => Boolean(attempt.retry_of_attempt_id || attempt.reconciliation_of_attempt_id));
     return recovered ? "recovered_verified" : "first_pass_verified";
@@ -456,9 +461,19 @@ export function buildBenchmarkCaseResultV2(args: {
   const efficiency = record(args.trace.efficiency);
   const modelSummary = record(efficiency.model_call_summary);
   const toolCalls = records(args.trace.tool_calls);
-  const canonicalRevitCalls = records(record(record(args.trace.tool_results).durable_tool_evidence).canonical_attempt_receipts)
-    .filter((entry) => String(entry.path || "").startsWith("/revit/")).length;
-  const revitCalls = Math.max(toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/")).length, canonicalRevitCalls);
+  const toolResults = record(args.trace.tool_results);
+  const canonicalRevitCalls = records(record(toolResults.durable_tool_evidence).canonical_attempt_receipts)
+    .filter((entry) => String(entry.path || "").startsWith("/revit/")
+      && ["acknowledged", "dispatched"].includes(String(entry.dispatch_state || ""))).length;
+  const kernelNativeEvidence = assignmentKernelNativeEvidenceProjectionV2(toolResults.durable_assignment_kernel_v2);
+  const kernelRevitCalls = kernelNativeEvidence.malformed ? 0 : kernelNativeEvidence.operations
+    .filter((operation) => operation.outcome !== "rejected_no_effect").length;
+  const revitCalls = kernelNativeEvidence.present
+    ? kernelRevitCalls
+    : Math.max(
+      toolCalls.filter((entry) => String(entry.path || "").startsWith("/revit/") && entry.request_dispatched !== false).length,
+      canonicalRevitCalls
+    );
   const evaluatorVersion = args.evaluatorVersion || GENERAL_REVIT_EVALUATOR_V2;
   const presentation = stages.at(-1)!;
   const identity = transformedIdentity({

@@ -2,16 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  evaluateGeneralRevitCapabilityAttempt,
-  generalRevitExecutionCase,
-  generalRevitGroundingDemand,
-  generalRevitPromptSpecificity,
-  generalRevitResearchDemand,
-  summarizeGeneralRevitCapabilityReport,
-  type GeneralRevitCapabilityCase,
-  type GeneralRevitAttempt
+  evaluateGeneralRevitCapabilityAttempt, generalRevitGroundingDemand,
+  generalRevitPromptSpecificity, generalRevitResearchDemand, summarizeGeneralRevitCapabilityReport,
+  type GeneralRevitCapabilityCase, type GeneralRevitAttempt
 } from "../benchmark/general_revit_capability_acceptance.js";
-import { nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
+import { backendRoot, nowIso, readJsonFile, writeJsonFile, writeTextFile } from "../benchmark/files.js";
 import { generalRevitFixtureForCase } from "../benchmark/general_revit_sample_fixtures.js";
 import { loadDurableToolEvidence } from "../benchmark/durable_tool_evidence.js";
 import {
@@ -19,21 +14,26 @@ import {
   waitForExactRevitFixtureHealth,
   type ExactRevitFixtureHealthResult
 } from "../benchmark/revit_fixture_readiness.js";
-import { localRevitProcessGuardTarget,
-  type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
-import { aggregateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
+import { localRevitProcessGuardTarget, type LocalRevitProcessGuardTarget } from "../benchmark/local_revit_process_liveness.js";
+import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallReceiptsFromSources, modelCallReceiptsFromTraces,
   modelTelemetryCaseCoverage, requestedComputerAgentConfig, requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
+import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
+import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
 import { loadVerifiedWorkPackets } from "../benchmark/work_packet_collection.js";
-import { loadAssignmentKernelPublicationsV2 } from "../benchmark/assignment_kernel_v2_collection.js";
+import {
+  loadAssignmentKernelPublicationsV2,
+  modelCallReceiptsFromAssignmentKernelPublicationsV2
+} from "../benchmark/assignment_kernel_v2_collection.js";
 import { markdownReport } from "../benchmark/general_revit_capability_report.js";
 import { selectReleaseCanaryCasesV2 } from "../benchmark/protocol_v2_canary.js";
 import { bindComputerClarificationResponse, executeGeneralRevitComputerTurn, modelCallReceiptsFromComputerTurns, pendingComputerClarification } from "../benchmark/general_revit_computer_turn.js";
 import { benchmarkInteractionCaseV1, benchmarkInteractionTraceV1, loadBenchmarkInteractionManifestV1,
   type BenchmarkInteractionCaseV1, type BenchmarkInteractionManifestV1 } from "../benchmark/protocol_v2_interaction.js";
-import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
+import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, generalRevitProtocolManifestPathV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
 import { baselineCaseDeltas, computerPerformanceSummary, groupedMultiSummary,
   groupedSummary } from "../benchmark/general_revit_trace_reporting.js";
 
@@ -226,37 +226,6 @@ function dynamicReceiptActions(state: JsonRecord): JsonRecord[] {
       receipt
     };
   });
-}
-
-function rescoreTraceFromFlightRecord(trace: JsonRecord, testCase: GeneralRevitCapabilityCase, applyRequested: boolean): JsonRecord {
-  const toolResults = asRecord(trace.tool_results);
-  const rawAttempt = asRecord(toolResults.raw_sidecar_response);
-  if (Object.keys(rawAttempt).length === 0) return trace;
-  const assignmentProjection = asRecord(toolResults.durable_assignment_projection);
-  const executionCase = generalRevitExecutionCase(testCase, applyRequested);
-  const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, {
-    ...rawAttempt,
-    assignment_projection: assignmentProjection
-  } as GeneralRevitAttempt);
-  const modelCallReceipts = modelCallReceiptsFromSources(rawAttempt, rawAttempt.computer_state, trace);
-  const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
-  return {
-    ...trace,
-    model_call_receipts: modelCallReceipts,
-    efficiency: {
-      ...asRecord(trace.efficiency),
-      token_count: modelCallSummary.total_tokens,
-      model_call_summary: modelCallSummary
-    },
-    verification_results: { ...asRecord(trace.verification_results), evaluation },
-    success_failure_score: {
-      tier: evaluation.tier,
-      non_refusal: evaluation.non_refusal,
-      completed: evaluation.completed,
-      verified: evaluation.verified
-    },
-    rescored_from_flight_record: true
-  };
 }
 
 function sidecarFunctionReceiptActions(state: JsonRecord): JsonRecord[] {
@@ -634,7 +603,7 @@ async function runCase(
   const startedAt = nowIso();
   const startedMs = Date.now();
   const applyRequested = suiteContext.apply_requested === true;
-  const executionCase = generalRevitExecutionCase(testCase, applyRequested);
+  const executionCase = generalRevitExecutionCaseWithInteractionV1(testCase, applyRequested, interaction);
   const executionExpectedEffect = executionCase.expected_effect;
   const requestedSpeedSettings = asRecord(suiteContext.requested_speed_settings);
   const speedSettings = Object.keys(requestedSpeedSettings).length > 0 ? requestedSpeedSettings : null;
@@ -710,7 +679,7 @@ async function runCase(
   const durableToolEvidence = await loadDurableToolEvidence(baseUrl, assignmentProjection, executedPrompt, {
     session_id: sessionId,
     started_at: startedAt
-  });
+  }, assignmentKernelV2);
   const evaluatedAttempt = {
     ...attempt,
     assignment_projection: assignmentProjection, assignment_kernel_v2: assignmentKernelV2,
@@ -718,7 +687,10 @@ async function runCase(
   };
   const evaluation = evaluateGeneralRevitCapabilityAttempt(executionCase, evaluatedAttempt as GeneralRevitAttempt);
   const toolCalls = extractToolCalls(attempt);
-  const modelCallReceipts = modelCallReceiptsFromSources(attempt, attempt.computer_state);
+  const modelCallReceipts = deduplicateModelCallReceipts([
+    ...modelCallReceiptsFromSources(attempt, attempt.computer_state),
+    ...modelCallReceiptsFromAssignmentKernelPublicationsV2(assignmentKernelV2)
+  ]);
   const modelCallSummary = aggregateModelCallReceipts(modelCallReceipts);
   const computerState = asRecord(attempt.computer_state);
   const sidecarRequestedSpeedSettings = asRecord(computerState.requestedSpeedSettings);
@@ -924,19 +896,51 @@ async function main(): Promise<void> {
   const priorSuiteTiming = asRecord(resumedCheckpoint?.suite_timing);
   const requestedComputerAgent = requestedComputerAgentConfig(process.argv, priorComputerAgent);
   const requestedSpeedSettings = speedSettingsForRequestedConfig(requestedComputerAgent);
+  if (protocolDraft) {
+    assertGeneralRevitCandidateIdentity({
+      backend_root: backendRoot(),
+      draft: protocolDraft,
+      corpus_value: externalHoldout?.manifest ?? corpus,
+      original_manifest_path: generalRevitProtocolManifestPathV2(protocolInputs),
+      selected_cases: selected,
+      fixture_adapter_version: fixtureConfig.schema,
+      selected_fixtures: generalRevitCandidateFixtureFiles(generalRevitProtocolFixtureRootV2(protocolInputs,
+        flag("--fixture-root", "C:\\Program Files\\Autodesk\\Revit 2024\\Samples")), fixtureConfig.fixtures, selectedFixtureKeys),
+      requested_agent: { model: requestedComputerAgent.agent_model,
+        reasoning_effort: requestedComputerAgent.agent_reasoning_effort },
+      source_identity: rescoreOnly ? null : generalRevitCandidateSourceIdentity(backendRoot()),
+      rescore_only: rescoreOnly
+    });
+  }
   const suiteStartedAt = String(priorSuiteTiming.started_at_utc || invocationStartedAt);
   const priorActiveWallClockMs = numberValue(priorSuiteTiming.active_wall_clock_ms);
-  const [config, grant] = rescoreOnly
+  const [config, grant, backendHealth] = rescoreOnly
     ? [{
       runtimeProfile: asRecord(priorSuiteContext.runtime_profile),
       computerModel: requestedComputerAgent.agent_model
-    }, asRecord(priorSuiteContext.write_grant)]
+    }, asRecord(priorSuiteContext.write_grant), {}]
     : await Promise.all([
       requestJson(sidecar, "/api/config", {}, 30_000),
-      requestJson(sidecar, "/api/revit/write-grant", {}, 30_000)
+      requestJson(sidecar, "/api/revit/write-grant", {}, 30_000),
+      requestJson(sidecar, "/api/backend/health", {}, 30_000)
     ]);
   const runtimeProfile = asRecord(config.runtimeProfile);
   if (runtimeProfile.general_agent !== true) throw new Error("General Agent is unavailable; refusing to misreport a capability run.");
+  const assignmentKernelRuntime = rescoreOnly
+    ? (Object.keys(asRecord(priorSuiteContext.assignment_kernel_runtime)).length > 0
+      ? asRecord(priorSuiteContext.assignment_kernel_runtime)
+      : null)
+    : assertGeneralRevitQualificationRuntime({
+      required_assignment_kernel_v2: protocolDraft?.feature_flags.assignment_kernel_v2 === true,
+      backend_health: backendHealth
+    });
+  if (!rescoreOnly) {
+    assertGeneralRevitQualificationWriteGrant({
+      cases: selected,
+      apply_requested: applyRequested,
+      grant
+    });
+  }
   let fixturePreflight: JsonRecord = {};
   let fixturePreflightAttempts = 0;
   if (requestedFixture && !rescoreOnly) {
@@ -949,6 +953,7 @@ async function main(): Promise<void> {
     sidecar,
     execution_surface: executionSurface(),
     runtime_profile: runtimeProfile,
+    assignment_kernel_runtime: assignmentKernelRuntime,
     write_grant: safeGrant(grant),
     computer_agent: {
       configuration_source: requestedSpeedSettings ? (resumedCheckpoint ? "resume_or_cli" : "benchmark_cli") : "unspecified",
@@ -1021,7 +1026,12 @@ async function main(): Promise<void> {
     .map(asRecord)
     .filter((trace) => selectedIds.has(String(trace.case_id || "")))
     .map((trace) => ({
-      ...rescoreTraceFromFlightRecord(trace, selectedById.get(String(trace.case_id || ""))!, applyRequested),
+      ...rescoreGeneralRevitInteractionTraceV1(
+        trace,
+        selectedById.get(String(trace.case_id || ""))!,
+        applyRequested,
+        benchmarkInteractionCaseV1(interactionManifest, String(trace.case_id || ""))
+      ),
       preferred_fixture: generalRevitFixtureForCase(fixtureConfig, String(trace.case_id || "")),
       fixture_applicability: fixtureApplicability(
         generalRevitFixtureForCase(fixtureConfig, String(trace.case_id || "")),

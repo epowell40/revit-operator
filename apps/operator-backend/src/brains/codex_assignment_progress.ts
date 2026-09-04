@@ -7,6 +7,20 @@ import { settleAssignmentKernelProviderBudgetAtQuiescenceV2 } from "../assignmen
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
 import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
+
+function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
+  if (!gapId.startsWith("verification:")) return "";
+  const operation = snapshot.operations[gapId.slice("verification:".length)];
+  if (!operation) return "";
+  return verificationCapabilityGuidanceV2({
+    capability_id: operation.capability_id,
+    method: operation.request_identity?.method,
+    path: operation.request_identity?.path,
+    tool: operation.input.tool,
+    target_id: operation.target.target_id
+  }) ?? "";
+}
 
 function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
   if (decision.decision === "request_user_input") return "The canonical Assignment is waiting for the required authenticated user input before any more provider work is allowed.";
@@ -18,14 +32,24 @@ function progressMessage(decision: ReturnType<typeof advanceAssignmentKernelProg
   return `The deterministic Assignment controller did not admit another reasoning turn: ${decision.reason}.`;
 }
 
-function progressPrompt(decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]): string {
+function progressPrompt(
+  snapshot: AssignmentSnapshotV2,
+  decision: ReturnType<typeof advanceAssignmentKernelProgressV2>["decision"]
+): string {
   if (decision.decision === "admit_reasoning_turn") {
+    const gapIds = new Set(decision.gap_ids);
+    const gapDetails = deriveProgressGapsV2(snapshot)
+      .filter((gap) => gapIds.has(gap.gap_id))
+      .map((gap) => `- ${gap.gap_id}: ${gap.reason}${applicationGapGuidance(snapshot, gap.gap_id)}`);
     return [
       "DETERMINISTIC ASSIGNMENT PROGRESS DECISION:",
       `Decision: ${decision.decision}`,
+      `Requested Assignment effect: ${snapshot.spec.requested_effect}`,
       `Unresolved gaps: ${decision.gap_ids.join(", ")}`,
       `Criteria: ${decision.criterion_ids.join(", ")}`,
       `Expected authoritative information: ${decision.expected_information.join(", ")}`,
+      ...(gapDetails.length > 0 ? ["Gap contracts:", ...gapDetails] : []),
+      `Only an explicitly eligible ${snapshot.spec.requested_effect} task operation may fulfill a task criterion; supporting reads and control evidence may only prepare that operation.`,
       "Propose only operations that advance these criteria or resolve these exact gaps. Stop when the canonical controller reports a terminal, clarification, review, or blocker outcome."
     ].join("\n");
   }
@@ -48,7 +72,7 @@ export function prepareCodexAssignmentProgressV2(binding: AssignmentBindingV2): 
   const progression = advanceAssignmentKernelProgressV2({ binding });
   return {
     snapshot: progression.snapshot,
-    prompt: progressPrompt(progression.decision),
+    prompt: progressPrompt(progression.snapshot, progression.decision),
     message: progression.snapshot.terminal
       ? renderTerminalResultV2(progression.snapshot)
       : progressMessage(progression.decision)
@@ -79,10 +103,15 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
   return advanceAssignmentKernelProgressV2({ binding }).snapshot;
 }
 
+export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+  return snapshot?.terminal ? renderTerminalResultV2(snapshot) : fallback;
+}
+
 export function codexAssignmentControllerStopMessage(snapshot: AssignmentSnapshotV2 | null, reason: string): string {
-  return snapshot?.terminal
-    ? renderTerminalResultV2(snapshot)
-    : `The canonical Assignment controller stopped this reasoning turn: ${reason}.`;
+  return finalCodexAssignmentMessageV2(
+    snapshot,
+    `The canonical Assignment controller stopped this reasoning turn: ${reason}.`
+  );
 }
 
 export function currentCodexAssignmentSnapshotV2(binding: AssignmentBindingV2): AssignmentSnapshotV2 | null {

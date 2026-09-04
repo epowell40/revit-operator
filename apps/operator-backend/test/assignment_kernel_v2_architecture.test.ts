@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
   ASSIGNMENT_KERNEL_V2_FEATURE_FLAG,
+  ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA,
   ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
   ASSIGNMENT_SPEC_V2_SCHEMA,
   OBSERVATION_V2_SCHEMA,
@@ -38,6 +39,7 @@ test("Assignment Kernel V2 schemas are versioned independently of transports", (
   assert.equal(ASSIGNMENT_SPEC_V2_SCHEMA, "revit-operator.assignment-spec/v2");
   assert.equal(ASSIGNMENT_EVENT_V2_SCHEMA, "revit-operator.assignment-event/v2");
   assert.equal(ASSIGNMENT_SNAPSHOT_V2_SCHEMA, "revit-operator.assignment-snapshot/v2");
+  assert.equal(ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA, "revit-operator.assignment-execution-failure/v2");
   assert.equal(OPERATION_V2_SCHEMA, "revit-operator.operation/v2");
   assert.equal(OPERATION_RESULT_V2_SCHEMA, "revit-operator.operation-result/v2");
   assert.equal(OBSERVATION_V2_SCHEMA, "revit-operator.observation/v2");
@@ -168,8 +170,25 @@ test("the transport-independent domain imports no edge, route, evidence-projecti
     if (source.includes("@revitoperator/payload-digest-v2")) {
       assert.ok(["canonical.ts", "payload_provenance.ts"].includes(path.basename(file)), file);
     }
-    const withoutSharedPayloadContract = source.replaceAll("@revitoperator/payload-digest-v2", "assignment-kernel-payload-contract");
-    assert.doesNotMatch(withoutSharedPayloadContract, /from\s+["'][^"']*(?:mcp|http|sidecar|revit|work_packets|work_returns|benchmark|evidence_projection)[^"']*["']/i, file);
+    if (source.includes("@revitoperator/assignment-kernel-v2-contracts")) {
+      assert.ok(["operation.ts", "provider_call.ts", "execution_failure.ts", "semantic_admissibility.ts", "snapshot.ts"].includes(path.basename(file)), file);
+      if (path.basename(file) === "operation.ts") {
+        assert.match(source, /OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA/);
+      }
+      if (path.basename(file) === "snapshot.ts") {
+        assert.match(source, /ASSIGNMENT_SNAPSHOT_V2_SCHEMA/);
+      }
+      if (path.basename(file) === "provider_call.ts") {
+        assert.match(source, /ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA/);
+      }
+      if (path.basename(file) === "execution_failure.ts") {
+        assert.match(source, /ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA/);
+      }
+    }
+    const withoutSharedContracts = source
+      .replaceAll("@revitoperator/payload-digest-v2", "assignment-kernel-payload-contract")
+      .replaceAll("@revitoperator/assignment-kernel-v2-contracts", "assignment-kernel-control-evidence-contract");
+    assert.doesNotMatch(withoutSharedContracts, /from\s+["'][^"']*(?:mcp|http|sidecar|revit|work_packets|work_returns|benchmark|evidence_projection)[^"']*["']/i, file);
     assert.doesNotMatch(source, /(?:route|path)_string/i, file);
   }
 });
@@ -203,6 +222,150 @@ test("V2 projections cannot write journal events and V2 completion has no specia
   assert.doesNotMatch(lifecycle, /read_completion|noop_completion|assertion.*path|json.*selector/i);
   const evaluator = readFileSync(path.join(process.cwd(), "src/domain/assignment-kernel/criterion_evaluator.ts"), "utf8");
   assert.doesNotMatch(evaluator, /EvidenceProjection|evidence_projection|payload\.items|content\[0\]/);
+});
+
+test("V2 terminal commit has one owner and provider turns reconcile before releasing its barrier", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const terminalWriters = sourceFiles(sourceRoot).filter((file) =>
+    /body:\s*\{\s*event_type:\s*"assignment_terminal"/.test(readFileSync(file, "utf8")));
+  assert.deepEqual(terminalWriters.map((file) => path.relative(process.cwd(), file).replaceAll("\\", "/")), [
+    "src/assignments/assignment_kernel_v2_lifecycle.ts"
+  ]);
+
+  const lifecycle = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_lifecycle.ts"), "utf8");
+  assert.match(lifecycle, /assignmentKernelTerminalSettlementDeferredV2/);
+  const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
+  const barrierAdmissionAt = brain.indexOf("assignmentTerminalBarrier = beginAssignmentKernelTerminalBarrierV2");
+  const notificationBindAt = brain.indexOf("bindTurnNotificationSource(activeClient);", barrierAdmissionAt);
+  const providerStartAt = brain.indexOf("return await activeClient.startTurn({", barrierAdmissionAt);
+  assert.ok(barrierAdmissionAt >= 0 && notificationBindAt > barrierAdmissionAt && providerStartAt > notificationBindAt,
+    "terminality must be barred and provider notifications captured before provider execution starts");
+  const reconcileAt = brain.indexOf("providerReceiptRecorder.reconcile(modelTelemetry.receipts)");
+  const normalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(false)", reconcileAt);
+  assert.ok(reconcileAt >= 0 && normalReleaseAt > reconcileAt,
+    "completed provider receipts must reconcile before the immutable terminal barrier is released");
+  const setupBindAt = brain.indexOf("bindBackendAuthLeaseTurn(backendAuthLease, turnId)", providerStartAt);
+  const abnormalReleaseAt = brain.indexOf("await releaseStartedProviderTurn(true)", setupBindAt);
+  assert.ok(setupBindAt > providerStartAt && abnormalReleaseAt > setupBindAt,
+    "every failure after provider start must interrupt and release the exact started turn");
+  assert.match(brain, /const releaseStartedProviderTurn = async[\s\S]*interruptTurn[\s\S]*endAssignmentKernelTerminalBarrierV2[\s\S]*endAssignmentKernelV2Lease/,
+    "started-turn cleanup must own interruption, terminal barrier release, and lease release as one idempotent path");
+});
+
+test("every V2 provider exit records canonical failure or returns already-earned terminal truth", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const router = readFileSync(path.join(sourceRoot, "brain.ts"), "utf8");
+  const route = readFileSync(path.join(sourceRoot, "index.ts"), "utf8");
+  const boundary = readFileSync(path.join(sourceRoot, "assignments", "chat_execution_failure_boundary.ts"), "utf8");
+  const brain = readFileSync(path.join(sourceRoot, "brains", "codex_brain.ts"), "utf8");
+  const failure = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution_failure.ts"), "utf8");
+  const reducer = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "reducer.ts"), "utf8");
+  const outcome = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "outcome.ts"), "utf8");
+
+  assert.match(route, /handleChatExecutionFailureBoundaryV2\(\{[\s\S]{0,180}canceled:\s*true/,
+    "stream cancellation must settle the exact V2 binding");
+  assert.ok((route.match(/handleChatExecutionFailureBoundaryV2\(\{/g) ?? []).length >= 3,
+    "streaming and non-streaming provider failures must share one V2 settlement boundary");
+  assert.match(boundary, /terminal[\s\S]*renderTerminalResultV2[\s\S]*deriveTerminalResultV2/,
+    "an already-complete Assignment must return its terminal result instead of an infrastructure error");
+  assert.match(brain, /turnCancelled[\s\S]*settleAssignmentKernelExecutionFailureV2[\s\S]*error_class:\s*"canceled"/,
+    "a normally returned interrupted Codex turn must not bypass V2 settlement");
+  const progressDecisionAt = brain.indexOf("prepareCodexAssignmentProgressV2(assignmentKernelV2.binding)");
+  const providerBootstrapAt = brain.indexOf("c = await getClient(workspaceRoot, threadProfile)");
+  assert.ok(progressDecisionAt >= 0 && providerBootstrapAt > progressDecisionAt,
+    "canonical progress must admit reasoning before any provider connection or thread bootstrap");
+  assert.match(brain, /provider-start:\$\{req\.message_id\}[\s\S]*"provider_start"[\s\S]*classifyAssignmentKernelExecutionFailureV2/,
+    "provider bootstrap failure must retain its precise canonical phase without reaching the outer generic catch");
+  assert.ok((brain.match(/endRequirementsPlanningLease\(requirementsLease\);[\s\S]{0,120}requirementsLease = null;[\s\S]{0,240}return stopBeforeProvider/g) ?? []).length >= 2,
+    "pre-provider runtime exits must release durable-requirements planning leases");
+  assert.ok((router.match(/requestHasExactAssignmentKernelV2Binding\(req\)/g) ?? []).length >= 2,
+    "streaming and non-streaming V2 requests must bypass every legacy deterministic shortcut");
+  assert.match(router, /requireCanonicalV2BrainRoute[\s\S]*route !== "codex"[\s\S]*assignment_kernel_v2_brain_route_unsupported/,
+    "a V2 request cannot silently route through a provider without V2 lifecycle ownership");
+  assert.match(failure, /evaluatePendingAssignmentCriteriaV2[\s\S]*terminalSuccess[\s\S]*execution_failure_recorded/,
+    "earned evidence is evaluated before infrastructure failure is admitted");
+  assert.match(reducer, /execution_failure_after_success_forbidden/,
+    "the canonical reducer must independently reject failure-over-success relabeling");
+  assert.ok(outcome.indexOf("unresolved_unknown_operation_ids") < outcome.indexOf("execution_failure_ids"),
+    "unknown persistent effect must remain ahead of provider-failure terminalization");
+});
+
+test("settled task evidence cannot be overtaken by another root operation", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const dynamicHandler = readFileSync(path.join(sourceRoot, "brains", "codex_dynamic_tool_handler.ts"), "utf8");
+  const checkpointStart = dynamicHandler.indexOf("function checkpointAssignmentKernelProgressV2");
+  const checkpointEnd = dynamicHandler.indexOf("export async function handleCodexDynamicToolCall", checkpointStart);
+  const checkpoint = dynamicHandler.slice(checkpointStart, checkpointEnd);
+  assert.ok(checkpointStart >= 0 && checkpointEnd > checkpointStart);
+  assert.match(checkpoint, /recordAssignmentProgressEpochV2[\s\S]*advanceAssignmentKernelProgressV2/);
+  assert.doesNotMatch(checkpoint, /providerReceiptRetained|if\s*\([^)]*provider[^)]*receipt[^)]*\)\s*return/i,
+    "criterion progression must not wait for provider telemetry; the terminal barrier owns receipt ordering");
+
+  const execution = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution.ts"), "utf8");
+  assert.match(execution, /criteriaPendingEvaluationV2\(snapshot\)[\s\S]*assignment_kernel_v2_criterion_evaluation_pending/);
+  const reducer = readFileSync(path.join(sourceRoot, "domain", "assignment-kernel", "reducer.ts"), "utf8");
+  assert.match(reducer, /role !== "root" \|\| Object\.keys\(criteriaPendingEvaluationV2\(snapshot\)\)\.length === 0/,
+    "the canonical reducer, not only one adapter, must enforce evaluate-before-act");
+});
+
+test("apply progress exposes one typed verification gap per unverified persistent effect", () => {
+  const sourceRoot = path.join(process.cwd(), "src", "domain", "assignment-kernel");
+  const controller = readFileSync(path.join(sourceRoot, "progress", "controller.ts"), "utf8");
+  assert.match(controller, /kind:\s*"verification_required"/);
+  assert.match(controller, /required_fact_ids:\s*\["verification\.postcondition_satisfied"\]/);
+  const outcome = readFileSync(path.join(sourceRoot, "outcome.ts"), "utf8");
+  assert.match(outcome, /appliedOperations\.every\(\(operation\) => appliedOperationHasVerifiedPostconditionV2/,
+    "every applied operation must retain its own verified postcondition before completion");
+  assert.doesNotMatch(outcome, /appliedOperations\.some\(/);
+});
+
+test("verification admission is capability-contract based before any OperationV2 is appended", () => {
+  const sourceRoot = path.join(process.cwd(), "src");
+  const admission = readFileSync(path.join(sourceRoot, "verification", "verification_capability_admission_v2.ts"), "utf8");
+  assert.match(admission, /VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA/);
+  assert.match(admission, /\/revit\/find-text-notes[\s\S]*text_note\.value/);
+  assert.match(admission, /\/revit\/get-element-summary[\s\S]*element\.identity/);
+  assert.match(admission, /\/revit\/get-parameters[\s\S]*element\.parameter_values/,
+    "parameter mutations must admit only readbacks whose reviewed schema exposes parameter values");
+  assert.match(admission, /principal_target_fields/,
+    "reviewed Revit capability contracts must distinguish the affected subject from contextual scope");
+  assert.match(admission, /contextual_scope_fields/,
+    "view, owner, and document scope must not be inferred as the affected operation target");
+  assert.match(admission, /operationTargetSelectorV2/,
+    "one reviewed selector must own target extraction across admission, execution, and result validation");
+  assert.doesNotMatch(admission, /\/revit\/get-element-summary[^\n]*text_note\.value/,
+    "an element identity/classification summary must not claim it can expose TextNote content");
+  const execution = readFileSync(path.join(sourceRoot, "assignments", "assignment_kernel_v2_execution.ts"), "utf8");
+  const admissionAt = execution.indexOf("verificationCapabilityAdmissionV2({");
+  const appendAt = execution.indexOf("event_id: `operation-admitted:${operationId}`");
+  assert.ok(admissionAt >= 0 && appendAt > admissionAt,
+    "verification capability eligibility must fail closed before an operation identity or dispatch opportunity is consumed");
+  const progress = readFileSync(path.join(sourceRoot, "brains", "codex_assignment_progress.ts"), "utf8");
+  assert.match(progress, /verificationCapabilityGuidanceV2/,
+    "the application adapter must describe the unresolved gap to bounded provider reasoning without leaking Revit routes into the kernel domain");
+  const dynamicHandler = readFileSync(path.join(sourceRoot, "brains", "codex_dynamic_tool_handler.ts"), "utf8");
+  assert.match(dynamicHandler, /target_tokens:\s*teammateGate\.call\?\.principal_target_tokens/,
+    "OperationV2 admission must use principal target identity rather than broad scope tokens");
+  assert.doesNotMatch(dynamicHandler, /target_tokens:\s*teammateGate\.call\?\.target_tokens/,
+    "contextual scope identifiers must not re-enter canonical target admission through the dynamic handler");
+  const preflight = readFileSync(path.join(process.cwd(), "..", "mcp-server", "src", "lib", "genericToolPreflight.ts"), "utf8");
+  assert.match(preflight, /schema\.additionalProperties === false/,
+    "published closed request schemas must reject unknown fields before native dispatch");
+  const evidenceBoundary = readFileSync(path.join(sourceRoot, "verification", "verification_payload_boundary_v2.ts"), "utf8");
+  assert.match(evidenceBoundary, /request/);
+  assert.match(evidenceBoundary, /metadata/);
+  assert.match(evidenceBoundary, /provenance/,
+    "one reviewed boundary must exclude echoed input, control metadata, and provenance from verification evidence");
+  const teammateEvidence = readFileSync(path.join(sourceRoot, "teammate_verification_evidence.ts"), "utf8");
+  const postcondition = readFileSync(path.join(sourceRoot, "postcondition_verification_v2.ts"), "utf8");
+  for (const consumer of [admission, teammateEvidence, postcondition]) {
+    assert.match(consumer, /verification_payload_boundary_v2/,
+      "every verifier-side semantic traversal must share the same evidence-envelope boundary");
+  }
+  assert.match(postcondition, /parameterMapTokens[\s\S]*propertyValueToken/,
+    "generic parameter verification must bind each value to its named property");
+  assert.doesNotMatch(postcondition, /values\.add\(JSON\.stringify\(node\)\)/,
+    "bare scalar coincidence must not satisfy a property-bound postcondition");
 });
 
 test("OperationV2 identity does not incorporate MCP aliases or route/path strings", () => {

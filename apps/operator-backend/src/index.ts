@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { decide, decideStreaming, isDirectBrainRouteRequest } from "./brain.js";
 import { readJson, writeJson } from "./http.js";
-import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest, type ToolResult } from "./contracts.js";
+import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "./contracts.js";
 import { appendMessage, appendToolSummary, assertSessionOwnership, ensureSession } from "./session_store.js";
 import { consumeRestartRequested, scheduleBackendRestart } from "./dev/dev_agent.js";
 import { appendAuditLine } from "./audit_log.js";
@@ -76,7 +76,8 @@ import {
   type RequestPrincipal
 } from "./request_context.js";
 import { createArtifactShare, listArtifacts, resolveArtifactShare } from "./artifacts/artifact_bus.js";
-import { describeVisibleElementsInventory, getChatRequestLimitBytes } from "./tool_result_compaction.js";
+import { getChatRequestLimitBytes } from "./tool_result_compaction.js";
+import { appendToolFailureEvent, summarizeToolResult } from "./tool_result_reporting.js";
 import {
   createZippyBimJob,
   getZippyBimConfig,
@@ -117,6 +118,8 @@ import {
   DirectRevitExecutionAuthorizationError
 } from "./capabilities/direct_revit_execution_authorization.js";
 import { getSidecarAgentProfileState } from "./capabilities/sidecar_agent_profile.js";
+import { assignmentKernelRuntimeAttestationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+import { assignmentKernelV2Enabled } from "./domain/assignment-kernel/feature_flag.js";
 import {
   getSafeReadCapabilityService,
   SAFE_READ_AUTHORIZE_EXECUTION_ENDPOINT,
@@ -160,6 +163,7 @@ import {
 import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.js";
 import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurn } from "./assignments/turn_preparation.js";
+import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
 import { startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
@@ -2366,6 +2370,9 @@ const server = http.createServer(async (req, res) => {
               parsed.session_id, assignmentBinding.assignmentId, assignmentBinding.runId,
               assignmentBinding.generation, "provider_turn_interrupted_or_stream_closed"
             );
+          } else {
+            handleChatExecutionFailureBoundaryV2({ assignment: assignmentBinding, message_id: parsed.message_id,
+              error: err, canceled: true, persist_terminal_response: false });
           }
           try {
             persistServerPlannedStep(parsed.session_id, parsed.message_id, userTextWithAttachments || null, []);
@@ -2377,6 +2384,9 @@ const server = http.createServer(async (req, res) => {
         }
 
         const message = err instanceof Error ? err.message : "Unknown error";
+        if (handleChatExecutionFailureBoundaryV2({ assignment: assignmentBinding, message_id: parsed.message_id, error: err,
+          deliver_terminal: response => { send("assistant.done", { text: response.assistant_message });
+            send("actions", { actions: [], ok: true }); send("done", {}); } }).response) return;
         try {
           appendEvent(parsed.session_id as any, "assistant", "backend.error", {
             message_id: parsed.message_id,
@@ -2691,6 +2701,9 @@ const server = http.createServer(async (req, res) => {
             assignmentBinding.generation, message
           );
         }
+        const terminalRecovery = handleChatExecutionFailureBoundaryV2({ assignment: assignmentBinding,
+          message_id: parsed.message_id, error: err }).response;
+        if (terminalRecovery) return writeJson(res, 200, terminalRecovery);
         try {
           appendEvent(parsed.session_id, "assistant", "backend.error", {
             message_id: parsed.message_id,
@@ -3948,6 +3961,7 @@ const server = http.createServer(async (req, res) => {
         revit_transport: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase(),
         revit_courier_enabled: (process.env.OPERATOR_REVIT_TRANSPORT || "direct").trim().toLowerCase() === "courier",
         sidecar_agent_profile: getSidecarAgentProfileState(),
+        assignment_kernel_runtime: assignmentKernelRuntimeAttestationV2(assignmentKernelV2Enabled()),
         codex_app_server: getCodexAppServerCompatibility(),
         memory_path: ws.memory,
         local_skills_path: ws.skills,
@@ -4035,90 +4049,6 @@ function appendAttachmentsToUserText(userText: string, attachments: NonNullable<
   if (!block) return t;
   if (!t) return block;
   return `${t}\n\n${block}`;
-}
-
-function appendToolFailureEvent(sessionId: string, messageId: string, r: ToolResult): void {
-  if (r.status !== "failed") return;
-  const attachmentSummary = summarizeFailureAttachments(r.attachments);
-  appendEvent(sessionId, "assistant", "tool.failure", {
-    message_id: messageId,
-    action_id: r.action_id,
-    method: r.method,
-    path: r.path,
-    status: r.status,
-    ...(typeof r.error === "string" && r.error.trim() ? { error: r.error.trim() } : {}),
-    ...(typeof r.failure_kind === "string" && r.failure_kind.trim() ? { failure_kind: r.failure_kind.trim() } : {}),
-    ...(typeof r.failure_code === "string" && r.failure_code.trim() ? { failure_code: r.failure_code.trim() } : {}),
-    ...(typeof r.failure_hint === "string" && r.failure_hint.trim() ? { failure_hint: r.failure_hint.trim() } : {}),
-    ...(typeof r.duration_ms === "number" ? { duration_ms: Math.round(r.duration_ms) } : {}),
-    ...(attachmentSummary ? { attachments: attachmentSummary } : {})
-  });
-}
-
-function summarizeFailureAttachments(attachments: ToolResult["attachments"] | undefined): { total: number; image_count: number } | null {
-  const list = Array.isArray(attachments) ? attachments : [];
-  if (list.length === 0) return null;
-  const imageCount = list.filter(a => a && typeof a === "object" && (a as any).kind === "image").length;
-  return {
-    total: list.length,
-    image_count: imageCount
-  };
-}
-
-function summarizeToolResult(r: ToolResult): string {
-  const bits = [`${r.status.toUpperCase()} ${r.method} ${r.path} (action_id=${r.action_id})`];
-  if (typeof r.duration_ms === "number") bits.push(`duration_ms=${Math.round(r.duration_ms)}`);
-  if (r.error) bits.push(`error=${r.error}`);
-  if (r.failure_code) bits.push(`failure_code=${r.failure_code}`);
-  if (r.failure_kind) bits.push(`failure_kind=${r.failure_kind}`);
-  const attachments = r.attachments ?? [];
-  const img = attachments.filter(a => a && typeof a === "object" && (a as any).kind === "image");
-  if (img.length > 0) bits.push(`attachments=image(${img.length})`);
-
-  try {
-    if (r.path === "/revit/quantify" && r.result_json && typeof r.result_json === "object") {
-      const rr: any = r.result_json;
-      const total = rr?.summary?.total;
-      if (typeof total === "number") bits.push(`total=${total}`);
-      const rsid = typeof rr?.resultSetId === "string" ? rr.resultSetId.trim() : "";
-      if (rsid) bits.push(`resultSetId=${rsid.slice(0, 12)}…`);
-      const groups = rr?.summary?.groups;
-      if (groups && typeof groups === "object") {
-        const entries = Object.entries(groups as Record<string, unknown>)
-          .filter(([, v]) => typeof v === "number")
-          .sort((a, b) => (b[1] as number) - (a[1] as number))
-          .slice(0, 5);
-        if (entries.length > 0) bits.push(`top_groups=${entries.map(([k, v]) => `${k}:${v}`).join(",")}`);
-      }
-    }
-
-    if (
-      (r.path === "/revit/export-image" ||
-        r.path === "/revit/export-view-frame" ||
-        r.path === "/revit/export-view-region" ||
-        r.path === "/revit/export-visible-elements" ||
-        r.path === "/revit/highlight-and-export" ||
-        r.path === "/revit/mep-route-workflow") &&
-      r.result_json &&
-      typeof r.result_json === "object"
-    ) {
-      const rr: any = r.result_json;
-      if (typeof rr.path === "string") bits.push(`path=${rr.path}`);
-      if (typeof rr?.visualVerification?.capture?.path === "string") bits.push(`path=${rr.visualVerification.capture.path}`);
-    }
-
-    if (r.path === "/revit/export-visible-elements") {
-      const inventory = describeVisibleElementsInventory(r.result_json);
-      if (inventory && inventory.count !== null) bits.push(`count=${inventory.count}`);
-      if (inventory && inventory.sampled) bits.push(`sampled=${inventory.sampled}`);
-      if (inventory && inventory.topCategories.length) bits.push(`top_categories=${inventory.topCategories.slice(0, 3).join(",")}`);
-      if (inventory && inventory.topRooms.length) bits.push(`top_rooms=${inventory.topRooms.slice(0, 3).join(",")}`);
-    }
-  } catch {
-    // ignore
-  }
-
-  return bits.join(" | ");
 }
 
 let uploadQueueWorker: { stop: () => void } | null = null;

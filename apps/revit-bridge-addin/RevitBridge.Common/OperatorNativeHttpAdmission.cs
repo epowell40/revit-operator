@@ -23,7 +23,8 @@ namespace RevitBridge.Common
 
         public static bool IsExactDeploymentGeneralAgent(string? runtimeMode, string? exposureProfile, string? trustSource)
         {
-            return (string.Equals(runtimeMode, "local", StringComparison.Ordinal)
+            return (string.Equals(runtimeMode, "development", StringComparison.Ordinal)
+                    || string.Equals(runtimeMode, "local", StringComparison.Ordinal)
                     || string.Equals(runtimeMode, "hosted", StringComparison.Ordinal)
                     || string.Equals(runtimeMode, "production", StringComparison.Ordinal))
                 && string.Equals(exposureProfile, "general", StringComparison.Ordinal)
@@ -178,6 +179,13 @@ namespace RevitBridge.Common
                 throw OperatorNativeHttpAdmissionException.InvalidRequest("Certified native Revit request body is not strict UTF-8.");
             }
 
+            // LF-only applies to source bytes, not to decoded JSON string
+            // values. A semantic carriage return represented as `\\r` is
+            // legitimate task data and must not be rewritten or rejected.
+            if (bodyJson.IndexOf('\r') >= 0)
+                throw OperatorNativeHttpAdmissionException.InvalidRequest(
+                    "Certified native Revit request body must use LF-only JSON source bytes.");
+
             try
             {
                 using (var document = JsonDocument.Parse(bodyJson, StrictJson))
@@ -288,12 +296,12 @@ namespace RevitBridge.Common
         {
             if (!string.Equals(value, NormalizeForPolicy(value), StringComparison.Ordinal))
                 throw OperatorNativeHttpAdmissionException.InvalidRequest(
-                    "Certified native Revit request " + location + " must already use NFC and LF-only policy normalization.");
+                    "Certified native Revit request " + location + " must already use NFC normalization.");
         }
 
         private static string NormalizeForPolicy(string value)
         {
-            return value.Replace("\r\n", "\n").Replace("\r", "\n").Normalize(NormalizationForm.FormC);
+            return value.Normalize(NormalizationForm.FormC);
         }
     }
 
@@ -396,6 +404,37 @@ namespace RevitBridge.Common
 
     public static class OperatorNativeHttpDispatchFence
     {
+        public static async Task<string> RequireFreshOneUseWithQueueRefreshAsync(
+            IOperatorNativeHttpAuthorizer authorizer,
+            OperatorNativeHttpAuthorizationReceipt? receipt,
+            OperatorNativeHttpRequest request,
+            string expectedCanonicalBodyJson,
+            CancellationToken cancellationToken,
+            Func<DateTimeOffset>? utcNow = null)
+        {
+            if (authorizer == null) throw new ArgumentNullException(nameof(authorizer));
+            var clock = utcNow ?? (() => DateTimeOffset.UtcNow);
+            try
+            {
+                RequireFreshOneUse(receipt, request, clock(), expectedCanonicalBodyJson);
+                return request.BodyJson;
+            }
+            catch (OperatorNativeHttpAdmissionException error) when (
+                error.Code == "CERTIFICATION_DIRECT_AUTHORIZATION_EXPIRED"
+                && receipt?.IsDeploymentGeneralAgent == true)
+            {
+                // A deployment General Agent receipt is obtained before write-grant
+                // consumption, but Revit may not acquire its single ExternalEvent
+                // lane until after that receipt's bounded local window. Refresh only
+                // the exact final authorization at the dispatch boundary. No native
+                // handler has run, and every other integrity or replay failure stays
+                // fail-closed.
+                var refreshed = await authorizer.AuthorizeAsync(request, cancellationToken, "final").ConfigureAwait(false);
+                RequireFreshOneUse(refreshed, request, clock(), expectedCanonicalBodyJson);
+                return request.BodyJson;
+            }
+        }
+
         public static string RequireFreshOneUse(
             OperatorNativeHttpAuthorizationReceipt? receipt,
             OperatorNativeHttpRequest request,

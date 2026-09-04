@@ -431,10 +431,18 @@ test("compiled package layout resolves and validates its sibling bundled policy"
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const packagedLib = path.join(root, "mcp-server", "dist", "lib");
   const packagedConfig = path.join(root, "operator-backend", "config");
+  const packagedRouteEffectPackage = path.join(root, "mcp-server", "node_modules", "@revitoperator", "revit-action-effect-v1");
   fs.mkdirSync(packagedLib, { recursive: true });
   fs.mkdirSync(packagedConfig, { recursive: true });
+  fs.mkdirSync(packagedRouteEffectPackage, { recursive: true });
   for (const file of ["toolExposurePolicy.js", "revitRouteEffect.js", "safeReadDiscovery.js", "certifiedMoveOneRequestFamily.js", "certifiedMoveTargetLedger.js"]) {
     fs.copyFileSync(path.resolve(process.cwd(), "dist", "lib", file), path.join(packagedLib, file));
+  }
+  for (const file of ["index.js", "package.json"]) {
+    fs.copyFileSync(
+      path.resolve(process.cwd(), "node_modules", "@revitoperator", "revit-action-effect-v1", file),
+      path.join(packagedRouteEffectPackage, file)
+    );
   }
   fs.copyFileSync(sourcePolicyPath, path.join(packagedConfig, "tool_exposure_policy.v1.json"));
   const packagedModule = await import(`${pathToFileURL(path.join(packagedLib, "toolExposurePolicy.js")).href}?package-test=${Date.now()}`);

@@ -1,0 +1,240 @@
+{
+  "schema": "revit_operator.tool_search_ranking_golden_vectors/v3",
+  "ranking_version": "operator.tool_search_ranking.v3",
+  "candidates": [
+    {
+      "method": "POST",
+      "path": "/revit/replace-text-note",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Replace Text Note",
+      "description": "Replace a TextNote's text in the active project. Body: {elementId,newText,expectedOldText?,dryRun?,apply?,confirm?}.",
+      "example": "replace text note to ACME",
+      "required_fields": ["elementId", "newText"],
+      "optional_fields": ["expectedOldText", "dryRun", "apply", "confirm"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/set-text-note-text",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Set Text Note Text",
+      "description": "Edit a TextNote's static text. Body: {textNoteId,newText,dryRun?,apply?,confirm?}.",
+      "example": "set text note text to ACME",
+      "required_fields": ["textNoteId", "newText"],
+      "optional_fields": ["dryRun", "apply", "confirm"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/find-text-notes",
+      "risk": "low",
+      "group": "Query",
+      "title": "Find Text Notes",
+      "description": "Find bounded TextNotes by exact element identity, phrase, or regex.",
+      "example": "find text notes containing MEP",
+      "required_fields": [],
+      "optional_fields": ["elementId", "elementIds", "textContains", "viewId", "max"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/edit-mep-route-elements",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Edit MEP Route Elements",
+      "description": "Edit elements in place by exact element ids. Supports dry-run and apply workflows.",
+      "example": "dry-run one route element edit",
+      "required_fields": ["expectedModelPath", "apply"],
+      "optional_fields": ["elementIds", "dryRun", "endpointEdit", "directionEdit"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/tag-elements",
+      "risk": "medium",
+      "group": "Drafting",
+      "title": "Tag Elements",
+      "description": "Create tags for elements by explicit ids with duplicate avoidance and dry-run support.",
+      "example": "tag selected elements without duplicates",
+      "required_fields": [],
+      "optional_fields": ["elementIds", "onlyUntagged", "dryRun"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/update-parameter-by-query",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Update Parameter By Query",
+      "description": "Find elements and update one parameter with preview and apply reporting.",
+      "example": "dry-run update a parameter",
+      "required_fields": ["parameterName", "value"],
+      "optional_fields": ["elementIds", "dryRun", "apply"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/repair-duct-continuity-by-scope",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Repair Duct Continuity By Scope",
+      "description": "Repair duct continuity for exact element ids. Dry-run rolls back the native repair.",
+      "example": "dry-run exact duct continuity repair",
+      "required_fields": ["expectedModelPath"],
+      "optional_fields": ["elementIds", "dryRun", "maxRepairs"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/titleblock-family-update-text",
+      "risk": "high",
+      "group": "Modeling",
+      "title": "Titleblock Family Update Text",
+      "description": "Update static TextNotes in a titleblock family and reload the project.",
+      "example": "dry-run update titleblock static text",
+      "required_fields": ["findText", "replaceText"],
+      "optional_fields": ["sheetNumber", "dryRun", "apply"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/quantify",
+      "risk": "low",
+      "group": "Query",
+      "title": "Quantify",
+      "description": "Count or list elements in a category with grouping by family and type.",
+      "example": "count air terminals grouped by family and type",
+      "required_fields": ["categories"],
+      "optional_fields": ["groupBy", "includeTypes"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/list-element-types",
+      "risk": "low",
+      "group": "Query",
+      "title": "List Element Types",
+      "description": "List loaded element types for a category.",
+      "example": "list duct terminal types",
+      "required_fields": [],
+      "optional_fields": ["category"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/resize-duct-run",
+      "risk": "high",
+      "group": "MEP",
+      "title": "Resize Duct Run",
+      "description": "Resize a connected duct run while preserving connections.",
+      "example": "resize connected duct run to six inches",
+      "required_fields": ["startElementId", "targetDiameter"],
+      "optional_fields": ["dryRun", "apply"]
+    },
+    {
+      "method": "POST",
+      "path": "/revit/export-image",
+      "risk": "low",
+      "group": "Capture",
+      "title": "Capture View",
+      "description": "Export the current Revit view to an image.",
+      "example": "capture current view",
+      "required_fields": [],
+      "optional_fields": ["viewId", "imageSize"]
+    }
+  ],
+  "queries": [
+    {
+      "id": "candidate_58_text_note_mutation",
+      "query": "update existing TextNote text in place by element id without duplication dry run apply",
+      "expected_first": "/revit/replace-text-note",
+      "required_top_five": ["/revit/replace-text-note", "/revit/set-text-note-text"],
+      "expected_scores": {
+        "/revit/replace-text-note": 1194,
+        "/revit/set-text-note-text": 742,
+        "/revit/titleblock-family-update-text": 730,
+        "/revit/edit-mep-route-elements": 570,
+        "/revit/find-text-notes": 446
+      }
+    },
+    {
+      "id": "inventory_grouping",
+      "query": "project-wide element inventory by category grouped by family and type complete count air terminals",
+      "expected_first": "/revit/quantify",
+      "required_top_five": ["/revit/quantify", "/revit/list-element-types"],
+      "expected_scores": {
+        "/revit/quantify": 450,
+        "/revit/list-element-types": 266,
+        "/revit/titleblock-family-update-text": 110,
+        "/revit/edit-mep-route-elements": 96,
+        "/revit/tag-elements": 96
+      }
+    },
+    {
+      "id": "text_note_discovery",
+      "query": "find the selected TextNote by exact element id",
+      "expected_first": "/revit/find-text-notes",
+      "required_top_five": ["/revit/find-text-notes"],
+      "expected_scores": {
+        "/revit/find-text-notes": 912,
+        "/revit/replace-text-note": 460,
+        "/revit/set-text-note-text": 446,
+        "/revit/edit-mep-route-elements": 124,
+        "/revit/tag-elements": 122
+      }
+    },
+    {
+      "id": "duct_repair",
+      "query": "repair duct continuity for exact element ids with rollback dry run",
+      "expected_first": "/revit/repair-duct-continuity-by-scope",
+      "required_top_five": ["/revit/repair-duct-continuity-by-scope"],
+      "expected_scores": {
+        "/revit/repair-duct-continuity-by-scope": 1194,
+        "/revit/resize-duct-run": 240,
+        "/revit/edit-mep-route-elements": 152,
+        "/revit/tag-elements": 138,
+        "/revit/list-element-types": 108
+      }
+    },
+    {
+      "id": "duct_resize",
+      "query": "resize the connected duct run while preserving connections",
+      "expected_first": "/revit/resize-duct-run",
+      "required_top_five": ["/revit/resize-duct-run"],
+      "expected_scores": {
+        "/revit/resize-duct-run": 940,
+        "/revit/repair-duct-continuity-by-scope": 110,
+        "/revit/edit-mep-route-elements": 14,
+        "/revit/replace-text-note": 14,
+        "/revit/set-text-note-text": 14
+      }
+    },
+    {
+      "id": "tagging",
+      "query": "tag selected elements and avoid duplicate tags",
+      "expected_first": "/revit/tag-elements",
+      "required_top_five": ["/revit/tag-elements"],
+      "expected_scores": {
+        "/revit/tag-elements": 526,
+        "/revit/edit-mep-route-elements": 96,
+        "/revit/list-element-types": 96,
+        "/revit/find-text-notes": 14,
+        "/revit/quantify": 14
+      }
+    },
+    {
+      "id": "titleblock_text",
+      "query": "update static titleblock family text on a sheet",
+      "expected_first": "/revit/titleblock-family-update-text",
+      "required_top_five": ["/revit/titleblock-family-update-text"],
+      "expected_scores": {
+        "/revit/titleblock-family-update-text": 1138,
+        "/revit/replace-text-note": 500,
+        "/revit/edit-mep-route-elements": 356,
+        "/revit/update-parameter-by-query": 356,
+        "/revit/set-text-note-text": 124
+      }
+    },
+    {
+      "id": "capture_view",
+      "query": "export an image of the current Revit view",
+      "expected_first": "/revit/export-image",
+      "required_top_five": ["/revit/export-image"],
+      "expected_scores": {
+        "/revit/export-image": 876
+      }
+    }
+  ]
+}

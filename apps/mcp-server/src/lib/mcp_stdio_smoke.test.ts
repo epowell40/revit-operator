@@ -395,7 +395,8 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
       OPERATOR_TOKEN: "mcp-stdio-smoke-token",
       OPERATOR_WORKSPACE_ROOT: workspace,
       REVIT_OPERATOR_MODE: "development",
-      OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
+      OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+      OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT: "1"
     },
     stderr: "pipe"
   });
@@ -491,6 +492,17 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(connectorRepairTool?.annotations?.destructiveHint, true);
   const runtimeProbe = await withTimeout(client.callTool({ name: "operator_runtime_probe", arguments: {} }), "probing MCP runtime");
   assert.match((runtimeProbe as any).content[0].text, /operator\.mcp\.runtime\.v1/);
+  const discovery = await withTimeout(client.callTool({
+    name: "operator_discover_capabilities",
+    arguments: { need: "inspect the current Revit context", maxResults: 4 }
+  }), "discovering live laboratory capabilities");
+  const discoveryPayload = JSON.parse((discovery as any).content[0].text);
+  assert.equal(discoveryPayload.schemaVersion, "revit-operator.general-agent-capability-discovery.v2");
+  assert.equal(discoveryPayload.exposureMode, "general");
+  assert.equal(discoveryPayload.runtimeMode, "development");
+  assert.equal(discoveryPayload.status, "available");
+  assert.ok(discoveryPayload.capabilities.some((capability: any) =>
+    capability.method === "GET" && capability.path === "/revit/context"));
   const connectorRepair = await withTimeout(client.callTool({
     name: "revit_dry_run_repair_mep_connectors",
     arguments: {
@@ -693,6 +705,42 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
     _meta: authMeta
   }), "retrieving principal-authenticated evidence through compiled MCP");
   assert.equal((evidence as any).isError, undefined, stderr.join(""));
+  const targetedEvidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"c".repeat(32)}`,
+      sessionId: "session-a",
+      assignmentId: "assignment-a",
+      runId: "run-a",
+      generation: 1,
+      purpose: "Read the one exact TextNote candidate selected by its native identity.",
+      targetSubset: ["1478627"],
+      maxBytes: 4096
+    },
+    _meta: authMeta
+  }), "retrieving exact target-bound evidence through compiled MCP");
+  assert.equal((targetedEvidence as any).isError, undefined, stderr.join(""));
+
+  const requestCountBeforeConflict = requests.length;
+  const ambiguousEvidence = await withTimeout(client.callTool({
+    name: "operator_retrieve_evidence",
+    arguments: {
+      evidenceId: `ev1_${"d".repeat(32)}`,
+      sessionId: "session-a",
+      assignmentId: "assignment-a",
+      runId: "run-a",
+      generation: 1,
+      purpose: "Reject an ambiguous focused-evidence request before transport.",
+      fields: ["payload.items"],
+      targetSubset: ["1478627"],
+      maxBytes: 4096
+    },
+    _meta: authMeta
+  }), "rejecting an ambiguous evidence selector through compiled MCP");
+  assert.equal((ambiguousEvidence as any).isError, true);
+  assert.match((ambiguousEvidence as any).content.map((item: any) => item.text ?? "").join("\n"), /exactly one active selector/);
+  assert.equal(requests.length, requestCountBeforeConflict, "Ambiguous selectors must fail before backend transport.");
+
   const semantic = await withTimeout(client.callTool({
     name: "operator_plan_semantic_mep_route",
     arguments: { userText: "Route one bounded branch." },
@@ -703,8 +751,13 @@ test("compiled MCP forwards a request-scoped principal JWT to completion without
   assert.deepEqual(requests.map(request => request.path), [
     "/api/assignments/read-completion-claims",
     "/evidence/retrieve",
+    "/evidence/retrieve",
     "/tools/mep/semantic-route-plan"
   ]);
+  assert.deepEqual(JSON.parse(requests[1]!.body).fields, ["count"]);
+  assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(requests[1]!.body), "target_subset"), false);
+  assert.deepEqual(JSON.parse(requests[2]!.body).target_subset, ["1478627"]);
+  assert.equal(Object.prototype.hasOwnProperty.call(JSON.parse(requests[2]!.body), "fields"), false);
   for (const request of requests) {
     assert.equal(request.authorization, `Bearer ${credential}`);
     assert.equal(request.shared, "");
@@ -909,4 +962,16 @@ test("capability metadata is session-cached while explicit refresh remains avail
   assert.match(serverSource, /callRevit\("\/revit\/tool-doc", "POST", args\)/);
   assert.match(serverSource, /callRevit\("\/revit\/tool-examples", "POST", args\)/);
   assert.match(serverSource, /!freshCachedToolRegistry\(\) && !args\.forceRefresh/);
+});
+
+test("reviewed typed verification reads propagate the exact kernel fulfillment grant", () => {
+  const serverSource = fs.readFileSync(path.resolve(process.cwd(), "src/server.ts"), "utf8");
+  for (const route of ["find-text-notes", "get-element-summary", "get-parameters"]) {
+    const escaped = route.replace(/-/g, "\\-");
+    assert.match(
+      serverSource,
+      new RegExp(`callRevit\\(\"/revit/${escaped}\", \"POST\",[\\s\\S]{0,220}assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2\\(\\)`),
+      `The reviewed ${route} handler must preserve task/verification fulfillment at the native edge.`
+    );
+  }
 });

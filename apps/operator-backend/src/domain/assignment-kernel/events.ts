@@ -5,6 +5,7 @@ import type { ObservationV2 } from "./observation.js";
 import type { ObservationCommitInputV2, OperationResultV2, OperationV2 } from "./operation.js";
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallStateV2, ProviderCallV2, ProviderUsageV2 } from "./progress/provider_call.js";
+import type { ExecutionFailureV2 } from "./progress/execution_failure.js";
 
 export const ASSIGNMENT_EVENT_V2_SCHEMA = "revit-operator.assignment-event/v2" as const;
 
@@ -41,6 +42,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
       error_class?: "provider" | "transport" | "canceled" | "resource_exhausted";
     }
   | { event_type: "provider_call_receipt_recorded"; call: ProviderCallV2 }
+  | { event_type: "execution_failure_recorded"; failure: ExecutionFailureV2 }
   | { event_type: "provider_budget_exhausted"; limit: number }
   | { event_type: "progress_epoch_recorded"; epoch: ProgressEpochV2 }
   | { event_type: "progress_blocked"; code: string; gap_ids: readonly string[] }

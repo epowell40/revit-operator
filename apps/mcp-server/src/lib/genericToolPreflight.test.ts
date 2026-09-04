@@ -168,6 +168,32 @@ test("Candidate 11 exact find-text-notes elementIds request is admitted by its o
   });
   assert.deepEqual(outOfRange?.invalid_fields, ["body.max"]);
   assert.equal(outOfRange?.validation_issues?.[0]?.expected_type, "maximum:500");
+
+  const candidate68 = preflightKnownGenericToolBody(contract, {
+    elementIds: [1478627],
+    viewId: 1363433,
+    query: "ISSUE 04",
+    matchMode: "exact",
+    max: 1
+  });
+  assert.deepEqual(candidate68?.invalid_fields, ["body.matchMode", "body.query"]);
+  assert.deepEqual(candidate68?.validation_issues?.map(issue => ({
+    field_path: issue.field_path,
+    expected_type: issue.expected_type,
+    actual_type: issue.actual_type,
+    correction_action: issue.correction_action,
+    constraint: issue.expected_constraint.kind
+  })), [
+    {
+      field_path: "body.matchMode", expected_type: "declared_property", actual_type: "unknown_property",
+      correction_action: "provider_resubmit", constraint: "property_set"
+    },
+    {
+      field_path: "body.query", expected_type: "declared_property", actual_type: "unknown_property",
+      correction_action: "provider_resubmit", constraint: "property_set"
+    }
+  ]);
+  assert.equal(candidate68?.request_dispatched, false);
 });
 
 test("Candidate 12 replace-text-note preview requires only the actual mutation inputs", () => {

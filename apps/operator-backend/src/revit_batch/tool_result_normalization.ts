@@ -1,4 +1,4 @@
-import { conditionalActionPathEffect, pathLooksWrite } from "../action_path_mutability.js";
+import { revitRouteEffect, revitRouteEffectWhenBodyUnavailable } from "../action_path_mutability.js";
 import { compactIncomingToolResult } from "../tool_result_compaction.js";
 import type { ActionCall, ToolResult } from "../contracts.js";
 import { getEvidenceContextBudget } from "../evidence/model_context_budget.js";
@@ -69,23 +69,15 @@ export function registerServerPlannedActions(sessionIdValue: unknown, actions: u
 
 function plannedRequestEffect(action: ActionCall): NonNullable<ToolResult["request_effect"]> {
   if (action.request_effect === "read" || action.request_effect === "preview" || action.request_effect === "apply") return action.request_effect;
-  if (action.method === "GET") return "read";
-  const conditional = conditionalActionPathEffect(action.path, action.body);
-  if (conditional) return conditional;
-  return pathLooksWrite(action.path, action.body) ? "apply" : "read";
+  return revitRouteEffect(action.path, action.method, action.body);
 }
 
 function unplannedRequestEffect(method: "GET" | "POST", actionPath: string): NonNullable<ToolResult["request_effect"]> {
-  if (method === "GET") return "read";
   // Conditional POST routes need the server-owned request body to distinguish
   // reads/previews from writes. If that plan was lost after a restart or cache
   // eviction, classify conservatively instead of allowing a bodyless fallback
   // (or client-supplied request_effect) to downgrade a possible mutation.
-  const conditional = conditionalActionPathEffect(actionPath);
-  // The transaction-plan route is an explicit rollback-only preview invariant.
-  if (conditional === "preview") return "preview";
-  if (conditional !== undefined) return "apply";
-  return pathLooksWrite(actionPath) ? "apply" : "read";
+  return revitRouteEffectWhenBodyUnavailable(actionPath, method);
 }
 
 export function normalizeIncomingToolResults(input: unknown, sessionIdValue: unknown): ToolResult[] {

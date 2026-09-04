@@ -18,6 +18,9 @@ import { decideAnthropic, decideGemini } from "../src/brains/external_provider_b
 import { decideOpenAi } from "../src/brains/openai_brain.js";
 import { guardGenericTeammateDecision } from "../src/teammate_loop_runtime.js";
 import { computeDynamicRuntimePackageDirectoryIdentity } from "../src/dynamic_runtime/runtime_package_directory_identity.js";
+import { normalizeProviderSupervisorEvidence } from "../src/dynamic_runtime/provider_supervisor_evidence.js";
+import { createGoal } from "../src/goals/service.js";
+import { createAssignmentKernelForGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import {
   OPERATOR_BACKEND_CONTRACT_VERSION,
   type ChatRequest,
@@ -31,6 +34,18 @@ function request(id: string): ChatRequest {
     message_id: "message-1",
     user_text: "Move the bounded mechanical set using a short custom loop."
   };
+}
+
+async function withWorkspace(fn: (root: string) => Promise<void> | void): Promise<void> {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "provider-dynamic-workspace-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  try { await fn(root); }
+  finally {
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
+    else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 function program(overrides: Partial<ProviderDynamicProgramV1> = {}): ProviderDynamicProgramV1 {
@@ -61,6 +76,30 @@ function sha256(value: string | Buffer): string {
   return `sha256:${crypto.createHash("sha256").update(value).digest("hex")}`;
 }
 
+function dynamicCanonicalJoin(values: string[]): string {
+  return values.map(value => `+${Buffer.from(value, "utf8").toString("base64")}\n`).join("");
+}
+
+function dynamicCanonicalSet(values: string[]): string {
+  return dynamicCanonicalJoin([...values].sort());
+}
+
+function dynamicEffectBudgetHash(budget: Record<string, unknown>): string {
+  return sha256(dynamicCanonicalJoin([
+    String(budget.Schema), String(budget.BudgetId),
+    dynamicCanonicalSet(budget.TargetDocumentFingerprints as string[]),
+    dynamicCanonicalSet(budget.AllowedCategories as string[]),
+    dynamicCanonicalSet(budget.ExplicitTargetUniqueIds as string[]),
+    dynamicCanonicalSet(budget.AllowedSdkDomains as string[]),
+    dynamicCanonicalSet(budget.AllowedExternalEffectClasses as string[]),
+    String(budget.ViewScopeHash), String(budget.LevelScopeHash), String(budget.WorksetScopeHash), String(budget.PhaseScopeHash),
+    String(budget.MaximumOperationCount), String(budget.MaximumAffectedElements), String(budget.MaximumCreates),
+    String(budget.MaximumModifications), String(budget.MaximumDeletes), String(budget.MaximumExecutionMilliseconds),
+    String(budget.MaximumRegenerations), String(budget.MaximumOutputCount), String(budget.MaximumOutputBytes),
+    String(budget.FileCapabilitySetHash)
+  ]));
+}
+
 function supervisorPackage(root: string) {
   const directory = path.join(root, "supervisor"); const executable = path.join(directory, "DynamicRevitSandboxSupervisor.exe");
   fs.mkdirSync(path.join(directory, "manifests"), { recursive: true });
@@ -86,6 +125,7 @@ function supervisorEvidence(args: {
   supervisorPackageSha256: string;
   workerRuntimePackageSha256: string;
   targetRevitYear?: "2023" | "2024" | "2025";
+  applyRequested?: boolean;
 }): Record<string, unknown> {
   const runtimeId = "runtime-1";
   const sessionId = "session-1";
@@ -127,6 +167,37 @@ function supervisorEvidence(args: {
     projected_changes: [], failures: [], warnings: [], rollback_status: "rolled_back",
     rollback_truth: true, elapsed_milliseconds: 1
   });
+  const previewHash = sha256(previewReceipt);
+  const effectBudget = {
+    Schema: "dynamic-revit-effect-budget/v1", BudgetId: "budget-1",
+    TargetDocumentFingerprints: [fingerprint], AllowedCategories: ["OST_MechanicalEquipment"],
+    ExplicitTargetUniqueIds: ["target-1"], AllowedSdkDomains: ["core"], AllowedExternalEffectClasses: [],
+    ViewScopeHash: `sha256:${"1".repeat(64)}`, LevelScopeHash: `sha256:${"2".repeat(64)}`,
+    WorksetScopeHash: `sha256:${"3".repeat(64)}`, PhaseScopeHash: `sha256:${"4".repeat(64)}`,
+    MaximumOperationCount: 1, MaximumAffectedElements: 1, MaximumCreates: 0, MaximumModifications: 1,
+    MaximumDeletes: 0, MaximumExecutionMilliseconds: 5000, MaximumRegenerations: 1,
+    MaximumOutputCount: 1, MaximumOutputBytes: 4096, FileCapabilitySetHash: `sha256:${"5".repeat(64)}`
+  };
+  const effectBudgetHash = dynamicEffectBudgetHash(effectBudget);
+  const finalAuthorizationHash = `sha256:${"f".repeat(64)}`;
+  const applyAuthorizationReceipt = JSON.stringify({
+    schema: "dynamic-revit-apply-authorization-receipt/v1", preview_id: "preview-1",
+    preview_receipt_hash: previewHash,
+    admission_expectations: { OperationGraphHash: graphHash, PreviewReceiptHash: previewHash, EffectBudgetHash: effectBudgetHash },
+    effect_budget: effectBudget, authorization_granted: true
+  });
+  const v1Admission = {
+    schema: "dynamic_program_admission/v1", admissionId: "admission-1", previewReceiptHash: previewHash,
+    operationGraphHash: graphHash, documentFingerprint: fingerprint, documentSessionId: sessionId,
+    effectBudgetHash, finalAuthorizationHash, workerRuntimePackageHash: args.workerRuntimePackageSha256,
+    targetRevitVersion: args.targetRevitYear ?? "2024"
+  };
+  const applyReceipt = JSON.stringify({
+    schema: "dynamic-revit-apply-receipt/v1", outcome: "committed_verified", admission_id: "admission-1",
+    preview_id: "preview-1", preview_receipt_hash: previewHash, final_authorization_hash: finalAuthorizationHash,
+    graph_hash: graphHash, effect_budget_hash: effectBudgetHash, document_fingerprint: fingerprint,
+    document_session_id: sessionId, changed_element_ids: [1]
+  });
   const authenticated = (purpose: string, raw: string) => JSON.stringify({
     schema: "dynamic-revit-authenticated-receipt/v0", runtime_instance_id: runtimeId, purpose,
     expires_unix_seconds: 4_000_000_000, receipt_hash: sha256(raw),
@@ -140,18 +211,44 @@ function supervisorEvidence(args: {
   });
   const target = args.targetRevitYear ?? "2024";
   const host = `C:\\Program Files\\Autodesk\\Revit ${target}\\Revit.exe`;
+  const applyRequested = args.applyRequested === true;
   return {
-    schema: "dynamic-revit-phase2-live-evidence/v0", ok: true,
+    schema: applyRequested ? "dynamic-revit-live-evidence/v1" : "dynamic-revit-phase2-live-evidence/v0", ok: true,
     startedUtc: "2026-08-09T10:00:00.000Z", completedUtc: "2026-08-09T10:00:01.000Z",
     sandboxProfile: "windows-lpac-v1-zero-capabilities", taskDirectory: "C:\\fixture\\task",
     registrationReceipt, snapshotReceipt, workerOutput, admission, previewReceipt,
-    applyAuthorizationReceipt: null, v1Admission: null, applyReceipt: null,
-    hostAuthenticationReceipts: [bootstrap, authenticated("snapshot-receipt", snapshotReceipt), authenticated("register-worker-receipt", registrationReceipt), authenticated("preview-receipt", previewReceipt)],
+    applyAuthorizationReceipt: applyRequested ? applyAuthorizationReceipt : null,
+    v1Admission: applyRequested ? v1Admission : null,
+    applyReceipt: applyRequested ? applyReceipt : null,
+    hostAuthenticationReceipts: [
+      bootstrap, authenticated("snapshot-receipt", snapshotReceipt), authenticated("register-worker-receipt", registrationReceipt),
+      authenticated("preview-receipt", previewReceipt),
+      ...(applyRequested ? [authenticated("authorize-apply-receipt", applyAuthorizationReceipt), authenticated("apply-receipt", applyReceipt)] : [])
+    ],
     replayEvidence: null, failure: null, runtimeImageDirectory: "C:\\fixture\\runtime",
     runtimeImageIdentity: args.workerRuntimePackageSha256, runtimeDependencyCount: 5,
     targetRevitYear: target, expectedHostExecutable: host, observedHostExecutable: host
   };
 }
+
+test("authenticated Dynamic Runtime apply evidence exposes its exact affected target identities", () => {
+  const supervisorPackageSha256 = `sha256:${"a".repeat(64)}`;
+  const workerRuntimePackageSha256 = `sha256:${"b".repeat(64)}`;
+  const evidence = supervisorEvidence({
+    source: program({ apply: true }).source,
+    supervisorPackageSha256,
+    workerRuntimePackageSha256,
+    applyRequested: true
+  });
+  const normalized = normalizeProviderSupervisorEvidence(Buffer.from(JSON.stringify(evidence), "utf8"), {
+    applyRequested: true,
+    targetRevitYear: "2024",
+    source: program({ apply: true }).source,
+    supervisorPackageSha256,
+    workerRuntimePackageSha256
+  });
+  assert.deepEqual((normalized as any).affected_target_identities, ["element_id:1"]);
+});
 
 function restoreEnvironment(snapshot: Record<string, string | undefined>): void {
   for (const [name, value] of Object.entries(snapshot)) {
@@ -283,6 +380,44 @@ test("restricted certified request routes cannot enter the dynamic runner", asyn
   });
   assert.equal(invoked, false);
   assert.equal(response?.dynamic_program_execution_receipt?.failure, "dynamic_program_request_ineligible");
+});
+
+test("Dynamic Runtime admission rejection remains structured and cannot invoke the native runner", { concurrency: false }, async () => {
+  await withWorkspace(async () => {
+    const sessionId = "provider-dynamic-admission-boundary";
+    const goal = createGoal({
+      title: "Read the active model",
+      objective: "Return an authoritative read-only model result.",
+      acceptance_criteria: ["The requested result is authoritatively established."],
+      status: "active",
+      related_session_id: sessionId,
+      created_by: "provider-dynamic-admission-regression",
+      work_budget: { requested_effect: "read", document_fingerprint: "document-dynamic-admission" }
+    });
+    const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-dynamic-admission" });
+    let invoked = false;
+    const response = await executeProviderDynamicProgramLane({
+      req: {
+        ...request("admission-boundary"),
+        session_id: sessionId,
+        assignment_id: binding.assignment_id,
+        assignment_run_id: binding.run_id,
+        assignment_generation: binding.generation
+      },
+      selectedSubstrate: "dynamic_revit_program",
+      dynamicProgram: program(),
+      otherLaneItemCount: 0,
+      runner: async () => {
+        invoked = true;
+        throw new Error("must not run");
+      }
+    });
+    assert.equal(invoked, false);
+    assert.equal(response?.dynamic_program_execution_receipt?.status, "blocked");
+    assert.equal(response?.dynamic_program_execution_receipt?.request_dispatched, false);
+    assert.match(response?.dynamic_program_execution_receipt?.failure ?? "", /assignment_kernel_v2_work_unit_not_admitted/);
+    assert.match(response?.assistant_message ?? "", /Dynamic Revit execution was blocked before dispatch/);
+  });
 });
 
 test("provider source cannot authorize apply when the user turn did not request a mutation", async () => {

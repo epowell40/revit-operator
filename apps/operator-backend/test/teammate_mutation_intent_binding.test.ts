@@ -4,6 +4,7 @@ import { OPERATOR_BACKEND_CONTRACT_VERSION, type ChatRequest } from "../src/cont
 import {
   __testOnlyResetTeammateLoopState,
   beginTeammateLoopOwner,
+  buildTeammateTurnContract,
   endTeammateLoopOwner,
   formatTeammateTurnContract,
   guardTeammateMcpCall
@@ -77,6 +78,34 @@ test("underspecified text replacement cannot preview a model-invented desired va
   });
 });
 
+test("Candidate 68 verification admission carries only the affected element into OperationV2 identity", () => {
+  withOwner('Set TextNote 1478627 to the exact literal text "ISSUE 04".', owner => {
+    const readback = guardTeammateMcpCall(owner, {
+      tool: "revit_call_tool",
+      arguments: {
+        method: "POST",
+        path: "/revit/find-text-notes",
+        body: { elementIds: [1478627], viewId: 1363433, query: "ISSUE 04", matchMode: "exact", max: 1 }
+      }
+    });
+    assert.equal(readback.allowed, true);
+    assert.ok(readback.call?.target_tokens.includes("id:1363433"),
+      "the broad audit token set still records contextual scope");
+    assert.deepEqual(readback.call?.principal_target_tokens, ["elementids:1478627", "id:1478627"]);
+  });
+});
+
+test("Candidate 30 nominal text replacement requests create the authenticated-input gap", () => {
+  const prompt = "Find one project TextNote, report its exact identity, and preview a conditional text replacement that would not create a duplicate. Do not apply it.";
+  const contract = buildTeammateTurnContract(request(prompt));
+  assert.equal(contract.turn_kind, "inspection");
+  assert.equal(contract.preview_required, true);
+  assert.equal(contract.no_write, true);
+  assert.equal(contract.stage, "ground");
+  assert.deepEqual(contract.required_user_inputs, ["replacement_text"]);
+  assert.match(formatTeammateTurnContract(request(prompt)), /operator_request_clarification.*replacement_text/);
+});
+
 test("synonymous placeholders do not authorize invented replacement text", () => {
   for (const prompt of [
     "Update the selected note to the approved wording.",
@@ -111,7 +140,7 @@ test("an exact authenticated replacement value permits preview and apply", () =>
     const apply = guardTeammateMcpCall(owner, replaceCall(replacement, { dryRun: false, apply: true }));
     assert.equal(apply.allowed, true);
     assert.equal(apply.call?.effect, "apply");
-    assert.deepEqual(apply.call?.expected_values, [JSON.stringify(replacement)]);
+    assert.deepEqual(apply.call?.expected_values, [`revit_text:${JSON.stringify(replacement)}`]);
   });
 });
 

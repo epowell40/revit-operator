@@ -59,13 +59,18 @@ function checkpointAssignmentKernelProgressV2(input: Readonly<{
     stated_gap_ids: gapIds,
     admitted_operation_ids: [input.operation_id]
   });
-  const controllerTurnId = typeof input.turn_id === "string" ? input.turn_id.trim() : "";
-  const providerReceiptRetained = Object.values(input.after.provider_calls)
-    .some(call => Boolean(controllerTurnId) && call.controller_turn_id === controllerTurnId);
-  if (!providerReceiptRetained) return;
+  // Operation settlement is the causal boundary for criterion progression.
+  // The active provider-turn terminal barrier keeps the final terminal event
+  // open until its receipt is reconciled; delaying evaluation itself permits
+  // another operation to overtake already-authoritative task evidence.
   const advanced = advanceAssignmentKernelProgressV2({ binding: epoch.current_binding });
   if (["terminal", "blocked", "request_user_input", "request_user_review"].includes(advanced.decision.decision)) {
-    input.runtime.requestAssignmentKernelV2TurnStop(input.turn_id, advanced.decision.reason);
+    // The canonical decision is already durable, but interrupting the Codex
+    // turn here races the item/tool/call response and can make a successful
+    // native result appear as a failed dynamic tool item. Arm the stop now;
+    // the Codex notification boundary flushes it after the completed tool
+    // result has been observed and journaled.
+    input.runtime.queueAssignmentKernelV2TurnStop(input.turn_id, advanced.decision.reason);
   }
 }
 
@@ -155,7 +160,7 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         if (afterInteraction && (afterInteraction.terminal
           || afterInteraction.outcome === "awaiting_user_input"
           || afterInteraction.outcome === "awaiting_user_review")) {
-          runtime.requestAssignmentKernelV2TurnStop(params.turnId, afterInteraction.terminal_reason ?? afterInteraction.outcome);
+          runtime.queueAssignmentKernelV2TurnStop(params.turnId, afterInteraction.terminal_reason ?? afterInteraction.outcome);
         }
         return adaptMcpToolCallResultToDynamicResponse(result, {
           tool: params.tool, arguments: boundArguments.arguments, projections: [], omitted: 0
@@ -167,15 +172,32 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         parallel.release();
       }
     }
-    const lease = openAssignmentKernelOperationV2({
-      snapshot: v2Snapshot,
-      controller_request_id: request.id,
-      provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
-      capability_id: String(params.tool || "unknown-capability"),
-      classified_effect: teammateGate.call?.effect ?? "unknown",
-      target_tokens: teammateGate.call?.target_tokens,
-      arguments: boundArguments.arguments
-    });
+    let lease: ReturnType<typeof openAssignmentKernelOperationV2>;
+    try {
+      lease = openAssignmentKernelOperationV2({
+        snapshot: v2Snapshot,
+        controller_request_id: request.id,
+        provider_turn_id: typeof params.turnId === "string" ? params.turnId : "unbound-turn",
+        capability_id: String(params.tool || "unknown-capability"),
+        classified_effect: teammateGate.call?.effect ?? "unknown",
+        target_tokens: teammateGate.call?.principal_target_tokens,
+        arguments: boundArguments.arguments
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Admission is a deterministic controller decision, not an MCP/native
+      // execution failure. Preserve the exact reason for the provider while
+      // leaving the canonical gap and Operation graph unchanged.
+      recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: message });
+      parallel.release();
+      return {
+        contentItems: [{
+          type: "inputText",
+          text: `[assignment_kernel_v2_operation_admission_blocked] ${message}`
+        }],
+        success: false
+      };
+    }
     let accepted = false;
     try {
       const rawResult = await runtime.callTool(params.tool, boundArguments.arguments, {
@@ -187,8 +209,9 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
           accepted = true;
         }
       });
-      recordTeammateMcpResult(runtime, teammateGate, rawResult);
-      const settled = settleAssignmentKernelOperationV2(lease, rawResult);
+      const trustedVerification = recordTeammateMcpResult(runtime, teammateGate, rawResult);
+      const settled = settleAssignmentKernelOperationV2(lease, rawResult, undefined,
+        trustedVerification ? { ...trustedVerification, operation_id: lease.operation_id } : null);
       checkpointAssignmentKernelProgressV2({
         runtime,
         turn_id: params.turnId,

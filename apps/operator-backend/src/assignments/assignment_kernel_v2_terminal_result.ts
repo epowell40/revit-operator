@@ -45,8 +45,36 @@ function inventorySummary(facts: readonly SemanticFactV2[]): string | null {
   return lines.join("\n");
 }
 
+function textNoteSummary(facts: readonly SemanticFactV2[], requestedEffect: string): string | null {
+  const after = facts.find(fact => fact.fact_id === "text_note.after");
+  const proposed = facts.find(fact => fact.fact_id === "text_note.proposed");
+  if (requestedEffect === "preview" ? !proposed : !after) return null;
+  const id = facts.find(fact => fact.fact_id === "text_note.element_id");
+  const before = facts.find(fact => fact.fact_id === "text_note.before");
+  const changed = facts.find(fact => fact.fact_id === "text_note.changed");
+  const action = requestedEffect === "preview" ? "Previewed" : changed?.value === false ? "Verified" : "Updated";
+  const lines = [`${action} TextNote${id ? ` ${scalar(id.value)}` : ""}.`];
+  if (before) lines.push(`- Before: ${scalar(before.value)}`);
+  if (requestedEffect === "preview") {
+    lines.push(`- Proposed: ${scalar(proposed!.value)}`);
+    lines.push("- Model unchanged; the native preview transaction was rolled back.");
+  } else {
+    lines.push(`- After: ${scalar(after!.value)}`);
+  }
+  if (facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"
+      && fact.fact_class === "verification" && fact.value === true)) {
+    lines.push("- Postcondition verified against the Revit readback.");
+  }
+  return lines.join("\n");
+}
+
 function generalDomainSummary(facts: readonly SemanticFactV2[]): string | null {
-  const useful = facts.filter(fact => !["inventory.complete", "task.result_available"].includes(fact.fact_id));
+  const useful = facts.filter(fact => ![
+    "inventory.complete",
+    "task.result_available",
+    "task.preview_valid",
+    "verification.postcondition_satisfied"
+  ].includes(fact.fact_id));
   if (useful.length === 0) return null;
   return useful.map(fact => {
     const dimensions = Object.entries(fact.dimensions ?? {}).map(([key, value]) => `${key}=${value}`).join(", ");
@@ -65,11 +93,23 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
   }
   const supportingObservationIds = [...new Set(Object.values(snapshot.criteria)
     .filter(criterion => criterion.status === "pass" || criterion.status === "not_applicable")
-    .flatMap(criterion => criterion.supporting_facts.map(fact => fact.observation_id)))]
+    .flatMap(criterion => criterion.supporting_facts.map(fact => fact.observation_id))
+    .concat(snapshot.spec.requested_effect === "apply"
+      ? Object.values(snapshot.operations)
+          .filter(operation => operation.purpose === "verification"
+            && operation.result?.status === "succeeded"
+            && operation.observation_ids.some(observationId => snapshot.observations[observationId]?.facts.some(fact =>
+              fact.fact_id === "verification.postcondition_satisfied"
+                && fact.fact_class === "verification"
+                && fact.value === true)))
+          .flatMap(operation => operation.observation_ids)
+      : []))]
     .filter(observationId => Boolean(snapshot.observations[observationId]))
     .sort();
   const facts = domainFacts(snapshot, supportingObservationIds);
-  const successfulSummary = inventorySummary(facts) ?? generalDomainSummary(facts);
+  const successfulSummary = inventorySummary(facts)
+    ?? textNoteSummary(facts, snapshot.spec.requested_effect)
+    ?? generalDomainSummary(facts);
   const complete = snapshot.outcome === "complete" || snapshot.outcome === "verified_noop" || snapshot.outcome === "complete_with_issues";
   const resultSummary = successfulSummary
     ?? (complete

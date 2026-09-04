@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { revitRouteEffect } from "./revitRouteEffect.js";
+import { revitRouteCertificationEffect } from "./revitRouteEffect.js";
 import {
   admitCertifiedMoveOneRequest,
   CERTIFIED_MOVE_ONE_REQUEST_FAMILY_HASH,
@@ -127,7 +127,7 @@ const POLICY_FILENAME = "tool_exposure_policy.v1.json";
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // This is a deployment trust anchor, not a value learned from the policy file.
 // Update it only alongside a reviewed bundled policy artifact.
-const BUNDLED_POLICY_HASH = "sha256:6e41b8f0c931059e0ab3fed735d0fb48052ee092eb321d70d0bebd2641e23425";
+const BUNDLED_POLICY_HASH = "sha256:ebc821b5b52cda478cd3b81833b502da7f44446a1ddb2bd8ab96e99141dca424";
 const invokedMcpAlias = new AsyncLocalStorage<string>();
 declare const certifiedCourierAdmissionBrand: unique symbol;
 export type CertifiedCourierAdmission = {
@@ -510,12 +510,7 @@ function requestHash(method: string, toolPath: string, body: unknown, strictCano
 function effectHash(toolPath: string, method: string, body: unknown, workflow?: string): string {
   const normalized = normalizedRequest(method, body);
   const wireBody = method === "GET" ? undefined : jsonWireValue(normalized, "request");
-  // Schedule listing/detail is a read-only POST contract. Keep this refinement
-  // at the certification boundary until the shared route-effect table gains
-  // the same entry; defaulting it to write would make a valid read hash fail.
-  const routeEffect = method === "POST" && toolPath === "/revit/schedules"
-    ? "read"
-    : revitRouteEffect(toolPath, method, wireBody);
+  const routeEffect = revitRouteCertificationEffect(toolPath, method, wireBody);
   const effect: Record<string, unknown> = { resolved_effect: routeEffect === "apply" ? "write" : routeEffect };
   if (workflow) effect.workflow = workflow;
   return digest({ effect });

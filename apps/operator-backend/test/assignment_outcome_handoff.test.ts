@@ -11,7 +11,8 @@ import { ensureAssignmentRunForTurn } from "../src/assignments/turn_journal.js";
 import { canonicalAssignmentOutcomeForBinding } from "../src/assignments/outcome_handoff.js";
 import { configureGoalEvidenceAuthorityProvider, createGoal } from "../src/goals/service.js";
 import { createLocalGoalEvidenceAuthority } from "../src/goals/authority.js";
-import { runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
+import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
+import { createPrincipalBoundSessionIdForRequest, runWithRequestContext, type RequestPrincipal } from "../src/request_context.js";
 
 function withWorkspace<T>(fn: () => T): T {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -99,7 +100,7 @@ test("authenticated chat outcome handoff reads a V2 clarification from the exact
       claims: {}
     };
     runWithRequestContext({ principal }, () => {
-      const sessionId = "session-outcome-handoff-v2";
+      const sessionId = createPrincipalBoundSessionIdForRequest(principal, "outcome-handoff-v2");
       const goal = createGoal({
         title: "Update selected note through V2",
         objective: "Replace the selected note after the user supplies the exact wording.",
@@ -131,6 +132,37 @@ test("authenticated chat outcome handoff reads a V2 clarification from the exact
         question: clarification.question,
         missing_fields: ["replacement_text"]
       });
+    });
+  });
+});
+
+test("local shared-token outcome handoff reads the same exact V2 binding", () => {
+  withWorkspace(() => {
+    runWithRequestContext({
+      operator_backend_auth: createOperatorBackendAuth("shared_token", "local-outcome-handoff-token")
+    }, () => {
+      const sessionId = "session-local-outcome-handoff-v2";
+      const goal = createGoal({
+        title: "Read local inventory through V2",
+        objective: "Return the authoritative local inventory.",
+        acceptance_criteria: ["The requested inventory is authoritatively returned."],
+        related_session_id: sessionId,
+        created_by: null,
+        status: "active",
+        work_budget: { requested_effect: "read" }
+      });
+      const binding = createAssignmentKernelForGoalV2({ goal, run_id: "local-outcome-run" });
+      const outcome = canonicalAssignmentOutcomeForBinding({
+        session_id: sessionId,
+        assignment_id: goal.id,
+        assignment_run_id: binding.run_id,
+        assignment_generation: binding.generation
+      });
+
+      assert.equal(outcome?.assignment_id, goal.id);
+      assert.equal(outcome?.run_id, binding.run_id);
+      assert.equal(outcome?.outcome_state, "active");
+      assert.equal(outcome?.terminal_state, "open");
     });
   });
 });

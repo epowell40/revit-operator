@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import { revitRouteEffect } from "./revitRouteEffect.js";
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
@@ -114,6 +115,453 @@ test("quantify result is normalized once into an explicit task-result Observatio
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.complete" && fact.value === true));
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.total" && fact.value === 2));
   assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "inventory.group" && fact.value === 2));
+});
+
+test("native affected target identities survive the MCP OperationResultV2 boundary", async () => {
+  const decorated = await runWithAssignmentKernelV2(
+    meta("apply", "work", { method: "POST", path: "/revit/create-text-note", body: { text: "Created" } }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-text-note", { text: "Created" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/create-text-note", {
+        ok: true,
+        createdElementId: 4242,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-create-4242",
+          requested_effect: "apply",
+          effect_state: "applied",
+          effect_authority: "native_transaction",
+          request_dispatched: true,
+          affected_target_identities: ["element_id:4242", "element_id:4242"]
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+  assert.deepEqual(
+    decorated.structuredContent.operation_result_v2.affected_target_identities,
+    ["element_id:4242"]
+  );
+});
+
+test("malformed native affected target identities fail closed before settlement publication", async () => {
+  await assert.rejects(
+    () => runWithAssignmentKernelV2(
+      meta("apply", "work", { method: "POST", path: "/revit/create-text-note", body: { text: "Created" } }),
+      async () => {
+        const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-text-note", { text: "Created" });
+        await markAssignmentKernelNativeRequestDispatchingV2(request);
+        await recordAssignmentKernelNativeResultV2("POST", "/revit/create-text-note", {
+          ok: true,
+          canonical_attempt_settlement: {
+            schema: "revit-operator.native-attempt-settlement.v1",
+            attempt_id: "native-create-malformed-target",
+            requested_effect: "apply",
+            effect_state: "applied",
+            effect_authority: "native_transaction",
+            request_dispatched: true,
+            affected_target_identities: [4242]
+          }
+        }, request);
+        return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+      }
+    ),
+    /assignment_kernel_v2_native_affected_targets_invalid/
+  );
+});
+
+test("Candidate 39 explicit native domain failure is retained without becoming task-completion evidence", async () => {
+  const body = {
+    elementId: 1421361,
+    expectedOldText: "***An Autodesk Revit sample project***",
+    newText: "Issued for Construction",
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body);
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: false,
+        status: "Precondition Failed",
+        errorCode: "expected_old_text_mismatch",
+        actualText: "***An Autodesk Revit sample project***\r",
+        expectedOldText: "***An Autodesk Revit sample project***",
+        changed: false,
+        dryRun: true,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "candidate39-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const result = decorated.structuredContent.operation_result_v2;
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.equal(result.observation_required, true);
+  assert.equal(result.error_code, "expected_old_text_mismatch");
+  assert.ok(facts.some((fact: any) => fact.fact_id === "control.domain_succeeded" && fact.value === false));
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.preview_valid"), false);
+});
+
+test("Candidate 48 shared classification lets an authoritative native preview claim its exact parent", async () => {
+  const body = {
+    elementId: 1421361,
+    expectedOldText: "***An Autodesk Revit sample project***\r",
+    newText: "Issued for Construction",
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
+        classified_effect: revitRouteEffect("/revit/replace-text-note", "POST", body)
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true,
+        status: "OK",
+        dryRun: true,
+        textNoteId: 1421361,
+        before: "***An Autodesk Revit sample project***\r",
+        after: "***An Autodesk Revit sample project***\r",
+        proposedText: "Issued for Construction",
+        changed: true,
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "successful-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const result = decorated.structuredContent.operation_result_v2;
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.persistent_effect, "none");
+  assert.equal(result.native_transaction_state, "rolled_back");
+  assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.element_id" && fact.value === 1421361));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.before" && fact.value === "***An Autodesk Revit sample project***\r"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.after" && fact.value === "***An Autodesk Revit sample project***\r"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.proposed" && fact.value === "Issued for Construction"));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.changed" && fact.value === true));
+});
+
+test("Candidate 56 rolled-back preview without native proposal proof cannot satisfy the preview criterion", async () => {
+  const requestedText = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+  const before = "***An Autodesk Revit sample project***\r";
+  const body = {
+    elementId: 1421361,
+    expectedOldText: before,
+    newText: requestedText,
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
+        classified_effect: revitRouteEffect("/revit/replace-text-note", "POST", body)
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true,
+        status: "Dry Run",
+        dryRun: true,
+        textNoteId: 1421361,
+        before,
+        after: before,
+        text: before,
+        normalizedText: "***An Autodesk Revit sample project***\n",
+        changed: true,
+        transaction: {
+          status: "rolled_back",
+          committed: false,
+          modified_element_ids: [],
+          affected_element_ids: [1421361]
+        },
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "candidate56-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const result = decorated.structuredContent.operation_result_v2;
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.error_code, "preview_result_contract_invalid");
+  assert.equal(result.result_semantic_gap?.native_replay_allowed, false);
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.after" && fact.value === before));
+  assert.equal(facts.some((fact: any) => fact.fact_id === "text_note.proposed"), false);
+  assert.equal(facts.some((fact: any) => fact.fact_id === "task.preview_valid"), false);
+});
+
+test("text-note preview admits only an explicit native proposal matching the admitted request", async () => {
+  const requestedText = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX";
+  const before = "***An Autodesk Revit sample project***\r";
+  const body = {
+    elementId: 1421361,
+    expectedOldText: before,
+    newText: requestedText,
+    dryRun: true,
+    apply: false
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/replace-text-note", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, {
+        classified_effect: revitRouteEffect("/revit/replace-text-note", "POST", body)
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true,
+        status: "Dry Run",
+        dryRun: true,
+        textNoteId: 1421361,
+        before,
+        after: before,
+        proposedText: requestedText,
+        changed: true,
+        transaction: {
+          status: "rolled_back",
+          committed: false,
+          modified_element_ids: [],
+          affected_element_ids: [1421361]
+        },
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "proposal-bound-preview-attempt",
+          requested_effect: "preview",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    }
+  );
+
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
+  assert.equal(decorated.structuredContent.operation_result_v2.result_semantic_gap, undefined);
+  assert.ok(facts.some((fact: any) => fact.fact_id === "text_note.proposed" && fact.value === requestedText));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
+});
+
+test("Candidate 40 action-specific read cannot claim a preview parent or emit task preview evidence", async () => {
+  const body = {
+    action: "inspect",
+    textNoteId: 1421361,
+    text: "",
+    typeName: "",
+    newTypeName: "",
+    baseTypeName: "",
+    fontName: "",
+    dryRun: true
+  };
+  const settled: any[] = [];
+  let admission: any = null;
+  const edge = {
+    async openChild(input: any) {
+      admission = structuredClone(input);
+      return {
+        ...meta("read", "work")[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "candidate40-inspection-child",
+        capability_id: input.capability_id,
+        requested_effect: input.classified_effect,
+        purpose: "work",
+        operation_role: "child",
+        fulfillment_role: input.fulfillment_role,
+        eligible_criterion_ids: input.eligible_criterion_ids,
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "candidate40-inspection-child-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { settled: true };
+    }
+  };
+
+  const decorated = await runWithAssignmentKernelV2(
+    meta("preview", "work", { method: "POST", path: "/revit/create-text", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/create-text", body, {
+        classified_effect: "read",
+        fulfillment_role: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/create-text", {
+        ok: true,
+        action: "inspect",
+        textNoteId: 1421361,
+        text: "***An Autodesk Revit sample project***\r",
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "candidate40-inspection-attempt",
+          requested_effect: "read",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    },
+    edge
+  );
+
+  assert.equal(admission.classified_effect, "read");
+  assert.equal(admission.fulfillment_role, "supporting_control");
+  assert.deepEqual(admission.eligible_criterion_ids, []);
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].lease.operation_id, "candidate40-inspection-child");
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "control");
+  assert.equal(settled[0].result.structuredContent.observation.semantic_facts.some(
+    (fact: any) => fact.fact_id === "task.preview_valid"
+  ), false);
+  assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "completed_without_native_dispatch");
+  assert.equal(decorated.structuredContent.observation, undefined);
+});
+
+test("count-only quantify summary is sufficient task evidence without rows or another Revit call", async () => {
+  const body = {
+    categories: ["OST_DuctTerminal"],
+    group_by: ["family", "type"],
+    intent: "count",
+    scope: "host"
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("read", "work", { method: "POST", path: "/revit/quantify", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify", body);
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
+        summary: {
+          total: 509,
+          groups: {
+            "Supply Diffuser | 24x24": 371,
+            "Return Grille | 16x4": 138
+          }
+        },
+        rows: [],
+        resultSetId: "count-only-result",
+        warnings: [],
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-count-only-attempt",
+          requested_effect: "read",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
+    }
+  );
+
+  const facts = decorated.structuredContent.observation.semantic_facts;
+  assert.ok(facts.some((fact: any) => fact.fact_id === "inventory.complete" && fact.value === true));
+  assert.ok(facts.some((fact: any) => fact.fact_id === "inventory.total" && fact.value === 509));
+  assert.deepEqual(
+    facts.filter((fact: any) => fact.fact_id === "inventory.group"),
+    [
+      {
+        fact_id: "inventory.group",
+        fact_class: "domain",
+        value: 138,
+        dimensions: { family: "Return Grille", type: "16x4" }
+      },
+      {
+        fact_id: "inventory.group",
+        fact_class: "domain",
+        value: 371,
+        dimensions: { family: "Supply Diffuser", type: "24x24" }
+      }
+    ]
+  );
+});
+
+test("quantify summary groups remain single-counted when list rows are also present", async () => {
+  const body = {
+    categories: ["OST_DuctTerminal"],
+    group_by: ["family", "type"],
+    intent: "count_and_list",
+    scope: "host"
+  };
+  const decorated = await runWithAssignmentKernelV2(
+    meta("read", "work", { method: "POST", path: "/revit/quantify", body }),
+    async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/quantify", body);
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/quantify", {
+        summary: { total: 2, groups: { "Supply Diffuser | 24x24": 2 } },
+        rows: [
+          { family: "Supply Diffuser", type: "24x24" },
+          { family: "Supply Diffuser", type: "24x24" }
+        ],
+        resultSetId: "count-and-list-result",
+        warnings: [],
+        canonical_attempt_settlement: {
+          schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-count-and-list-attempt",
+          requested_effect: "read",
+          effect_state: "none",
+          effect_authority: "native_receipt",
+          request_dispatched: true
+        }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "inventory.read") as any;
+    }
+  );
+
+  assert.deepEqual(
+    decorated.structuredContent.observation.semantic_facts.filter((fact: any) => fact.fact_id === "inventory.group"),
+    [{
+      fact_id: "inventory.group",
+      fact_class: "domain",
+      value: 2,
+      dimensions: { family: "Supply Diffuser", type: "24x24" }
+    }]
+  );
 });
 
 test("Candidate 2 tool-registry payload uses the cross-process ordinal digest", async () => {
@@ -531,12 +979,157 @@ test("same native route with a different canonical body cannot claim the admitte
   assert.equal(admission.delegation_authority_id, "delegation:operation-1");
 });
 
-test("retained evidence retrieval settles as a non-native read and cannot claim mutation", async () => {
-  const decorated = await runWithAssignmentKernelV2(meta("read", "evidence_read"), async () =>
-    decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: "focused retained selection" }] }, "operator_retrieve_evidence") as any);
+test("retained evidence retrieval settles as a non-native read and records one stable focused selection", async () => {
+  const operationMeta = meta("read", "evidence_read") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "operator_retrieve_evidence";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "operator_retrieve_evidence",
+    request_signature: "candidate55-focused-evidence-selection"
+  };
+  const selection = {
+    ok: true,
+    result: {
+      schema: "revit-operator.evidence-retrieval.v1",
+      evidence_ref: { evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG" },
+      selection: { "payload.items": [{ elementId: 1421361, text: "Existing note" }] },
+      returned_bytes: 128,
+      complete: false
+    }
+  };
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () =>
+    decorateAssignmentKernelMcpResultV2({ content: [{ type: "text", text: JSON.stringify(selection) }] }, "operator_retrieve_evidence") as any);
   assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
   assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-evidence-store");
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "none");
+  assert.equal(decorated.structuredContent.observation.evidence_class, "control");
+  assert.deepEqual(
+    decorated.structuredContent.observation.semantic_facts
+      .filter((fact: any) => fact.fact_id === "control.evidence_selection_available")
+      .map((fact: any) => fact.dimensions),
+    [{ capability_id: "operator_retrieve_evidence", evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", selection_path: "payload.items" }]
+  );
+  assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_class === "domain"), false);
+});
+
+test("Candidate 50 tool search retains exact control knowledge without acquiring task eligibility", async () => {
+  const operationMeta = meta("read", "discovery") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "revit_search_tools";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "revit_search_tools",
+    request_signature: "candidate50-r01-text-note-search"
+  };
+  const rawResult = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        query: "find and replace one text note",
+        count: 2,
+        matches: [
+          { method: "GET", path: "/revit/find-text-notes", title: "Find Text Notes", risk: "low" },
+          { method: "POST", path: "/revit/replace-text-note", title: "Replace Text Note", risk: "medium" }
+        ]
+      })
+    }]
+  };
+
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () =>
+    decorateAssignmentKernelMcpResultV2(rawResult, "revit_search_tools") as any);
+  const result = decorated.structuredContent.operation_result_v2;
+  const observation = decorated.structuredContent.observation;
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.dispatch_state, "dispatched");
+  assert.equal(result.authority, "operator-mcp-transport");
+  assert.equal(result.observation_required, true);
+  assert.deepEqual(observation.raw_payload, rawResult);
+  assert.equal(observation.evidence_class, "control");
+  assert.deepEqual(observation.eligible_criterion_ids ?? [], []);
+  assert.deepEqual(
+    observation.semantic_facts
+      .filter((fact: any) => fact.fact_id === "control.capability_available")
+      .map((fact: any) => fact.dimensions)
+      .sort((left: any, right: any) => left.path.localeCompare(right.path)),
+    [
+      { capability_id: "revit_search_tools", method: "GET", path: "/revit/find-text-notes" },
+      { capability_id: "revit_search_tools", method: "POST", path: "/revit/replace-text-note" }
+    ]
+  );
+  assert.equal(observation.semantic_facts.some((fact: any) => fact.fact_class === "domain"), false);
+  assert.equal(observation.semantic_facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+});
+
+test("capability search retains its transformed control result after a distinct registry prerequisite settles", async () => {
+  const settled: any[] = [];
+  const operationMeta = meta("read", "discovery") as any;
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].capability_id = "revit_search_tools";
+  operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY].request_identity = {
+    capability_id: "revit_search_tools",
+    request_signature: "search-with-registry-prerequisite"
+  };
+  const edge = {
+    async openChild(input: any) {
+      return {
+        ...operationMeta[ASSIGNMENT_KERNEL_V2_META_KEY],
+        operation_id: "registry-prerequisite",
+        capability_id: input.capability_id,
+        purpose: "discovery",
+        operation_role: "prerequisite",
+        fulfillment_role: "prerequisite",
+        eligible_criterion_ids: [],
+        parent_operation_id: "operation-1",
+        root_operation_id: "operation-1",
+        blocks_parent_settlement: true,
+        request_identity: {
+          capability_id: input.capability_id,
+          method: input.method,
+          path: input.path,
+          request_signature: "registry-prerequisite-signature"
+        }
+      } as any;
+    },
+    async markDispatch() {},
+    async settle(lease: any, result: any) {
+      settled.push({ lease, result });
+      return { operation_id: lease.operation_id, settled: true };
+    }
+  };
+  const rawResult = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        status: "available",
+        matches: [{ method: "POST", path: "/revit/replace-text-note" }]
+      })
+    }]
+  };
+  const decorated = await runWithAssignmentKernelV2(operationMeta, async () => {
+    const prerequisite = await beginAssignmentKernelNativeRequestV2("GET", "/revit/tool-registry", undefined, {
+      operation_role: "prerequisite"
+    });
+    await markAssignmentKernelNativeRequestDispatchingV2(prerequisite);
+    await recordAssignmentKernelNativeResultV2("GET", "/revit/tool-registry", {
+      tools: [{ method: "POST", path: "/revit/replace-text-note" }],
+      canonical_attempt_settlement: {
+        attempt_id: "registry-prerequisite-receipt",
+        requested_effect: "read",
+        effect_state: "none",
+        request_dispatched: true
+      }
+    }, prerequisite);
+    return decorateAssignmentKernelMcpResultV2(rawResult, "revit_search_tools") as any;
+  }, edge);
+
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].lease.operation_id, "registry-prerequisite");
+  assert.equal(settled[0].result.structuredContent.observation.evidence_class, "prerequisite");
+  assert.equal(decorated.structuredContent.operation_result_v2.operation_id, "operation-1");
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "succeeded");
+  assert.equal(decorated.structuredContent.operation_result_v2.authority, "operator-mcp-transport");
+  assert.deepEqual(decorated.structuredContent.observation.raw_payload, rawResult);
+  assert.ok(decorated.structuredContent.observation.semantic_facts.some((fact: any) =>
+    fact.fact_id === "control.capability_available"
+      && fact.dimensions.path === "/revit/replace-text-note"));
+  assert.equal(decorated.structuredContent.child_operation_results_v2[0].operation_id, "registry-prerequisite");
 });
 
 test("read context rejects a contradictory native applied settlement", async () => {

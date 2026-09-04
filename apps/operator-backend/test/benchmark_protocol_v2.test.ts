@@ -12,6 +12,7 @@ import {
 } from "../src/benchmark/general_revit_capability_acceptance.js";
 import { buildBenchmarkCaseResultV2 } from "../src/benchmark/protocol_v2_case.js";
 import { canonicalAttemptRequestedEffect, loadDurableToolEvidence } from "../src/benchmark/durable_tool_evidence.js";
+import { summarizeGeneralRevitLatency } from "../src/benchmark/general_revit_latency.js";
 import { assertReleaseCanaryInvocationV2, RELEASE_CANARY_CASE_IDS_V2, selectReleaseCanaryCasesV2 } from "../src/benchmark/protocol_v2_canary.js";
 import { compareBenchmarkExactRerunsV2 } from "../src/benchmark/protocol_v2_compare.js";
 import { finalizeBenchmarkRunEnvelopeV2, validateBenchmarkRunEnvelopeDraftV2 } from "../src/benchmark/protocol_v2_envelope.js";
@@ -423,6 +424,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     },
     work_unit_id: "work-primary",
     capability_id: "revit.quantify",
+    request_identity: { method: "POST", path: "/revit/quantify", request_signature: "request-inventory" },
     purpose: "work",
     operation_role: "root",
     requested_effect: "read",
@@ -433,23 +435,58 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     admission_state: "admitted",
     dispatch_state: "dispatched",
     dispatch_authority: "native",
+    dispatched_at: START,
     persistent_effect: "none",
     settlement_state: "settled",
     observation_ids: ["observation-inventory"],
     result: {
+      schema: "revit-operator.operation-result/v2",
       result_id: "result-inventory",
       operation_id: "operation-direct-read",
+      binding: {
+        assignment_id: "assignment-1", run_id: "assignment-run-1", generation: 1,
+        session_id: "suite-session-v2", principal_id: "suite-principal-v2"
+      },
       status: "succeeded",
       dispatch_state: "dispatched",
       persistent_effect: "none",
+      native_transaction_state: "not_applicable",
       authority: "native-host",
-      receipt_id: "receipt-inventory"
+      result_schema_id: "operator-native/POST:/revit/quantify/v2",
+      observation_required: true,
+      request_identity: {
+        capability_id: "revit.quantify", method: "POST", path: "/revit/quantify",
+        request_signature: "request-inventory"
+      },
+      receipt_id: "receipt-inventory",
+      completed_at: FINISH
+    }
+  };
+  const supportOperation = {
+    ...operation,
+    operation_id: "operation-tool-documentation",
+    capability_id: "revit_tool_doc",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    observation_ids: [],
+    result: {
+      ...operation.result,
+      result_id: "result-tool-documentation",
+      operation_id: "operation-tool-documentation",
+      authority: "mcp",
+      result_schema_id: "operator-capability/revit_tool_doc/v2",
+      observation_required: false,
+      request_identity: {
+        capability_id: "revit_tool_doc", method: "POST", path: "/revit/quantify",
+        request_signature: "request-tool-documentation"
+      }
     }
   };
   const providerCall = {
     schema: "revit-operator.provider-call/v2",
     call_id: "provider-call-direct-read",
-    state: "completed",
+    binding: operation.binding,
+    state: "response_transport_completed",
     provider: "openai",
     model: "gpt-5.6-sol",
     reasoning_effort: "medium",
@@ -458,6 +495,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     expected_information: ["inventory.total"],
     admitted_at: START,
     completed_at: FINISH,
+    response_transport_completed_at: FINISH,
     success: true,
     usage: { input_tokens: 100, output_tokens: 20, reasoning_tokens: 30, total_tokens: 150 }
   };
@@ -465,7 +503,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
     schema: "revit-operator.assignment-snapshot/v2",
     assignment_version: 9,
     current_binding: operation.binding,
-    operations: { [operation.operation_id]: operation },
+    operations: { [operation.operation_id]: operation, [supportOperation.operation_id]: supportOperation },
     observations: {
       "observation-inventory": {
         schema: "revit-operator.observation/v2",
@@ -473,10 +511,11 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
         operation_id: operation.operation_id,
         binding: operation.binding,
         authority: "native-host",
+        result_schema_id: "operator-native/POST:/revit/quantify/v2",
         semantic_facts: [{ fact_id: "inventory.total", value: 2 }]
       }
     },
-    operation_ids: [operation.operation_id],
+    operation_ids: [operation.operation_id, supportOperation.operation_id],
     in_flight_operation_ids: [],
     unresolved_unknown_operation_ids: [],
     quiescent: true,
@@ -491,6 +530,7 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
   delete toolResults.durable_assignment_projection;
   toolResults.durable_assignment_kernel_v2 = {
     schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignment_ids: ["assignment-1"],
     assignments: [{
       schema: "revit-operator.assignment-kernel-publication/v2",
       assignment_id: "assignment-1",
@@ -505,12 +545,34 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
         calls: { [providerCall.call_id]: providerCall },
         in_flight_call_ids: []
       }
-    }]
+    }],
+    failures: []
+  };
+  trace.model_call_receipts = [];
+  trace.tool_calls = [];
+  toolResults.durable_tool_evidence = {
+    schema: "revit-operator.benchmark-durable-tool-evidence/v1",
+    canonical_attempt_receipts: [], result_receipts: []
   };
   assert.doesNotThrow(() => assertCompleteProtocolV2Receipts({
     model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
     task_traces: [trace]
   }, [readCase.case_id]));
+  trace.model_call_receipts = [
+    { call_id: providerCall.call_id },
+    { call_id: "candidate46-receipt-missing-from-canonical-ledger" }
+  ];
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /provider.*ledger.*conflict/i);
+  trace.model_call_receipts = [{ call_id: providerCall.call_id, tokens: { total_tokens: 151 } }];
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /provider.*ledger.*conflict/i,
+  "raw transport telemetry that contradicts canonical usage must fail closed");
+  trace.model_call_receipts = [{ call_id: providerCall.call_id }];
   const result = buildBenchmarkCaseResultV2({
     runId: "run-v2", lane: "controlled_capability", testCase: readCase, trace,
     rawTraceRef: "trace.json", judgedAt: FINISH
@@ -519,6 +581,11 @@ test("Protocol V2 publishes directly from the V2 snapshot and durable provider l
   assert.equal(result.execution_truth.effect_state, "none");
   assert.equal(result.original_runtime_verdict.verdict, "complete");
   assert.equal(result.assignment_outcome, "complete");
+  assert.equal(result.metrics.revit_calls, 1, "Protocol metrics must count the dispatched operation in the exact V2 snapshot");
+  const latency = summarizeGeneralRevitLatency([trace], {});
+  assert.equal((latency.revit_tool_duration as JsonRecord).count, 1,
+    "latency reporting must use the same exact V2 operation publication");
+  assert.equal(((latency.by_revit_path as JsonRecord)["/revit/quantify"] as JsonRecord).failed_or_rejected_count, 0);
 });
 
 test("Protocol V2 reports a missing direct V2 publication instead of falling back to legacy provider absence", () => {
@@ -541,6 +608,84 @@ test("Protocol V2 reports a missing direct V2 publication instead of falling bac
     model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
     task_traces: [trace]
   }, [readCase.case_id]), /v2_publication_missing/);
+});
+
+test("Candidate 64 replay rejects a V2-declared flight that ran entirely on the legacy lifecycle", () => {
+  const readCase = benchmarkCase({
+    case_id: "q01_candidate64_runtime_drift",
+    operation_family: "inventory",
+    prompt: "Return the requested authoritative inventory.",
+    probe_prompt: "Return the requested authoritative inventory without editing.",
+    capability_paths: ["/revit/quantify"],
+    dispatch_any_of: ["/revit/quantify"],
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const attempt = canonicalAttempt({
+    requested_effect: "read",
+    target_identities: ["document:fixture"],
+    affected_target_identities: [],
+    effect: { state: "none", authority: "native_receipt", reason: "read_only" }
+  });
+  const trace = traceFor(readCase, {
+    attempts: [attempt],
+    mutationRequested: false,
+    actionRows: [{
+      path: "/revit/quantify", request_effect: "read", request_dispatched: true,
+      status: "success", receipt: { total: 509, groups: [] }
+    }]
+  });
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_kernel_v2 = {
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    session_index: {
+      schema: "revit-operator.assignment-kernel-session-index/v2",
+      session_id: "suite-session-v2",
+      assignments: []
+    },
+    assignment_ids: [],
+    assignments: [],
+    failures: []
+  };
+
+  const assertReceipts = assertCompleteProtocolV2Receipts as unknown as (
+    report: JsonRecord,
+    caseIds: readonly string[],
+    options: { require_assignment_kernel_v2: boolean }
+  ) => void;
+  assert.throws(() => assertReceipts({
+    model_telemetry_coverage: { complete: true, cases_with_model_receipts: 1 },
+    task_traces: [trace]
+  }, [readCase.case_id], { require_assignment_kernel_v2: true }), /v2_publication_missing/,
+  "legacy completion and complete transport telemetry must not qualify a V2-declared run");
+});
+
+test("Protocol V2 reports a malformed direct V2 publication instead of treating its provider ledger as absent", () => {
+  const readCase = benchmarkCase({
+    case_id: "q01_v2_publication_invalid",
+    operation_family: "inventory",
+    expected_effect: "read",
+    production_expected_effect: "read",
+    probe_expected_effect: "read"
+  });
+  const trace = traceFor(readCase);
+  const toolResults = trace.tool_results as JsonRecord;
+  toolResults.durable_assignment_kernel_v2 = {
+    schema: "revit-operator.benchmark-assignment-kernel-v2/v1",
+    assignment_ids: ["assignment-1"],
+    assignments: [{
+      schema: "revit-operator.assignment-kernel-publication/v2",
+      assignment_id: "assignment-1",
+      assignment_version: 9,
+      provider_ledger: { schema: "revit-operator.assignment-provider-ledger/v2" }
+    }],
+    failures: []
+  };
+  assert.throws(() => assertCompleteProtocolV2Receipts({
+    model_telemetry_coverage: { complete: false, cases_with_model_receipts: 0 },
+    task_traces: [trace]
+  }, [readCase.case_id]), /assignment_kernel_v2_direct_publication_invalid/);
 });
 
 test("canonical attempt effect accessor is backward compatible but rejects conflicting dual fields", () => {
@@ -739,6 +884,59 @@ test("preview/apply confusion and unauthorized mutations are release blocking", 
   assert.equal(result.execution_truth.collateral_or_unauthorized_mutation, true);
   assert.equal(result.delivery_verdict, "collateral_or_unauthorized_mutation");
   assert.equal(result.release_blocking, true);
+});
+
+test("a verified non-mutating preview is reported as successful delivery", () => {
+  const previewCase = benchmarkCase({
+    case_id: "r01_verified_preview_delivery",
+    expected_effect: "preview",
+    production_expected_effect: "preview",
+    probe_expected_effect: "preview"
+  });
+  const previewAttempt = canonicalAttempt({
+    requested_effect: "preview",
+    affected_target_identities: [],
+    effect: { state: "none", authority: "native_receipt", reason: "structured_preview" }
+  });
+  const trace = traceFor(previewCase, {
+    assistant: "Preview completed successfully for the requested text-note replacement.",
+    attempts: [previewAttempt],
+    mutationRequested: false
+  });
+  const raw = (trace.tool_results as JsonRecord).raw_sidecar_response as JsonRecord;
+  const assignment = ((raw.assignment_projection as JsonRecord).assignments as JsonRecord[])[0]!;
+  assignment.source_record_id = "assignment-1";
+  assignment.lifecycle = { phase: "complete" };
+  assignment.execution = { requested_effect: "preview", completion_mode: "successful_preview" };
+  assignment.verification = { state: "pass" };
+  raw.teammate_loop_receipt = {
+    schema: "revit-operator.teammate-loop-receipt.v1",
+    turn_kind: "inspection",
+    context_state: "live",
+    stage: "preview_complete",
+    apply_attempts: 0,
+    blocked_reason: null,
+    preview_action_ids: ["preview-action-1"],
+    preview_receipts: [{
+      action_id: "preview-action-1",
+      path: "/revit/replace-text-note",
+      status: "success",
+      evidence_sha256: `sha256:${HASH}`
+    }]
+  };
+  const result = buildBenchmarkCaseResultV2({
+    runId: "run-v2",
+    lane: "controlled_capability",
+    testCase: previewCase,
+    trace,
+    rawTraceRef: "trace#verified-preview",
+    judgedAt: FINISH
+  });
+  assert.equal(result.assignment_outcome, "complete");
+  assert.equal(result.current_evaluator_verdict.verdict, "verified");
+  assert.equal(result.first_failed_or_uncertain_stage, null);
+  assert.equal(result.primary_failure_cause, null);
+  assert.equal(result.delivery_verdict, "verified_preview_completion");
 });
 
 test("wrong target and wrong orientation/host/side semantics fail even with a correct operation", () => {

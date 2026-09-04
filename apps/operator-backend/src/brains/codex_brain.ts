@@ -2,20 +2,16 @@ import path from "node:path";
 import type { ChatRequest, ChatResponse, ToolResult } from "../contracts.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../contracts.js";
 import { ensureWorkspaceLayout } from "../workspace.js";
-import { appendEvent, appendNotification, setCodexThreadId } from "../memory/sqlite_store.js";
-import { CodexAppServer, type CodexServerRequest } from "../codex/app_server.js";
+import { appendEvent, setCodexThreadId } from "../memory/sqlite_store.js";
+import { CodexAppServer, type CodexNotificationEnvelope, type CodexServerRequest } from "../codex/app_server.js";
 import type { UserInput } from "../codex/generated/app_server_0_149_0/v2/UserInput.js";
 import { ensureCodexHomeAuth, ensureCodexHomeConfig, prepareCertifiedCodexIsolation } from "../codex/config.js";
 import { CodexMcpToolRuntime } from "../codex/mcp_tool_runtime.js";
 import { resolveCodexTurnTimeoutMs } from "../codex/timeout_policy.js";
-import {
-  formatRevitToolContractMemoryForPrompt,
-  recordRevitToolOutcome
-} from "../codex/revit_tool_contract_memory.js";
+import { formatRevitToolContractMemoryForPrompt } from "../codex/revit_tool_contract_memory.js";
 import { beginRevitCourierTurnContext, endRevitCourierTurnContext } from "../courier/revit_courier_context.js";
 import { revitCourierTargetFromContext } from "../courier/revit_courier_target.js";
 import { getSkillLibraryText } from "../skills/skill_library.js";
-import { persistence } from "../persistence/persistence_manager.js";
 import { retrieveMemoryContext } from "../memory/jsonl_memory_store.js";
 import { formatProjectProfileForPrompt } from "../memory/project_profile.js";
 import {
@@ -42,12 +38,16 @@ import {
   teammateLoopReceiptForLease
 } from "../teammate_loop_runtime.js";
 import { adaptDynamicToolCompletedItem, isMissingCodexThreadError } from "./codex_tool_observation.js";
-import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement, isSuccessfulAuthoritativeWebEvidenceCall } from "./authoritative_web_evidence.js";
-import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement, isSuccessfulFreshRevitEvidence } from "./revit_turn_evidence.js";
+import { enforceAuthoritativeWebEvidence, getAuthoritativeWebEvidenceRequirement } from "./authoritative_web_evidence.js";
+import { FRESH_REVIT_EVIDENCE_FAILURE, getFreshRevitEvidenceRequirement } from "./revit_turn_evidence.js";
 import { resolveAgentModelSettings } from "../speed_config.js";
 import { codexTelemetryThreadKey, createCodexTurnModelTelemetry } from "./codex_turn_model_telemetry.js";
 import { assignmentModelReceiptObserver } from "../assignments/model_call_budget.js";
-import { assignmentKernelV2ModelReceiptObserver } from "../assignments/assignment_kernel_v2_provider_budget.js";
+import { createAssignmentKernelV2ModelReceiptRecorder } from "../assignments/assignment_kernel_v2_provider_budget.js";
+import {
+  classifyAssignmentKernelExecutionFailureV2,
+  settleAssignmentKernelExecutionFailureV2
+} from "../assignments/assignment_kernel_v2_execution_failure.js";
 import { getOrCreateCodexThread } from "./codex_thread_lifecycle.js";
 import { awaitAssignmentQuiescence, cancelAssignmentInFlight, requestAssignmentTerminal } from "../assignments/settlement_barrier.js";
 import { settleAssignmentTurn } from "../assignments/turn_settlement.js";
@@ -59,13 +59,20 @@ import { assignmentKernelV2ForBinding } from "../assignments/assignment_kernel_v
 import { recoverAssignmentKernelOperationsV2 } from "../assignments/assignment_kernel_v2_execution.js";
 import { deriveTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import {
+  beginAssignmentKernelTerminalBarrierV2,
+  endAssignmentKernelTerminalBarrierV2,
+  type AssignmentKernelTerminalBarrierLeaseV2
+} from "../assignments/assignment_kernel_v2_terminal_barrier.js";
+import {
   checkpointCodexAssignmentProgressV2,
   codexAssignmentControllerStopMessage,
   currentCodexAssignmentSnapshotV2,
+  finalCodexAssignmentMessageV2,
   prepareCodexAssignmentProgressV2,
   settleCodexAssignmentProgressV2
 } from "./codex_assignment_progress.js";
 import { formatToolResultsForCodex } from "./codex_tool_result_formatting.js";
+import { createCodexTurnNotificationObserver } from "./codex_turn_notification_observer.js";
 
 export type StreamCallbacks = {
   onDelta?: (textDelta: string) => void;
@@ -162,16 +169,6 @@ function buildCodexSpawnEnv(workspaceRoot: string): NodeJS.ProcessEnv {
   delete env.OPERATOR_OPENAI_API_KEY;
   env.OPERATOR_WORKSPACE_ROOT = workspaceRoot;
   return env;
-}
-
-function shouldNotifyCodexToolCalls(): boolean {
-  const v = (process.env.OPERATOR_NOTIFY_CODEX_TOOL_CALLS ?? "1").toString().trim().toLowerCase();
-  return v !== "0" && v !== "false" && v !== "no";
-}
-
-function toolNotifyThresholdMs(): number {
-  const raw = Number.parseInt(process.env.OPERATOR_NOTIFY_CODEX_TOOL_CALLS_THRESHOLD_MS ?? "2500", 10);
-  return Number.isFinite(raw) ? Math.max(0, raw) : 2500;
 }
 
 function codexTurnTimeoutMs(): number {
@@ -438,6 +435,34 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     : null;
   const threadProfile = getCodexThreadStartProfileForTest(req);
   const agentSettings = resolveAgentModelSettings(req.context);
+  const stopBeforeProvider = (
+    message: string,
+    failureId: string,
+    phase: "request_validation" | "runtime_setup" | "provider_start",
+    errorClass: "provider" | "transport" | "runtime" | "canceled" | "resource_exhausted" = "runtime"
+  ): ChatResponse => {
+    const snapshot = assignmentKernelV2
+      ? settleAssignmentKernelExecutionFailureV2({
+          binding: assignmentKernelV2.binding,
+          failure_id: failureId,
+          error_class: errorClass,
+          phase
+        }).snapshot
+      : null;
+    const assistantMessage = snapshot
+      && snapshot.terminal
+      && ["complete", "complete_with_issues", "verified_noop"].includes(snapshot.outcome)
+      ? finalCodexAssignmentMessageV2(snapshot, message)
+      : message;
+    cb.onDone?.(assistantMessage);
+    return {
+      version: OPERATOR_BACKEND_CONTRACT_VERSION,
+      assistant_message: assistantMessage,
+      actions: [],
+      ...(snapshot ? { assignment_snapshot_v2: snapshot } : {}),
+      ...(snapshot?.terminal ? { terminal_result_v2: deriveTerminalResultV2(snapshot) } : {})
+    };
+  };
   const requestBackendAuth = getRequestOperatorBackendAuth();
   const certifiedDirect = threadProfile.certified;
   let courierTarget: ReturnType<typeof revitCourierTargetFromContext> | undefined;
@@ -446,16 +471,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       courierTarget = revitCourierTargetFromContext(req.context);
     } catch (error) {
       const message = `${error instanceof Error ? error.message : String(error)} I stopped before planning or Revit tool actions.`;
-      cb.onDone?.(message);
-      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+      return stopBeforeProvider(message, `request-validation:${req.message_id}`, "request_validation");
     }
   }
   const workspaceRoot = getWorkspaceRoot();
-  let c = await getClient(workspaceRoot, threadProfile);
-  let threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
-    c = activeClient;
-    return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
-  });
+  let c: CodexAppServer;
+  let threadId: string;
 
 
   const text = (req.user_text ?? "").toString();
@@ -484,13 +505,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   }
   if (requirementsError) {
     const message = `Durable requirements could not be read safely (${requirementsError}). I stopped before planning or tool actions.`;
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+    return stopBeforeProvider(message, `requirements-read:${req.message_id}`, "request_validation");
   }
   if (requirementsReceipt && requirementsReceipt.status !== "resolved") {
     const message = `Durable requirements are ${requirementsReceipt.status}. I stopped before planning or tool actions; resolve or narrow the attached receipt first.`;
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
+    return {
+      ...stopBeforeProvider(message, `requirements-unresolved:${req.message_id}`, "request_validation"),
+      requirements_receipt: requirementsReceipt
+    };
   }
   try {
     const query = text.trim() || (getPinnedGoal(req.session_id) ?? "") || "";
@@ -574,25 +596,38 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         const message = leasedReceipt.status === "resolved"
           ? "Durable requirements changed while the planning lease was being acquired. I stopped before tool actions; re-run the request against the attached current receipt."
           : `Durable requirements became ${leasedReceipt.status} while the planning lease was being acquired. I stopped before tool actions; resolve or narrow the attached receipt first.`;
-        cb.onDone?.(message);
-        return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: leasedReceipt };
+        return {
+          ...stopBeforeProvider(message, `requirements-changed:${req.message_id}`, "request_validation"),
+          requirements_receipt: leasedReceipt
+        };
       }
       requirementsReceipt = leasedReceipt;
     } catch (error) {
       endRequirementsPlanningLease(requirementsLease);
       requirementsLease = null;
       const message = `Durable requirements could not be leased and revalidated safely (${error instanceof Error ? error.message : String(error)}). I stopped before planning or tool actions.`;
-      cb.onDone?.(message);
-      return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [], requirements_receipt: requirementsReceipt };
+      return {
+        ...stopBeforeProvider(message, `requirements-lease:${req.message_id}`, "request_validation"),
+        requirements_receipt: requirementsReceipt
+      };
     }
   }
   const mcpRuntime = threadProfile.startRevitTurnRuntime ? mcpRuntimesByWorkspace.get(workspaceRoot) : null;
-  if (threadProfile.startRevitTurnRuntime && !mcpRuntime) throw new Error("Revit Operator MCP runtime is not configured for this workspace.");
+  if (threadProfile.startRevitTurnRuntime && !mcpRuntime) {
+    endRequirementsPlanningLease(requirementsLease);
+    requirementsLease = null;
+    return stopBeforeProvider(
+      "Revit Operator MCP runtime is not configured for this workspace. I stopped before the provider or any Revit tool was called.",
+      `runtime-missing:${req.message_id}`,
+      "runtime_setup"
+    );
+  }
   const backendAuth = threadProfile.startRevitTurnRuntime ? requestBackendAuth : undefined;
   if (threadProfile.startRevitTurnRuntime && !backendAuth) {
+    endRequirementsPlanningLease(requirementsLease);
+    requirementsLease = null;
     const message = "Authenticated Operator backend transport is unavailable. I stopped before the provider or any Revit tool was called.";
-    cb.onDone?.(message);
-    return { version: OPERATOR_BACKEND_CONTRACT_VERSION, assistant_message: message, actions: [] };
+    return stopBeforeProvider(message, `backend-transport-missing:${req.message_id}`, "runtime_setup", "transport");
   }
   let backendAuthLease: OperatorBackendAuthLease | null = null;
   let assignmentKernelV2Lease: AssignmentKernelTurnLeaseV2 | null = null;
@@ -600,6 +635,24 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   let teammateReceipt: ReturnType<typeof teammateLoopReceiptForLease> | undefined;
   let courierContext: ReturnType<typeof beginRevitCourierTurnContext> = null;
   let assignmentProgressTurnStart: ReturnType<typeof currentCodexAssignmentSnapshotV2> = null;
+  let assignmentTerminalBarrier: AssignmentKernelTerminalBarrierLeaseV2 | null = null;
+  let assignmentBudgetInterrupt: (() => void) | null = null;
+  let assignmentControllerStopReason: string | null = null;
+  let providerReceiptRecorder: ReturnType<typeof createAssignmentKernelV2ModelReceiptRecorder> | null = null;
+  let reconcileStartedProviderTurn: (() => void) | null = null;
+  const earlyTurnNotifications: CodexNotificationEnvelope[] = [];
+  let liveTurnNotificationHandler: ((notification: CodexNotificationEnvelope) => void) | null = null;
+  let notificationSource: CodexAppServer | null = null;
+  let unsubscribeTurnNotifications: () => void = () => {};
+  const bindTurnNotificationSource = (activeClient: CodexAppServer) => {
+    if (notificationSource === activeClient) return;
+    unsubscribeTurnNotifications();
+    notificationSource = activeClient;
+    unsubscribeTurnNotifications = activeClient.onNotification(notification => {
+      if (liveTurnNotificationHandler) liveTurnNotificationHandler(notification);
+      else earlyTurnNotifications.push(notification);
+    });
+  };
   let start: Awaited<ReturnType<CodexAppServer["startTurn"]>>;
   const agentTurnStartedAt = new Date().toISOString();
   const agentTurnStartedMs = Date.now();
@@ -662,8 +715,49 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       }
     }
     try {
+      c = await getClient(workspaceRoot, threadProfile);
+      threadId = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
+        c = activeClient;
+        return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
+      });
+    } catch (error) {
+      mcpRuntime?.endBackendAuthLease(backendAuthLease);
+      backendAuthLease = null;
+      mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
+      assignmentKernelV2Lease = null;
+      endTeammateLoopOwner(teammateContext);
+      teammateContext = null;
+      endRevitCourierTurnContext(courierContext);
+      courierContext = null;
+      endRequirementsPlanningLease(requirementsLease);
+      requirementsLease = null;
+      return stopBeforeProvider(
+        "The provider connection could not be initialized. I stopped before planning or any Revit tool action.",
+        `provider-start:${req.message_id}`,
+        "provider_start",
+        classifyAssignmentKernelExecutionFailureV2(error)
+      );
+    }
+    providerReceiptRecorder = assignmentKernelV2
+      ? createAssignmentKernelV2ModelReceiptRecorder({
+          binding: assignmentKernelV2.binding,
+          admission_snapshot: assignmentProgressTurnStart ?? assignmentKernelV2.snapshot,
+          onStop: () => {
+            assignmentControllerStopReason = assignmentControllerStopReason ?? "assignment_progress_controller_stop";
+            assignmentBudgetInterrupt?.();
+          }
+        })
+      : null;
+    if (assignmentKernelV2) {
+      assignmentTerminalBarrier = beginAssignmentKernelTerminalBarrierV2({
+        binding: assignmentKernelV2.binding,
+        barrier_id: `provider-request:${req.message_id}`
+      });
+    }
+    try {
       start = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
         c = activeClient;
+        bindTurnNotificationSource(activeClient);
         return await activeClient.startTurn({
           threadId,
           input,
@@ -678,6 +772,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
         c = activeClient;
         return await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
       });
+      bindTurnNotificationSource(c);
       start = await c.startTurn({
         threadId,
         input,
@@ -686,6 +781,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       });
     }
   } catch (error) {
+    endAssignmentKernelTerminalBarrierV2(assignmentTerminalBarrier);
+    assignmentTerminalBarrier = null;
+    unsubscribeTurnNotifications();
+    unsubscribeTurnNotifications = () => {};
     mcpRuntime?.endBackendAuthLease(backendAuthLease);
     backendAuthLease = null;
     mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
@@ -700,6 +799,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
 
   const turnId = typeof start?.turn?.id === "string" ? start.turn.id : "";
   if (!turnId) {
+    endAssignmentKernelTerminalBarrierV2(assignmentTerminalBarrier);
+    assignmentTerminalBarrier = null;
+    unsubscribeTurnNotifications();
+    unsubscribeTurnNotifications = () => {};
     mcpRuntime?.endBackendAuthLease(backendAuthLease);
     backendAuthLease = null;
     mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
@@ -711,6 +814,77 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     endRequirementsPlanningLease(requirementsLease);
     throw new Error("Codex turn/start did not return a turn id.");
   }
+  let providerTurnResourcesReleased = false;
+  let releaseActiveTurnRegistration: (() => void) | null = null;
+  const releaseStartedProviderTurn = async (interrupt: boolean): Promise<void> => {
+    if (providerTurnResourcesReleased) return;
+    const cleanupErrors: string[] = [];
+    if (interrupt) {
+      try {
+        await c.interruptTurn({ threadId, turnId });
+      } catch (error) {
+        cleanupErrors.push(`interrupt: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try {
+        await c.waitForTurnCompleted({
+          threadId,
+          turnId,
+          timeoutMs: Math.min(codexTurnTimeoutMs(), 10_000)
+        });
+      } catch (error) {
+        cleanupErrors.push(`interrupt drain: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const cleanup = (label: string, action: () => void) => {
+      try {
+        action();
+      } catch (error) {
+        cleanupErrors.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    cleanup("provider receipt reconciliation", () => reconcileStartedProviderTurn?.());
+    reconcileStartedProviderTurn = null;
+    cleanup("notification subscription", () => unsubscribeTurnNotifications());
+    unsubscribeTurnNotifications = () => {};
+    liveTurnNotificationHandler = null;
+    cleanup("active turn registration", () => releaseActiveTurnRegistration?.());
+    releaseActiveTurnRegistration = null;
+    cleanup("terminal barrier", () => endAssignmentKernelTerminalBarrierV2(assignmentTerminalBarrier));
+    assignmentTerminalBarrier = null;
+    cleanup("backend auth lease", () => mcpRuntime?.endBackendAuthLease(backendAuthLease));
+    backendAuthLease = null;
+    cleanup("Assignment Kernel lease", () => mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease));
+    assignmentKernelV2Lease = null;
+    cleanup("requirements planning lease", () => endRequirementsPlanningLease(requirementsLease));
+    requirementsLease = null;
+    cleanup("teammate loop owner", () => endTeammateLoopOwner(teammateContext));
+    teammateContext = null;
+    cleanup("Revit courier context", () => endRevitCourierTurnContext(courierContext));
+    courierContext = null;
+    providerTurnResourcesReleased = true;
+    if (cleanupErrors.length > 0) {
+      throw new Error(`Started provider turn cleanup failed (${cleanupErrors.join("; ")}).`);
+    }
+  };
+
+  try {
+  const modelTelemetry = createCodexTurnModelTelemetry({
+    sessionId: req.session_id,
+    threadId,
+    turnId,
+    settings: agentSettings,
+    startedAtUtc: agentTurnStartedAt,
+    onReceipt: providerReceiptRecorder
+      ? providerReceiptRecorder.observe
+      : assignmentModelReceiptObserver(req.session_id, () => {
+          assignmentControllerStopReason = "absolute_model_call_limit_reached";
+          assignmentBudgetInterrupt?.();
+        })
+  });
+  reconcileStartedProviderTurn = () => {
+    for (const notification of earlyTurnNotifications) modelTelemetry.observe(notification);
+    providerReceiptRecorder?.reconcile(modelTelemetry.receipts);
+  };
   if (backendAuthLease) mcpRuntime!.bindBackendAuthLeaseTurn(backendAuthLease, turnId);
   if (assignmentKernelV2Lease) mcpRuntime!.bindAssignmentKernelV2LeaseTurn(assignmentKernelV2Lease, turnId);
   if (teammateContext) bindTeammateLoopOwnerTurn(teammateContext, turnId);
@@ -720,275 +894,22 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     // ignore
   }
 
-  let assistantText = "", assistantDeltas = "";
-  let assignmentBudgetInterrupt: (() => void) | null = null;
-  let assignmentControllerStopReason: string | null = null;
-  const modelTelemetry = createCodexTurnModelTelemetry({
-    sessionId: req.session_id,
-    threadId,
-    turnId,
-    settings: agentSettings,
-    startedAtUtc: agentTurnStartedAt,
-    onReceipt: assignmentKernelV2
-      ? assignmentKernelV2ModelReceiptObserver(assignmentKernelV2.binding, () => {
-          assignmentControllerStopReason = assignmentControllerStopReason ?? "assignment_progress_controller_stop";
-          assignmentBudgetInterrupt?.();
-        })
-      : assignmentModelReceiptObserver(req.session_id, () => {
-          assignmentControllerStopReason = "absolute_model_call_limit_reached";
-          assignmentBudgetInterrupt?.();
-        })
-  });
-  let hasFreshRevitEvidence = !freshEvidenceRequirement.required;
-  let hasAuthoritativeWebEvidence = !webEvidenceRequirement.required;
   const assignmentObserver = assignmentKernelV2
     ? { observe: (_value: unknown) => {}, finish: (_turnId: string, _assistant: string, _receipt: unknown) => {} }
     : createAutoGoalTurnObserver(req.session_id);
-
-  const unsubscribe = c.onNotification(n => {
-    try {
-      if (!n || n.threadId !== threadId) return;
-      modelTelemetry.observe(n);
-      if (n.method === "item/agentMessage/delta") {
-        if (n.params?.turnId !== turnId) return;
-        const delta = typeof n.params?.delta === "string" ? n.params.delta : "";
-        if (delta) {
-          assistantDeltas += delta;
-          if (!freshEvidenceRequirement.required && !webEvidenceRequirement.required) cb.onDelta?.(delta);
-        }
-      }
-
-      if (n.method === "item/completed") {
-        if (n.params?.turnId !== turnId) return;
-        const item = n.params?.item;
-        if (item?.type === "agentMessage") {
-          const full = typeof item.text === "string" ? item.text : "";
-          if (full) assistantText = full;
-        }
-        const dynamicTool = adaptDynamicToolCompletedItem(item);
-        if (dynamicTool) {
-          assignmentObserver.observe(dynamicTool);
-          if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, dynamicTool)) hasFreshRevitEvidence = true;
-          if (isSuccessfulAuthoritativeWebEvidenceCall(dynamicTool)) hasAuthoritativeWebEvidence = true;
-          try {
-            recordRevitToolOutcome({
-              sessionId: req.session_id,
-              threadId,
-              turnId,
-              tool: dynamicTool.tool,
-              arguments: dynamicTool.arguments,
-              success: dynamicTool.success,
-              error: dynamicTool.error
-            });
-          } catch {
-            // contract memory is best-effort and must never interrupt the active turn
-          }
-          try {
-            appendEvent(req.session_id, "tool", "codex.dynamicToolCall", {
-              thread_id: threadId,
-              turn_id: turnId,
-              ...dynamicTool
-            });
-          } catch {
-            // ignore
-          }
-          try {
-            const ts = new Date().toISOString();
-            persistence.appendToolCall(req.session_id, {
-              ts,
-              kind: "mcp.tool_call",
-              session_id: req.session_id,
-              tool: dynamicTool.tool,
-              server: dynamicTool.server,
-              arguments: dynamicTool.arguments,
-              status: dynamicTool.status,
-              duration_ms: dynamicTool.duration_ms,
-              thread_id: threadId,
-              turn_id: turnId
-            });
-            persistence.appendToolOutput(req.session_id, {
-              ts,
-              kind: "mcp.tool_result",
-              session_id: req.session_id,
-              tool: dynamicTool.tool,
-              server: dynamicTool.server,
-              status: dynamicTool.status,
-              duration_ms: dynamicTool.duration_ms,
-              result: dynamicTool.result,
-              error: dynamicTool.error,
-              thread_id: threadId,
-              turn_id: turnId
-            });
-          } catch {
-            // ignore
-          }
-          if (shouldNotifyCodexToolCalls()) {
-            try {
-              const slow = dynamicTool.duration_ms !== null && dynamicTool.duration_ms >= toolNotifyThresholdMs();
-              const summary = dynamicTool.error
-                ? `Tool ${dynamicTool.tool}: ${dynamicTool.error}`
-                : `Tool ${dynamicTool.tool} completed${dynamicTool.duration_ms !== null ? ` (ms=${Math.round(dynamicTool.duration_ms)}${slow ? ", slow=true" : ""})` : ""}.`;
-              appendNotification(req.session_id, "codex.tool_call", summary, {
-                server: dynamicTool.server,
-                tool: dynamicTool.tool,
-                status: dynamicTool.status,
-                duration_ms: dynamicTool.duration_ms,
-                error: dynamicTool.error,
-                arguments: dynamicTool.arguments,
-                result: dynamicTool.result,
-                slow: slow || null
-              });
-            } catch {
-              // ignore
-            }
-          }
-        }
-        if (item?.type === "mcpToolCall") {
-          const mcpStatus = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
-          const mcpError = typeof item.error === "string" ? item.error.trim() : "";
-          assignmentObserver.observe({
-            action_id: typeof item.id === "string" ? item.id : typeof item.callId === "string" ? item.callId : null,
-            server: typeof item.server === "string" ? item.server : null,
-            tool: typeof item.tool === "string" ? item.tool : "mcp_tool",
-            success: mcpError ? false : mcpStatus ? ["success", "ok", "done", "completed"].includes(mcpStatus) : null,
-            status: mcpStatus || null,
-            error: mcpError || null,
-            duration_ms: typeof item.durationMs === "number" ? item.durationMs : null, arguments: item.arguments ?? null, result: item.result ?? item.content ?? item.contentItems ?? null
-          });
-          if (isSuccessfulFreshRevitEvidence(freshEvidenceRequirement, {
-            server: item.server,
-            tool: item.tool,
-            arguments: item.arguments,
-            status: item.status,
-            error: item.error
-          })) hasFreshRevitEvidence = true;
-          if (isSuccessfulAuthoritativeWebEvidenceCall({
-            tool: item.tool,
-            status: item.status,
-            error: item.error
-          })) hasAuthoritativeWebEvidence = true;
-          try {
-            const status = typeof item.status === "string" ? item.status.trim().toLowerCase() : "";
-            const error = typeof item.error === "string" ? item.error : null;
-            const success = error
-              ? false
-              : status
-                ? ["success", "ok", "done", "completed"].includes(status)
-                : undefined;
-            recordRevitToolOutcome({
-              sessionId: req.session_id,
-              threadId,
-              turnId,
-              tool: item.tool,
-              arguments: item.arguments,
-              success,
-              error
-            });
-          } catch {
-            // contract memory is best-effort and must never interrupt the active turn
-          }
-          try {
-            appendEvent(req.session_id, "tool", "codex.mcpToolCall", {
-              thread_id: threadId,
-              turn_id: turnId,
-              server: item.server,
-              tool: item.tool,
-              status: item.status,
-              arguments: item.arguments,
-              duration_ms: item.durationMs ?? null,
-              result: item.result ?? null,
-              error: item.error ?? null
-            });
-          } catch {
-            // ignore
-          }
-
-          // Phase 1 journaling: write tool call + tool output to the run bundle JSONL tape.
-          try {
-            const ts = new Date().toISOString();
-            persistence.appendToolCall(req.session_id, {
-              ts,
-              kind: "mcp.tool_call",
-              session_id: req.session_id,
-              tool: item.tool ?? "tool",
-              server: item.server ?? null,
-              arguments: item.arguments ?? null,
-              status: item.status ?? null,
-              duration_ms: typeof item.durationMs === "number" ? item.durationMs : null,
-              thread_id: threadId,
-              turn_id: turnId
-            });
-            persistence.appendToolOutput(req.session_id, {
-              ts,
-              kind: "mcp.tool_result",
-              session_id: req.session_id,
-              tool: item.tool ?? "tool",
-              server: item.server ?? null,
-              status: item.status ?? null,
-              duration_ms: typeof item.durationMs === "number" ? item.durationMs : null,
-              result: item.result ?? null,
-              error: typeof item.error === "string" ? item.error : null,
-              thread_id: threadId,
-              turn_id: turnId
-            });
-          } catch {
-            // ignore
-          }
-
-          // Web research: always surface "saved evidence" via /notifications (not just slow/fail).
-          try {
-            if (typeof item.tool === "string" && item.tool.trim() === "web_fetch_evidence") {
-              const status = typeof item.status === "string" ? item.status : "";
-              const ok = status === "success" || status === "ok" || status === "done";
-              appendNotification(req.session_id, "web.research.saved", ok ? "Saved web evidence (see tool output for paths)." : "Web evidence fetch failed (see tool output).", {
-                tool: item.tool,
-                status: item.status ?? null
-              });
-            }
-          } catch {
-            // ignore
-          }
-
-          if (shouldNotifyCodexToolCalls()) {
-            try {
-              const status = typeof item.status === "string" ? item.status : "";
-              const durationMs = typeof item.durationMs === "number" ? item.durationMs : null;
-              const err = typeof item.error === "string" ? item.error.trim() : "";
-              const tool = typeof item.tool === "string" ? item.tool.trim() : "tool";
-              const statusNorm = status.toLowerCase();
-              const ok = statusNorm === "success" || statusNorm === "ok" || statusNorm === "done";
-              const slow = durationMs !== null && durationMs >= toolNotifyThresholdMs();
-              const payload = {
-                server: item.server ?? null,
-                tool: item.tool ?? null,
-                status: item.status ?? null,
-                duration_ms: durationMs,
-                error: err || null,
-                arguments: item.arguments ?? null,
-                result: item.result ?? null,
-                slow: slow || null
-              };
-              const suffix = [
-                status ? `status=${status}` : null,
-                durationMs !== null ? `ms=${Math.round(durationMs)}` : null,
-                slow ? "slow=true" : null
-              ]
-                .filter(Boolean)
-                .join(", ");
-              const summary = err
-                ? `Tool ${tool}: ${err}`
-                : `Tool ${tool} ${ok ? "completed" : "finished"}${suffix ? ` (${suffix})` : ""}.`;
-              appendNotification(req.session_id, "codex.tool_call", summary, payload);
-            } catch {
-              // ignore
-            }
-          }
-        }
-      }
-    } catch {
-      // ignore per notification
-    }
+  const turnNotificationObserver = createCodexTurnNotificationObserver({
+    sessionId: req.session_id,
+    threadId,
+    turnId,
+    modelTelemetry,
+    assignmentObserver,
+    freshEvidenceRequirement,
+    webEvidenceRequirement,
+    mcpRuntime: mcpRuntime ?? null,
+    onDelta: cb.onDelta
   });
+  liveTurnNotificationHandler = turnNotificationObserver.observe;
+  for (const notification of earlyTurnNotifications.splice(0)) turnNotificationObserver.observe(notification);
 
   const activeTurnAbort = new AbortController();
   const activeTurnKey = codexTurnAbortKey(req.session_id, req.message_id);
@@ -1018,11 +939,21 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   };
   if (cb.abortSignal?.aborted) forwardExternalAbort();
   else cb.abortSignal?.addEventListener("abort", forwardExternalAbort, { once: true });
+  releaseActiveTurnRegistration = () => {
+    cb.abortSignal?.removeEventListener("abort", forwardExternalAbort);
+    if (activeCodexTurns.get(activeTurnKey) === activeTurn) {
+      activeCodexTurns.delete(activeTurnKey);
+    }
+    assignmentBudgetInterrupt = null;
+    mcpRuntime?.clearAssignmentKernelV2TurnStop(turnId);
+  };
   let turnCancelled = false;
+  let providerReceiptReconciliationError: unknown = null;
   const assignmentIdForTurn = assignmentKernelV2?.binding.assignment_id ?? getActiveGoalForSession(req.session_id)?.id ?? null;
   try {
     const completion = await withTransportRetry(workspaceRoot, threadProfile, async activeClient => {
       c = activeClient;
+      bindTurnNotificationSource(activeClient);
       if (!activeClient.hasLoadedThread(threadId)) {
         const resumedThreadId = await getOrCreateThreadId(req, activeClient, workspaceRoot, agentSettings);
         if (resumedThreadId !== threadId) throw new Error(`Codex active thread ${threadId} could not be resumed after reconnect.`);
@@ -1053,23 +984,27 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     }
     turnCancelled = true;
   } finally {
-    unsubscribe();
-    cb.abortSignal?.removeEventListener("abort", forwardExternalAbort);
-    if (activeCodexTurns.get(activeTurnKey) === activeTurn) {
-      activeCodexTurns.delete(activeTurnKey);
+    unsubscribeTurnNotifications();
+    unsubscribeTurnNotifications = () => {};
+    liveTurnNotificationHandler = null;
+    if (providerReceiptRecorder) {
+      try {
+        providerReceiptRecorder.reconcile(modelTelemetry.receipts);
+      } catch (error) {
+        providerReceiptReconciliationError = error;
+      }
     }
-    assignmentBudgetInterrupt = null;
-    mcpRuntime?.clearAssignmentKernelV2TurnStop(turnId);
-    mcpRuntime?.endBackendAuthLease(backendAuthLease);
-    backendAuthLease = null;
-    mcpRuntime?.endAssignmentKernelV2Lease(assignmentKernelV2Lease);
-    assignmentKernelV2Lease = null;
-    endRequirementsPlanningLease(requirementsLease);
+    reconcileStartedProviderTurn = null;
     teammateReceipt = teammateContext ? teammateLoopReceiptForLease(teammateContext) : undefined;
-    endTeammateLoopOwner(teammateContext);
-    teammateContext = null;
-    endRevitCourierTurnContext(courierContext);
-    courierContext = null;
+    await releaseStartedProviderTurn(false);
+  }
+
+  if (providerReceiptReconciliationError) {
+    throw new Error(
+      `Canonical provider receipt reconciliation failed: ${providerReceiptReconciliationError instanceof Error
+        ? providerReceiptReconciliationError.message
+        : String(providerReceiptReconciliationError)}`
+    );
   }
 
   if (turnCancelled) {
@@ -1078,10 +1013,19 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
       const drained = await awaitAssignmentQuiescence(assignmentIdForTurn);
       if (drained.terminal_state === "open") requestAssignmentTerminal(assignmentIdForTurn, "canceled", "user_canceled_after_in_flight_settlement");
     }
-    const snapshot = assignmentKernelV2 ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding) : null;
+    const snapshot = assignmentKernelV2
+      ? assignmentControllerStopReason
+        ? settleCodexAssignmentProgressV2(assignmentKernelV2.binding)
+        : settleAssignmentKernelExecutionFailureV2({
+            binding: assignmentKernelV2.binding,
+            failure_id: `canceled:${req.message_id}`,
+            error_class: "canceled",
+            phase: "provider_turn"
+          }).snapshot
+      : null;
     const budgetMessage = assignmentControllerStopReason
       ? codexAssignmentControllerStopMessage(snapshot, assignmentControllerStopReason)
-      : "";
+      : finalCodexAssignmentMessageV2(snapshot, "");
     cb.onDone?.(budgetMessage);
     return {
       version: OPERATOR_BACKEND_CONTRACT_VERSION,
@@ -1094,6 +1038,12 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     };
   }
 
+  let {
+    assistantText,
+    assistantDeltas,
+    hasFreshRevitEvidence,
+    hasAuthoritativeWebEvidence
+  } = turnNotificationObserver.snapshot();
   assistantText = assistantText || assistantDeltas;
   if (assignmentKernelV2 && assignmentProgressTurnStart) {
     checkpointCodexAssignmentProgressV2({
@@ -1154,6 +1104,10 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   if (assignmentKernelV2) settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
+  const terminalSnapshot = assignmentKernelV2
+    ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
+    : null;
+  assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText);
   const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({
@@ -1178,9 +1132,6 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     // ignore
   }
 
-  const terminalSnapshot = assignmentKernelV2
-    ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
-    : null;
   return {
     version: OPERATOR_BACKEND_CONTRACT_VERSION,
     assistant_message: assistantText || "",
@@ -1192,4 +1143,14 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     ...(teammateReceipt ? { teammate_loop_receipt: teammateReceipt } : {}),
     ...(requirementsReceipt && (requirementsReceipt.status !== "resolved" || requirementsReceipt.applied.length > 0) ? { requirements_receipt: requirementsReceipt } : {})
   };
+  } catch (error) {
+    try {
+      await releaseStartedProviderTurn(true);
+    } catch (cleanupError) {
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)} Started provider turn cleanup also failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`
+      );
+    }
+    throw error;
+  }
 }

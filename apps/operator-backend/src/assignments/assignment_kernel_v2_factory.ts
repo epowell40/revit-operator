@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   ASSIGNMENT_SPEC_V2_SCHEMA,
+  ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
   CRITERION_EVIDENCE_POLICY_V2_SCHEMA,
   SEMANTIC_EVIDENCE_CONTRACT_V2,
   sameAssignmentBindingV2,
@@ -11,6 +12,7 @@ import {
   type RequestedEffectV2
 } from "../domain/assignment-kernel/index.js";
 import { getGoal, type GoalRecord } from "../goals/service.js";
+import { getRequestAssignmentPrincipalId, requestMatchesAssignmentPrincipalId } from "../request_context.js";
 import { missingOpaqueMutationInputs } from "../teammate_mutation_intent_binding.js";
 import { createAssignmentKernelV2, getAssignmentKernelSnapshotV2 } from "./assignment_kernel_v2_store.js";
 
@@ -60,7 +62,8 @@ function inventoryCriterionFacts(goal: GoalRecord, configuredFacts: readonly str
 
 function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
   const inventoryFacts = inventoryCriterionFacts(goal, facts);
-  const requiredFacts = inventoryFacts ?? facts.map((fact) => fact === "result.available" ? "task.result_available" : fact);
+  const successFact = requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available";
+  const requiredFacts = inventoryFacts ?? facts.map((fact) => fact === "result.available" ? successFact : fact);
   const inventory = requiredFacts.some((fact) => fact.startsWith("inventory."));
   return {
     semantic_fact_requirements: requiredFacts,
@@ -85,7 +88,9 @@ function evidencePolicy(goal: GoalRecord, facts: readonly string[]) {
 function inputs(goal: GoalRecord): AssignmentInputVariableV2[] {
   const sourceRequest = text(goal.work_budget?.source_user_request, 20_000) || goal.objective;
   const declared = strings(goal.work_budget?.required_user_inputs);
-  const detected = requestedEffect(goal) === "apply" ? missingOpaqueMutationInputs(sourceRequest) : [];
+  // An executable preview needs the same authenticated desired state as the
+  // later apply. Read-only explanation and inspection requests remain exempt.
+  const detected = requestedEffect(goal) !== "read" ? missingOpaqueMutationInputs(sourceRequest) : [];
   return [...new Set([...declared, ...detected].map(stableVariableId))].map(variableId => ({
     variable_id: variableId,
     value_state: "needs_input",
@@ -99,7 +104,8 @@ function criteria(goal: GoalRecord): AssignmentSpecV2["criteria"] {
   if (configured === undefined || configured === null) {
     if (goal.acceptance_criteria.length !== 1) throw new Error("assignment_kernel_v2_criterion_fact_contract_required");
     const requirement = goal.acceptance_criteria[0]!;
-    const contract = evidencePolicy(goal, inventoryCriterionFacts(goal) ?? ["task.result_available"]);
+    const contract = evidencePolicy(goal, inventoryCriterionFacts(goal)
+      ?? [requestedEffect(goal) === "preview" ? "task.preview_valid" : "task.result_available"]);
     return [{
       criterion_id: stableId("criterion", requirement), requirement, required: true,
       ...contract,
@@ -143,7 +149,10 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
   created_at?: string;
 }>): AssignmentSpecV2 {
   const sessionId = text(input.goal.related_session_id, 200);
-  const principalId = text(input.goal.created_by, 200);
+  // The authenticated request edge owns principal identity. Goal.created_by is
+  // retained only as an internal/trusted-call fallback because historical Goal
+  // records also use it for non-principal actor labels (for example auto_goal).
+  const principalId = text(getRequestAssignmentPrincipalId(), 200) || text(input.goal.created_by, 200);
   const runId = text(input.run_id, 240);
   const documentFingerprint = text(input.document_fingerprint ?? input.goal.work_budget?.document_fingerprint, 500);
   if (!sessionId || !principalId || !runId) throw new Error("assignment_kernel_v2_trusted_binding_required");
@@ -194,7 +203,7 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
         rollback_scope: effect === "apply" ? "operation" : "none"
       },
       ...(effect === "apply" ? [{
-        work_unit_id: "work-verification",
+        work_unit_id: ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2,
         requested_effect: "read" as const,
         execution_class: "analysis" as const,
         dependency_ids: [] as string[], criterion_ids: criterionSpecs.map(criterion => criterion.criterion_id), input_variable_ids: [] as string[],
@@ -232,6 +241,12 @@ export function assignmentKernelV2ForBinding(input: Readonly<{
   const goal = getGoal(input.assignment_id);
   const snapshot = goal ? getAssignmentKernelSnapshotV2(goal.id) : null;
   if (!goal || !snapshot) return null;
+  const requestPrincipalId = getRequestAssignmentPrincipalId();
+  if (requestPrincipalId && !requestMatchesAssignmentPrincipalId(
+    snapshot.current_binding.principal_id,
+    undefined,
+    snapshot.current_binding.session_id
+  )) return null;
   const proposed: AssignmentBindingV2 = {
     ...snapshot.current_binding,
     assignment_id: input.assignment_id,

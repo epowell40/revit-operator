@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Text.Json;
 using RevitBridge.Operator;
 using Xunit;
@@ -141,6 +143,49 @@ namespace RevitBridge.Common.Tests
             Assert.True(OperatorApprovalPolicy.RequiresApproval(OperatorApprovalMode.Safe, risk));
         }
 
+        [Fact]
+        public void NativeProcessSatisfiesCrossRuntimeActionEffectGoldenVectors()
+        {
+            var contractPath = Path.Combine(
+                FindRepositoryRoot(),
+                "packages",
+                "revit-action-effect-v1",
+                "golden-vectors.json");
+            using var document = JsonDocument.Parse(File.ReadAllText(contractPath));
+            var root = document.RootElement;
+            Assert.Equal("revit_action_effect_v1_golden_vectors", root.GetProperty("schema").GetString());
+
+            foreach (var vector in root.GetProperty("vectors").EnumerateArray())
+            {
+                var id = vector.GetProperty("id").GetString() ?? "unnamed";
+                var method = vector.GetProperty("method").GetString() ?? "";
+                var path = vector.GetProperty("path").GetString() ?? "";
+                var bodyElement = vector.GetProperty("body");
+                var body = bodyElement.ValueKind == JsonValueKind.Null ? null : bodyElement.GetRawText();
+                var expected = vector.GetProperty("expected_effect").GetString() ?? "";
+                var actual = OperatorApprovalPolicy.GetEffectWireValue(method, path, body);
+                Assert.True(
+                    string.Equals(expected, actual, StringComparison.Ordinal),
+                    $"{id}: expected {expected}, got {actual} for {method} {path}.");
+            }
+        }
+
+        [Fact]
+        public void DeclaredRequestedEffectCannotOverrideTheNativeRequestContract()
+        {
+            const string previewBody = "{\"elementId\":1421361,\"dryRun\":true,\"apply\":false}";
+            const string applyBody = "{\"elementId\":1421361,\"dryRun\":false,\"apply\":true}";
+
+            Assert.Equal("preview", OperatorApprovalPolicy.ResolveRequestedEffectWireValue(
+                null, "POST", "/revit/replace-text-note", previewBody));
+            Assert.Equal("preview", OperatorApprovalPolicy.ResolveRequestedEffectWireValue(
+                "preview", "POST", "/revit/replace-text-note", previewBody));
+            Assert.Throws<InvalidOperationException>(() => OperatorApprovalPolicy.ResolveRequestedEffectWireValue(
+                "preview", "POST", "/revit/replace-text-note", applyBody));
+            Assert.Throws<InvalidOperationException>(() => OperatorApprovalPolicy.ResolveRequestedEffectWireValue(
+                "unknown", "POST", "/revit/replace-text-note", previewBody));
+        }
+
         private static void AssertLow(string method, string path, string body)
         {
             var risk = OperatorApprovalPolicy.GetRisk(method, path, body);
@@ -157,6 +202,22 @@ namespace RevitBridge.Common.Tests
             Assert.Equal(OperatorActionRisk.High, risk);
             Assert.True(OperatorApprovalPolicy.RequiresApproval(OperatorApprovalMode.Safe, risk));
             Assert.True(risk >= OperatorActionRisk.Medium);
+        }
+
+        private static string FindRepositoryRoot()
+        {
+            var current = new DirectoryInfo(AppContext.BaseDirectory);
+            while (current != null)
+            {
+                var gitMetadata = Path.Combine(current.FullName, ".git");
+                var contract = Path.Combine(current.FullName, "packages", "revit-action-effect-v1", "golden-vectors.json");
+                if ((Directory.Exists(gitMetadata) || File.Exists(gitMetadata)) && File.Exists(contract))
+                {
+                    return current.FullName;
+                }
+                current = current.Parent;
+            }
+            throw new DirectoryNotFoundException("Could not locate the public repository root.");
         }
     }
 }

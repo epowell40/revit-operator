@@ -96,6 +96,22 @@ function receiptKey(receipt: JsonRecord): string | null {
 function mergeReceipt(left: JsonRecord, right: JsonRecord): JsonRecord {
   const leftTokens = asRecord(left.tokens);
   const rightTokens = asRecord(right.tokens);
+  const conflicts = [
+    ["route", left.route, right.route],
+    ["model", left.model, right.model],
+    ["reasoning_effort", left.reasoning_effort, right.reasoning_effort],
+    ["started_at_utc", left.started_at_utc, right.started_at_utc],
+    ["success", left.success, right.success],
+    ["input_tokens", leftTokens.input_tokens, rightTokens.input_tokens],
+    ["output_tokens", leftTokens.output_tokens, rightTokens.output_tokens],
+    ["reasoning_output_tokens", leftTokens.reasoning_output_tokens, rightTokens.reasoning_output_tokens],
+    ["total_tokens", leftTokens.total_tokens, rightTokens.total_tokens]
+  ].filter(([, leftValue, rightValue]) => leftValue !== undefined && leftValue !== null
+    && rightValue !== undefined && rightValue !== null && leftValue !== rightValue)
+    .map(([field]) => String(field));
+  if (conflicts.length > 0) {
+    throw new Error(`model_call_receipt_conflict:${receiptKey(left) ?? "unknown"}:${conflicts.join(",")}`);
+  }
   return {
     ...left,
     ...Object.fromEntries(Object.entries(right).filter(([, value]) => value !== null && value !== undefined && value !== "")),

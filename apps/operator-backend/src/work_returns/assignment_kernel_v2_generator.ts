@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
+import { reportedOperationTargetIdentitiesV2 } from "../domain/assignment-kernel/operation_target_identity.js";
 import type { GoalRecord } from "../goals/service.js";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import { WORK_RETURN_SCHEMA, type WorkReturnV1 } from "./contract.js";
@@ -32,11 +33,11 @@ export function generateWorkReturnFromKernelV2(
     return !evaluation || !["pass", "not_applicable"].includes(evaluation.status)
       ? [`${spec.requirement}: ${evaluation?.reason ?? "not yet evaluated"}`] : [];
   });
-  const targets = [...new Set(Object.values(snapshot.operations).flatMap(operation => [
-    operation.target.target_id,
-    ...Object.values(operation.target.semantic_scope ?? {})
-  ]).filter((value): value is string => typeof value === "string" && Boolean(value)))];
+  const targets = [...new Set(Object.values(snapshot.operations)
+    .flatMap(operation => reportedOperationTargetIdentitiesV2(operation)))].sort();
   const primaryArtifacts = [...new Set(Object.values(snapshot.observations).map(observation => observation.raw_payload_ref))];
+  const executionFailureId = snapshot.execution_failure_ids.at(-1);
+  const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
   const body: Omit<WorkReturnV1, "work_return_id" | "work_return_hash"> = {
     schema: WORK_RETURN_SCHEMA,
     parent_work_return_id: parentWorkReturnId,
@@ -51,6 +52,7 @@ export function generateWorkReturnFromKernelV2(
     primary_artifacts: primaryArtifacts,
     deviations_or_open_items: [...new Set([
       ...open,
+      ...(executionFailure ? [`Execution stopped at ${executionFailure.phase}: ${executionFailure.code}.`] : []),
       ...snapshot.unresolved_unknown_operation_ids.map(id => `Operation ${id} requires reconciliation.`)
     ])],
     question: pending?.question ?? null,

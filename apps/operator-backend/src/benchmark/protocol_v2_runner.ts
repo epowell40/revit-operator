@@ -12,6 +12,7 @@ import { validateBenchmarkProtocolV2Contract } from "./protocol_v2_schema.js";
 import { buildBenchmarkRawReportV2, writeBenchmarkRawReportV2 } from "./protocol_v2_report.js";
 import { BENCHMARK_FINALIZATION_FAILURE_V2_SCHEMA } from "./protocol_v2_types.js";
 import { verifyVerifiedWorkPacketHash } from "../work_packets/generator.js";
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA, isTerminalProviderCallStateV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import type { VerifiedWorkPacketV1 } from "../work_packets/contract.js";
 import type {
   BenchmarkLaneV2,
@@ -41,7 +42,7 @@ function records(value: unknown): JsonRecord[] {
 function workPacketStatusMatchesTerminal(packet: JsonRecord, assignment: JsonRecord): boolean {
   const status = String(packet.status || "");
   const kernel = record(assignment.assignment_snapshot_v2);
-  if (kernel.schema === "revit-operator.assignment-snapshot/v2") {
+  if (kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA) {
     const outcome = String(kernel.outcome || "");
     const terminal = kernel.terminal === true;
     const hasUnknown = records(kernel.unresolved_unknown_operation_ids).length > 0
@@ -84,16 +85,23 @@ export function observedProviderRoutesV2(legacyReport: JsonRecord): BenchmarkRun
   })).filter((row) => row.route && row.model && row.reasoning_effort && Number.isInteger(row.call_count) && row.call_count > 0);
 }
 
-export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selectedCaseIds: readonly string[]): void {
+export function assertCompleteProtocolV2Receipts(
+  legacyReport: JsonRecord,
+  selectedCaseIds: readonly string[],
+  options: { require_assignment_kernel_v2?: boolean } = {}
+): void {
+  const requireAssignmentKernelV2 = options.require_assignment_kernel_v2 === true;
   const traces = records(legacyReport.task_traces);
   for (const caseId of selectedCaseIds) {
     const trace = traces.find((entry) => entry.case_id === caseId);
     if (!trace) continue;
     const toolResults = record(trace.tool_results);
     const expectedIds = expectedDirectKernelAssignmentIdsV2(toolResults);
-    const receivedIds = new Set(directKernelPublicationsV2(toolResults).map((publication) => String(publication.assignment_id ?? "")));
+    const directPublications = directKernelPublicationsV2(toolResults);
+    const receivedIds = new Set(directPublications.map((publication) => String(publication.assignment_id ?? "")));
     const failures = records(record(toolResults.durable_assignment_kernel_v2).failures);
-    if (expectedIds.some((assignmentId) => !receivedIds.has(assignmentId)) || failures.length > 0) {
+    if ((requireAssignmentKernelV2 && (expectedIds.length === 0 || directPublications.length === 0))
+        || expectedIds.some((assignmentId) => !receivedIds.has(assignmentId)) || failures.length > 0) {
       throw new Error(`Benchmark Protocol V2 v2_publication_missing for ${caseId}.`);
     }
   }
@@ -102,6 +110,9 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     return trace ? directKernelPublicationsV2(record(trace.tool_results)).length > 0 : false;
   });
   if (!allDirect) {
+    if (requireAssignmentKernelV2) {
+      throw new Error("Benchmark Protocol V2 v2_publication_missing for a V2-declared run.");
+    }
     const telemetry = record(legacyReport.model_telemetry_coverage);
     if (telemetry.complete !== true || Number(telemetry.cases_with_model_receipts || 0) !== selectedCaseIds.length) {
       throw new Error("Benchmark Protocol V2 fails closed on incomplete provider telemetry.");
@@ -125,15 +136,64 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         throw new Error(`Benchmark Protocol V2 v2_publication_missing for ${caseId}: ${missingIds.join(",") || "direct publication read failed"}.`);
       }
     }
-    const publications = kernelPublicationsV2(toolResults);
+    const publications = requireAssignmentKernelV2 ? directPublications : kernelPublicationsV2(toolResults);
     const v2AssignmentRows = publications.map(assignmentRowFromKernelPublicationV2);
     if (directPublications.length > 0) {
+      const observedProviderReceipts = records(trace.model_call_receipts);
+      const observedProviderCallIds = observedProviderReceipts
+        .map((receipt) => String(receipt.call_id ?? receipt.response_id ?? "").trim())
+        .filter(Boolean);
+      const canonicalProviderCalls = new Map<string, JsonRecord>();
+      const canonicalProviderCallIds = directPublications.flatMap((publication) => {
+        const ledger = record(publication.provider_ledger);
+        const calls = record(ledger.calls);
+        const ids = Array.isArray(ledger.call_ids) ? ledger.call_ids.map(String).filter(Boolean) : [];
+        for (const callId of ids) canonicalProviderCalls.set(callId, record(calls[callId]));
+        return ids;
+      });
+      const observedSet = new Set(observedProviderCallIds);
+      const canonicalSet = new Set(canonicalProviderCallIds);
+      const missingFromCanonical = [...observedSet].filter((callId) => !canonicalSet.has(callId));
+      const conflictingObserved = observedProviderReceipts.flatMap((receipt) => {
+        const callId = String(receipt.call_id ?? receipt.response_id ?? "").trim();
+        const call = canonicalProviderCalls.get(callId);
+        if (!call) return [];
+        const tokens = record(receipt.tokens);
+        const usage = record(call.usage);
+        const conflicts = [
+          ["provider", receipt.provider, call.provider],
+          ["model", receipt.model, call.model],
+          ["reasoning_effort", receipt.reasoning_effort, call.reasoning_effort],
+          ["started_at_utc", receipt.started_at_utc, call.admitted_at],
+          ["success", receipt.success, call.success],
+          ["input_tokens", tokens.input_tokens, usage.input_tokens],
+          ["output_tokens", tokens.output_tokens, usage.output_tokens],
+          ["reasoning_tokens", tokens.reasoning_output_tokens, usage.reasoning_tokens],
+          ["total_tokens", tokens.total_tokens, usage.total_tokens]
+        ].filter(([, observed, canonical]) => observed !== undefined && observed !== null
+          && canonical !== undefined && canonical !== null && observed !== canonical)
+          .map(([field]) => String(field));
+        return conflicts.length > 0 ? [`${callId}[${conflicts.join(",")}]`] : [];
+      });
+      if (observedSet.size !== observedProviderCallIds.length
+        || canonicalSet.size !== canonicalProviderCallIds.length
+        || missingFromCanonical.length > 0
+        || conflictingObserved.length > 0) {
+        throw new Error(
+          `Canonical provider ledger conflict for ${caseId}: `
+          + `observed_not_canonical=${missingFromCanonical.join(",") || "none"}; `
+          + `field_conflicts=${conflictingObserved.join(",") || "none"}.`
+        );
+      }
       for (const publication of directPublications) {
         const ledger = record(publication.provider_ledger);
         const callIds = Array.isArray(ledger.call_ids) ? ledger.call_ids.map(String) : [];
         const calls = record(ledger.calls);
         const inFlight = Array.isArray(ledger.in_flight_call_ids) ? ledger.in_flight_call_ids.map(String) : [];
-        if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => record(calls[id]).state !== "completed")) {
+        if (callIds.length === 0 || inFlight.length > 0 || callIds.some((id) => {
+          const call = record(calls[id]);
+          return call.call_id !== id || !isTerminalProviderCallStateV2(call.state);
+        })) {
           throw new Error(`Benchmark Protocol V2 fails closed on incomplete provider telemetry for ${caseId}.`);
         }
       }
@@ -141,7 +201,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     const activeControls = assignmentRows.map(row => record(row.control_plane)).filter(control =>
       Number(control.in_flight_count || 0) > 0 || control.quiescent === false);
     const activeKernels = publications.map(row => record(row.snapshot))
-      .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2"
+      .filter(kernel => kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA
         && (kernel.quiescent === false || (Array.isArray(kernel.in_flight_operation_ids) && kernel.in_flight_operation_ids.length > 0)));
     if (activeControls.length > 0 || activeKernels.length > 0) {
       const ids = activeControls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
@@ -170,7 +230,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
         && ["verified", "complete"].includes(String(receipt.assignment_terminal_state || "")));
       const validKernelRead = publications.some(row => {
         const kernel = record(row.snapshot);
-        if (kernel.schema !== "revit-operator.assignment-snapshot/v2" || kernel.terminal !== true) return false;
+        if (kernel.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA || kernel.terminal !== true) return false;
         const observations = record(kernel.observations);
         return Object.values(record(kernel.operations)).map(record).some(operation =>
           operation.requested_effect === "read" && operation.dispatch_state === "dispatched"
@@ -192,7 +252,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
     }
     const terminalAssignments = [...v2AssignmentRows, ...assignmentRows].filter(row => {
       const kernel = record(row.assignment_snapshot_v2);
-      return kernel.schema === "revit-operator.assignment-snapshot/v2"
+      return kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA
         ? kernel.terminal === true
         : String(record(row.control_plane).terminal_state || "") !== "open";
     });
@@ -201,7 +261,7 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
       const assignment = terminalAssignments.find(row => {
         const assignmentId = String(row.id || row.source_record_id || "").replace(/^goal:/, "");
         const kernel = record(row.assignment_snapshot_v2);
-        const binding = kernel.schema === "revit-operator.assignment-snapshot/v2" ? record(kernel.current_binding) : record(row.control_plane);
+        const binding = kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA ? record(kernel.current_binding) : record(row.control_plane);
         return identity.assignment_id === assignmentId && identity.run_id === binding.run_id
           && identity.generation === binding.generation;
       });
@@ -217,7 +277,9 @@ export function assertCompleteProtocolV2Receipts(legacyReport: JsonRecord, selec
 function finalizationFailureDetails(message: string): {
   code: string; stage: string; missing: string[]; telemetry: BenchmarkFinalizationFailureV2["telemetry_completeness"];
 } {
+  if (/v2_direct_publication_invalid|direct_publication_invalid/i.test(message)) return { code: "v2_publication_invalid", stage: "v2_publication", missing: [], telemetry: "conflicting_or_quarantined" };
   if (/v2_publication_missing/i.test(message)) return { code: "v2_publication_missing", stage: "v2_publication", missing: ["v2_assignment_publication"], telemetry: "collection_failed" };
+  if (/provider ledger conflict/i.test(message)) return { code: "provider_ledger_conflict", stage: "provider_telemetry", missing: [], telemetry: "conflicting_or_quarantined" };
   if (/provider telemetry/i.test(message)) return { code: "missing_provider_receipt", stage: "provider_telemetry", missing: ["provider_receipt"], telemetry: "missing" };
   if (/settlement still in flight/i.test(message)) return { code: "assignment_settlement_in_flight", stage: "settlement_barrier", missing: ["settled_revit_receipt"], telemetry: "still_in_flight" };
   if (/missing a complete Verified Work Packet/i.test(message)) return { code: "incomplete_work_packet", stage: "work_packet", missing: ["verified_work_packet"], telemetry: "missing" };
@@ -260,7 +322,7 @@ function bestEffortFailureArtifact(args: {
   const directKernels = traces.flatMap(trace => directKernelPublicationsV2(record(trace.tool_results)))
     .map(publication => record(publication.snapshot));
   const kernels = (directKernels.length > 0 ? directKernels : assignmentRows.map(row => record(row.assignment_snapshot_v2)))
-    .filter(kernel => kernel.schema === "revit-operator.assignment-snapshot/v2");
+    .filter(kernel => kernel.schema === ASSIGNMENT_SNAPSHOT_V2_SCHEMA);
   const inFlightAttemptIds = controls.flatMap(control => Array.isArray(control.in_flight_attempt_ids) ? control.in_flight_attempt_ids : []).map(String);
   inFlightAttemptIds.push(...kernels.flatMap(kernel => Array.isArray(kernel.in_flight_operation_ids) ? kernel.in_flight_operation_ids : []).map(String));
   const nextDeadline = controls.map(control => String(control.next_in_flight_deadline || "")).filter(Boolean).sort()[0] ?? null;
@@ -325,7 +387,11 @@ export function buildProtocolV2ReportFromFlight(args: {
   const traces = records(args.legacyReport.task_traces);
   const byId = new Map(args.cases.map((entry) => [entry.case_id, entry]));
   const traceIds = traces.map((entry) => String(entry.case_id || ""));
-  if (args.requireCompleteReceipts !== false) assertCompleteProtocolV2Receipts(args.legacyReport, traceIds);
+  if (args.requireCompleteReceipts !== false) {
+    assertCompleteProtocolV2Receipts(args.legacyReport, traceIds, {
+      require_assignment_kernel_v2: args.draft.feature_flags.assignment_kernel_v2 === true
+    });
+  }
   for (const caseId of traceIds) {
     const testCase = byId.get(caseId);
     if (!testCase) throw new Error(`Flight contains case ${caseId}, which is absent from the bound corpus.`);

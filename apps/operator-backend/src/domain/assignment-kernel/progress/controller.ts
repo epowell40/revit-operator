@@ -1,9 +1,14 @@
 import { canonicalJsonV2 } from "../canonical.js";
-import type { AssignmentCriterionSpecV2 } from "../assignment_spec.js";
+import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
+import { appliedOperationHasVerifiedPostconditionV2 } from "../outcome.js";
 import { observationAdmissibilityForCriterionV2 } from "../semantic_admissibility.js";
-import type { OperationV2 } from "../operation.js";
+import type { OperationInputSchemaIssueV2, OperationV2 } from "../operation.js";
+import {
+  EXECUTION_STRATEGY_EVIDENCE_V1,
+  EXECUTION_SUBSTRATES
+} from "../../../execution_strategy.js";
 import {
   PROGRESS_DECISION_V2_SCHEMA,
   PROGRESS_EPOCH_V2_SCHEMA,
@@ -32,6 +37,37 @@ function relevantObservationIds(snapshot: AssignmentSnapshotV2, criterion: Assig
 
 const INPUT_SCHEMA_DOCUMENTATION_CAPABILITIES = new Set(["revit_tool_doc", "revit_tool_examples"]);
 
+export function operationProposalCanResolveInputSchemaGapV2(input: Readonly<{
+  rejected: OperationV2;
+  capability_id: string;
+  request_identity: Readonly<{
+    method?: "GET" | "POST";
+    path?: string;
+    request_signature: string;
+  }>;
+}>): boolean {
+  const gap = input.rejected.result?.input_schema_gap;
+  if (!gap) return false;
+  const exactCorrectedRetry = input.capability_id === input.rejected.capability_id
+    && input.request_identity.method === gap.method
+    && input.request_identity.path === gap.path
+    && input.request_identity.request_signature !== gap.request_signature;
+  const exactSchemaDocumentation = INPUT_SCHEMA_DOCUMENTATION_CAPABILITIES.has(input.capability_id)
+    && input.request_identity.method === gap.method
+    && input.request_identity.path === gap.path;
+  return exactCorrectedRetry || exactSchemaDocumentation;
+}
+
+function inputSchemaIssueRequirementV2(issue: OperationInputSchemaIssueV2): string {
+  const constraint = issue.expected_constraint;
+  const constraintDetail = constraint.kind === "enum"
+    ? `allowed_values=${canonicalJsonV2(constraint.allowed_values ?? [])}`
+    : constraint.kind === "json_type"
+      ? `required_type=${constraint.type ?? issue.expected_type}`
+      : canonicalJsonV2(constraint);
+  return `${issue.field_path}:${issue.expected_type};actual=${issue.actual_type};${constraintDetail};correction=${issue.correction_action}`;
+}
+
 function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: OperationV2): boolean {
   const gap = rejected.result?.input_schema_gap;
   if (!gap) return false;
@@ -44,10 +80,12 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
         || candidate.binding.generation !== rejected.binding.generation) return false;
     const correctedRetry = candidate.retry_of_operation_id === rejected.operation_id
       && candidate.retry_basis === "corrected_input"
-      && candidate.capability_id === rejected.capability_id
-      && candidate.request_identity?.method === gap.method
-      && candidate.request_identity?.path === gap.path
-      && candidate.request_identity?.request_signature !== gap.request_signature
+      && Boolean(candidate.request_identity)
+      && operationProposalCanResolveInputSchemaGapV2({
+        rejected,
+        capability_id: candidate.capability_id,
+        request_identity: candidate.request_identity!
+      })
       && candidate.result?.dispatch_state === "dispatched"
       && candidate.observation_ids.length > 0;
     const documentationChildren = Object.values(snapshot.operations).filter((child) =>
@@ -68,6 +106,33 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
   for (const operation of Object.values(snapshot.operations)) {
+    const semanticGap = operation.result?.result_semantic_gap;
+    const settledPreviewWithoutTypedProof = operation.requested_effect === "preview"
+      && operation.fulfillment_role === "delegated_task_execution"
+      && operation.settlement_state === "settled"
+      && operation.result?.status === "succeeded"
+      && !operation.observation_ids.some((observationId) =>
+        snapshot.observations[observationId]?.facts.some((fact) =>
+          fact.fact_id === "task.preview_valid"
+          && fact.fact_class === "domain"
+          && fact.value === true));
+    if (!semanticGap && !settledPreviewWithoutTypedProof) continue;
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA,
+      gap_id: semanticGap?.gap_id ?? `result-semantics:${operation.operation_id}`,
+      kind: "operation_result_semantic_invalid",
+      criterion_ids: operation.advances_criterion_ids,
+      work_unit_ids: [operation.work_unit_id],
+      required_fact_ids: [],
+      current_observation_ids: operation.observation_ids,
+      reason: semanticGap
+        ? `Operation ${operation.operation_id} returned safe native evidence that failed the admitted ${semanticGap.result_schema_id} semantic-result contract (${semanticGap.reason_code}). `
+          + "The exact native result remains durable, but provider correction and native replay are prohibited."
+        : `Operation ${operation.operation_id} settled a task preview without typed semantic proof (preview_semantic_proof_missing). `
+        + "The exact native result remains durable, but provider correction and native replay are prohibited."
+    });
+  }
+  for (const operation of Object.values(snapshot.operations)) {
     const inputGap = operation.result?.input_schema_gap;
     if (!inputGap) continue;
     const resolved = inputSchemaGapResolvedV2(snapshot, operation);
@@ -78,9 +143,11 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
       kind: "operation_input_schema_invalid",
       criterion_ids: operation.advances_criterion_ids,
       work_unit_ids: [operation.work_unit_id],
-      required_fact_ids: inputGap.issues.map((issue) => `${issue.field_path}:${issue.expected_type}`).sort(),
+      required_fact_ids: inputGap.issues.map(inputSchemaIssueRequirementV2).sort(),
       current_observation_ids: [],
-      reason: `Operation ${operation.operation_id} was safely rejected before dispatch because its structured input did not satisfy ${inputGap.input_schema_id}.`
+      reason: `Operation ${operation.operation_id} was safely rejected before dispatch because its structured input did not satisfy ${inputGap.input_schema_id}. `
+        + `Correct the exact ${inputGap.method} ${inputGap.path} request or inspect that route's exact schema documentation; unrelated capability discovery cannot resolve this gap. `
+        + `Issues: ${inputGap.issues.map(inputSchemaIssueRequirementV2).join(" | ")}`
     });
   }
   for (const variableId of snapshot.pending_input_variable_ids) {
@@ -109,6 +176,28 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
       reason: "A possibly dispatched mutation requires target-bound reconciliation."
     });
   }
+  for (const operation of Object.values(snapshot.operations)) {
+    if (operation.requested_effect !== "apply"
+        || operation.persistent_effect !== "applied"
+        || operation.settlement_state !== "settled"
+        || appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)) continue;
+    const verificationOperationIds = operation.verification_operation_ids
+      .filter((operationId) => Boolean(snapshot.operations[operationId]));
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA,
+      gap_id: `verification:${operation.operation_id}`,
+      kind: "verification_required",
+      criterion_ids: operation.advances_criterion_ids,
+      work_unit_ids: snapshot.spec.work_units.some((unit) => unit.work_unit_id === ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2)
+        ? [ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2]
+        : [operation.work_unit_id],
+      required_fact_ids: ["verification.postcondition_satisfied"],
+      current_observation_ids: verificationOperationIds
+        .flatMap((operationId) => snapshot.operations[operationId]?.observation_ids ?? [])
+        .sort(),
+      reason: `Applied operation ${operation.operation_id} requires a successful target-bound readback before completion.`
+    });
+  }
   for (const criterion of snapshot.spec.criteria.filter((candidate) => candidate.required)) {
     const evaluation = snapshot.criteria[criterion.criterion_id];
     if (evaluation?.status === "pass" || evaluation?.status === "not_applicable") continue;
@@ -116,15 +205,23 @@ export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly P
     const present = new Set(observations.flatMap((id) => snapshot.observations[id]?.facts.map((fact) => fact.fact_id) ?? []));
     const missing = criterion.semantic_fact_requirements.filter((factId) => !present.has(factId));
     const workUnits = snapshot.spec.work_units.filter((unit) => unit.criterion_ids.includes(criterion.criterion_id));
+    const policy = criterion.evidence_policy;
+    const missingFacts = missing.length > 0 ? missing : criterion.semantic_fact_requirements;
+    const evidenceContract = policy
+      ? `Allowed fulfillment roles: ${policy.allowed_fulfillment_roles.join(", ")}; evidence classes: ${policy.allowed_evidence_classes.join(", ")}.`
+      : "No typed evidence policy is available.";
     gaps.push({
       schema: PROGRESS_GAP_V2_SCHEMA,
       gap_id: `criterion:${criterion.criterion_id}`,
       kind: evaluation?.status === "uncertain" ? "criterion_uncertain" : "criterion_fact_missing",
       criterion_ids: [criterion.criterion_id],
       work_unit_ids: workUnits.map((unit) => unit.work_unit_id).sort(),
-      required_fact_ids: missing.length > 0 ? missing : criterion.semantic_fact_requirements,
+      required_fact_ids: missingFacts,
       current_observation_ids: observations,
-      reason: evaluation?.reason ?? "Required criterion has not been evaluated from authoritative facts."
+      reason: `${evaluation?.reason ?? "Required criterion has not been evaluated from authoritative facts."} `
+        + `Missing authoritative facts: ${missingFacts.join(", ")}. ${evidenceContract} `
+        + `An operation must be explicitly eligible for this criterion; ordinary fulfillment must perform the Assignment's ${snapshot.spec.requested_effect} effect. `
+        + "Supporting control, discovery, and evidence-read operations may inform the next action but cannot replace task fulfillment."
     });
   }
   return gaps.sort((left, right) => left.gap_id.localeCompare(right.gap_id));
@@ -206,6 +303,15 @@ export function decideAssignmentProgressV2(input: Readonly<{
       observation_ids: unique(criterionIds.flatMap((id) => pendingCriteria[id] ?? []))
     };
   }
+  const semanticResultGaps = deriveProgressGapsV2(snapshot)
+    .filter((gap) => gap.kind === "operation_result_semantic_invalid");
+  if (semanticResultGaps.length > 0) {
+    return {
+      ...decisionBase(snapshot, now, "blocked", "operation_result_semantic_invalid"),
+      decision: "blocked", outcome: "blocked",
+      gap_ids: semanticResultGaps.map((gap) => gap.gap_id)
+    };
+  }
   if (snapshot.pending_input_variable_ids.length > 0 || snapshot.outcome === "awaiting_user_input") {
     const gaps = deriveProgressGapsV2(snapshot).filter((gap) => gap.kind === "input_missing");
     return { ...decisionBase(snapshot, now, "request_user_input", "Authenticated execution-critical input is missing."), decision: "request_user_input", gap_ids: gaps.map((gap) => gap.gap_id), criterion_ids: unique(gaps.flatMap((gap) => gap.criterion_ids)) };
@@ -260,6 +366,7 @@ export function assertOperationAdvancesProgressV2(input: Readonly<{
   for (const gapId of input.operation.resolves_gap_ids) if (!gaps.has(gapId)) throw new Error("operation_progress_gap_not_current");
   const unresolvedCriteria = new Set([...gaps.values()].flatMap((gap) => gap.criterion_ids));
   for (const criterionId of input.operation.advances_criterion_ids) if (!unresolvedCriteria.has(criterionId)) throw new Error("operation_progress_criterion_not_unresolved");
+  assertOperationDoesNotRepeatSchemaRejectedInputV2(input);
   const identity = operationProgressIdentityV2(input.operation);
   const equivalents = Object.values(input.snapshot.operations).filter((operation) => operationProgressIdentityV2(operation) === identity);
   if (equivalents.length >= input.budget.max_equivalent_operations && !input.operation.retry_of_operation_id && input.operation.purpose !== "reconciliation") {
@@ -267,8 +374,59 @@ export function assertOperationAdvancesProgressV2(input: Readonly<{
   }
 }
 
+export function assertOperationDoesNotRepeatSchemaRejectedInputV2(input: Readonly<{
+  snapshot: AssignmentSnapshotV2;
+  operation: OperationV2;
+}>): void {
+  const repeatsSchemaRejectedInput = Object.values(input.snapshot.operations).some((candidate) => {
+    const gap = candidate.result?.input_schema_gap;
+    return Boolean(gap
+      && candidate.capability_id === input.operation.capability_id
+      && gap.method === input.operation.request_identity?.method
+      && gap.path === input.operation.request_identity?.path
+      && gap.request_signature === input.operation.request_identity?.request_signature);
+  });
+  if (repeatsSchemaRejectedInput) throw new Error("operation_progress_identical_input_schema_retry");
+}
+
 function statusRank(status: string): number {
   return ({ unevaluated: 0, uncertain: 1, needs_input: 1, needs_review: 1, failed: 1, partial: 2, pass: 3, not_applicable: 3 } as Record<string, number>)[status] ?? 0;
+}
+
+function executionStrategySelectionIdentityV2(operation: OperationV2): string | null {
+  const selectedSubstrate = operation.input.selected_substrate;
+  if (operation.capability_id !== "operator_record_execution_strategy"
+      || operation.purpose !== "discovery"
+      || operation.fulfillment_role !== "supporting_control"
+      || operation.settlement_state !== "settled"
+      || operation.result?.status !== "completed_without_native_dispatch"
+      || operation.result.dispatch_state !== "not_dispatched"
+      || operation.input.schema !== EXECUTION_STRATEGY_EVIDENCE_V1
+      || typeof selectedSubstrate !== "string"
+      || !(EXECUTION_SUBSTRATES as readonly string[]).includes(selectedSubstrate)) return null;
+  return canonicalJsonV2({
+    work_unit_id: operation.work_unit_id,
+    selected_substrate: selectedSubstrate,
+    resolves_gap_ids: [...operation.resolves_gap_ids].sort()
+  });
+}
+
+function introducesExecutionStrategySelectionV2(input: Readonly<{
+  before: AssignmentSnapshotV2;
+  after: AssignmentSnapshotV2;
+  admitted_operation_ids: readonly string[];
+  stated_gap_ids: readonly string[];
+}>): boolean {
+  const currentGaps = new Set(input.stated_gap_ids);
+  const previous = new Set(Object.values(input.before.operations)
+    .map(executionStrategySelectionIdentityV2)
+    .filter((identity): identity is string => identity !== null));
+  return input.admitted_operation_ids.some((operationId) => {
+    const operation = input.after.operations[operationId];
+    if (!operation || !operation.resolves_gap_ids.some((gapId) => currentGaps.has(gapId))) return false;
+    const identity = executionStrategySelectionIdentityV2(operation);
+    return identity !== null && !previous.has(identity);
+  });
 }
 
 export function buildProgressEpochV2(input: Readonly<{
@@ -281,7 +439,10 @@ export function buildProgressEpochV2(input: Readonly<{
 }>): ProgressEpochV2 {
   const beforeFacts = new Set(Object.values(input.before.observations).flatMap((observation) => observation.facts.map(semanticFactIdentityV2)));
   const newObservations = Object.keys(input.after.observations).filter((id) => !input.before.observations[id]).sort();
-  const newFacts = unique(newObservations.flatMap((id) => input.after.observations[id]?.facts.map(semanticFactIdentityV2) ?? []).filter((identity) => !beforeFacts.has(identity)));
+  const newFactRecords = newObservations.flatMap((id) =>
+    input.after.observations[id]?.facts.map((fact) => ({ fact, identity: semanticFactIdentityV2(fact) })) ?? [])
+    .filter(({ identity }) => !beforeFacts.has(identity));
+  const newFacts = unique(newFactRecords.map(({ identity }) => identity));
   const criterionDeltas: CriterionDeltaV2[] = input.after.spec.criteria.map((criterion) => ({
     criterion_id: criterion.criterion_id,
     before_status: input.before.criteria[criterion.criterion_id]?.status ?? "unevaluated",
@@ -292,12 +453,20 @@ export function buildProgressEpochV2(input: Readonly<{
   const progressReasons: ProgressEpochV2["progress_reasons"][number][] = [];
   if (criterionDeltas.some((delta) => statusRank(delta.after_status) > statusRank(delta.before_status))) progressReasons.push("criterion_advanced");
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
-  if (newFacts.length > 0) progressReasons.push("authoritative_observation_added");
+  if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");
+  if (newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
+  if (newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
   if (input.after.pending_input_variable_ids.length > input.before.pending_input_variable_ids.length) progressReasons.push("input_requested");
   if (input.after.pending_input_variable_ids.length < input.before.pending_input_variable_ids.length) progressReasons.push("input_resolved");
   if (input.after.pending_review_ids.length > input.before.pending_review_ids.length) progressReasons.push("review_requested");
   if (input.after.pending_review_ids.length < input.before.pending_review_ids.length) progressReasons.push("review_resolved");
   if (input.after.unresolved_unknown_operation_ids.length < input.before.unresolved_unknown_operation_ids.length) progressReasons.push("uncertainty_reconciled");
+  if (introducesExecutionStrategySelectionV2({
+    before: input.before,
+    after: input.after,
+    admitted_operation_ids: input.admitted_operation_ids ?? [],
+    stated_gap_ids: input.stated_gap_ids
+  })) progressReasons.push("execution_strategy_selected");
   if (canonicalJsonV2(input.before.work_unit_states) !== canonicalJsonV2(input.after.work_unit_states)) progressReasons.push("work_unit_changed");
   if (input.before.outcome !== input.after.outcome && input.after.outcome !== "active") progressReasons.push("terminal_derived");
   return {

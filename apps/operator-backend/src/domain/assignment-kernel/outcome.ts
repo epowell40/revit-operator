@@ -1,6 +1,7 @@
 import type { AssignmentInputVariableV2, AssignmentSpecV2 } from "./assignment_spec.js";
 import type { AssignmentOutcomeV2, CriterionEvaluationV2 } from "./criteria.js";
 import type { AssignmentSnapshotV2 } from "./snapshot.js";
+import { executionFailureOutcomeV2 } from "./progress/execution_failure.js";
 
 function requiredInputsKnown(spec: AssignmentSpecV2, snapshot: AssignmentSnapshotV2): boolean {
   return spec.input_variables.every((input: AssignmentInputVariableV2) => !input.required
@@ -15,6 +16,37 @@ function requiredEvaluations(snapshot: AssignmentSnapshotV2): CriterionEvaluatio
     .filter((evaluation): evaluation is CriterionEvaluationV2 => Boolean(evaluation));
 }
 
+function provesAppliedPostcondition(snapshot: AssignmentSnapshotV2, verificationOperationId: string): boolean {
+  const verification = snapshot.operations[verificationOperationId];
+  if (!verification) return false;
+  return verification.observation_ids.some((observationId) => snapshot.observations[observationId]?.facts.some((fact) =>
+    fact.fact_id === "verification.postcondition_satisfied"
+      && fact.fact_class === "verification"
+      && fact.value === true));
+}
+
+export function appliedOperationHasVerifiedPostconditionV2(
+  snapshot: AssignmentSnapshotV2,
+  appliedOperationId: string
+): boolean {
+  const operation = snapshot.operations[appliedOperationId];
+  if (!operation
+      || operation.requested_effect !== "apply"
+      || operation.persistent_effect !== "applied"
+      || operation.settlement_state !== "settled") return false;
+  return operation.verification_operation_ids.some((verificationId) => {
+    const verification = snapshot.operations[verificationId];
+    return verification?.verification_of_operation_id === operation.operation_id
+      && verification.requested_effect === "read"
+      && verification.purpose === "verification"
+      && verification.persistent_effect === "none"
+      && verification.settlement_state === "settled"
+      && verification.result?.status === "succeeded"
+      && verification.observation_ids.length > 0
+      && provesAppliedPostcondition(snapshot, verification.operation_id);
+  });
+}
+
 export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): AssignmentOutcomeV2 {
   if (snapshot.pending_input_variable_ids.length > 0 || !requiredInputsKnown(snapshot.spec, snapshot)) {
     return "awaiting_user_input";
@@ -23,6 +55,9 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   if (!snapshot.quiescent) return "active";
   if (snapshot.progress_blocker) return "blocked";
   if (snapshot.unresolved_unknown_operation_ids.length > 0) return "active";
+  const executionFailureId = snapshot.execution_failure_ids.at(-1);
+  const executionFailure = executionFailureId ? snapshot.execution_failures[executionFailureId] : undefined;
+  if (executionFailure) return executionFailureOutcomeV2(executionFailure.error_class);
   if (snapshot.provider_budget_exhausted) return "failed";
 
   const requiredSpecs = snapshot.spec.criteria.filter((criterion) => criterion.required);
@@ -46,16 +81,8 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   if (snapshot.spec.requested_effect !== "apply") return "complete";
   const appliedOperations = Object.values(snapshot.operations)
     .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");
-  const appliedAndVerified = appliedOperations.some((operation) => operation.verification_operation_ids.some((verificationId) => {
-    const verification = snapshot.operations[verificationId];
-    return verification?.verification_of_operation_id === operation.operation_id
-      && verification.requested_effect === "read"
-      && verification.purpose === "verification"
-      && verification.persistent_effect === "none"
-      && verification.settlement_state === "settled"
-      && verification.result?.status === "succeeded"
-      && verification.observation_ids.length > 0;
-  }));
+  const appliedAndVerified = appliedOperations.length > 0
+    && appliedOperations.every((operation) => appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id));
   if (appliedAndVerified) {
     return "complete";
   }

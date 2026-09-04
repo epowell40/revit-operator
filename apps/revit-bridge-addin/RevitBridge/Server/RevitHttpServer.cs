@@ -786,7 +786,12 @@ namespace RevitBridge.Server
                         {
                             deploymentGeneralAgentFinalReceipt = earlyReceipt;
                             effectiveRequest = sourceRequest;
-                            requestBody = earlyReceipt.CanonicalBodyJson;
+                            // The receipt's canonical body is the normalized
+                            // policy identity. The exact fenced source body is
+                            // the authorized domain payload and must reach the
+                            // native handler without semantic line-ending or
+                            // key-order rewriting.
+                            requestBody = sourceRequest.BodyJson;
                         }
                         else
                         {
@@ -809,7 +814,7 @@ namespace RevitBridge.Server
                 var effectiveMethod = effectiveRequest?.Method ?? req.HttpMethod;
                 actionMethod = effectiveMethod;
                 actionPath = path;
-                requestedEffect = ResolveCanonicalRequestedEffect(effectiveMethod, path, requestBody);
+                requestedEffect = OperatorApprovalPolicy.GetEffectWireValue(effectiveMethod, path, requestBody);
                 var isGet = string.Equals(effectiveMethod, "GET", StringComparison.OrdinalIgnoreCase);
                 if (!isGet && path != "/revit/ping" && path != "/revit/capabilities")
                 {
@@ -1205,23 +1210,6 @@ namespace RevitBridge.Server
             resp.Close();
         }
 
-        private static string ResolveCanonicalRequestedEffect(string method, string path, string bodyJson)
-        {
-            var risk = GetRequestRisk(method, path, bodyJson);
-            if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) || risk < OperatorActionRisk.Medium) return "read";
-            try
-            {
-                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(bodyJson) ? "{}" : bodyJson);
-                var root = document.RootElement;
-                if (root.ValueKind == JsonValueKind.Object
-                    && ((root.TryGetProperty("dryRun", out var dryRun) && dryRun.ValueKind == JsonValueKind.True)
-                        || (root.TryGetProperty("dry_run", out var snakeDryRun) && snakeDryRun.ValueKind == JsonValueKind.True)
-                        || (root.TryGetProperty("preview", out var preview) && preview.ValueKind == JsonValueKind.True))) return "preview";
-            }
-            catch { }
-            return "apply";
-        }
-
         private async Task<string> RequireFinalNativeAuthorizationAsync(
             OperatorNativeHttpRequest effectiveRequest,
             string expectedCanonicalBody,
@@ -1230,11 +1218,13 @@ namespace RevitBridge.Server
         {
             var finalReceipt = preauthorizedFinalReceipt
                 ?? await _nativeHttpAuthorizer.AuthorizeAsync(effectiveRequest, cancellationToken, "final").ConfigureAwait(false);
-            return OperatorNativeHttpDispatchFence.RequireFreshOneUse(
+            var expectedPolicyBody = preauthorizedFinalReceipt?.CanonicalBodyJson ?? expectedCanonicalBody;
+            return await OperatorNativeHttpDispatchFence.RequireFreshOneUseWithQueueRefreshAsync(
+                _nativeHttpAuthorizer,
                 finalReceipt,
                 effectiveRequest,
-                DateTimeOffset.UtcNow,
-                expectedCanonicalBody);
+                expectedPolicyBody,
+                cancellationToken).ConfigureAwait(false);
         }
 
         private static async Task<byte[]> ReadRequestBodyBytesAsync(HttpListenerRequest request, int maximumBytes)

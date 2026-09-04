@@ -4,7 +4,13 @@ import {
   payloadDigestV2,
   payloadRepresentationDigestV2
 } from "@revitoperator/payload-digest-v2";
+import {
+  OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+  assignmentKernelControlEvidenceFactsV2,
+  isAssignmentKernelDurableControlEvidenceProducerV2
+} from "@revitoperator/assignment-kernel-v2-contracts";
 import { createOperatorBackendClient } from "./operatorBackendClient.js";
+import { previewSemanticEvidenceV2 } from "./previewSemanticEvidenceV2.js";
 
 export const ASSIGNMENT_KERNEL_V2_META_KEY = "revit-operator/assignment-kernel-v2" as const;
 export const ASSIGNMENT_KERNEL_V2_BINDING_META_KEY = "revit-operator/assignment-kernel-binding-v2" as const;
@@ -14,6 +20,7 @@ const OPERATION_RESULT_V2_SCHEMA = "revit-operator.operation-result/v2" as const
 const OPERATION_INPUT_SCHEMA_GAP_V2_SCHEMA = "revit-operator.operation-input-schema-gap/v2" as const;
 
 type Scalar = string | number | boolean | null;
+type ClassifiedEffect = "read" | "preview" | "apply";
 type FulfillmentRole = "supporting_control" | "prerequisite" | "delegated_task_execution" | "verification" | "reconciliation" | "telemetry";
 type EvidenceClass = "control" | "prerequisite" | "task_result" | "verification" | "reconciliation" | "telemetry";
 type Binding = {
@@ -54,9 +61,11 @@ type NativeCall = {
   operation_id: string;
   parent_operation_id?: string;
   operation_role: "root" | "prerequisite" | "child";
+  classified_effect: ClassifiedEffect;
   lease: Context;
   method: string;
   path: string;
+  body?: unknown;
   state: "reserved" | "dispatching" | "completed";
   payload?: unknown;
   observation_payload?: unknown;
@@ -120,6 +129,22 @@ function payloadProvenance(sourceValue: unknown, normalizedValue: unknown, trans
 
 function text(value: unknown, max = 500): string {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function affectedTargetIdentities(settlement: Record<string, unknown>): string[] {
+  const source = settlement.affected_target_identities;
+  if (source === undefined) return [];
+  if (!Array.isArray(source) || source.length > 256) {
+    throw new Error("assignment_kernel_v2_native_affected_targets_invalid");
+  }
+  const identities = source.map(value => {
+    if (typeof value !== "string" || value !== value.trim() || value.length === 0 || value.length > 500
+        || /[\u0000-\u001f\u007f]/.test(value)) {
+      throw new Error("assignment_kernel_v2_native_affected_targets_invalid");
+    }
+    return value;
+  });
+  return [...new Set(identities)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
 }
 
 function parseContext(meta: unknown): Context | null {
@@ -262,13 +287,19 @@ function nativeChildFulfillmentRole(_path: string, topology: "prerequisite" | "c
   return "supporting_control";
 }
 
-function operationMatchesNativeRequest(context: Context, request: RequestIdentity, body: unknown): boolean {
+function operationMatchesNativeRequest(
+  context: Context,
+  request: RequestIdentity,
+  body: unknown,
+  classifiedEffect: ClassifiedEffect
+): boolean {
   const expected = context.request_identity;
   // A typed MCP capability and a native route are different executable
   // identities unless the trusted controller admitted the exact native
   // method/path. Never let the first hidden native call opportunistically
   // claim an abstract typed parent.
-  if (!expected.method || !expected.path
+  if (context.requested_effect !== classifiedEffect
+      || !expected.method || !expected.path
       || expected.method !== request.method
       || expected.path !== request.path) return false;
   if (context.capability_id === "revit_call_tool") {
@@ -301,7 +332,12 @@ export async function beginAssignmentKernelNativeRequestV2(
   const path = String(pathValue).trim();
   if (!path.startsWith("/")) throw new Error("assignment_kernel_v2_native_request_path_invalid");
   const identity = nativeRequestIdentity(method, path, body);
-  const parentMatches = operationMatchesNativeRequest(scope.context, identity, body);
+  const classifiedEffectValue = options.classified_effect ?? scope.context.requested_effect;
+  if (!['read', 'preview', 'apply'].includes(classifiedEffectValue)) {
+    throw new Error("assignment_kernel_v2_native_effect_classification_invalid");
+  }
+  const classifiedEffect = classifiedEffectValue as ClassifiedEffect;
+  const parentMatches = operationMatchesNativeRequest(scope.context, identity, body, classifiedEffect);
   const useParent = !options.operation_role && !scope.parent_claimed && parentMatches;
   let lease: Context;
   let role: "root" | "prerequisite" | "child";
@@ -311,13 +347,21 @@ export async function beginAssignmentKernelNativeRequestV2(
     role = "root";
   } else {
     role = options.operation_role ?? "child";
-    const fulfillmentRole = nativeChildFulfillmentRole(path, role, options.fulfillment_role);
+    const taskFulfillmentRequested = options.fulfillment_role === "delegated_task_execution"
+      || options.fulfillment_role === "verification";
+    const fulfillmentRole = nativeChildFulfillmentRole(
+      path,
+      role,
+      taskFulfillmentRequested && classifiedEffect !== scope.context.requested_effect
+        ? undefined
+        : options.fulfillment_role
+    );
     lease = await scope.edge.openChild({
       parent_operation_id: scope.context.operation_id,
       child_ordinal: scope.native_calls.length,
       operation_role: role,
       capability_id: identity.capability_id,
-      classified_effect: options.classified_effect ?? "read",
+      classified_effect: classifiedEffect,
       method,
       path,
       arguments: { method, path, body: body ?? null },
@@ -333,6 +377,9 @@ export async function beginAssignmentKernelNativeRequestV2(
     if (lease.operation_id === scope.context.operation_id || lease.parent_operation_id !== scope.context.operation_id) {
       throw new Error("assignment_kernel_v2_child_operation_identity_invalid");
     }
+    if (lease.requested_effect !== classifiedEffect) {
+      throw new Error("assignment_kernel_v2_child_effect_classification_mismatch");
+    }
   }
   const requestId = sha256({
     operation_id: lease.operation_id,
@@ -344,9 +391,11 @@ export async function beginAssignmentKernelNativeRequestV2(
     operation_id: lease.operation_id,
     ...(role === "root" ? {} : { parent_operation_id: scope.context.operation_id }),
     operation_role: role,
+    classified_effect: classifiedEffect,
     lease,
     method,
     path,
+    ...(body === undefined ? {} : { body: structuredClone(body) }),
     state: "reserved"
   });
   return Object.freeze({
@@ -448,6 +497,16 @@ function aliasedField(row: Record<string, unknown>, names: readonly string[]): u
   return matches[0]![1];
 }
 
+function nativeDomainFailure(payload: unknown): boolean {
+  const root = object(payload);
+  return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false;
+}
+
+function nativeDomainFailureCode(payload: unknown): string {
+  const root = object(payload);
+  return text(aliasedField(root, ["error_code", "errorCode", "code"])) || "native_domain_operation_failed";
+}
+
 function scalar(value: unknown): value is Scalar {
   return value === null || ["string", "number", "boolean"].includes(typeof value);
 }
@@ -462,16 +521,56 @@ function candidateItems(payload: unknown): unknown[] {
   return [];
 }
 
-function semanticFacts(payload: unknown, nativeCallCount: number, evidence: EvidenceClass, path: string): Array<Record<string, unknown>> {
+function quantifyGroupDimensions(body: unknown): string[] {
+  const declared = aliasedField(object(body), ["group_by", "groupBy"]);
+  const names = Array.isArray(declared)
+    ? declared.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .slice(0, 3)
+        .map(normalizedFieldName)
+    : [];
+  return names.length > 0 ? names : ["type"];
+}
+
+function semanticFacts(
+  payload: unknown,
+  nativeCallCount: number,
+  evidence: EvidenceClass,
+  path: string,
+  requestBody?: unknown,
+  requestedEffect?: Context["requested_effect"],
+  authoritativePreview = false,
+  controlCapabilityId?: string,
+  taskResultAdmitted = true
+): Array<Record<string, unknown>> {
+  const domainSucceeded = !nativeDomainFailure(payload);
   const facts: Array<Record<string, unknown>> = [
     { fact_id: "control.result_available", fact_class: "control", value: true },
+    { fact_id: "control.domain_succeeded", fact_class: "control", value: domainSucceeded },
     { fact_id: "control.native_call_count", fact_class: "control", value: nativeCallCount },
     { fact_id: "control.payload_hash", fact_class: "control", value: sha256(payload) }
   ];
-  if (evidence === "task_result") facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
+  if (evidence === "task_result" && domainSucceeded && taskResultAdmitted) {
+    facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
+  }
   const root = object(payload);
-  const total = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
-  const inventory = evidence === "task_result" && path.toLowerCase() === "/revit/quantify";
+  const textNoteResult = evidence === "task_result"
+    && domainSucceeded
+    && ["/revit/replace-text-note", "/revit/set-text-note-text"].includes(path.toLowerCase());
+  if (textNoteResult) {
+    facts.push(...previewSemanticEvidenceV2({
+      path,
+      payload,
+      requestBody,
+      requestedEffect,
+      authoritativePreview
+    }).facts);
+  }
+  const summary = object(aliasedField(root, ["summary"]));
+  const rootTotal = aliasedField(root, ["total", "total_count", "totalCount", "count"]);
+  const total = rootTotal === undefined
+    ? aliasedField(summary, ["total", "total_count", "totalCount", "count"])
+    : rootTotal;
+  const inventory = evidence === "task_result" && domainSucceeded && taskResultAdmitted && path.toLowerCase() === "/revit/quantify";
   if (inventory && typeof total === "number" && Number.isFinite(total)) {
     facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
     facts.push({ fact_id: "inventory.total", fact_class: "domain", value: total });
@@ -481,26 +580,50 @@ function semanticFacts(payload: unknown, nativeCallCount: number, evidence: Evid
     facts.push({ fact_id: "inventory.complete", fact_class: "domain", value: true });
     facts.push({ fact_id: "inventory.total", fact_class: "domain", value: items.length });
   }
-  const groups = new Map<string, { family: Scalar; type: Scalar; count: number }>();
-  const declaredGroups = aliasedField(root, ["groups", "grouped_counts", "groupedCounts"]);
-  const groupCandidates = Array.isArray(declaredGroups) ? declaredGroups : items;
+  const groups = new Map<string, { dimensions: Record<string, Scalar>; count: number }>();
+  const rootGroups = aliasedField(root, ["groups", "grouped_counts", "groupedCounts"]);
+  const declaredGroups = rootGroups === undefined
+    ? aliasedField(summary, ["groups", "grouped_counts", "groupedCounts"])
+    : rootGroups;
+  const groupCandidates = Array.isArray(declaredGroups)
+    ? declaredGroups
+    : Object.keys(object(declaredGroups)).length > 0 ? [] : items;
   for (const candidate of groupCandidates) {
     const row = object(candidate);
     const family = aliasedField(row, ["family", "family_name", "familyName"]);
     const type = aliasedField(row, ["type", "type_name", "typeName"]);
     if (!scalar(family) || !scalar(type)) continue;
-    const key = canonicalJson([family, type]);
+    const dimensions = { family, type };
+    const key = canonicalJson(dimensions);
     const prior = groups.get(key);
     const declaredCount = aliasedField(row, ["count", "total", "quantity"]);
     const count = typeof declaredCount === "number" && Number.isFinite(declaredCount) ? declaredCount : 1;
-    groups.set(key, { family, type, count: (prior?.count ?? 0) + count });
+    groups.set(key, { dimensions, count: (prior?.count ?? 0) + count });
+  }
+  if (inventory && declaredGroups && !Array.isArray(declaredGroups)) {
+    const dimensionNames = quantifyGroupDimensions(requestBody);
+    for (const [groupKey, declaredCount] of Object.entries(object(declaredGroups))) {
+      if (typeof declaredCount !== "number" || !Number.isFinite(declaredCount)) continue;
+      const values = groupKey.split(" | ");
+      if (values.length !== dimensionNames.length) continue;
+      const dimensions = Object.fromEntries(dimensionNames.map((name, index) => [name, values[index]!])) as Record<string, Scalar>;
+      const key = canonicalJson(dimensions);
+      const prior = groups.get(key);
+      groups.set(key, { dimensions, count: (prior?.count ?? 0) + declaredCount });
+    }
   }
   for (const group of [...groups.values()].sort((left, right) => {
     const leftJson = canonicalJson(left);
     const rightJson = canonicalJson(right);
     return leftJson < rightJson ? -1 : leftJson > rightJson ? 1 : 0;
   })) {
-    if (inventory) facts.push({ fact_id: "inventory.group", fact_class: "domain", value: group.count, dimensions: { family: group.family, type: group.type } });
+    if (inventory) facts.push({ fact_id: "inventory.group", fact_class: "domain", value: group.count, dimensions: group.dimensions });
+  }
+  if (evidence === "control" && controlCapabilityId) {
+    facts.push(...assignmentKernelControlEvidenceFactsV2(
+      controlCapabilityId,
+      semanticPayloadFromMcpResult(payload)
+    ).map(fact => ({ ...fact })));
   }
   for (const [key, value] of Object.entries(root)) {
     if (scalar(value) && facts.length < 256) facts.push({ fact_id: `control.field.${normalizedFieldName(key)}`, fact_class: "control", value });
@@ -519,11 +642,31 @@ function observationPayload(payload: unknown): unknown {
     .map(([key, value]) => [key, structuredClone(value)]));
 }
 
-function operationResultForCall(call: NativeCall, failed: boolean): Record<string, unknown> {
+function semanticPayloadFromMcpResult(payload: unknown): unknown {
+  const root = object(payload);
+  const structured = object(root.structuredContent ?? root.structured_content);
+  if (Object.keys(structured).length > 0) return structured;
+  const content = Array.isArray(root.content) ? root.content : [];
+  for (const itemValue of content.slice(0, 8)) {
+    const item = object(itemValue);
+    if (item.type !== "text" || typeof item.text !== "string") continue;
+    try {
+      return JSON.parse(item.text);
+    } catch {
+      // Non-JSON text remains part of the exact raw payload but cannot mint
+      // structured capability knowledge.
+    }
+  }
+  return root;
+}
+
+function operationResultForCall(call: NativeCall, transportFailed: boolean): Record<string, unknown> {
   const settlement = directSettlement(call.payload);
-  if (!failed && Object.keys(settlement).length === 0) throw new Error("assignment_kernel_v2_native_settlement_missing");
+  if (!transportFailed && Object.keys(settlement).length === 0) throw new Error("assignment_kernel_v2_native_settlement_missing");
+  const domainFailed = !transportFailed && nativeDomainFailure(call.observation_payload);
+  const failed = transportFailed || domainFailed;
   const failureDispatchState = text(object(call.payload).native_dispatch_state);
-  const dispatchState = failed
+  const dispatchState = transportFailed
     ? failureDispatchState === "dispatched" ? "dispatched"
       : failureDispatchState === "dispatching" ? "dispatching"
         : "not_dispatched"
@@ -531,30 +674,49 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
   const dispatched = dispatchState !== "not_dispatched";
   const outcomeUnknown = object(call.payload).outcome_unknown === true;
   const persistentEffect = text(settlement.effect_state)
-    || (failed && dispatched && call.lease.requested_effect === "apply" && outcomeUnknown ? "unknown" : "none");
+    || (transportFailed && dispatched && call.lease.requested_effect === "apply" && outcomeUnknown ? "unknown" : "none");
   if (!['none', 'unknown', 'applied'].includes(persistentEffect)) throw new Error("assignment_kernel_v2_native_effect_invalid");
   if (call.lease.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
   if (call.lease.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
   const nativeTransactionState = persistentEffect === "applied" ? "committed"
-    : call.lease.requested_effect === "preview" && !failed ? "rolled_back"
+    : call.lease.requested_effect === "preview" && !transportFailed && dispatched ? "rolled_back"
       : persistentEffect === "unknown" ? "unknown" : "not_applicable";
-  const provenance = failed ? undefined : call.payload_provenance;
-  if (!failed && (!provenance || call.observation_payload === undefined)) {
+  const provenance = transportFailed ? undefined : call.payload_provenance;
+  if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
     throw new Error("assignment_kernel_v2_observation_payload_not_captured");
   }
+  const resultSchemaId = `operator-native/${call.method}:${call.path}/v2`;
+  const authoritativeTaskPreview = !failed
+    && call.lease.fulfillment_role === "delegated_task_execution"
+    && call.lease.requested_effect === "preview"
+    && dispatched
+    && persistentEffect === "none"
+    && nativeTransactionState === "rolled_back";
+  const previewEvidence = authoritativeTaskPreview ? previewSemanticEvidenceV2({
+    path: call.path,
+    payload: call.observation_payload,
+    requestBody: call.body,
+    requestedEffect: call.lease.requested_effect,
+    authoritativePreview: true
+  }) : null;
+  const resultSemanticReason = previewEvidence && !previewEvidence.admitted
+    ? previewEvidence.recognized ? "preview_result_contract_invalid" : "preview_semantic_adapter_missing"
+    : null;
+  const resultFailed = failed || resultSemanticReason !== null;
   return {
     schema: OPERATION_RESULT_V2_SCHEMA,
-    result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed })}`,
+    result_id: `resultv2_${sha256({ operation_id: call.operation_id, payload: call.payload, failed: resultFailed, result_semantic_reason: resultSemanticReason })}`,
     operation_id: call.operation_id,
     binding: call.lease.binding,
-    status: failed ? dispatched ? "failed_after_dispatch" : "failed_before_dispatch" : "succeeded",
+    status: resultFailed ? dispatched ? "failed_after_dispatch" : "failed_before_dispatch" : "succeeded",
     dispatch_state: dispatchState,
     persistent_effect: persistentEffect,
     native_transaction_state: nativeTransactionState,
     authority: "native-host",
-    result_schema_id: `operator-native/${call.method}:${call.path}/v2`,
-    observation_required: !failed,
-    ...(!failed && provenance ? {
+    result_schema_id: resultSchemaId,
+    observation_required: !transportFailed,
+    affected_target_identities: affectedTargetIdentities(settlement),
+    ...(!transportFailed && provenance ? {
       raw_payload_hash: provenance.normalized.digest,
       payload_provenance: provenance
     } : {}),
@@ -562,12 +724,31 @@ function operationResultForCall(call: NativeCall, failed: boolean): Record<strin
     native_correlation_id: call.request_id,
     request_identity: call.lease.request_identity,
     completed_at: new Date().toISOString(),
-    ...(failed ? { error_code: "native_operation_failed" } : {})
+    ...(resultSemanticReason ? { result_semantic_gap: {
+      schema: OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+      gap_id: `result-semantics:${call.operation_id}`,
+      operation_id: call.operation_id,
+      capability_id: call.lease.capability_id,
+      result_schema_id: resultSchemaId,
+      reason_code: resultSemanticReason,
+      retryable: false,
+      provider_correctable: false,
+      native_replay_allowed: false
+    } } : {}),
+    ...(transportFailed ? { error_code: "native_operation_failed" }
+      : domainFailed ? { error_code: nativeDomainFailureCode(call.observation_payload) }
+        : resultSemanticReason ? { error_code: resultSemanticReason }
+          : {})
   };
 }
 
 function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, unknown>): Record<string, unknown> {
   const observationClass = evidenceClass(call.lease.fulfillment_role);
+  const authoritativePreview = call.classified_effect === "preview"
+    && operationResult.status === "succeeded"
+    && operationResult.dispatch_state === "dispatched"
+    && operationResult.persistent_effect === "none"
+    && operationResult.native_transaction_state === "rolled_back";
   return {
     content: [],
     structuredContent: {
@@ -576,7 +757,17 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
       ...(operationResult.observation_required ? {
         observation: {
           raw_payload: call.observation_payload,
-          semantic_facts: semanticFacts(call.observation_payload, 1, observationClass, call.path),
+          semantic_facts: semanticFacts(
+            call.observation_payload,
+            1,
+            observationClass,
+            call.path,
+            call.body,
+            call.lease.requested_effect,
+            authoritativePreview,
+            undefined,
+            operationResult.status === "succeeded"
+          ),
           target_scope: {},
           verification_relevance: [observationClass],
           evidence_class: observationClass
@@ -586,9 +777,14 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
   };
 }
 
-function transportOnlyResult(context: Context, payload: unknown, failed: boolean, evidenceRead: boolean): Record<string, unknown> {
-  const transportSucceeded = !failed;
-  const provenance = evidenceRead && !failed
+function transportOnlyResult(
+  context: Context,
+  payload: unknown,
+  failed: boolean,
+  observationAuthority?: "operator-evidence-store" | "operator-mcp-transport"
+): Record<string, unknown> {
+  const observationBearing = Boolean(observationAuthority) && !failed;
+  const provenance = observationBearing
     ? payloadProvenance(payload, payload, "revit-operator.parsed-json-to-canonical-payload")
     : undefined;
   const failure = object(object(payload).structuredContent ?? object(payload).structured_content);
@@ -633,14 +829,14 @@ function transportOnlyResult(context: Context, payload: unknown, failed: boolean
     operation_id: context.operation_id,
     binding: context.binding,
     status: failed ? "failed_before_dispatch"
-      : evidenceRead ? "succeeded" : "completed_without_native_dispatch",
-    dispatch_state: evidenceRead ? "dispatched" : "not_dispatched",
+      : observationBearing ? "succeeded" : "completed_without_native_dispatch",
+    dispatch_state: observationBearing ? "dispatched" : "not_dispatched",
     persistent_effect: "none",
     native_transaction_state: "not_applicable",
-    authority: evidenceRead ? "operator-evidence-store" : "operator-mcp-transport",
+    authority: observationAuthority ?? "operator-mcp-transport",
     result_schema_id: `operator-capability/${context.capability_id}/v2`,
-    observation_required: evidenceRead && !failed,
-    ...(evidenceRead && !failed && provenance ? {
+    observation_required: observationBearing,
+    ...(observationBearing && provenance ? {
       raw_payload_hash: provenance.normalized.digest,
       payload_provenance: provenance
     } : {}),
@@ -656,10 +852,25 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
   if (calls.some(call => call.state !== "completed")) throw new Error("assignment_kernel_v2_native_result_missing");
   const failed = Boolean(object(result).isError);
   const parentCall = calls.find(call => call.operation_role === "root");
-  const retainedEvidenceRead = calls.length === 0 && scope.context.purpose === "evidence_read" && !failed;
+  const retainedEvidenceRead = !parentCall && scope.context.purpose === "evidence_read" && !failed;
+  const retainedControlEvidence = !parentCall
+    && !failed
+    && scope.context.requested_effect === "read"
+    && capabilityId === scope.context.capability_id
+    && isAssignmentKernelDurableControlEvidenceProducerV2(scope.context.capability_id);
+  const observationAuthority = retainedEvidenceRead ? "operator-evidence-store" as const
+    : retainedControlEvidence ? "operator-mcp-transport" as const
+      : undefined;
   const operationResult = parentCall
     ? operationResultForCall(parentCall, failed)
-    : transportOnlyResult(scope.context, result, failed, retainedEvidenceRead);
+    : transportOnlyResult(scope.context, result, failed, observationAuthority);
+  const authoritativeParentPreview = parentCall
+    ? parentCall.classified_effect === "preview"
+      && operationResult.status === "succeeded"
+      && operationResult.dispatch_state === "dispatched"
+      && operationResult.persistent_effect === "none"
+      && operationResult.native_transaction_state === "rolled_back"
+    : false;
   const root = object(result);
   const childOperationResults = calls
     .filter(call => call.operation_role !== "root")
@@ -678,15 +889,34 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       ...(parentCall && operationResult.observation_required ? {
         observation: {
           raw_payload: parentCall.observation_payload,
-           semantic_facts: semanticFacts(parentCall.observation_payload, 1, evidenceClass(parentCall.lease.fulfillment_role), parentCall.path),
+           semantic_facts: semanticFacts(
+             parentCall.observation_payload,
+             1,
+             evidenceClass(parentCall.lease.fulfillment_role),
+             parentCall.path,
+             parentCall.body,
+             parentCall.lease.requested_effect,
+             authoritativeParentPreview,
+             undefined,
+             operationResult.status === "succeeded"
+           ),
           target_scope: {},
            verification_relevance: [evidenceClass(parentCall.lease.fulfillment_role)],
            evidence_class: evidenceClass(parentCall.lease.fulfillment_role)
         }
-      } : retainedEvidenceRead ? {
+      } : operationResult.observation_required ? {
         observation: {
           raw_payload: result,
-           semantic_facts: semanticFacts(result, 0, "control", "operator-evidence-store"),
+           semantic_facts: semanticFacts(
+             result,
+             0,
+             "control",
+             observationAuthority ?? "operator-mcp-transport",
+             undefined,
+             scope.context.requested_effect,
+             false,
+             retainedControlEvidence ? scope.context.capability_id : undefined
+           ),
           target_scope: {},
            verification_relevance: ["control"],
            evidence_class: "control"

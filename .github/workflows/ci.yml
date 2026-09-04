@@ -1,10 +1,9 @@
 name: Public Core CI
 
 on:
+  # PR validation is the release gate. A second full run on the merge push to
+  # main is intentionally omitted to avoid paying twice for the same batch.
   pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       run_revit_addin:

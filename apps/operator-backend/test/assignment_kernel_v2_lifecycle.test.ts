@@ -19,13 +19,18 @@ import {
   supplyAssignmentInputV2
 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
-import { OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2 } from "../src/domain/assignment-kernel/index.js";
+import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
 import { listWorkReturns } from "../src/work_returns/store.js";
 import { deriveTerminalResultV2, renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
 import { prepareCodexAssignmentProgressV2, settleCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { settleAssignmentKernelExecutionFailureV2 } from "../src/assignments/assignment_kernel_v2_execution_failure.js";
+import {
+  beginAssignmentKernelTerminalBarrierV2,
+  endAssignmentKernelTerminalBarrierV2
+} from "../src/assignments/assignment_kernel_v2_terminal_barrier.js";
 import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
 import { generateWorkReturnFromKernelV2 } from "../src/work_returns/assignment_kernel_v2_generator.js";
 import { projectGoalAssignment } from "../src/assignments/projection.js";
@@ -52,9 +57,14 @@ function workspace(fn: () => void): void {
 }
 
 function setup(effect: "read" | "apply" = "read", requiredInputs: string[] = []) {
+  const objective = effect === "read"
+    ? "Return the requested inventory."
+    : requiredInputs.length > 0
+      ? "Replace the selected note text."
+      : 'Replace the selected note text with "Current issue wording".';
   const goal = createGoal({
     title: "Assignment Kernel V2 lifecycle",
-    objective: effect === "read" ? "Return the requested inventory." : "Replace the selected note text.",
+    objective,
     acceptance_criteria: ["The requested result is authoritatively established."],
     status: "active",
     related_session_id: "session-v2-life",
@@ -102,6 +112,53 @@ function resultEnvelope(operationId: string, binding: any, requestIdentity: any,
         raw_payload: payload,
         semantic_facts: semanticFacts,
         verification_relevance: ["task_result"]
+      }
+    }
+  };
+}
+
+function previewResultEnvelope(
+  operationId: string,
+  binding: any,
+  requestIdentity: any,
+  payload: Record<string, unknown>,
+  succeeded: boolean
+) {
+  const hash = createHash("sha256").update(canonicalJsonV2(payload), "utf8").digest("hex");
+  return {
+    content: [],
+    structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: {
+        schema: OPERATION_RESULT_V2_SCHEMA,
+        result_id: `result-${operationId}`,
+        operation_id: operationId,
+        binding,
+        status: succeeded ? "succeeded" : "failed_after_dispatch",
+        dispatch_state: "dispatched",
+        persistent_effect: "none",
+        native_transaction_state: "rolled_back",
+        authority: "native-host",
+        result_schema_id: "operator-native/POST:/revit/replace-text-note/v2",
+        observation_required: true,
+        raw_payload_hash: hash,
+        receipt_id: `receipt-${operationId}`,
+        request_identity: requestIdentity,
+        completed_at: "2026-09-01T14:28:16.000Z",
+        ...(succeeded ? {} : { error_code: "expected_old_text_mismatch" })
+      },
+      observation: {
+        raw_payload: payload,
+        semantic_facts: [
+          { fact_id: "control.result_available", fact_class: "control", value: true },
+          { fact_id: "control.domain_succeeded", fact_class: "control", value: succeeded },
+          ...(succeeded ? [
+            { fact_id: "task.result_available", fact_class: "domain", value: true },
+            { fact_id: "task.preview_valid", fact_class: "domain", value: true }
+          ] : [])
+        ],
+        verification_relevance: ["task_result"],
+        evidence_class: "task_result"
       }
     }
   };
@@ -158,6 +215,60 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   }), /terminal_immutable/);
 }));
 
+test("provider failure cannot replace task success derived while terminal handoff was deferred", () => workspace(() => {
+  const { goal, binding } = setup();
+  const barrier = beginAssignmentKernelTerminalBarrierV2({ binding, barrier_id: "provider-request:terminal-handoff" });
+  const settled = settleRead(goal.id).settled;
+  const derived = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{
+      criterion_id: settled.snapshot.spec.criteria[0]!.criterion_id,
+      observation_ids: [settled.observation!.observation_id]
+    }]
+  });
+  assert.equal(derived.outcome, "complete");
+  assert.equal(derived.terminal, false);
+  endAssignmentKernelTerminalBarrierV2(barrier);
+
+  const recovered = settleAssignmentKernelExecutionFailureV2({
+    binding,
+    failure_id: "response-handoff-lost-after-success",
+    error_class: "transport",
+    phase: "response_handoff"
+  });
+  assert.equal(recovered.disposition, "terminal_preserved");
+  assert.equal(recovered.snapshot.terminal, true);
+  assert.equal(recovered.snapshot.outcome, "complete");
+  assert.equal(recovered.snapshot.execution_failure_ids.length, 0);
+  assert.equal(recovered.snapshot.terminal_reason, "terminal_outcome_derived_before_execution_failure");
+}));
+
+test("Work Packet and Work Return preserve native affected identities from the terminal V2 result", () => workspace(() => {
+  const { goal, binding } = setup();
+  const settled = settleRead(goal.id).settled;
+  const terminal = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{
+      criterion_id: settled.snapshot.spec.criteria[0]!.criterion_id,
+      observation_ids: [settled.observation!.observation_id]
+    }]
+  });
+  const projected = structuredClone(terminal);
+  const operation = Object.values(projected.operations)[0]!;
+  operation.persistent_effect = "applied";
+  operation.result!.persistent_effect = "applied";
+  operation.result!.affected_target_identities = ["element_id:4242"];
+
+  const persistedGoal = getGoal(goal.id)!;
+  const packet = generateVerifiedWorkPacketFromKernelV2(persistedGoal, projected, null);
+  const workReturn = generateWorkReturnFromKernelV2(persistedGoal, projected, null, packet);
+  assert.deepEqual(packet.actions[0]!.affected_target_identities, ["element_id:4242"]);
+  assert.ok(packet.actions[0]!.target_identities.includes("element_id:4242"));
+  assert.ok(packet.grounded_targets.some(target => target.identity === "element_id:4242"));
+  assert.deepEqual(packet.rollback.affected_target_identities, ["element_id:4242"]);
+  assert.ok(workReturn.affected_targets.includes("element_id:4242"));
+}));
+
 test("Protocol V2 recognizes the same terminal V2 snapshot and native read Observation", () => workspace(() => {
   const { goal, binding } = setup();
   const settled = settleRead(goal.id).settled;
@@ -192,6 +303,194 @@ test("quiescence or assistant claim without authoritative Observation cannot com
   }), /unknown observation/);
   assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.terminal, false);
   assert.equal(getGoal(goal.id)!.finished_at, null);
+}));
+
+test("Candidate 39 failed native preview remains evidence, cannot complete, and permits one corrected preview", () => workspace(() => {
+  const goal = createGoal({
+    title: "Preview selected note replacement",
+    objective: "Preview replacing the selected note with the authenticated replacement text without applying it.",
+    acceptance_criteria: ["The requested preview is authoritatively returned."],
+    status: "active",
+    related_session_id: "session-candidate39-preview",
+    created_by: "principal-candidate39-preview",
+    work_budget: { requested_effect: "preview", document_fingerprint: "document-candidate39-preview" }
+  });
+  const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate39-preview" });
+  const criterionId = getAssignmentKernelSnapshotV2(goal.id)!.spec.criteria[0]!.criterion_id;
+  assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id)!.spec.criteria[0]!.semantic_fact_requirements, ["task.preview_valid"]);
+
+  const failedLease = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id: "candidate39-preview-first",
+    provider_turn_id: "candidate39-turn-first",
+    capability_id: "revit_call_tool",
+    classified_effect: "preview",
+    target_tokens: ["elementid:1421361"],
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1421361, expectedOldText: "***An Autodesk Revit sample project***", dryRun: true, apply: false }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(failedLease);
+  const failedPayload = {
+    ok: false,
+    status: "Precondition Failed",
+    errorCode: "expected_old_text_mismatch",
+    actualText: "***An Autodesk Revit sample project***\r",
+    expectedOldText: "***An Autodesk Revit sample project***",
+    changed: false,
+    dryRun: true
+  };
+  const failed = settleAssignmentKernelOperationV2(
+    failedLease,
+    previewResultEnvelope(failedLease.operation_id, failedLease.binding, failedLease.request_identity, failedPayload, false)
+  );
+  assert.equal(failed.snapshot.operations[failedLease.operation_id]!.result!.status, "failed_after_dispatch");
+  assert.equal(failed.snapshot.operations[failedLease.operation_id]!.persistent_effect, "none");
+  assert.ok(failed.observation);
+  const unresolved = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{ criterion_id: criterionId, observation_ids: [failed.observation!.observation_id] }]
+  });
+  assert.equal(unresolved.criteria[criterionId]!.status, "uncertain");
+  assert.equal(unresolved.terminal, false);
+  assert.equal(unresolved.outcome, "active");
+
+  const correctedLease = openAssignmentKernelOperationV2({
+    snapshot: unresolved,
+    controller_request_id: "candidate39-preview-corrected",
+    provider_turn_id: "candidate39-turn-corrected",
+    capability_id: "revit_call_tool",
+    classified_effect: "preview",
+    target_tokens: ["elementid:1421361"],
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1421361, expectedOldText: "***An Autodesk Revit sample project***\r", dryRun: true, apply: false }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(correctedLease);
+  const corrected = settleAssignmentKernelOperationV2(
+    correctedLease,
+    previewResultEnvelope(correctedLease.operation_id, correctedLease.binding, correctedLease.request_identity, {
+      ok: true,
+      status: "Dry Run",
+      before: "***An Autodesk Revit sample project***\r",
+      after: "Issued for Construction",
+      changed: true,
+      dryRun: true
+    }, true)
+  );
+  const terminal = evaluateAssignmentObservationCriteriaV2({
+    binding,
+    claims: [{ criterion_id: criterionId, observation_ids: [failed.observation!.observation_id, corrected.observation!.observation_id] }]
+  });
+  assert.equal(terminal.criteria[criterionId]!.status, "pass");
+  assert.equal(terminal.terminal, true);
+  assert.equal(terminal.outcome, "complete");
+}));
+
+test("Candidate 56 semantic-result contract failure retains native evidence and blocks without provider or Revit replay", () => workspace(() => {
+  const goal = createGoal({
+    title: "Preview selected note replacement",
+    objective: "Preview replacing the selected note with authenticated text without applying it.",
+    acceptance_criteria: ["The requested preview is authoritatively returned."],
+    status: "active",
+    related_session_id: "session-candidate56-preview",
+    created_by: "principal-candidate56-preview",
+    work_budget: { requested_effect: "preview", document_fingerprint: "document-candidate56-preview" }
+  });
+  const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-candidate56-preview" });
+  const lease = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id: "candidate56-preview",
+    provider_turn_id: "candidate56-turn",
+    capability_id: "revit_call_tool",
+    classified_effect: "preview",
+    target_tokens: ["elementid:1421361"],
+    arguments: {
+      method: "POST",
+      path: "/revit/replace-text-note",
+      body: { elementId: 1421361, newText: "ISSUE 04", dryRun: true, apply: false }
+    }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const envelope = previewResultEnvelope(lease.operation_id, lease.binding, lease.request_identity, {
+    ok: true,
+    status: "Dry Run",
+    dryRun: true,
+    textNoteId: 1421361,
+    before: "OLD\r",
+    after: "OLD\r",
+    changed: true
+  }, false) as any;
+  const result = envelope.structuredContent.operation_result_v2;
+  result.error_code = "preview_result_contract_invalid";
+  result.result_semantic_gap = {
+    schema: OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+    gap_id: `result-semantics:${lease.operation_id}`,
+    operation_id: lease.operation_id,
+    capability_id: lease.capability_id,
+    result_schema_id: result.result_schema_id,
+    reason_code: "preview_result_contract_invalid",
+    retryable: false,
+    provider_correctable: false,
+    native_replay_allowed: false
+  };
+  const settled = settleAssignmentKernelOperationV2(lease, envelope);
+  assert.ok(settled.observation, "the exact safe native result remains durable");
+
+  const advanced = advanceAssignmentKernelProgressV2({ binding, now: "2026-09-02T19:00:00.000Z" });
+  assert.equal(advanced.snapshot.terminal, true);
+  assert.equal(advanced.snapshot.outcome, "blocked");
+  assert.equal(advanced.snapshot.terminal_reason, "operation_result_semantic_invalid");
+  assert.equal(Object.keys(advanced.snapshot.provider_calls).length, 0);
+  assert.equal(Object.keys(advanced.snapshot.operations).length, 1);
+  assert.equal(Object.keys(advanced.snapshot.observations).length, 1);
+  assert.equal(advanced.snapshot.operations[lease.operation_id]!.result!.result_semantic_gap?.native_replay_allowed, false);
+}));
+
+test("every transport blocks a settled task preview that lacks typed semantic proof", () => workspace(() => {
+  const goal = createGoal({
+    title: "Preview one change",
+    objective: "Preview one authenticated change without applying it.",
+    acceptance_criteria: ["The requested preview is authoritatively returned."],
+    status: "active",
+    related_session_id: "session-preview-proof-missing",
+    created_by: "principal-preview-proof-missing",
+    work_budget: { requested_effect: "preview", document_fingerprint: "document-preview-proof-missing" }
+  });
+  const binding = createAssignmentKernelForGoalV2({ goal, run_id: "run-preview-proof-missing" });
+  const lease = openAssignmentKernelOperationV2({
+    snapshot: getAssignmentKernelSnapshotV2(goal.id)!,
+    controller_request_id: "preview-proof-missing",
+    provider_turn_id: "preview-proof-missing-turn",
+    capability_id: "dynamic_revit_program",
+    classified_effect: "preview",
+    arguments: { program: "bounded-preview" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(lease);
+  const envelope = previewResultEnvelope(lease.operation_id, lease.binding, lease.request_identity, {
+    ok: true,
+    status: "Dry Run",
+    dryRun: true,
+    changed: true
+  }, true) as any;
+  envelope.structuredContent.operation_result_v2.result_schema_id = "operator-dynamic-runtime/provider-program/v2";
+  envelope.structuredContent.observation.semantic_facts = [
+    { fact_id: "control.result_available", fact_class: "control", value: true }
+  ];
+  const settled = settleAssignmentKernelOperationV2(lease, envelope);
+  assert.ok(settled.observation, "transport-neutral raw evidence remains durable");
+
+  const advanced = advanceAssignmentKernelProgressV2({ binding, now: "2026-09-02T19:01:00.000Z" });
+  assert.equal(advanced.snapshot.terminal, true);
+  assert.equal(advanced.snapshot.outcome, "blocked");
+  assert.equal(advanced.snapshot.terminal_reason, "operation_result_semantic_invalid");
+  assert.equal(Object.keys(advanced.snapshot.provider_calls).length, 0);
+  assert.equal(Object.keys(advanced.snapshot.operations).length, 1);
+  assert.equal(Object.keys(advanced.snapshot.observations).length, 1);
 }));
 
 test("cross-Assignment Observation is rejected and apply Assignment is not promoted by read evidence", () => workspace(() => {
@@ -428,6 +727,37 @@ test("durable progress controller evaluates retained observations and terminaliz
   assert.match(renderTerminalResultV2(handedOff.snapshot), /Inventory total: 509/);
   assert.match(renderTerminalResultV2(handedOff.snapshot), /Family A — Type A: 300/);
   assert.match(renderTerminalResultV2(handedOff.snapshot), /Family B — Type B: 209/);
+  const textNoteHandoff = structuredClone(handedOff.snapshot);
+  textNoteHandoff.spec.requested_effect = "apply";
+  const textObservation = textNoteHandoff.observations[Object.keys(textNoteHandoff.observations)[0]!]!;
+  textObservation.facts = [
+    { fact_id: "task.result_available", fact_class: "domain", value: true },
+    { fact_id: "text_note.element_id", fact_class: "domain", value: 1421361 },
+    { fact_id: "text_note.before", fact_class: "domain", value: "Existing note" },
+    { fact_id: "text_note.after", fact_class: "domain", value: "Issued for Construction" },
+    { fact_id: "text_note.changed", fact_class: "domain", value: true }
+  ];
+  assert.match(renderTerminalResultV2(textNoteHandoff), /Updated TextNote 1421361/);
+  assert.match(renderTerminalResultV2(textNoteHandoff), /Before: Existing note/);
+  assert.match(renderTerminalResultV2(textNoteHandoff), /After: Issued for Construction/);
+  const previewTextNoteHandoff = structuredClone(textNoteHandoff);
+  previewTextNoteHandoff.spec.requested_effect = "preview";
+  const previewTextObservation = previewTextNoteHandoff.observations[Object.keys(previewTextNoteHandoff.observations)[0]!]!;
+  previewTextObservation.facts = [
+    { fact_id: "task.result_available", fact_class: "domain", value: true },
+    { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+    { fact_id: "text_note.element_id", fact_class: "domain", value: 1421361 },
+    { fact_id: "text_note.before", fact_class: "domain", value: "Existing note" },
+    { fact_id: "text_note.after", fact_class: "domain", value: "Existing note" },
+    { fact_id: "text_note.proposed", fact_class: "domain", value: "Issued for Construction" },
+    { fact_id: "text_note.changed", fact_class: "domain", value: true }
+  ];
+  const previewTextSummary = renderTerminalResultV2(previewTextNoteHandoff);
+  assert.match(previewTextSummary, /Previewed TextNote 1421361/);
+  assert.match(previewTextSummary, /Before: Existing note/);
+  assert.match(previewTextSummary, /Proposed: Issued for Construction/);
+  assert.match(previewTextSummary, /Model unchanged.*rolled back/i);
+  assert.doesNotMatch(previewTextSummary, /After: Existing note/);
   const reconnected = prepareCodexAssignmentProgressV2(binding);
   assert.equal(reconnected.snapshot.assignment_version, advanced.snapshot.assignment_version);
   assert.equal(reconnected.prompt, "");

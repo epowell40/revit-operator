@@ -1,6 +1,30 @@
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_SCHEMA: "revit-operator.assignment-kernel-session-index/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA: "revit-operator.assignment-kernel-session-index-response/v2";
 export const ASSIGNMENT_KERNEL_V2_SESSION_INDEX_FIELD: "assignment_kernel_v2_session_index";
+export const ASSIGNMENT_SNAPSHOT_V2_SCHEMA: "revit-operator.assignment-snapshot/v2";
+export const ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA: "revit-operator.assignment-kernel-publication/v2";
+export const ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA: "revit-operator.assignment-provider-ledger/v2";
+export const ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA: "revit-operator.provider-call/v2";
+export const ASSIGNMENT_EXECUTION_FAILURE_V2_SCHEMA: "revit-operator.assignment-execution-failure/v2";
+export const OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA: "revit-operator.operation-result-semantic-gap/v2";
+export const ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA: "revit-operator.assignment-kernel-runtime-attestation/v2";
+export const ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2: "typed-deny-by-default/v2";
+export type TerminalProviderCallStateV2 = "completed" | "response_transport_completed";
+export function isTerminalProviderCallStateV2(value: unknown): value is TerminalProviderCallStateV2;
+
+export type AssignmentKernelRuntimeAttestationV2 = Readonly<{
+  schema: typeof ASSIGNMENT_KERNEL_RUNTIME_ATTESTATION_V2_SCHEMA;
+  assignment_kernel_v2_enabled: boolean;
+  lifecycle_owner: "assignment_kernel_v2" | "legacy_goal_v1";
+  progress_owner: "deterministic_progress_controller_v2" | "legacy_agent_loop_v1";
+  session_index_response_schema: typeof ASSIGNMENT_KERNEL_V2_SESSION_INDEX_RESPONSE_SCHEMA | null;
+  exact_publication_schema: typeof ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA | null;
+  provider_ledger_schema: typeof ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA | null;
+  semantic_evidence_policy: typeof ASSIGNMENT_KERNEL_SEMANTIC_EVIDENCE_POLICY_V2 | null;
+}>;
+
+export function assignmentKernelRuntimeAttestationV2(enabled: unknown): AssignmentKernelRuntimeAttestationV2;
+export function parseAssignmentKernelRuntimeAttestationV2(value: unknown): AssignmentKernelRuntimeAttestationV2;
 
 export interface AssignmentKernelV2SessionIndexBinding {
   assignment_id: string;
@@ -34,3 +58,65 @@ export interface AssignmentKernelV2SessionIndexResponse {
 export function parseAssignmentKernelSessionIndexV2(value: unknown): AssignmentKernelV2SessionIndex;
 export function assignmentKernelSessionIndexResponseV2(value: unknown): AssignmentKernelV2SessionIndexResponse;
 export function parseAssignmentKernelSessionIndexResponseV2(value: unknown): AssignmentKernelV2SessionIndexResponse;
+
+export interface AssignmentKernelPublicationV2Contract {
+  readonly schema: typeof ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA;
+  readonly assignment_id: string;
+  readonly assignment_version: number;
+  readonly snapshot: Readonly<Record<string, unknown>>;
+  readonly provider_ledger: Readonly<Record<string, unknown>>;
+}
+
+export function parseAssignmentKernelPublicationV2(value: unknown): AssignmentKernelPublicationV2Contract;
+
+export const ASSIGNMENT_KERNEL_V2_CONTROL_EVIDENCE_SCHEMA: "revit-operator.assignment-kernel-control-evidence/v2";
+
+export interface AssignmentKernelControlCapabilityV2 {
+  readonly capability_id: string;
+  readonly durable_result_evidence: boolean;
+  readonly collection_fields: readonly string[];
+}
+
+export interface AssignmentKernelControlEvidenceFactV2 {
+  readonly fact_id:
+    | "control.capability_discovery_status"
+    | "control.capability_available"
+    | "control.evidence_retrieval_status"
+    | "control.evidence_selection_available";
+  readonly fact_class: "control";
+  readonly value: string | boolean;
+  readonly cardinality?: "many";
+  readonly identity_dimensions?: readonly string[];
+  readonly dimensions: Readonly<Record<string, string>>;
+}
+
+export const ASSIGNMENT_KERNEL_V2_CONTROL_CAPABILITY_IDS: readonly string[];
+export const ASSIGNMENT_KERNEL_V2_DURABLE_CONTROL_EVIDENCE_PRODUCER_IDS: readonly string[];
+export function assignmentKernelControlCapabilityV2(capabilityId: unknown): AssignmentKernelControlCapabilityV2 | null;
+export function isAssignmentKernelControlCapabilityV2(capabilityId: unknown): boolean;
+export function isAssignmentKernelDurableControlEvidenceProducerV2(capabilityId: unknown): boolean;
+export function assignmentKernelControlEvidenceFactsV2(
+  capabilityId: unknown,
+  value: unknown
+): readonly AssignmentKernelControlEvidenceFactV2[];
+
+export const EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA: "revit-operator.evidence-retrieval-selector-contract/v1";
+
+export type EvidenceRetrievalSelectorV1 =
+  | Readonly<{ kind: "fields"; fields: readonly string[] }>
+  | Readonly<{ kind: "item_range"; item_range: Readonly<{ path: string; start: number; count: number }> }>
+  | Readonly<{ kind: "text_range"; text_range: Readonly<{ start: number; length: number }> }>
+  | Readonly<{ kind: "target_subset"; target_subset: readonly string[] }>
+  | Readonly<{ kind: "image"; image: true }>;
+
+export interface ExactEvidenceTargetSelectionV1 {
+  readonly schema: typeof EVIDENCE_RETRIEVAL_SELECTOR_CONTRACT_V1_SCHEMA;
+  readonly selection: Readonly<Record<string, unknown>>;
+  readonly matched_target_ids: readonly string[];
+  readonly selection_paths: readonly string[];
+}
+
+export function parseEvidenceRetrievalSelectorV1(value: unknown): EvidenceRetrievalSelectorV1;
+export function isEvidenceTargetIdentityFieldV1(value: unknown): boolean;
+export function evidenceTargetIdentityValuesV1(value: unknown): readonly string[];
+export function selectExactEvidenceTargetsV1(payload: unknown, targetSubset: unknown): ExactEvidenceTargetSelectionV1;

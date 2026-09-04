@@ -3,11 +3,17 @@ import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
   OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
+  appliedOperationHasVerifiedPostconditionV2,
+  assertOperationDoesNotRepeatSchemaRejectedInputV2,
   canonicalJsonV2,
+  criteriaPendingEvaluationV2,
   deriveProgressGapsV2,
   evidenceClassForFulfillmentRoleV2,
   fulfillmentRoleCanCarryTaskCriteriaV2,
   normalizeSemanticFactsForEvidenceV2,
+  operationEffectAdmissibleForCriterionV2,
+  operationMatchesTargetIdentityV2,
+  operationProposalCanResolveInputSchemaGapV2,
   operationFulfillmentRoleForAdmissionV2,
   sameAssignmentBindingV2,
   type AssignmentBindingV2,
@@ -24,6 +30,10 @@ import {
   type RequestedEffectV2,
   type SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
+import {
+  operationTargetSelectorV2,
+  verificationCapabilityAdmissionV2
+} from "../verification/verification_capability_admission_v2.js";
 import { assertEvidenceStoreInputSafe, storeEvidence } from "../evidence/evidence_store.js";
 import type { EvidenceStoreInput, EvidenceStoreResult } from "../evidence/evidence_ref.js";
 import type { EvidenceProjectionV1, EvidenceRefV1 } from "../evidence/evidence_ref.js";
@@ -38,6 +48,7 @@ import {
   getAssignmentKernelSnapshotV2
 } from "./assignment_kernel_v2_store.js";
 import { deriveAndSettleAssignmentKernelV2 } from "./assignment_kernel_v2_lifecycle.js";
+import { postconditionSatisfiedByPayloadV2 } from "../postcondition_verification_v2.js";
 
 export const ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA = "revit-operator.assignment-kernel-mcp-result/v2" as const;
 export const ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA = "revit-operator.assignment-kernel-operation-context/v2" as const;
@@ -51,6 +62,14 @@ export type AssignmentKernelMcpResultV2 = Readonly<{
     target_scope?: Readonly<Record<string, string | number | boolean | null>>;
     verification_relevance?: readonly string[];
   }>;
+}>;
+
+export type AssignmentKernelTrustedVerificationV2 = Readonly<{
+  schema: "revit-operator.teammate-verification-assertion/v2";
+  operation_id: string;
+  action_id: string;
+  mode: "target_bound_readback";
+  evidence_sha256: string;
 }>;
 
 export type AssignmentKernelOperationLeaseV2 = Readonly<{
@@ -120,10 +139,12 @@ function operationPurpose(effect: string, snapshot: AssignmentSnapshotV2): Opera
   if (effect === "evidence_read") return "evidence_read";
   if (effect === "discovery" || effect === "navigation") return "discovery";
   if (effect === "read" && snapshot.spec.requested_effect === "apply"
-      && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply" && operation.persistent_effect === "applied")) {
+      && Object.values(snapshot.operations).some(operation => operation.requested_effect === "apply"
+        && operation.persistent_effect === "applied"
+        && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id))) {
     return "verification";
   }
-  if (effect === "read" && snapshot.spec.requested_effect === "apply") return "discovery";
+  if (effect === "read" && snapshot.spec.requested_effect !== "read") return "discovery";
   return "work";
 }
 
@@ -173,6 +194,43 @@ function requestIdentity(input: Readonly<{
   };
 }
 
+function anticipatedResultSchemaIds(capabilityId: string, identity: OperationRequestIdentityV2): readonly string[] {
+  if (capabilityId === "revit_call_tool" && identity.method && identity.path) {
+    return [`operator-native/${identity.method}:${identity.path}/v2`];
+  }
+  return [`operator-capability/${capabilityId}/v2`];
+}
+
+function criterionIdsAdmittedForOperationV2(input: Readonly<{
+  snapshot: AssignmentSnapshotV2;
+  criterion_ids: readonly string[];
+  capability_id: string;
+  operation_effect: RequestedEffectV2;
+  request_identity: OperationRequestIdentityV2;
+}>): readonly string[] {
+  const nativeCapabilityId = input.request_identity.method && input.request_identity.path
+    ? `native:${input.request_identity.method}:${input.request_identity.path}`
+    : undefined;
+  const resultSchemas = anticipatedResultSchemaIds(input.capability_id, input.request_identity);
+  return input.criterion_ids.filter((criterionId) => {
+    if (input.snapshot.criteria[criterionId]?.status === "pass") return false;
+    const criterion = input.snapshot.spec.criteria.find(candidate => candidate.criterion_id === criterionId);
+    const policy = criterion?.evidence_policy;
+    if (!policy) return false;
+    if (!operationEffectAdmissibleForCriterionV2({
+      assignment_requested_effect: input.snapshot.spec.requested_effect,
+      operation_requested_effect: input.operation_effect,
+      criterion
+    })) return false;
+    const capabilityAllowed = policy.allowed_capability_ids.length === 0
+      || policy.allowed_capability_ids.includes(input.capability_id)
+      || Boolean(nativeCapabilityId && policy.allowed_capability_ids.includes(nativeCapabilityId));
+    const resultSchemaAllowed = policy.allowed_result_schema_ids.length === 0
+      || resultSchemas.some(schemaId => policy.allowed_result_schema_ids.includes(schemaId));
+    return capabilityAllowed && resultSchemaAllowed;
+  }).sort();
+}
+
 function canonicalTargetId(targetTokens: readonly string[]): string | undefined {
   const exactIds = [...new Set(targetTokens.filter(token => /^id:[^\s]{1,240}$/.test(token)))];
   if (exactIds.length === 1) return exactIds[0];
@@ -180,13 +238,12 @@ function canonicalTargetId(targetTokens: readonly string[]): string | undefined 
 }
 
 function verificationSubject(snapshot: AssignmentSnapshotV2, targetTokens: readonly string[]): OperationV2 | null {
-  const tokens = new Set(targetTokens);
   return Object.values(snapshot.operations)
     .filter(operation => operation.requested_effect === "apply"
       && operation.persistent_effect === "applied"
       && operation.settlement_state === "settled"
-      && Boolean(operation.target.target_id)
-      && tokens.has(operation.target.target_id!))
+      && !appliedOperationHasVerifiedPostconditionV2(snapshot, operation.operation_id)
+      && operationMatchesTargetIdentityV2(operation, targetTokens))
     .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
       .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0] ?? null;
 }
@@ -201,33 +258,89 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   arguments: unknown;
   opened_at?: string;
 }>): AssignmentKernelOperationLeaseV2 {
+  const snapshot = getAssignmentKernelSnapshotV2(input.snapshot.current_binding.assignment_id);
+  if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.snapshot.current_binding)) {
+    throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
+  }
+  if (snapshot.terminal || snapshot.outcome !== "active") {
+    throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
+  }
   const suggestedEffect = operationEffect(input.classified_effect);
-  const purpose = operationPurpose(input.classified_effect, input.snapshot);
-  if (input.snapshot.unresolved_unknown_operation_ids.length > 0 && purpose !== "reconciliation") {
+  const purpose = operationPurpose(input.classified_effect, snapshot);
+  if (snapshot.unresolved_unknown_operation_ids.length > 0 && purpose !== "reconciliation") {
     throw new Error("assignment_kernel_v2_unknown_effect_requires_reconciliation");
   }
-  const unit = admittedWorkUnit(input.snapshot, suggestedEffect, purpose);
+  if (purpose !== "reconciliation"
+      && Object.keys(criteriaPendingEvaluationV2(snapshot)).length > 0) {
+    throw new Error("assignment_kernel_v2_criterion_evaluation_pending");
+  }
+  const unit = admittedWorkUnit(snapshot, suggestedEffect, purpose);
   const effect = unit.requested_effect;
   const openedAt = input.opened_at ?? new Date().toISOString();
   const operationId = `opv2_${stableHash({
-    assignment_id: input.snapshot.spec.binding.assignment_id,
-    generation: input.snapshot.current_binding.generation,
+    assignment_id: snapshot.spec.binding.assignment_id,
+    generation: snapshot.current_binding.generation,
     provider_turn_id: input.provider_turn_id,
     controller_request_id: String(input.controller_request_id),
     capability_id: input.capability_id
   })}`;
   const targetTokens = [...new Set((input.target_tokens ?? []).map(String).filter(Boolean))].sort();
   const targetId = canonicalTargetId(targetTokens);
-  const verifies = purpose === "verification" ? verificationSubject(input.snapshot, targetTokens) : null;
+  const verifies = purpose === "verification" ? verificationSubject(snapshot, targetTokens) : null;
   if (purpose === "verification" && !verifies) {
     throw new Error("assignment_kernel_v2_verification_target_unbound");
   }
-  const fulfillmentRole = operationFulfillmentRoleForAdmissionV2({
+  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
+  if (verifies) {
+    const verificationAdmission = verificationCapabilityAdmissionV2({
+      apply: {
+        capability_id: verifies.capability_id,
+        method: verifies.request_identity?.method,
+        path: verifies.request_identity?.path,
+        tool: verifies.input.tool
+      },
+      verification: {
+        capability_id: input.capability_id,
+        method: currentIdentity.method,
+        path: currentIdentity.path,
+        tool: object(input.arguments).tool
+      }
+    });
+    if (!verificationAdmission.admissible) {
+      throw new Error(`assignment_kernel_v2_verification_capability_inadmissible:${verificationAdmission.reason}`
+        + `:required=${verificationAdmission.required_semantic_outputs.join(",")}`
+        + `:admissible_readback_paths=${verificationAdmission.admissible_readback_paths.join(",")}`);
+    }
+  }
+  const correctedPredecessor = Object.values(snapshot.operations)
+    .filter(candidate => candidate.settlement_state === "settled"
+      && candidate.persistent_effect === "none"
+      && Boolean(candidate.result?.input_schema_gap)
+      && operationProposalCanResolveInputSchemaGapV2({
+        rejected: candidate,
+        capability_id: input.capability_id,
+        request_identity: currentIdentity
+      })
+      && candidate.capability_id === input.capability_id
+      && !Object.values(snapshot.operations).some(retry => retry.retry_of_operation_id === candidate.operation_id))
+    .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
+      .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0];
+  const proposedFulfillmentRole = operationFulfillmentRoleForAdmissionV2({
     purpose,
     capability_id: input.capability_id
   });
+  const admittedCriterionIds = criterionIdsAdmittedForOperationV2({
+    snapshot,
+    criterion_ids: unit.criterion_ids,
+    capability_id: input.capability_id,
+    operation_effect: effect,
+    request_identity: currentIdentity
+  });
+  const fulfillmentRole = proposedFulfillmentRole === "delegated_task_execution" && admittedCriterionIds.length === 0
+    ? "supporting_control"
+    : proposedFulfillmentRole;
   const advancesCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
-    ? [...new Set(unit.criterion_ids)].sort()
+    ? admittedCriterionIds
     : [];
   const eligibleCriterionIds = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
     ? advancesCriterionIds
@@ -235,29 +348,39 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   const delegationAuthorityId = fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
     ? `delegation:${operationId}`
     : undefined;
-  const currentGaps = deriveProgressGapsV2(input.snapshot);
+  const currentGaps = deriveProgressGapsV2(snapshot);
   const resolvesGapIds = currentGaps
-    .filter((gap) => gap.work_unit_ids.includes(unit.work_unit_id)
-      || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
-      || (purpose === "reconciliation" && gap.kind === "effect_unknown"))
+    .filter((gap) => {
+      if (gap.kind === "verification_required") {
+        return purpose === "verification"
+          && Boolean(verifies)
+          && gap.gap_id === `verification:${verifies!.operation_id}`;
+      }
+      const generallyRelevant = gap.work_unit_ids.includes(unit.work_unit_id)
+        || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
+        || (purpose === "reconciliation" && gap.kind === "effect_unknown");
+      if (!generallyRelevant || gap.kind !== "operation_input_schema_invalid") return generallyRelevant;
+      const rejected = Object.values(snapshot.operations)
+        .find(candidate => candidate.result?.input_schema_gap?.gap_id === gap.gap_id);
+      return Boolean(rejected && operationProposalCanResolveInputSchemaGapV2({
+        rejected,
+        capability_id: input.capability_id,
+        request_identity: currentIdentity
+      }));
+    })
     .map((gap) => gap.gap_id)
     .sort();
-  const currentIdentity = requestIdentity({ capability_id: input.capability_id, arguments: input.arguments });
-  const correctedPredecessor = Object.values(input.snapshot.operations)
-    .filter(candidate => candidate.capability_id === input.capability_id
-      && candidate.settlement_state === "settled"
-      && candidate.persistent_effect === "none"
-      && Boolean(candidate.result?.input_schema_gap)
-      && candidate.request_identity?.method === currentIdentity.method
-      && candidate.request_identity?.path === currentIdentity.path
-      && candidate.request_identity?.request_signature !== currentIdentity.request_signature
-      && !Object.values(input.snapshot.operations).some(retry => retry.retry_of_operation_id === candidate.operation_id))
-    .sort((left, right) => `${right.settled_at ?? right.opened_at}:${right.operation_id}`
-      .localeCompare(`${left.settled_at ?? left.opened_at}:${left.operation_id}`))[0];
+  const relevantInputSchemaGaps = currentGaps.filter((gap) => gap.kind === "operation_input_schema_invalid"
+    && gap.work_unit_ids.includes(unit.work_unit_id));
+  if (fulfillmentRole === "supporting_control"
+      && relevantInputSchemaGaps.length > 0
+      && !resolvesGapIds.some((gapId) => relevantInputSchemaGaps.some((gap) => gap.gap_id === gapId))) {
+    throw new Error("assignment_kernel_v2_input_schema_gap_requires_corrected_operation_or_exact_schema_docs");
+  }
   const operation: OperationV2 = {
     schema: OPERATION_V2_SCHEMA,
     operation_id: operationId,
-    binding: structuredClone(input.snapshot.current_binding),
+    binding: structuredClone(snapshot.current_binding),
     work_unit_id: unit.work_unit_id,
     capability_id: input.capability_id,
     requested_effect: effect,
@@ -272,7 +395,7 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     resolves_gap_ids: resolvesGapIds,
     target: {
       ...(targetId ? { target_id: targetId } : {}),
-      ...(input.snapshot.current_binding.document_fingerprint ? { document_fingerprint: input.snapshot.current_binding.document_fingerprint } : {}),
+      ...(snapshot.current_binding.document_fingerprint ? { document_fingerprint: snapshot.current_binding.document_fingerprint } : {}),
       ...(targetTokens.length > 1 ? { semantic_scope: Object.fromEntries(targetTokens.map((token, index) => [`target_${index}`, token])) } : {})
     },
     input: canonicalInput(input.arguments),
@@ -287,14 +410,15 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
     } : {}),
     ...(verifies ? { verification_of_operation_id: verifies.operation_id } : {}),
     ...(purpose === "reconciliation" ? {
-      reconciliation_of_operation_id: input.snapshot.unresolved_unknown_operation_ids[0]
+      reconciliation_of_operation_id: snapshot.unresolved_unknown_operation_ids[0]
     } : {}),
     opened_at: openedAt,
     deadline_at: boundedDeadline(openedAt)
   };
+  assertOperationDoesNotRepeatSchemaRejectedInputV2({ snapshot, operation });
   appendCurrentAssignmentKernelEventV2({
-    goal_id: input.snapshot.spec.binding.assignment_id,
-    binding: input.snapshot.current_binding,
+    goal_id: snapshot.spec.binding.assignment_id,
+    binding: snapshot.current_binding,
     event_id: `operation-admitted:${operationId}`,
     actor: "codex-app-server",
     occurred_at: openedAt,
@@ -302,8 +426,8 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   });
   return {
     schema: ASSIGNMENT_KERNEL_OPERATION_CONTEXT_V2_SCHEMA,
-    assignment_id: input.snapshot.spec.binding.assignment_id,
-    binding: structuredClone(input.snapshot.current_binding),
+    assignment_id: snapshot.spec.binding.assignment_id,
+    binding: structuredClone(snapshot.current_binding),
     operation_id: operationId,
     capability_id: input.capability_id,
     requested_effect: effect,
@@ -339,6 +463,9 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   const snapshot = getAssignmentKernelSnapshotV2(input.binding.assignment_id);
   if (!snapshot || !sameAssignmentBindingV2(snapshot.current_binding, input.binding)) {
     throw new Error("assignment_kernel_v2_binding_stale_or_mismatched");
+  }
+  if (snapshot.terminal || snapshot.outcome !== "active") {
+    throw new Error("assignment_kernel_v2_operation_admission_after_terminal_outcome");
   }
   const parent = snapshot.operations[input.parent_operation_id];
   if (!parent || !["open", "awaiting_result", "retaining_observation"].includes(parent.settlement_state)) {
@@ -427,6 +554,13 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     settlement_state: "open",
     observation_ids: [],
     verification_operation_ids: [],
+    // A native child of a verification operation is still verifying the exact
+    // settled apply selected by the kernel. Preserve that immutable subject
+    // across the MCP/native seam; topology must not erase verification
+    // causality or force the adapter to rediscover it from payload data.
+    ...(purpose === "verification" && parent.verification_of_operation_id
+      ? { verification_of_operation_id: parent.verification_of_operation_id }
+      : {}),
     opened_at: openedAt,
     deadline_at: boundedDeadline(openedAt)
   };
@@ -495,14 +629,73 @@ function evidenceInput(
   };
 }
 
-function commitInput(envelope: AssignmentKernelMcpResultV2, result: OperationResultV2): ObservationCommitInputV2 | undefined {
+function commitInput(
+  envelope: AssignmentKernelMcpResultV2,
+  result: OperationResultV2,
+  lease: AssignmentKernelOperationLeaseV2,
+  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null
+): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)];
+  const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
+  const operation = snapshot?.operations[lease.operation_id];
+  const verificationSubject = operation?.verification_of_operation_id
+    ? snapshot?.operations[operation.verification_of_operation_id]
+    : undefined;
+  const observedTarget = operationTargetSelectorV2({
+    operation: {
+      capability_id: operation?.capability_id,
+      method: operation?.request_identity?.method,
+      path: operation?.request_identity?.path,
+      tool: operation?.input.tool
+    },
+    value: envelope.observation.raw_payload
+  });
+  const deterministicallyTargetBound = observedTarget.source !== "reviewed_capability_contract"
+    || Boolean(verificationSubject
+      && observedTarget.principal_target_tokens.length > 0
+      && operationMatchesTargetIdentityV2(verificationSubject, observedTarget.principal_target_tokens));
+  const deterministicallySatisfied = Boolean(
+    lease.purpose === "verification"
+      && lease.fulfillment_role === "verification"
+      && verificationSubject?.requested_effect === "apply"
+      && verificationSubject.persistent_effect === "applied"
+      && deterministicallyTargetBound
+      && postconditionSatisfiedByPayloadV2(
+        verificationSubject.input,
+        envelope.observation.raw_payload,
+        { capability_id: verificationSubject.capability_id }
+      )
+  );
+  if (trustedVerification) {
+    if (lease.purpose !== "verification"
+        || lease.fulfillment_role !== "verification"
+        || trustedVerification.operation_id !== lease.operation_id
+        || trustedVerification.schema !== "revit-operator.teammate-verification-assertion/v2"
+        || trustedVerification.mode !== "target_bound_readback"
+        || !/^sha256:[a-f0-9]{64}$/.test(trustedVerification.evidence_sha256)) {
+      throw new Error("assignment_kernel_v2_trusted_verification_invalid");
+    }
+    if (trustedVerification.evidence_sha256 !== `sha256:${result.raw_payload_hash}`) {
+      throw new Error("assignment_kernel_v2_trusted_verification_evidence_mismatch");
+    }
+    if (!deterministicallySatisfied) {
+      throw new Error("assignment_kernel_v2_trusted_verification_postcondition_not_satisfied");
+    }
+  }
+  if (deterministicallySatisfied) {
+    semanticFacts.push({
+      fact_id: "verification.postcondition_satisfied",
+      fact_class: "verification",
+      value: true
+    });
+  }
   return {
     schema: OBSERVATION_COMMIT_INPUT_V2_SCHEMA,
     result_id: result.result_id,
     raw_payload: structuredClone(envelope.observation.raw_payload),
-    semantic_facts: validateFacts(envelope.observation.semantic_facts),
+    semantic_facts: semanticFacts,
     ...(envelope.observation.target_scope ? { target_scope: structuredClone(envelope.observation.target_scope) } : {}),
     ...(envelope.observation.verification_relevance ? { verification_relevance: [...envelope.observation.verification_relevance] } : {})
   };
@@ -524,14 +717,15 @@ function recordNativeDispatchIfNeeded(lease: AssignmentKernelOperationLeaseV2, r
 export function settleAssignmentKernelOperationV2(
   lease: AssignmentKernelOperationLeaseV2,
   rawResult: unknown,
-  observationCommitRuntime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME
+  observationCommitRuntime: AssignmentKernelObservationCommitRuntimeV2 = DEFAULT_OBSERVATION_COMMIT_RUNTIME,
+  trustedVerification?: AssignmentKernelTrustedVerificationV2 | null
 ): AssignmentKernelOperationSettlementV2 {
   const envelope = explicitMcpEnvelope(rawResult);
   const result = unwrapOperationResultV2({ transport: "typed_mcp", structured_content: { operation_result_v2: envelope.operation_result_v2 } });
   if (result.operation_id !== lease.operation_id || !sameAssignmentBindingV2(result.binding, lease.binding)) {
     throw new Error("assignment_kernel_v2_result_binding_mismatch");
   }
-  const commit = commitInput(envelope, result);
+  const commit = commitInput(envelope, result, lease, trustedVerification);
   if (commit) assertEvidenceStoreInputSafe(evidenceInput(lease, result, commit));
   recordNativeDispatchIfNeeded(lease, result);
   appendCurrentAssignmentKernelEventV2({

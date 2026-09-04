@@ -1,3 +1,5 @@
+import { BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA } from "./assignment_kernel_v2_collection.js";
+
 export type PacketJsonRecord = Record<string, unknown>;
 
 function asRecord(value: unknown): PacketJsonRecord {
@@ -11,7 +13,7 @@ export async function loadVerifiedWorkPackets(
   requestJson: (baseUrl: string, pathname: string, options?: RequestInit, timeoutMs?: number) => Promise<PacketJsonRecord>
 ): Promise<PacketJsonRecord> {
   const v2 = asRecord(assignmentKernelV2);
-  const v2AssignmentIds = v2.schema === "revit-operator.benchmark-assignment-kernel-v2/v1"
+  const v2AssignmentIds = v2.schema === BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA
     && Array.isArray(v2.assignment_ids)
     ? [...new Set(v2.assignment_ids.map((value) => String(value ?? "").trim()).filter(Boolean))]
     : [];

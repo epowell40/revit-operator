@@ -19,6 +19,8 @@ import {
 import { assignmentSpecFromGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
+import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
+import { runWithRequestContext } from "../src/request_context.js";
 
 function workspace(fn: () => void): void {
   const previous = process.env.OPERATOR_WORKSPACE_ROOT;
@@ -239,6 +241,39 @@ test("trusted external Assignment start writes exactly one V2 journal when the f
   }
 }));
 
+test("authenticated local shared-token Assignment start receives a trusted V2 principal binding", () => workspace(() => {
+  const previous = process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
+  process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = "1";
+  try {
+    runWithRequestContext({
+      operator_backend_auth: createOperatorBackendAuth("shared_token", "local-assignment-test-token")
+    }, () => {
+      const goal = createGoal({
+        title: "Inspect the local model",
+        objective: "Return the requested local inventory.",
+        acceptance_criteria: ["The local inventory is authoritatively returned."],
+        status: "active",
+        related_session_id: "session-local-v2",
+        created_by: null,
+        work_budget: { requested_effect: "read" }
+      });
+      const binding = startExternalAssignmentRun({
+        goal,
+        sessionId: "session-local-v2",
+        requestedRunId: "local-v2-run",
+        actor: "sidecar"
+      });
+      const snapshot = getAssignmentKernelSnapshotV2(goal.id);
+      assert.equal(binding.kernelVersion, 2);
+      assert.equal(snapshot?.current_binding.principal_id, "local:shared-token");
+      assert.equal(getGoal(goal.id)?.assignment_control_plane?.events.length ?? 0, 0);
+    });
+  } finally {
+    if (previous === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
+    else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previous;
+  }
+}));
+
 test("trusted external Assignment start preserves the legacy path when V2 is disabled", () => workspace(() => {
   const previous = process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
   delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
@@ -304,6 +339,33 @@ test("trusted AssignmentSpec creation gives opaque mutations one stable input va
     if (previous === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
     else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previous;
   }
+}));
+
+test("trusted AssignmentSpec creation gives opaque executable previews the same authenticated input gap", () => workspace(() => {
+  const preview = createGoal({
+    title: "Preview selected note replacement",
+    objective: "Find one project TextNote, report its exact identity, and preview a conditional text replacement that would not create a duplicate. Do not apply it.",
+    acceptance_criteria: ["The requested preview is authoritatively returned."],
+    status: "active",
+    related_session_id: "session-preview-input-v2",
+    created_by: "principal-preview-input-v2",
+    work_budget: { requested_effect: "preview" }
+  });
+  const previewSpec = assignmentSpecFromGoalV2({ goal: preview, run_id: "run-preview-input-v2" });
+  assert.deepEqual(previewSpec.input_variables.map(value => value.variable_id), ["replacement_text"]);
+  assert.deepEqual(previewSpec.criteria[0]?.semantic_fact_requirements, ["task.preview_valid"]);
+
+  const read = createGoal({
+    title: "Explain note replacement",
+    objective: "Explain how a conditional text replacement preview works without executing it.",
+    acceptance_criteria: ["The explanation is returned."],
+    status: "active",
+    related_session_id: "session-read-input-v2",
+    created_by: "principal-read-input-v2",
+    work_budget: { requested_effect: "read" }
+  });
+  const readSpec = assignmentSpecFromGoalV2({ goal: read, run_id: "run-read-input-v2" });
+  assert.deepEqual(readSpec.input_variables, []);
 }));
 
 test("multiple V2 criteria require an explicit semantic-fact contract instead of sharing one generic success fact", () => workspace(() => {

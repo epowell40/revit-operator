@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+  ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA,
+  ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+  ASSIGNMENT_SNAPSHOT_V2_SCHEMA
+} from "@revitoperator/assignment-kernel-v2-contracts";
+import {
+  BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA,
+  modelCallReceiptsFromAssignmentKernelPublicationsV2
+} from "../src/benchmark/assignment_kernel_v2_collection.js";
+import {
   aggregateModelCallReceipts,
   modelCallReceiptsFromSources,
   modelCallReceiptsFromTraces,
@@ -19,6 +29,74 @@ function receipt(overrides: Record<string, unknown> = {}): Record<string, unknow
     tokens: { input_tokens: 100, cached_input_tokens: 60, cache_write_input_tokens: 10,
       output_tokens: 40, reasoning_output_tokens: 20, total_tokens: 140 },
     ...overrides
+  };
+}
+
+function providerCall(callId: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    schema: ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA,
+    call_id: callId,
+    controller_turn_id: "turn-canonical",
+    state: "completed",
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    reasoning_effort: "medium",
+    admitted_at: "2026-09-02T00:00:00.000Z",
+    completed_at: "2026-09-02T00:00:01.000Z",
+    success: true,
+    ...overrides
+  };
+}
+
+function telemetryPublicationBundle(
+  callsInput: Record<string, Record<string, unknown>>,
+  assignmentId: string,
+  assignmentVersion: number
+): Record<string, unknown> {
+  const binding = {
+    assignment_id: assignmentId,
+    run_id: `run-${assignmentId}`,
+    generation: 1,
+    session_id: `session-${assignmentId}`,
+    principal_id: "principal-telemetry"
+  };
+  const calls = Object.fromEntries(Object.entries(callsInput).map(([callId, call]) => [callId, {
+    ...call,
+    schema: ASSIGNMENT_PROVIDER_CALL_V2_SCHEMA,
+    call_id: callId,
+    binding,
+    gap_ids: ["gap:provider-telemetry"],
+    criterion_ids: ["criterion-provider-telemetry"],
+    expected_information: ["provider response and usage"]
+  }]));
+  const callIds = Object.keys(calls);
+  const publication = {
+    schema: ASSIGNMENT_KERNEL_PUBLICATION_V2_SCHEMA,
+    assignment_id: assignmentId,
+    assignment_version: assignmentVersion,
+    snapshot: {
+      schema: ASSIGNMENT_SNAPSHOT_V2_SCHEMA,
+      assignment_version: assignmentVersion,
+      current_binding: binding,
+      provider_call_ids: callIds,
+      provider_calls: calls,
+      in_flight_provider_call_ids: []
+    },
+    provider_ledger: {
+      schema: ASSIGNMENT_PROVIDER_LEDGER_V2_SCHEMA,
+      assignment_id: assignmentId,
+      run_id: binding.run_id,
+      generation: binding.generation,
+      call_ids: callIds,
+      calls,
+      in_flight_call_ids: []
+    }
+  };
+  return {
+    schema: BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA,
+    assignment_ids: [assignmentId],
+    assignments: [publication],
+    failures: []
   };
 }
 
@@ -80,6 +158,23 @@ test("deduplication, exact pricing, and unified configuration comparison are com
   assert.equal(comparison.comparable_configuration, true);
 });
 
+test("duplicate provider receipts merge missing fields but reject contradictory accounting", () => {
+  const merged = modelCallReceiptsFromSources(
+    { model_call_receipts: [receipt({ duration_ms: 250 })] },
+    { model_call_receipts: [receipt({ duration_ms: null, canonical_source: "assignment_kernel_v2_provider_ledger" })] }
+  );
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.duration_ms, 250);
+  assert.equal(merged[0]?.canonical_source, "assignment_kernel_v2_provider_ledger");
+  assert.throws(() => modelCallReceiptsFromSources(
+    { model_call_receipts: [receipt()] },
+    { model_call_receipts: [receipt({
+      tokens: { input_tokens: 100, cached_input_tokens: null, output_tokens: 40,
+        reasoning_output_tokens: 20, total_tokens: 141 }
+    })] }
+  ), /model_call_receipt_conflict:openai:resp_1:total_tokens/);
+});
+
 test("missing usage remains unknown and never becomes zero cost", () => {
   const summary = aggregateModelCallReceipts(modelCallReceiptsFromTraces([{ model_call_receipts: [receipt({
     tokens: { input_tokens: null, cached_input_tokens: null, output_tokens: null,
@@ -88,4 +183,58 @@ test("missing usage remains unknown and never becomes zero cost", () => {
   assert.equal(summary.total_tokens, null);
   assert.equal(summary.cost_usd, null);
   assert.equal(summary.cost_status, "incomplete");
+});
+
+test("benchmark telemetry recovers every provider call from the exact V2 publication ledger", () => {
+  const calls = Object.fromEntries([1, 2, 3].map((index) => [`resp_${index}`, providerCall(`resp_${index}`, {
+    admitted_at: `2026-09-02T00:00:0${index}.000Z`,
+    completed_at: `2026-09-02T00:00:0${index}.250Z`,
+    provider_duration_ms: 250,
+    usage: { input_tokens: index * 100, output_tokens: index * 10, reasoning_tokens: index * 5, total_tokens: index * 110 }
+  })]));
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2(
+    telemetryPublicationBundle(calls, "assignment-telemetry", 40)
+  );
+  assert.deepEqual(recovered.map((entry) => entry.call_id), ["resp_1", "resp_2", "resp_3"]);
+  assert.equal(recovered[0]?.canonical_source, "assignment_kernel_v2_provider_ledger");
+  assert.equal((recovered[2]?.tokens as Record<string, unknown>).reasoning_output_tokens, 15);
+  assert.equal(recovered[2]?.duration_ms, 250);
+  assert.equal(aggregateModelCallReceipts(recovered).call_count, 3);
+});
+
+test("benchmark telemetry retains provider calls after downstream response transport completes", () => {
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2(
+    telemetryPublicationBundle({
+      "resp-transported": providerCall("resp-transported", {
+        state: "response_transport_completed",
+        response_transport_completed_at: "2026-09-02T00:00:02.000Z"
+      })
+    }, "assignment-transported", 41)
+  );
+  assert.deepEqual(recovered.map((entry) => entry.call_id), ["resp-transported"]);
+});
+
+test("V2 telemetry never fabricates per-call provider durations from shared controller-turn admission", () => {
+  const calls = Object.fromEntries([1, 2].map((index) => [`resp_shared_${index}`, providerCall(`resp_shared_${index}`, {
+    controller_turn_id: "turn-shared",
+    admitted_at: "2026-09-02T00:00:00.000Z",
+    completed_at: `2026-09-02T00:00:${index}0.000Z`,
+    usage: { input_tokens: 100, output_tokens: 10, reasoning_tokens: 5, total_tokens: 110 }
+  })]));
+  const recovered = modelCallReceiptsFromAssignmentKernelPublicationsV2(
+    telemetryPublicationBundle(calls, "assignment-shared-admission", 20)
+  );
+  assert.deepEqual(recovered.map((entry) => entry.duration_ms), [null, null]);
+});
+
+test("malformed V2 telemetry publication fails explicitly instead of impersonating an absent provider ledger", () => {
+  const bundle = telemetryPublicationBundle({
+    "resp-bound": providerCall("resp-bound")
+  }, "assignment-bound", 7) as { assignments: Array<Record<string, unknown>> } & Record<string, unknown>;
+  const publication = bundle.assignments[0]!;
+  const ledger = publication.provider_ledger as Record<string, unknown>;
+  assert.throws(() => modelCallReceiptsFromAssignmentKernelPublicationsV2({
+    ...bundle,
+    assignments: [{ ...publication, provider_ledger: { ...ledger, run_id: "run-foreign" } }]
+  }), /assignment_kernel_v2_telemetry_invalid:publication:0:assignment_kernel_v2_publication_invalid:provider_ledger_binding/);
 });

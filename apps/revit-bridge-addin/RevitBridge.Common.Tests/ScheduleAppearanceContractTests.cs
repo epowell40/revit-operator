@@ -23,13 +23,34 @@ namespace RevitBridge.Common.Tests
             Assert.DoesNotContain("UseStripedRowsOnSheets", block);
         }
 
+        [Fact]
+        public void ScheduleDetailPublishesTypedConfigurationEvidenceInsteadOfInferringItFromRows()
+        {
+            var source = ReadRepoFile("apps", "revit-bridge-addin", "RevitBridge", "Handlers", "SchedulesHandler.cs");
+
+            Assert.Contains("filterDefinitions = BuildFilterDefinitions", source);
+            Assert.Contains("filterDefinitionsComplete", source);
+            Assert.Contains("definition.GetFilter(index)", source);
+            Assert.Contains("field = field == null ? null : ReadFieldName(field, doc)", source);
+            Assert.Contains("op = NormalizeFilterType(filter.FilterType)", source);
+            Assert.Contains("value = ReadFilterValue(filter)", source);
+            Assert.Contains("appearance = BuildAppearance(schedule)", source);
+            Assert.Contains("settings = BuildSettings(schedule)", source);
+        }
+
         private static string ReadRepoFile(params string[] relativeSegments)
         {
+            var layouts = relativeSegments.Length > 0 && relativeSegments[0] == "apps"
+                ? new[] { relativeSegments, relativeSegments.Skip(1).ToArray() }
+                : new[] { relativeSegments, new[] { "apps" }.Concat(relativeSegments).ToArray() };
             var directory = new DirectoryInfo(AppContext.BaseDirectory);
             while (directory != null)
             {
-                var candidate = Path.Combine(new[] { directory.FullName }.Concat(relativeSegments).ToArray());
-                if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                foreach (var layout in layouts)
+                {
+                    var candidate = Path.Combine(new[] { directory.FullName }.Concat(layout).ToArray());
+                    if (File.Exists(candidate)) return File.ReadAllText(candidate);
+                }
                 directory = directory.Parent;
             }
             throw new FileNotFoundException("Could not locate repository source file.", Path.Combine(relativeSegments));

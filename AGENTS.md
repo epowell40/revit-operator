@@ -24,6 +24,19 @@ REVIT_OPERATOR_MODE=development
 
 If a change touches hosted auth, billing, licensing, customer data, production deployments, telemetry, file storage, or secrets, default to the private repo unless the user explicitly says to open-source it.
 
+## Local-first development
+
+Follow `docs/LOCAL_DEVELOPMENT_WORKFLOW.md`.
+
+- Work on one branch and use local commits as iteration checkpoints.
+- Build, restart, and test against the local backend at
+  `http://127.0.0.1:7007` without pushing every experiment.
+- Do not create a PR per candidate or use GitHub Actions as the inner test loop.
+- After the coherent batch passes applicable deterministic and real Revit UI
+  validation, make one consolidated push and use one PR/CI checkpoint.
+- Hosted deployment and EC2 iteration belong in the private integration repo;
+  do not deploy public work-in-progress from this repository.
+
 This public core is AGPL-3.0-or-later. Commercial licensing is handled separately by BIMTools and should not be implemented by adding proprietary restrictions to the public license.
 
 ## EPIC-0437 live Revit evidence sessions

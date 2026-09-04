@@ -519,7 +519,7 @@ test("direct authorization binds distinct compact source and normalized canonica
   assert.equal(resubmitted.body_sha256, authorization.body_sha256);
 });
 
-test("direct authorization rejects caller trust material, malformed contracts, request mismatches, ambiguity, denial, and laboratory mode", () => {
+test("direct authorization rejects caller trust material, malformed contracts, request mismatches, ambiguity, and denial", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-direct-deny-"));
   const allowed = writePolicy(root, { request: {} });
   const exact = directRequest();
@@ -546,9 +546,33 @@ test("direct authorization rejects caller trust material, malformed contracts, r
   expectDirectError(() => authorizeDirectRevitExecution(exact, certifiedEnv(denied)), 403, "CERTIFICATION_POLICY_DENIED");
   const ambiguous = writePolicy(root, { request: {}, secondEffect: true });
   expectDirectError(() => authorizeDirectRevitExecution(exact, certifiedEnv(ambiguous)), 403, "CERTIFICATION_POLICY_DENIED");
-  expectDirectError(() => authorizeDirectRevitExecution(exact, certifiedEnv(allowed, {
+  const laboratory = authorizeDirectRevitExecution(directRequest({ runtime_mode: "development" }), certifiedEnv(allowed, {
     REVIT_OPERATOR_MODE: "development",
-    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory"
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "codex"
+  }));
+  assert.equal(laboratory.runtime_mode, "development");
+  assert.equal(laboratory.exposure_profile, "general");
+  assert.equal(laboratory.policy_trust_source, "deployment");
+  assert.notEqual(laboratory.policy_hash, allowed.policyHash);
+  const localRevitHost = authorizeDirectRevitExecution(directRequest(), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "codex"
+  }));
+  assert.equal(localRevitHost.runtime_mode, "local");
+  assert.equal(localRevitHost.exposure_profile, "general");
+  assert.equal(localRevitHost.policy_trust_source, "deployment");
+  assert.notEqual(localRevitHost.policy_hash, allowed.policyHash);
+  expectDirectError(() => authorizeDirectRevitExecution(directRequest({ runtime_mode: "production" }), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "codex"
+  })), 403, "CERTIFICATION_RUNTIME_PROFILE_MISMATCH");
+  expectDirectError(() => authorizeDirectRevitExecution(directRequest({ runtime_mode: "development" }), certifiedEnv(allowed, {
+    REVIT_OPERATOR_MODE: "development",
+    OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory",
+    OPERATOR_BRAIN: "disabled"
   })), 403, "CERTIFICATION_RUNTIME_PROFILE_MISMATCH");
   assert.equal(authorizeDirectRevitExecution(exact, certifiedEnv(allowed, {
     REVIT_OPERATOR_MODE: "Development",

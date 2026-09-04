@@ -19,6 +19,7 @@ import {
   type OperationResultV2,
   type OperationV2
 } from "../src/domain/assignment-kernel/index.js";
+import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
 
 const binding: AssignmentBindingV2 = {
   assignment_id: "assignment-progress",
@@ -221,6 +222,22 @@ test("all required criteria pass and controller terminates immediately", () => {
   assert.deepEqual({ decision: decision.decision, outcome: decision.decision === "terminal" ? decision.outcome : null }, { decision: "terminal", outcome: "complete" });
 });
 
+test("terminal handoff replaces stale provider prose with the canonical useful result", () => {
+  const j = journal();
+  settleObservation(j);
+  j.append(event(j, { event_type: "criterion_evaluated", evaluation: evaluation() }));
+  const terminal = {
+    ...j.snapshot(),
+    terminal: true,
+    outcome: "complete" as const,
+    terminal_reason: "criteria_satisfied",
+    finished_at: "2026-08-26T20:00:09.000Z"
+  };
+  const message = finalCodexAssignmentMessageV2(terminal, "Provider says it may continue reasoning.");
+  assert.match(message, /Inventory total: 3/);
+  assert.doesNotMatch(message, /continue reasoning/);
+});
+
 test("active operation suppresses another reasoning turn", () => {
   const j = journal();
   j.append(event(j, { event_type: "operation_admitted", operation: operation() }));
@@ -362,6 +379,522 @@ test("repeated no-progress epochs exhaust liveness without creating success", ()
   const decision = decideAssignmentProgressV2({ snapshot: j.snapshot(), budget, now: "2026-08-26T20:00:10.000Z" });
   assert.equal(decision.decision, "blocked");
   if (decision.decision === "blocked") assert.equal(decision.reason, "no_progress_budget_exhausted");
+});
+
+test("Candidate 25 flight 3 gives one bounded execution opportunity after the first structured strategy selection", () => {
+  const initial = journal().snapshot();
+  const searchOperation: OperationV2 = {
+    ...operation("operation-search"),
+    capability_id: "revit_search_tools",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: { query: "inventory air terminals" },
+    dispatch_state: "not_dispatched",
+    settlement_state: "settled",
+    result: {
+      ...result("operation-search"),
+      status: "completed_without_native_dispatch",
+      dispatch_state: "not_dispatched",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_search_tools/v2",
+      observation_required: false,
+      raw_payload_hash: undefined
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const afterSearch = {
+    ...initial,
+    operations: { [searchOperation.operation_id]: searchOperation },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const searchEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterSearch,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [searchOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(searchEpoch.genuine_progress, false);
+
+  const beforeStrategy = { ...afterSearch, progress_epochs: [searchEpoch] };
+  const strategyOperation: OperationV2 = {
+    ...operation("operation-strategy"),
+    capability_id: "operator_record_execution_strategy",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: {
+      schema: "revit-operator.execution-strategy-evidence.v1",
+      selected_substrate: "typed_capability",
+      reason: "One typed read capability can return the requested inventory."
+    },
+    dispatch_state: "not_dispatched",
+    settlement_state: "settled",
+    result: {
+      ...result("operation-strategy"),
+      status: "completed_without_native_dispatch",
+      dispatch_state: "not_dispatched",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/operator_record_execution_strategy/v2",
+      observation_required: false,
+      raw_payload_hash: undefined
+    },
+    settled_at: "2026-08-26T20:00:03.000Z"
+  };
+  const afterStrategy = {
+    ...beforeStrategy,
+    operations: {
+      ...beforeStrategy.operations,
+      [strategyOperation.operation_id]: strategyOperation
+    }
+  };
+  const strategyEpoch = buildProgressEpochV2({
+    before: beforeStrategy,
+    after: afterStrategy,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [strategyOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:03.000Z"
+  });
+  const finalSnapshot = { ...afterStrategy, progress_epochs: [searchEpoch, strategyEpoch] };
+  const decision = decideAssignmentProgressV2({ snapshot: finalSnapshot, budget, now: "2026-08-26T20:00:04.000Z" });
+
+  assert.equal(strategyEpoch.genuine_progress, true);
+  assert.deepEqual(strategyEpoch.progress_reasons, ["execution_strategy_selected"]);
+  assert.equal(decision.decision, "admit_reasoning_turn");
+
+  const repeatedStrategy: OperationV2 = {
+    ...strategyOperation,
+    operation_id: "operation-strategy-repeat",
+    input: {
+      ...strategyOperation.input,
+      reason: "Different prose cannot turn the same strategy selection into new progress."
+    },
+    result: {
+      ...strategyOperation.result!,
+      result_id: "result-operation-strategy-repeat",
+      operation_id: "operation-strategy-repeat"
+    }
+  };
+  const beforeRepeat = finalSnapshot;
+  const afterRepeat = {
+    ...beforeRepeat,
+    operations: {
+      ...beforeRepeat.operations,
+      [repeatedStrategy.operation_id]: repeatedStrategy
+    }
+  };
+  const repeatedEpoch = buildProgressEpochV2({
+    before: beforeRepeat,
+    after: afterRepeat,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [repeatedStrategy.operation_id],
+    recorded_at: "2026-08-26T20:00:04.000Z"
+  });
+  assert.equal(repeatedEpoch.genuine_progress, false);
+  assert.deepEqual(repeatedEpoch.progress_reasons, []);
+});
+
+test("Candidate 50 durable capability knowledge advances once and equivalent search output does not reset liveness", () => {
+  const initial = journal().snapshot();
+  const searchOperation: OperationV2 = {
+    ...operation("operation-search-control"),
+    capability_id: "revit_search_tools",
+    purpose: "discovery",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: { query: "find and replace one text note" },
+    dispatch_state: "dispatched",
+    dispatch_authority: "mcp",
+    settlement_state: "settled",
+    observation_ids: ["observation-search-control"],
+    result: {
+      ...result("operation-search-control"),
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_search_tools/v2",
+      raw_payload_hash: "hash-search-control"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const searchObservation: ObservationV2 = {
+    ...observation("operation-search-control", "observation-search-control"),
+    authority: "operator-mcp-transport",
+    result_schema_id: "operator-capability/revit_search_tools/v2",
+    raw_payload_hash: "hash-search-control",
+    facts: [
+      { fact_id: "control.result_available", fact_class: "control", value: true },
+      {
+        fact_id: "control.capability_available",
+        fact_class: "control",
+        value: true,
+        cardinality: "many",
+        identity_dimensions: ["capability_id", "method", "path"],
+        dimensions: { capability_id: "revit_search_tools", method: "GET", path: "/revit/find-text-notes" }
+      },
+      {
+        fact_id: "control.capability_available",
+        fact_class: "control",
+        value: true,
+        cardinality: "many",
+        identity_dimensions: ["capability_id", "method", "path"],
+        dimensions: { capability_id: "revit_search_tools", method: "POST", path: "/revit/replace-text-note" }
+      }
+    ],
+    verification_relevance: ["control"],
+    fulfillment_role: "supporting_control",
+    evidence_class: "control",
+    capability_id: "revit_search_tools",
+    eligible_criterion_ids: []
+  };
+  const afterSearch = {
+    ...initial,
+    operations: { [searchOperation.operation_id]: searchOperation },
+    observations: { [searchObservation.observation_id]: searchObservation },
+    observation_versions: { [searchObservation.observation_id]: 2 },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const searchEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterSearch,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [searchOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(searchEpoch.genuine_progress, true);
+  assert.deepEqual(searchEpoch.progress_reasons, ["controller_knowledge_added"]);
+  assert.equal(afterSearch.criteria["criterion-inventory"], undefined);
+  assert.equal(decideAssignmentProgressV2({
+    snapshot: { ...afterSearch, progress_epochs: [searchEpoch] },
+    budget,
+    now: "2026-08-26T20:00:03.000Z"
+  }).decision, "admit_reasoning_turn");
+
+  const repeatedOperation: OperationV2 = {
+    ...searchOperation,
+    operation_id: "operation-search-control-repeat",
+    observation_ids: ["observation-search-control-repeat"],
+    result: {
+      ...searchOperation.result!,
+      result_id: "result-operation-search-control-repeat",
+      operation_id: "operation-search-control-repeat",
+      raw_payload_hash: "hash-search-control-repeat"
+    }
+  };
+  const repeatedObservation: ObservationV2 = {
+    ...searchObservation,
+    observation_id: "observation-search-control-repeat",
+    operation_id: repeatedOperation.operation_id,
+    raw_payload_hash: "hash-search-control-repeat"
+  };
+  const beforeRepeat = { ...afterSearch, progress_epochs: [searchEpoch] };
+  const afterRepeat = {
+    ...beforeRepeat,
+    operations: { ...beforeRepeat.operations, [repeatedOperation.operation_id]: repeatedOperation },
+    observations: { ...beforeRepeat.observations, [repeatedObservation.observation_id]: repeatedObservation },
+    observation_versions: { ...beforeRepeat.observation_versions, [repeatedObservation.observation_id]: 3 }
+  };
+  const repeatedEpoch = buildProgressEpochV2({
+    before: beforeRepeat,
+    after: afterRepeat,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [repeatedOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:04.000Z"
+  });
+  assert.equal(repeatedEpoch.genuine_progress, false);
+  assert.deepEqual(repeatedEpoch.progress_reasons, []);
+});
+
+test("Candidate 55 a new focused evidence selection resets liveness once while an unrelated next step does not", () => {
+  const initial = journal().snapshot();
+  const evidenceOperation: OperationV2 = {
+    ...operation("operation-focused-evidence"),
+    capability_id: "operator_retrieve_evidence",
+    purpose: "evidence_read",
+    fulfillment_role: "supporting_control",
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    input: { evidenceId: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG", fields: ["payload.items"] },
+    dispatch_state: "dispatched",
+    dispatch_authority: "mcp",
+    settlement_state: "settled",
+    observation_ids: ["observation-focused-evidence"],
+    result: {
+      ...result("operation-focused-evidence"),
+      authority: "operator-evidence-store",
+      result_schema_id: "operator-capability/operator_retrieve_evidence/v2",
+      raw_payload_hash: "hash-focused-evidence"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const evidenceObservation: ObservationV2 = {
+    ...observation("operation-focused-evidence", "observation-focused-evidence"),
+    authority: "operator-evidence-store",
+    result_schema_id: "operator-capability/operator_retrieve_evidence/v2",
+    raw_payload_hash: "hash-focused-evidence",
+    facts: [{
+      fact_id: "control.evidence_selection_available",
+      fact_class: "control",
+      value: true,
+      cardinality: "many",
+      identity_dimensions: ["capability_id", "evidence_id", "selection_path"],
+      dimensions: {
+        capability_id: "operator_retrieve_evidence",
+        evidence_id: "ev1_BE1x2Z1tkNa3F6VVtnPi_cEvu7lCs-MG",
+        selection_path: "payload.items"
+      }
+    }],
+    verification_relevance: ["control"],
+    fulfillment_role: "supporting_control",
+    evidence_class: "control",
+    capability_id: "operator_retrieve_evidence",
+    eligible_criterion_ids: []
+  };
+  const afterEvidence = {
+    ...initial,
+    operations: { [evidenceOperation.operation_id]: evidenceOperation },
+    observations: { [evidenceObservation.observation_id]: evidenceObservation },
+    observation_versions: { [evidenceObservation.observation_id]: 2 },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const evidenceEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterEvidence,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [evidenceOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(evidenceEpoch.genuine_progress, true);
+  assert.deepEqual(evidenceEpoch.progress_reasons, ["controller_knowledge_added"]);
+
+  const supportRead = {
+    ...operation("operation-duplicate-check"),
+    purpose: "discovery" as const,
+    fulfillment_role: "supporting_control" as const,
+    delegation_authority_id: undefined,
+    advances_criterion_ids: [],
+    eligible_criterion_ids: [],
+    settlement_state: "settled" as const,
+    result: result("operation-duplicate-check"),
+    settled_at: "2026-08-26T20:00:03.000Z"
+  };
+  const afterSupportRead = {
+    ...afterEvidence,
+    operations: { ...afterEvidence.operations, [supportRead.operation_id]: supportRead }
+  };
+  const supportEpoch = buildProgressEpochV2({
+    before: afterEvidence,
+    after: afterSupportRead,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [supportRead.operation_id],
+    recorded_at: "2026-08-26T20:00:03.000Z"
+  });
+  assert.equal(supportEpoch.genuine_progress, false);
+  const decision = decideAssignmentProgressV2({
+    snapshot: { ...afterSupportRead, progress_epochs: [evidenceEpoch, supportEpoch] },
+    budget,
+    now: "2026-08-26T20:00:04.000Z"
+  });
+  assert.equal(decision.decision, "admit_reasoning_turn",
+    "one later support step must leave a bounded turn for the exact task-effect operation");
+});
+
+test("Candidate 13 flight 3 preserves one correction turn when a structured schema gap follows unrelated no-progress", () => {
+  const initial = journal().snapshot();
+  const scheduleOperation: OperationV2 = {
+    ...operation("operation-schedule"),
+    capability_id: "revit_list_schedules",
+    input: { action: "list", max: 200 },
+    settlement_state: "settled",
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: "result-operation-schedule",
+      operation_id: "operation-schedule",
+      binding,
+      status: "failed_before_dispatch",
+      dispatch_state: "not_dispatched",
+      persistent_effect: "none",
+      native_transaction_state: "not_applicable",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_list_schedules/v2",
+      observation_required: false,
+      error_code: "mcp_tool_failed",
+      completed_at: "2026-08-26T20:00:02.000Z"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const afterSchedule = {
+    ...initial,
+    operations: { [scheduleOperation.operation_id]: scheduleOperation },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const scheduleEpoch = buildProgressEpochV2({
+    before: initial,
+    after: afterSchedule,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [scheduleOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:02.000Z"
+  });
+  assert.equal(scheduleEpoch.genuine_progress, false);
+
+  const beforeInvalid = { ...afterSchedule, progress_epochs: [scheduleEpoch] };
+  const invalidOperation: OperationV2 = {
+    ...operation("operation-invalid-quantify"),
+    capability_id: "revit_call_tool",
+    request_identity: {
+      capability_id: "revit_call_tool",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "invalid-quantify-signature"
+    },
+    input: {
+      method: "POST",
+      path: "/revit/quantify",
+      body: { intent: "Count every air terminal" }
+    },
+    settlement_state: "settled",
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: "result-operation-invalid-quantify",
+      operation_id: "operation-invalid-quantify",
+      binding,
+      status: "failed_before_dispatch",
+      dispatch_state: "not_dispatched",
+      persistent_effect: "none",
+      native_transaction_state: "not_applicable",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_call_tool/v2",
+      observation_required: false,
+      error_code: "mcp_tool_failed",
+      input_schema_gap: {
+        schema: "revit-operator.operation-input-schema-gap/v2",
+        gap_id: "input-schema:operation-invalid-quantify",
+        operation_id: "operation-invalid-quantify",
+        capability_id: "revit_call_tool",
+        input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+        input_schema_digest: "quantify-input-schema-digest",
+        method: "POST",
+        path: "/revit/quantify",
+        request_signature: "invalid-quantify-signature",
+        dispatch: false,
+        effect: "none",
+        issues: [{
+          field_path: "body.intent",
+          expected_type: "enum",
+          actual_type: "string",
+          safe_correction_eligibility: "provider_corrected_arguments_required",
+          correction_action: "provider_resubmit",
+          expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+        }]
+      },
+      completed_at: "2026-08-26T20:00:03.000Z"
+    },
+    settled_at: "2026-08-26T20:00:03.000Z"
+  };
+  const afterInvalid = {
+    ...beforeInvalid,
+    operations: {
+      ...beforeInvalid.operations,
+      [invalidOperation.operation_id]: invalidOperation
+    }
+  };
+  const invalidEpoch = buildProgressEpochV2({
+    before: beforeInvalid,
+    after: afterInvalid,
+    stated_gap_ids: ["criterion:criterion-inventory"],
+    admitted_operation_ids: [invalidOperation.operation_id],
+    recorded_at: "2026-08-26T20:00:03.000Z"
+  });
+  const finalSnapshot = { ...afterInvalid, progress_epochs: [scheduleEpoch, invalidEpoch] };
+  const decision = decideAssignmentProgressV2({ snapshot: finalSnapshot, budget, now: "2026-08-26T20:00:04.000Z" });
+
+  assert.equal(invalidEpoch.genuine_progress, true);
+  assert.deepEqual(invalidEpoch.progress_reasons, ["correction_gap_identified"]);
+  assert.equal(decision.decision, "admit_reasoning_turn");
+  if (decision.decision === "admit_reasoning_turn") {
+    assert.deepEqual(decision.gap_ids, ["criterion:criterion-inventory", "input-schema:operation-invalid-quantify"]);
+    assert.ok(decision.expected_information.some((information) => information.includes("body.intent:enum")
+      && information.includes("count")
+      && information.includes("count_and_list")),
+    "Candidate 28 replay: the bounded correction turn must receive the exact enum choices already known to the controller");
+  }
+});
+
+test("an identical schema-invalid proposal cannot mint another correction gap", () => {
+  const rejected: OperationV2 = {
+    ...operation("operation-rejected"),
+    capability_id: "revit_call_tool",
+    request_identity: {
+      capability_id: "revit_call_tool",
+      method: "POST",
+      path: "/revit/quantify",
+      request_signature: "same-invalid-signature"
+    },
+    settlement_state: "settled",
+    result: {
+      schema: OPERATION_RESULT_V2_SCHEMA,
+      result_id: "result-operation-rejected",
+      operation_id: "operation-rejected",
+      binding,
+      status: "failed_before_dispatch",
+      dispatch_state: "not_dispatched",
+      persistent_effect: "none",
+      native_transaction_state: "not_applicable",
+      authority: "operator-mcp-transport",
+      result_schema_id: "operator-capability/revit_call_tool/v2",
+      observation_required: false,
+      error_code: "mcp_tool_failed",
+      input_schema_gap: {
+        schema: "revit-operator.operation-input-schema-gap/v2",
+        gap_id: "input-schema:operation-rejected",
+        operation_id: "operation-rejected",
+        capability_id: "revit_call_tool",
+        input_schema_id: "operator-native/POST:/revit/quantify/input/v1",
+        input_schema_digest: "quantify-input-schema-digest",
+        method: "POST",
+        path: "/revit/quantify",
+        request_signature: "same-invalid-signature",
+        dispatch: false,
+        effect: "none",
+        issues: [{
+          field_path: "body.intent",
+          expected_type: "enum",
+          actual_type: "string",
+          safe_correction_eligibility: "provider_corrected_arguments_required",
+          correction_action: "provider_resubmit",
+          expected_constraint: { kind: "enum", allowed_values: ["count", "list", "count_and_list"] }
+        }]
+      },
+      completed_at: "2026-08-26T20:00:02.000Z"
+    },
+    settled_at: "2026-08-26T20:00:02.000Z"
+  };
+  const snapshot = {
+    ...journal().snapshot(),
+    operations: { [rejected.operation_id]: rejected },
+    in_flight_operation_ids: [],
+    quiescent: true
+  };
+  const identical: OperationV2 = {
+    ...operation("operation-identical-retry"),
+    capability_id: "revit_call_tool",
+    request_identity: structuredClone(rejected.request_identity),
+    resolves_gap_ids: ["criterion:criterion-inventory", "input-schema:operation-rejected"]
+  };
+  assert.throws(
+    () => assertOperationAdvancesProgressV2({ snapshot, operation: identical, budget }),
+    /identical_input_schema_retry/
+  );
 });
 
 test("unknown effect blocks truthfully when bounded reconciliation is exhausted", () => {

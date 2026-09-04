@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import {
+  parseEvidenceRetrievalSelectorV1,
+  selectExactEvidenceTargetsV1
+} from "@revitoperator/assignment-kernel-v2-contracts";
 import { ensureWorkspaceLayout, resolveFileUnderWorkspace } from "../workspace.js";
 import { atomicAppendJsonlLine } from "../persistence/jsonl.js";
 import {
@@ -341,11 +345,31 @@ function readSettledEvidenceBytes(ref: EvidenceRefV1): Buffer {
 
 function selectPath(root: unknown, dottedPath: string): unknown {
   if (!dottedPath || dottedPath === "$" || dottedPath.includes("..") || /[\\/\u0000]/.test(dottedPath)) throw new Error("Invalid typed field path.");
+  const segments = dottedPath.replace(/^\$\.?/, "").split(".");
+  if (segments.some(segment => !segment || segment === "__proto__" || segment === "constructor" || segment === "prototype")) {
+    throw new Error("Invalid typed field path.");
+  }
   let value: unknown = root;
-  for (const segment of dottedPath.replace(/^\$\.?/, "").split(".")) {
-    if (!segment || segment === "__proto__" || segment === "constructor" || segment === "prototype") throw new Error("Invalid typed field path.");
-    if (!value || typeof value !== "object" || Array.isArray(value) || !Object.prototype.hasOwnProperty.call(value, segment)) return null;
-    value = (value as Record<string, unknown>)[segment];
+  for (let index = 0; index < segments.length;) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const row = value as Record<string, unknown>;
+    let matchedKey: string | null = null;
+    let nextIndex = index;
+    // Projections flatten object paths with dots. A trusted result can also
+    // contain a literal dotted key (for example the `payload.items` key in an
+    // evidence-retrieval selection), so prefer the longest exact own-property
+    // match at each level. This keeps every advertised projection selector
+    // retrievable without interpreting code or weakening scope/hash checks.
+    for (let end = segments.length; end > index; end -= 1) {
+      const candidate = segments.slice(index, end).join(".");
+      if (!Object.prototype.hasOwnProperty.call(row, candidate)) continue;
+      matchedKey = candidate;
+      nextIndex = end;
+      break;
+    }
+    if (!matchedKey) return null;
+    value = row[matchedKey];
+    index = nextIndex;
   }
   return value;
 }
@@ -355,25 +379,23 @@ function retrievalRoot(value: unknown): unknown {
   if (!row) return value;
   const looksLikeMcpEnvelope = Array.isArray(row.content)
     || Object.prototype.hasOwnProperty.call(row, "structuredContent");
-  if (!looksLikeMcpEnvelope) return value;
+  if (!looksLikeMcpEnvelope) {
+    if (Object.prototype.hasOwnProperty.call(row, "payload")) return value;
+    // OperationResultV2 persists the normalized semantic payload itself rather
+    // than the original MCP envelope. Keep direct root selectors available for
+    // historical callers while exposing the same payload.<field> contract that
+    // projections advertise for MCP-carried JSON.
+    return { ...row, payload: row };
+  }
   const structured = extractMcpStructuredPayload(value);
   const { payload: _untrustedPayload, ...envelope } = row;
   return structured ? { ...envelope, payload: structured.payload } : envelope;
 }
 
-function filterTargets(value: unknown, targets: Set<string>): unknown {
-  if (Array.isArray(value)) return value.filter(item => {
-    const text = JSON.stringify(item);
-    return [...targets].some(target => text.includes(target));
-  });
-  const row = value && typeof value === "object" ? value as Record<string, unknown> : null;
-  if (!row) return value;
-  return Object.fromEntries(Object.entries(row).filter(([, item]) => [...targets].some(target => JSON.stringify(item).includes(target))));
-}
-
 export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRetrievalResult {
   const purpose = safeBounded(request.purpose, 300, "purpose", true);
   if (/^(?:all|all evidence|everything|dump all evidence)$/i.test(purpose)) throw new Error("Focused evidence retrieval purpose is required.");
+  const selector = parseEvidenceRetrievalSelectorV1(request);
   const maxBytes = Math.max(64, Math.min(Number.isSafeInteger(request.max_bytes) ? request.max_bytes! : 16_384, 1_048_576));
   const ref = readRef(request.evidence_id);
   assertScope(ref, request);
@@ -382,30 +404,33 @@ export function retrieveEvidence(request: EvidenceRetrievalRequest): EvidenceRet
   let complete = false;
   const parsed = parseRaw(bytes, ref.media_type);
   const selectable = retrievalRoot(parsed);
-  if (request.image === true) {
+  if (selector.kind === "image") {
     if (!ref.media_type.startsWith("image/")) throw new Error("Selected evidence is not an image.");
     if (bytes.length > maxBytes) throw new Error("Selected image exceeds the authorized retrieval byte limit.");
     selection = { media_type: ref.media_type, data_base64: bytes.toString("base64") };
     complete = true;
-  } else if (request.text_range) {
-    const start = Math.max(0, Math.trunc(request.text_range.start));
-    const length = Math.max(1, Math.min(Math.trunc(request.text_range.length), maxBytes));
+  } else if (selector.kind === "text_range") {
+    const start = selector.text_range.start;
+    const length = Math.min(selector.text_range.length, maxBytes);
     selection = bytes.subarray(start, Math.min(bytes.length, start + length)).toString("utf8");
     complete = start === 0 && length >= bytes.length;
-  } else if (request.item_range) {
-    const array = selectPath(selectable, request.item_range.path);
+  } else if (selector.kind === "item_range") {
+    const array = selectPath(selectable, selector.item_range.path);
     if (!Array.isArray(array)) throw new Error("item_range.path must select an array.");
-    const start = Math.max(0, Math.trunc(request.item_range.start));
-    const count = Math.max(1, Math.min(Math.trunc(request.item_range.count), 256));
+    const start = selector.item_range.start;
+    const count = selector.item_range.count;
     selection = array.slice(start, start + count);
     complete = start === 0 && count >= array.length;
-  } else if (Array.isArray(request.fields) && request.fields.length > 0) {
-    if (request.fields.length > 64) throw new Error("At most 64 typed fields may be retrieved.");
-    selection = Object.fromEntries(request.fields.map(field => [field, selectPath(selectable, field)]));
-  } else if (Array.isArray(request.target_subset) && request.target_subset.length > 0) {
-    selection = filterTargets(selectable, new Set(request.target_subset.map(target => safeBounded(target, 160, "target_subset", true))));
+  } else if (selector.kind === "fields") {
+    selection = Object.fromEntries(selector.fields.map(field => [field, selectPath(selectable, field)]));
   } else {
-    throw new Error("Focused retrieval requires fields, item_range, text_range, target_subset, or image selection.");
+    const selectableRecord = selectable && typeof selectable === "object" && !Array.isArray(selectable)
+      ? selectable as Record<string, unknown>
+      : null;
+    const semanticPayload = selectableRecord && Object.prototype.hasOwnProperty.call(selectableRecord, "payload")
+      ? selectableRecord.payload
+      : selectable;
+    selection = selectExactEvidenceTargetsV1(semanticPayload, selector.target_subset).selection;
   }
   const selectedBytes = Buffer.byteLength(JSON.stringify(selection), "utf8");
   if (selectedBytes > maxBytes) throw new Error(`Focused evidence selection exceeds ${maxBytes}-byte limit.`);
