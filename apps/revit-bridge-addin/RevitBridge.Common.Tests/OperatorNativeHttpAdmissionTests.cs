@@ -509,6 +509,8 @@ namespace RevitBridge.Common.Tests
 
             Assert.Contains("api/revit-direct/authorize-execution", client);
             Assert.Contains("deadline.CancelAfter(TimeSpan.FromSeconds(20));", client);
+            Assert.Contains("OperatorNativeAuthorizationTransport.SendAsync(() => SendWithAuthAsync(", client);
+            Assert.Equal(1, Regex.Matches(client, "OperatorNativeAuthorizationTransport.SendAsync").Count);
             Assert.Contains("body_json = request.BodyJson", client);
             Assert.Contains("var responseByteLimit = resp.IsSuccessStatusCode", client);
             Assert.Contains("? OperatorNativeHttpAuthorizationVerifier.MaximumSuccessResponseUtf8Bytes", client);

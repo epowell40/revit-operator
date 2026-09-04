@@ -28,6 +28,7 @@
     "candidate53_v2_native_evidence_authority.test.ts",
     "codex_app_server_compatibility.test.ts",
     "dynamic_runtime_orchestration.test.ts",
+    "direct_revit_execution_authorization.test.ts",
     "endpoint_mutability.test.ts",
     "evidence_projection.test.ts",
     "evidence_retrieval_selector_contract.test.ts",
@@ -68,6 +69,7 @@
   "dotnet_test_classes": [
     "OperatorApprovalPolicyTests",
     "OperatorNativeExecutionAttestationAuthorityTests",
+    "OperatorNativeAuthorizationTransportTests",
     "OperatorNativeHttpAdmissionTests",
     "OperatorNativeMutationScopePolicyTests",
     "OperatorNativeToolExposureAuthorityTests",
@@ -77,6 +79,7 @@
     "TextNoteCanonicalizationTests"
   ],
   "failure_families": [
+    { "id": "native-authorization-reconnect-after-backend-restart", "coverage": ["dotnet:OperatorNativeAuthorizationTransportTests", "dotnet:OperatorNativeHttpAdmissionTests", "backend:direct_revit_execution_authorization.test.ts"] },
     { "id": "native-queue-admission-before-preview-and-apply", "coverage": ["mcp:lib/revitClient.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/nativeTransport.test.ts"] },
     { "id": "saved-input-requestion-and-predispatch-busy-read-recovery", "coverage": ["backend:assignment_kernel_v2_controls.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts", "mcp:lib/revitClient.test.ts"] },
     { "id": "browser-control-json-content-type-and-binding", "coverage": ["backend:assignment_kernel_v2_controls.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts"] },

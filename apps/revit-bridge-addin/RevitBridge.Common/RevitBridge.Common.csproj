@@ -9,6 +9,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(TargetFramework)'=='net48'">
+    <Reference Include="System.Net.Http" />
     <Reference Include="RevitAPI">
       <HintPath>$(RevitApiPathNet48)\RevitAPI.dll</HintPath>
       <Private>False</Private>
