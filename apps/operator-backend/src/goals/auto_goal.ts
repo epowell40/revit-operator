@@ -8,7 +8,7 @@ const SPATIAL = /\b(room|wall|sheet|view|redline|markup|receptacle|outlet|device
 const VISUAL = /\b(redline|markup|screenshot|capture|image|pdf|shown|marked|visual)\b/i;
 const OUTCOME = /\b(make sure|so it works|complete|finish|clean up|pick up|apply|update|fix|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|print)\b/i;
 const SINGLE_COMMAND = /\b(select|what is|change this one|open sheet|open view|show me|list|find)\b/i;
-const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|parameter|selection|branch|fitting|system|connector|topology|level|plan)\b/i;
+const LIVE_MODEL_OBJECT = /\b(revit|project|model|sheet|view|schedule|family|type|element|room|space|wall|door|window|duct|pipe|terminal|air device|device|equipment|fixture|tag|note|parameter|selection|branch|fitting|system|connector|topology|level|plan)\b/i;
 const LIVE_MODEL_OPERATION = /\b(count|how many|break down|breakdown|list|find|show|open|identify|inspect|check|query|report|compare|audit|preview|select|capture|export|print|create|duplicate|add|place|put|fill|enter|write|copy|move|align|rotate|resize|change|adjust|modify|update|edit|replace|delete|remove|rename|restore|revert|reset|clear|set|assign|match|hide|unhide|turn (?:on|off)|verify)\b/i;
 const PREVIEW_REQUEST = /\b(preview|preflight|dry[- ]?run|show me (?:the )?change|do not commit|don't commit)\b/i;
 const EXECUTABLE_PREVIEW = /\b(?:execute|perform|run|simulate)\b[^.!?]{0,80}\b(?:preview|preflight|dry[- ]?run|rollback)\b|\b(?:executable|transaction(?:al)?|rollback)\s+(?:change\s+)?preview\b|\bshow me (?:the )?change\b/i;
@@ -62,16 +62,11 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
     title: makeTitle(text),
     objective: text,
     requestedEffect,
-    acceptanceCriteria: liveModelRequest
-      ? [
-          "The requested Revit work is completed or a concrete blocker is reported.",
-          "The reported result is grounded in successful live Revit tool evidence from this assignment."
-        ]
-      : [
-          "The requested Revit outcome is completed or a concrete blocker is reported.",
-          "Actions are verified with native Revit context, coordinates, exported evidence, or tool validation.",
-          "Any retries are bounded and each retry changes placement, orientation, scope, or evidence."
-        ]
+    // Automatic admission describes one requested outcome. Evidence provenance
+    // and bounded retries are kernel policies, not additional domain criteria
+    // that an unconfigured factory could independently evaluate. Explicit
+    // multi-criterion Goals still require their own semantic fact contracts.
+    acceptanceCriteria: ["The requested Revit outcome is completed and verified with evidence from this assignment."]
   };
 }
 

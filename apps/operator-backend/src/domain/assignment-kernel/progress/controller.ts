@@ -1,4 +1,5 @@
 import { canonicalJsonV2 } from "../canonical.js";
+import { assignmentActiveExecutionTimeMsV2 } from "./execution_time.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2, type AssignmentCriterionSpecV2 } from "../assignment_spec.js";
 import type { AssignmentSnapshotV2 } from "../snapshot.js";
 import { semanticFactIdentityV2 } from "../observation.js";
@@ -255,7 +256,7 @@ function budgetBlocker(snapshot: AssignmentSnapshotV2, budget: AssignmentProgres
   if (operationCount >= budget.max_operations) return "operation_budget_exhausted";
   if (consecutiveNoProgress >= budget.max_no_progress_epochs) return "no_progress_budget_exhausted";
   if (tokens >= budget.max_total_tokens) return "token_budget_exhausted";
-  if (Date.parse(now) - Date.parse(snapshot.spec.created_at) >= budget.max_wall_clock_ms) return "execution_lease_exhausted";
+  if (assignmentActiveExecutionTimeMsV2(snapshot, now) >= budget.max_wall_clock_ms) return "execution_lease_exhausted";
   return null;
 }
 

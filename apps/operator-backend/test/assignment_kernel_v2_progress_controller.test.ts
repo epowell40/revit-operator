@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   ASSIGNMENT_EVENT_V2_SCHEMA,
@@ -20,6 +21,7 @@ import {
   type OperationV2
 } from "../src/domain/assignment-kernel/index.js";
 import { finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
+import { assignmentActiveExecutionTimeMsV2 } from "../src/domain/assignment-kernel/progress/execution_time.js";
 
 const binding: AssignmentBindingV2 = {
   assignment_id: "assignment-progress",
@@ -498,6 +500,58 @@ test("Candidate 25 flight 3 gives one bounded execution opportunity after the fi
   });
   assert.equal(repeatedEpoch.genuine_progress, false);
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
+});
+
+test("idle Assignments remain admissible days later without resetting their cumulative budgets", () => {
+  const snapshot = journal().snapshot();
+  const now = "2026-08-29T20:00:00.000Z";
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, now), 0);
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget, now }).decision, "admit_reasoning_turn");
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...budget, max_provider_calls: 0 }, now }).reason, "provider_call_budget_exhausted");
+});
+
+test("execution time survives journal replay while completed work excludes the offline wait", () => {
+  const j = journal();
+  j.append(event(j, {
+    event_type: "provider_call_state_recorded", call_id: "timed-provider", state: "admitted",
+    provider: "test", model: "test", reasoning_effort: null, gap_ids: ["criterion:criterion-inventory"],
+    criterion_ids: ["criterion-inventory"], expected_information: ["inventory.total"]
+  }, "2026-08-26T20:00:00.000Z"));
+  const now = "2026-08-29T20:00:00.000Z";
+  assert.equal(assignmentActiveExecutionTimeMsV2(new AssignmentJournalV2(j.events()).snapshot(), now), 3 * 86_400_000,
+    "process loss cannot forgive unresolved admitted work");
+  j.append(event(j, { event_type: "provider_call_state_recorded", call_id: "timed-provider", state: "completed", success: true }, "2026-08-26T20:00:30.000Z"));
+  const snapshot = new AssignmentJournalV2(j.events()).snapshot();
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, now), 30_000);
+  const delayed = structuredClone(snapshot);
+  delayed.provider_calls["timed-provider"].completed_at = now;
+  delayed.provider_calls["timed-provider"].provider_duration_ms = 30_000;
+  assert.equal(assignmentActiveExecutionTimeMsV2(delayed, now), 30_000, "known provider duration excludes delayed receipt delivery");
+  const imported = structuredClone(snapshot);
+  imported.provider_calls["timed-provider"].admitted_at = "2026-08-20T20:00:00.000Z";
+  assert.equal(assignmentActiveExecutionTimeMsV2(imported, now), 30_000, "imported receipt cannot charge history before task creation");
+  const kernelUrl = new URL("../src/domain/assignment-kernel/index.js", import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+    import fs from 'node:fs';
+    import { reduceAssignmentEventsV2, decideAssignmentProgressV2 } from ${JSON.stringify(kernelUrl)};
+    const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+    console.log(JSON.stringify(decideAssignmentProgressV2({ snapshot: reduceAssignmentEventsV2(input.events), budget: input.budget, now: input.now })));
+  `], { input: JSON.stringify({ events: j.events(), budget, now }), encoding: "utf8", timeout: 20_000 });
+  assert.equal(child.status, 0, child.stderr || child.error?.message);
+  assert.deepEqual(JSON.parse(child.stdout), decideAssignmentProgressV2({ snapshot, budget, now }));
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget, now }).decision, "admit_reasoning_turn");
+  assert.equal(decideAssignmentProgressV2({ snapshot, budget: { ...budget, max_wall_clock_ms: 30_000 }, now }).reason, "execution_lease_exhausted");
+});
+
+test("overlapping execution intervals consume wall time once and invalid timestamps cannot waive the limit", () => {
+  const snapshot = journal().snapshot();
+  snapshot.operations = {
+    first: { ...operation("first"), opened_at: "2026-08-26T20:00:00.000Z", settled_at: "2026-08-26T20:00:20.000Z" },
+    second: { ...operation("second"), opened_at: "2026-08-26T20:00:10.000Z", settled_at: "2026-08-26T20:00:30.000Z" }
+  };
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, "2026-08-27T20:00:00.000Z"), 30_000);
+  snapshot.operations.second.opened_at = "invalid";
+  assert.equal(assignmentActiveExecutionTimeMsV2(snapshot, "2026-08-27T20:00:00.000Z"), Infinity);
 });
 
 test("Candidate 50 durable capability knowledge advances once and equivalent search output does not reset liveness", () => {

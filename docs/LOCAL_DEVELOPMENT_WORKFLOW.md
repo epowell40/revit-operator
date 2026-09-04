@@ -63,3 +63,21 @@ the identity of the current checkout.
 Hosted authentication, private deployment, EC2, production packaging, and
 commercial integration are owned by `revit-operator-private`. Do not add those
 details or secrets to this repository.
+
+## Durable task regression coverage
+
+Normal chat admission must be exercised with V2 enabled, without constructing
+benchmark-specific Goals. Automatic admission creates one outcome criterion;
+explicit multi-criterion Goals require distinct semantic fact contracts.
+
+Session discovery derives V2 identity and outcome from durable Goal journals.
+Independent index files are compatibility artifacts and may be absent or stale
+after a crash. Recovery tests must start a fresh process and include a task
+outside the general history page.
+
+The progress budget's `max_wall_clock_ms` measures cumulative active execution
+time, using the union of durable provider and operation intervals. Completed
+work retains its cost across restart; idle time does not consume allowance.
+Unsettled admitted work continues to count, and provider, token, operation, and
+no-progress limits remain cumulative. This does not grant automatic unlimited
+budget renewal or authorize replay of an operation with unknown effects.

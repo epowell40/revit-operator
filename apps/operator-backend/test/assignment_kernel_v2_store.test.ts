@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,7 +15,8 @@ import {
 import {
   appendAssignmentKernelEventV2,
   createAssignmentKernelV2,
-  getAssignmentKernelSnapshotV2
+  getAssignmentKernelSnapshotV2,
+  listAssignmentKernelIndexV2
 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { assignmentSpecFromGoalV2 } from "../src/assignments/assignment_kernel_v2_factory.js";
 import { startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
@@ -339,6 +341,41 @@ test("trusted AssignmentSpec creation gives opaque mutations one stable input va
     if (previous === undefined) delete process.env.OPERATOR_ASSIGNMENT_KERNEL_V2;
     else process.env.OPERATOR_ASSIGNMENT_KERNEL_V2 = previous;
   }
+}));
+
+test("V2 session discovery survives a fresh process with a missing or stale independent index", () => workspace(() => {
+  const { goal, binding } = fixture();
+  const root = process.env.OPERATOR_WORKSPACE_ROOT!;
+  const indexRoot = path.join(root, "artifacts", "assignment-kernel-v2", "index");
+  const indexPath = path.join(indexRoot, fs.readdirSync(indexRoot)[0]!);
+  const stale = fs.readFileSync(indexPath, "utf8");
+  appendAssignmentKernelEventV2(goal.id, event(goal.id, binding, 2, {
+    event_type: "work_unit_state_changed", work_unit_id: "work-result", state: "active", reason: "Started."
+  }));
+  const expected = listAssignmentKernelIndexV2(binding.session_id);
+  assert.equal(expected[0]!.assignment_version, 2);
+  const moduleUrl = new URL("../src/assignments/assignment_kernel_v2_store.js", import.meta.url).href;
+  for (const brokenIndex of [null, stale, "{broken", JSON.stringify({ ...JSON.parse(stale), session_id: "another-session" })]) {
+    if (brokenIndex === null) fs.unlinkSync(indexPath);
+    else fs.writeFileSync(indexPath, brokenIndex);
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      import { listAssignmentKernelIndexV2, getAssignmentKernelSnapshotV2 } from ${JSON.stringify(moduleUrl)};
+      console.log(JSON.stringify({ index: listAssignmentKernelIndexV2(${JSON.stringify(binding.session_id)}),
+        version: getAssignmentKernelSnapshotV2(${JSON.stringify(goal.id)}).assignment_version }));
+    `], { env: process.env, encoding: "utf8", timeout: 20_000 });
+    assert.equal(child.status, 0, child.stderr || child.error?.message);
+    assert.deepEqual(JSON.parse(child.stdout), { index: expected, version: 2 });
+  }
+}));
+
+test("V2 session discovery filters before the history limit and excludes unrelated Goals", () => workspace(() => {
+  const { goal, binding } = fixture();
+  for (let i = 0; i < 205; i += 1) createGoal({
+    title: `Unrelated ${i}`, objective: "Unrelated task", acceptance_criteria: ["Done"],
+    status: "active", related_session_id: "another-session", created_by: "another-principal"
+  });
+  assert.deepEqual(listAssignmentKernelIndexV2(binding.session_id, 1).map(entry => entry.assignment_id), [goal.id]);
+  assert.deepEqual(listAssignmentKernelIndexV2("another-session"), []);
 }));
 
 test("trusted AssignmentSpec creation gives opaque executable previews the same authenticated input gap", () => workspace(() => {

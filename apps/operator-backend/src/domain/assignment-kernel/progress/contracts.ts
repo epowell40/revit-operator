@@ -43,6 +43,7 @@ export interface AssignmentProgressBudgetV2 {
   max_equivalent_operations: number;
   max_no_progress_epochs: number;
   max_reconciliation_attempts: number;
+  /** Cumulative active execution wall time; durable idle/input waits are excluded. */
   max_wall_clock_ms: number;
   max_total_tokens: number;
 }

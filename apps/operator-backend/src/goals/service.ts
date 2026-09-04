@@ -851,6 +851,11 @@ export function listGoals(limit = 50): GoalRecord[] {
   return readAllGoals().slice(0, Math.max(1, Math.min(200, limit)));
 }
 
+/** Durable session discovery must filter before applying a presentation limit. */
+export function listGoalsForSession(sessionId: string): GoalRecord[] {
+  return readAllGoals().filter(goal => goal.related_session_id === sessionId);
+}
+
 export function updateGoal(goalId: string, input: GoalUpdateInput): GoalRecord {
   const goal = getGoal(goalId);
   if (!goal) throw new Error("Goal not found.");
