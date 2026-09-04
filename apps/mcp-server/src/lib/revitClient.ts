@@ -574,6 +574,20 @@ export async function callRevit<T = unknown>(path: string, method: string = "GET
   let response: Awaited<ReturnType<typeof doFetch>>;
   try {
     response = await doFetch();
+    // Retry only a known read rejected before native dispatch. Keep the same
+    // operation and exact request bytes; never replay an uncertain mutation.
+    const busyDeadline = Date.now() + Math.min(30_000, requestTimeoutMs());
+    for (let attempt = 0; !mutating && response.status === 409 && attempt < 7; attempt++) {
+      const busyText = await response.text();
+      response = { ...response, text: async () => busyText };
+      const busy = parseBridgeErrorDetails(busyText);
+      if (busy?.code !== "revit_external_event_busy" || busy.request_dispatched !== false
+          || busy.outcome_unknown !== false || busy.retryable !== true) break;
+      const delay = Math.min(250 * 2 ** attempt, 8_000);
+      if (Date.now() + delay > busyDeadline) break;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      response = await doFetch();
+    }
   } catch (error) {
     await recordAssignmentKernelNativeFailureV2(kernelNativeRequest, error);
     throw error;

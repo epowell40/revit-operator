@@ -614,6 +614,38 @@ test("callRevit does not replay an unstructured mutation rejection", async () =>
   }
 });
 
+test("a known busy read retries identical bytes within one call; ambiguous or mutating requests do not", async () => {
+  const requests: string[] = [];
+  let busy = { ok: false, code: "revit_external_event_busy", phase: "revit_external_event",
+    request_dispatched: false, outcome_unknown: false, retryable: true };
+  const server = http.createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    requests.push(body);
+    response.setHeader("content-type", "application/json");
+    response.statusCode = requests.length === 1 ? 409 : 200;
+    response.end(JSON.stringify(requests.length === 1 ? busy : { ok: true, text: "saved wording" }));
+  });
+  const port = await listen(server);
+  const restore = setTestEnvironment(`http://127.0.0.1:${port}`, 2_000);
+  try {
+    assert.deepEqual(await callRevit("/revit/find-text-notes", "POST", { elementIds: [1478627], max: 1 }), { ok: true, text: "saved wording" });
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0], requests[1]);
+    requests.length = 0;
+    await assert.rejects(callRevit("/revit/walls", "POST", { action: "create" }));
+    assert.equal(requests.length, 1, "an edit is never retried by the read queue recovery");
+    for (const change of [{ request_dispatched: true }, { outcome_unknown: true }, { code: "other_conflict" }, { retryable: false }]) {
+      requests.length = 0;
+      const original = busy;
+      busy = { ...busy, ...change };
+      await assert.rejects(callRevit("/revit/find-text-notes", "POST", { elementIds: [1478627] }));
+      assert.equal(requests.length, 1);
+      busy = original;
+    }
+  } finally { restore(); await close(server); }
+});
+
 test("callRevit honors a structured pre-dispatch rejection for a mutation", async () => {
   const bridgeError = {
     ok: false,

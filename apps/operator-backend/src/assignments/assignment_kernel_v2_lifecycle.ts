@@ -126,6 +126,11 @@ export function requestAssignmentInputV2(input: Readonly<{
   if (variableIds.length < 1) throw new Error("assignment_kernel_v2_input_variable_required");
   for (const variableId of variableIds) {
     if (!snapshot.spec.input_variables.some(variable => variable.variable_id === variableId)) throw new Error("assignment_kernel_v2_input_variable_unknown");
+  }
+  for (const variableId of variableIds) {
+    // A provider cannot reopen an authenticated answer by calling it missing.
+    // Changing an answer requires a separate user-owned revision, not a question.
+    if (Object.prototype.hasOwnProperty.call(snapshot.input_values, variableId)) continue;
     snapshot = appendCurrentAssignmentKernelEventV2({
       goal_id: input.binding.assignment_id,
       binding: snapshot.current_binding,

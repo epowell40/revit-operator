@@ -243,11 +243,11 @@
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.test.ts",
-      "sha256": "sha256:d5ade6b89abb5ca8cf8886a300844e33b5068100f92d253ef0dfc84e0c1a7adf"
+      "sha256": "sha256:61f9481d9cacdd0d998682e8e994520cb8e12051532bdca9244d75b9590b2312"
     },
     {
       "path": "apps/mcp-server/src/lib/revitClient.ts",
-      "sha256": "sha256:289fd1e944c7958fd51556515e6a2fc53a49e84f7c6be0b207bc77d32242c9d3"
+      "sha256": "sha256:34f97453d7f5cc6abf0e88a678ea974eb26e1964890c2af4daf84db025a9a2ee"
     },
     {
       "path": "apps/mcp-server/src/lib/revitCourier.test.ts",
@@ -552,7 +552,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_lifecycle.ts",
-      "sha256": "sha256:cb52a86e3819476152d86653be9cfa022182f7a5b982581a988ae7f7924ae338"
+      "sha256": "sha256:dc9af26662a8053844a560d70e7b8d7b6468ec2a6be18a44fe73ca7cdaa8e2fb"
     },
     {
       "path": "apps/operator-backend/src/assignments/assignment_kernel_v2_progress.ts",
@@ -604,7 +604,7 @@
     },
     {
       "path": "apps/operator-backend/src/assignments/http_routes.ts",
-      "sha256": "sha256:ac02493bc084eb19f12049de44c02e68c18f5abaedf84ccb57733187f570f4ac"
+      "sha256": "sha256:803686aea541f6d287b2692fc36a858be2d92f050b82065da4c5ed4f47c5cf02"
     },
     {
       "path": "apps/operator-backend/src/assignments/interaction.ts",
@@ -2937,7 +2937,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_controls.test.ts",
-      "sha256": "sha256:230b7323b589fd0967f347db39b255bdb6121d22f6fa33f3ee96b1434e1d2112"
+      "sha256": "sha256:66b77bff0c3f6d229efb1c39fa093cdf72525268dee661fb329c713fa5de8d34"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
@@ -6101,7 +6101,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:368b8774435d963865c414c58111115e6e5bf1f2fd571ddc0056cbf8207c4357",
+  "inputs_hash": "sha256:9d471a0b5d50a8e18cad68501fac09fe77f2705e012c08d0d6891077c071bfc8",
   "result": {
     "passed": true,
     "checks": [

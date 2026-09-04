@@ -286,7 +286,15 @@ export async function handleAssignmentHttpRoute(
           variable_ids: variableIds,
           question: String(body?.question ?? "").trim()
         });
-        writeJson(res, 202, { ok: true, clarification_id: clarificationId, assignment_snapshot_v2: snapshot });
+        const pending = variableIds.filter(id => snapshot.pending_input_variable_ids.includes(id));
+        writeJson(res, pending.length ? 202 : 200, {
+          ok: true, clarification_id: pending.length ? clarificationId : null,
+          assignment_id: binding.assignment_id, run_id: binding.run_id, generation: binding.generation,
+          already_resolved: pending.length === 0, pending_input_variable_ids: pending,
+          authenticated_input_values: Object.fromEntries(variableIds
+            .filter(id => Object.prototype.hasOwnProperty.call(snapshot.input_values, id))
+            .map(id => [id, snapshot.input_values[id]]))
+        });
         return true;
       }
       const requested = requestAssignmentClarification(body!, "operator_request_clarification");

@@ -10,7 +10,7 @@ import { prepareAssignmentTurn, bindPreparedAssignmentToRequest } from "../src/a
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { advanceAssignmentKernelProgressV2, recordAssignmentProviderCallStateV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
 import { openAssignmentKernelOperationV2, failAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
-import { supplyAssignmentInputResultV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
+import { supplyAssignmentInputResultV2, requestAssignmentInputV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { handleAssignmentHttpRoute } from "../src/assignments/http_routes.js";
 import { getAssignmentKernelPublicationV2 } from "../src/assignments/assignment_kernel_v2_publication.js";
 import { __testOnlyResetGoalListCache } from "../src/goals/service.js";
@@ -101,6 +101,12 @@ test("pending answers survive pause and resume into the same normal chat binding
   const resumed = controlAssignmentExecutionV2({ binding, command_id: "resume", expected_command_id: "pause", action: "resume" });
   assert.equal(resumed.execution_control?.state, "running");
   assert.deepEqual(resumed.pending_input_variable_ids, []);
+  const redundant = requestAssignmentInputV2({ binding, clarification_id: "duplicate-question",
+    variable_ids: [question.variable_id], question: "Please confirm that wording again." });
+  assert.equal(redundant.assignment_version, resumed.assignment_version);
+  assert.deepEqual(redundant.pending_input_variable_ids, []);
+  assert.equal(redundant.input_values.replacement_text, "Issued for Construction");
+  assert.equal(redundant.clarifications["duplicate-question"], undefined);
   const continued = prepareAssignmentTurn({ sessionId: binding.session_id, messageId: "second-turn", userText: "Continue saved work",
     toolResults: [], source: "chat", createdBy: null, suppliedBinding: { assignment_id: binding.assignment_id, assignment_run_id: binding.run_id, assignment_generation: binding.generation } })!;
   assert.deepEqual(continued, prepared);
@@ -117,7 +123,8 @@ test("pending answers survive pause and resume into the same normal chat binding
 }));
 
 test("canonical control HTTP boundary rejects foreign sessions and malformed bindings", () => workspace(async () => {
-  const { binding } = start();
+  const { binding } = start("Replace Revit TextNote element 1478627 with the approved wording.");
+  const question = Object.values(advanceAssignmentKernelProgressV2({ binding }).snapshot.clarifications)[0]!;
   const server = http.createServer((req, res) => {
     void runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") }, async () => {
       await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => {
@@ -135,6 +142,20 @@ test("canonical control HTTP boundary rejects foreign sessions and malformed bin
     assert.equal((await send({ ...body, run_id: "wrong" })).status, 409);
     assert.equal((await send({ ...body, command_id: undefined })).status, 409);
     assert.equal((await send(body)).status, 200);
+    supplyAssignmentInputResultV2({ binding, clarification_id: question.clarification_id,
+      external_values: { replacement_text: "Authenticated saved wording" } });
+    const beforeQuestion = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    const questionResponse = await fetch(`http://127.0.0.1:${address.port}/api/assignments/clarifications`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...binding, missing_fields: ["replacement_text"], question: "Confirm again?" })
+    });
+    const answerText = await questionResponse.text();
+    assert.equal(questionResponse.status, 200);
+    const answerPayload = JSON.parse(answerText);
+    assert.equal(answerPayload.already_resolved, true);
+    assert.equal(answerPayload.authenticated_input_values.replacement_text, "Authenticated saved wording");
+    assert.ok(answerText.length < 1000, "interaction replies must not dump raw native evidence and the full journal");
+    assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.assignment_version, beforeQuestion.assignment_version);
     const publication = getAssignmentKernelPublicationV2(binding.assignment_id)!;
     assert.equal((parseAssignmentKernelPublicationV2(publication).snapshot.execution_control as { state: string }).state, "paused");
     assert.throws(() => parseAssignmentKernelPublicationV2({ ...publication, snapshot: { ...publication.snapshot, execution_control: { state: "complete" } } }), /execution_control/);
