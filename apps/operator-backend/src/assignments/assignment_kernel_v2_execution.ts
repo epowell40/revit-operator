@@ -554,6 +554,13 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     settlement_state: "open",
     observation_ids: [],
     verification_operation_ids: [],
+    // A native child of a verification operation is still verifying the exact
+    // settled apply selected by the kernel. Preserve that immutable subject
+    // across the MCP/native seam; topology must not erase verification
+    // causality or force the adapter to rediscover it from payload data.
+    ...(purpose === "verification" && parent.verification_of_operation_id
+      ? { verification_of_operation_id: parent.verification_of_operation_id }
+      : {}),
     opened_at: openedAt,
     deadline_at: boundedDeadline(openedAt)
   };

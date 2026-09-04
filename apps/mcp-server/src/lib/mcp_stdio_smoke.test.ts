@@ -963,3 +963,15 @@ test("capability metadata is session-cached while explicit refresh remains avail
   assert.match(serverSource, /callRevit\("\/revit\/tool-examples", "POST", args\)/);
   assert.match(serverSource, /!freshCachedToolRegistry\(\) && !args\.forceRefresh/);
 });
+
+test("reviewed typed verification reads propagate the exact kernel fulfillment grant", () => {
+  const serverSource = fs.readFileSync(path.resolve(process.cwd(), "src/server.ts"), "utf8");
+  for (const route of ["find-text-notes", "get-element-summary", "get-parameters"]) {
+    const escaped = route.replace(/-/g, "\\-");
+    assert.match(
+      serverSource,
+      new RegExp(`callRevit\\(\"/revit/${escaped}\", \"POST\",[\\s\\S]{0,220}assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2\\(\\)`),
+      `The reviewed ${route} handler must preserve task/verification fulfillment at the native edge.`
+    );
+  }
+});

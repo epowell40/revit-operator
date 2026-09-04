@@ -837,6 +837,59 @@ test("captured V2 operation binding settles after the legacy Goal envelope is pa
   assert.equal(settled.snapshot.current_binding.assignment_id, goal.id);
 }));
 
+test("a verification parent's native child preserves the exact applied-operation subject", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const applyLease = openAssignmentKernelOperationV2({
+    snapshot,
+    controller_request_id: "candidate-70-apply",
+    provider_turn_id: "candidate-70-apply-turn",
+    capability_id: "revit_replace_text_note",
+    classified_effect: "apply",
+    target_tokens: ["elementid:1478627", "id:1478627"],
+    arguments: { elementId: 1478627, newText: "Candidate 70 verified text" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(applyLease);
+  const applied = settleAssignmentKernelOperationV2(
+    applyLease,
+    envelope(applyLease.operation_id, applyLease.binding, { elementId: 1478627, updated: true }, "applied")
+  ).snapshot;
+  const awaitingVerification = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+  const verificationParent = openAssignmentKernelOperationV2({
+    snapshot: awaitingVerification,
+    controller_request_id: "candidate-70-verification",
+    provider_turn_id: "candidate-70-verification-turn",
+    capability_id: "revit_find_text_notes",
+    classified_effect: "read",
+    target_tokens: ["elementid:1478627", "id:1478627"],
+    arguments: { elementId: 1478627 }
+  });
+  assert.equal(verificationParent.purpose, "verification");
+  const parentOperation = getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
+    .operations[verificationParent.operation_id]!;
+  assert.equal(parentOperation.verification_of_operation_id, applyLease.operation_id);
+
+  const nativeChild = openAssignmentKernelChildOperationV2({
+    binding: verificationParent.binding,
+    parent_operation_id: verificationParent.operation_id,
+    child_ordinal: 0,
+    operation_role: "child",
+    capability_id: "native:POST:/revit/find-text-notes",
+    classified_effect: "read",
+    method: "POST",
+    path: "/revit/find-text-notes",
+    arguments: { method: "POST", path: "/revit/find-text-notes", body: { elementId: 1478627 } },
+    fulfillment_role: "verification",
+    delegation_authority_id: verificationParent.delegation_authority_id,
+    eligible_criterion_ids: verificationParent.eligible_criterion_ids
+  });
+  const childOperation = getAssignmentKernelSnapshotV2(snapshot.spec.binding.assignment_id)!
+    .operations[nativeChild.operation_id]!;
+  assert.equal(childOperation.parent_operation_id, verificationParent.operation_id);
+  assert.equal(childOperation.fulfillment_role, "verification");
+  assert.equal(childOperation.verification_of_operation_id, applyLease.operation_id);
+  assert.deepEqual(childOperation.target, parentOperation.target);
+}));
+
 test("read after committed apply is canonically a verification operation", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

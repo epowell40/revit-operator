@@ -1885,7 +1885,9 @@ server.tool("revit_find_text_notes", "Find TextNotes by exact element identity, 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/find-text-notes", "POST", args);
+      const data = await callRevit("/revit/find-text-notes", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2258,7 +2260,9 @@ server.tool("revit_get_element_summary", "Get a lightweight summary (id/category
   async ({ ids }) => {
     try {
       // The Revit endpoint now prefers `elementIds` (legacy `ids` still supported).
-      const data = await callRevit("/revit/get-element-summary", "POST", { elementIds: ids });
+      const data = await callRevit("/revit/get-element-summary", "POST", { elementIds: ids }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3312,7 +3316,9 @@ server.tool("revit_get_parameters", "Read parameters for one or many elements. P
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/get-parameters", "POST", args);
+      const data = await callRevit("/revit/get-parameters", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
