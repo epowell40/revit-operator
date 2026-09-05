@@ -14,7 +14,7 @@ const TERMINAL_DIRECT_NO_WRITE = new RegExp(
   + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"
   + "(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate)"
   + "(?:\\s*(?:,|or|and)\\s*(?:(?:actually|ever|otherwise)\\s+)?(?:change|save|modify|edit|configure|reload|create|apply|commit|export|print|delete|remove|write|mutate)){0,6}"
-  + "\\s+(?:(?:the|any)\\s+)?(?:schedule|family|model|project|document|files?|changes?|anything|it)\\s*[.!?]*\\s*$",
+  + "\\s+(?:(?:the|any)\\s+)?(?:schedule|family|model|project|document|files?|changes?|add[- ]?in|code|anything|it)\\s*[.!?]*\\s*$",
   "i"
 );
 
@@ -37,6 +37,8 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (hasAuthoritativeLeadingNoWriteFraming(text)) return true;
   if (COORDINATED_GLOBAL_NO_WRITE.test(text)) return true;
   if (TERMINAL_DIRECT_NO_WRITE.test(text)) return true;
+  if (hasNoncommittingChangePreviewRequest(text)) return true;
+  if (/\bleave\s+(?:it|them|(?:the|this|current|selected)\s+(?:model|project|document|element|device|branch|accessory|pipe|duct))\s+(?:unchanged|in place)\b/i.test(text)) return true;
   if (/\bread[ -]?only\b[^.!?\n]{0,60}\b(?:plan|preview|analysis|inspection|report)\b/i.test(text)
       || /\b(?:plan|preview|analysis|inspection|report)\b[^.!?\n]{0,60}\bread[ -]?only\b/i.test(text)
       || /\b(?:preview|analysis)\s+only\b/i.test(text)) return true;
@@ -49,6 +51,12 @@ function hasPreviewOrGlobalNoWriteFraming(text: string): boolean {
   if (/\bwithout\s+(?:making|applying|committing|saving)\s+(?:any\s+)?changes?\b/i.test(text)) return true;
   if (/\bbefore\b[^.!?\n]{0,100}\b(?:delet|remov|chang|modif|edit|apply|commit|writ|creat|renam|print)/i.test(text)) return true;
   return /\b(?:do not|don't|dont|never)\s+(?:(?:actually|ever)\s+|(?:attempt|try)\s+to\s+)?(?:change|modify|edit|delete|remove|apply|commit|write|create|rename|print|mutate)\b[^.!?;\n]{0,40}\b(?:the\s+)?(?:model|project|document|anything|it|the\s+change)\b/i.test(text);
+}
+
+/** A requested what-if demonstration is noncommitting, unlike an instruction to delete. */
+export function hasNoncommittingChangePreviewRequest(text: string): boolean {
+  return /\bshow\s+(?:me\s+)?what\s+would\b[^.!?;\n]{0,180}\bif\s+(?:we|you|I)\s+(?:delet|remov|mov|chang|replac|disconnect)\w*\b/i.test(text)
+    && !/(?:^|[.!?;]\s*|\bthen\s+)(?:apply|commit|delete|remove|move|change|replace|do it)\b/i.test(text);
 }
 
 export function hasEffectiveNoWriteFraming(text: string): boolean {

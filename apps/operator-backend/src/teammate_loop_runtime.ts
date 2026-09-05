@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
-import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming } from "./no_write_intent.js";
+import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
@@ -209,7 +209,7 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   // turn-defining only when the turn actually asks to change document
   // lifecycle state (for example, "do not save the Revit model").
   const documentLifecycleDenied = documentLifecycleMutation && deniesDocumentLifecycleMutation(text);
-  const previewOnly = hasEffectiveNoWriteFraming(text);
+  const previewOnly = hasEffectiveNoWriteFraming(text) || hasNoncommittingChangePreviewRequest(text);
   const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
   const explicitMutation = containsMutationVerb(text);
   // Opening/saving/closing a Revit document changes authoritative application
@@ -226,9 +226,10 @@ export function classifyAgentTurn(userText: string | null | undefined, context?:
   if (!/^\s*(?:why|what|how|is|are|does|do|can you tell|could you tell)\b/.test(text) &&
       /\b(?:wrong|incorrect|needs? to be|should be|too (?:large|small|high|low|big))\b/.test(text)) return "mutation";
   if (/\b(?:only\s+show|show\s+only)\b/.test(text) && hasRevitWorkSubject(text)) return "mutation";
+  if (/\bshow\b[^.!?;\n]{0,140}\bin\s+(?:red|blue|green|gray|grey|black|white|halftone)\b/.test(text)) return "mutation";
   const navigationText = withoutAdjectivalOpenDocumentState(text);
   if (/\b(?:open|show|activate|take me to|go to|zoom to|select|highlight)\b/.test(navigationText)) return "navigation";
-  if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|current|active|selected)\b/.test(text)) return "inspection";
+  if (/\b(?:ping|probe|status|find|locate|where|which|how many|count|list|inspect|check|verify|identify|report|compare|audit|summarize|describe|csv|inventory|current|active|selected)\b/.test(text)) return "inspection";
   // Delegated Revit work is commonly written as a terse redline or noun phrase
   // (for example, "12x10 SUPPLY DUCT at the marked branch"). Once a turn has a
   // concrete Revit subject and is neither a question nor explicitly read-only,
@@ -263,6 +264,7 @@ function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): b
 
 function explicitlyRequestsExecutablePreview(text: string, kind: AgentTurnKind): boolean {
   if (kind === "conversation") return false;
+  if (hasNoncommittingChangePreviewRequest(text)) return true;
   if (/\b(?:preflight|dry[ -]?run|simulation|simulate(?:d)?)\b/i.test(text)) return true;
   return /\bpreview\b/i.test(text) && containsMutationVerb(text.toLowerCase());
 }

@@ -12,13 +12,27 @@ import { runWithRequestContext } from "../src/request_context.js";
 import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
 import { handleCodexDynamicToolCall } from "../src/brains/codex_dynamic_tool_handler.js";
 import { OPERATOR_BACKEND_CONTRACT_VERSION } from "../src/contracts.js";
+import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "../src/assignments/external_assignment_start.js";
+import { setAgentGoal } from "../src/goals/service.js";
+import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 
 for (const [effect, prompt, facts] of [
   ["read", "Count all air devices in the project and break the total down by family and type. Do not change the model.", ["inventory.complete", "inventory.total", "inventory.group"]],
   ["read", "Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.", ["task.result_available"]],
   ["read", "What size is this?", ["task.result_available"]],
   ["read", "Which system does this belong to?", ["task.result_available"]],
+  ["read", "Give me a CSV of the Level 4 equipment: name, family/type, level, and location in feet.", ["task.result_available"]],
+  ["read", "Our Revit add-in uses ElementId.IntegerValue. Find out what needs to change for Revit 2026 while keeping Revit 2023 support. Explain the fix; do not edit the add-in.", ["task.result_available"]],
   ["preview", "Run a rollback preview moving the selected device one foot east. Do not commit.", ["task.preview_valid"]],
+  ["preview", "Pick an accessory on this plan and show me what would be removed or disconnected if we deleted it. Leave it in place for now.", ["task.preview_valid"]],
+  ["preview", "Show me what would change if we moved this equipment. Leave it unchanged.", ["task.preview_valid"]],
+  ["apply", "Turn off the architectural room stuff on the Level 4 mechanical plans. Leave the MEP spaces alone.", ["task.result_available"]],
+  ["apply", "Put QA REVIEW in Comments for this pipe.", ["task.result_available"]],
+  ["apply", "Show the supply ducts in red on this plan.", ["task.result_available"]],
+  ["apply", "Center this device between the two next to it.", ["task.result_available"]],
+  ["apply", "Save the settings from this plan as TEST COORDINATION TEMPLATE.", ["task.result_available"]],
+  ["apply", "Tidy up the crowded tags without changing what they label.", ["task.result_available"]],
+  ["apply", "Show me what would change if we moved this equipment, then apply the move.", ["task.result_available"]],
   ["apply", "Replace the selected note text with the exact literal 'Issued for Construction'.", ["task.result_available"]]
 ] as const) {
   test(`normal chat admits ${effect} auto-goals with a native evidence contract under V2`, () => {
@@ -55,6 +69,18 @@ for (const [effect, prompt, facts] of [
         assert.equal(bound.assignment_generation, snapshot.current_binding.generation);
         assert.throws(() => prepareAssignmentTurn({ sessionId: "different-session", messageId: "foreign",
           userText: prompt, toolResults: [], source: "chat", createdBy: null, suppliedBinding: bound }), /stale_or_mismatched/);
+        const external = normalizeExternalAssignmentRequest({ objective: prompt, start_assignment_run: true,
+          success_criteria: ["Return the requested result with evidence."], work_budget: {
+            mode: "sidecar_computer", source: "operator_desktop", source_user_request: prompt,
+            requested_effect: effect === "apply" ? "read" : "apply", document_fingerprint: "test-model"
+          } });
+        const externalGoal = setAgentGoal("external-session", external as any);
+        const externalRun = startExternalAssignmentRun({ goal: externalGoal, sessionId: "external-session", actor: "test" });
+        assert.equal(getAssignmentKernelSnapshotV2(externalRun.assignmentId)!.spec.requested_effect, effect,
+          "external controller and ordinary chat must create the same immutable effect contract");
+        const guard = buildTeammateTurnContract(bound);
+        assert.equal(guard.write_authorized, effect === "apply", prompt);
+        if (effect === "preview") assert.equal(guard.preview_required, true, prompt);
       });
     } finally {
       if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT;
@@ -73,6 +99,13 @@ test("context admission does not turn empty input, tool continuations, or unrela
   assert.equal(prepareAssignmentTurn({ ...base, userText: "What size is this?" }), null);
   assert.equal(prepareAssignmentTurn({ ...base, userText: "", requestContext: { revit: {} } }), null);
   assert.equal(prepareAssignmentTurn({ ...base, userText: "What size is this?", toolResults: [{}] as any, requestContext: { revit: {} } }), null);
+});
+
+test("external source/objective mismatch is rejected while explicit structured assignments keep their contract", () => {
+  const structured = { objective: "Structured work", work_budget: { requested_effect: "preview" }, start_assignment_run: true };
+  assert.equal(normalizeExternalAssignmentRequest(structured), structured);
+  assert.throws(() => normalizeExternalAssignmentRequest({ objective: "Read only", start_assignment_run: true,
+    work_budget: { mode: "sidecar_computer", source: "operator_desktop", source_user_request: "Delete the branch" } }), /source_request_mismatch/);
 });
 
 test("a short UI read reaches the MCP boundary only with its admitted canonical binding", async () => {

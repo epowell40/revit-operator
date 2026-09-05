@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "goal_endpoint_security.test.ts",
     "revit_control_plane_contract.test.ts",
     "assignment_auto_goal_admission.test.ts",
     "assignment_kernel_v2_controls.test.ts",
@@ -125,6 +126,7 @@
     { "id": "verification-parent-native-child-subject-binding", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/assignmentKernelV2.test.ts", "mcp:lib/mcp_stdio_smoke.test.ts"] },
     { "id": "mutation-completion-crash-recovery-without-replay", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_controls.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },
     { "id": "fixture-starting-view-and-browser-focus-reset", "coverage": ["backend:general_revit_fixture_preconditions.test.ts", "backend:postcondition_verification_v2.test.ts", "dotnet:OperatorProjectCloseFocusTests", "dotnet:OperatorNativeTransportTests"] },
-    {"id":"contextual-chat-admission-and-session-reset","coverage":["backend:assignment_auto_goal_admission.test.ts","backend:teammate_loop_runtime.test.ts"]}
+    {"id":"contextual-chat-admission-and-session-reset","coverage":["backend:assignment_auto_goal_admission.test.ts","backend:teammate_loop_runtime.test.ts"]},
+    {"id":"authoritative-request-effect-and-noncommitting-natural-requests","coverage":["backend:assignment_auto_goal_admission.test.ts","backend:goal_endpoint_security.test.ts","backend:teammate_loop_runtime.test.ts"]}
   ]
 }

@@ -1,6 +1,6 @@
 import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
-import { isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
-import { hasAuthoritativeLeadingNoWriteFraming } from "../no_write_intent.js";
+import { classifyAgentTurn, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
+import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest } from "../no_write_intent.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -35,24 +35,26 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   if (VISUAL.test(text)) signals.push("visual/redline interpretation");
   if (OUTCOME.test(text)) signals.push("outcome-oriented request");
   const explicitMutation = hasExplicitMutationVerb(text);
+  const turnKind = classifyAgentTurn(text);
   const liveModelRequest = LIVE_MODEL_OBJECT.test(text) && (LIVE_MODEL_OPERATION.test(text) || explicitMutation);
   if (liveModelRequest) signals.push("live Revit model work");
 
   let score = signals.length;
   if (SINGLE_COMMAND.test(text) && score < 3 && !liveModelRequest) score -= 2;
-  const shouldStart = liveModelRequest || score >= 2;
+  const shouldStart = liveModelRequest || score >= 2 || turnKind === "mutation";
   const documentLifecycleMutation = isAffirmativeDocumentLifecycleMutation(text);
   const authoritativeLeadingNoWrite = hasAuthoritativeLeadingNoWriteFraming(text);
   const informationalReadOnlyPlan = isExplicitNoWriteRequest(text)
     && /\b(?:read[- ]only|discovery only|inspection only)\b/i.test(text)
     && /\b(?:plan|steps?|guidance|instructions?|recommendations?)\b/i.test(text)
     && !EXECUTABLE_PREVIEW.test(text);
-  const explicitNoWrite = isExplicitNoWriteRequest(text);
+  const whatIfPreview = hasNoncommittingChangePreviewRequest(text);
+  const explicitNoWrite = isExplicitNoWriteRequest(text) || whatIfPreview;
   const appliesAfterPreflight = APPLY_AFTER_PREFLIGHT.test(text) && !explicitNoWrite;
-  const requestedEffect = PREVIEW_REQUEST.test(text) && !informationalReadOnlyPlan
+  const requestedEffect = (PREVIEW_REQUEST.test(text) || whatIfPreview) && !informationalReadOnlyPlan
     && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"
-    : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (explicitMutation && !explicitNoWrite)
+    : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (turnKind === "mutation" && !explicitNoWrite)
       ? "apply"
       : "read";
   return {

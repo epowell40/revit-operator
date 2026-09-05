@@ -164,7 +164,7 @@ import { settleAssignmentProviderFailure } from "./assignments/turn_settlement.j
 import { requireProviderAssignmentBinding } from "./assignments/provider_binding.js";
 import { bindPreparedAssignmentToRequest, prepareAssignmentTurn } from "./assignments/turn_preparation.js";
 import { handleChatExecutionFailureBoundaryV2 } from "./assignments/chat_execution_failure_boundary.js";
-import { startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
+import { normalizeExternalAssignmentRequest, startExternalAssignmentRun } from "./assignments/external_assignment_start.js";
 import { buildSidecarDiagnosticReport } from "./sidecar_diagnostics.js";
 import {
   applyEnvironmentPolicyToActions,
@@ -1195,7 +1195,7 @@ const server = http.createServer(async (req, res) => {
         if (replaceBlockedSidecar) clearAgentGoal(sessionId, "Superseded by a fresh Operator Desktop assignment.");
         const owner = sessionOwnerForPrincipal(auth.principal);
         const goal = setAgentGoal(sessionId, {
-          ...(body as any),
+          ...normalizeExternalAssignmentRequest(body as Record<string, unknown>),
           ...(owner ? { created_by: owner.owner_user_id } : {})
         });
         const requestedRunId = trimText((body as any)?.assignment_run_id ?? (body as any)?.assignmentRunId, 200);
