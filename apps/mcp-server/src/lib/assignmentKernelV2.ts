@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { retainAssignmentCompletionV2 } from "./assignmentCompletionOutbox.js";
 import {
   canonicalPayloadJsonV2,
   payloadDigestV2,
@@ -445,6 +446,7 @@ export async function recordAssignmentKernelNativeResultV2(
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, false);
     const settlementEnvelope = mcpEnvelopeForCall(call, result);
+    retainAssignmentCompletionV2(call.lease, settlementEnvelope);
     call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
   }
   call.state = "completed";
@@ -479,7 +481,9 @@ export async function recordAssignmentKernelNativeFailureV2(
   };
   if (call.operation_role !== "root") {
     const result = operationResultForCall(call, true);
-    call.settlement = await scope.edge.settle(call.lease, mcpEnvelopeForCall(call, result));
+    const settlementEnvelope = mcpEnvelopeForCall(call, result);
+    retainAssignmentCompletionV2(call.lease, settlementEnvelope);
+    call.settlement = await scope.edge.settle(call.lease, settlementEnvelope);
   }
   call.state = "completed";
 }
@@ -929,5 +933,8 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
 
 export function decorateAssignmentKernelMcpResultV2(result: unknown, capabilityId: string): unknown {
   const scope = storage.getStore();
-  return scope ? decoratedResult(result, capabilityId, scope) : result;
+  if (!scope) return result;
+  const envelope = decoratedResult(result, capabilityId, scope);
+  retainAssignmentCompletionV2(scope.context, envelope);
+  return envelope;
 }

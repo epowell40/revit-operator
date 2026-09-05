@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { operatorBackendAuthRequestMeta, type OperatorBackendAuthV1 } from "../operator_backend_auth.js";
@@ -94,6 +95,7 @@ export class CodexMcpToolRuntime {
     const env = stringEnvironment({
       ...this.opts.spawnEnv,
       OPERATOR_WORKSPACE_ROOT: this.opts.workspaceRoot,
+      OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY: completionOutboxKeyV2(this.opts.workspaceRoot),
       CODEX_HOME: this.opts.codexHome
     });
     const transport = new StdioClientTransport({
@@ -210,6 +212,10 @@ export class CodexMcpToolRuntime {
   clearAssignmentKernelV2TurnStop(turnId: unknown): void {
     const id = typeof turnId === "string" ? turnId.trim() : "";
     if (id) this.assignmentKernelV2TurnStops.delete(id);
+  }
+
+  recoverCompletion(lease: AssignmentKernelOperationLeaseV2): unknown | null {
+    return readCompletionOutboxV2(this.opts.workspaceRoot, completionOutboxKeyV2(this.opts.workspaceRoot), lease);
   }
 
   async callTool(tool: string, args: unknown, binding?: {

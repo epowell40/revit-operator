@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";
 
@@ -1163,4 +1166,45 @@ test("malformed trusted lifecycle binding fails before a lifecycle handler can d
     () => runWithAssignmentKernelV2({ [ASSIGNMENT_KERNEL_V2_BINDING_META_KEY]: { ...binding, generation: 0 } }, async () => "unreachable"),
     /assignment_kernel_v2_binding_context_invalid/
   );
+});
+
+test("MCP retains authenticated native completion before returning its operation envelope", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-mcp-completion-"));
+  const previousRoot = process.env.OPERATOR_WORKSPACE_ROOT;
+  const previousKey = process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY;
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  const key = completionOutboxKeyV2(root);
+  process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY = key;
+  try {
+    const body = { elementId: 1478627, newText: "RECOVERED", apply: true };
+    const requestMeta = meta("apply", "work", { method: "POST", path: "/revit/replace-text-note", body });
+    const lease = requestMeta[ASSIGNMENT_KERNEL_V2_META_KEY];
+    assert.equal(readCompletionOutboxV2(root, key, lease), null);
+    await runWithAssignmentKernelV2(requestMeta, async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/replace-text-note", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/replace-text-note", {
+        ok: true, elementId: 1478627, before: "ORIGINAL", after: "RECOVERED", changed: true,
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1",
+          attempt_id: "native-committed-once", requested_effect: "apply", effect_state: "applied",
+          effect_authority: "native_receipt", request_dispatched: true }
+      }, request);
+      const result = decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+      const retained = readCompletionOutboxV2(root, key, lease) as any;
+      assert.deepEqual(retained.structuredContent, JSON.parse(JSON.stringify(result.structuredContent)));
+      assert.equal(retained.structuredContent.operation_result_v2.persistent_effect, "applied");
+      assert.equal(retained.structuredContent.operation_result_v2.native_transaction_state, "committed");
+      assert.equal(retained.structuredContent.observation.raw_payload.after, "RECOVERED");
+      // Simulate loss of the producer/transport after retention, before delivery.
+      // The consumer can read the receipt even though no envelope is returned.
+    });
+    assert.ok(readCompletionOutboxV2(root, key, lease));
+    assert.throws(() => readCompletionOutboxV2(root, "0".repeat(64), lease), /signature_invalid/);
+    const wrong = { ...lease, binding: { ...lease.binding, principal_id: "another-principal" } };
+    assert.equal(readCompletionOutboxV2(root, key, wrong), null);
+  } finally {
+    if (previousRoot === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previousRoot;
+    if (previousKey === undefined) delete process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY; else process.env.OPERATOR_ASSIGNMENT_COMPLETION_OUTBOX_KEY = previousKey;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

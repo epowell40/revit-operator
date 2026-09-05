@@ -22,6 +22,7 @@ import { checkpointCodexAssignmentProgressV2 } from "../src/brains/codex_assignm
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { canonicalTeammateInputs } from "../src/teammate_assignment_inputs.js";
 import { mutationIntentBlockReason } from "../src/teammate_mutation_intent_binding.js";
+import { completionOutboxKeyV2, retainCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -159,6 +160,62 @@ test("canonical control HTTP boundary rejects foreign sessions and malformed bin
     const publication = getAssignmentKernelPublicationV2(binding.assignment_id)!;
     assert.equal((parseAssignmentKernelPublicationV2(publication).snapshot.execution_control as { state: string }).state, "paused");
     assert.throws(() => parseAssignmentKernelPublicationV2({ ...publication, snapshot: { ...publication.snapshot, execution_control: { state: "complete" } } }), /execution_control/);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}));
+
+test("completion recovery HTTP command is bound, repeatable, and cannot resume or settle missing evidence", () => workspace(async root => {
+  const { binding, snapshot } = start();
+  const lease = openAssignmentKernelOperationV2({ snapshot, provider_turn_id: "provider", controller_request_id: "recover-http",
+    capability_id: "inventory.read", classified_effect: "read", arguments: {} });
+  controlAssignmentExecutionV2({ binding, command_id: "paused", expected_command_id: null, action: "pause" });
+  const before = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const server = http.createServer((req, res) => {
+    const context = req.headers["x-test-no-authority"] ? {} : { operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") };
+    void runWithRequestContext(context, async () => {
+      await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => {
+        if (session === binding.session_id) return true;
+        res.writeHead(403); res.end(); return false;
+      });
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address() as import("node:net").AddressInfo;
+    const send = (body: unknown, noAuthority = false) => fetch(`http://127.0.0.1:${address.port}/api/assignments/v2/recover-completions`, {
+      method: "POST", headers: { "Content-Type": "application/json", ...(noAuthority ? { "x-test-no-authority": "1" } : {}) }, body: JSON.stringify(body) });
+    assert.equal((await send({ ...binding, session_id: "foreign" })).status, 403);
+    assert.equal((await send({ ...binding, generation: binding.generation + 1 })).status, 409);
+    assert.equal((await send({ ...binding, run_id: "foreign" })).status, 409);
+    assert.equal((await send({ ...binding, assignment_id: undefined })).status, 409);
+    const denied = await send(binding, true);
+    assert.equal(denied.status, 409);
+    assert.match(await denied.text(), /foreign_principal/);
+    const forged = { ...binding, principal_id: "model-authored-principal", document_fingerprint: "model-authored-target" };
+    const ignoredClaims = await (await send(forged)).json() as any;
+    assert.equal(ignoredClaims.assignment_snapshot_v2.current_binding.principal_id, snapshot.current_binding.principal_id);
+    assert.equal(ignoredClaims.assignment_snapshot_v2.current_binding.document_fingerprint, snapshot.current_binding.document_fingerprint);
+    const absent = await (await send(binding)).json() as any;
+    assert.deepEqual(absent.recovered_operation_ids, []);
+    assert.deepEqual(absent.unresolved_operation_ids, [lease.operation_id]);
+    assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id), before);
+    retainCompletionOutboxV2(root, completionOutboxKeyV2(root), lease, { content: [], structuredContent: {
+      schema: "revit-operator.assignment-kernel-mcp-result/v2",
+      operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `retained:${lease.operation_id}`,
+        operation_id: lease.operation_id, binding: lease.binding, status: "failed_before_dispatch", dispatch_state: "not_dispatched",
+        persistent_effect: "none", native_transaction_state: "not_applicable", authority: "operator-mcp-transport",
+        result_schema_id: "operation-transport-failure/v2", observation_required: false, completed_at: new Date().toISOString(),
+        request_identity: lease.request_identity, error_code: "pre_dispatch_failure" }
+    } });
+    const recoveredResponse = await send(binding);
+    const recovered = await recoveredResponse.json() as any;
+    assert.equal(recoveredResponse.status, 200, JSON.stringify(recovered));
+    assert.deepEqual(recovered.recovered_operation_ids, [lease.operation_id]);
+    assert.deepEqual(recovered.unresolved_operation_ids, []);
+    assert.equal(recovered.assignment_snapshot_v2.execution_control.state, "paused");
+    assert.equal(recovered.assignment_snapshot_v2.terminal, false);
+    const repeated = await (await send(binding)).json() as any;
+    assert.deepEqual(repeated.recovered_operation_ids, []);
+    assert.deepEqual(repeated.assignment_snapshot_v2, recovered.assignment_snapshot_v2);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }));
 

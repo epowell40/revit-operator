@@ -4,12 +4,18 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./completion-outbox": {
+      "types": "./completion-outbox.d.ts",
+      "import": "./completion-outbox.js"
+    },
     ".": {
       "types": "./index.d.ts",
       "import": "./index.js"
     }
   },
   "files": [
+    "completion-outbox.js",
+    "completion-outbox.d.ts",
     "index.js",
     "index.d.ts",
     "evidence-retrieval-selector-golden-vectors.json"

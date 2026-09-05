@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { completionRecoveryOrderV2 } from "./assignment_kernel_v2_recovery_order.js";
 import {
   OPERATION_RESULT_V2_SCHEMA,
   OPERATION_V2_SCHEMA,
@@ -101,6 +102,7 @@ export type AssignmentKernelOperationSettlementV2 = Readonly<{
 }>;
 
 export type AssignmentKernelRecoveryRuntimeV2 = Readonly<{
+  recoverCompletion?(lease: AssignmentKernelOperationLeaseV2): unknown | null;
   callTool(tool: string, args: Record<string, unknown>, binding: Readonly<{
     sessionId: string;
     assignmentKernelV2: AssignmentKernelOperationLeaseV2;
@@ -911,7 +913,7 @@ export async function recoverAssignmentKernelOperationsV2(input: Readonly<{
   let snapshot = input.snapshot;
   const now = input.now ?? new Date();
   const transport = (input.transport ?? process.env.OPERATOR_REVIT_TRANSPORT ?? "direct").trim().toLowerCase();
-  for (const operationId of snapshot.in_flight_operation_ids) {
+  for (const operationId of completionRecoveryOrderV2(snapshot)) {
     const operation = snapshot.operations[operationId];
     if (!operation || operation.settlement_state === "settled") continue;
     const lease = leaseFromOperation(operation);
@@ -941,6 +943,15 @@ export async function recoverAssignmentKernelOperationsV2(input: Readonly<{
       } catch {
         snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id)!;
       }
+      continue;
+    }
+    // This is retained execution truth, not a fresh dispatch. An expired
+    // admission deadline cannot erase an already committed native result.
+    // Invalid records stop recovery; they never fall through to courier replay.
+    const retained = input.runtime.recoverCompletion?.(lease);
+    if (retained) {
+      snapshot = settleAssignmentKernelOperationV2(lease, retained,
+        input.observation_commit_runtime ?? DEFAULT_OBSERVATION_COMMIT_RUNTIME).snapshot;
       continue;
     }
     if (Date.parse(operation.deadline_at) <= now.getTime()) {

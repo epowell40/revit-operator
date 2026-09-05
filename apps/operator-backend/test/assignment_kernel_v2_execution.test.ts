@@ -3,6 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { recoverRetainedAssignmentCompletionsV2 } from "../src/assignments/assignment_kernel_v2_completion_recovery.js";
+import { completionOutboxKeyV2, readCompletionOutboxV2, retainCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
@@ -1913,3 +1916,126 @@ test("provider receipt without a tool result is durable but waits for the quiesc
   assert.equal(continued.decision.decision, "admit_reasoning_turn");
   assert.equal(continued.snapshot.progress_epochs[0]!.genuine_progress, false);
 }));
+
+test("producer process loss after durable apply completion recovers without native replay, even after deadline", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-completion-crash-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { snapshot } = setup("apply");
+    const lease = openAssignmentKernelOperationV2({ snapshot,
+      controller_request_id: "crash-apply", provider_turn_id: "crash-turn",
+      capability_id: "element.update", classified_effect: "apply", target_tokens: ["id:1478627"],
+      arguments: { value: "new" }, opened_at: "2026-08-26T16:00:00.000Z" });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const key = completionOutboxKeyV2(root);
+    const completion = envelope(lease.operation_id, lease.binding, { updated: true }, "applied");
+    const producer = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      import fs from 'node:fs';
+      import path from 'node:path';
+      import { retainCompletionOutboxV2 } from '@revitoperator/assignment-kernel-v2-contracts/completion-outbox';
+      const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+      fs.appendFileSync(path.join(input.root, 'native-mutations.log'), 'committed once\\n');
+      retainCompletionOutboxV2(input.root, input.key, input.lease, input.completion);
+      process.kill(process.pid, 'SIGKILL');
+    `], { cwd: process.cwd(), input: JSON.stringify({ root, key, lease, completion }), encoding: "utf8", timeout: 15_000 });
+    assert.ok(producer.signal || producer.status !== 0, "producer must die before delivering a result");
+    assert.equal(fs.readFileSync(path.join(root, "native-mutations.log"), "utf8"), "committed once\n");
+    __testOnlyResetGoalListCache();
+    const before = getAssignmentKernelSnapshotV2(lease.assignment_id)!;
+    assert.equal(before.operations[lease.operation_id]!.result, undefined);
+    let dispatches = 0;
+    const runtime = { recoverCompletion: (value: typeof lease) => readCompletionOutboxV2(root, key, value),
+      callTool: async () => { dispatches++; throw new Error("must not dispatch during recovery"); } };
+    const recovered = await recoverAssignmentKernelOperationsV2({ snapshot: before, runtime,
+      transport: "direct", now: new Date("2026-08-27T16:00:00Z") });
+    assert.equal(recovered.operations[lease.operation_id]!.persistent_effect, "applied");
+    assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
+    assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
+    assert.deepEqual(await recoverAssignmentKernelOperationsV2({ snapshot: recovered, runtime }), recovered);
+    assert.equal(dispatches, 0);
+    const ready = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+    assert.equal(ready.outcome, "active", "recovered apply still requires fresh verification");
+    const read = openAssignmentKernelOperationV2({ snapshot: ready,
+      controller_request_id: "crash-readback", provider_turn_id: "readback-turn",
+      capability_id: "element.read", classified_effect: "read", target_tokens: ["id:1478627"], arguments: { target_id: "1478627" } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, { elementId: 1478627, value: "new" }));
+    const terminal = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
+    assert.equal(terminal.outcome, "complete");
+    assert.equal(terminal.terminal, true);
+    assert.equal(Object.values(terminal.operations).filter(operation => operation.requested_effect === "apply").length, 1);
+    assert.equal(fs.readFileSync(path.join(root, "native-mutations.log"), "utf8"), "committed once\n");
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retained child completion recovers before its parent; absent child evidence leaves both pending", () => workspace(() => {
+  const { snapshot } = setup();
+  const parent = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "recovery-parent", provider_turn_id: "turn",
+    capability_id: "revit_call_tool", classified_effect: "read", arguments: { method: "POST", path: "/revit/quantify", body: {} } });
+  markAssignmentKernelOperationDispatchStartedV2(parent);
+  const child = openAssignmentKernelChildOperationV2({ binding: parent.binding, parent_operation_id: parent.operation_id,
+    child_ordinal: 0, operation_role: "prerequisite", capability_id: "native:GET:/revit/tool-registry",
+    classified_effect: "read", method: "GET", path: "/revit/tool-registry",
+    arguments: { method: "GET", path: "/revit/tool-registry", body: null } });
+  markAssignmentKernelOperationDispatchStartedV2(child);
+  const root = process.env.OPERATOR_WORKSPACE_ROOT!;
+  const key = completionOutboxKeyV2(root);
+  retainCompletionOutboxV2(root, key, parent, envelope(parent.operation_id, parent.binding, { total: 2 }));
+  const waiting = recoverRetainedAssignmentCompletionsV2(parent.binding);
+  assert.deepEqual(waiting.recovered_operation_ids, []);
+  assert.equal(waiting.unresolved_operation_ids.length, 2);
+  retainCompletionOutboxV2(root, key, child, envelope(child.operation_id, child.binding, { tools: [] }));
+  const recovered = recoverRetainedAssignmentCompletionsV2(parent.binding);
+  assert.deepEqual(recovered.recovered_operation_ids, [child.operation_id, parent.operation_id]);
+  assert.deepEqual(recovered.unresolved_operation_ids, []);
+  assert.equal(recovered.snapshot.quiescent, true);
+  const repeated = recoverRetainedAssignmentCompletionsV2(parent.binding);
+  assert.deepEqual(repeated.recovered_operation_ids, []);
+  assert.deepEqual(repeated.snapshot, recovered.snapshot);
+}));
+
+test("invalid retained completion never authorizes recovery or a fallback mutation", async () => {
+  const previous = process.env.OPERATOR_WORKSPACE_ROOT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-completion-invalid-"));
+  process.env.OPERATOR_WORKSPACE_ROOT = root;
+  __testOnlyResetGoalListCache();
+  try {
+    const { snapshot } = setup("apply");
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "invalid-completion", provider_turn_id: "turn",
+      capability_id: "element.update", classified_effect: "apply", arguments: { value: "new" } });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const key = completionOutboxKeyV2(root);
+    const completion = envelope(lease.operation_id, lease.binding, { updated: true }, "applied");
+    retainCompletionOutboxV2(root, key, lease, completion);
+    assert.equal(readCompletionOutboxV2(root, key, { ...lease, binding: { ...lease.binding, generation: 2 } }), null);
+    assert.equal(readCompletionOutboxV2(root, key, { ...lease, request_identity: { ...lease.request_identity, request_signature: "different" } }), null);
+    const outbox = path.join(root, "runtime", "assignment-completions-v2");
+    const file = path.join(outbox, fs.readdirSync(outbox).find(name => name.endsWith(".json"))!);
+    const original = fs.readFileSync(file, "utf8");
+    const tampered = JSON.parse(original);
+    tampered.payload.envelope.structuredContent.observation.raw_payload.updated = false;
+    fs.writeFileSync(file, JSON.stringify(tampered));
+    let dispatches = 0;
+    await assert.rejects(recoverAssignmentKernelOperationsV2({ snapshot: getAssignmentKernelSnapshotV2(lease.assignment_id)!, transport: "courier",
+      runtime: { recoverCompletion: value => readCompletionOutboxV2(root, key, value),
+        callTool: async () => { dispatches++; return completion; } } }), /signature_invalid/);
+    assert.equal(dispatches, 0);
+    assert.equal(getAssignmentKernelSnapshotV2(lease.assignment_id)!.operations[lease.operation_id]!.result, undefined);
+    fs.writeFileSync(file, original);
+    retainCompletionOutboxV2(root, key, lease, completion);
+    const conflict = structuredClone(completion);
+    conflict.structuredContent.operation_result_v2.completed_at = "2026-08-26T16:00:06.000Z";
+    assert.throws(() => retainCompletionOutboxV2(root, key, lease, conflict), /result_conflict/);
+    assert.equal(fs.readFileSync(file, "utf8"), original);
+  } finally {
+    __testOnlyResetGoalListCache();
+    if (previous === undefined) delete process.env.OPERATOR_WORKSPACE_ROOT; else process.env.OPERATOR_WORKSPACE_ROOT = previous;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
