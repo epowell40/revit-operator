@@ -1,6 +1,7 @@
 import { classifyAutoGoalRequest } from "./auto_goal.js";
 import { supersedeBlockedAutoGoalForFreshRequest } from "./auto_goal_runtime.js";
 import { getCurrentGoalForSession, setAgentGoal, type GoalRecord } from "./service.js";
+import { hasRevitTurnContext } from "../revit_context_policy.js";
 
 type JsonMap = Record<string, unknown>;
 
@@ -24,7 +25,13 @@ export function startAutoGoalIfEligible(input: {
 }): GoalRecord | null {
   if (input.tool_result_count > 0) return null;
   const decision = classifyAutoGoalRequest(input.user_text);
-  if (!decision.shouldStart) return null;
+  // A Revit conversation is a work surface. Short requests ("What size is
+  // this?") need a durable owner before discovery, even without command words.
+  // Admission is not write authorization or completion; those stay evidence-bound.
+  if (!decision.shouldStart) {
+    if (!input.user_text.trim() || !hasRevitTurnContext(input.request_context)) return null;
+    decision.signals.push("request in Revit conversation context");
+  }
   const current = getCurrentGoalForSession(input.session_id);
   if (current && !supersedeBlockedAutoGoalForFreshRequest(input.session_id)) return current;
   const context = object(input.request_context);

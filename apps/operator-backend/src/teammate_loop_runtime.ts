@@ -10,6 +10,7 @@ import { missingOpaqueMutationInputs, mutationIntentBlockReason } from "./teamma
 import { canonicalTeammateInputs, normalizedTeammateUserText as normalizedUserText, type TeammateTaskRequest } from "./teammate_assignment_inputs.js";
 import { expectedPostconditionValuesV2, observedPostconditionValuesV2 } from "./postcondition_verification_v2.js";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import { hasRevitTurnContext } from "./revit_context_policy.js";
 import {
   explicitTargetAbsenceV2,
   explicitVerificationV2,
@@ -199,7 +200,7 @@ export function isAffirmativeDocumentLifecycleMutation(userText: string | null |
   return !!text && containsDocumentLifecycleMutation(text) && !deniesDocumentLifecycleMutation(text);
 }
 
-export function classifyAgentTurn(userText: string | null | undefined): AgentTurnKind {
+export function classifyAgentTurn(userText: string | null | undefined, context?: unknown): AgentTurnKind {
   const text = `${userText || ""}`.replace(/\s+/g, " ").trim().toLowerCase();
   if (!text) return "conversation";
   const documentLifecycleMutation = containsDocumentLifecycleMutation(text);
@@ -218,6 +219,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   if (previewOnly || documentLifecycleDenied) return "inspection";
   const explicitlyConceptualFraming = /^(?:please\s+)?(?:for planning\b|explain\b|(?:can|could|would) you explain\b|what\b|how\b|why\b|should\s+(?:i|we)\b|tell me about\b)/.test(text);
   if (isConceptualQuestion(text)
+      && !(hasRevitTurnContext(context) && /\b(?:this|that|these|those|it)\b/.test(text))
       && (!explicitMutation || explicitlyConceptualFraming)
       && !/\b(?:then|and|also|otherwise)\s+(?:add|fix|change|modify|edit|create|delete|remove|move|place|set|update|replace)\b/.test(text)) return "conversation";
   if (explicitMutation) return "mutation";
@@ -232,7 +234,7 @@ export function classifyAgentTurn(userText: string | null | undefined): AgentTur
   // concrete Revit subject and is neither a question nor explicitly read-only,
   // default to doing the work instead of requiring a magic mutation verb.
   if (hasRevitWorkSubject(text)) return "mutation";
-  return "conversation";
+  return hasRevitTurnContext(context) ? "inspection" : "conversation";
 }
 
 function hasNoWriteAuthority(text: string): boolean {
@@ -306,7 +308,7 @@ function contextIdentity(contextValue: unknown, kind: AgentTurnKind): { state: T
 
 export function buildTeammateTurnContract(req: TeammateTaskRequest): TeammateTurnContract {
   const text = normalizedUserText(req);
-  const turnKind = classifyAgentTurn(text);
+  const turnKind = classifyAgentTurn(text, req.context);
   const identity = contextIdentity(req.context, turnKind);
   const ambiguity = ambiguityFor(text, turnKind);
   const noWrite = hasNoWriteAuthority(text);
