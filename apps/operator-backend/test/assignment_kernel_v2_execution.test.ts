@@ -28,6 +28,9 @@ import { storeEvidence } from "../src/evidence/evidence_store.js";
 import { __testOnlyResetGoalListCache, createGoal, getGoal, transitionGoal } from "../src/goals/service.js";
 import { ASSIGNMENT_ABSOLUTE_MODEL_CALL_LIMIT } from "../src/assignments/model_call_budget.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
+import { generateVerifiedWorkPacketFromKernelV2 } from "../src/work_packets/assignment_kernel_v2_generator.js";
+import { renderVerifiedWorkPacketMarkdown } from "../src/work_packets/renderer.js";
+import { settleAssignmentKernelExecutionFailureV2 } from "../src/assignments/assignment_kernel_v2_execution_failure.js";
 import {
   assignmentKernelV2ModelReceiptObserver,
   createAssignmentKernelV2ModelReceiptRecorder,
@@ -965,6 +968,67 @@ test("read after committed apply is canonically a verification operation", () =>
     && fact.fact_class === "verification" && fact.value === true));
   assert.equal(verified.snapshot.outcome, "complete");
   assert.equal(verified.snapshot.work_unit_states["work-verification"], "complete");
+  const terminal = advanceAssignmentKernelProgressV2({ binding: verified.snapshot.current_binding }).snapshot;
+  assert.equal(terminal.terminal, true);
+  const goal = getGoal(snapshot.spec.binding.assignment_id)!;
+  const packet = generateVerifiedWorkPacketFromKernelV2(goal, terminal, null);
+  assert.equal(packet.trust_presentation.overall, "independently_verified");
+  assert.equal(packet.actions.find(action => action.attempt_id === applyLease.operation_id)?.verification.state, "passed");
+  assert.equal(packet.actions.find(action => action.attempt_id === verificationLease.operation_id)?.verification.state, "passed");
+
+  // A read succeeded and retained bytes in these neighboring cases, but it did
+  // not establish proof for this applied operation.
+  for (const missingProof of ["no_postcondition_fact", "wrong_applied_operation", "missing_forward_link", "unsettled_read"] as const) {
+    const altered = structuredClone(terminal);
+    const read = altered.operations[verificationLease.operation_id]!;
+    if (missingProof === "no_postcondition_fact") {
+      for (const id of read.observation_ids) altered.observations[id]!.facts = altered.observations[id]!.facts
+        .filter(fact => fact.fact_id !== "verification.postcondition_satisfied");
+    } else if (missingProof === "wrong_applied_operation") read.verification_of_operation_id = "different-apply";
+    else if (missingProof === "missing_forward_link") altered.operations[applyLease.operation_id]!.verification_operation_ids = [];
+    else read.settlement_state = "awaiting_result";
+    const incomplete = generateVerifiedWorkPacketFromKernelV2(goal, altered, null);
+    assert.equal(incomplete.trust_presentation.overall, "uncertain_or_missing", missingProof);
+    assert.notEqual(incomplete.actions.find(action => action.attempt_id === applyLease.operation_id)?.verification.state, "passed", missingProof);
+    assert.notEqual(incomplete.actions.find(action => action.attempt_id === verificationLease.operation_id)?.verification.state, "passed", missingProof);
+    assert.ok(incomplete.issues.some(issue => issue.affected_attempt_ids.includes(applyLease.operation_id)), missingProof);
+  }
+}));
+
+test("blocked after applied edit and failed readback keeps packet trust uncertain despite a passing criterion", () => workspace(() => {
+  const { goal, snapshot } = setup("apply");
+  const apply = openAssignmentKernelOperationV2({
+    snapshot, controller_request_id: "packet-apply", provider_turn_id: "packet-apply-turn",
+    capability_id: "element.update", classified_effect: "apply", target_tokens: ["id:1478627"], arguments: { value: "new" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(apply);
+  settleAssignmentKernelOperationV2(apply, envelope(apply.operation_id, apply.binding, { updated: true }, "applied"));
+  const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+  assert.equal(ready.criteria[ready.spec.criteria[0]!.criterion_id]?.status, "pass");
+  const read = openAssignmentKernelOperationV2({
+    snapshot: ready, controller_request_id: "packet-readback", provider_turn_id: "packet-readback-turn",
+    capability_id: "element.read", classified_effect: "read", target_tokens: ["id:1478627"], arguments: { target_id: "1478627" }
+  });
+  markAssignmentKernelOperationDispatchStartedV2(read);
+  failAssignmentKernelOperationV2(read, new Error("native_host_busy_before_readback"), "dispatching");
+  const blocked = settleAssignmentKernelExecutionFailureV2({
+    binding: apply.binding, failure_id: "packet-readback-interrupted", error_class: "transport", phase: "provider_turn"
+  }).snapshot;
+  assert.equal(blocked.terminal, true);
+  assert.equal(blocked.outcome, "blocked");
+  const packet = generateVerifiedWorkPacketFromKernelV2(getGoal(goal.id)!, blocked, null);
+  assert.equal(packet.status, "blocked_truthfully");
+  assert.equal(packet.acceptance_criteria[0]!.status, "pass", "retain the canonical fact evaluation without promoting task completion");
+  assert.equal(packet.trust_presentation.overall, "uncertain_or_missing");
+  const appliedRow = packet.actions.find(action => action.attempt_id === apply.operation_id)!;
+  assert.equal(appliedRow.effect.state, "applied");
+  assert.equal(appliedRow.verification.state, "inconclusive");
+  assert.equal(packet.actions.find(action => action.attempt_id === read.operation_id)?.verification.state, "inconclusive");
+  assert.ok(packet.issues.some(issue => issue.kind === "verification_uncertainty" && issue.affected_attempt_ids.includes(apply.operation_id)));
+  const markdown = renderVerifiedWorkPacketMarkdown(packet);
+  assert.match(markdown, /Blocked Truthfully/);
+  assert.match(markdown, /\*\*Blocked Truthfully\*\* \[uncertain \/ missing\]/);
+  assert.match(markdown, /This change was applied, but no successful linked readback proves its postcondition/);
 }));
 
 test("authoritative affected identity from a targetless create binds its verification read", () => workspace(() => {

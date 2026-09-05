@@ -200,6 +200,18 @@ test("stable criterion plus authoritative Observation terminally settles V2 and 
   const returns = listWorkReturns(goal.id);
   assert.equal(packets.length, 1);
   assert.equal(returns.length, 1);
+  assert.equal(packets[0]!.status, "verified_complete");
+  assert.equal(packets[0]!.trust_presentation.overall, "independently_verified");
+  for (const outcome of ["blocked", "failed", "complete_with_issues", "awaiting_user_input"] as const) {
+    const interrupted = { ...terminal, outcome };
+    const incompletePacket = generateVerifiedWorkPacketFromKernelV2(persistedGoal, interrupted, null);
+    assert.equal(incompletePacket.acceptance_criteria[0]!.status, "pass");
+    assert.equal(incompletePacket.trust_presentation.overall, "uncertain_or_missing", outcome);
+  }
+  const notApplicable = structuredClone(terminal);
+  notApplicable.criteria[criterionId]!.status = "not_applicable";
+  assert.equal(generateVerifiedWorkPacketFromKernelV2(persistedGoal, notApplicable, null).trust_presentation.overall,
+    "independently_verified", "a canonical not-applicable criterion does not contradict completion");
   assert.equal(
     packets[0]!.packet_id,
     generateVerifiedWorkPacketFromKernelV2(persistedGoal, terminal, null).packet_id,

@@ -81,6 +81,7 @@
     "TextNoteCanonicalizationTests"
   ],
   "failure_families": [
+    { "id": "blocked-packet-trust-and-linked-postcondition-reporting", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts"] },
     { "id": "native-queue-contention-owner-observability", "coverage": ["dotnet:OperatorRevitQueueDiagnosticTests", "backend:revit_control_plane_contract.test.ts", "mcp:lib/revitClient.test.ts", "backend:assignment_kernel_v2_execution.test.ts"] },
     { "id": "native-authorization-reconnect-after-backend-restart", "coverage": ["dotnet:OperatorNativeAuthorizationTransportTests", "dotnet:OperatorNativeHttpAdmissionTests", "backend:direct_revit_execution_authorization.test.ts"] },
     { "id": "native-queue-admission-before-preview-and-apply", "coverage": ["mcp:lib/revitClient.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/nativeTransport.test.ts"] },
