@@ -23,6 +23,7 @@
     "assignment_turn_journal.test.ts",
     "assignment_typed_native_settlement.test.ts",
     "benchmark_protocol_v2.test.ts",
+    "general_revit_acceptance_review.test.ts",
     "benchmark_protocol_v2_interaction.test.ts",
     "candidate51_v2_session_receipt_coherence.test.ts",
     "candidate52_v2_session_receipt_authority.test.ts",

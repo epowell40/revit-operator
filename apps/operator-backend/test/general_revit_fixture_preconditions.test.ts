@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { summarizeGeneralRevitFixturePreconditionCoverage } from "../src/benchmark/general_revit_fixture_preconditions.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { sha256File } from "../src/benchmark/protocol_v2_hash.js";
+import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../src/benchmark/general_revit_fixture_preconditions.js";
+
+test("per-case fixture verification detects an explicitly saved mutation and a missing frozen digest", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-fixture-bytes-"));
+  const fixture = path.join(root, "sample.rvt");
+  fs.writeFileSync(fixture, "pristine fixture test bytes");
+  const digest = sha256File(fixture);
+  assert.doesNotThrow(() => assertGeneralRevitFixtureBytes(root, "sample.rvt", digest));
+  assert.doesNotThrow(() => assertGeneralRevitFixtureBytes("unused", fixture, digest));
+  assert.throws(() => assertGeneralRevitFixtureBytes(root, "sample.rvt", ""), /Fixture bytes changed/);
+  fs.writeFileSync(fixture, "an earlier task explicitly saved an edit");
+  assert.throws(() => assertGeneralRevitFixtureBytes(root, "sample.rvt", digest), /Fixture bytes changed/);
+});
 
 test("fixture precondition coverage requires a successful exact receipt for every selected precondition", () => {
   const coverage = summarizeGeneralRevitFixturePreconditionCoverage([

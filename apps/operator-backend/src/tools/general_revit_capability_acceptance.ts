@@ -19,7 +19,8 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
   modelTelemetryCaseCoverage, requestedComputerAgentConfig, requestedVsObservedComputerAgent,
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
-import { summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
 import { generalRevitExecutionCaseWithInteractionV1, rescoreGeneralRevitInteractionTraceV1 } from "../benchmark/general_revit_interaction_acceptance.js";
@@ -34,7 +35,7 @@ import { bindComputerClarificationResponse, executeGeneralRevitComputerTurn, mod
 import { benchmarkInteractionCaseV1, benchmarkInteractionTraceV1, loadBenchmarkInteractionManifestV1,
   type BenchmarkInteractionCaseV1, type BenchmarkInteractionManifestV1 } from "../benchmark/protocol_v2_interaction.js";
 import { assertGeneralRevitProtocolOutputV2, generalRevitProtocolCorpusCoverageV2, generalRevitProtocolFixtureRootV2, generalRevitProtocolManifestPathV2, loadGeneralRevitProtocolInputsV2, resolveGeneralRevitProtocolRunV2, writeGeneralRevitProtocolReportV2 } from "../benchmark/protocol_v2_general_revit.js";
-import { baselineCaseDeltas, computerPerformanceSummary, groupedMultiSummary,
+import { baselineCaseDeltas, generalRevitBaselineComparison, computerPerformanceSummary, groupedMultiSummary,
   groupedSummary } from "../benchmark/general_revit_trace_reporting.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -798,7 +799,7 @@ async function main(): Promise<void> {
   const invocationStartedMs = Date.now();
   const invocationStartedAt = nowIso();
   const externalHoldoutPath = flag("--external-holdout");
-  const protocolInputs = loadGeneralRevitProtocolInputsV2(externalHoldoutPath);
+  const protocolInputs = loadGeneralRevitProtocolInputsV2(externalHoldoutPath, flag("--corpus-manifest") || undefined);
   const { corpus, fixtureConfig, externalHoldout } = protocolInputs;
   const interactionManifestPath = flag("--interaction-manifest");
   const interactionManifest: BenchmarkInteractionManifestV1 | null = interactionManifestPath
@@ -1068,6 +1069,7 @@ async function main(): Promise<void> {
   };
   for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
     const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
+    for (const fixture of protocolDraft?.fixture_adapter.fixtures || []) assertGeneralRevitFixtureBytes(fixtureRoot, fixtureConfig.fixtures[fixture.identity].sample_filename, fixture.rvt_sha256);
     if ((orchestrateFixtures || requestedFixture) && (isolateCases || preferredFixture !== activeFixtureKey)) {
       console.log(`[fixture] ${preferredFixture}`);
       const transition = await ensureFixtureActive(
@@ -1141,13 +1143,9 @@ async function main(): Promise<void> {
   const selectedAnswerAssertionCaseCount = selected.filter((entry) => !!entry.answer_assertions).length;
   const baselinePath = flag("--baseline");
   const baselineReport = baselinePath ? readJsonFile<JsonRecord>(path.resolve(baselinePath)) : null;
-  const baselineComparison = baselineReport ? {
-    path: path.resolve(baselinePath),
-    run_id: baselineReport.run_id ?? null,
-    generated_at: baselineReport.generated_at ?? null,
-    summary: asRecord(baselineReport.summary)
-  } : null;
+  const baselineComparison = generalRevitBaselineComparison(path.resolve(baselinePath), baselineReport);
   const caseDeltas = baselineCaseDeltas(traces, baselineReport);
+  const independentReview = buildGeneralRevitAcceptanceReviewPacket(runId, selected, traces);
   const report = {
     schema: "revit-operator.general-revit-capability-report/v1",
     run_id: runId,
@@ -1157,6 +1155,8 @@ async function main(): Promise<void> {
     suite_id: corpus.suite_id,
     suite,
     representative_not_exhaustive: true,
+    qualification_status: independentReview ? "pending_independent_review" : "runtime_evaluated",
+    runtime_score_is_provisional: independentReview !== null,
     suite_context: suiteContext,
     summary,
     summary_by_operation_family: summaryByOperationFamily,
@@ -1185,6 +1185,7 @@ async function main(): Promise<void> {
     report_sha256: sha256({ suiteContext, suiteTiming, summary, summaryByOperationFamily, summaryBySpecificity, summaryByFixture, summaryByVerificationBasis, summaryByCorpusTaskType, corpusCoverage, fixtureMismatchCount, fixtureUnverifiableCount, answerAssertionCaseCount, selectedAnswerAssertionCaseCount, caseDeltas, modelCallTelemetry, modelTelemetryCoverage, fixturePreconditionCoverage, latencyTelemetry, traces })
   };
   writeJsonFile(output, report);
+  if (independentReview) writeJsonFile(output.replace(/\.json$/i, ".independent-review.json"), independentReview);
   writeTextFile(summaryOutput, markdownReport(report));
   const protocolV2Output = rescoreOnly ? null : writeGeneralRevitProtocolReportV2({ draft: protocolDraft,
     envelopePath: protocolEnvelopePath, legacyReportPath: output, corpus, inputs: protocolInputs, releaseCanary });

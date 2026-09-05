@@ -10,6 +10,13 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+export function generalRevitBaselineComparison(baselinePath: string, baselineReport: JsonRecord | null): JsonRecord | null {
+  return baselineReport ? {
+    path: baselinePath, run_id: baselineReport.run_id ?? null,
+    generated_at: baselineReport.generated_at ?? null, summary: asRecord(baselineReport.summary)
+  } : null;
+}
+
 export function baselineCaseDeltas(traces: JsonRecord[], baselineReport: JsonRecord | null): JsonRecord[] {
   if (!baselineReport) return [];
   const baselineTraces = new Map((Array.isArray(baselineReport.task_traces) ? baselineReport.task_traces : [])

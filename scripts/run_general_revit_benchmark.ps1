@@ -9,6 +9,7 @@ param(
   [string]$Lane = "safe_readiness",
   [string]$ProtocolV2Envelope = "",
   [string]$InteractionManifest = "",
+  [string]$CorpusManifest = "",
   [switch]$LegacyProtocolV1,
   [switch]$ReleaseCanary,
   [string]$ExternalHoldout = "",
@@ -97,6 +98,7 @@ if ($resolvedProtocolV2Envelope) {
   )
 }
 if ($resolvedInteractionManifest) { $runnerArgs += @("--interaction-manifest", $resolvedInteractionManifest) }
+if ($CorpusManifest) { $runnerArgs += @("--corpus-manifest", (Resolve-Path -LiteralPath $CorpusManifest).Path) }
 if ($LegacyProtocolV1) { $runnerArgs += "--legacy-protocol-v1" }
 if ($ReleaseCanary) { $runnerArgs += "--release-canary" }
 if ($ExternalHoldout) { $runnerArgs += @("--external-holdout", (Resolve-Path -LiteralPath $ExternalHoldout).Path) }

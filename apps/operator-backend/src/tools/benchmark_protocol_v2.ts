@@ -6,6 +6,7 @@ import { benchmarkDataRoot, readJsonFile, sourceControlledRoots, writeJsonFile }
 import {
   generalRevitExecutionCase,
   loadGeneralRevitCapabilityCorpus,
+  generalRevitCapabilityManifestPath,
   type GeneralRevitCapabilityCase
 } from "../benchmark/general_revit_capability_acceptance.js";
 import {
@@ -18,6 +19,7 @@ import { buildBenchmarkRescoreV2, writeBenchmarkRescoreV2 } from "../benchmark/p
 import { readBenchmarkRawReportV2 } from "../benchmark/protocol_v2_report.js";
 import { writeProtocolV2ReportFromFlight } from "../benchmark/protocol_v2_runner.js";
 import { validateBenchmarkProtocolV2Contract, type BenchmarkProtocolV2Contract } from "../benchmark/protocol_v2_schema.js";
+import { sha256Value } from "../benchmark/protocol_v2_hash.js";
 import type { BenchmarkCaseResultV2 } from "../benchmark/protocol_v2_types.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -63,7 +65,7 @@ function sourceRoots(): string[] {
 }
 
 function loadCases(): GeneralRevitCapabilityCase[] {
-  return loadGeneralRevitCapabilityCorpus().cases;
+  return loadGeneralRevitCapabilityCorpus(flag("--corpus-manifest") || undefined).cases;
 }
 
 function main(): void {
@@ -90,8 +92,8 @@ function main(): void {
       legacyReportPath: legacyPath,
       outputPath: path.resolve(requiredFlag("--output")),
       cases: loadCases(),
-      corpusValue: loadGeneralRevitCapabilityCorpus(),
-      originalManifestPath: path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json")
+      corpusValue: loadGeneralRevitCapabilityCorpus(flag("--corpus-manifest") || undefined),
+      originalManifestPath: generalRevitCapabilityManifestPath(flag("--corpus-manifest") || undefined)
     });
     console.log(JSON.stringify({ output: result.json_path, report_sha256: result.report.report_sha256 }, null, 2));
     return;
@@ -113,11 +115,15 @@ function main(): void {
         const trace = traces.get(original.case_id);
         const testCase = cases.get(original.case_id);
         if (!trace || !testCase) throw new Error(`Rescore is missing retained trace or corpus case ${original.case_id}.`);
-        const executionCase = generalRevitExecutionCase(testCase, original.execution_truth.requested_effect === "apply");
+        if (sha256Value(testCase) !== (original.source_case_sha256 || original.case_sha256)) {
+          throw new Error(`Rescore corpus differs from retained case ${original.case_id}; select its original --corpus-manifest.`);
+        }
+        const executionCase = generalRevitExecutionCase(testCase, original.lane === "committed_apply");
         const current = buildBenchmarkCaseResultV2({
           runId: original.run_id,
           lane: original.lane,
           testCase: executionCase,
+          sourceCase: testCase,
           trace,
           rawTraceRef: original.raw_trace_ref,
           judgedAt: rescoredAt,

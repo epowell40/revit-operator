@@ -43,6 +43,9 @@ export function markdownReport(report: JsonRecord): string {
   const lines = [
     "# General Revit benchmark result",
     "",
+    ...(report.runtime_score_is_provisional === true ? [
+      "**Provisional runtime results: independent review of delivery and collateral effects is still required. These percentages are not the final task-delivery grade.**", ""
+    ] : []),
     `- Run: \`${String(report.run_id || "")}\``,
     `- Label: ${String(report.label || "unlabeled")}`,
     `- Generated: ${String(report.generated_at || "")}`,

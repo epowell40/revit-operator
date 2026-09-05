@@ -15,6 +15,10 @@ export function benchmarkDataRoot(): string {
   return path.join(backendRoot(), "benchmark");
 }
 
+export function generalRevitCapabilityManifestPath(manifestPath?: string): string {
+  return manifestPath ? path.resolve(manifestPath) : path.join(benchmarkDataRoot(), "general-agent", "revit-capability-acceptance.v1.json");
+}
+
 /** Every enclosing Git checkout/worktree that owns backend source. */
 export function sourceControlledRoots(start = backendRoot()): string[] {
   const roots: string[] = [];
