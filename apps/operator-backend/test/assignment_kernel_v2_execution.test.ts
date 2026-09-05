@@ -1954,6 +1954,8 @@ test("producer process loss after durable apply completion recovers without nati
     assert.equal(recovered.operations[lease.operation_id]!.settlement_state, "settled");
     assert.equal(recovered.operations[lease.operation_id]!.observation_ids.length, 1);
     assert.deepEqual(await recoverAssignmentKernelOperationsV2({ snapshot: recovered, runtime }), recovered);
+    assert.deepEqual(settleAssignmentKernelOperationV2(lease, completion).snapshot, recovered,
+      "a late original delivery must be idempotent after completion recovery");
     assert.equal(dispatches, 0);
     const ready = advanceAssignmentKernelProgressV2({ binding: lease.binding }).snapshot;
     assert.equal(ready.outcome, "active", "recovered apply still requires fresh verification");
