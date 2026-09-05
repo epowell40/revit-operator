@@ -3,6 +3,7 @@ import type {
   AssignmentSnapshotV2,
   SemanticFactV2
 } from "../domain/assignment-kernel/index.js";
+import { renderResultDeliveryV2 } from "../domain/assignment-kernel/result_delivery.js";
 
 export const TERMINAL_RESULT_V2_SCHEMA = "revit-operator.terminal-result/v2" as const;
 
@@ -103,11 +104,13 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
                 && fact.fact_class === "verification"
                 && fact.value === true)))
           .flatMap(operation => operation.observation_ids)
-      : []))]
+      : [])
+    .concat(snapshot.result_delivery?.items.map(item => item.observation_id) ?? []))]
     .filter(observationId => Boolean(snapshot.observations[observationId]))
     .sort();
   const facts = domainFacts(snapshot, supportingObservationIds);
-  const successfulSummary = inventorySummary(facts)
+  const successfulSummary = (snapshot.result_delivery ? renderResultDeliveryV2(snapshot.result_delivery) : null)
+    ?? inventorySummary(facts)
     ?? textNoteSummary(facts, snapshot.spec.requested_effect)
     ?? generalDomainSummary(facts);
   const complete = snapshot.outcome === "complete" || snapshot.outcome === "verified_noop" || snapshot.outcome === "complete_with_issues";

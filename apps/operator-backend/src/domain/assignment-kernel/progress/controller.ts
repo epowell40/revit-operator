@@ -106,6 +106,15 @@ function inputSchemaGapResolvedV2(snapshot: AssignmentSnapshotV2, rejected: Oper
 
 export function deriveProgressGapsV2(snapshot: AssignmentSnapshotV2): readonly ProgressGapV2[] {
   const gaps: ProgressGapV2[] = [];
+  if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) {
+    gaps.push({
+      schema: PROGRESS_GAP_V2_SCHEMA, gap_id: "result:delivery", kind: "result_delivery_required",
+      criterion_ids: snapshot.spec.criteria.filter(criterion => criterion.required).map(criterion => criterion.criterion_id),
+      work_unit_ids: ["work-primary", "work-evidence"], required_fact_ids: [],
+      current_observation_ids: Object.values(snapshot.observations).filter(observation => observation.evidence_class === "task_result").map(observation => observation.observation_id),
+      reason: "A successful read is not the delivered answer. Inspect retained evidence and address every part of the original request. Call operator_evaluate_assignment_criteria with resultItems selecting the exact native values to show the user (label, observationId, path as an array of exact object keys/array indexes). These selectors only present evidence; they cannot create facts or passing criteria."
+    });
+  }
   for (const operation of Object.values(snapshot.operations)) {
     const semanticGap = operation.result?.result_semantic_gap;
     const settledPreviewWithoutTypedProof = operation.requested_effect === "preview"

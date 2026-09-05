@@ -23,6 +23,10 @@ import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { canonicalTeammateInputs } from "../src/teammate_assignment_inputs.js";
 import { mutationIntentBlockReason } from "../src/teammate_mutation_intent_binding.js";
 import { completionOutboxKeyV2, retainCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
+import { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA } from "../src/assignments/assignment_kernel_v2_execution.js";
+import { renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
+import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -45,6 +49,77 @@ function start(prompt = "Count all air devices in the model.") {
     requestContext: { revit: { document: { projectIdentity: { fingerprint: "controls-model" } } } } })!;
   return { prepared, binding: prepared.bindingV2!, snapshot: getAssignmentKernelSnapshotV2(prepared.assignmentId)! };
 }
+
+test("read-result HTTP delivery returns native values, rejects foreign or missing evidence, and survives publication", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
+  const payload = { name: "PVC - DWV", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => { throw new Error("read interrupted before delivery"); },
+    callTool: async (_tool: unknown, _args: unknown, context: any) => {
+      const lease = context.assignmentKernelV2;
+      context.onMcpAccepted();
+      return { content: [], structuredContent: {
+    schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+    operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: "http-read-result", operation_id: lease.operation_id,
+      binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none", native_transaction_state: "not_applicable",
+      authority: "native-host", result_schema_id: "operator-native/POST:/revit/get-parameters/v2", observation_required: true,
+      raw_payload_hash: payloadDigestV2(payload).digest, receipt_id: "http-read-receipt", request_identity: lease.request_identity,
+      completed_at: new Date().toISOString() },
+    observation: { raw_payload: payload, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
+      verification_relevance: ["task_result"], evidence_class: "task_result" }
+      } };
+    }
+  };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+    session_id: binding.session_id, user_text: snapshot.spec.source_user_request,
+    context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Snowdon Towers Sample Plumbing", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared));
+  let dynamicResponse: any;
+  try {
+    dynamicResponse = await handleCodexDynamicToolCall(runtime as any, { id: "read-http", method: "item/tool/call", params: {
+      namespace: "revit_operator", turnId: "read-http", tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementId: 1380354 } }
+    } } as any);
+    assert.equal(dynamicResponse.success, true, JSON.stringify(dynamicResponse));
+  } finally { endTeammateLoopOwner(owner); }
+  advanceAssignmentKernelProgressV2({ binding });
+  const observation = Object.values(getAssignmentKernelSnapshotV2(binding.assignment_id)!.observations)[0]!;
+  const observationId = observation.observation_id;
+  const mapping = dynamicResponse.contentItems.map((item: any) => JSON.parse(item.text)).find((item: any) => item.schema === "revit-operator.model-observation-index/v2");
+  assert.equal(mapping.observations[0].observation_id, observationId);
+  assert.equal(mapping.observations[0].evidence_id, observation.raw_payload_ref.replace(/^evidence:/, ""));
+  assert.deepEqual(mapping.observations[0].eligible_criterion_ids, [snapshot.spec.criteria[0]!.criterion_id]);
+  const body = { ...binding, claims: [{ criterion_id: snapshot.spec.criteria[0]!.criterion_id, observation_ids: [observationId] }],
+    result_items: [{ label: "Selected pipe", observation_id: observationId, path: ["name"] },
+      { label: "Size", observation_id: observationId, path: ["parameters", "Size"] },
+      { label: "System", observation_id: observationId, path: ["parameters", "System Name"] }] };
+  const server = http.createServer((req, res) => {
+    void runWithRequestContext({ operator_backend_auth: createOperatorBackendAuth("shared_token", "test-only") }, async () => {
+      await handleAssignmentHttpRoute(req, res, new URL(req.url!, "http://localhost"), session => {
+        if (session === binding.session_id) return true;
+        res.writeHead(403); res.end(); return false;
+      });
+    });
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address() as import("node:net").AddressInfo;
+    const send = (value: unknown) => fetch(`http://127.0.0.1:${address.port}/api/assignments/v2/criteria/evaluate`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) });
+    assert.equal((await send({ ...body, session_id: "foreign" })).status, 403);
+    assert.equal((await send({ ...body, generation: 99 })).status, 400);
+    assert.equal((await send({ ...body, result_items: [{ ...body.result_items[0], observation_id: observation.operation_id }] })).status, 400,
+      "an operation or correlation identifier cannot substitute for the published Observation ID");
+    assert.equal((await send({ ...body, result_items: [{ ...body.result_items[0], path: ["missing"] }] })).status, 400);
+    assert.equal((await send({ ...body, result_items: null })).status, 400);
+    assert.equal(getAssignmentKernelSnapshotV2(binding.assignment_id)!.terminal, false);
+    const response = await send(body);
+    assert.equal(response.status, 200, await response.clone().text());
+    const result = (await response.json()) as any;
+    assert.equal(renderTerminalResultV2(result.assignment_snapshot_v2), '- Selected pipe: PVC - DWV\n- Size: 4"ø\n- System: Building Sanitary');
+    const published = parseAssignmentKernelPublicationV2(getAssignmentKernelPublicationV2(binding.assignment_id)!);
+    assert.deepEqual((published.snapshot as any).result_delivery, result.assignment_snapshot_v2.result_delivery);
+    assert.equal((await send(body)).status, 200);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}));
 
 test("pause persists through a fresh process; resume retains identity, budget usage, and command fencing", () => workspace(() => {
   const { binding, snapshot } = start();

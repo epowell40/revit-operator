@@ -16,6 +16,7 @@ import {
   normalizeAssignmentKernelJournalV2
 } from "./assignment_kernel_v2_store.js";
 import { assignmentKernelTerminalSettlementDeferredV2 } from "./assignment_kernel_v2_terminal_barrier.js";
+import { buildAssignmentResultDeliveryV2, type AssignmentResultSelectionV2 } from "./assignment_kernel_v2_result_delivery.js";
 
 export type AssignmentKernelBindingInputV2 = Readonly<{
   session_id: string;
@@ -86,10 +87,17 @@ export function deriveAndSettleAssignmentKernelV2(binding: AssignmentKernelBindi
 export function evaluateAssignmentObservationCriteriaV2(input: Readonly<{
   binding: AssignmentKernelBindingInputV2;
   claims: readonly CriterionObservationClaimV2[];
+  result_items?: readonly AssignmentResultSelectionV2[];
 }>): AssignmentSnapshotV2 {
+  const retained = assignmentKernelV2ForBinding(input.binding)?.snapshot;
+  if (retained?.terminal && retained.result_delivery && input.result_items) {
+    buildAssignmentResultDeliveryV2(retained, input.result_items);
+    return retained;
+  }
   let snapshot = context(input.binding).snapshot;
   if (!snapshot.quiescent) throw new Error("assignment_kernel_v2_criteria_not_quiescent");
   if (input.claims.length < 1) throw new Error("assignment_kernel_v2_criterion_claim_required");
+  const delivery = input.result_items !== undefined ? buildAssignmentResultDeliveryV2(snapshot, input.result_items) : null;
   for (const claim of input.claims) {
     const evaluation = evaluateCriterionV2({
       snapshot,
@@ -106,6 +114,13 @@ export function evaluateAssignmentObservationCriteriaV2(input: Readonly<{
       actor: evaluation.evaluator_authority,
       occurred_at: evaluation.evaluated_at,
       body: { event_type: "criterion_evaluated", evaluation }
+    }).snapshot;
+  }
+  if (delivery && !snapshot.result_delivery) {
+    snapshot = appendCurrentAssignmentKernelEventV2({
+      goal_id: input.binding.assignment_id, binding: snapshot.current_binding,
+      event_id: `result-delivered:${digest(delivery)}`, actor: "operator-result-delivery",
+      body: { event_type: "result_delivered", delivery }
     }).snapshot;
   }
   return deriveAndSettleAssignmentKernelV2(input.binding, "criterion_observations_evaluated");

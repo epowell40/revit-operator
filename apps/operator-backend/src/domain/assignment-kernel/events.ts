@@ -6,6 +6,7 @@ import type { ObservationCommitInputV2, OperationResultV2, OperationV2 } from ".
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallStateV2, ProviderCallV2, ProviderUsageV2 } from "./progress/provider_call.js";
 import type { ExecutionFailureV2 } from "./progress/execution_failure.js";
+import type { AssignmentResultDeliveryV2 } from "./result_delivery.js";
 
 export const ASSIGNMENT_EVENT_V2_SCHEMA = "revit-operator.assignment-event/v2" as const;
 
@@ -57,6 +58,7 @@ export type AssignmentEventV2 = AssignmentEventEnvelopeV2 & (
   | { event_type: "observation_commit_failed"; operation_id: OperationIdV2; result_id: string; attempt: number; error_code: string }
   | { event_type: "observation_retention_failed"; operation_id: OperationIdV2; error_code: string }
   | { event_type: "criterion_evaluated"; evaluation: CriterionEvaluationV2 }
+  | { event_type: "result_delivered"; delivery: AssignmentResultDeliveryV2 }
   | { event_type: "review_requested"; review_id: string; work_unit_ids: readonly WorkUnitIdV2[]; reason: string }
   | { event_type: "review_resolved"; review_id: string; decision: string }
   | { event_type: "reconciliation_recorded"; operation_id: OperationIdV2; resolved_effect: "none" | "applied"; observation_ids: readonly ObservationIdV2[] }

@@ -6,6 +6,7 @@ import type { OperationV2 } from "./operation.js";
 import type { ProgressEpochV2 } from "./progress/contracts.js";
 import type { ProviderCallV2 } from "./progress/provider_call.js";
 import type { ExecutionFailureV2 } from "./progress/execution_failure.js";
+import type { AssignmentResultDeliveryV2 } from "./result_delivery.js";
 import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
 
 export { ASSIGNMENT_SNAPSHOT_V2_SCHEMA };
@@ -44,6 +45,7 @@ export interface AssignmentSnapshotV2 {
   criterion_evaluation_versions: Readonly<Record<CriterionIdV2, number>>;
   outcome: AssignmentOutcomeV2;
   terminal: boolean;
+  result_delivery?: AssignmentResultDeliveryV2;
   terminal_reason?: string;
   in_flight_operation_ids: readonly OperationIdV2[];
   unresolved_unknown_operation_ids: readonly OperationIdV2[];

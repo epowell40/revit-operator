@@ -30,6 +30,7 @@ import { recordAssignmentTurnProgress } from "../assignments/turn_settlement.js"
 import { currentAssignmentJournalContext } from "../assignments/turn_journal.js";
 import { bindCanonicalAssignmentToolArguments } from "../assignments/tool_argument_binding.js";
 import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_v2_store.js";
+import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 import {
   failAssignmentKernelOperationV2,
   markAssignmentKernelOperationDispatchStartedV2,
@@ -232,12 +233,15 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         source: `assignment_kernel_v2_context:${params.tool}`,
         budget: getEvidenceContextBudget()
       });
-      return adaptMcpToolCallResultToDynamicResponse(result, {
+      const response = adaptMcpToolCallResultToDynamicResponse(result, {
         tool: params.tool,
         arguments: boundArguments.arguments,
         projections: context.projections,
         omitted: context.omitted
       });
+      const observationContext = codexAssignmentEvidenceContextV2(settled.snapshot, lease.operation_id);
+      if (observationContext) response.contentItems.push({ type: "inputText", text: observationContext });
+      return response;
     } catch (error) {
       recordTeammateMcpResult(runtime, teammateGate, { isError: true, error: error instanceof Error ? error.message : String(error) });
       const currentOperation = getAssignmentKernelSnapshotV2(lease.assignment_id)?.operations[lease.operation_id];

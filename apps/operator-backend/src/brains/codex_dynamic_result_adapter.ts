@@ -19,6 +19,9 @@ function compactDynamicMcpTextForCodex(tool: unknown, rawArguments: unknown, tex
   if (path !== "/revit/get-parameters") return text;
   try {
     const parsed = JSON.parse(text);
+    // A schema/transport rejection is a correction contract, not a parameter
+    // result. The success-only compactor otherwise erases its error and issues.
+    if (parsed?.error || parsed?.isError === true || parsed?.ok === false || parsed?.success === false) return text;
     const body = parseToolArguments(args.body);
     const requestedNames = Array.isArray(body.names)
       ? body.names.filter((name: unknown): name is string => typeof name === "string" && Boolean(name.trim()))
@@ -48,7 +51,7 @@ export function adaptMcpToolCallResultToDynamicResponse(
   // result itself creates an evidence-reference recursion in which the model
   // can never consume the requested fields. The V2 settlement path still
   // retains the retrieval result and its projection durably for audit/recovery.
-  const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence";
+  const exposeFocusedRetrieval = context?.tool === "operator_retrieve_evidence" || result?.isError === true;
   if (context?.projections?.length && !exposeFocusedRetrieval) {
     contentItems.push({
       type: "inputText",
@@ -59,7 +62,7 @@ export function adaptMcpToolCallResultToDynamicResponse(
   for (const item of content) {
     if (context?.projections?.length && !exposeFocusedRetrieval && item?.type !== "image") continue;
     if (item?.type === "text" && typeof item.text === "string") {
-      contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
+      contentItems.push({ type: "inputText", text: result?.isError === true ? item.text : compactDynamicMcpTextForCodex(context?.tool, context?.arguments, item.text) });
       continue;
     }
     if (item?.type === "image" && typeof item.data === "string" && typeof item.mimeType === "string") {
@@ -77,7 +80,7 @@ export function adaptMcpToolCallResultToDynamicResponse(
   }
   if (contentItems.length === 0 && result?.structuredContent !== undefined) {
     const text = JSON.stringify(result.structuredContent);
-    contentItems.push({ type: "inputText", text: compactDynamicMcpTextForCodex(context?.tool, context?.arguments, text) });
+    contentItems.push({ type: "inputText", text: result?.isError === true ? text : compactDynamicMcpTextForCodex(context?.tool, context?.arguments, text) });
   }
   if (contentItems.length === 0) contentItems.push({ type: "inputText", text: result?.isError ? "MCP tool failed without an error body." : "MCP tool completed without output." });
   return { contentItems, success: result?.isError !== true };

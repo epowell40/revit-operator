@@ -8,6 +8,7 @@ import { getAssignmentKernelSnapshotV2 } from "../assignments/assignment_kernel_
 import { renderTerminalResultV2 } from "../assignments/assignment_kernel_v2_terminal_result.js";
 import { deriveProgressGapsV2, type AssignmentBindingV2, type AssignmentSnapshotV2 } from "../domain/assignment-kernel/index.js";
 import { verificationCapabilityGuidanceV2 } from "../verification/verification_capability_admission_v2.js";
+import { codexAssignmentEvidenceContextV2 } from "./codex_assignment_evidence.js";
 
 function applicationGapGuidance(snapshot: AssignmentSnapshotV2, gapId: string): string {
   if (!gapId.startsWith("verification:")) return "";
@@ -51,6 +52,7 @@ function progressPrompt(
       `Unresolved gaps: ${decision.gap_ids.join(", ")}`,
       `Criteria: ${decision.criterion_ids.join(", ")}`,
       `Expected authoritative information: ${decision.expected_information.join(", ")}`,
+      codexAssignmentEvidenceContextV2(snapshot),
       ...(gapDetails.length > 0 ? ["Gap contracts:", ...gapDetails] : []),
       `Only an explicitly eligible ${snapshot.spec.requested_effect} task operation may fulfill a task criterion; supporting reads and control evidence may only prepare that operation.`,
       "Propose only operations that advance these criteria or resolve these exact gaps. Stop when the canonical controller reports a terminal, clarification, review, or blocker outcome."

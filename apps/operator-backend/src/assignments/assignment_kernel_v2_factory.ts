@@ -173,6 +173,10 @@ export function assignmentSpecFromGoalV2(input: Readonly<{
     source_user_request: input.goal.objective,
     requested_effect: effect,
     semantic_evidence_contract: SEMANTIC_EVIDENCE_CONTRACT_V2,
+    ...(effect === "read"
+      && ["auto_goal", "sidecar_computer"].includes(String(input.goal.work_budget?.mode))
+      && criterionSpecs.some(criterion => criterion.semantic_fact_requirements.includes("task.result_available"))
+      ? { result_delivery_required: true } : {}),
     criteria: criterionSpecs,
     input_variables: inputVariables,
     work_units: [

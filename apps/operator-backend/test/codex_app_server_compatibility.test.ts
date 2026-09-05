@@ -214,6 +214,25 @@ test("app-server dynamic Revit parameter reads are compacted before returning to
   assert.equal((response.contentItems[0] as { text: string }).text.includes("Panel 499"), false);
 });
 
+test("parameter read rejection keeps its correction contract even beside evidence projections", () => {
+  for (const error of [
+    { error: "invalid_tool_input", issues: [{ path: "body.elementId", expected: "number", actual: "missing" }] },
+    { code: "tool_input_schema_invalid", required: ["elementId"], rejected: ["elementIds", "parameterNames"] }
+  ]) {
+    const response = adaptMcpToolCallResultToDynamicResponse({ isError: true,
+      content: [{ type: "text", text: JSON.stringify(error) }] }, {
+      tool: "revit_call_tool", arguments: { path: "/revit/get-parameters", body: { elementIds: [1380354], parameterNames: ["Comments"] } },
+      projections: [{ evidence_id: "ev1_error_projection" } as any]
+    });
+    assert.equal(response.success, false);
+    assert.ok(response.contentItems.some(item => item.type === "inputText" && item.text === JSON.stringify(error)));
+    assert.equal(JSON.stringify(response).includes("parameter-evidence-summary"), false);
+    const structured = adaptMcpToolCallResultToDynamicResponse({ isError: true, structuredContent: error },
+      { tool: "revit_call_tool", arguments: { path: "/revit/get-parameters" } });
+    assert.deepEqual(JSON.parse((structured.contentItems[0] as { text: string }).text), error);
+  }
+});
+
 test("app-server preserves bounded explicit sheet parameter evidence in one compact response", () => {
   const elementIds = Array.from({ length: 17 }, (_, index) => 1400000 + index);
   const names = ["Sheet Number", "Sheet Group", "Discipline", "Drawn By", "Checked By"];

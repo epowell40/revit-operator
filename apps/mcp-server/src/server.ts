@@ -1065,13 +1065,18 @@ server.tool("operator_request_clarification", "Pause the current Assignment with
   }
 );
 
-server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status; this tool does not accept model-authored pass/fail status or JSON selectors.",
+server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kernel to evaluate stable criteria from cited Observation IDs and semantic facts. The runtime derives criterion status without model-authored pass/fail status. For required read-result delivery, select retained native values with resultItems; those presentation paths never determine criterion truth.",
   {
     claims: z.array(z.object({
       criterionId: z.string().min(1).max(240),
       observationIds: z.array(z.string().min(1).max(240)).min(1).max(128),
       basis: z.enum(["observation", "desired_state_equivalence"]).optional()
-    })).min(1).max(80)
+    })).min(1).max(80),
+    resultItems: z.array(z.object({
+      label: z.string().min(1).max(160),
+      observationId: z.string().min(1).max(240),
+      path: z.array(z.union([z.string().min(1).max(240), z.number().int().min(0)])).min(1).max(24)
+    })).min(1).max(32).optional().describe("Required for a generic read's user-visible answer. Select exact values from retained native observations with arrays of object keys/array indexes. Values are extracted by the host; these presentation selectors cannot change semantic facts or criterion truth. Cover every requested answer before delivery.")
   },
   async (args) => {
     try {
@@ -1082,6 +1087,7 @@ server.tool("operator_evaluate_assignment_criteria", "Ask the V2 Assignment Kern
         run_id: binding.run_id,
         generation: binding.generation,
         session_id: binding.session_id,
+        ...(args.resultItems ? { result_items: args.resultItems.map(item => ({ label: item.label, observation_id: item.observationId, path: item.path })) } : {}),
         claims: args.claims.map(claim => ({
           criterion_id: claim.criterionId,
           observation_ids: claim.observationIds,

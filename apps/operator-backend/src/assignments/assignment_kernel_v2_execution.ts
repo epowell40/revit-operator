@@ -361,7 +361,10 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
       const generallyRelevant = gap.work_unit_ids.includes(unit.work_unit_id)
         || gap.criterion_ids.some((criterionId) => advancesCriterionIds.includes(criterionId))
         || (purpose === "reconciliation" && gap.kind === "effect_unknown");
-      if (!generallyRelevant || gap.kind !== "operation_input_schema_invalid") return generallyRelevant;
+      // Exact schema help can belong to discovery while the rejected request
+      // belongs to verification. Its route binding, not work-unit equality,
+      // establishes relevance to this correction gap.
+      if (gap.kind !== "operation_input_schema_invalid") return generallyRelevant;
       const rejected = Object.values(snapshot.operations)
         .find(candidate => candidate.result?.input_schema_gap?.gap_id === gap.gap_id);
       return Boolean(rejected && operationProposalCanResolveInputSchemaGapV2({
@@ -477,7 +480,13 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
     throw new Error("assignment_kernel_v2_child_ordinal_invalid");
   }
   const suggestedEffect = operationEffect(input.classified_effect);
-  const purpose = input.operation_role === "prerequisite" ? "discovery" : operationPurpose(input.classified_effect, snapshot);
+  const fulfillmentRole = input.operation_role === "prerequisite"
+    ? "prerequisite"
+    : input.fulfillment_role ?? "supporting_control";
+  // Documentation/registry children remain supporting reads after an apply.
+  // Their chronology cannot promote them into target-bound verification.
+  const purpose = !fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole)
+    ? "discovery" : operationPurpose(input.classified_effect, snapshot);
   const unit = admittedWorkUnit(snapshot, suggestedEffect, purpose);
   const identity = requestIdentity({
     capability_id: input.capability_id,
@@ -508,9 +517,6 @@ export function openAssignmentKernelChildOperationV2(input: Readonly<{
   // Topology never grants semantic fulfillment. Ordinary children default to
   // supporting control with no criterion eligibility; only the trusted edge
   // may explicitly delegate a parent-approved criterion subset.
-  const fulfillmentRole = input.operation_role === "prerequisite"
-    ? "prerequisite"
-    : input.fulfillment_role ?? "supporting_control";
   const requestedEligible = [...new Set(input.eligible_criterion_ids ?? [])].sort();
   if (!fulfillmentRoleCanCarryTaskCriteriaV2(fulfillmentRole) && requestedEligible.length > 0) {
     throw new Error("assignment_kernel_v2_support_operation_criterion_forbidden");

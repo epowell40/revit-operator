@@ -90,6 +90,7 @@ export function deriveAssignmentOutcomeV2(snapshot: AssignmentSnapshotV2): Assig
   }
   if (!evaluations.every((evaluation) => evaluation.status === "pass" || evaluation.status === "not_applicable")) return "active";
 
+  if (snapshot.spec.result_delivery_required && !snapshot.result_delivery) return "active";
   if (snapshot.spec.requested_effect !== "apply") return "complete";
   const appliedOperations = Object.values(snapshot.operations)
     .filter((operation) => operation.requested_effect === "apply" && operation.persistent_effect === "applied");

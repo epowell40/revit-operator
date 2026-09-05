@@ -234,7 +234,8 @@ export async function handleAssignmentHttpRoute(
           ...(row.basis === "desired_state_equivalence" ? { basis: "desired_state_equivalence" as const } : {})
         };
       }) : [];
-      const snapshot = evaluateAssignmentObservationCriteriaV2({ binding, claims });
+      const snapshot = evaluateAssignmentObservationCriteriaV2({ binding, claims,
+        ...(body?.result_items !== undefined ? { result_items: body.result_items as any } : {}) });
       writeJson(res, snapshot.terminal ? 200 : 202, { ok: true, assignment_snapshot_v2: snapshot });
     } catch (error) {
       writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) });

@@ -605,6 +605,44 @@ test("MCP stdio server registers repaired tools and rejects semantic write contr
   assert.equal(backendRequests, 0, "Invalid semantic planner controls must be rejected before any backend fetch.");
 });
 
+test("compiled MCP preserves native result selections and rejects malformed read delivery", async (t) => {
+  const requests: any[] = [];
+  const backend = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    requests.push({ path: req.url, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ok: true }));
+  });
+  const port = await listen(backend);
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "operator-result-delivery-stdio-"));
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(process.cwd(), "dist", "server.js")], cwd: process.cwd(),
+    env: { ...env, OPERATOR_API_BASE_URL: `http://127.0.0.1:${port}`, OPERATOR_AUTH_MODE: "shared_token", OPERATOR_TOKEN: "test-only",
+      OPERATOR_WORKSPACE_ROOT: workspace, REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory" }, stderr: "pipe" });
+  transport.stderr?.on("data", () => {});
+  const client = new Client({ name: "result-delivery-stdio", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => { await client.close(); await transport.close(); await closeServer(backend); fs.rmSync(workspace, { recursive: true, force: true }); });
+  await withTimeout(client.connect(transport), "connecting result delivery MCP");
+  const binding = { assignment_id: "read-assignment", run_id: "read-run", session_id: "read-session", generation: 1, principal_id: "test" };
+  const _meta = { "revit-operator/assignment-kernel-binding-v2": binding };
+  const claims = [{ criterionId: "read-result", observationIds: ["native-observation"] }];
+  const resultItems = [{ label: "System", observationId: "native-observation", path: ["items", 0, "parameters", "System Name"] }];
+  const result = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims, resultItems }, _meta });
+  assert.notEqual(result.isError, true);
+  assert.deepEqual(requests, [{ path: "/api/assignments/v2/criteria/evaluate", body: {
+    assignment_id: binding.assignment_id, run_id: binding.run_id, session_id: binding.session_id, generation: 1,
+    claims: [{ criterion_id: "read-result", observation_ids: ["native-observation"] }],
+    result_items: [{ label: "System", observation_id: "native-observation", path: ["items", 0, "parameters", "System Name"] }]
+  } }]);
+  for (const pathValue of [[], ["items", -1], ["items", 1.5]]) {
+    const denied = await client.callTool({ name: "operator_evaluate_assignment_criteria", arguments: { claims,
+      resultItems: [{ ...resultItems[0], path: pathValue }] }, _meta });
+    assert.equal(denied.isError, true);
+  }
+  assert.equal(requests.length, 1, "invalid selectors must not reach the backend");
+});
+
 test("compiled MCP forwards a request-scoped principal JWT to completion without model or audit leakage", async (t) => {
   const credential = "compiled-stdio-principal-jwt";
   const requests: Array<{ path: string; authorization: string; shared: string; body: string }> = [];

@@ -896,6 +896,54 @@ test("a verification parent's native child preserves the exact applied-operation
   assert.deepEqual(childOperation.target, parentOperation.target);
 }));
 
+test("exact documentation and example children stay supporting discovery after a committed parameter edit", () => {
+  for (const path of ["/revit/tool-doc", "/revit/tool-examples"]) workspace(() => {
+    const { snapshot } = setup("apply");
+    const applyLease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "comments-apply", provider_turn_id: "comments-turn",
+      capability_id: "revit_set_parameters", classified_effect: "apply", target_tokens: ["elementid:1380354", "id:1380354"],
+      arguments: { changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK" }] } });
+    markAssignmentKernelOperationDispatchStartedV2(applyLease);
+    const applied = settleAssignmentKernelOperationV2(applyLease,
+      envelope(applyLease.operation_id, applyLease.binding, { elementId: 1380354, updated: true }, "applied")).snapshot;
+    const progressed = advanceAssignmentKernelProgressV2({ binding: applied.current_binding }).snapshot;
+    const invalid = openAssignmentKernelOperationV2({ snapshot: progressed, controller_request_id: "comments-invalid-read",
+      provider_turn_id: "comments-invalid-turn", capability_id: "revit_call_tool", classified_effect: "read",
+      target_tokens: ["elementid:1380354", "id:1380354"],
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [1380354], parameterNames: ["Comments"] } } });
+    settleAssignmentKernelOperationV2(invalid, { content: [], structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: {
+        schema: OPERATION_RESULT_V2_SCHEMA, result_id: `result-${invalid.operation_id}`, operation_id: invalid.operation_id,
+        binding: invalid.binding, status: "failed_before_dispatch", dispatch_state: "not_dispatched", persistent_effect: "none",
+        native_transaction_state: "not_applicable", authority: "operator-mcp-transport", result_schema_id: "operation-transport-failure/v2",
+        observation_required: false, completed_at: "2026-09-05T20:48:20.000Z", error_code: "mcp_request_validation_failed",
+        request_identity: invalid.request_identity, input_schema_gap: {
+          schema: "revit-operator.operation-input-schema-gap/v2", gap_id: `input-schema:${invalid.operation_id}`,
+          operation_id: invalid.operation_id, capability_id: invalid.capability_id,
+          input_schema_id: "operator-native/POST:/revit/get-parameters/input/v1", input_schema_digest: "a".repeat(64),
+          method: "POST", path: "/revit/get-parameters", request_signature: invalid.request_identity.request_signature,
+          dispatch: false, effect: "none", issues: [{ field_path: "body.elementId", expected_type: "number", actual_type: "undefined",
+            safe_correction_eligibility: "provider_corrected_arguments_required", correction_action: "provider_resubmit",
+            expected_constraint: { kind: "json_type", type: "number" } }]
+        }
+      }
+    } });
+    const docParent = openAssignmentKernelOperationV2({ snapshot: progressed, controller_request_id: "comments-doc", provider_turn_id: "comments-doc-turn",
+      capability_id: path.endsWith("tool-doc") ? "revit_tool_doc" : "revit_tool_examples", classified_effect: "discovery",
+      arguments: { method: "POST", path: "/revit/get-parameters" } });
+    const docChild = openAssignmentKernelChildOperationV2({ binding: docParent.binding, parent_operation_id: docParent.operation_id,
+      child_ordinal: 0, operation_role: "child", classified_effect: "read", method: "POST", path,
+      capability_id: `native:POST:${path}`, arguments: { method: "POST", path, body: { method: "POST", path: "/revit/get-parameters" } },
+      fulfillment_role: "supporting_control", eligible_criterion_ids: [] });
+    const state = getAssignmentKernelSnapshotV2(snapshot.current_binding.assignment_id)!;
+    const child = state.operations[docChild.operation_id]!;
+    assert.equal(child.purpose, "discovery");
+    assert.equal(child.verification_of_operation_id, undefined);
+    assert.deepEqual(child.eligible_criterion_ids, []);
+    assert.equal(state.operations[applyLease.operation_id]!.verification_operation_ids.length, 0,
+      "documentation must never masquerade as a successful postcondition readback");
+  });
+});
+
 test("read after committed apply is canonically a verification operation", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

@@ -1,4 +1,5 @@
 import { canonicalJsonV2 } from "./canonical.js";
+import { validateResultDeliveryV2 } from "./result_delivery.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2 } from "./events.js";
 import { kernelAssertV2 } from "./errors.js";
@@ -881,6 +882,12 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         });
         break;
       }
+      case "result_delivered":
+        kernelAssertV2(event.actor === "operator-result-delivery", "assignment_result_delivery_authority_invalid", "Only the trusted evidence presentation boundary can retain a result.");
+        validateResultDeliveryV2(snapshot, event.delivery);
+        kernelAssertV2(!snapshot.result_delivery, "assignment_result_delivery_duplicate", "Result delivery is immutable.");
+        snapshot = { ...snapshot, result_delivery: structuredClone(event.delivery) };
+        break;
       case "review_requested":
         for (const workUnitId of event.work_unit_ids) kernelAssertV2(Object.prototype.hasOwnProperty.call(snapshot.work_unit_states, workUnitId), "review_work_unit_unknown", "Review cites an unknown work unit.");
         snapshot = { ...snapshot, pending_review_ids: [...new Set([...snapshot.pending_review_ids, event.review_id])].sort() };
