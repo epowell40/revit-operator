@@ -446,7 +446,7 @@ namespace RevitBridge.Operator
                     }
 
                     return handlerResult;
-                }, localDeadline.Token, correlationId).ConfigureAwait(false);
+                }, localDeadline.Token, correlationId, "courier:" + method + ":" + path).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && localDeadline.IsCancellationRequested)
             {
@@ -667,7 +667,7 @@ namespace RevitBridge.Operator
 
         internal async Task ProbeRevitHostAsync(CancellationToken cancellationToken)
         {
-            await _eventService.Run(_ => true, cancellationToken).ConfigureAwait(false);
+            await _eventService.Run(_ => true, cancellationToken, null, "courier:host-probe").ConfigureAwait(false);
         }
 
         private static bool IsDirectControlPlanePath(string path)

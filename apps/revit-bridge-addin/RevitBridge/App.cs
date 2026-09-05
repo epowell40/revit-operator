@@ -49,7 +49,7 @@ namespace RevitBridge
             var backend = new OperatorBackendClient(OperatorBackendConfig.GetBaseUri(), backendAuth);
 
             // Init Service & Server
-            _eventService = new RevitEventService();
+            _eventService = new RevitEventService(WriteStartupLog);
             _server = new RevitHttpServer(_eventService, backend);
             _server.Start();
             WriteStartupLog("HTTP server start requested.");

@@ -1018,7 +1018,8 @@ namespace RevitBridge.Server
                                     return certifiedResult;
                                 },
                                 localDeadline.Token,
-                                correlationId);
+                                correlationId,
+                                "http:" + effectiveMethod + ":" + path);
                         }
                         catch (OperationCanceledException) when (localDeadline.IsCancellationRequested)
                         {

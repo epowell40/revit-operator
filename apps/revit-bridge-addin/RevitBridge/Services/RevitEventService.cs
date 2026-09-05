@@ -68,11 +68,14 @@ namespace RevitBridge.Services
             public CancellationToken CancellationToken { get; }
             public string? CorrelationId { get; }
             public int ExecutionState;
+            public OperatorRevitQueueDiagnostic? Diagnostic;
         }
 
         private readonly ConcurrentQueue<QueueItem> _queue = new ConcurrentQueue<QueueItem>();
         private readonly ExternalEvent _externalEvent;
         private int _inFlight;
+        private readonly Action<string>? _diagnosticSink;
+        private OperatorRevitQueueDiagnostic? _diagnosticOwner;
 
         private static readonly TimeSpan BackgroundWakeInterval = TimeSpan.FromMilliseconds(250);
         private const uint WmNull = 0x0000;
@@ -81,8 +84,9 @@ namespace RevitBridge.Services
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool PostMessage(IntPtr windowHandle, uint message, IntPtr wParam, IntPtr lParam);
 
-        public RevitEventService()
+        public RevitEventService(Action<string>? diagnosticSink = null)
         {
+            _diagnosticSink = diagnosticSink;
             _externalEvent = ExternalEvent.Create(this);
         }
 
@@ -92,8 +96,10 @@ namespace RevitBridge.Services
         public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken)
             => Run(action, cancellationToken, null);
 
-        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId)
+        public Task<T> Run<T>(Func<UIApplication, T> action, CancellationToken cancellationToken, string? correlationId, string? source = null)
         {
+            var diagnostic = new OperatorRevitQueueDiagnostic(correlationId,
+                source ?? action.Method.DeclaringType?.FullName + "." + action.Method.Name);
             var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
             if (cancellationToken.IsCancellationRequested)
             {
@@ -105,6 +111,7 @@ namespace RevitBridge.Services
             // unbounded queue that can make Revit appear frozen after one slow operation.
             if (Interlocked.CompareExchange(ref _inFlight, 1, 0) != 0)
             {
+                OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "busy", diagnostic, Volatile.Read(ref _diagnosticOwner));
                 tcs.TrySetException(new RevitEventQueueException(
                     "revit_external_event_busy",
                     "Revit already has one Operator action in flight. Retry after that action completes.",
@@ -114,7 +121,10 @@ namespace RevitBridge.Services
             }
 
             var item = new QueueItem(app => action(app), tcs, cancellationToken, correlationId);
+            item.Diagnostic = diagnostic;
+            Volatile.Write(ref _diagnosticOwner, diagnostic);
             _queue.Enqueue(item);
+            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "admitted", diagnostic);
             if (cancellationToken.CanBeCanceled)
             {
                 // A cancellation that wins before Execute must remove the pending item and
@@ -230,6 +240,7 @@ namespace RevitBridge.Services
 
         private void CancelQueuedItem(QueueItem expected)
         {
+            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "cancellation_requested", expected.Diagnostic);
             // If Execute already started, it owns the slot until the Revit API callback
             // returns. Releasing it here would permit overlapping access to Revit's API.
             if (Interlocked.CompareExchange(
@@ -260,6 +271,7 @@ namespace RevitBridge.Services
 
         private void FailQueuedItem(QueueItem expected, Exception error)
         {
+            OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "raise_failed", expected.Diagnostic);
             if (_queue.TryDequeue(out var item))
             {
                 if (!ReferenceEquals(item, expected))
@@ -303,6 +315,8 @@ namespace RevitBridge.Services
                 }
                 else
                 {
+                    item.Diagnostic?.MarkStarted();
+                    OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "started", item.Diagnostic);
                     result = item.Action(app);
                 }
             }
@@ -318,6 +332,7 @@ namespace RevitBridge.Services
                 // Revit actions. A Raise made before this handler returns is safely handled
                 // by ExternalEventRequest.Pending and MaintainRaiseUntilStartedAsync.
                 Interlocked.Exchange(ref _inFlight, 0);
+                OperatorRevitQueueDiagnostic.Write(_diagnosticSink, "released", item.Diagnostic);
             }
 
             if (canceled)
