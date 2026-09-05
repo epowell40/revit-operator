@@ -459,6 +459,25 @@ export function buildProgressEpochV2(input: Readonly<{
     input.after.observations[id]?.facts.map((fact) => ({ fact, identity: semanticFactIdentityV2(fact) })) ?? [])
     .filter(({ identity }) => !beforeFacts.has(identity));
   const newFacts = unique(newFactRecords.map(({ identity }) => identity));
+  // Generic read facts deliberately do not encode every returned parameter.
+  // A distinct authoritative read can therefore add needed answer data without
+  // changing task.result_available. Count each admitted read shape once, never
+  // new observation IDs, timestamps, payload hashes or repeated identical reads.
+  const deliveryReadIdentities = (snapshot: AssignmentSnapshotV2): Set<string> => new Set(
+    Object.values(snapshot.observations).flatMap(observation => {
+      const operation = snapshot.operations[observation.operation_id];
+      if (observation.evidence_class !== "task_result"
+          || !["native-host", "dynamic-runtime"].includes(observation.authority)
+          || operation?.requested_effect !== "read"
+          || !operation.resolves_gap_ids.includes("result:delivery")
+          || !snapshot.spec.criteria.some(criterion => observationAdmissibilityForCriterionV2({ snapshot, criterion, observation }).admissible)) return [];
+      return [canonicalJsonV2({ capability_id: operation.capability_id,
+        request_identity: operation.request_identity ?? null, input: operation.input, target: operation.target })];
+    }));
+  const previousDeliveryReads = deliveryReadIdentities(input.before);
+  const addsDeliveryRead = input.before.spec.result_delivery_required && !input.before.result_delivery
+    && input.before.spec.requested_effect === "read"
+    && [...deliveryReadIdentities(input.after)].some(identity => !previousDeliveryReads.has(identity));
   const criterionDeltas: CriterionDeltaV2[] = input.after.spec.criteria.map((criterion) => ({
     criterion_id: criterion.criterion_id,
     before_status: input.before.criteria[criterion.criterion_id]?.status ?? "unevaluated",
@@ -471,7 +490,7 @@ export function buildProgressEpochV2(input: Readonly<{
   if (afterGaps.length < beforeGaps.length || beforeGaps.some((gap) => !afterGaps.includes(gap))) progressReasons.push("gap_narrowed");
   if (afterGaps.some((gap) => gap.startsWith("input-schema:") && !beforeGaps.includes(gap))) progressReasons.push("correction_gap_identified");
   if (newFactRecords.some(({ fact }) => fact.fact_class === "control")) progressReasons.push("controller_knowledge_added");
-  if (newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
+  if (addsDeliveryRead || newFactRecords.some(({ fact }) => fact.fact_class !== "control")) progressReasons.push("authoritative_observation_added");
   if (input.after.pending_input_variable_ids.length > input.before.pending_input_variable_ids.length) progressReasons.push("input_requested");
   if (input.after.pending_input_variable_ids.length < input.before.pending_input_variable_ids.length) progressReasons.push("input_resolved");
   if (input.after.pending_review_ids.length > input.before.pending_review_ids.length) progressReasons.push("review_requested");

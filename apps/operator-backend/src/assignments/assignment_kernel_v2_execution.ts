@@ -215,7 +215,15 @@ function criterionIdsAdmittedForOperationV2(input: Readonly<{
     : undefined;
   const resultSchemas = anticipatedResultSchemaIds(input.capability_id, input.request_identity);
   return input.criterion_ids.filter((criterionId) => {
-    if (input.snapshot.criteria[criterionId]?.status === "pass") return false;
+    // Generic read truth may already be established while the answer still
+    // needs additional native data. Keep those reads in the same task-evidence
+    // contract; otherwise their results become control evidence and cannot be
+    // delivered. Effect and capability/schema policy checks still apply.
+    const assemblingReadAnswer = input.snapshot.spec.result_delivery_required
+      && !input.snapshot.result_delivery
+      && input.snapshot.spec.requested_effect === "read"
+      && input.operation_effect === "read";
+    if (input.snapshot.criteria[criterionId]?.status === "pass" && !assemblingReadAnswer) return false;
     const criterion = input.snapshot.spec.criteria.find(candidate => candidate.criterion_id === criterionId);
     const policy = criterion?.evidence_policy;
     if (!policy) return false;

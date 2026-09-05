@@ -54,17 +54,18 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
   const { binding, snapshot, prepared } = start("Tell me what is selected in Revit, its size, and which system it belongs to. Leave the model unchanged.");
   const payload = { name: "PVC - DWV", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
   const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => { throw new Error("read interrupted before delivery"); },
-    callTool: async (_tool: unknown, _args: unknown, context: any) => {
+    callTool: async (_tool: unknown, args: any, context: any) => {
       const lease = context.assignmentKernelV2;
+      const payloadForRead = args.path === "/revit/get-element-summary" ? { name: payload.name } : payload;
       context.onMcpAccepted();
       return { content: [], structuredContent: {
     schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
-    operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: "http-read-result", operation_id: lease.operation_id,
+    operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `http-read-result:${lease.operation_id}`, operation_id: lease.operation_id,
       binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: "none", native_transaction_state: "not_applicable",
-      authority: "native-host", result_schema_id: "operator-native/POST:/revit/get-parameters/v2", observation_required: true,
-      raw_payload_hash: payloadDigestV2(payload).digest, receipt_id: "http-read-receipt", request_identity: lease.request_identity,
+      authority: "native-host", result_schema_id: `operator-native/POST:${args.path}/v2`, observation_required: true,
+      raw_payload_hash: payloadDigestV2(payloadForRead).digest, receipt_id: `http-read-receipt:${lease.operation_id}`, request_identity: lease.request_identity,
       completed_at: new Date().toISOString() },
-    observation: { raw_payload: payload, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
+    observation: { raw_payload: payloadForRead, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
       verification_relevance: ["task_result"], evidence_class: "task_result" }
       } };
     }
@@ -74,14 +75,26 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
     context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Snowdon Towers Sample Plumbing", projectIdentity: { fingerprint: "controls-model" } } } } } as any, prepared));
   let dynamicResponse: any;
   try {
+    const firstRead = await handleCodexDynamicToolCall(runtime as any, { id: "summary-http", method: "item/tool/call", params: {
+      namespace: "revit_operator", turnId: "read-http", tool: "revit_call_tool",
+      arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [1380354] } }
+    } } as any) as any;
+    assert.equal(firstRead.success, true, JSON.stringify(firstRead));
+    const afterSummary = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    assert.equal(afterSummary.criteria[snapshot.spec.criteria[0]!.criterion_id]!.status, "pass");
+    assert.equal(afterSummary.terminal, false);
     dynamicResponse = await handleCodexDynamicToolCall(runtime as any, { id: "read-http", method: "item/tool/call", params: {
       namespace: "revit_operator", turnId: "read-http", tool: "revit_call_tool",
-      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementId: 1380354 } }
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [1380354] } }
     } } as any);
     assert.equal(dynamicResponse.success, true, JSON.stringify(dynamicResponse));
   } finally { endTeammateLoopOwner(owner); }
   advanceAssignmentKernelProgressV2({ binding });
-  const observation = Object.values(getAssignmentKernelSnapshotV2(binding.assignment_id)!.observations)[0]!;
+  const afterReads = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  const observation = Object.values(afterReads.observations).find(item =>
+    afterReads.operations[item.operation_id]!.request_identity?.path === "/revit/get-parameters")!;
+  assert.equal(observation.evidence_class, "task_result");
+  assert.ok(afterReads.progress_epochs.at(-1)!.progress_reasons.includes("authoritative_observation_added"));
   const observationId = observation.observation_id;
   const mapping = dynamicResponse.contentItems.map((item: any) => JSON.parse(item.text)).find((item: any) => item.schema === "revit-operator.model-observation-index/v2");
   assert.equal(mapping.observations[0].observation_id, observationId);

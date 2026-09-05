@@ -19,7 +19,7 @@ import {
   supplyAssignmentInputV2
 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
-import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2 } from "../src/domain/assignment-kernel/index.js";
+import { OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA, OPERATION_RESULT_V2_SCHEMA, canonicalJsonV2, buildProgressEpochV2 } from "../src/domain/assignment-kernel/index.js";
 import { createHash } from "node:crypto";
 import { __testOnlyResetGoalListCache, createGoal, getGoal } from "../src/goals/service.js";
 import { listVerifiedWorkPackets } from "../src/work_packets/store.js";
@@ -197,7 +197,7 @@ test("generic contextual read stays active until its native values are delivered
     arguments: { method: "POST", path: "/revit/get-parameters", body: { elementId: 1380354 } } });
   markAssignmentKernelOperationDispatchStartedV2(lease);
   const payload = { id: 1380354, name: "PVC - DWV", category: "Pipes", parameters: { Size: '4"ø', "System Name": "Building Sanitary" } };
-  const envelope = resultEnvelope(lease.operation_id, binding, lease.request_identity, payload);
+  const envelope = resultEnvelope(lease.operation_id, binding, lease.request_identity, { ...payload, parameters: {} });
   envelope.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/get-parameters/v2";
   const settled = settleAssignmentKernelOperationV2(lease, envelope);
   const observationId = settled.observation!.observation_id;
@@ -212,7 +212,7 @@ test("generic contextual read stays active until its native values are delivered
   assert.ok(modelContext.includes(observationId), "resumed reasoning must receive usable canonical Observation IDs");
   assert.ok(modelContext.includes(settled.observation!.raw_payload_ref.replace(/^evidence:/, "")),
     "the canonical Observation must map to its focused retrieval evidence ID");
-  const selection = [{ label: "Size", observation_id: observationId, path: ["parameters", "Size"] }];
+  const selection = [{ label: "Selected pipe", observation_id: observationId, path: ["name"] }];
   for (const variant of ["control", "foreign", "hash"] as const) {
     const changed = structuredClone(progress.snapshot);
     if (variant === "control") changed.observations[observationId]!.evidence_class = "control";
@@ -224,7 +224,30 @@ test("generic contextual read stays active until its native values are delivered
     provider_turn_id: "pipe-turn", capability_id: "revit_call_tool", classified_effect: "read",
     arguments: { method: "POST", path: "/revit/get-parameters", body: { elementId: 1380354, includeEmpty: false } } });
   markAssignmentKernelOperationDispatchStartedV2(followUp);
-  settleAssignmentKernelOperationV2(followUp, resultEnvelope(followUp.operation_id, binding, followUp.request_identity, payload));
+  const followUpResult = resultEnvelope(followUp.operation_id, binding, followUp.request_identity, payload);
+  followUpResult.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/get-parameters/v2";
+  const followed = settleAssignmentKernelOperationV2(followUp, followUpResult);
+  const followUpObservationId = followed.observation!.observation_id;
+  assert.equal(followed.snapshot.operations[followUp.operation_id]!.fulfillment_role, "delegated_task_execution");
+  assert.equal(followed.observation!.evidence_class, "task_result", "later parameter values must remain deliverable after the generic criterion passes");
+  const epoch = buildProgressEpochV2({ before: progress.snapshot, after: followed.snapshot,
+    stated_gap_ids: ["result:delivery"], admitted_operation_ids: [followUp.operation_id], recorded_at: new Date().toISOString() });
+  assert.ok(epoch.progress_reasons.includes("authoritative_observation_added"), "a distinct native read adds answer data even when task.result_available is unchanged");
+  for (const variant of ["control", "repeat", "failed", "foreign"] as const) {
+    const changed = structuredClone(followed.snapshot);
+    const observation = changed.observations[followUpObservationId]!;
+    const operation = changed.operations[followUp.operation_id]!;
+    if (variant === "control") observation.evidence_class = "control";
+    if (variant === "repeat") {
+      operation.input = structuredClone(progress.snapshot.operations[lease.operation_id]!.input);
+      operation.request_identity = structuredClone(progress.snapshot.operations[lease.operation_id]!.request_identity);
+    }
+    if (variant === "failed") operation.result!.status = "failed_after_dispatch";
+    if (variant === "foreign") observation.binding = { ...observation.binding, session_id: "foreign" };
+    const negative = buildProgressEpochV2({ before: progress.snapshot, after: changed,
+      stated_gap_ids: ["result:delivery"], admitted_operation_ids: [followUp.operation_id], recorded_at: new Date().toISOString() });
+    assert.ok(!negative.progress_reasons.includes("authoritative_observation_added"), variant);
+  }
   assert.equal(advanceAssignmentKernelProgressV2({ binding }).snapshot.terminal, false,
     "additional native reads remain admissible while the answer is being assembled");
   assert.throws(() => evaluateAssignmentObservationCriteriaV2({ binding, claims,
@@ -236,8 +259,8 @@ test("generic contextual read stays active until its native values are delivered
     result_items: [{ label: "Size", observation_id: observationId, path: ["parameters", "Size"] }] }), /binding_stale/);
   const resultItems = [
     { label: "Selected pipe", observation_id: observationId, path: ["name"] },
-    { label: "Size", observation_id: observationId, path: ["parameters", "Size"] },
-    { label: "System", observation_id: observationId, path: ["parameters", "System Name"] }
+    { label: "Size", observation_id: followUpObservationId, path: ["parameters", "Size"] },
+    { label: "System", observation_id: followUpObservationId, path: ["parameters", "System Name"] }
   ];
   const terminal = evaluateAssignmentObservationCriteriaV2({ binding, claims, result_items: resultItems });
   assert.equal(terminal.terminal, true);
