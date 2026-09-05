@@ -3,8 +3,22 @@ import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { backendRoot } from "../src/benchmark/files.js";
+import { loadGeneralRevitCapabilityCorpus } from "../src/benchmark/general_revit_capability_acceptance.js";
+import { generalRevitFixtureForCase, loadGeneralRevitSampleFixtures } from "../src/benchmark/general_revit_sample_fixtures.js";
 import { sha256File } from "../src/benchmark/protocol_v2_hash.js";
 import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../src/benchmark/general_revit_fixture_preconditions.js";
+
+test("realistic Electrical cases start in the live-qualified power plan instead of the HVAC-only L4 name", () => {
+  const corpus = loadGeneralRevitCapabilityCorpus(path.join(backendRoot(), "benchmark/general-agent/revit-capability-acceptance.v2.json"));
+  const fixtures = loadGeneralRevitSampleFixtures(corpus.cases);
+  const electrical = corpus.cases.filter(entry => generalRevitFixtureForCase(fixtures, entry.case_id) === "snowdon_electrical");
+  assert.equal(electrical.length, 9);
+  for (const entry of electrical) {
+    assert.deepEqual(entry.fixture_precondition?.active_view, { name: "L4 - Power", view_type: "FloorPlan" }, entry.case_id);
+    assert.equal(entry.fixture_precondition?.clear_selection, true, entry.case_id);
+  }
+});
 
 test("per-case fixture verification detects an explicitly saved mutation and a missing frozen digest", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "revit-fixture-bytes-"));

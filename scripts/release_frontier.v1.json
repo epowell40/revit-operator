@@ -48,7 +48,8 @@
     "teammate_verification_evidence.test.ts",
     "tool_result_normalization.test.ts",
     "verification_capability_admission_v2.test.ts",
-    "verified_work_packet.test.ts"
+    "verified_work_packet.test.ts",
+    "general_revit_fixture_preconditions.test.ts"
   ],
   "mcp_tests": [
     "lib/assignmentKernelV2.test.ts",
@@ -79,7 +80,8 @@
     "OperatorNativeTransportTests",
     "OperatorToolSearchRankingTests",
     "ScheduleAppearanceContractTests",
-    "TextNoteCanonicalizationTests"
+    "TextNoteCanonicalizationTests",
+    "OperatorProjectCloseFocusTests"
   ],
   "failure_families": [
     { "id": "blocked-packet-trust-and-linked-postcondition-reporting", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts"] },
@@ -121,6 +123,7 @@
     { "id": "typed-principal-target-and-context-scope-separation", "coverage": ["backend:assignment_kernel_v2_architecture.test.ts", "backend:verification_capability_admission_v2.test.ts", "backend:teammate_mutation_intent_binding.test.ts", "backend:assignment_async_settlement_barrier.test.ts", "mcp:lib/genericToolPreflight.test.ts"] },
     { "id": "property-bound-parameter-postcondition-evidence", "coverage": ["backend:postcondition_verification_v2.test.ts", "backend:verification_capability_admission_v2.test.ts", "backend:assignment_kernel_v2_execution.test.ts", "backend:teammate_loop_runtime.test.ts", "backend:assignment_kernel_v2_architecture.test.ts"] },
     { "id": "verification-parent-native-child-subject-binding", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "mcp:lib/assignmentKernelV2.test.ts", "mcp:lib/mcp_stdio_smoke.test.ts"] },
-    { "id": "mutation-completion-crash-recovery-without-replay", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_controls.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] }
+    { "id": "mutation-completion-crash-recovery-without-replay", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_controls.test.ts", "mcp:lib/assignmentKernelV2.test.ts"] },
+    { "id": "fixture-starting-view-and-browser-focus-reset", "coverage": ["backend:general_revit_fixture_preconditions.test.ts", "backend:postcondition_verification_v2.test.ts", "dotnet:OperatorProjectCloseFocusTests", "dotnet:OperatorNativeTransportTests"] }
   ]
 }

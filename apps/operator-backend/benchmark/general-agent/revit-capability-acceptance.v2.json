@@ -1294,7 +1294,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "clear_selection": true
@@ -1334,7 +1334,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "clear_selection": true
@@ -1414,7 +1414,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "selection": {
@@ -1487,7 +1487,7 @@
       "probe_prompt": "Make this device match the compatible one next to it. Show me the proposed work, but do not apply model changes or produce the final export.",
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "selection": {
@@ -1798,7 +1798,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "selection": {
@@ -1883,7 +1883,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "clear_selection": true
@@ -2273,7 +2273,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "clear_selection": true
@@ -3353,7 +3353,7 @@
       ],
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "clear_selection": true
@@ -3381,7 +3381,7 @@
       "probe_prompt": "Add another one here like the selected device. Show me the proposed work, but do not apply model changes or produce the final export.",
       "fixture_precondition": {
         "active_view": {
-          "name": "L4",
+          "name": "L4 - Power",
           "view_type": "FloorPlan"
         },
         "selection": {

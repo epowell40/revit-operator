@@ -16,6 +16,18 @@ const applyText = (newText: string) => ({
   body: { elementId: 1478627, newText, apply: true }
 });
 
+test("posting project close after browser focus restoration is not proof that the document closed", () => {
+  const input = { method: "POST", path: "/revit/close-active-model", body: { discardUnsavedChanges: true } };
+  for (const restoredGraphicalFocus of [false, true]) {
+    assert.equal(postconditionSatisfiedByPayloadV2(input, {
+      status: "Close Posted", commandPosted: true, restoredGraphicalFocus,
+      requestedEffectSatisfied: false, verificationRequired: true,
+      title: "Snowdon Towers Sample Electrical",
+      context: { document: { title: "Snowdon Towers Sample Electrical", activeView: { type: "ProjectBrowser" } } }
+    }), false);
+  }
+});
+
 const readText = (text: string) => ({
   ok: true,
   requestedElementIds: [1478627],

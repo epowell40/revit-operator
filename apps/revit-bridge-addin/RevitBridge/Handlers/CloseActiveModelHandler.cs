@@ -2,6 +2,7 @@ using System;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 using RevitBridge.Operator;
 
 namespace RevitBridge.Handlers
@@ -21,7 +22,8 @@ namespace RevitBridge.Handlers
         public Task<object> Handle(UIApplication app, string jsonData)
         {
             var p = JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
-            var document = app.ActiveUIDocument?.Document;
+            var uiDocument = app.ActiveUIDocument;
+            var document = uiDocument?.Document;
             if (document == null)
             {
                 return Task.FromResult<object>(new
@@ -52,34 +54,46 @@ namespace RevitBridge.Handlers
             var commandId = RevitCommandId.LookupCommandId("ID_REVIT_FILE_CLOSE");
             if (commandId == null)
                 throw new InvalidOperationException("Revit's Close Active Project command is unavailable in this version.");
-            if (!app.CanPostCommand(commandId))
-                throw new InvalidOperationException("Revit cannot post Close Active Project in the current state.");
-
             object? dialogGuard = null;
-            if (wasModified)
-            {
-                var service = RevitBridge.App.Instance?.DialogComputerUse
-                    ?? throw new InvalidOperationException(
-                        "discardUnsavedChanges requires the Revit dialog guardian, but it is unavailable in this session.");
-                dialogGuard = service.ArmGuard(new OperatorDialogComputerUse.GuardParams
+            var restoredGraphicalFocus = OperatorProjectCloseFocus.PrepareAndPost(
+                uiDocument!.ActiveView?.ViewType.ToString(),
+                () =>
                 {
-                    button = "no",
-                    interactionMode = "message_then_mouse",
-                    cursorRestoreMode = "keep",
-                    messageContains = "save changes",
-                    maxTriggers = 1,
-                    ttlMs = 120000,
-                    includeScreenshotAfter = false
+                    // ActiveView can be ProjectBrowser/SystemBrowser after a browser
+                    // selection. Restore the actual drawing before posting File Close.
+                    var graphicalView = uiDocument.ActiveGraphicalView
+                        ?? throw new InvalidOperationException("No graphical view is available to close the active project.");
+                    uiDocument.ActiveView = graphicalView;
+                },
+                () =>
+                {
+                    if (!app.CanPostCommand(commandId))
+                        throw new InvalidOperationException("Revit cannot post Close Active Project in the current state.");
+                    if (wasModified)
+                    {
+                        var service = RevitBridge.App.Instance?.DialogComputerUse
+                            ?? throw new InvalidOperationException(
+                                "discardUnsavedChanges requires the Revit dialog guardian, but it is unavailable in this session.");
+                        dialogGuard = service.ArmGuard(new OperatorDialogComputerUse.GuardParams
+                        {
+                            button = "no",
+                            interactionMode = "message_then_mouse",
+                            cursorRestoreMode = "keep",
+                            messageContains = "save changes",
+                            maxTriggers = 1,
+                            ttlMs = 120000,
+                            includeScreenshotAfter = false
+                        });
+                    }
+                    app.PostCommand(commandId);
                 });
-            }
-
-            app.PostCommand(commandId);
             return Task.FromResult<object>(new
             {
                 status = "Close Posted",
                 commandPosted = true,
                 requestedEffectSatisfied = false,
                 verificationRequired = true,
+                restoredGraphicalFocus,
                 discardedUnsavedChanges = wasModified && p.discardUnsavedChanges,
                 title = document.Title,
                 path = document.PathName,

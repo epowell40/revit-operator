@@ -649,6 +649,9 @@ namespace RevitBridge.Common.Tests
             Assert.Contains("not the active-project close command", handler, StringComparison.Ordinal);
             Assert.Contains("app.CanPostCommand(commandId)", handler, StringComparison.Ordinal);
             Assert.Contains("app.PostCommand(commandId)", handler, StringComparison.Ordinal);
+            Assert.Contains("OperatorProjectCloseFocus.PrepareAndPost(", handler, StringComparison.Ordinal);
+            Assert.Contains("uiDocument.ActiveGraphicalView", handler, StringComparison.Ordinal);
+            Assert.Contains("uiDocument.ActiveView = graphicalView", handler, StringComparison.Ordinal);
             Assert.Contains("messageContains = \"save changes\"", handler, StringComparison.Ordinal);
             Assert.Contains("button = \"no\"", handler, StringComparison.Ordinal);
             Assert.Contains("verificationRequired = true", handler, StringComparison.Ordinal);

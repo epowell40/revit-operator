@@ -3593,7 +3593,7 @@
     },
     {
       "path": "apps/operator-backend/test/general_revit_fixture_preconditions.test.ts",
-      "sha256": "sha256:b01043551e2f02e4dbbdaa8773da6f4a1c858a3f6e6f1758935f1a92ed8769db"
+      "sha256": "sha256:4608d899baf67434af9324aafc94a6743f1cb30127389362e44f248fb6262a4d"
     },
     {
       "path": "apps/operator-backend/test/general_revit_model_telemetry.test.ts",
@@ -3729,7 +3729,7 @@
     },
     {
       "path": "apps/operator-backend/test/postcondition_verification_v2.test.ts",
-      "sha256": "sha256:ca14b3621fa0ff4fc8b5de5a4194169e80540cfffdf2f59cf8427638f937a448"
+      "sha256": "sha256:28b6bc1a08d2f9fbce7a3995eb8d15e16b599a4b42acd48fa30cdd2fb101e141"
     },
     {
       "path": "apps/operator-backend/test/principal_runtime_security.test.ts",
@@ -4233,7 +4233,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeTransportTests.cs",
-      "sha256": "sha256:5610003d4c076324f92e048c077955f1d4d6c6afac39d6d3b8c14e4f34050821"
+      "sha256": "sha256:252a35f6dfba747773c08401fd1a7aac36745f25587f228a66517f6b2ca0fd27"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPaneIntegrationContractTests.cs",
@@ -4242,6 +4242,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorProactivityLifecycleContractTests.cs",
       "sha256": "sha256:5986285edc441cf6c7a59116871caff612dc9cd6e7694e23b5d5e4364d87b72d"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorProjectCloseFocusTests.cs",
+      "sha256": "sha256:a9a8ca856a1794b83486303949d862983872415b64447bcbea34e55560b55713"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorRevitBatchBindingTests.cs",
@@ -4667,6 +4671,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeTransport.cs",
       "sha256": "sha256:64fc8f4e22857f4deea5a7290747e8206431777afbcff9fe31352eaf00408916"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorProjectCloseFocus.cs",
+      "sha256": "sha256:be0e9217b002919f0a7ca03d15a92f8873dfe5c663c647271704c816204725a6"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorRevitBatchBinding.cs",
@@ -5594,7 +5602,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CloseActiveModelHandler.cs",
-      "sha256": "sha256:b38bafc12bc514f3ebbc0cf2ba28b190f0027575235b24fb1322f5e32f31c9ca"
+      "sha256": "sha256:3f37e21a66d4e6584c8d80fcea17daf42efc4de9bb4269bd147c4f3e6be15940"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ComputerUseDialogHandlers.cs",
@@ -6149,7 +6157,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:8644027077be83d8538ec7ad3cb464a6528522c7260aa2c6e184f33f10ab34d4",
+  "inputs_hash": "sha256:8d1fd16855b324a65c5e5cb3768b2c8d3564002788b96c1fb509c8e3225782cf",
   "result": {
     "passed": true,
     "checks": [
