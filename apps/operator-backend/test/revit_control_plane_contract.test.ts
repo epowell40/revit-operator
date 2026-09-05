@@ -48,7 +48,8 @@ test("metadata and native discovery bypass the Revit event queue while actions p
     assert.match(server, new RegExp(`/revit/${route}`));
   }
   assert.match(runner, /OperatorActionDeadlinePolicy\.Resolve/);
-  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId\)\.ConfigureAwait\(false\)/);
+  assert.match(runner, /},\s*localDeadline\.Token,\s*correlationId,\s*"courier:" \+ method \+ ":" \+ path\)\.ConfigureAwait\(false\)/);
+  assert.match(server, /localDeadline\.Token,\s*correlationId,\s*"http:" \+ effectiveMethod \+ ":" \+ path/);
   assert.match(server, /X-Operator-Correlation-Id/);
   assert.match(server, /deadline\.CreateTimeoutException\(correlationId\)/);
   assert.match(server, /root is RevitEventQueueException/);
