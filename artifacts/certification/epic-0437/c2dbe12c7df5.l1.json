@@ -1793,7 +1793,7 @@
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/outcome.ts",
-      "sha256": "sha256:65386423dc5c1fd7b16feffdd7b4e30a07686cf969beafc71cd52c8a20e676c7"
+      "sha256": "sha256:8d9e4f2cea518c70d3ed96e2d20cea5aea7718e4a22cf6c9f75006f5c28b0dcf"
     },
     {
       "path": "apps/operator-backend/src/domain/assignment-kernel/payload_provenance.ts",
@@ -2765,7 +2765,11 @@
     },
     {
       "path": "apps/operator-backend/src/work_packets/assignment_kernel_v2_generator.ts",
-      "sha256": "sha256:2950540db0a1371f816fe11bb9703fea68bcd2fffe8da7dbc1f54912d195ea96"
+      "sha256": "sha256:645680e65beb46a715bc6dcddd1d5541bb77aec404a7e3a16686cd5501179093"
+    },
+    {
+      "path": "apps/operator-backend/src/work_packets/assignment_kernel_v2_verification.ts",
+      "sha256": "sha256:eaaec780a9f3a9de13760baeb800a70bdaf72987c15283ffed08beb15162bc46"
     },
     {
       "path": "apps/operator-backend/src/work_packets/contract.ts",
@@ -2941,11 +2945,11 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:143b35d888602ab803ce3b7014086d11d777ce7dae67516b6874038921b50926"
+      "sha256": "sha256:b7b55534820778a2728475844f165e0ebf8c5c4339a9895fae813d93c8f0cf95"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
-      "sha256": "sha256:09d723075fc85bf14d2adf8f299d3460d78c30224aff50d4d2d5e2f206d51e77"
+      "sha256": "sha256:580a2c751e9864f94d528be620f75be288923f7f94372e76864bb601dba1386a"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_progress_contracts.test.ts",
@@ -6117,7 +6121,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:86f7132908fc481d7e4c853cc3a9f34a7f4bb658b6852bb793e88d96de1957fb",
+  "inputs_hash": "sha256:19085d25ab44bcfe5ce35e8ba5dbac98bedec423c29c571b85ee997820c24631",
   "result": {
     "passed": true,
     "checks": [
