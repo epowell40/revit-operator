@@ -32,7 +32,7 @@ namespace RevitBridge.Logic.Handlers
                 transaction = OperatorNativeTransactionReceipt.NotStarted()
             });
 
-            return Task.FromResult(NativeSingleTransaction.Execute(app, doc, "Duplicate View", createdElements =>
+            return Task.FromResult<object>(NativeSingleTransaction.Execute(app, doc, "Duplicate View", createdElements =>
             {
                 var option = request.withDetailing ? ViewDuplicateOption.WithDetailing : ViewDuplicateOption.Duplicate;
                 var newId = view.Duplicate(option);

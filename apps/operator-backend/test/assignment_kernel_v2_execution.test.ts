@@ -2166,3 +2166,30 @@ test("invalid retained completion never authorizes recovery or a fallback mutati
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("visibility rejection persists confirmed rollback without completing work; unknown still blocks replay", () => {
+  for (const effect of ["none", "unknown"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const argumentsForVisibility = { method: "POST", path: "/revit/visibility",
+      body: { action: "hide_category", viewId: 1363433, categoryName: "Rooms", categoryNames: ["Rooms", "Room Tags"] } };
+    const lease = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "visibility-rejected", provider_turn_id: "visibility-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", arguments: argumentsForVisibility });
+    markAssignmentKernelOperationDispatchStartedV2(lease);
+    const payload = { status: "Failed", success: false, error: "Category 'Rooms' cannot be hidden in view 'L4'.",
+      transaction: { status: effect === "none" ? "rolled_back" : "pending", committed: effect === "none" ? false : null,
+        modified_element_ids: [], affected_element_ids: [], added_element_ids: [], deleted_element_ids: [] } };
+    const native = envelope(lease.operation_id, lease.binding, payload);
+    Object.assign(native.structuredContent.operation_result_v2, { status: "failed_after_dispatch", persistent_effect: effect,
+      native_transaction_state: effect === "none" ? "rolled_back" : "unknown", affected_target_identities: [], error_code: "native_domain_failure" });
+    native.structuredContent.observation.semantic_facts = [];
+    const settled = settleAssignmentKernelOperationV2(lease, native).snapshot;
+    assert.equal(settled.operations[lease.operation_id]!.persistent_effect, effect);
+    assert.deepEqual(settled.unresolved_unknown_operation_ids, effect === "unknown" ? [lease.operation_id] : []);
+    assert.notEqual(settled.outcome, "complete");
+    __testOnlyResetGoalListCache();
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), settled, "transaction truth survives restart");
+    if (effect === "unknown") assert.throws(() => openAssignmentKernelOperationV2({ snapshot: settled,
+      controller_request_id: "visibility-retry", provider_turn_id: "retry-turn", capability_id: "revit_call_tool",
+      classified_effect: "apply", arguments: argumentsForVisibility }), /unknown|operation/i);
+  });
+});

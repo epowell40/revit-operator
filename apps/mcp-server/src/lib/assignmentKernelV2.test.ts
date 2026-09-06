@@ -1227,3 +1227,56 @@ test("MCP retains authenticated native completion before returning its operation
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("visibility category rejection retains native rollback truth and pending remains unknown", async () => {
+  for (const effect of ["none", "unknown"] as const) {
+    const body = { action: "hide_category", viewId: 1363433, categoryName: "Rooms", categoryNames: ["Rooms", "Room Tags"] };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/visibility", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/visibility", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/visibility", {
+        status: "Failed", success: false, action: "hide_category", dryRun: false,
+        error: "Category 'Rooms' cannot be hidden in view 'L4'.",
+        transaction: { status: effect === "none" ? "rolled_back" : "pending", committed: effect === "none" ? false : null,
+          modified_element_ids: [], affected_element_ids: [], added_element_ids: [], deleted_element_ids: [] },
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "visibility-rejected",
+          requested_effect: "apply", effect_state: effect, effect_authority: effect === "none" ? "native_rollback" : "native_host",
+          effect_reason: effect === "none" ? "verified_native_rollback" : "native_handler_returned_without_authoritative_settlement", request_dispatched: true,
+          affected_target_identities: [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, effect);
+    assert.equal(result.native_transaction_state, effect === "none" ? "rolled_back" : "unknown");
+    assert.deepEqual(result.affected_target_identities ?? [], []);
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((fact: any) => fact.fact_id === "task.result_available"), false);
+  }
+});
+
+test("visibility settlement distinguishes pretransaction rejection, commit, and unknown preview", async () => {
+  for (const [effect, requested, authority, reason, state] of [
+    ["none", "apply", "native_host", "native_transaction_not_started", "not_applicable"],
+    ["applied", "apply", "native_transaction", "native_transaction_committed", "committed"],
+    ["unknown", "preview", "native_host", "native_handler_returned_without_authoritative_settlement", "unknown"]
+  ] as const) {
+    const body = { action: "set_scale", viewId: 1363433, scale: 96, dryRun: requested === "preview" };
+    const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: "/revit/visibility", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/visibility", body, { classified_effect: requested });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/visibility", {
+        status: effect === "applied" ? "Success" : "Failed", success: effect === "applied",
+        ...(effect === "applied" ? { view: { id: 1363433, scale: 96 } } : { error: "native request rejected" }),
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "visibility-neighbor",
+          requested_effect: requested, effect_state: effect, effect_authority: authority, effect_reason: reason,
+          request_dispatched: true, affected_target_identities: effect === "applied" ? ["element_id:1363433"] : [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, effect);
+    assert.equal(result.native_transaction_state, state);
+    assert.deepEqual(result.affected_target_identities, effect === "applied" ? ["element_id:1363433"] : []);
+  }
+});

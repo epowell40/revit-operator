@@ -682,9 +682,13 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   if (!['none', 'unknown', 'applied'].includes(persistentEffect)) throw new Error("assignment_kernel_v2_native_effect_invalid");
   if (call.lease.requested_effect === "read" && persistentEffect !== "none") throw new Error("assignment_kernel_v2_read_effect_conflict");
   if (call.lease.requested_effect !== "apply" && persistentEffect === "applied") throw new Error("assignment_kernel_v2_effect_exceeds_operation");
+  const confirmedNativeRollback = persistentEffect === "none" && !transportFailed && dispatched
+    && settlement.effect_authority === "native_rollback"
+    && settlement.effect_reason === "verified_native_rollback";
   const nativeTransactionState = persistentEffect === "applied" ? "committed"
-    : call.lease.requested_effect === "preview" && !transportFailed && dispatched ? "rolled_back"
-      : persistentEffect === "unknown" ? "unknown" : "not_applicable";
+    : persistentEffect === "unknown" ? "unknown"
+      : confirmedNativeRollback || (call.lease.requested_effect === "preview" && !transportFailed && dispatched)
+        ? "rolled_back" : "not_applicable";
   const provenance = transportFailed ? undefined : call.payload_provenance;
   if (!transportFailed && (!provenance || call.observation_payload === undefined)) {
     throw new Error("assignment_kernel_v2_observation_payload_not_captured");

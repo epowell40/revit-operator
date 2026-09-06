@@ -13,7 +13,8 @@ namespace RevitBridge.Common
             Func<string> start, Func<string> commit, Func<string> rollback,
             Func<string> getStatus, Func<Dictionary<string, object?>> mutate,
             Func<OperatorNativeTransactionReceipt> committedReceipt,
-            Func<IEnumerable<long>>? nativeCreatedElements = null)
+            Func<IEnumerable<long>>? nativeCreatedElements = null,
+            Func<IEnumerable<long>>? nativeModifiedElements = null)
         {
             var result = new Dictionary<string, object?>();
             string status = "unknown";
@@ -47,10 +48,15 @@ namespace RevitBridge.Common
                 // DocumentChanged was not observed within the handler's scope.
                 if (nativeCreatedElements != null)
                     receipt = receipt.WithNativeCreatedElements(nativeCreatedElements());
+                if (nativeModifiedElements != null)
+                    receipt = receipt.WithNativeModifiedElements(nativeModifiedElements());
             }
             else if (status == "RolledBack") receipt = OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>());
             else if (status == "Uninitialized") receipt = OperatorNativeTransactionReceipt.NotStarted();
             else receipt = OperatorNativeTransactionReceipt.Unknown(status);
+            // A handler's in-transaction readback cannot describe the persisted
+            // document after rollback or while the native outcome is pending.
+            if (status != "Committed") result.Clear();
             result["success"] = error == null && status == "Committed";
             result["transaction"] = receipt;
             if (error != null) result["error"] = error;

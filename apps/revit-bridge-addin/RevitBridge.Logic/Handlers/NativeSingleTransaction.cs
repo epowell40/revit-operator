@@ -9,10 +9,11 @@ using RevitBridge.Common;
 namespace RevitBridge.Logic.Handlers
 {
     /// <summary>For handlers that own exactly one transaction, without a surrounding transaction group.</summary>
-    internal static class NativeSingleTransaction
+    public static class NativeSingleTransaction
     {
-        public static object Execute(UIApplication app, Document doc, string name,
-            Func<ISet<long>, Dictionary<string, object?>> mutate)
+        public static Dictionary<string, object?> Execute(UIApplication app, Document doc, string name,
+            Func<ISet<long>, Dictionary<string, object?>> mutate,
+            Func<IEnumerable<long>>? nativeModifiedElements = null)
         {
             var added = new HashSet<long>();
             var modified = new HashSet<long>();
@@ -36,7 +37,7 @@ namespace RevitBridge.Logic.Handlers
                         () => tx.Start().ToString(), () => tx.Commit().ToString(),
                         () => tx.RollBack().ToString(), () => tx.GetStatus().ToString(), () => mutate(nativeCreated),
                         () => OperatorNativeTransactionReceipt.CommittedChanges(added, modified, deleted),
-                        () => nativeCreated);
+                        () => nativeCreated, nativeModifiedElements);
                     result["changeTracking"] = new
                     {
                         documentChangedObserved,

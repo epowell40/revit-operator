@@ -13,6 +13,73 @@ namespace RevitBridge.Common.Tests
         { ["viewId"] = 1542917L, ["name"] = "M-COORDINATION COPY", ["sourceViewId"] = 1363433L, ["withDetailing"] = true };
 
         [Theory]
+        [InlineData("RolledBack", false, "none")]
+        [InlineData("Pending", false, "unknown")]
+        [InlineData("RolledBack", true, "unknown")]
+        public void VisibilityCategoryRejectionSettlesOnlyFromNativeRollback(string rollbackStatus, bool rollbackThrows, string effect)
+        {
+            int mutations = 0, rollbacks = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started",
+                () => throw new Exception("A rejected category must not commit."),
+                () => { rollbacks++; if (rollbackThrows) throw new Exception("rollback failed"); return rollbackStatus; },
+                () => "Started",
+                () => { mutations++; throw new InvalidOperationException("Category 'Rooms' cannot be hidden in view 'L4'."); },
+                () => throw new Exception("A rejection must not publish a committed receipt."));
+            Assert.Equal(1, mutations);
+            Assert.Equal(1, rollbacks);
+            Assert.Equal(false, response["success"]);
+            Assert.Equal("Category 'Rooms' cannot be hidden in view 'L4'.", response["error"]);
+            Assert.False(response.ContainsKey("view"));
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/visibility");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Empty(settlement.AffectedTargetIdentities);
+        }
+
+        [Theory]
+        [InlineData("Committed", false, "applied", true)]
+        [InlineData("Committed", true, "applied", false)]
+        [InlineData("RolledBack", false, "none", false)]
+        [InlineData("Pending", false, "unknown", false)]
+        public void VisibilityReadbackRequiresCommitAndNeverPromotesRequestedIdentity(string commitStatus, bool commitThrows, string effect, bool success)
+        {
+            int mutations = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started",
+                () => commitThrows ? throw new Exception("commit response failed") : commitStatus,
+                () => throw new Exception("Must not roll back an already settled commit."), () => commitStatus,
+                () => { mutations++; return new Dictionary<string, object?> {
+                    ["status"] = "Success", ["view"] = new { id = 1363433L, scale = 96 } }; },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), Array.Empty<long>(), Array.Empty<long>()),
+                nativeModifiedElements: () => new[] { 1363433L });
+            Assert.Equal(1, mutations);
+            Assert.Equal(success, response["success"]);
+            Assert.Equal(commitStatus == "Committed", response.ContainsKey("view"));
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/visibility");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(commitStatus == "Committed", settlement.AffectedTargetIdentities.Contains("element_id:1363433"));
+        }
+
+        [Fact]
+        public void UnchangedNativeViewReadbackDoesNotMintModifiedIdentity()
+        {
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed", () => "RolledBack",
+                () => "Committed", () => new Dictionary<string, object?> { ["view"] = new { id = 1363433L, scale = 96 } },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), Array.Empty<long>(), Array.Empty<long>()),
+                nativeModifiedElements: () => Array.Empty<long>());
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/visibility");
+            Assert.Equal("applied", settlement.EffectState);
+            Assert.Empty(settlement.AffectedTargetIdentities);
+        }
+
+        [Fact]
+        public void HistoricalVisibilityExceptionOrSuccessWithoutReceiptRemainsUnknown()
+        {
+            foreach (var response in new object[] {
+                new { status = "Success", view = new { id = 1363433L } },
+                new { success = false, error = "Category 'Rooms' cannot be hidden in view 'L4'." } })
+                Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/visibility").EffectState);
+        }
+
+        [Theory]
         [InlineData("Committed", "applied", true)]
         [InlineData("RolledBack", "none", false)]
         [InlineData("Pending", "unknown", false)]
