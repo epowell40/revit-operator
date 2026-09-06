@@ -48,6 +48,7 @@ export function createCodexTurnNotificationObserver(args: {
   webEvidenceRequirement: AuthoritativeWebEvidenceRequirement;
   mcpRuntime: Pick<CodexMcpToolRuntime, "flushAssignmentKernelV2TurnStop"> | null;
   onDelta?: (delta: string) => void;
+  deferAssistantOutput?: boolean;
 }): {
   observe(notification: CodexNotificationEnvelope): void;
   snapshot(): CodexTurnNotificationSnapshot;
@@ -66,7 +67,7 @@ export function createCodexTurnNotificationObserver(args: {
         const delta = typeof notification.params?.delta === "string" ? notification.params.delta : "";
         if (delta) {
           assistantDeltas += delta;
-          if (!args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required) args.onDelta?.(delta);
+          if (!args.deferAssistantOutput && !args.freshEvidenceRequirement.required && !args.webEvidenceRequirement.required) args.onDelta?.(delta);
         }
       }
 

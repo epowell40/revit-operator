@@ -18,7 +18,7 @@ import { runWithRequestContext } from "../src/request_context.js";
 import { createOperatorBackendAuth } from "../src/operator_backend_auth.js";
 import { parseAssignmentKernelPublicationV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { handleCodexDynamicToolCall } from "../src/brains/codex_dynamic_tool_handler.js";
-import { checkpointCodexAssignmentProgressV2 } from "../src/brains/codex_assignment_progress.js";
+import { checkpointCodexAssignmentProgressV2, finalCodexAssignmentMessageV2 } from "../src/brains/codex_assignment_progress.js";
 import { buildTeammateTurnContract } from "../src/teammate_loop_runtime.js";
 import { canonicalTeammateInputs } from "../src/teammate_assignment_inputs.js";
 import { mutationIntentBlockReason } from "../src/teammate_mutation_intent_binding.js";
@@ -420,6 +420,52 @@ test("paused dynamic calls queue the existing safe provider-stop boundary withou
   const checkpoint = checkpointCodexAssignmentProgressV2({ binding, turn_start: snapshot, receipts: [] })!;
   assert.deepEqual(checkpoint.progress_epochs, [], "intentional pause must not consume the no-progress allowance");
   assert.deepEqual(checkpoint.operations, {});
+}));
+
+test("duplicate-view unknown native settlement survives dynamic handoff and prevents false completion or replay", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Make a coordination copy of this plan, including its annotations. Call it M-COORDINATION COPY.");
+  let dispatches = 0;
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (_tool: string, _args: any, context: any) => {
+      dispatches++;
+      const lease = context.assignmentKernelV2;
+      context.onMcpAccepted();
+      const payload = { success: true, viewId: 1542917, name: "M-COORDINATION COPY" };
+      return { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `result:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: "succeeded", dispatch_state: "dispatched",
+          persistent_effect: "unknown", native_transaction_state: "unknown", authority: "native-host",
+          result_schema_id: "operator-native/POST:/revit/duplicate-view/v2", observation_required: true,
+          raw_payload_hash: payloadDigestV2(payload).digest, request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+        observation: { raw_payload: payload, semantic_facts: [{ fact_id: "task.result_available", fact_class: "domain", value: true }],
+          verification_relevance: ["task_result"], evidence_class: "task_result" }
+      } };
+    }
+  };
+  const args = { method: "POST", path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+    session_id: binding.session_id, user_text: snapshot.spec.source_user_request,
+    context: { revit: { process_id: 4242, source: { live: true }, activeView: { id: 1363433, name: "L4" },
+      document: { title: "Snowdon Towers Sample HVAC", projectIdentity: { fingerprint: "controls-model" } } } }
+  } as any, prepared));
+  let dynamic: unknown;
+  try {
+    dynamic = await handleCodexDynamicToolCall(runtime as any, { id: "duplicate", method: "item/tool/call", params: {
+      namespace: "revit_operator", turnId: "duplicate-turn", tool: "revit_call_tool", arguments: args
+    } } as any);
+  } finally { endTeammateLoopOwner(owner); }
+  const retained = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+  assert.equal(dispatches, 1, JSON.stringify(dynamic));
+  assert.equal(retained.terminal, false);
+  assert.equal(retained.unresolved_unknown_operation_ids.length, 1);
+  assert.equal(retained.operations[retained.unresolved_unknown_operation_ids[0]!]!.settlement_state, "settled");
+  const final = finalCodexAssignmentMessageV2(retained, "Created M-COORDINATION COPY with annotations.");
+  assert.match(final, /could not confirm/);
+  assert.doesNotMatch(final, /Created M-COORDINATION COPY/);
+  assert.throws(() => openAssignmentKernelOperationV2({ snapshot: retained, provider_turn_id: "retry",
+    controller_request_id: "duplicate-again", capability_id: "revit_call_tool", classified_effect: "apply", arguments: args }), /unknown|reconciliation/);
+  assert.equal(dispatches, 1);
 }));
 
 test("unknown mutation effects prevent resume even after the dispatch settles", () => workspace(() => {

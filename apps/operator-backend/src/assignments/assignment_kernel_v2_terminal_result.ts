@@ -114,10 +114,10 @@ export function deriveTerminalResultV2(snapshot: AssignmentSnapshotV2): Terminal
     ?? textNoteSummary(facts, snapshot.spec.requested_effect)
     ?? generalDomainSummary(facts);
   const complete = snapshot.outcome === "complete" || snapshot.outcome === "verified_noop" || snapshot.outcome === "complete_with_issues";
-  const resultSummary = successfulSummary
-    ?? (complete
-      ? "The requested work completed from authoritative Revit evidence."
-      : `The requested work did not complete: ${snapshot.terminal_reason ?? snapshot.outcome}.`);
+  const resultSummary = complete
+    ? successfulSummary ?? "The requested work completed from authoritative Revit evidence."
+    : `The requested work did not complete: ${snapshot.terminal_reason ?? snapshot.outcome}.`
+      + (successfulSummary ? `\n\nRetained partial results:\n${successfulSummary}` : "");
   return {
     schema: TERMINAL_RESULT_V2_SCHEMA,
     assignment_id: snapshot.current_binding.assignment_id,

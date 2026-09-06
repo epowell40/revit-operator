@@ -24,20 +24,35 @@ namespace RevitBridge.Common
         [JsonPropertyName("affected_element_ids")]
         public IReadOnlyList<long> AffectedElementIds { get; }
 
+        [JsonPropertyName("added_element_ids")]
+        public IReadOnlyList<long> AddedElementIds { get; }
+
+        [JsonPropertyName("deleted_element_ids")]
+        public IReadOnlyList<long> DeletedElementIds { get; }
+
         private OperatorNativeTransactionReceipt(
             string status,
             bool? committed,
             IEnumerable<long>? modifiedElementIds,
-            IEnumerable<long>? affectedElementIds)
+            IEnumerable<long>? affectedElementIds,
+            IEnumerable<long>? addedElementIds = null,
+            IEnumerable<long>? deletedElementIds = null)
         {
             Status = status;
             CommittedValue = committed;
             ModifiedElementIds = Normalize(modifiedElementIds);
             AffectedElementIds = Normalize(affectedElementIds);
+            AddedElementIds = Normalize(addedElementIds);
+            DeletedElementIds = Normalize(deletedElementIds);
         }
 
         public static OperatorNativeTransactionReceipt Committed(IEnumerable<long> modifiedElementIds)
             => new OperatorNativeTransactionReceipt("committed", true, modifiedElementIds, modifiedElementIds);
+
+        public static OperatorNativeTransactionReceipt CommittedChanges(
+            IEnumerable<long> added, IEnumerable<long> modified, IEnumerable<long> deleted)
+            => new OperatorNativeTransactionReceipt("committed", true, modified,
+                added.Concat(modified).Concat(deleted), added, deleted);
 
         public static OperatorNativeTransactionReceipt RolledBack(IEnumerable<long> affectedElementIds)
             => new OperatorNativeTransactionReceipt("rolled_back", false, Array.Empty<long>(), affectedElementIds);

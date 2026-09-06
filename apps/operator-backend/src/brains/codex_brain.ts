@@ -906,6 +906,7 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
     freshEvidenceRequirement,
     webEvidenceRequirement,
     mcpRuntime: mcpRuntime ?? null,
+    deferAssistantOutput: Boolean(assignmentKernelV2),
     onDelta: cb.onDelta
   });
   liveTurnNotificationHandler = turnNotificationObserver.observe;
@@ -1101,13 +1102,13 @@ export async function decideCodexStreaming(req: ChatRequest, cb: StreamCallbacks
   });
   assistantText = webSettlement.assistantText;
   hasAuthoritativeWebEvidence = webSettlement.satisfied;
-  if ((freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   assignmentObserver.finish(turnId, assistantText, teammateReceipt);
   if (assignmentKernelV2) settleCodexAssignmentProgressV2(assignmentKernelV2.binding);
   const terminalSnapshot = assignmentKernelV2
     ? currentCodexAssignmentSnapshotV2(assignmentKernelV2.binding) ?? assignmentKernelV2.snapshot
     : null;
   assistantText = finalCodexAssignmentMessageV2(terminalSnapshot, assistantText);
+  if ((assignmentKernelV2 || freshEvidenceRequirement.required || webEvidenceRequirement.required) && assistantText) cb.onDelta?.(assistantText);
   const canonicalAssignmentOutcome = req.assignment_id && req.assignment_run_id
     && Number.isSafeInteger(req.assignment_generation) && Number(req.assignment_generation) > 0
     ? canonicalAssignmentOutcomeForBinding({

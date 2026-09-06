@@ -502,6 +502,33 @@ test("Candidate 25 flight 3 gives one bounded execution opportunity after the fi
   assert.deepEqual(repeatedEpoch.progress_reasons, []);
 });
 
+test("unknown mutation suppresses provider success even after dispatch settlement", () => {
+  const j = journal();
+  const snapshot = { ...j.snapshot(), unresolved_unknown_operation_ids: ["duplicate-view"] };
+  for (const state of [snapshot, { ...snapshot, terminal: true, outcome: "blocked" as const, terminal_reason: "reconciliation_required" }]) {
+    const message = finalCodexAssignmentMessageV2(state, "Created M-COORDINATION COPY with annotations.");
+    assert.match(message, /could not confirm|not confirmed/i);
+    assert.doesNotMatch(message, /Created M-COORDINATION COPY/);
+  }
+});
+
+test("pending apply cannot pass unverified completion prose while clarification retains its question", () => {
+  const j = journal();
+  const snapshot = { ...j.snapshot(), spec: { ...j.snapshot().spec, requested_effect: "apply" as const } };
+  assert.doesNotMatch(finalCodexAssignmentMessageV2(snapshot, "Created the view."), /Created the view/);
+  assert.equal(finalCodexAssignmentMessageV2({ ...snapshot, outcome: "awaiting_user_input" }, "Which plan?"), "Which plan?");
+});
+
+test("blocked terminal result keeps failure visible when partial inventory evidence exists", () => {
+  const j = journal();
+  settleObservation(j);
+  j.append(event(j, { event_type: "criterion_evaluated", evaluation: evaluation() }));
+  const message = finalCodexAssignmentMessageV2({ ...j.snapshot(), terminal: true,
+    outcome: "blocked", terminal_reason: "reconciliation_required" }, "Everything completed.");
+  assert.match(message, /did not complete/);
+  assert.match(message, /Inventory total: 3/);
+});
+
 test("idle Assignments remain admissible days later without resetting their cumulative budgets", () => {
   const snapshot = journal().snapshot();
   const now = "2026-08-29T20:00:00.000Z";

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { createCodexTurnNotificationObserver } from "../src/brains/codex_turn_notification_observer.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -17,6 +18,21 @@ import {
 } from "../src/brains/authoritative_web_evidence.js";
 import { CodexMcpToolRuntime, EAGER_OPERATOR_MCP_TOOLS, resolveOperatorMcpServerSpec } from "../src/codex/mcp_tool_runtime.js";
 import { canonicalizeProtocolJson, resolveOperatorBackendRoot, sortProtocolFiles } from "../src/tools/verify_codex_app_server_protocol.js";
+
+test("canonical assignment defers provider success deltas until the authoritative final handoff", () => {
+  for (const deferAssistantOutput of [false, true]) {
+    const deltas: string[] = [];
+    const observer = createCodexTurnNotificationObserver({ sessionId: "deferred-output", threadId: "thread", turnId: "turn",
+      modelTelemetry: { observe: () => {} }, assignmentObserver: { observe: () => {} }, mcpRuntime: null,
+      freshEvidenceRequirement: { required: false } as any, webEvidenceRequirement: { required: false } as any,
+      deferAssistantOutput, onDelta: text => deltas.push(text) });
+    observer.observe({ threadId: "thread", method: "item/agentMessage/delta", params: {
+      turnId: "turn", delta: "Created M-COORDINATION COPY."
+    } } as any);
+    assert.equal(observer.snapshot().assistantDeltas, "Created M-COORDINATION COPY.");
+    assert.deepEqual(deltas, deferAssistantOutput ? [] : ["Created M-COORDINATION COPY."]);
+  }
+});
 
 test("Codex app-server compatibility pins the generated protocol version", () => {
   assert.equal(parseCodexCliVersion("codex-cli 0.149.0\n"), "0.149.0");

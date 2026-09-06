@@ -112,7 +112,14 @@ export function settleCodexAssignmentProgressV2(binding: AssignmentBindingV2): A
 }
 
 export function finalCodexAssignmentMessageV2(snapshot: AssignmentSnapshotV2 | null, fallback: string): string {
+  if (snapshot?.unresolved_unknown_operation_ids.length) {
+    return "I could not confirm whether the model edit completed. The task needs reconciliation against the existing model before another edit can be attempted.";
+  }
   if (!snapshot?.terminal && snapshot?.execution_control?.state === "paused") return "Task paused. Its completed work and remaining questions are saved. Resume when you are ready.";
+  if (snapshot && !snapshot.terminal && snapshot.spec.requested_effect === "apply"
+      && snapshot.outcome !== "awaiting_user_input" && snapshot.outcome !== "awaiting_user_review") {
+    return "The task has not finished. Any completed changes and remaining verification are saved with the task.";
+  }
   return snapshot?.terminal ? renderTerminalResultV2(snapshot) : fallback;
 }
 
