@@ -5944,7 +5944,9 @@ namespace RevitBridge.Operator
 
             if (shouldIssue)
             {
-                status = OperatorWriteGrant.Issue(desiredMode, ttl);
+                status = !forceIssue && desiredMode == OperatorWriteGrantMode.Session
+                    ? OperatorWriteGrant.RenewSession(ttl)
+                    : OperatorWriteGrant.Issue(desiredMode, ttl);
             }
 
             return status;

@@ -84,7 +84,9 @@
     "OperatorToolSearchRankingTests",
     "ScheduleAppearanceContractTests",
     "TextNoteCanonicalizationTests",
-    "OperatorProjectCloseFocusTests"
+    "OperatorProjectCloseFocusTests",
+    "OperatorWriteGrantRenewalTests",
+    "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
     {"id":"created-native-identity-without-documentchanged","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","backend:verification_capability_admission_v2.test.ts","mcp:lib/assignmentKernelV2.test.ts"]},
@@ -137,6 +139,7 @@
     {"id":"authoritative-request-effect-and-noncommitting-natural-requests","coverage":["backend:assignment_auto_goal_admission.test.ts","backend:goal_endpoint_security.test.ts","backend:teammate_loop_runtime.test.ts"]},
     {"id":"generic-read-result-delivery-before-terminal-handoff","coverage":["backend:assignment_kernel_v2_lifecycle.test.ts","backend:assignment_kernel_v2_controls.test.ts","mcp:lib/mcp_stdio_smoke.test.ts"]},
     {"id":"followup-native-read-remains-task-evidence-after-generic-criterion-pass","coverage":["backend:assignment_kernel_v2_lifecycle.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},
-    {"id":"post-apply-schema-recovery-and-supporting-documentation-child","coverage":["backend:assignment_kernel_v2_execution.test.ts","backend:codex_app_server_compatibility.test.ts","mcp:lib/mcp_stdio_smoke.test.ts"]}
+    {"id":"post-apply-schema-recovery-and-supporting-documentation-child","coverage":["backend:assignment_kernel_v2_execution.test.ts","backend:codex_app_server_compatibility.test.ts","mcp:lib/mcp_stdio_smoke.test.ts"]},
+    {"id":"active-session-renewal-prepared-write-token","coverage":["dotnet:OperatorWriteGrantRenewalTests","dotnet:OperatorWriteGrantAdmissionTests"]}
   ]
 }
