@@ -2193,3 +2193,38 @@ test("visibility rejection persists confirmed rollback without completing work; 
       classified_effect: "apply", arguments: argumentsForVisibility }), /unknown|operation/i);
   });
 });
+test("visibility scale commit survives restart and completes only from exact independent native readback", () => {
+  for (const variant of ["exact", "wrong_view", "wrong_scale", "echo", "failed"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply");
+    const args = { method: "POST", path: "/revit/visibility", body: { action: "set_scale", viewId: 1363433, scale: 96 } };
+    const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "visibility-scale", provider_turn_id: "apply-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1363433"], arguments: args });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const commit = envelope(apply.operation_id, apply.binding, { status: "Success", action: "set_scale", dryRun: false,
+      view: { id: 1363433, scale: 96 }, transaction: { status: "committed", committed: true, modified_element_ids: [1363433], affected_element_ids: [1363433] } }, "applied");
+    commit.structuredContent.operation_result_v2.affected_target_identities = ["id:1363433"];
+    settleAssignmentKernelOperationV2(apply, commit);
+    __testOnlyResetGoalListCache();
+    const restarted = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(restarted.operations[apply.operation_id]!.persistent_effect, "applied");
+    assert.notEqual(restarted.outcome, "complete");
+    const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "visibility-read", provider_turn_id: "read-turn",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["id:1363433"],
+      arguments: { method: "POST", path: "/revit/visibility", body: { action: "get", viewId: 1363433 } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const expected = { id: 1363433, scale: 96 };
+    const payload = { status: variant === "failed" ? "Failed" : "Ok", action: "get", dryRun: false,
+      view: variant === "echo" ? undefined : { ...expected, id: variant === "wrong_view" ? 99 : expected.id,
+        scale: variant === "wrong_scale" ? 48 : 96, scopeBox: { id: 1363433 } }, request: { view: expected } };
+    const retained = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/visibility-scale-native-readback.json"), "utf8"));
+    const settled = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, variant === "exact" ? retained.read : payload));
+    assert.equal(settled.observation!.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied"), variant === "exact");
+    const final = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert.equal(final.outcome === "complete", variant === "exact");
+    assert.deepEqual(final.unresolved_unknown_operation_ids, []);
+    assert.equal(Object.values(final.operations).filter(op => op.requested_effect === "apply").length, 1);
+    __testOnlyResetGoalListCache();
+    assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), final);
+  });
+});

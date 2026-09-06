@@ -286,3 +286,48 @@ test("schedule field and settings verification consume only the typed detail con
     table: { body: { rows: [{ name: "Count", showGrandTotals: true, filterBySheet: false }] } }
   }, { path: "/revit/configure-schedule" }), false);
 });
+test("visibility properties require successful native get on the exact returned view", () => {
+  const input = { path: "/revit/visibility", body: JSON.stringify({ action: "set_scale", viewId: 1363433, scale: 96 }) };
+  const read = { status: "Ok", action: "get", dryRun: false, view: { id: 1363433, scale: 96 } };
+  assert.equal(postconditionSatisfiedByPayloadV2(input, read), true);
+  const retained = JSON.parse(readFileSync(path.resolve("test/fixtures/visibility-scale-native-readback.json"), "utf8"));
+  assert.equal(retained.read.status, "Ok");
+  assert.equal(postconditionSatisfiedByPayloadV2(input, retained.read), true, "exact retained installed-native wire");
+  assert.equal(postconditionSatisfiedByPayloadV2(input, retained.applied), false, "the commit projection is not an independent read");
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { content: [{ type: "text", text: JSON.stringify(retained.read) }] }), true);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { isError: true, content: [{ type: "text", text: JSON.stringify(retained.read) }] }), false);
+  assert.equal(postconditionSatisfiedByPayloadV2(input, { content: [
+    { type: "text", text: JSON.stringify(retained.read) }, { type: "text", text: JSON.stringify({ ...read, view: { id: 1363433, scale: 48 } }) }
+  ] }), false, "conflicting MCP blocks cannot be combined");
+  for (const bad of [
+    { ...read, view: { id: 1363433, scale: 48 }, request: read },
+    { ...read, view: { id: 99, scale: 96, scopeBox: { id: 1363433 } } },
+    { ...read, view: { scale: 96 }, viewId: 1363433 },
+    { ...read, view: { id: 1363433, scale: "96" } },
+    { ...read, view: { id: 1363433, scale: 48 }, result: read },
+    { status: "Success", request: read, metadata: read, provenance: read },
+    { ...read, status: "Failed" }, { ...read, success: false }, { ...read, ok: false },
+    { ...read, error: "read failed" }, { ...read, dryRun: true },
+    { ...read, action: "set_scale" }, { view: read.view },
+    { ...read, view: { id: 1363433, scale: 48 }, scale: 96 }
+  ]) assert.equal(postconditionSatisfiedByPayloadV2(input, bad), false, JSON.stringify(bad));
+  for (const body of [
+    { action: "get", viewId: 1363433, scale: 96 },
+    { action: "set_scale", scale: 96 },
+    { action: "set_scale", viewId: 1363433, scale: 96, dryRun: true },
+    { action: "set_scale", viewId: 1363433, scale: "96" },
+    { action: "set_scope_box", viewId: 1363433, value: 96 }
+  ]) assert.equal(postconditionSatisfiedByPayloadV2({ path: "/revit/visibility", body }, read), false);
+});
+
+test("visibility enum properties normalize native enum spelling without matching unrelated properties", () => {
+  for (const [action, field, desired, other] of [
+    ["set_detail_level", "detailLevel", "Fine", "Medium"],
+    ["set_discipline", "discipline", "Mechanical", "Electrical"]
+  ]) {
+    const input = { action, viewId: 42, [field!]: desired!.toLowerCase() };
+    const read = { status: "Ok", action: "get", dryRun: false, view: { id: 42, [field!]: desired } };
+    assert.equal(postconditionSatisfiedByPayloadV2(input, read, { path: "/revit/visibility" }), true);
+    assert.equal(postconditionSatisfiedByPayloadV2(input, { ...read, view: { id: 42, [field!]: other }, request: input }, { path: "/revit/visibility" }), false);
+  }
+});

@@ -6,6 +6,7 @@
  */
 
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
+import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
 import {
   isExcludedEvidenceContainerV2,
   normalizedEvidenceKeyV2
@@ -284,6 +285,7 @@ export function expectedPostconditionValuesV2(
   const useRevitTextSemantics = textNoteOperation(value, contract);
   const operationPath = operationContractPath(value, contract);
   const semanticInput = semanticApplyInput(value);
+  if (operationPath === "/revit/visibility") return visibilityExpectedValuesV2(semanticInput);
   const visit = (node: unknown, key = "", parent = "", depth = 0): void => {
     if (depth > 6 || values.size >= 32) return;
     if (Array.isArray(node)) {
@@ -371,6 +373,7 @@ export function expectedPostconditionValuesV2(
 
 export function observedPostconditionValuesV2(value: unknown): ReadonlySet<string> {
   const values = new Set<string>();
+  for (const token of visibilityObservedValuesV2(value)) values.add(token);
   for (const token of observedScheduleContractTokens(value)) values.add(token);
   const controlLeaves = new Set([
     "action", "complete", "dryrun", "error", "failure", "message", "ok", "status", "success", "verified"

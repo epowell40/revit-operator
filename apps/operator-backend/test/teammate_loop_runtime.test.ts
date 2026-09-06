@@ -2694,3 +2694,30 @@ test("continuation identity, transaction binding, and expected-value verificatio
   }]), response([], "Verified."));
   assert.equal(wrongValue.teammate_loop_receipt?.verified, false);
 });
+test("visibility MCP host guard verifies only successful independent scale readback from the affected view", () => {
+  for (const variant of ["exact", "wrong_view", "wrong_scale", "echo", "failed"] as const) {
+    __testOnlyResetTeammateLoopState();
+    const owner = {};
+    const lease = beginTeammateLoopOwner(owner, request("Set view 42 scale to 96 and verify it."));
+    try {
+      const call = (body: Record<string, unknown>) => guardTeammateMcpCall(owner, { tool: "revit_call_tool",
+        arguments: { method: "POST", path: "/revit/visibility", body } });
+      const record = (gate: ReturnType<typeof call>, body: unknown) => recordTeammateMcpResult(owner, gate,
+        { content: [{ type: "text", text: JSON.stringify(body) }] });
+      const preview = call({ action: "set_scale", viewId: 42, scale: 96, dryRun: true });
+      assert.equal(preview.allowed, true);
+      record(preview, { status: "Success", dryRun: true });
+      const apply = call({ action: "set_scale", viewId: 42, scale: 96, dryRun: false });
+      assert.equal(apply.allowed, true);
+      record(apply, { status: "Success", action: "set_scale", dryRun: false, view: { id: 42, scale: 96 } });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, false);
+      const read = call({ action: "get", viewId: 42 });
+      assert.equal(read.allowed, true);
+      const assertion = record(read, { status: variant === "failed" ? "Failed" : "Ok", action: "get", dryRun: false,
+        view: variant === "echo" ? undefined : { id: variant === "wrong_view" ? 99 : 42, scale: variant === "wrong_scale" ? 48 : 96 },
+        request: { view: { id: 42, scale: 96 } } });
+      assert.equal(teammateLoopReceiptForOwner(owner)?.verified, variant === "exact");
+      assert.equal(assertion?.mode === "target_bound_readback", variant === "exact");
+    } finally { endTeammateLoopOwner(lease); }
+  }
+});

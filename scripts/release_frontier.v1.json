@@ -141,6 +141,7 @@
     {"id":"followup-native-read-remains-task-evidence-after-generic-criterion-pass","coverage":["backend:assignment_kernel_v2_lifecycle.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},
     {"id":"post-apply-schema-recovery-and-supporting-documentation-child","coverage":["backend:assignment_kernel_v2_execution.test.ts","backend:codex_app_server_compatibility.test.ts","mcp:lib/mcp_stdio_smoke.test.ts"]},
     {"id":"active-session-renewal-prepared-write-token","coverage":["dotnet:OperatorWriteGrantRenewalTests","dotnet:OperatorWriteGrantAdmissionTests"]},
-    {"id":"visibility-category-rejection-native-rollback-and-committed-readback","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","mcp:lib/assignmentKernelV2.test.ts"]}
+    {"id":"visibility-category-rejection-native-rollback-and-committed-readback","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","mcp:lib/assignmentKernelV2.test.ts"]},
+    {"id":"visibility-view-property-postcondition-and-restart","coverage":["backend:postcondition_verification_v2.test.ts","backend:verification_capability_admission_v2.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:teammate_loop_runtime.test.ts"]}
   ]
 }

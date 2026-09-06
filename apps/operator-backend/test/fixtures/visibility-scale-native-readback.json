@@ -1,0 +1,263 @@
+{
+  "applied": {
+    "status": "Success",
+    "action": "set_scale",
+    "dryRun": false,
+    "view": {
+      "id": 1363433,
+      "name": "L4",
+      "scale": 96,
+      "detailLevel": "Medium",
+      "discipline": "Mechanical",
+      "sectionBox": null,
+      "cropBox": {
+        "isActive": true,
+        "isVisible": false,
+        "min": {
+          "x": -115.33193516109374,
+          "y": -47.01832591228737,
+          "z": -1000
+        },
+        "max": {
+          "x": 88.8521438567533,
+          "y": 71.48585540021631,
+          "z": -0.1
+        }
+      },
+      "scopeBox": {
+        "id": 1364283,
+        "name": "Overall"
+      },
+      "underlay": {
+        "levelId": -1,
+        "levelName": null,
+        "topLevelId": -1,
+        "topLevelName": null,
+        "orientation": "LookDown"
+      },
+      "viewRange": {
+        "top": {
+          "levelId": 1362798,
+          "levelName": "L5",
+          "offsetFeet": 0
+        },
+        "cut": {
+          "levelId": 1362791,
+          "levelName": "L4",
+          "offsetFeet": 4
+        },
+        "bottom": {
+          "levelId": 1362791,
+          "levelName": "L4",
+          "offsetFeet": 0
+        },
+        "viewDepth": {
+          "levelId": 1362791,
+          "levelName": "L4",
+          "offsetFeet": 0
+        }
+      },
+      "phase": {
+        "id": 21885,
+        "name": "New Construction"
+      },
+      "phaseFilter": {
+        "id": 22794,
+        "name": "Show Previous + New"
+      },
+      "linkedModels": null,
+      "temporaryModes": {
+        "hideIsolate": false,
+        "revealHidden": false
+      },
+      "viewFilters": [
+        {
+          "id": 576429,
+          "name": "Domestic",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 576430,
+          "name": "Sanitary",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 727741,
+          "name": "Vent",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 1364036,
+          "name": "Not M Levels or Grids",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      ],
+      "categoryOverride": null,
+      "viewTemplate": "Mechanical Plan",
+      "viewTemplateId": 183719
+    },
+    "success": true,
+    "transaction": {
+      "status": "committed",
+      "committed": true,
+      "modified_element_ids": [
+        1363433
+      ],
+      "affected_element_ids": [
+        1363433
+      ],
+      "added_element_ids": [],
+      "deleted_element_ids": []
+    },
+    "changeTracking": {
+      "documentChangedObserved": false,
+      "exhaustiveChangeInventory": false
+    }
+  },
+  "read": {
+    "status": "Ok",
+    "action": "get",
+    "dryRun": false,
+    "view": {
+      "id": 1363433,
+      "name": "L4",
+      "scale": 96,
+      "detailLevel": "Medium",
+      "discipline": "Mechanical",
+      "sectionBox": null,
+      "cropBox": {
+        "isActive": true,
+        "isVisible": false,
+        "min": {
+          "x": -115.33193516109374,
+          "y": -47.01832591228737,
+          "z": -1000
+        },
+        "max": {
+          "x": 88.8521438567533,
+          "y": 71.48585540021631,
+          "z": -0.1
+        }
+      },
+      "scopeBox": {
+        "id": 1364283,
+        "name": "Overall"
+      },
+      "underlay": {
+        "levelId": -1,
+        "levelName": null,
+        "topLevelId": -1,
+        "topLevelName": null,
+        "orientation": "LookDown"
+      },
+      "viewRange": {
+        "top": {
+          "levelId": 1362798,
+          "levelName": "L5",
+          "offsetFeet": 0
+        },
+        "cut": {
+          "levelId": 1362791,
+          "levelName": "L4",
+          "offsetFeet": 4
+        },
+        "bottom": {
+          "levelId": 1362791,
+          "levelName": "L4",
+          "offsetFeet": 0
+        },
+        "viewDepth": {
+          "levelId": 1362791,
+          "levelName": "L4",
+          "offsetFeet": 0
+        }
+      },
+      "phase": {
+        "id": 21885,
+        "name": "New Construction"
+      },
+      "phaseFilter": {
+        "id": 22794,
+        "name": "Show Previous + New"
+      },
+      "linkedModels": null,
+      "temporaryModes": {
+        "hideIsolate": false,
+        "revealHidden": false
+      },
+      "viewFilters": [
+        {
+          "id": 576429,
+          "name": "Domestic",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 576430,
+          "name": "Sanitary",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 727741,
+          "name": "Vent",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        },
+        {
+          "id": 1364036,
+          "name": "Not M Levels or Grids",
+          "visible": false,
+          "override": {
+            "lineWeight": -1,
+            "linePatternId": -1,
+            "linePatternName": null,
+            "color": null
+          }
+        }
+      ],
+      "categoryOverride": null,
+      "viewTemplate": "Mechanical Plan",
+      "viewTemplateId": 183719
+    }
+  }
+}

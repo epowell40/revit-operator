@@ -154,3 +154,22 @@ test("unknown capabilities retain bounded fallback identity while verifier guida
     target_id: "id:1478627"
   }) ?? "", /Bind the exact affected subject.*elementId.*1478627.*viewId do not establish affected-target identity/);
 });
+test("visibility verification uses its native view contract and excludes nested filter and scope IDs", () => {
+  const operation = { capability_id: "revit_call_tool", path: "/revit/visibility" };
+  assert.equal(verificationCapabilityAdmissionV2({ apply: operation, verification: operation }).admissible, true);
+  for (const path of ["/revit/get-element-summary", "/revit/views", "/revit/get-parameters"]) {
+    assert.equal(verificationCapabilityAdmissionV2({ apply: operation, verification: { ...operation, path } }).admissible, false);
+  }
+  assert.deepEqual(operationTargetSelectorV2({ operation, value: { body: JSON.stringify({ viewId: 42, filterId: 99 }) } }).principal_target_tokens, ["id:42", "viewid:42"]);
+  assert.deepEqual(operationTargetSelectorV2({ operation, value: {
+    status: "Success", viewId: 99, request: { viewId: 99 },
+    view: { id: 42, scopeBox: { id: 99 }, viewFilters: [{ id: 98 }] }
+  } }).principal_target_tokens, ["id:42", "viewid:42"]);
+  for (const value of [{ request: { viewId: 42 } }, { view: { scopeBox: { id: 42 } } },
+    { status: "Success", viewId: 42 }, { id: 42 }, { metadata: { view: { id: 42 } } }]) {
+    assert.deepEqual(operationTargetSelectorV2({ operation, value, fallback_target_tokens: ["id:42"] }).principal_target_tokens, []);
+  }
+  const guidance = verificationCapabilityGuidanceV2({ ...operation, target_id: "id:42" })!;
+  assert.match(guidance, /viewId=42.*action=get.*view.id/);
+  assert.doesNotMatch(guidance, /viewId do not establish/);
+});
