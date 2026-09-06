@@ -7,6 +7,61 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorPrintSettingsGuardTests
     {
+        [Fact]
+        public void StagedFileSettingsAreAppliedBeforeGlobalReadbackAndRestoredAfterSubmission()
+        {
+            var global = new Dictionary<string, object> { ["PrintToFile"] = false, ["PrintToFileName"] = "old.pdf" };
+            var local = new Dictionary<string, object>(global);
+            var applies = 0;
+            void Apply() { foreach (var pair in local) global[pair.Key] = pair.Value; applies++; }
+            var guard = new OperatorPrintSettingsGuard(new[] { "PrintToFile", "PrintToFileName" }, name => global[name],
+                (name, value) => local[name] = value, Apply);
+            local["PrintToFile"] = true; local["PrintToFileName"] = "M000-singlecopy-check.pdf";
+            Assert.False((bool)global["PrintToFile"]); // The old pre-Apply validation rejects this valid staged change.
+            var submissions = 0;
+            try
+            {
+                OperatorPrintSettingsGuard.ApplyAndValidateOutput(Apply, () => (bool)global["PrintToFile"],
+                    () => (string)global["PrintToFileName"], "M000-singlecopy-check.pdf");
+                Assert.Equal(1, applies); submissions++;
+            }
+            finally { Assert.True(guard.Restore(out var errors)); Assert.Empty(errors); }
+            Assert.Equal(1, submissions); Assert.Equal(2, applies);
+            Assert.False((bool)global["PrintToFile"]); Assert.Equal("old.pdf", global["PrintToFileName"]);
+        }
+
+        [Theory]
+        [InlineData("ignored")]
+        [InlineData("wrong_path")]
+        [InlineData("apply_throws")]
+        [InlineData("read_throws")]
+        public void UnacceptedOrUnreadableAppliedSettingsPreventSubmissionAndStillRestore(string failure)
+        {
+            var global = new Dictionary<string, object> { ["PrintToFile"] = false, ["PrintToFileName"] = "old.pdf" };
+            var guard = new OperatorPrintSettingsGuard(new[] { "PrintToFile", "PrintToFileName" }, name => global[name],
+                (name, value) => global[name] = value, () => { });
+            var submissions = 0;
+            void Apply()
+            {
+                if (failure == "ignored") return;
+                global["PrintToFile"] = true;
+                global["PrintToFileName"] = failure == "wrong_path" ? "wrong.pdf" : "requested.pdf";
+                if (failure == "apply_throws") throw new InvalidOperationException("apply failed after changes");
+            }
+            try
+            {
+                Assert.Throws<InvalidOperationException>(() =>
+                {
+                    OperatorPrintSettingsGuard.ApplyAndValidateOutput(Apply,
+                        () => failure == "read_throws" ? throw new InvalidOperationException("read failed") : (bool)global["PrintToFile"],
+                        () => (string)global["PrintToFileName"], "requested.pdf");
+                    submissions++;
+                });
+            }
+            finally { Assert.True(guard.Restore(out var errors)); Assert.Empty(errors); }
+            Assert.Equal(0, submissions); Assert.False((bool)global["PrintToFile"]); Assert.Equal("old.pdf", global["PrintToFileName"]);
+        }
+
         [Theory]
         [InlineData(true, 1, false, 1)]
         [InlineData(false, 1, false, 1)]

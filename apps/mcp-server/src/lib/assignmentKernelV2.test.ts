@@ -76,6 +76,33 @@ test("driver print PartialFailure and PrintFailed never become successful task e
   assert.equal(nativeArtifactReceiptEffectV1(print, "POST", "/revit/export-pdf", "apply"), null);
 });
 
+test("driver print unaccepted staged output retains unknown effect even when settings restoration succeeds", async () => {
+  for (const restored of [true, false]) {
+    const body = { viewIds: [1420963], printToFile: true, copies: 1, collate: false, printIndividually: false,
+      combinedFile: true, printToFileName: "C:/fixture/M000-singlecopy-check.pdf", dryRun: false };
+    const receipt = { ...pdfArtifactReceipt(), path: "/revit/print", status: "unverified", print_settings_restored: restored,
+      expected_output_paths: [body.printToFileName], export_calls: [],
+      outputs: [{ path: body.printToFileName, size_bytes: 0, sha256: "", fresh_output: false, exists: false, readable: false }] };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/print", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/print", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/print", {
+        status: "PrintFailed", ok: false, dryRun: false, selectedCount: 1, selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }],
+        printJobs: 1, failedCount: 1, artifact_receipt: receipt, print_settings_restored: restored,
+        print_settings_restoration_errors: restored ? [] : ["Apply: failed"], path: body.printToFileName,
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+          effect_state: "unknown", effect_authority: "native_host", request_dispatched: true },
+        warnings: ["Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged.", "CopyNumber not applied: This property is not available."],
+        results: [{ ok: false, viewId: 1420963, sheetNumber: "M000", error: "InvalidOperationException: Requested print-to-file settings were not accepted; no print was submitted." }]
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    assert.equal(decorated.structuredContent.operation_result_v2.status, "failed_after_dispatch");
+    assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "unknown");
+    assert(!(decorated.structuredContent.observation?.semantic_facts ?? []).some((fact: any) => fact.fact_id === "task.result_available"));
+  }
+});
+
 test("PDF preview facts reject mismatched sheet scope or output plans while preserving no-write truth", async () => {
   for (const variant of ["missing_sheets", "wrong_sheet", "wrong_count", "wrong_output"] as const) {
     const receipt = pdfArtifactReceipt("preview"), body = { viewIds: [1420963], dryRun: true };

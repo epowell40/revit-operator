@@ -35,7 +35,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:1f4e0721245831c1044b3ee82db48d6f51f2402006f533fcb3b87ffcf9114879"
+      "sha256": "sha256:66321334dc683e5d82d265152039574a90f0b5ff46396c1ddb8886d3bb73c453"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -4305,7 +4305,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPrintSettingsGuardTests.cs",
-      "sha256": "sha256:58e1ccf7e0e809e5383b46e918466a0c22491b245be282413e32cacea09446b0"
+      "sha256": "sha256:75331a13b55459aa8b065ed7e33acdd6cf8b34700613d228916131cc40eb0369"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorProactivityLifecycleContractTests.cs",
@@ -4762,7 +4762,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorPrintSettingsGuard.cs",
-      "sha256": "sha256:7a7cca1cf969a21da5c02f8cbba2971e8cb5ef3648d8fedd631f638c56d646f5"
+      "sha256": "sha256:152043ee92d40540460710dfd56a9af7160eef9348de163d99faafdd325668bf"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorProjectCloseFocus.cs",
@@ -5926,7 +5926,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintHandler.cs",
-      "sha256": "sha256:4357f8ec684b5e0d9e5324c831e0b2352800d1cc1279dd24d4c8144c2a877f7f"
+      "sha256": "sha256:5347305950d6349ebff3622d92951a1c4eeaa0817e3fe7cbd0f81e4184aa9b67"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintSetsHandler.cs",
@@ -5934,7 +5934,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintSettingsPreservation.cs",
-      "sha256": "sha256:3ceaf8019b0e0a6bb3fde6b5c0fca89c43fbc5829829b142ef526b16910d6c2d"
+      "sha256": "sha256:d664f4c32fd002f4440fa76e9cd90b647baf8c45038eaeba833d3220be6ae80d"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ProjectParametersHandler.cs",
@@ -6269,7 +6269,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:e79efbcc716a855b2dba48731cb5bcadbefe59740f5fd896fa23845c02a423d2",
+  "inputs_hash": "sha256:4a9649b64c880729947b6429d3dff903b03ed7cb204afb389d9e96e5d421272b",
   "result": {
     "passed": true,
     "checks": [

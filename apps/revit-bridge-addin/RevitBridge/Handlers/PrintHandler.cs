@@ -126,9 +126,16 @@ namespace RevitBridge.Handlers
             IReadOnlyList<string> restorationErrors;
             try
             {
-                warnings.AddRange(ApplyPrintSettings(printManager, p, selectedPrinter));
-                if (outputPath != null && (!printManager.PrintToFile || !string.Equals(printManager.PrintToFileName, outputPath, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException("Requested print-to-file settings were not accepted; no print was submitted.");
+                if (!string.Equals(currentPrinter, selectedPrinter, StringComparison.OrdinalIgnoreCase))
+                {
+                    printManager.SelectNewPrintDriver(selectedPrinter);
+                    // Driver selection can replace Revit's underlying PrintManager.
+                    printManager = doc.PrintManager;
+                }
+                warnings.AddRange(ApplyPrintSettings(printManager, p));
+                if (outputPath != null)
+                    OperatorPrintSettingsGuard.ApplyAndValidateOutput(() => printManager.Apply(),
+                        () => doc.PrintManager.PrintToFile, () => doc.PrintManager.PrintToFileName, outputPath);
                 results = printIndividually ? SubmitIndividualPrints(doc, printManager, views)
                     : new List<PrintResult> { SubmitSelectedSetPrint(doc, printManager, views) };
                 foreach (var result in results) capture?.RecordNativeExport(result.ok);
@@ -246,19 +253,15 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static List<string> ApplyPrintSettings(PrintManager printManager, Params p, string selectedPrinter)
+        private static List<string> ApplyPrintSettings(PrintManager printManager, Params p)
         {
             var warnings = new List<string>();
-            if (!string.IsNullOrWhiteSpace(p.printerName))
-            {
-                printManager.SelectNewPrintDriver(selectedPrinter);
-            }
-
             if (p.copies.HasValue)
             {
                 try
                 {
-                    printManager.CopyNumber = Math.Max(1, Math.Min(99, p.copies.Value));
+                    var copies = Math.Max(1, Math.Min(99, p.copies.Value));
+                    if (printManager.CopyNumber != copies) printManager.CopyNumber = copies;
                 }
                 catch (Exception ex)
                 {

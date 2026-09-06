@@ -35,7 +35,12 @@ namespace RevitBridge.Handlers
 
         private void Write(string name, object value)
         {
-            if (name == "PrinterName") { restoreManager.SelectNewPrintDriver((string)value); return; }
+            if (name == "PrinterName")
+            {
+                restoreManager.SelectNewPrintDriver((string)value);
+                restoreManager = document.PrintManager;
+                return;
+            }
             if (name == "ViewSelection")
             {
                 var views = new ViewSet();
