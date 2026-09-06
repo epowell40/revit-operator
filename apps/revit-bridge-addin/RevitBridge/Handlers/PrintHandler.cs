@@ -135,7 +135,8 @@ namespace RevitBridge.Handlers
                 warnings.AddRange(ApplyPrintSettings(printManager, p));
                 if (outputPath != null)
                     OperatorPrintSettingsGuard.ApplyAndValidateOutput(() => printManager.Apply(),
-                        () => doc.PrintManager.PrintToFile, () => doc.PrintManager.PrintToFileName, outputPath);
+                        () => doc.PrintManager.PrintToFile, () => doc.PrintManager.PrintToFileName, outputPath,
+                        () => doc.PrintManager.IsVirtual != VirtualPrinterType.None);
                 results = printIndividually ? SubmitIndividualPrints(doc, printManager, views)
                     : new List<PrintResult> { SubmitSelectedSetPrint(doc, printManager, views) };
                 foreach (var result in results) capture?.RecordNativeExport(result.ok);

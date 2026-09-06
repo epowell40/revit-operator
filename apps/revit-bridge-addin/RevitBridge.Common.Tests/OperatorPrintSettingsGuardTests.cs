@@ -7,6 +7,37 @@ namespace RevitBridge.Common.Tests
 {
     public sealed class OperatorPrintSettingsGuardTests
     {
+        [Theory]
+        [InlineData(true, true, true)]
+        [InlineData(false, true, false)]
+        [InlineData(true, false, false)]
+        public void VirtualPrinterWithDisabledPrintToFileStillRequiresExactAppliedDestination(bool isVirtual, bool correctPath, bool allowed)
+        {
+            var globalPath = "old.pdf";
+            var guard = new OperatorPrintSettingsGuard(new[] { "PrintToFileName" }, _ => globalPath,
+                (_, value) => globalPath = (string)value, () => { });
+            var submitted = false;
+            void Run()
+            {
+                OperatorPrintSettingsGuard.ApplyAndValidateOutput(
+                    () => globalPath = correctPath ? "M000-printapply-check.pdf" : "wrong.pdf",
+                    () => false, () => globalPath, "M000-printapply-check.pdf", () => isVirtual);
+                submitted = true;
+            }
+            try { if (allowed) Run(); else Assert.Throws<InvalidOperationException>(Run); }
+            finally { Assert.True(guard.Restore(out var errors)); Assert.Empty(errors); }
+            Assert.Equal(allowed, submitted); Assert.Equal("old.pdf", globalPath);
+        }
+
+        [Fact]
+        public void VirtualCapabilityReadFailureCannotAuthorizePrintAndOrdinaryFilePrintingNeedsNoVirtualOverride()
+        {
+            Assert.Throws<InvalidOperationException>(() => OperatorPrintSettingsGuard.ApplyAndValidateOutput(() => { },
+                () => false, () => "requested.pdf", "requested.pdf", () => throw new InvalidOperationException("capability unavailable")));
+            OperatorPrintSettingsGuard.ApplyAndValidateOutput(() => { }, () => true, () => "requested.pdf", "requested.pdf",
+                () => throw new InvalidOperationException("must not read an unnecessary virtual capability"));
+        }
+
         [Fact]
         public void StagedFileSettingsAreAppliedBeforeGlobalReadbackAndRestoredAfterSubmission()
         {

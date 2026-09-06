@@ -76,8 +76,8 @@ test("driver print PartialFailure and PrintFailed never become successful task e
   assert.equal(nativeArtifactReceiptEffectV1(print, "POST", "/revit/export-pdf", "apply"), null);
 });
 
-test("driver print unaccepted staged output retains unknown effect even when settings restoration succeeds", async () => {
-  for (const restored of [true, false]) {
+test("driver print unaccepted staged or virtual output retains unknown effect even when settings restoration succeeds", async () => {
+  for (const restored of [true, false]) for (const diagnostic of ["", " PrintToFile=False; expected path=C:/fixture/M000-singlecopy-check.pdf; actual path=C:/fixture/M000-singlecopy-check.pdf"]) {
     const body = { viewIds: [1420963], printToFile: true, copies: 1, collate: false, printIndividually: false,
       combinedFile: true, printToFileName: "C:/fixture/M000-singlecopy-check.pdf", dryRun: false };
     const receipt = { ...pdfArtifactReceipt(), path: "/revit/print", status: "unverified", print_settings_restored: restored,
@@ -93,7 +93,7 @@ test("driver print unaccepted staged output retains unknown effect even when set
         canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
           effect_state: "unknown", effect_authority: "native_host", request_dispatched: true },
         warnings: ["Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged.", "CopyNumber not applied: This property is not available."],
-        results: [{ ok: false, viewId: 1420963, sheetNumber: "M000", error: "InvalidOperationException: Requested print-to-file settings were not accepted; no print was submitted." }]
+        results: [{ ok: false, viewId: 1420963, sheetNumber: "M000", error: "InvalidOperationException: Requested print-to-file settings were not accepted; no print was submitted." + diagnostic }]
       }, request);
       return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
     });

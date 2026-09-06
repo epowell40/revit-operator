@@ -8,16 +8,19 @@ namespace RevitBridge.Common
     public sealed class OperatorPrintSettingsGuard
     {
         public static void ApplyAndValidateOutput(Action apply, Func<bool> readPrintToFile,
-            Func<string> readOutputPath, string expectedPath)
+            Func<string> readOutputPath, string expectedPath, Func<bool>? readVirtualPrinter = null)
         {
             // Revit getters describe applied global settings, not necessarily the local staged values.
             // The caller must have a restoration guard before applying anything.
             apply();
             var toFile = readPrintToFile();
+            // Virtual printers produce files even when Revit disables its ordinary print-to-file checkbox.
+            // Capability comes from Revit, never a caller-supplied printer-name guess.
+            var virtualPrinter = !toFile && (readVirtualPrinter?.Invoke() ?? false);
             var actualPath = readOutputPath();
-            if (!toFile || !string.Equals(actualPath, expectedPath, StringComparison.OrdinalIgnoreCase))
+            if ((!toFile && !virtualPrinter) || !string.Equals(actualPath, expectedPath, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Requested print-to-file settings were not accepted; no print was submitted. "
-                    + "PrintToFile=" + toFile + "; expected path=" + expectedPath + "; actual path=" + actualPath);
+                    + "PrintToFile=" + toFile + "; virtual printer=" + virtualPrinter + "; expected path=" + expectedPath + "; actual path=" + actualPath);
         }
 
         public static bool? EffectiveCollation(bool? requested, int viewCount, bool printIndividually, int copies)
