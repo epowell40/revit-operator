@@ -43,16 +43,16 @@ function textReplacementRoute(toolValue: unknown, pathValue: unknown): boolean {
     || tool === "revit_replace_textnote";
 }
 
-function firstText(body: JsonObject, keys: string[]): string {
+function firstText(body: JsonObject, keys: string[], preserveWhitespace = false): string {
   for (const key of keys) {
     const value = text(body[key]);
-    if (value) return value;
+    if (value) return preserveWhitespace ? body[key] as string : value;
   }
   return "";
 }
 
-function replacementText(body: JsonObject): string {
-  return firstText(body, ["newText", "new_text", "replacementText", "replacement_text", "replaceWith", "replace_with"]);
+function replacementText(body: JsonObject, preserveWhitespace = false): string {
+  return firstText(body, ["newText", "new_text", "replacementText", "replacement_text", "replaceWith", "replace_with"], preserveWhitespace);
 }
 
 function expectedOldText(body: JsonObject): string {
@@ -125,7 +125,9 @@ export function mutationIntentBindingDecision(input: {
     return { applicable: false, authorized: true, missing_fields: [], reason: null, proposed_value: null };
   }
   const body = objectValue(input.body);
-  const proposed = replacementText(body);
+  // Authenticated journal values are exact text, including leading/trailing
+  // whitespace. Validate presence/size without normalizing the comparison.
+  const proposed = replacementText(body, input.authenticated_replacement_text !== undefined);
   if (input.authenticated_replacement_text !== undefined) {
     const authorized = Boolean(proposed) && proposed === input.authenticated_replacement_text;
     return { applicable: true, authorized, missing_fields: authorized ? [] : ["replacement_text"],

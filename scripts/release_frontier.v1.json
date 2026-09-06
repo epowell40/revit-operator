@@ -85,6 +85,7 @@
     "OperatorProjectCloseFocusTests"
   ],
   "failure_families": [
+    {"id":"authenticated-multiline-input-exact-mutation-admission","coverage":["backend:teammate_mutation_intent_binding.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},
     {"id":"typed-primary-native-fulfillment-handoff","coverage":["mcp:lib/mcp_stdio_smoke.test.ts","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts"]},
     {"id":"supplementary-read-after-canonical-verification","coverage":["backend:assignment_kernel_v2_controls.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:teammate_loop_runtime.test.ts"]},
     { "id": "blocked-packet-trust-and-linked-postcondition-reporting", "coverage": ["backend:assignment_kernel_v2_execution.test.ts", "backend:assignment_kernel_v2_lifecycle.test.ts"] },

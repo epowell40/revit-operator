@@ -26,7 +26,7 @@ import { completionOutboxKeyV2, retainCompletionOutboxV2 } from "@revitoperator/
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { renderTerminalResultV2 } from "../src/assignments/assignment_kernel_v2_terminal_result.js";
-import { beginTeammateLoopOwner, endTeammateLoopOwner } from "../src/teammate_loop_runtime.js";
+import { beginTeammateLoopOwner, endTeammateLoopOwner, guardTeammateMcpCall } from "../src/teammate_loop_runtime.js";
 
 async function workspace(fn: (root: string) => unknown) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "operator-controls-v2-"));
@@ -277,6 +277,34 @@ test("pending answers survive pause and resume into the same normal chat binding
   assert.equal(mutationIntentBlockReason("apply", "/revit/replace-text-note", { newText: "invented wording" }, "approved wording", savedText), "desired_postcondition_conflicts_with_authenticated_input");
   assert.deepEqual(canonicalTeammateInputs({ ...request, assignment_generation: 999 }), {});
   assert.deepEqual(canonicalTeammateInputs({ user_text: "approved wording", context: { input_values: { replacement_text: "forged" } } }), {});
+}));
+
+test("saved multiline clarification reaches typed and generic mutation admission without losing the final newline", () => workspace(() => {
+  const { binding, prepared } = start("Replace the outdated selected note with the current issue wording without creating a duplicate.");
+  const question = Object.values(advanceAssignmentKernelProgressV2({ binding }).snapshot.clarifications)[0]!;
+  const exact = "ISSUE 04 - COORDINATION SET - 2026-08-09\nVERIFY AGAINST CURRENT SHEET INDEX\n";
+  supplyAssignmentInputResultV2({ binding, clarification_id: question.clarification_id, external_values: { [question.variable_id]: exact } });
+  const request = bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    message_id: "exact-wording-followup", user_text: "Use this exact replacement wording:\n" + exact.trimEnd(),
+    context: { revit: { source: { live: true }, version: "Autodesk Revit 2024", process_id: 4242,
+      document: { title: "Text note test", path: "C:\\fixtures\\text-note.rvt", projectIdentity: { fingerprint: "controls-model" } } } }
+  } as any, prepared);
+  assert.equal(canonicalTeammateInputs(request).replacement_text, exact);
+  for (const tool of ["revit_call_tool", "revit_replace_text_note"]) {
+    for (const proposed of [exact, exact.trimEnd(), exact.replace(/\n/g, "\r\n")]) {
+      const owner = {};
+      const lease = beginTeammateLoopOwner(owner, request);
+      try {
+        const body = { elementId: 1478627, newText: proposed, dryRun: true, apply: false };
+        const gate = guardTeammateMcpCall(owner, { tool, arguments: tool === "revit_call_tool"
+          ? { method: "POST", path: "/revit/replace-text-note", body } : body });
+        assert.equal(gate.allowed, proposed === exact, gate.message);
+        if (proposed === exact) assert.equal(gate.call?.effect, "preview");
+        else assert.match(gate.message || "", /conflicts with authenticated input/);
+      } finally { endTeammateLoopOwner(lease); }
+    }
+  }
+  assert.deepEqual(getAssignmentKernelSnapshotV2(binding.assignment_id)!.operations, {}, "guard checks do not invent native dispatch");
 }));
 
 test("canonical control HTTP boundary rejects foreign sessions and malformed bindings", () => workspace(async () => {

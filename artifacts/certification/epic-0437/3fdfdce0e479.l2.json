@@ -2577,7 +2577,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
-      "sha256": "sha256:bdd9b9b354b374d0a362ae7eb2f4dc59a279caa5096554288dc64e63108f975f"
+      "sha256": "sha256:8b66a00193e3f962b1960890b9923c8eaee23989b0e10ec3360b7cf82f69fa56"
     },
     {
       "path": "apps/operator-backend/src/teammate_verification_evidence.ts",
@@ -2969,7 +2969,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_controls.test.ts",
-      "sha256": "sha256:d57e85961ac15ff73d98e88c1f93ed5cf1e6e5861dffff7a797fe07e19f7fc04"
+      "sha256": "sha256:f13cbf557040a0992f2d23d8113f8232aef71044fac945114d32c118a2eb1706"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
@@ -3929,7 +3929,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_mutation_intent_binding.test.ts",
-      "sha256": "sha256:d0475cdeda91fc3715a654291f8e9185f08ca57d20b91ff5e65a3f927740bfc2"
+      "sha256": "sha256:3e1123588e95394b14a02fddbe9e5df21df0ec0f54e596f7fe5c6a981cbaf29e"
     },
     {
       "path": "apps/operator-backend/test/teammate_verification_evidence.test.ts",
@@ -6169,7 +6169,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:bd929cd68ea7d24abfb75facadfba77156d34e2cfbbfe56511dcefa9db8e80ba",
+  "inputs_hash": "sha256:c7abe0f4bfab571ba4d6c641b6b5429610ed5edbc5f8d5f0bc30e7916d2123e0",
   "result": {
     "passed": true,
     "checks": [
