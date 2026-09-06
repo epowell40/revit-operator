@@ -20,7 +20,7 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
-import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
+import { GeneralRevitExportIsolation, assertGeneralRevitCaseSettled, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
 import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
@@ -1119,13 +1119,11 @@ async function main(): Promise<void> {
       directVariant
     ));
     let exportIsolationError: unknown = null;
-    if (exportIsolation) {
+    if (protocolDraft || exportIsolation) {
       const trace = traces[traces.length - 1]!;
-      const publications = asRecord(asRecord(trace.tool_results).durable_assignment_kernel_v2).assignments;
-      const snapshot = Array.isArray(publications) && publications.length === 1 ? asRecord(asRecord(publications[0]).snapshot) : {};
       try {
-        trace.export_artifacts = exportIsolation.finish(testCase.case_id, snapshot.quiescent === true
-          && asRecord(snapshot.current_binding).session_id === asRecord(trace.context_supplied).session_id);
+        assertGeneralRevitCaseSettled(trace);
+        if (exportIsolation) trace.export_artifacts = exportIsolation.finish(testCase.case_id, true);
       } catch (error) { trace.export_isolation_error = String(error); exportIsolationError = error; }
     }
     writeJsonFile(checkpointOutput, {

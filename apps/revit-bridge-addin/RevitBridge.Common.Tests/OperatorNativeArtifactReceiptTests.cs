@@ -15,6 +15,20 @@ namespace RevitBridge.Common.Tests
 
         public OperatorNativeArtifactReceiptTests() => Directory.CreateDirectory(root);
 
+        [Theory]
+        [InlineData(true, "applied")]
+        [InlineData(false, "unknown")]
+        [InlineData(null, "unknown")]
+        public void DriverPrintedFileRequiresGlobalSettingsRestorationAndExactRoute(bool? restored, string effect)
+        {
+            var capture = new OperatorNativeArtifactCapture(new[] { Output() }, 1, "/revit/print");
+            File.WriteAllText(Output(), "%PDF driver output"); capture.RecordNativeExport(true);
+            var receipt = capture.Complete(restored);
+            Assert.Equal(effect, Settle(receipt, "apply", "/revit/print").EffectState);
+            Assert.Equal("unknown", Settle(receipt, "apply", "/revit/export-pdf").EffectState);
+            Assert.Equal(restored, receipt.PrintSettingsRestored);
+        }
+
         [Fact]
         public void FreshNativeExportProducesFileReceiptAndIndependentReadbackWithoutTransaction()
         {

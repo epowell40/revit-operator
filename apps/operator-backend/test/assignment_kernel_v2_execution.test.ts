@@ -16,15 +16,17 @@ function nativePdfReceipt(phase: "apply" | "preview" = "apply"): NativeArtifactR
 }
 
 test("native PDF file effect survives restart and requires exact independent file readback", () => {
+  for (const route of ["/revit/export-pdf", "/revit/print"] as const)
   for (const variant of ["exact", "wrong_path", "wrong_hash", "wrong_size", "missing", "unreadable", "incomplete", "echo", "duplicate"] as const) workspace(() => {
     const { goal, snapshot } = setup("apply"), receipt = nativePdfReceipt();
+    Object.assign(receipt, { path: route, ...(route === "/revit/print" ? { print_settings_restored: true } : {}) });
     const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-export", provider_turn_id: "export-turn",
       capability_id: "revit_call_tool", classified_effect: "apply",
-      arguments: { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], dryRun: false } } });
+      arguments: { method: "POST", path: route, body: { viewIds: [1420963], dryRun: false } } });
     markAssignmentKernelOperationDispatchStartedV2(apply);
     const commit = envelope(apply.operation_id, apply.binding, { ok: true, status: "Success", artifact_receipt: receipt }, "applied");
     Object.assign(commit.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
-      result_schema_id: "operator-native/POST:/revit/export-pdf/v2", affected_target_identities: ["artifact_path:C:/fixture/M000.pdf"] });
+      result_schema_id: `operator-native/POST:${route}/v2`, affected_target_identities: ["artifact_path:C:/fixture/M000.pdf"] });
     settleAssignmentKernelOperationV2(apply, commit);
     __testOnlyResetGoalListCache();
     const persisted = getAssignmentKernelSnapshotV2(goal.id)!;

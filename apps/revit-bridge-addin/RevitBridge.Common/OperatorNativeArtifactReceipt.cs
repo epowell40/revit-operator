@@ -14,7 +14,9 @@ namespace RevitBridge.Common
         public const string Version = "revit-operator.native-artifact-receipt.v1";
         [JsonPropertyName("schema")] public string Schema => Version;
         [JsonPropertyName("method")] public string Method => "POST";
-        [JsonPropertyName("path")] public string Path => "/revit/export-pdf";
+        [JsonPropertyName("path")] public string Path { get; }
+        [JsonPropertyName("print_settings_restored"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? PrintSettingsRestored { get; }
         [JsonPropertyName("phase")] public string Phase { get; }
         [JsonPropertyName("status")] public string Status { get; }
         [JsonPropertyName("expected_output_paths")] public IReadOnlyList<string> ExpectedOutputPaths { get; }
@@ -23,15 +25,17 @@ namespace RevitBridge.Common
         [JsonPropertyName("outputs")] public IReadOnlyList<OperatorNativeArtifactFile> Outputs { get; }
 
         internal OperatorNativeArtifactReceipt(string phase, string status, string[] paths, int expectedCalls,
-            bool[] calls, OperatorNativeArtifactFile[] outputs)
+            bool[] calls, OperatorNativeArtifactFile[] outputs, string path = "/revit/export-pdf", bool? printSettingsRestored = null)
         {
+            if (path != "/revit/export-pdf" && path != "/revit/print") throw new ArgumentException("Unsupported native file-export route.");
+            Path = path; PrintSettingsRestored = printSettingsRestored;
             Phase = phase; Status = status; ExpectedOutputPaths = paths;
             ExpectedExportCalls = expectedCalls; ExportCalls = calls; Outputs = outputs;
         }
 
-        public static OperatorNativeArtifactReceipt Preview(IEnumerable<string> paths, int expectedCalls)
+        public static OperatorNativeArtifactReceipt Preview(IEnumerable<string> paths, int expectedCalls, string path = "/revit/export-pdf")
             => new OperatorNativeArtifactReceipt("preview", "not_started", Normalize(paths, expectedCalls), expectedCalls,
-                Array.Empty<bool>(), Array.Empty<OperatorNativeArtifactFile>());
+                Array.Empty<bool>(), Array.Empty<OperatorNativeArtifactFile>(), path);
 
         internal static string[] Normalize(IEnumerable<string> paths, int expectedCalls)
         {
@@ -49,7 +53,7 @@ namespace RevitBridge.Common
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("artifact_receipt", out var value)) return false;
             try
             {
-                if (method != "POST" || path != "/revit/export-pdf"
+                if (method != "POST" || (path != "/revit/export-pdf" && path != "/revit/print")
                     || value.GetProperty("schema").GetString() != Version
                     || value.GetProperty("method").GetString() != method || value.GetProperty("path").GetString() != path)
                     return true;
@@ -69,6 +73,8 @@ namespace RevitBridge.Common
                 }
                 if (effect != "apply" || phase != "apply" || status != "complete" || calls.Length != expectedCalls
                     || calls.Any(x => !x) || outputs.Length != expected.Length) return true;
+                if (path == "/revit/print" && (!value.TryGetProperty("print_settings_restored", out var restored)
+                    || restored.ValueKind != JsonValueKind.True)) return true;
                 var refs = new List<string>();
                 for (var i = 0; i < outputs.Length; i++)
                 {
@@ -110,10 +116,13 @@ namespace RevitBridge.Common
         private readonly string[] paths;
         private readonly Snapshot[] before;
         private readonly int expectedCalls;
+        private readonly string routePath;
         private readonly List<bool> calls = new List<bool>();
 
-        public OperatorNativeArtifactCapture(IEnumerable<string> outputPaths, int expectedExportCalls)
+        public OperatorNativeArtifactCapture(IEnumerable<string> outputPaths, int expectedExportCalls, string path = "/revit/export-pdf")
         {
+            if (path != "/revit/export-pdf" && path != "/revit/print") throw new ArgumentException("Unsupported native file-export route.");
+            routePath = path;
             paths = OperatorNativeArtifactReceipt.Normalize(outputPaths, expectedExportCalls);
             expectedCalls = expectedExportCalls;
             before = paths.Select(Read).ToArray();
@@ -121,7 +130,7 @@ namespace RevitBridge.Common
 
         public void RecordNativeExport(bool succeeded) => calls.Add(succeeded);
 
-        public OperatorNativeArtifactReceipt Complete()
+        public OperatorNativeArtifactReceipt Complete(bool? printSettingsRestored = null)
         {
             var outputs = paths.Select((path, i) =>
             {
@@ -131,8 +140,9 @@ namespace RevitBridge.Common
                     FreshOutput = prior.Known && after.Known && after.Exists && after.Size > 0
                         && (!prior.Exists || prior.Hash != after.Hash || prior.Written != after.Written) };
             }).ToArray();
-            var complete = calls.Count == expectedCalls && calls.All(x => x) && outputs.All(x => x.FreshOutput);
-            return new OperatorNativeArtifactReceipt("apply", complete ? "complete" : "unverified", paths, expectedCalls, calls.ToArray(), outputs);
+            var complete = calls.Count == expectedCalls && calls.All(x => x) && outputs.All(x => x.FreshOutput)
+                && (routePath != "/revit/print" || printSettingsRestored == true);
+            return new OperatorNativeArtifactReceipt("apply", complete ? "complete" : "unverified", paths, expectedCalls, calls.ToArray(), outputs, routePath, printSettingsRestored);
         }
 
         public static IReadOnlyList<OperatorNativeArtifactFile> Inspect(IEnumerable<string> paths)

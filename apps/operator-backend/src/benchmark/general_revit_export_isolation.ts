@@ -1,6 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { assignmentUserPauseV2 } from "../work_packets/assignment_kernel_v2_pause.js";
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
+
+export function assertGeneralRevitCaseSettled(trace: Record<string, unknown>): void {
+  const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const publications = record(record(trace.tool_results).durable_assignment_kernel_v2).assignments;
+  const snapshot = Array.isArray(publications) && publications.length === 1 ? record(record(publications[0]).snapshot) : {};
+  const expectedSession = record(trace.context_supplied).session_id;
+  const empty = (value: unknown) => Array.isArray(value) && value.length === 0;
+  if (snapshot.schema !== ASSIGNMENT_SNAPSHOT_V2_SCHEMA || typeof expectedSession !== "string" || !expectedSession || record(snapshot.current_binding).session_id !== expectedSession
+      || snapshot.quiescent !== true || (snapshot.terminal !== true && !assignmentUserPauseV2(snapshot))
+      || !empty(snapshot.in_flight_operation_ids) || !empty(snapshot.in_flight_provider_call_ids)
+      || !empty(snapshot.unresolved_unknown_operation_ids)) {
+    throw new Error("benchmark_case_requires_exact_settled_assignment_without_unknown_effects:" + String(trace.case_id));
+  }
+}
 
 export function assertGeneralRevitExportIsolationPolicy(requested: boolean, declared: unknown, rescoreOnly: boolean): void {
   if (!rescoreOnly && requested !== (declared === true)) {

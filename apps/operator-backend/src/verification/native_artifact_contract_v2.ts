@@ -13,7 +13,7 @@ export function artifactTargetTokensV2(value: unknown): readonly string[] {
 }
 
 export function nativeArtifactPostconditionV2(receiptValue: unknown, payload: unknown): boolean {
-  if (nativeArtifactReceiptEffectV1(receiptValue, "POST", "/revit/export-pdf", "apply") !== "applied") return false;
+  if (nativeArtifactReceiptEffectV1(receiptValue, "POST", object(receiptValue).path, "apply") !== "applied") return false;
   const receipt = object(receiptValue), readback = object(payload);
   if (readback.schema !== "revit-operator.exported-file-inspection.v1" || readback.ok !== true || readback.itemsComplete !== true
       || !Array.isArray(readback.requestedPaths) || !Array.isArray(readback.files)) return false;

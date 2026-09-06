@@ -3,7 +3,28 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../src/benchmark/general_revit_export_isolation.js";
+import { ASSIGNMENT_SNAPSHOT_V2_SCHEMA } from "@revitoperator/assignment-kernel-v2-contracts";
+import { GeneralRevitExportIsolation, assertGeneralRevitCaseSettled, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../src/benchmark/general_revit_export_isolation.js";
+
+test("quiescent unknown print effect stops case advancement and preserves live evidence and originals", t => {
+  const f = fixture(t), isolation = new GeneralRevitExportIsolation(f.workspace, f.retained);
+  isolation.begin("b02_print_sheet");
+  fs.writeFileSync(path.join(f.prints, "partial.pdf"), "unverified bytes");
+  const settled = { schema: ASSIGNMENT_SNAPSHOT_V2_SCHEMA, quiescent: true, terminal: true, current_binding: { session_id: "exact-session" },
+    in_flight_operation_ids: [], in_flight_provider_call_ids: [], unresolved_unknown_operation_ids: [] };
+  const trace = (snapshot: unknown, session: unknown = "exact-session", extra: unknown[] = []) => ({ case_id: "b02_print_sheet",
+    context_supplied: { session_id: session }, tool_results: { durable_assignment_kernel_v2: { assignments: [{ snapshot }, ...extra] } } });
+  assert.doesNotThrow(() => assertGeneralRevitCaseSettled(trace(settled)));
+  for (const change of [{ unresolved_unknown_operation_ids: ["print-operation"] }, { unresolved_unknown_operation_ids: undefined },
+    { in_flight_operation_ids: ["pending"] }, { in_flight_provider_call_ids: ["provider"] }, { quiescent: false }, { terminal: false }, { schema: undefined }])
+    assert.throws(() => assertGeneralRevitCaseSettled(trace({ ...settled, ...change })), /requires_exact_settled/);
+  assert.throws(() => assertGeneralRevitCaseSettled(trace(settled, "another-session")), /requires_exact_settled/);
+  assert.throws(() => assertGeneralRevitCaseSettled(trace(settled, "exact-session", [{}])), /requires_exact_settled/);
+  assert.throws(() => isolation.begin("next_case"), /identity_invalid/);
+  assert.throws(() => isolation.restore(), /requires_recovery/);
+  assert.equal(fs.readFileSync(path.join(f.prints, "partial.pdf"), "utf8"), "unverified bytes");
+  assert.equal(fs.readFileSync(path.join(f.retained, "originals", "prints", "original.pdf"), "utf8"), "original user file");
+});
 
 test("execution honors the frozen isolation policy while rescoring preserves retained evidence without file operations", () => {
   assert.doesNotThrow(() => assertGeneralRevitExportIsolationPolicy(false, undefined, false));

@@ -505,7 +505,9 @@ function aliasedField(row: Record<string, unknown>, names: readonly string[]): u
 
 function nativeDomainFailure(payload: unknown): boolean {
   const root = object(payload);
-  return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false;
+  const status = text(aliasedField(root, ["status"])).toLowerCase().replace(/[ _-]/g, "");
+  return aliasedField(root, ["ok"]) === false || aliasedField(root, ["success"]) === false
+    || status === "partialfailure" || status === "printfailed";
 }
 
 function nativeDomainFailureCode(payload: unknown): string {
@@ -561,7 +563,7 @@ function semanticFacts(
   const root = object(payload);
   const typedPreviewResult = evidence === "task_result"
     && domainSucceeded
-    && ["/revit/replace-text-note", "/revit/set-text-note-text", "/revit/export-pdf"].includes(path.toLowerCase());
+    && ["/revit/replace-text-note", "/revit/set-text-note-text", "/revit/export-pdf", "/revit/print"].includes(path.toLowerCase());
   if (typedPreviewResult) {
     facts.push(...previewSemanticEvidenceV2({
       path,

@@ -78,7 +78,7 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   authoritativePreview: boolean;
 }>): PreviewSemanticEvidenceV2 {
   const path = input.path.toLowerCase();
-  if (path === "/revit/export-pdf") {
+  if (path === "/revit/export-pdf" || path === "/revit/print") {
     const result = object(input.payload), receipt = object(result.artifact_receipt), request = object(input.requestBody);
     const sheets = Array.isArray(result.selectedSheets) ? result.selectedSheets.map(object) : [];
     const outputs = object(result.preflight).outputs;

@@ -17,12 +17,13 @@ function pdfArtifactReceipt(phase: "apply" | "preview" = "apply") {
 }
 
 test("native PDF exports and nonwriting plans retain artifact authority without inventing transactions", async () => {
-  for (const requested of ["apply", "preview"] as const) {
+  for (const route of ["/revit/export-pdf", "/revit/print"]) for (const requested of ["apply", "preview"] as const) {
     const receipt = pdfArtifactReceipt(requested), body = { viewIds: [1420963], dryRun: requested === "preview" };
-    const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: "/revit/export-pdf", body }), async () => {
-      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/export-pdf", body, { classified_effect: requested });
+    Object.assign(receipt, { path: route, ...(route === "/revit/print" ? { print_settings_restored: true } : {}) });
+    const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requested });
       await markAssignmentKernelNativeRequestDispatchingV2(request);
-      await recordAssignmentKernelNativeResultV2("POST", "/revit/export-pdf", {
+      await recordAssignmentKernelNativeResultV2("POST", route, {
         status: requested === "apply" ? "Success" : "Dry Run", ok: true, dryRun: requested === "preview", artifact_receipt: receipt,
         selectedCount: 1, selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }], preflight: { outputs: receipt.expected_output_paths },
         canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
@@ -44,6 +45,33 @@ test("native PDF exports and nonwriting plans retain artifact authority without 
       assert.ok(facts.some((fact: any) => fact.fact_id === "artifact.planned_output_count" && fact.value === 1));
     }
   }
+});
+
+test("driver print PartialFailure and PrintFailed never become successful task evidence or erase unknown effects", async () => {
+  for (const status of ["PartialFailure", "PrintFailed"]) {
+    const body = { viewIds: [1420963], printToFile: true, printToFileName: "artifacts/prints/M000.pdf", dryRun: false };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/print", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/print", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/print", {
+        status, dryRun: false, selectedCount: 1, printerName: "Microsoft Print to PDF", printJobs: 1, failedCount: 1,
+        results: [{ ok: false, viewId: 1420963, error: "InvalidOperationException: artifacts/prints/. Path does not exist." }],
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+          effect_state: "unknown", effect_authority: "native_host", request_dispatched: true }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    assert.equal(decorated.structuredContent.operation_result_v2.status, "failed_after_dispatch");
+    assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "unknown");
+    const facts = decorated.structuredContent.observation.semantic_facts;
+    assert(facts.some((fact: any) => fact.fact_id === "control.domain_succeeded" && fact.value === false));
+    assert(!facts.some((fact: any) => fact.fact_id === "task.result_available"));
+  }
+  const print = { ...pdfArtifactReceipt(), path: "/revit/print", print_settings_restored: true };
+  assert.equal(nativeArtifactReceiptEffectV1(print, "POST", "/revit/print", "apply"), "applied");
+  for (const restored of [undefined, false, "true"])
+    assert.equal(nativeArtifactReceiptEffectV1({ ...print, print_settings_restored: restored }, "POST", "/revit/print", "apply"), null);
+  assert.equal(nativeArtifactReceiptEffectV1(print, "POST", "/revit/export-pdf", "apply"), null);
 });
 
 test("PDF preview facts reject mismatched sheet scope or output plans while preserving no-write truth", async () => {

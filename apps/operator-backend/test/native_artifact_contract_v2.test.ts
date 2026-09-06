@@ -50,3 +50,16 @@ test("artifact identities bind path separators and case without accepting a diff
   assert(!verificationCapabilityAdmissionForPathsV2("/revit/export-pdf", "/revit/get-element-summary").admissible);
   assert.match(verificationCapabilityGuidanceV2({ capability_id: "revit_call_tool", path: "/revit/export-pdf" })!, /Do not export again/);
 });
+
+test("driver print file verification requires restored settings and binds the exact print route", () => {
+  const printed = { ...receipt, path: "/revit/print", print_settings_restored: true };
+  const read = { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true,
+    requestedPaths: printed.expected_output_paths, files: [{ ...printed.outputs[0], exists: true, readable: true }] };
+  assert.equal(nativeArtifactPostconditionV2(printed, read), true);
+  for (const restored of [undefined, false, "true"])
+    assert.equal(nativeArtifactPostconditionV2({ ...printed, print_settings_restored: restored }, read), false);
+  assert.equal(nativeArtifactReceiptEffectV1(printed, "POST", "/revit/export-pdf", "apply"), null);
+  assert(verificationCapabilityAdmissionForPathsV2("/revit/print", "/revit/inspect-exported-files").admissible);
+  assert(!verificationCapabilityAdmissionForPathsV2("/revit/print", "/revit/get-element-summary").admissible);
+  assert.match(verificationCapabilityGuidanceV2({ capability_id: "revit_call_tool", path: "/revit/print" })!, /Do not export again/);
+});

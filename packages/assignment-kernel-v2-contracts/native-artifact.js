@@ -7,7 +7,7 @@ const absolute = value => typeof value === "string" && value.length > 1 && value
 /** The wire receipt describes native file effects, never a Revit transaction. */
 export function nativeArtifactReceiptEffectV1(value, method, path, requestedEffect) {
   const r = record(value);
-  if (method !== "POST" || path !== "/revit/export-pdf" || r.schema !== NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA
+  if (method !== "POST" || !["/revit/export-pdf", "/revit/print"].includes(path) || r.schema !== NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA
       || r.method !== method || r.path !== path) return null;
   const paths = r.expected_output_paths;
   if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || !paths.every(absolute)
@@ -17,6 +17,7 @@ export function nativeArtifactReceiptEffectV1(value, method, path, requestedEffe
   if (requestedEffect === "preview" && r.phase === "preview" && r.status === "not_started"
       && r.export_calls.length === 0 && r.outputs.length === 0) return "none";
   if (requestedEffect !== "apply" || r.phase !== "apply" || r.status !== "complete"
+      || (path === "/revit/print" && r.print_settings_restored !== true)
       || r.export_calls.length !== r.expected_export_calls || !r.export_calls.every(c => c === true)
       || r.outputs.length !== paths.length) return null;
   return r.outputs.every((entry, i) => {
@@ -31,7 +32,7 @@ export function nativeArtifactResultEffectV2(value) {
   const r = record(value), identity = record(r.request_identity), receipt = record(r.native_artifact_receipt);
   if (r.authority !== "native-host" || r.dispatch_state !== "dispatched" || r.native_transaction_state !== "not_applicable"
       || r.observation_required !== true || !hash(r.raw_payload_hash)
-      || r.result_schema_id !== "operator-native/POST:/revit/export-pdf/v2") return null;
+      || r.result_schema_id !== `operator-native/POST:${identity.path}/v2`) return null;
   const effect = nativeArtifactReceiptEffectV1(receipt, identity.method, identity.path, receipt.phase);
   return effect !== null && r.persistent_effect === effect ? effect : null;
 }

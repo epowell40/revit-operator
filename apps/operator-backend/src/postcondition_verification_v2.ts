@@ -436,7 +436,7 @@ export function postconditionSatisfiedByPayloadV2(
   verificationPayload: unknown,
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
-  if (contract.path === "/revit/export-pdf" || objectValue(applyInput).path === "/revit/export-pdf")
+  if (["/revit/export-pdf", "/revit/print"].includes(String(contract.path ?? objectValue(applyInput).path)))
     return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));
   const expected = expectedPostconditionValuesV2(applyInput, true, contract);
   if (expected.length > 0) {

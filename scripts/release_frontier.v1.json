@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "external_provider_brain.test.ts",
+    "agent_response_policy.test.ts",
     "general_revit_export_isolation.test.ts",
     "tool_registry_audit.test.ts",
     "native_artifact_contract_v2.test.ts",
@@ -76,6 +78,8 @@
   ],
   "desktop_tests": [],
   "dotnet_test_classes": [
+    "OperatorPrintOutputPathTests",
+    "OperatorPrintSettingsGuardTests",
     "OperatorNativeArtifactReceiptTests",
     "OperatorAttemptSettlementTests",
     "OperatorNativeTransactionExecutionTests",
@@ -95,6 +99,8 @@
     "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
+    {"id":"agent-instructions-match-real-work-and-verification-contracts","coverage":["backend:external_provider_brain.test.ts","backend:agent_response_policy.test.ts","backend:codex_app_server_compatibility.test.ts","backend:assignment_kernel_v2_execution.test.ts"]},
+    {"id":"driver-print-relative-path-partial-failure-settings-and-file-truth","coverage":["dotnet:OperatorPrintOutputPathTests","dotnet:OperatorPrintSettingsGuardTests","dotnet:OperatorNativeArtifactReceiptTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:general_revit_export_isolation.test.ts"]},
     {"id":"benchmark-native-export-start-state-and-retained-output-isolation","coverage":["backend:general_revit_export_isolation.test.ts","backend:general_revit_fixture_preconditions.test.ts"]},
     {"id":"post-apply-verification-helper-admission-after-criterion-pass","coverage":["backend:assignment_kernel_v2_execution.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},
     {"id":"native-pdf-artifact-effect-and-independent-readback","coverage":["dotnet:OperatorNativeArtifactReceiptTests","dotnet:OperatorApprovalPolicyTests","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:native_artifact_contract_v2.test.ts","backend:tool_registry_audit.test.ts"]},

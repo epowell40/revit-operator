@@ -2,7 +2,8 @@ export const NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA: "revit-operator.native-artifact-
 export interface NativeArtifactReceiptV1 {
   readonly schema: typeof NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA;
   readonly method: "POST";
-  readonly path: "/revit/export-pdf";
+  readonly path: "/revit/export-pdf" | "/revit/print";
+  readonly print_settings_restored?: boolean;
   readonly phase: "preview" | "apply";
   readonly status: "not_started" | "complete" | "unverified";
   readonly expected_output_paths: readonly string[];

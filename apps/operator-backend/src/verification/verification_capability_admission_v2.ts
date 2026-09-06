@@ -243,7 +243,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
   if (PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
   if (path === "/revit/visibility") return ["view.visibility_properties"];
-  if (path === "/revit/export-pdf") return ["artifact.file_digest"];
+  if (path === "/revit/export-pdf" || path === "/revit/print") return ["artifact.file_digest"];
   return [];
 }
 
@@ -302,7 +302,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
-  if (pathOf(apply) === "/revit/export-pdf") return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
+  if (["/revit/export-pdf", "/revit/print"].includes(pathOf(apply))) return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
   const required = requiredSemanticOutputs(apply);
   if (required.length === 0) return null;
   const paths = routesProviding(required);

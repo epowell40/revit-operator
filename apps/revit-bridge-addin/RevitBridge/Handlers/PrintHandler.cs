@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing.Printing;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 
 namespace RevitBridge.Handlers
 {
@@ -51,7 +53,23 @@ namespace RevitBridge.Handlers
             var views = ExportPdfHandler.ResolveSelectedViews(doc, p, out var selectionMeta);
             if (views.Count == 0) throw new InvalidOperationException("No views/sheets selected for printing.");
 
+            var printToFile = p.printToFile ?? printManager.PrintToFile;
+            string? outputPath = null;
+            if (printToFile)
+            {
+                if (printIndividually && views.Count > 1)
+                    throw new ArgumentException("Individual print-to-file needs distinct output names. Use printIndividually=false and combinedFile=true for one combined file.");
+                if (!printIndividually && views.Count > 1 && p.combinedFile != true)
+                    throw new ArgumentException("Multiple views printed to one file require combinedFile=true.");
+                outputPath = OperatorPrintOutputPath.Resolve(p.printToFileName, p.outputFolder,
+                    new[] { p.baseFileName, p.fileName, views[0].SheetNumber + ".pdf" }.First(name => !string.IsNullOrWhiteSpace(name))!, ExportPdfHandler.ResolvePdfOutputFolder);
+                p.printToFileName = outputPath;
+            }
+            var plannedPaths = outputPath == null ? Array.Empty<string>() : new[] { outputPath };
+            var selectedSheets = views.Select(v => new { viewId = ElementIdCompat.GetValue(v.ViewId), sheetNumber = v.SheetNumber, name = v.Name }).ToArray();
+
             var preflight = BuildPrinterPreflight(printerName, selectedPrinter, currentPrinter, installedPrinters);
+            preflight.outputs = plannedPaths;
             var plan = new
             {
                 printerName = string.IsNullOrWhiteSpace(selectedPrinter) ? null : selectedPrinter,
@@ -76,8 +94,11 @@ namespace RevitBridge.Handlers
                 return Task.FromResult<object>(new
                 {
                     status = "Dry Run",
+                    ok = preflight.available,
                     dryRun = true,
+                    artifact_receipt = outputPath == null ? null : OperatorNativeArtifactReceipt.Preview(plannedPaths, 1, "/revit/print"),
                     selectedCount = views.Count,
+                    selectedSheets,
                     selection = selectionMeta,
                     preflight,
                     plan
@@ -89,34 +110,47 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException(preflight.failureClass + ": " + preflight.message);
             }
 
-            var warnings = ApplyPrintSettings(printManager, p, selectedPrinter);
-            if (printIndividually)
+            var settings = new PrintSettingsPreservation(doc, !printIndividually);
+            var capture = outputPath == null ? null : new OperatorNativeArtifactCapture(plannedPaths, 1, "/revit/print");
+            if (outputPath != null) Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+            var warnings = new List<string>();
+            var results = new List<PrintResult>();
+            bool restored;
+            IReadOnlyList<string> restorationErrors;
+            try
             {
-                var results = SubmitIndividualPrints(doc, printManager, views);
-                var failed = results.Where(r => !r.ok).ToList();
-                return Task.FromResult<object>(new
-                {
-                    status = failed.Count == 0 ? "Success" : "PartialFailure",
-                    dryRun = false,
-                    selectedCount = views.Count,
-                    printerName = selectedPrinter,
-                    printJobs = results.Count,
-                    failedCount = failed.Count,
-                    warnings,
-                    results
-                });
+                warnings.AddRange(ApplyPrintSettings(printManager, p, selectedPrinter));
+                if (outputPath != null && (!printManager.PrintToFile || !string.Equals(printManager.PrintToFileName, outputPath, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException("Requested print-to-file settings were not accepted; no print was submitted.");
+                results = printIndividually ? SubmitIndividualPrints(doc, printManager, views)
+                    : new List<PrintResult> { SubmitSelectedSetPrint(doc, printManager, views) };
+                foreach (var result in results) capture?.RecordNativeExport(result.ok);
             }
-
-            var batchResult = SubmitSelectedSetPrint(doc, printManager, views);
+            catch (Exception ex) { results.Add(PrintResult.Failed(views[0], ex.GetType().Name + ": " + ex.Message)); }
+            finally
+            {
+                try { restored = settings.Restore(out restorationErrors); }
+                catch (Exception ex) { restored = false; restorationErrors = new[] { ex.GetType().Name + ": " + ex.Message }; }
+            }
+            var receipt = capture?.Complete(restored);
+            var failed = results.Count(r => !r.ok);
+            var complete = failed == 0 && restored && (receipt == null || receipt.Status == "complete");
             return Task.FromResult<object>(new
             {
-                status = batchResult.ok ? "Success" : "PrintFailed",
+                status = complete ? "Success" : "PrintFailed",
+                ok = complete,
                 dryRun = false,
                 selectedCount = views.Count,
+                selectedSheets,
                 printerName = selectedPrinter,
-                printJobs = 1,
+                printJobs = results.Count,
+                failedCount = failed,
+                artifact_receipt = receipt,
+                print_settings_restored = restored,
+                print_settings_restoration_errors = restorationErrors,
+                path = outputPath,
                 warnings,
-                result = batchResult
+                results
             });
         }
 
@@ -155,6 +189,7 @@ namespace RevitBridge.Handlers
 
         private sealed class PrinterPreflight
         {
+            public string[] outputs { get; set; } = Array.Empty<string>();
             public bool available { get; set; }
             public string? failureClass { get; set; }
             public string message { get; set; } = "";

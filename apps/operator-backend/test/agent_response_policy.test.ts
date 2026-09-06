@@ -111,7 +111,9 @@ test("per-turn teammate contract requires live grounding, focused clarification,
   assert.match(mutation, /"context_state":"live"/);
   assert.match(mutation, /discover one exact contract/i);
   assert.match(mutation, /"max_apply_attempts":32/);
-  assert.match(mutation, /atomic Revit primitives may apply directly/i);
+  assert.match(mutation, /perform the authorized work directly in a bounded edit/i);
+  assert.match(mutation, /complete and verify that real item, then stop for review/i);
+  assert.match(mutation, /preview is needed only when explicitly requested or required by the primitive/i);
   assert.match(mutation, /verify by readback\/capture/i);
   assert.match(preview, /"turn_kind":"inspection"/);
   assert.match(preview, /"context_state":"missing"/);

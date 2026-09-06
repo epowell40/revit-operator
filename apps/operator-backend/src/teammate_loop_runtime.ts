@@ -372,7 +372,7 @@ export function formatTeammateTurnContract(req: Pick<ChatRequest, "user_text" | 
         : contract.preview_required
           ? "Use live context; resolve the exact target and execute a real bounded preview or dry-run before applying; bind the apply to that preview and verify by readback/capture before success. A prose plan, table, or proposed receipt is not an executed preview."
       : contract.turn_kind === "mutation"
-        ? "Use live context; discover one exact contract if needed; preview when the primitive supports it or the preview is useful, but atomic Revit primitives may apply directly; verify by readback/capture before success."
+        ? "Use live context; discover one exact contract if needed; perform the authorized work directly in a bounded edit and verify by readback/capture before success. When the user requests a first item for review, complete and verify that real item, then stop for review. A separate preview is needed only when explicitly requested or required by the primitive's execution contract."
         : "Use live context and the smallest read/navigation step; discover one exact contract if needed; never mutate the model.";
   const requestedOperation = requestedPreviewOperation(contract.intent_summary);
   const semanticPreviewRule = requestedOperation === "create"

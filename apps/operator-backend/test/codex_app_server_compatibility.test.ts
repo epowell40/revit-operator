@@ -324,13 +324,13 @@ test("Codex instructions route exact sheet totals through the typed sheet counte
   assert.match(instructions, /revit_update_schedule_cell/);
 });
 
-test("Codex PDF instructions keep preflight output under the Operator workspace", () => {
+test("Codex PDF instructions keep default output under the Operator workspace without blind export retries", () => {
   const instructions = getOperatorAgentBaseInstructions();
-  assert.match(instructions, /PDF preflight or dry-run/);
-  assert.match(instructions, /omit `outputFolder`[\s\S]*`artifacts\/prints`/);
+  assert.match(instructions, /perform the authorized export or driver print with dryRun=false/);
+  assert.match(instructions, /user's destination or the default workspace-relative artifacts\/prints folder/);
   assert.match(instructions, /never invent an OS temp\/test-run directory/);
-  assert.match(instructions, /rejects `outputFolder`[\s\S]*retry once with `artifacts\/prints`/);
-  assert.match(instructions, /dry-run or file-verification receipt/);
+  assert.match(instructions, /Do not re-export to verify or retry a failed print\/export with unknown effects/);
+  assert.match(instructions, /inspect and reconcile the existing attempt first/);
 });
 
 test("Codex instructions diagnose cross-floor visibility beyond view depth", () => {
@@ -353,6 +353,18 @@ test("Codex instructions use bounded bulk sheet parameter readback and target-aw
 
 test("core Revit lifecycle recovery is available before deferred capability discovery", () => {
   assert.equal(EAGER_OPERATOR_MCP_TOOLS.has("revit_open_model"), true);
+});
+
+test("Codex file delivery instructions match artifact authority and allow supporting verification recovery", () => {
+  const instructions = getOperatorAgentBaseInstructions();
+  assert.match(instructions, /Read-only retained-evidence retrieval, tool search, or documentation may support that verification/);
+  assert.match(instructions, /those helpers cannot verify the edit themselves/);
+  assert.match(instructions, /separate POST \/revit\/inspect-exported-files/);
+  assert.match(instructions, /print_settings_restored=true/);
+  assert.match(instructions, /byte sizes and SHA256 hashes/);
+  assert.match(instructions, /Do not re-export to verify or retry a failed print\/export with unknown effects/);
+  assert.doesNotMatch(instructions, /verify the returned `verification\.exists`/);
+  assert.doesNotMatch(instructions, /Do not search for tools, request tool docs/);
 });
 
 test("Codex instructions reuse known primitives before capability discovery", () => {
