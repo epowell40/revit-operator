@@ -37,37 +37,45 @@ namespace RevitBridge.Handlers
                 sourceSheetId = ElementIdCompat.GetValue(source.Id), sourceSheetNumber = source.SheetNumber,
                 sourceSheetName = source.Name, option = NormalizeOption(request.option), newNumber = targetNumber, newName = targetName
             };
-            if (request.dryRun == true) return Task.FromResult<object>(new { ok = true, dryRun = true, plan });
+            if (request.dryRun == true) return Task.FromResult<object>(new
+                { ok = true, dryRun = true, plan, transaction = OperatorNativeTransactionReceipt.NotStarted() });
 
-            ViewSheet duplicate;
-            using (var transaction = new Transaction(doc, "Duplicate Sheet"))
+            ElementId? duplicateId = null;
+            var sourceViews = new HashSet<ElementId>(source.GetAllPlacedViews());
+            var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Duplicate Sheet", created =>
             {
-                transaction.Start();
-                try
+                duplicateId = InvokeNativeDuplicate(source, optionName);
+                var duplicate = doc.GetElement(duplicateId) as ViewSheet ?? throw new InvalidOperationException("Revit did not return the duplicated sheet.");
+                duplicate.SheetNumber = targetNumber;
+                duplicate.Name = targetName;
+                doc.Regenerate();
+                CaptureOwnedElements(doc, duplicate.Id, created);
+                foreach (var viewId in duplicate.GetAllPlacedViews())
                 {
-                    var duplicateId = InvokeNativeDuplicate(source, optionName);
-                    duplicate = doc.GetElement(duplicateId) as ViewSheet ?? throw new InvalidOperationException("Revit did not return the duplicated sheet.");
-                    duplicate.SheetNumber = targetNumber;
-                    duplicate.Name = targetName;
-                    transaction.Commit();
+                    // Shared legends/schedules are not newly created identities.
+                    if (!sourceViews.Contains(viewId)) CaptureOwnedElements(doc, viewId, created);
                 }
-                catch
-                {
-                    if (transaction.GetStatus() == TransactionStatus.Started) transaction.RollBack();
-                    throw;
-                }
-            }
-
-            var viewportCount = duplicate.GetAllViewports().Count;
-            var scheduleCount = new FilteredElementCollector(doc, duplicate.Id).OfClass(typeof(ScheduleSheetInstance)).Cast<ScheduleSheetInstance>()
-                .Count(instance => !instance.IsTitleblockRevisionSchedule);
-            var verified = request.verify == false || (doc.GetElement(duplicate.Id) is ViewSheet readback &&
-                string.Equals(readback.SheetNumber, targetNumber, StringComparison.Ordinal) && string.Equals(readback.Name, targetName, StringComparison.Ordinal));
-            return Task.FromResult<object>(new
-            {
-                ok = true, dryRun = false, applied = true, verified, plan,
-                sheet = new { id = ElementIdCompat.GetValue(duplicate.Id), number = duplicate.SheetNumber, name = duplicate.Name, viewportCount, scheduleCount }
+                return new Dictionary<string, object?> { ["dryRun"] = false, ["plan"] = plan };
             });
+            return Task.FromResult<object>(OperatorNativeTransactionExecution.ReadCommitted(result, () =>
+            {
+                var duplicate = duplicateId == null ? null : doc.GetElement(duplicateId) as ViewSheet;
+                if (duplicate == null || !string.Equals(duplicate.SheetNumber, targetNumber, StringComparison.Ordinal) ||
+                    !string.Equals(duplicate.Name, targetName, StringComparison.Ordinal))
+                    throw new InvalidOperationException("Committed sheet identity, number or name did not match readback.");
+                var viewportCount = duplicate.GetAllViewports().Count;
+                var scheduleCount = new FilteredElementCollector(doc, duplicate.Id).OfClass(typeof(ScheduleSheetInstance)).Cast<ScheduleSheetInstance>()
+                    .Count(instance => !instance.IsTitleblockRevisionSchedule);
+                return new Dictionary<string, object?> { ["sheet"] = new
+                    { id = ElementIdCompat.GetValue(duplicate.Id), number = duplicate.SheetNumber, name = duplicate.Name, viewportCount, scheduleCount } };
+            }));
+        }
+
+        private static void CaptureOwnedElements(Document doc, ElementId viewId, ISet<long> created)
+        {
+            created.Add(ElementIdCompat.GetValue(viewId));
+            foreach (var id in new FilteredElementCollector(doc).WherePasses(new ElementOwnerViewFilter(viewId)).ToElementIds())
+                created.Add(ElementIdCompat.GetValue(id));
         }
 
         private static ViewSheet ResolveSource(Document doc, Params request)

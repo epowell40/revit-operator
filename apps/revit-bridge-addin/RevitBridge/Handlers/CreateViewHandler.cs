@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
+using RevitBridge.Common;
 
 namespace RevitBridge.Handlers
 {
@@ -86,22 +87,27 @@ namespace RevitBridge.Handlers
                     });
                 }
 
-                object result;
-                using (var tx = new Transaction(doc, "Rename Views (Batch)"))
+                var modified = new HashSet<long>();
+                object? batch = null;
+                var result = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Rename Views (Batch)", _ =>
                 {
-                    tx.Start();
-                    result = ExecuteRenameBatch(doc, p, dryRun: false);
-                    tx.Commit();
-                }
-
-                return Task.FromResult<object>(new
+                    batch = ExecuteRenameBatch(doc, p, dryRun: false, nativeModified: modified);
+                    return new Dictionary<string, object?> { ["dryRun"] = false, ["action"] = action, ["plan"] = renamePlan, ["result"] = batch };
+                }, () => modified);
+                var readback = OperatorNativeTransactionExecution.ReadCommitted(result, () =>
                 {
-                    status = "Success",
-                    dryRun = false,
-                    action,
-                    plan = renamePlan,
-                    result
+                    var expected = JsonSerializer.SerializeToElement(batch);
+                    foreach (var change in expected.GetProperty("changed").EnumerateArray())
+                    {
+                        var view = doc.GetElement(ElementIdCompat.Create(change.GetProperty("id").GetInt64())) as View;
+                        if (view == null || view.Name != change.GetProperty("newName").GetString())
+                            throw new InvalidOperationException("Committed view name did not match batch readback.");
+                    }
+                    if (expected.GetProperty("errorCount").GetInt32() > 0)
+                        throw new InvalidOperationException("The batch committed with one or more rejected view renames; inspect result.errors.");
+                    return new Dictionary<string, object?> { ["status"] = "Success" };
                 });
+                return Task.FromResult<object>(readback);
             }
 
             var plan = BuildPlan(doc, p, action, activeView);
@@ -116,11 +122,10 @@ namespace RevitBridge.Handlers
                 });
             }
 
-            View created;
-            using (var tx = new Transaction(doc, "Create View"))
+            ElementId? outputId = null;
+            var creation = RevitBridge.Logic.Handlers.NativeSingleTransaction.Execute(app, doc, "Create View", nativeCreated =>
             {
-                tx.Start();
-                created = action switch
+                var created = action switch
                 {
                     "create_floor_plan" => CreateFloorPlan(doc, p),
                     "create_3d" => Create3D(doc, p),
@@ -139,16 +144,19 @@ namespace RevitBridge.Handlers
                 {
                     ApplyOptionalViewSettings(doc, created, p);
                 }
-                tx.Commit();
-            }
-
-            return Task.FromResult<object>(new
-            {
-                status = "Success",
-                dryRun = false,
-                action,
-                view = BuildViewSummary(doc, created)
+                doc.Regenerate();
+                outputId = created.Id;
+                nativeCreated.Add(ElementIdCompat.GetValue(created.Id));
+                foreach (var id in new FilteredElementCollector(doc).WherePasses(new ElementOwnerViewFilter(created.Id)).ToElementIds())
+                    nativeCreated.Add(ElementIdCompat.GetValue(id));
+                return new Dictionary<string, object?> { ["dryRun"] = false, ["action"] = action };
             });
+            return Task.FromResult<object>(OperatorNativeTransactionExecution.ReadCommitted(creation, () =>
+            {
+                var created = outputId == null ? null : doc.GetElement(outputId) as View;
+                if (created == null) throw new InvalidOperationException("Committed view was not found during readback.");
+                return new Dictionary<string, object?> { ["status"] = "Success", ["view"] = BuildViewSummary(doc, created) };
+            }));
         }
 
         private static object BuildPlan(Document doc, Params p, string action, View? activeView)
@@ -723,7 +731,7 @@ namespace RevitBridge.Handlers
             };
         }
 
-        private static object ExecuteRenameBatch(Document doc, Params p, bool dryRun)
+        private static object ExecuteRenameBatch(Document doc, Params p, bool dryRun, ISet<long>? nativeModified = null)
         {
             ValidateRenameBatchParams(p);
             List<object> selectorErrors;
@@ -783,6 +791,7 @@ namespace RevitBridge.Handlers
                     if (!dryRun)
                     {
                         view.Name = uniqueName;
+                        if (view.Name != oldName) nativeModified?.Add(id);
                     }
 
                     changed.Add(new { id, oldName, newName = uniqueName });
@@ -1054,6 +1063,9 @@ namespace RevitBridge.Handlers
                 typeId = RevitBridge.Common.ElementIdCompat.GetValue(typeId),
                 typeName = vfName,
                 viewFamily = family,
+                viewType = view.ViewType.ToString(),
+                level = (view as ViewPlan)?.GenLevel is Level level ? new { id = ElementIdCompat.GetValue(level.Id), name = level.Name } : null,
+                discipline = view.get_Parameter(BuiltInParameter.VIEW_DISCIPLINE)?.AsValueString(),
                 isTemplate = view.IsTemplate,
                 scale = view.Scale,
                 templateId = RevitBridge.Common.ElementIdCompat.GetValue(template?.Id),

@@ -9,6 +9,35 @@ namespace RevitBridge.Common
     /// </summary>
     public static class OperatorNativeTransactionExecution
     {
+        /// <summary>Read persisted output without losing commit authority if readback fails.</summary>
+        public static Dictionary<string, object?> ReadCommitted(
+            Dictionary<string, object?> result, Func<Dictionary<string, object?>> readback)
+        {
+            if (!result.TryGetValue("transaction", out var raw) || !(raw is OperatorNativeTransactionReceipt receipt))
+                throw new InvalidOperationException("Post-commit readback requires native transaction authority.");
+            result["applied"] = receipt.CommittedValue;
+            result["verified"] = false;
+            result["ok"] = false;
+            if (receipt.Status != "committed" || receipt.CommittedValue != true) return result;
+            try
+            {
+                foreach (var entry in readback())
+                {
+                    if (entry.Key == "transaction" || entry.Key == "success" || entry.Key == "applied" || entry.Key == "ok" || entry.Key == "verified")
+                        throw new InvalidOperationException("Readback cannot replace native outcome authority.");
+                    result[entry.Key] = entry.Value;
+                }
+                result["verified"] = true;
+                result["ok"] = result.TryGetValue("success", out var success) && success is bool passed && passed;
+            }
+            catch (Exception ex)
+            {
+                result["success"] = false;
+                result["error"] = ex.Message;
+            }
+            return result;
+        }
+
         public static Dictionary<string, object?> Execute(
             Func<string> start, Func<string> commit, Func<string> rollback,
             Func<string> getStatus, Func<Dictionary<string, object?>> mutate,

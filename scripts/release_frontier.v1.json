@@ -100,6 +100,7 @@
     "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
+    {"id":"sheet-duplicate-boolean-success-without-commit-and-created-identity-readback","coverage":["dotnet:OperatorNativeTransactionExecutionTests","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:general_revit_export_isolation.test.ts"]},
     {"id":"interactive-print-destination-dialog-timeout-and-untouched-preflight","coverage":["dotnet:OperatorPrinterDestinationTests","dotnet:OperatorNativeArtifactReceiptTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts"]},
     {"id":"driver-print-virtual-output-with-disabled-print-to-file-checkbox","coverage":["dotnet:OperatorPrintSettingsGuardTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts"]},
     {"id":"driver-print-staged-settings-global-readback-before-submit","coverage":["dotnet:OperatorPrintSettingsGuardTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts"]},

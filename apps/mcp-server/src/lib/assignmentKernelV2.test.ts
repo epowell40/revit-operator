@@ -394,6 +394,37 @@ test("duplicated view settlement carries native created identities without promo
   assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "applied");
 });
 
+test("sheet duplication keeps the exact legacy uncertainty and committed or rolled-back neighbors", async () => {
+  for (const [effect, authority, reason, success] of [
+    ["unknown", "native_host", "native_handler_returned_without_authoritative_settlement", true],
+    ["applied", "native_transaction", "native_transaction_committed", true],
+    ["applied", "native_transaction", "native_transaction_committed", false],
+    ["none", "native_rollback", "verified_native_rollback", false]
+  ] as const) {
+    const body = { sourceSheetId: 1420963, sourceSheetNumber: "M000", sourceQuery: "M000", option: "views_and_detailing",
+      newNumber: "TEMP-M000", newName: "Cover Sheet - Working Copy", dryRun: false, verify: true };
+    const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/duplicate-sheet", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/duplicate-sheet", body, { classified_effect: "apply" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/duplicate-sheet", {
+        ok: success, ...(effect === "unknown" ? {} : { success }), dryRun: false, applied: effect === "none" ? false : true, verified: success,
+        ...(success ? { plan: { sourceSheetId: 1420963, sourceSheetNumber: "M000", option: "views_and_detailing", newNumber: "TEMP-M000" },
+          sheet: { id: 1542977, number: "TEMP-M000", name: "COVER SHEET - WORKING COPY", viewportCount: 2, scheduleCount: 1 } }
+          : { error: effect === "applied" ? "Sheet readback unavailable" : "Sheet number already exists" }),
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "native-sheet-copy",
+          requested_effect: "apply", effect_state: effect, effect_authority: authority, effect_reason: reason, request_dispatched: true,
+          affected_target_identities: effect === "applied" ? ["element_id:1542977", "element_id:1542978"] : [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.persistent_effect, effect);
+    assert.equal(result.native_transaction_state, effect === "applied" ? "committed" : effect === "none" ? "rolled_back" : "unknown");
+    assert.deepEqual(result.affected_target_identities ?? [], effect === "applied" ? ["element_id:1542977", "element_id:1542978"] : []);
+    if (!success) assert.equal(result.status, "failed_after_dispatch");
+  }
+});
+
 test("malformed native affected target identities fail closed before settlement publication", async () => {
   await assert.rejects(
     () => runWithAssignmentKernelV2(

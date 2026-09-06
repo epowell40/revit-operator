@@ -35,7 +35,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:4b1aaf61194d1f18aa0f9cd55747fa81981feb9e5f018d6deb867d3ab3742344"
+      "sha256": "sha256:d0f50a45806747c14b1e977033f694c42ff30219c2a40edee778e975ef2ceb9e"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -2989,7 +2989,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:243d6889f1a15fad13569d44859b648fb2b0c8906ebf0447eb128792fba66636"
+      "sha256": "sha256:37eefb17b4b8a79fca24374829033e1e8f400433fe575721b30d30ed68c8c57c"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
@@ -4289,7 +4289,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeTransactionExecutionTests.cs",
-      "sha256": "sha256:2c426114b1a795f4e2a136b780a90fd5649dc7479c31242b96da6fe1236eb611"
+      "sha256": "sha256:e3d2b8cdff1c0dd1620e474754b587853629492a1413154b156f67544ec69fdf"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeTransportTests.cs",
@@ -4750,7 +4750,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeTransactionExecution.cs",
-      "sha256": "sha256:858102eabf10218b389836dd59868f90c9ad9655b7dd956710caca1ab9251746"
+      "sha256": "sha256:934557d0906f8e85800c4481b8025838a975c15c848e692d865105411cee8cf8"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeTransactionReceipt.cs",
@@ -4974,7 +4974,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/CreateSheetHandler.cs",
-      "sha256": "sha256:dedc192bdfd73683071cb494f95dfdaef28d725652526dc0e2a5c0f070d02e49"
+      "sha256": "sha256:c68f134a2624b08017e0a26cbcc59b72aa665f66ed196172ce57213ec3e4b847"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/Handlers/CreateTextNoteHandler.cs",
@@ -5746,7 +5746,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CreateSheetHandler.cs",
-      "sha256": "sha256:e72a6d4a671f005ed46789676ea61f7a6dfb812cfecdf41f5456389c9336e26c"
+      "sha256": "sha256:dfb8b50c16290a0f6e4707842f01bead1f021bff1e2dd3699284a7d743208985"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CreateSheetsBatchHandler.cs",
@@ -5758,7 +5758,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/CreateViewHandler.cs",
-      "sha256": "sha256:0bea3d19bf743a928d217c22c5e64f908231c42100363520a3b9674d7abeb8a5"
+      "sha256": "sha256:652e499f691b186d409fcdb354edf0d36076a12f4d9b295aa2ea9878389139b7"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/DatumsHandler.cs",
@@ -5774,7 +5774,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/DuplicateSheetHandler.cs",
-      "sha256": "sha256:eaaafcba6c8310e76e79a23bb6ec6c723efa1628de75f0452a8e82ee80bc5666"
+      "sha256": "sha256:98ff13a25d7d86507269c946ca228fb386ce5f01125a970755ee861e19055b5e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportDwgHandler.cs",
@@ -6277,7 +6277,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:278f5132882b273dd55091fda07c7f1ad4c4b68aec230a50f49334ed89a8e630",
+  "inputs_hash": "sha256:fde104170589f782d17977a01e2fd9a740506c488cd68d0497afc175dbe102be",
   "result": {
     "passed": true,
     "checks": [

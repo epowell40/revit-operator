@@ -9,6 +9,90 @@ namespace RevitBridge.Common.Tests
 {
     public class OperatorNativeTransactionExecutionTests
     {
+        [Fact]
+        public void HistoricalSheetDuplicateBooleanSuccessCannotEstablishCommit()
+        {
+            var historical = new { ok = true, dryRun = false, applied = true, verified = true,
+                plan = new { sourceSheetId = 1420963, sourceSheetNumber = "M000", option = "views_and_detailing", newNumber = "TEMP-M000" },
+                sheet = new { id = 1542977, number = "TEMP-M000", name = "COVER SHEET - WORKING COPY", viewportCount = 2, scheduleCount = 1 } };
+            Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(historical, "apply", "POST", "/revit/duplicate-sheet").EffectState);
+        }
+
+        [Theory]
+        [InlineData("/revit/duplicate-sheet", "Committed", "applied", true)]
+        [InlineData("/revit/duplicate-sheet", "RolledBack", "none", false)]
+        [InlineData("/revit/duplicate-sheet", "Pending", "unknown", false)]
+        [InlineData("/revit/create-sheet", "Committed", "applied", true)]
+        [InlineData("/revit/create-sheet", "RolledBack", "none", false)]
+        [InlineData("/revit/create-view", "Committed", "applied", true)]
+        [InlineData("/revit/create-view", "Pending", "unknown", false)]
+        public void SheetAndViewReadbackRunsOnlyAfterNativeCommit(string route, string status, string effect, bool verified)
+        {
+            int edits = 0, reads = 0;
+            var created = new HashSet<long>();
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => status, () => "RolledBack", () => status,
+                () => { edits++; created.Add(1542977); created.Add(1542978); return new Dictionary<string, object?>(); },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), Array.Empty<long>(), Array.Empty<long>()), () => created);
+            OperatorNativeTransactionExecution.ReadCommitted(response, () => { reads++; return new Dictionary<string, object?>
+                { ["sheet"] = new { id = 1542977, number = "TEMP-M000", viewportCount = 2, scheduleCount = 1 } }; });
+            Assert.Equal(1, edits);
+            Assert.Equal(verified ? 1 : 0, reads);
+            Assert.Equal(verified, response["ok"]);
+            Assert.Equal(verified, response["verified"]);
+            Assert.Equal(verified, response.ContainsKey("sheet"));
+            if (status == "Pending") Assert.Null(response["applied"]);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", route);
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(verified, settlement.AffectedTargetIdentities.Contains("element_id:1542977"));
+            Assert.DoesNotContain("element_id:1420963", settlement.AffectedTargetIdentities);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void CommittedSheetReadbackFailurePreservesEffectWithoutRepeatingEdit(bool commitThrows)
+        {
+            int edits = 0, reads = 0;
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started",
+                () => commitThrows ? throw new InvalidOperationException("Commit response failed") : "Committed",
+                () => throw new InvalidOperationException("Committed work must not be rolled back"), () => "Committed",
+                () => { edits++; return new Dictionary<string, object?>(); },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(new[] { 1542977L }, Array.Empty<long>(), Array.Empty<long>()));
+            var receipt = response["transaction"];
+            OperatorNativeTransactionExecution.ReadCommitted(response, () => { reads++; throw new InvalidOperationException("Sheet readback unavailable"); });
+            Assert.Equal(1, edits); Assert.Equal(1, reads);
+            Assert.Same(receipt, response["transaction"]);
+            Assert.Equal(true, response["applied"]);
+            Assert.Equal(false, response["ok"]); Assert.Equal(false, response["verified"]); Assert.Equal(false, response["success"]);
+            Assert.Equal("applied", OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/duplicate-sheet").EffectState);
+        }
+
+        [Fact]
+        public void ConvertedPlaceholderAndRenamedViewKeepModifiedIdentitySeparateFromCreated()
+        {
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed", () => "RolledBack", () => "Committed",
+                () => new Dictionary<string, object?>(),
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), Array.Empty<long>(), Array.Empty<long>()),
+                () => new[] { 1542978L }, () => new[] { 1420963L });
+            var receipt = Assert.IsType<OperatorNativeTransactionReceipt>(response["transaction"]);
+            Assert.Equal(new[] { 1420963L }, receipt.ModifiedElementIds);
+            Assert.Equal(new[] { 1542978L }, receipt.AddedElementIds);
+            Assert.DoesNotContain(1420963L, receipt.AddedElementIds);
+        }
+
+        [Fact]
+        public void ReadbackCannotMintOrOverwriteNativeTransactionAuthority()
+        {
+            Assert.Throws<InvalidOperationException>(() => OperatorNativeTransactionExecution.ReadCommitted(
+                new Dictionary<string, object?> { ["applied"] = true }, () => new Dictionary<string, object?>()));
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => "Committed", () => "RolledBack", () => "Committed",
+                () => new Dictionary<string, object?>(), () => OperatorNativeTransactionReceipt.Committed(Array.Empty<long>()));
+            var receipt = response["transaction"];
+            OperatorNativeTransactionExecution.ReadCommitted(response, () => new Dictionary<string, object?> { ["transaction"] = OperatorNativeTransactionReceipt.NotStarted() });
+            Assert.Same(receipt, response["transaction"]); Assert.Equal(false, response["verified"]);
+            Assert.Equal(true, response["applied"]); Assert.Equal(false, response["success"]);
+        }
+
         private static Dictionary<string, object?> CopyResult() => new Dictionary<string, object?>
         { ["viewId"] = 1542917L, ["name"] = "M-COORDINATION COPY", ["sourceViewId"] = 1363433L, ["withDetailing"] = true };
 

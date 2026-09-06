@@ -1325,6 +1325,32 @@ test("duplicated view creation receipts bind the new view even when the request 
   });
 });
 
+test("sheet and view creation bind verification to native-created identities without replaying creation", () => {
+  for (const route of ["/revit/duplicate-sheet", "/revit/create-sheet", "/revit/create-view"]) workspace(() => {
+    const { snapshot } = setup("apply");
+    const create = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "sheet-view-create", provider_turn_id: "creation-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1420963"],
+      arguments: { method: "POST", path: route, body: route === "/revit/duplicate-sheet"
+        ? { sourceSheetId: 1420963, option: "views_and_detailing", newNumber: "TEMP-M000", newName: "COVER SHEET - WORKING COPY" }
+        : route === "/revit/create-sheet" ? { name: "COVER SHEET - WORKING COPY", number: "TEMP-M000" }
+          : { action: "create_floor_plan", name: "M-LEVEL 2 COORDINATION", levelName: "L2", discipline: "Mechanical" } } });
+    markAssignmentKernelOperationDispatchStartedV2(create);
+    const native = envelope(create.operation_id, create.binding, { ok: true, applied: true, verified: true,
+      sheet: { id: 1542977, number: "TEMP-M000", name: "COVER SHEET - WORKING COPY" } }, "applied");
+    native.structuredContent.operation_result_v2.affected_target_identities = ["element_id:1542977", "element_id:1542978"];
+    settleAssignmentKernelOperationV2(create, native);
+    const ready = advanceAssignmentKernelProgressV2({ binding: create.binding }).snapshot;
+    const readNew = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-created-${id}`, provider_turn_id: "verify-created",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`],
+      arguments: { method: "POST", path: "/revit/get-parameters", body: { elementIds: [id], names: ["Sheet Number", "Sheet Name"] } } });
+    assert.throws(() => readNew(9999), /verification_target_unbound/);
+    const read = readNew(1542977);
+    const stored = getAssignmentKernelSnapshotV2(create.binding.assignment_id)!;
+    assert.equal(stored.operations[read.operation_id]!.verification_of_operation_id, create.operation_id);
+    assert.equal(Object.values(stored.operations).filter(op => op.requested_effect === "apply").length, 1);
+  });
+});
+
 test("operation admission cannot overtake retained evidence awaiting criterion evaluation", () => workspace(() => {
   const { goal, snapshot } = setup();
   const first = openAssignmentKernelOperationV2({
