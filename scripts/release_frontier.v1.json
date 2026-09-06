@@ -1,6 +1,7 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "general_revit_export_isolation.test.ts",
     "tool_registry_audit.test.ts",
     "native_artifact_contract_v2.test.ts",
     "assignment_kernel_v2_pause_reporting.test.ts",
@@ -94,6 +95,8 @@
     "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
+    {"id":"benchmark-native-export-start-state-and-retained-output-isolation","coverage":["backend:general_revit_export_isolation.test.ts","backend:general_revit_fixture_preconditions.test.ts"]},
+    {"id":"post-apply-verification-helper-admission-after-criterion-pass","coverage":["backend:assignment_kernel_v2_execution.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},
     {"id":"native-pdf-artifact-effect-and-independent-readback","coverage":["dotnet:OperatorNativeArtifactReceiptTests","dotnet:OperatorApprovalPolicyTests","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:native_artifact_contract_v2.test.ts","backend:tool_registry_audit.test.ts"]},
     {"id":"paused-user-handoff-packet-and-provider-non-invocation","coverage":["backend:assignment_kernel_v2_pause_reporting.test.ts","backend:assignment_kernel_v2_pause_http.test.ts","backend:benchmark_protocol_v2.test.ts"]},
     {"id":"created-native-identity-without-documentchanged","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","backend:verification_capability_admission_v2.test.ts","mcp:lib/assignmentKernelV2.test.ts"]},

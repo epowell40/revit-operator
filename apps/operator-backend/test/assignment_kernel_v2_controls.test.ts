@@ -134,6 +134,74 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }));
 
+test("dynamic PDF handoff permits verification helpers after criterion pass without repeating export", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Export M000 in color and verify the PDF.");
+  const outputPath = "C:/fixture/M000.pdf";
+  const file = { path: outputPath, size_bytes: 8251485, sha256: "a".repeat(64), exists: true, readable: true };
+  const receipt = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf",
+    phase: "apply", status: "complete", expected_output_paths: [outputPath], expected_export_calls: 1, export_calls: [true],
+    outputs: [{ ...file, fresh_output: true }] };
+  const calls: string[] = [];
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: () => {},
+    callTool: async (tool: string, args: any, context: any) => {
+      const lease = context.assignmentKernelV2;
+      calls.push(args.path || tool);
+      context.onMcpAccepted();
+      const native = tool === "revit_call_tool";
+      const apply = args.path === "/revit/export-pdf";
+      const payload = apply ? { ok: true, status: "Success", artifact_receipt: receipt }
+        : native ? { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: true, requestedPaths: [outputPath], files: [file] }
+          : tool === "revit_search_tools" ? { matches: [{ method: "POST", path: "/revit/inspect-exported-files" }] } : { artifact_receipt: receipt };
+      const facts = native ? [{ fact_id: apply ? "task.result_available" : "control.result_available", fact_class: apply ? "domain" : "control", value: true }]
+        : tool === "revit_search_tools" ? [{ fact_id: "control.capability_available", fact_class: "control", value: true,
+          cardinality: "many", identity_dimensions: ["capability_id", "method", "path"],
+          dimensions: { capability_id: tool, method: "POST", path: "/revit/inspect-exported-files" } }]
+          : [{ fact_id: "control.evidence_selection_available", fact_class: "control", value: true,
+            cardinality: "many", identity_dimensions: ["capability_id", "evidence_id", "selection_path"],
+            dimensions: { capability_id: tool, evidence_id: "retained-export", selection_path: "payload.artifact_receipt" } }];
+      return { content: [], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+        operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `handoff:${lease.operation_id}`,
+          operation_id: lease.operation_id, binding, status: "succeeded",
+          dispatch_state: "dispatched", persistent_effect: apply ? "applied" : "none",
+          native_transaction_state: "not_applicable", authority: native ? "native-host" : tool === "operator_retrieve_evidence" ? "operator-evidence-store" : "operator-mcp-transport",
+          result_schema_id: native ? `operator-native/POST:${args.path}/v2` : `operator-capability/${tool}/v2`,
+          observation_required: true, request_identity: lease.request_identity, completed_at: new Date().toISOString(),
+          raw_payload_hash: payloadDigestV2(payload).digest,
+          ...(apply ? { native_artifact_receipt: receipt, affected_target_identities: [`artifact_path:${outputPath}`] } : {}) },
+        observation: { raw_payload: payload, semantic_facts: facts, verification_relevance: [apply ? "task_result" : "control"] }
+      } };
+    }
+  };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1",
+    session_id: binding.session_id, user_text: snapshot.spec.source_user_request,
+    context: { revit: { process_id: 4242, source: { live: true }, document: { title: "Snowdon HVAC", projectIdentity: { fingerprint: "controls-model" } } } }
+  } as any, prepared));
+  const run = async (id: string, tool: string, args: any) => {
+    const result = await handleCodexDynamicToolCall(runtime as any, { id, method: "item/tool/call",
+      params: { namespace: "revit_operator", turnId: "pdf-handoff", tool, arguments: args } } as any) as any;
+    assert.equal(result.success, true, JSON.stringify(result));
+  };
+  try {
+    await run("export", "revit_call_tool", { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], fileName: "M000.pdf", colorMode: "Color", dryRun: false } });
+    const applied = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    assert(Object.values(applied.criteria).every(c => c.status === "pass"));
+    assert.equal(applied.terminal, false, JSON.stringify({ outcome: applied.outcome, effect: applied.spec.requested_effect,
+      operations: Object.values(applied.operations).map(o => ({ purpose: o.purpose, requested: o.requested_effect, result: o.result })) }));
+    await run("lookup", "revit_search_tools", { query: "verify exported PDF file", max: 5, includeSchemas: true });
+    await run("evidence", "operator_retrieve_evidence", { evidenceId: "retained-export", fields: ["payload.artifact_receipt"] });
+    const afterHelpers = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    assert.equal(afterHelpers.terminal, false, JSON.stringify({ outcome: afterHelpers.outcome, blocker: afterHelpers.progress_blocker,
+      operations: Object.values(afterHelpers.operations).map(o => ({ purpose: o.purpose, requested: o.requested_effect, result: o.result })) }));
+    await run("inspect", "revit_call_tool", { method: "POST", path: "/revit/inspect-exported-files", body: { paths: [outputPath] } });
+    const final = advanceAssignmentKernelProgressV2({ binding }).snapshot;
+    assert.equal(final.outcome, "complete");
+    assert.deepEqual(calls, ["/revit/export-pdf", "revit_search_tools", "operator_retrieve_evidence", "/revit/inspect-exported-files"]);
+    assert.equal(Object.values(final.operations).filter(o => o.persistent_effect === "applied").length, 1);
+    assert.deepEqual(final.unresolved_unknown_operation_ids, []);
+  } finally { endTeammateLoopOwner(owner); }
+}));
+
 test("a supplementary read after verified apply uses its canonical discovery role despite the legacy verification assertion", () => workspace(async () => {
   const { binding, snapshot, prepared } = start("Put UI CHECK in Comments for this pipe.");
   const payload = { items: [{ id: 1380354, parameterDetails: [{ name: "Comments", value: "UI CHECK", valueString: "UI CHECK" }] }] };

@@ -362,6 +362,12 @@ export function openAssignmentKernelOperationV2(input: Readonly<{
   const resolvesGapIds = currentGaps
     .filter((gap) => {
       if (gap.kind === "verification_required") {
+        // Verification may need tool/schema discovery or retrieval of the
+        // retained edit receipt after task criteria already pass. Bind those
+        // read-only helpers to the outstanding gap without granting them
+        // verification authority; only the linked native readback settles it.
+        if (effect === "read" && fulfillmentRole === "supporting_control"
+            && (purpose === "discovery" || purpose === "evidence_read")) return true;
         return purpose === "verification"
           && Boolean(verifies)
           && gap.gap_id === `verification:${verifies!.operation_id}`;

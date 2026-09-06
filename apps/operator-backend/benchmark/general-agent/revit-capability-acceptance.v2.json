@@ -1358,17 +1358,17 @@
       "case_id": "r04_delete_preview",
       "source": "redline_corpus",
       "operation_family": "delete",
-      "prompt": "Pick an accessory on this plan and show me what would be removed or disconnected if we deleted it. Leave it in place for now.",
-      "probe_prompt": "Pick an accessory on this plan and show me what would be removed or disconnected if we deleted it. Leave it in place for now. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "prompt": "Pick an accessory on this plan and explain what it connects to and what would be affected by removing it. Leave it in place.",
+      "probe_prompt": "Pick an accessory on this plan and explain what it connects to and what would be affected by removing it. Do not change the model.",
       "capability_paths": [
-        "/revit/delete"
-      ],
-      "dispatch_any_of": [
-        "/revit/delete",
         "/revit/find-elements",
         "/revit/trace-connected-network"
       ],
-      "expected_effect": "preview",
+      "dispatch_any_of": [
+        "/revit/find-elements",
+        "/revit/trace-connected-network"
+      ],
+      "expected_effect": "read",
       "epic0441_task_refs": [
         "r19_delete_accessory_preflight",
         "r20_delete_route_preflight"
@@ -1380,14 +1380,14 @@
         },
         "clear_selection": true
       },
-      "production_expected_effect": "preview",
-      "probe_expected_effect": "preview",
+      "production_expected_effect": "read",
+      "probe_expected_effect": "read",
       "acceptance_review": {
         "delivery_criteria": [
-          "An identified accessory has a target-bound deletion/dependency preview with connected elements explained and no committed deletion."
+          "Identify an actual accessory on the active plan and explain its connections and removal impacts using model evidence. Distinguish observed connections from inferred consequences."
         ],
         "collateral_criteria": [
-          "No model changes are committed; safe previews must prove rollback."
+          "Leave the model unchanged; no deletion or simulated deletion is required."
         ],
         "intentional_missing_information": []
       },
@@ -1993,20 +1993,18 @@
       "case_id": "r19_delete_bounded_route_preflight",
       "source": "redline_corpus",
       "operation_family": "delete",
-      "prompt": "Show me what would be removed or disconnected if we deleted this branch. Do not delete it yet.",
-      "probe_prompt": "Show me what would be removed or disconnected if we deleted this branch. Do not delete it yet. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "prompt": "Trace this branch and explain what equipment or terminals it serves. Leave the model as it is.",
+      "probe_prompt": "Trace this branch and explain what equipment or terminals it serves. Do not change the model.",
       "capability_paths": [
-        "/revit/trace-connected-network",
-        "/revit/delete"
+        "/revit/trace-connected-network"
       ],
       "dispatch_any_of": [
         "/revit/trace-connected-network",
         "/revit/get-connectors",
-        "/revit/delete",
         "/revit/find-elements"
       ],
-      "expected_effect": "preview",
-      "production_expected_effect": "preview",
+      "expected_effect": "read",
+      "production_expected_effect": "read",
       "epic0441_task_refs": [
         "r20_delete_route_preflight"
       ],
@@ -2020,13 +2018,13 @@
         },
         "clear_selection": true
       },
-      "probe_expected_effect": "preview",
+      "probe_expected_effect": "read",
       "acceptance_review": {
         "delivery_criteria": [
-          "The selected branch has a bounded, target-bound deletion/dependency preview, including downstream impacts, with no committed deletion."
+          "Trace the branch containing the selected duct and report the equipment or terminals it serves with model evidence. State any uncertain boundaries or incomplete connectivity honestly."
         ],
         "collateral_criteria": [
-          "No model changes are committed; safe previews must prove rollback."
+          "Leave the model unchanged; no deletion or simulated deletion is required."
         ],
         "intentional_missing_information": []
       },
@@ -4365,8 +4363,8 @@
       "case_id": "c44_research_pdf_color_failure",
       "source": "redline_corpus",
       "operation_family": "research_and_compliance",
-      "prompt": "The issue set keeps coming out grayscale. Figure out the Revit/PDF setting and get me a color preflight.",
-      "probe_prompt": "The issue set keeps coming out grayscale. Figure out the Revit/PDF setting and get me a color preflight. Show me the proposed work, but do not apply model changes or produce the final export.",
+      "prompt": "We need a color issue set. Export M000 in color first so I can check it before you do the rest.",
+      "probe_prompt": "Identify the sheet and available color export settings for M000. Do not export a file or change the model.",
       "capability_paths": [
         "/revit/print-sets",
         "/revit/sheets",
@@ -4378,8 +4376,8 @@
         "/revit/export-pdf",
         "/revit/native-api-search"
       ],
-      "expected_effect": "preview",
-      "probe_expected_effect": "preview",
+      "expected_effect": "apply",
+      "probe_expected_effect": "read",
       "epic0441_task_refs": [
         "g25_export_publish",
         "n28_novel_holdout"
@@ -4391,13 +4389,13 @@
         },
         "clear_selection": true
       },
-      "production_expected_effect": "preview",
+      "production_expected_effect": "apply",
       "acceptance_review": {
         "delivery_criteria": [
-          "The grayscale cause is evidenced by actual print/export settings and a color preflight confirms the proposed correction without issuing a final set."
+          "Deliver an accessible, nonempty color PDF of M000 with the correct sheet content and verify the actual file. The first completed sheet is the review deliverable; a proposed setting or export plan is insufficient."
         ],
         "collateral_criteria": [
-          "No model changes are committed; safe previews must prove rollback."
+          "Export only M000 and stop for review before producing the rest of the set. Preserve model content and unrelated files."
         ],
         "intentional_missing_information": []
       },

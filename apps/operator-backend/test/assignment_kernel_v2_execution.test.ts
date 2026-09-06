@@ -31,7 +31,26 @@ test("native PDF file effect survives restart and requires exact independent fil
     assert.equal(persisted.operations[apply.operation_id]!.persistent_effect, "applied");
     assert.equal(persisted.operations[apply.operation_id]!.result!.native_transaction_state, "not_applicable");
     assert.notEqual(persisted.outcome, "complete");
-    const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    let ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert(Object.values(ready.criteria).every(c => c.status === "pass"));
+    for (const [tool, purpose, args] of [
+      ["revit_search_tools", "discovery", { query: "verify exported PDF file", max: 5, includeSchemas: true }],
+      ["operator_retrieve_evidence", "evidence_read", { evidenceId: "retained-export", fields: ["payload.artifact_receipt"] }]
+    ] as const) {
+      const helper = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: tool, provider_turn_id: "inspect-turn",
+        capability_id: tool, classified_effect: purpose, arguments: args });
+      const operation = getAssignmentKernelSnapshotV2(goal.id)!.operations[helper.operation_id]!;
+      assert.deepEqual(operation.resolves_gap_ids, [`verification:${apply.operation_id}`]);
+      assert.deepEqual(operation.eligible_criterion_ids, []);
+      assert.equal(operation.verification_of_operation_id, undefined);
+      markAssignmentKernelOperationDispatchStartedV2(helper);
+      settleAssignmentKernelOperationV2(helper, envelope(helper.operation_id, helper.binding, { ok: true, files: receipt.outputs }));
+      ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+      assert.equal(ready.outcome, "active", "lookup or rereading an export receipt cannot verify its postcondition");
+      assert.equal(ready.operations[apply.operation_id]!.verification_operation_ids.length, 0);
+      assert.throws(() => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: tool + "-repeat",
+        provider_turn_id: "inspect-turn", capability_id: tool, classified_effect: purpose, arguments: args }), /equivalent/);
+    }
     const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "pdf-inspect", provider_turn_id: "inspect-turn",
       capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["artifact_path:C:/fixture/M000.pdf"],
       arguments: { method: "POST", path: "/revit/inspect-exported-files", body: { paths: ["C:/fixture/M000.pdf"] } } });

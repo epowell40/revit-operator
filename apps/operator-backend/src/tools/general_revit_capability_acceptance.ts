@@ -20,6 +20,7 @@ import { aggregateModelCallReceipts, deduplicateModelCallReceipts, modelCallRece
   speedSettingsForRequestedConfig } from "../benchmark/general_revit_model_telemetry.js";
 import { summarizeGeneralRevitLatency } from "../benchmark/general_revit_latency.js";
 import { assertGeneralRevitFixtureBytes, summarizeGeneralRevitFixturePreconditionCoverage } from "../benchmark/general_revit_fixture_preconditions.js";
+import { GeneralRevitExportIsolation, assertGeneralRevitExportIsolationPolicy, retainedGeneralRevitExportIsolation } from "../benchmark/general_revit_export_isolation.js";
 import { buildGeneralRevitAcceptanceReviewPacket } from "../benchmark/general_revit_acceptance_review.js";
 import { assertGeneralRevitQualificationRuntime, assertGeneralRevitQualificationWriteGrant } from "../benchmark/general_revit_qualification_preflight.js";
 import { assertGeneralRevitCandidateIdentity, generalRevitCandidateFixtureFiles, generalRevitCandidateSourceIdentity } from "../benchmark/general_revit_candidate_identity_preflight.js";
@@ -789,6 +790,7 @@ async function main(): Promise<void> {
   if (process.argv.includes("--help")) {
     console.log([
       "General Revit capability acceptance runner",
+      "--isolate-exports: fresh local protocol campaigns only. Start each case with empty native export folders, archive exact output bytes, and restore original files after the campaign. Interrupted runs retain a recovery journal and must be recovered before restarting.",
       "",
       "npm run probe:general-revit-capabilities -- [--suite smoke|redline|challenge|terse|research|long-horizon|production|code-execution|full] [--fixture snowdon_hvac|snowdon_plumbing|snowdon_electrical | --orchestrate-fixtures] [--fixture-root DIR] [--case ID[,ID] | --release-canary] [--protocol-v2-envelope FILE --lane controlled_capability|ambient_context|safe_readiness|committed_apply] [--interaction-manifest FILE] [--direct-variant] [--sidecar URL] [--source SOURCE] [--limit N] [--timeout-ms N] [--health-timeout-ms N] [--fixture-readiness-timeout-ms N] [--fixture-timeout-ms N] [--agent-model MODEL] [--agent-effort none|low|medium|high|xhigh|max] [--sample-every N] [--sample-offset N] [--isolate-cases | --reuse-fixture-state] [--output FILE | --output-dir DIR] [--resume CHECKPOINT] [--rescore-only] [--allow-corpus-drift] [--baseline FILE] [--label TEXT] [--list-cases] [--legacy-chat] [--apply] [--require-completion]",
       "",
@@ -873,6 +875,8 @@ async function main(): Promise<void> {
     legacyProtocol: process.argv.includes("--legacy-protocol-v1"), proposedRunId: runId, applyRequested,
     requestedFixture, orchestrateFixtures, laneFlag: flag("--lane"), inputs: protocolInputs });
   const protocolDraft = protocolRun.draft;
+  const isolateExports = process.argv.includes("--isolate-exports");
+  assertGeneralRevitExportIsolationPolicy(isolateExports, protocolDraft?.feature_flags.export_folder_isolation, rescoreOnly);
   const boundInteractionHash = String(protocolDraft?.feature_flags.benchmark_interaction_manifest_sha256 || "").trim();
   if (protocolDraft && interactionManifest && boundInteractionHash !== interactionManifestSha256) {
     throw new Error("Protocol V2 envelope does not bind the exact benchmark interaction manifest hash.");
@@ -999,6 +1003,7 @@ async function main(): Promise<void> {
         ? "close without saving and reopen the canonical sample before every case"
         : "fixture state may be reused across cases"
     },
+    export_isolation: retainedGeneralRevitExportIsolation(priorSuiteContext.export_isolation, rescoreOnly),
     mutation_policy: applyRequested
       ? "production prompts; mutation explicitly requested by the test operator"
       : "safe probe prompts only; no apply requested",
@@ -1067,6 +1072,15 @@ async function main(): Promise<void> {
       resumed: resumedCheckpoint !== null
     };
   };
+  if (isolateExports && !rescoreOnly && (resumedCheckpoint || !protocolDraft || !resolvedOutputDir || !isolateCases
+      || !(orchestrateFixtures || requestedFixture) || !["localhost", "127.0.0.1", "[::1]"].includes(new URL(sidecar).hostname))) {
+    throw new Error("Export isolation requires a fresh local protocol campaign with isolated fixtures and an output directory; interrupted exports must be recovered before a new run.");
+  }
+  const exportIsolation = isolateExports && !rescoreOnly ? new GeneralRevitExportIsolation(
+    String(asRecord(backendHealth.backend).workspace_root || ""), path.join(path.dirname(output), "export-isolation")) : null;
+  if (exportIsolation) suiteContext.export_isolation = { enabled: true, root: exportIsolation.root, retained: exportIsolation.retained,
+    policy: "empty default native export directories per case; retain outputs after quiescence and restore originals after the campaign",
+    limits: "Custom destinations outside the recorded folders require independent starting-state review." };
   for (const testCase of rescoreOnly ? [] : selected.filter((entry) => !completedIds.has(entry.case_id))) {
     const preferredFixture = generalRevitFixtureForCase(fixtureConfig, testCase.case_id);
     for (const fixture of protocolDraft?.fixture_adapter.fixtures || []) assertGeneralRevitFixtureBytes(fixtureRoot, fixtureConfig.fixtures[fixture.identity].sample_filename, fixture.rvt_sha256);
@@ -1093,6 +1107,7 @@ async function main(): Promise<void> {
       (suiteContext.fixture_preconditions as JsonRecord[]).push(prepared);
     }
     console.log(`[${traces.length + 1}/${selected.length}] ${testCase.case_id}`);
+    exportIsolation?.begin(testCase.case_id);
     traces.push(await runCase(
       sidecar,
       testCase,
@@ -1103,6 +1118,16 @@ async function main(): Promise<void> {
       benchmarkInteractionCaseV1(interactionManifest, testCase.case_id),
       directVariant
     ));
+    let exportIsolationError: unknown = null;
+    if (exportIsolation) {
+      const trace = traces[traces.length - 1]!;
+      const publications = asRecord(asRecord(trace.tool_results).durable_assignment_kernel_v2).assignments;
+      const snapshot = Array.isArray(publications) && publications.length === 1 ? asRecord(asRecord(publications[0]).snapshot) : {};
+      try {
+        trace.export_artifacts = exportIsolation.finish(testCase.case_id, snapshot.quiescent === true
+          && asRecord(snapshot.current_binding).session_id === asRecord(trace.context_supplied).session_id);
+      } catch (error) { trace.export_isolation_error = String(error); exportIsolationError = error; }
+    }
     writeJsonFile(checkpointOutput, {
       schema: "revit-operator.general-revit-capability-checkpoint/v1",
       run_id: runId,
@@ -1114,7 +1139,10 @@ async function main(): Promise<void> {
       completed_case_ids: traces.map((trace) => trace.case_id),
       task_traces: traces
     });
+    if (exportIsolationError) throw exportIsolationError;
   }
+  exportIsolation?.restore();
+  if (exportIsolation) asRecord(suiteContext.export_isolation).originals_restored = true;
   const suiteModelCallReceipts = modelCallReceiptsFromTraces(traces);
   const modelCallTelemetry = aggregateModelCallReceipts(suiteModelCallReceipts);
   const modelTelemetryCoverage = modelTelemetryCaseCoverage(traces);
