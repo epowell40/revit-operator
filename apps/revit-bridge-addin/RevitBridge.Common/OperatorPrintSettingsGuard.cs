@@ -7,6 +7,16 @@ namespace RevitBridge.Common
     /// <summary>Preserve the print settings touched by one native submission and verify restoration from global readback.</summary>
     public sealed class OperatorPrintSettingsGuard
     {
+        public static IReadOnlyList<string> FieldsForPrint(bool selectedSet, bool collateRequested)
+        {
+            var fields = new List<string> { "PrinterName", "PrintToFile", "CombinedFile", "PrintToFileName", "PrintRange", "CopyNumber", "PrintOrderReverse" };
+            // Revit cannot read Collate for single-view/single-copy printing.
+            // SubmitPrint inherits it unchanged unless the caller explicitly sets it.
+            if (collateRequested) fields.Add("Collate");
+            if (selectedSet) fields.Add("ViewSelection");
+            return fields;
+        }
+
         private readonly IReadOnlyList<string> names;
         private readonly Func<string, object> read;
         private readonly Action<string, object> write;

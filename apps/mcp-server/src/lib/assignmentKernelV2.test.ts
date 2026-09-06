@@ -151,8 +151,26 @@ import {
   decorateAssignmentKernelMcpResultV2,
   markAssignmentKernelNativeRequestDispatchingV2,
   recordAssignmentKernelNativeResultV2,
+  recordAssignmentKernelNativeFailureV2,
   runWithAssignmentKernelV2
 } from "./assignmentKernelV2.js";
+
+test("driver print conditional Collate getter HTTP failure remains unknown without synthetic completion", async () => {
+  const body = { viewIds: [1420963], printToFile: true, dryRun: false };
+  const error = { status: 500, request_dispatched: true, outcome_unknown: true, phase: "dispatch",
+    message: "System.Reflection.TargetInvocationException: Collate is only available when there are more than 1 views and more than 1 copies." };
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/print", body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/print", body, { classified_effect: "apply" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeFailureV2(request, error);
+    return decorateAssignmentKernelMcpResultV2({ isError: true, content: [{ type: "text", text: error.message }] }, "revit_call_tool") as any;
+  });
+  const result = decorated.structuredContent.operation_result_v2;
+  assert.equal(result.status, "failed_after_dispatch");
+  assert.equal(result.persistent_effect, "unknown");
+  assert.equal(result.observation_required, false);
+  assert(!(decorated.structuredContent.observation?.semantic_facts ?? []).some((fact: any) => fact.fact_id === "task.result_available"));
+});
 
 const binding = {
   assignment_id: "assignment-1",

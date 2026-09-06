@@ -10,6 +10,27 @@ namespace RevitBridge.Common.Tests
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
+        public void SingleCopyPrintDoesNotReadUnavailableUnrequestedCollation(bool selectedSet)
+        {
+            var fields = OperatorPrintSettingsGuard.FieldsForPrint(selectedSet, false);
+            var global = new Dictionary<string, object>();
+            foreach (var name in fields) global[name] = "original " + name;
+            object Read(string name) => name == "Collate"
+                ? throw new InvalidOperationException("Collate is only available when there are more than 1 views and more than 1 copies.")
+                : global[name];
+            var guard = new OperatorPrintSettingsGuard(fields, Read, (name, value) => global[name] = value, () => { });
+            global["PrintToFileName"] = "M000-driver-check.pdf";
+            Assert.True(guard.Restore(out var errors)); Assert.Empty(errors);
+            Assert.Equal("original PrintToFileName", global["PrintToFileName"]);
+            Assert.Equal(selectedSet, global.ContainsKey("ViewSelection"));
+            Assert.Throws<InvalidOperationException>(() => new OperatorPrintSettingsGuard(
+                OperatorPrintSettingsGuard.FieldsForPrint(selectedSet, true), Read, (_, __) => throw new Exception("must not write"),
+                () => throw new Exception("must not apply")));
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
         public void SubmissionSuccessOrFailureStillRequiresGlobalSettingsRestoration(bool submitFailed)
         {
             var global = new Dictionary<string, object> { ["printer"] = "Original", ["file"] = "old.pdf", ["copies"] = 1 };

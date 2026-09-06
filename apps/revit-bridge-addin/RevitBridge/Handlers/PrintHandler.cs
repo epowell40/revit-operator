@@ -110,7 +110,7 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException(preflight.failureClass + ": " + preflight.message);
             }
 
-            var settings = new PrintSettingsPreservation(doc, !printIndividually);
+            var settings = new PrintSettingsPreservation(doc, !printIndividually, p.collate.HasValue);
             var capture = outputPath == null ? null : new OperatorNativeArtifactCapture(plannedPaths, 1, "/revit/print");
             if (outputPath != null) Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
             var warnings = new List<string>();

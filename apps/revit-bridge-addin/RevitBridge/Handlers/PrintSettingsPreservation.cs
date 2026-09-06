@@ -12,12 +12,11 @@ namespace RevitBridge.Handlers
         private PrintManager restoreManager;
         private readonly OperatorPrintSettingsGuard guard;
 
-        internal PrintSettingsPreservation(Document document, bool selectedSet)
+        internal PrintSettingsPreservation(Document document, bool selectedSet, bool collateRequested)
         {
             this.document = document;
             restoreManager = document.PrintManager;
-            var names = new List<string> { "PrinterName", "PrintToFile", "CombinedFile", "PrintToFileName", "PrintRange", "CopyNumber", "PrintOrderReverse", "Collate" };
-            if (selectedSet) names.Add("ViewSelection");
+            var names = OperatorPrintSettingsGuard.FieldsForPrint(selectedSet, collateRequested);
             guard = new OperatorPrintSettingsGuard(names, name => Read(document.PrintManager, name), Write, () => restoreManager.Apply());
         }
 
