@@ -8,6 +8,39 @@ namespace RevitBridge.Common.Tests
     public sealed class OperatorPrintSettingsGuardTests
     {
         [Theory]
+        [InlineData(true, 1, false, 1)]
+        [InlineData(false, 1, false, 1)]
+        [InlineData(true, 1, false, 2)]
+        [InlineData(true, 2, false, 1)]
+        [InlineData(true, 2, true, 2)]
+        public void ExplicitInapplicableCollationDoesNotReadOrWriteUnavailableSetting(bool requested, int views, bool individual, int copies)
+        {
+            var effective = OperatorPrintSettingsGuard.EffectiveCollation(requested, views, individual, copies);
+            Assert.Null(effective);
+            var fields = OperatorPrintSettingsGuard.FieldsForPrint(!individual, effective.HasValue);
+            var global = new Dictionary<string, object>();
+            foreach (var name in fields) global[name] = "original " + name;
+            object Read(string name) => name == "Collate"
+                ? throw new InvalidOperationException("Collate is only available when there are more than 1 views and more than 1 copies.")
+                : global[name];
+            var writes = new List<string>();
+            var guard = new OperatorPrintSettingsGuard(fields, Read, (name, value) => { writes.Add(name); global[name] = value; }, () => { });
+            global["PrintToFileName"] = "artifacts/prints/M000-collate-check.pdf";
+            Assert.True(guard.Restore(out var errors)); Assert.Empty(errors);
+            Assert.Equal("original PrintToFileName", global["PrintToFileName"]);
+            Assert.DoesNotContain("Collate", writes);
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        [InlineData(null)]
+        public void MultipleCopiesOfMultipleViewsPreserveExplicitCollationIntent(bool? requested)
+        {
+            Assert.Equal(requested, OperatorPrintSettingsGuard.EffectiveCollation(requested, 2, false, 2));
+        }
+
+        [Theory]
         [InlineData(false)]
         [InlineData(true)]
         public void SingleCopyPrintDoesNotReadUnavailableUnrequestedCollation(bool selectedSet)

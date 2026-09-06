@@ -7,6 +7,13 @@ namespace RevitBridge.Common
     /// <summary>Preserve the print settings touched by one native submission and verify restoration from global readback.</summary>
     public sealed class OperatorPrintSettingsGuard
     {
+        public static bool? EffectiveCollation(bool? requested, int viewCount, bool printIndividually, int copies)
+        {
+            // Collation orders repeated sets. A one-view job or one copy has no sets to order.
+            // Do not touch Revit's conditional getter/setter for such a request.
+            return !printIndividually && viewCount > 1 && copies > 1 ? requested : null;
+        }
+
         public static IReadOnlyList<string> FieldsForPrint(bool selectedSet, bool collateRequested)
         {
             var fields = new List<string> { "PrinterName", "PrintToFile", "CombinedFile", "PrintToFileName", "PrintRange", "CopyNumber", "PrintOrderReverse" };

@@ -53,6 +53,13 @@ namespace RevitBridge.Handlers
             var views = ExportPdfHandler.ResolveSelectedViews(doc, p, out var selectionMeta);
             if (views.Count == 0) throw new InvalidOperationException("No views/sheets selected for printing.");
 
+            var effectiveCopies = p.copies.HasValue ? Math.Max(1, Math.Min(99, p.copies.Value)) : printManager.CopyNumber;
+            var effectiveCollate = OperatorPrintSettingsGuard.EffectiveCollation(p.collate, views.Count, printIndividually, effectiveCopies);
+            var warnings = new List<string>();
+            if (p.collate.HasValue && !effectiveCollate.HasValue)
+                warnings.Add("Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged.");
+            p.collate = effectiveCollate;
+
             var printToFile = p.printToFile ?? printManager.PrintToFile;
             string? outputPath = null;
             if (printToFile)
@@ -74,7 +81,7 @@ namespace RevitBridge.Handlers
             {
                 printerName = string.IsNullOrWhiteSpace(selectedPrinter) ? null : selectedPrinter,
                 printIndividually,
-                copies = p.copies ?? 1,
+                copies = effectiveCopies,
                 collate = p.collate,
                 reverseOrder = p.reverseOrder,
                 printToFile = p.printToFile,
@@ -100,6 +107,7 @@ namespace RevitBridge.Handlers
                     selectedCount = views.Count,
                     selectedSheets,
                     selection = selectionMeta,
+                    warnings,
                     preflight,
                     plan
                 });
@@ -113,7 +121,6 @@ namespace RevitBridge.Handlers
             var settings = new PrintSettingsPreservation(doc, !printIndividually, p.collate.HasValue);
             var capture = outputPath == null ? null : new OperatorNativeArtifactCapture(plannedPaths, 1, "/revit/print");
             if (outputPath != null) Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
-            var warnings = new List<string>();
             var results = new List<PrintResult>();
             bool restored;
             IReadOnlyList<string> restorationErrors;

@@ -18,13 +18,15 @@ function pdfArtifactReceipt(phase: "apply" | "preview" = "apply") {
 
 test("native PDF exports and nonwriting plans retain artifact authority without inventing transactions", async () => {
   for (const route of ["/revit/export-pdf", "/revit/print"]) for (const requested of ["apply", "preview"] as const) {
-    const receipt = pdfArtifactReceipt(requested), body = { viewIds: [1420963], dryRun: requested === "preview" };
+    const receipt = pdfArtifactReceipt(requested), body = { viewIds: [1420963], dryRun: requested === "preview",
+      ...(route === "/revit/print" ? { copies: 1, collate: true, printIndividually: false } : {}) };
     Object.assign(receipt, { path: route, ...(route === "/revit/print" ? { print_settings_restored: true } : {}) });
     const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: route, body }), async () => {
       const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requested });
       await markAssignmentKernelNativeRequestDispatchingV2(request);
       await recordAssignmentKernelNativeResultV2("POST", route, {
         status: requested === "apply" ? "Success" : "Dry Run", ok: true, dryRun: requested === "preview", artifact_receipt: receipt,
+        warnings: route === "/revit/print" ? ["Collation is not applicable to a job with one view or one copy; the existing collation setting was left unchanged."] : [],
         selectedCount: 1, selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }], preflight: { outputs: receipt.expected_output_paths },
         canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
           requested_effect: requested, effect_state: requested === "apply" ? "applied" : "none", effect_authority: "native_receipt",
@@ -155,8 +157,10 @@ import {
   runWithAssignmentKernelV2
 } from "./assignmentKernelV2.js";
 
-test("driver print conditional Collate getter HTTP failure remains unknown without synthetic completion", async () => {
-  const body = { viewIds: [1420963], printToFile: true, dryRun: false };
+for (const collation of [undefined, true, false]) test(`driver print conditional Collate ${collation} getter HTTP failure remains unknown without synthetic completion`, async () => {
+  const body = { viewIds: [1420963], printToFile: true, dryRun: false,
+    ...(collation === undefined ? {} : { copies: 1, collate: collation, printIndividually: false, combinedFile: true,
+      printToFileName: "artifacts/prints/M000-collate-check.pdf", printerName: "Microsoft Print to PDF" }) };
   const error = { status: 500, request_dispatched: true, outcome_unknown: true, phase: "dispatch",
     message: "System.Reflection.TargetInvocationException: Collate is only available when there are more than 1 views and more than 1 copies." };
   const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/print", body }), async () => {

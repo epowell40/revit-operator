@@ -35,7 +35,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:bf52379ae293aa80a73bfe5c61cb417c086cda3944bd632983856b039be3f4b8"
+      "sha256": "sha256:1f4e0721245831c1044b3ee82db48d6f51f2402006f533fcb3b87ffcf9114879"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -4305,7 +4305,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPrintSettingsGuardTests.cs",
-      "sha256": "sha256:07f85b99e2f6c451864f82814cbe541b4d91560314c1b7522f361ad54dd4fb74"
+      "sha256": "sha256:58e1ccf7e0e809e5383b46e918466a0c22491b245be282413e32cacea09446b0"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorProactivityLifecycleContractTests.cs",
@@ -4762,7 +4762,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorPrintSettingsGuard.cs",
-      "sha256": "sha256:7f5496133cf0bfc0490f73c4d4e07543939c5547dfe80556994b47f68bfb00b7"
+      "sha256": "sha256:7a7cca1cf969a21da5c02f8cbba2971e8cb5ef3648d8fedd631f638c56d646f5"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorProjectCloseFocus.cs",
@@ -5926,7 +5926,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintHandler.cs",
-      "sha256": "sha256:5b2684ec23b7abdb2ddf29327883d57f0bd675483901c6bdb5be50b9ea8dc83c"
+      "sha256": "sha256:4357f8ec684b5e0d9e5324c831e0b2352800d1cc1279dd24d4c8144c2a877f7f"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintSetsHandler.cs",
@@ -6269,7 +6269,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:688c39b20aee36f90332cd980b3f3c7f01cb3839eb43d1204df59caee43fdbfd",
+  "inputs_hash": "sha256:e79efbcc716a855b2dba48731cb5bcadbefe59740f5fd896fa23845c02a423d2",
   "result": {
     "passed": true,
     "checks": [
