@@ -215,8 +215,12 @@ export async function handleCodexDynamicToolCall(runtime: CodexMcpToolRuntime, r
         }
       });
       const trustedVerification = recordTeammateMcpResult(runtime, teammateGate, rawResult);
+      // The legacy loop may recognize the same readback again after the kernel
+      // has already verified its apply. Only the admitted canonical verification
+      // operation can carry that assertion; later discovery stays discovery.
       const settled = settleAssignmentKernelOperationV2(lease, rawResult, undefined,
-        trustedVerification ? { ...trustedVerification, operation_id: lease.operation_id } : null);
+        trustedVerification && lease.purpose === "verification" && lease.fulfillment_role === "verification"
+          ? { ...trustedVerification, operation_id: lease.operation_id } : null);
       checkpointAssignmentKernelProgressV2({
         runtime,
         turn_id: params.turnId,

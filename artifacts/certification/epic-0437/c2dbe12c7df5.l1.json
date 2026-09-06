@@ -203,7 +203,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/mcp_stdio_smoke.test.ts",
-      "sha256": "sha256:a4194f8a4caa973ea702557dd365b73b986c7638677b1a9c409368249a84d9ec"
+      "sha256": "sha256:3a8b94ef8cba4f5716d348e138e6506f873c867251e74cd24a3af6d7268949a6"
     },
     {
       "path": "apps/mcp-server/src/lib/nativeTransport.test.ts",
@@ -392,7 +392,7 @@
     },
     {
       "path": "apps/mcp-server/src/server.ts",
-      "sha256": "sha256:50e69da92f50b8080fc811a15cac43b8a47661ae4156d7a14fea6f7ae2554b94"
+      "sha256": "sha256:0b9afbc40d38338e8942ebf4bad0cbc693904324f8d3e4ff061040ce31fa35fb"
     },
     {
       "path": "apps/mcp-server/src/skills/alignCeilingDevices.ts",
@@ -1060,7 +1060,7 @@
     },
     {
       "path": "apps/operator-backend/src/brains/codex_dynamic_tool_handler.ts",
-      "sha256": "sha256:4510d01614aed6e5e84c8547649447cda659df9a1cf05afd5be7fb7d7c624108"
+      "sha256": "sha256:c2164f9d90c7ec78b14559e042129a2404d92da6736265849b006403f037cc5c"
     },
     {
       "path": "apps/operator-backend/src/brains/codex_permission_summary.ts",
@@ -2969,11 +2969,11 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_controls.test.ts",
-      "sha256": "sha256:d6e6892e10abccdbd4160dc1f813494e2de7c978e98127312ada75273b7d34a1"
+      "sha256": "sha256:d57e85961ac15ff73d98e88c1f93ed5cf1e6e5861dffff7a797fe07e19f7fc04"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_execution.test.ts",
-      "sha256": "sha256:32785b95b40ba3eff1736936cca907fa8483e5a770bae4b3e60c9a5898b6542d"
+      "sha256": "sha256:c05f6864a261019747ce0852017603bce91551ee4a27492968bd46c4637577d8"
     },
     {
       "path": "apps/operator-backend/test/assignment_kernel_v2_lifecycle.test.ts",
@@ -6169,7 +6169,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:e9302fc82aff03b916d7150dda63934756bbcbc33d88dc92569eae965ae96844",
+  "inputs_hash": "sha256:bd929cd68ea7d24abfb75facadfba77156d34e2cfbbfe56511dcefa9db8e80ba",
   "result": {
     "passed": true,
     "checks": [

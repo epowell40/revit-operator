@@ -9,7 +9,7 @@ import { controlAssignmentExecutionV2 } from "../src/assignments/assignment_kern
 import { prepareAssignmentTurn, bindPreparedAssignmentToRequest } from "../src/assignments/turn_preparation.js";
 import { getAssignmentKernelSnapshotV2 } from "../src/assignments/assignment_kernel_v2_store.js";
 import { advanceAssignmentKernelProgressV2, recordAssignmentProviderCallStateV2 } from "../src/assignments/assignment_kernel_v2_progress.js";
-import { openAssignmentKernelOperationV2, failAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
+import { openAssignmentKernelOperationV2, openAssignmentKernelChildOperationV2, settleAssignmentKernelOperationV2, failAssignmentKernelOperationV2, markAssignmentKernelOperationDispatchStartedV2 } from "../src/assignments/assignment_kernel_v2_execution.js";
 import { supplyAssignmentInputResultV2, requestAssignmentInputV2 } from "../src/assignments/assignment_kernel_v2_lifecycle.js";
 import { handleAssignmentHttpRoute } from "../src/assignments/http_routes.js";
 import { getAssignmentKernelPublicationV2 } from "../src/assignments/assignment_kernel_v2_publication.js";
@@ -132,6 +132,74 @@ test("read-result HTTP delivery returns native values, rejects foreign or missin
     assert.deepEqual((published.snapshot as any).result_delivery, result.assignment_snapshot_v2.result_delivery);
     assert.equal((await send(body)).status, 200);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}));
+
+test("a supplementary read after verified apply uses its canonical discovery role despite the legacy verification assertion", () => workspace(async () => {
+  const { binding, snapshot, prepared } = start("Put UI CHECK in Comments for this pipe.");
+  const payload = { items: [{ id: 1380354, parameterDetails: [{ name: "Comments", value: "UI CHECK", valueString: "UI CHECK" }] }] };
+  const stops: string[] = [];
+  const envelope = (lease: any, value: any, effect: "none" | "applied") => ({
+    content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: {
+      schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,
+      operation_result_v2: { schema: "revit-operator.operation-result/v2", result_id: `result:${lease.operation_id}`, operation_id: lease.operation_id,
+        binding, status: "succeeded", dispatch_state: "dispatched", persistent_effect: effect,
+        native_transaction_state: effect === "applied" ? "committed" : lease.requested_effect === "preview" ? "rolled_back" : "not_applicable", authority: "native-host",
+        result_schema_id: "operator-native/test/v2", observation_required: true, raw_payload_hash: payloadDigestV2(value).digest,
+        request_identity: lease.request_identity, completed_at: new Date().toISOString() },
+      observation: { raw_payload: value, semantic_facts: [{ fact_id: "control.result_available", fact_class: "control", value: true }], verification_relevance: ["control"] }
+    }
+  });
+  const runtime = { assignmentKernelV2Binding: () => binding, queueAssignmentKernelV2TurnStop: (_turn: string, reason: string) => stops.push(reason),
+    callTool: async (tool: string, args: any, context: any) => {
+      const lease = context.assignmentKernelV2;
+      context.onMcpAccepted();
+      if (tool !== "revit_set_parameters") return envelope(lease, payload, "none");
+      const apply = args.apply === true;
+      // Replay the retained live failure: native mutation was committed but its
+      // child had no task-fulfillment grant. Readback can verify the mutation;
+      // it cannot invent the missing task-result evidence or duplicate the edit.
+      const child = openAssignmentKernelChildOperationV2({ binding, parent_operation_id: lease.operation_id, child_ordinal: 0,
+        operation_role: "child", capability_id: "native:POST:/revit/set-parameter", classified_effect: apply ? "apply" : "preview",
+        method: "POST", path: "/revit/set-parameter", arguments: { method: "POST", path: "/revit/set-parameter", body: args },
+        fulfillment_role: "supporting_control", eligible_criterion_ids: [] });
+      markAssignmentKernelOperationDispatchStartedV2(child);
+      const nativePayload = { status: apply ? "Applied and Verified" : "Dry Run", dryRun: !apply,
+        changedCount: 1, changedElementIds: [1380354], verificationPerformed: apply, verifiedCount: apply ? 1 : 0 };
+      settleAssignmentKernelOperationV2(child, envelope(child, nativePayload, apply ? "applied" : "none"));
+      return { content: [{ type: "text", text: JSON.stringify(nativePayload) }], structuredContent: {
+        schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: {
+          schema: "revit-operator.operation-result/v2", result_id: `root:${lease.operation_id}`, operation_id: lease.operation_id, binding,
+          status: "completed_without_native_dispatch", dispatch_state: "not_dispatched", persistent_effect: "none",
+          native_transaction_state: "not_applicable", authority: "operator-mcp-transport", result_schema_id: "operator-mcp/transport/v2",
+          observation_required: false, request_identity: lease.request_identity, completed_at: new Date().toISOString()
+        }
+      } };
+    }
+  };
+  const owner = beginTeammateLoopOwner(runtime, bindPreparedAssignmentToRequest({ version: "operator.backend.v1", session_id: binding.session_id,
+    user_text: snapshot.spec.source_user_request, context: { revit: { process_id: 4242, source: { live: true },
+      document: { title: "Snowdon Towers Sample Plumbing", projectIdentity: { fingerprint: "controls-model" } }, selection: { elementIds: [1380354] } } }
+  } as any, prepared));
+  const run = (id: string, tool: string, args: any) => handleCodexDynamicToolCall(runtime as any, {
+    id, method: "item/tool/call", params: { namespace: "revit_operator", turnId: "supplementary-turn", tool, arguments: args }
+  } as any) as Promise<{ success: boolean }>;
+  try {
+    const changes = [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK" }];
+    const preview = await run("preview", "revit_set_parameters", { dryRun: true, apply: false, changes });
+    assert.equal(preview.success, true, JSON.stringify(preview));
+    const apply = await run("apply", "revit_set_parameters", { dryRun: false, apply: true, changes });
+    assert.equal(apply.success, true, JSON.stringify(apply));
+    const read = await run("verification", "revit_call_tool", { method: "POST", path: "/revit/get-parameters", body: { elementIds: [1380354], names: ["Comments"] } });
+    assert.equal(read.success, true, JSON.stringify(read));
+    const supplementary = await run("supplementary", "revit_call_tool", { method: "POST", path: "/revit/get-parameters", body: { elementIds: [1380354], names: ["Comments", "Mark"] } });
+    assert.equal(supplementary.success, true, JSON.stringify(supplementary));
+    const retained = getAssignmentKernelSnapshotV2(binding.assignment_id)!;
+    assert.notEqual(retained.outcome, "complete", "missing task-result evidence must remain missing");
+    const reads = Object.values(retained.operations).filter(op => op.capability_id === "revit_call_tool");
+    assert.deepEqual(reads.map(op => op.purpose), ["verification", "discovery"]);
+    assert.equal(Object.values(retained.operations).filter(op => op.persistent_effect === "applied").length, 1);
+    assert.equal(Object.values(retained.observations).filter(obs => obs.evidence_class === "verification").length, 1);
+  } finally { endTeammateLoopOwner(owner); }
 }));
 
 test("pause persists through a fresh process; resume retains identity, budget usage, and command fencing", () => workspace(() => {

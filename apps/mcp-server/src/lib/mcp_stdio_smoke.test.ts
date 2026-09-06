@@ -1013,3 +1013,100 @@ test("reviewed typed verification reads propagate the exact kernel fulfillment g
     );
   }
 });
+
+test("compiled typed task handlers preserve native fulfillment while previews and documentation stay control", async (t) => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "operator-typed-fulfillment-"));
+  const binding = { assignment_id: "typed-assignment", run_id: "typed-run", session_id: "typed-session", generation: 1, principal_id: "test" };
+  let parent: any;
+  const children: any[] = [];
+  const settlements: any[] = [];
+  const nativeRequests: string[] = [];
+  const backend = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/api/assignments/v2/operations/children") {
+      children.push(input);
+      res.end(JSON.stringify({ operation_lease_v2: { ...parent, operation_id: `child-${children.length}`,
+        parent_operation_id: parent.operation_id, root_operation_id: parent.operation_id, operation_role: "child",
+        capability_id: input.capability_id, requested_effect: input.classified_effect,
+        purpose: input.fulfillment_role === "delegated_task_execution" ? "work" : "discovery",
+        fulfillment_role: input.fulfillment_role, eligible_criterion_ids: input.eligible_criterion_ids,
+        delegation_authority_id: input.delegation_authority_id,
+        request_identity: { capability_id: input.capability_id, method: input.method, path: input.path, request_signature: `request-${children.length}` }
+      } }));
+    } else if (req.url === "/api/assignments/v2/operations/results") {
+      settlements.push(input); res.end(JSON.stringify({ settled: true }));
+    } else if (req.url === "/api/assignments/v2/operations/dispatch") {
+      res.end(JSON.stringify({ ok: true }));
+    } else { res.statusCode = 404; res.end(JSON.stringify({ error: "unexpected backend route" })); }
+  });
+  const bridge = http.createServer(async (req, res) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(Buffer.from(chunk));
+    const input = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+    nativeRequests.push(req.url!);
+    const write = req.url === "/revit/set-parameter" || req.url === "/revit/replace-text-note";
+    const preview = write && input.apply !== true;
+    const payload = req.url === "/revit/set-parameter"
+      ? { status: preview ? "Dry Run" : "Applied and Verified", dryRun: preview, changedCount: 1, verifiedCount: preview ? 0 : 1,
+          verificationPerformed: !preview, verificationFailedCount: 0, writeFailedCount: 0, changedElementIds: [1380354],
+          diffs: [{ elementId: 1380354, parameterName: "Comments", ok: true, changed: true,
+            before: { value: null }, after: { value: "UI CHECK" } }] }
+      : req.url === "/revit/replace-text-note" ? { elementId: 42, updated: true, newText: "Coordination issue" }
+      : req.url === "/revit/sheets" ? { items: [{ id: 42, number: "M001" }], total: 1 }
+      : { path: "/revit/set-parameter", request: { changes: [] } };
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ ...payload, canonical_attempt_settlement: {
+      attempt_id: `native-${nativeRequests.length}`, requested_effect: write ? preview ? "preview" : "apply" : "read",
+      effect_state: write && !preview ? "applied" : "none", request_dispatched: true,
+      affected_target_identities: write ? [req.url === "/revit/set-parameter" ? "element_id:1380354" : "element_id:42"] : []
+    } }));
+  });
+  const backendPort = await listen(backend);
+  const bridgePort = await listen(bridge);
+  fs.writeFileSync(path.join(workspace, "write_grant.json"), JSON.stringify({ token: "test-only", expires_at_utc: new Date(Date.now()+60_000).toISOString() }));
+  const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string,string] => typeof entry[1] === "string"));
+  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(process.cwd(), "dist", "server.js")], cwd: process.cwd(),
+    env: { ...env, OPERATOR_API_BASE_URL: `http://127.0.0.1:${backendPort}`, REVIT_BRIDGE_URL: `http://127.0.0.1:${bridgePort}`,
+      OPERATOR_AUTH_MODE: "shared_token", OPERATOR_TOKEN: "test-only", OPERATOR_WORKSPACE_ROOT: workspace,
+      REVIT_OPERATOR_MODE: "development", OPERATOR_TOOL_EXPOSURE_PROFILE: "laboratory", OPERATOR_UNSAFE_LEGACY_PLAINTEXT_REVIT_TRANSPORT: "1" }, stderr: "pipe" });
+  transport.stderr?.on("data", () => {});
+  const client = new Client({ name: "typed-fulfillment-stdio", version: "1.0.0" }, { capabilities: {} });
+  t.after(async () => { await client.close(); await transport.close(); await closeServer(backend); await closeServer(bridge); fs.rmSync(workspace,{recursive:true,force:true}); });
+  await withTimeout(client.connect(transport), "connecting typed fulfillment MCP");
+  const scenarios = [
+    { tool: "revit_set_parameters", effect: "apply", role: "delegated_task_execution", args: { apply: true, changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK", expectedOldValue: "" }] } },
+    { tool: "revit_replace_text_note", effect: "apply", role: "delegated_task_execution", args: { elementId: 42, newText: "Coordination issue", apply: true } },
+    { tool: "revit_list_sheets", effect: "read", role: "delegated_task_execution", args: { action: "list" } },
+    { tool: "revit_set_parameters", effect: "preview", role: "supporting_control", args: { dryRun: true, changes: [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK" }] } },
+    { tool: "revit_tool_doc", effect: "read", role: "supporting_control", args: { method: "POST", path: "/revit/set-parameter" } }
+  ];
+  for (const scenario of scenarios) {
+    const countBefore = nativeRequests.length;
+    parent = { schema: "revit-operator.assignment-kernel-operation-context/v2", assignment_id: binding.assignment_id, binding,
+      operation_id: `parent-${countBefore}`, root_operation_id: `parent-${countBefore}`, capability_id: scenario.tool,
+      requested_effect: scenario.effect, purpose: scenario.role === "supporting_control" ? "discovery" : "work",
+      operation_role: "root", blocks_parent_settlement: false, fulfillment_role: scenario.role,
+      ...(scenario.role === "delegated_task_execution" ? { delegation_authority_id: `delegation-${countBefore}` } : {}),
+      eligible_criterion_ids: scenario.role === "delegated_task_execution" ? ["requested-task"] : [],
+      request_identity: { capability_id: scenario.tool, request_signature: `parent-request-${countBefore}` },
+      opened_at: new Date().toISOString(), deadline_at: new Date(Date.now()+60_000).toISOString() };
+    const result = await client.callTool({ name: scenario.tool, arguments: scenario.args, _meta: { "revit-operator/assignment-kernel-v2": parent } });
+    assert.notEqual(result.isError, true, JSON.stringify(result));
+    assert.equal(nativeRequests.length, countBefore+1, "one typed call must dispatch its native action exactly once");
+    assert.equal(children.at(-1).fulfillment_role, scenario.role, scenario.tool);
+    assert.deepEqual(children.at(-1).eligible_criterion_ids, parent.eligible_criterion_ids);
+    const observation = settlements.at(-1).mcp_result.structuredContent.observation;
+    assert.equal(observation.evidence_class, scenario.role === "delegated_task_execution" ? "task_result" : "control", scenario.tool);
+    assert.equal(observation.semantic_facts.some((fact: any) => fact.fact_id === "task.result_available"), scenario.role === "delegated_task_execution");
+    const rootResult = (result.structuredContent as any).operation_result_v2;
+    if (scenario.tool === "revit_tool_doc") {
+      assert.notEqual(rootResult.authority, "native-host", "durable documentation is an adapter result, not another native dispatch");
+      assert.equal((result.structuredContent as any).observation.evidence_class, "control");
+    } else {
+      assert.equal(rootResult.status, "completed_without_native_dispatch", "the abstract parent cannot invent another native action");
+    }
+  }
+});

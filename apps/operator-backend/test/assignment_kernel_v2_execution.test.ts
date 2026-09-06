@@ -843,6 +843,50 @@ test("captured V2 operation binding settles after the legacy Goal envelope is pa
   assert.equal(settled.snapshot.current_binding.assignment_id, goal.id);
 }));
 
+test("typed parameter child evidence survives its abstract parent and requires exact native readback", () => workspace(() => {
+  const { snapshot } = setup("apply");
+  const changes = [{ elementId: 1380354, parameterName: "Comments", value: "UI CHECK", expectedOldValue: "" }];
+  const parent = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "typed-comments", provider_turn_id: "typed-turn",
+    capability_id: "revit_set_parameters", classified_effect: "apply", arguments: { apply: true, changes },
+    target_tokens: ["elementid:1380354", "id:1380354"] });
+  markAssignmentKernelOperationDispatchStartedV2(parent);
+  const child = openAssignmentKernelChildOperationV2({ binding: parent.binding, parent_operation_id: parent.operation_id,
+    child_ordinal: 0, operation_role: "child", capability_id: "native:POST:/revit/set-parameter", classified_effect: "apply",
+    method: "POST", path: "/revit/set-parameter", arguments: { method: "POST", path: "/revit/set-parameter", body: { apply: true, changes } },
+    fulfillment_role: "delegated_task_execution", delegation_authority_id: parent.delegation_authority_id,
+    eligible_criterion_ids: parent.eligible_criterion_ids });
+  markAssignmentKernelOperationDispatchStartedV2(child);
+  const childResult = envelope(child.operation_id, child.binding, { changedElementIds: [1380354], changedCount: 1 }, "applied");
+  childResult.structuredContent.operation_result_v2.result_schema_id = "operator-native/POST:/revit/set-parameter/v2";
+  const applied = settleAssignmentKernelOperationV2(child, childResult);
+  assert.equal(applied.observation!.evidence_class, "task_result");
+  const parentResult = envelope(parent.operation_id, parent.binding, null);
+  const transportResult = { ...parentResult.structuredContent.operation_result_v2,
+    status: "completed_without_native_dispatch", dispatch_state: "not_dispatched", authority: "operator-mcp-transport",
+    observation_required: false, raw_payload_hash: undefined, receipt_id: undefined, native_correlation_id: undefined };
+  settleAssignmentKernelOperationV2(parent, { content: [], structuredContent: {
+    schema: ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA, operation_result_v2: transportResult
+  } });
+  const pending = advanceAssignmentKernelProgressV2({ binding: parent.binding }).snapshot;
+  assert.equal(pending.criteria[pending.spec.criteria[0]!.criterion_id]!.status, "pass");
+  assert.equal(pending.terminal, false, "a task-result observation cannot waive post-apply readback");
+  assert.equal(pending.operations[parent.operation_id]!.observation_ids.length, 0);
+  assert.equal(Object.values(pending.operations).filter(op => op.persistent_effect === "applied").length, 1);
+  const verify = openAssignmentKernelOperationV2({ snapshot: pending, controller_request_id: "typed-readback", provider_turn_id: "typed-turn",
+    capability_id: "revit_get_parameters", classified_effect: "read", arguments: { elementIds: [1380354], names: ["Comments"] },
+    target_tokens: ["elementid:1380354", "id:1380354"] });
+  const readback = { items: [{ id: 1380354, parameterDetails: [{ name: "Comments", value: "UI CHECK", valueString: "UI CHECK" }] }] };
+  markAssignmentKernelOperationDispatchStartedV2(verify);
+  settleAssignmentKernelOperationV2(verify, envelope(verify.operation_id, verify.binding, readback));
+  const complete = advanceAssignmentKernelProgressV2({ binding: parent.binding }).snapshot;
+  assert.equal(complete.outcome, "complete");
+  assert.equal(complete.operations[verify.operation_id]!.verification_of_operation_id, child.operation_id);
+  assert.deepEqual(complete.operations[child.operation_id]!.verification_operation_ids, [verify.operation_id]);
+  const replayed = getAssignmentKernelSnapshotV2(parent.binding.assignment_id)!;
+  assert.equal(replayed.outcome, "complete");
+  assert.equal(Object.values(replayed.operations).filter(op => op.persistent_effect === "applied").length, 1);
+}));
+
 test("a verification parent's native child preserves the exact applied-operation subject", () => workspace(() => {
   const { snapshot } = setup("apply");
   const applyLease = openAssignmentKernelOperationV2({

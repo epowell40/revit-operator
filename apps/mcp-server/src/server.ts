@@ -694,7 +694,9 @@ server.tool("revit_get_context", "Get active doc/view info.", {}, async () => {
 
 server.tool("revit_list_views", "List all views.", {}, async () => {
   try {
-    const data = await callRevit("/revit/views");
+    const data = await callRevit("/revit/views", "GET", undefined, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -713,7 +715,9 @@ server.tool("revit_query_views", "Query a bounded view index by exact level/type
   limit: z.number().int().min(1).max(500).default(100)
 }, async (args) => {
   try {
-    const data = await callRevit("/revit/views", "POST", args);
+    const data = await callRevit("/revit/views", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
     return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
   } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -832,7 +836,9 @@ server.tool("revit_native_api_call", "Invoke a reflected Revit native API member
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/native-api-call", "POST", args);
+      const data = await callRevit("/revit/native-api-call", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       const out =
         data && typeof data === "object" && !Array.isArray(data) ? addWorkspaceLinks(data as Record<string, any>) : data;
       return { content: [{ type: "text", text: JSON.stringify(out, null, 2) }] };
@@ -855,7 +861,9 @@ server.tool("revit_native_api_ops", "Compose a bounded read-only native Revit AP
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/native-api-ops", "POST", args);
+      const data = await callRevit("/revit/native-api-ops", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) {
       return { isError: true, content: [{ type: "text", text: String(e) }] };
@@ -1464,7 +1472,9 @@ server.tool("revit_list_sheets", "List or count sheets (sorted by Sheet Number).
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/sheets", "POST", args);
+      const data = await callRevit("/revit/sheets", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1527,7 +1537,9 @@ server.tool("revit_update_schedule_cell", "Resolve one schedule row to one backi
   async (args) => {
     try {
       const mode = canonicalWriteMode(args.apply, args.dryRun);
-      const data = await callRevit("/revit/update-schedule-cell", "POST", { ...args, ...mode });
+      const data = await callRevit("/revit/update-schedule-cell", "POST", { ...args, ...mode }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1558,7 +1570,9 @@ server.tool("revit_replace_schedule_values", "Plan or apply bounded literal repl
       if (mode.apply && !String(args.expectedPlanHash ?? "").trim()) {
         throw new Error("Applying schedule replacements requires expectedPlanHash from the matching dry run.");
       }
-      const data = await callRevit("/revit/replace-schedule-values", "POST", { ...args, ...mode });
+      const data = await callRevit("/revit/replace-schedule-values", "POST", { ...args, ...mode }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1572,7 +1586,9 @@ server.tool("revit_get_titleblock_info", "Resolve a sheet to its titleblock inst
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/get-titleblock-info", "POST", args);
+      const data = await callRevit("/revit/get-titleblock-info", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1596,7 +1612,9 @@ server.tool("revit_capture_sheet_region", "Capture a deterministic region of a s
   },
   async (args) => {
     try {
-      const data = addWorkspaceLinks(await callRevit("/revit/capture-sheet-region", "POST", args) as any);
+      const data = addWorkspaceLinks(await callRevit("/revit/capture-sheet-region", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      }) as any);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1856,7 +1874,9 @@ server.tool("revit_get_family_file_path", "Best-effort: determine a family file 
   { familyId: z.number().int() },
   async (args) => {
     try {
-      const data = await callRevit("/revit/get-family-file-path", "POST", args);
+      const data = await callRevit("/revit/get-family-file-path", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1871,7 +1891,9 @@ server.tool("revit_open_family_doc", "Open a family document for editing (return
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/open-family-doc", "POST", args);
+      const data = await callRevit("/revit/open-family-doc", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1912,7 +1934,9 @@ server.tool("revit_replace_text_note", "Replace a TextNote's text in the active 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/replace-text-note", "POST", args);
+      const data = await callRevit("/revit/replace-text-note", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1925,7 +1949,9 @@ server.tool("revit_save_family_doc", "Save an open family doc to disk if it has 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/save-family-doc", "POST", args);
+      const data = await callRevit("/revit/save-family-doc", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1938,7 +1964,9 @@ server.tool("revit_load_family_doc", "Load/reload an open family doc into the ac
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/load-family-doc", "POST", args);
+      const data = await callRevit("/revit/load-family-doc", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1951,7 +1979,9 @@ server.tool("revit_close_doc", "Close an open family doc session.",
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/close-doc", "POST", args);
+      const data = await callRevit("/revit/close-doc", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -1961,7 +1991,9 @@ server.tool("revit_capture_view", "Export view as image.",
   { viewId: z.number().optional(), imageSize: z.number().default(2048) }, 
   async ({ viewId, imageSize }) => {
     try {
-      const data = await callRevit("/revit/export-image", "POST", { viewId, imageSize });
+      const data = await callRevit("/revit/export-image", "POST", { viewId, imageSize }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -1975,7 +2007,9 @@ server.tool("revit_export_view_frame", "Export active view image + deterministic
   },
   async ({ viewId, imageSize, folder, includeMapping }) => {
     try {
-      const data = await callRevit("/revit/export-view-frame", "POST", { viewId, imageSize, folder, includeMapping });
+      const data = await callRevit("/revit/export-view-frame", "POST", { viewId, imageSize, folder, includeMapping }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2038,7 +2072,9 @@ server.tool("revit_export_view_region", "Export an image + deterministic pixel-t
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/export-view-region", "POST", args);
+      const data = await callRevit("/revit/export-view-region", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2058,7 +2094,9 @@ server.tool("revit_pick_at_pixel", "Pick element candidates at pixel coordinates
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/pick-at-pixel", "POST", args);
+      const data = await callRevit("/revit/pick-at-pixel", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2074,7 +2112,9 @@ server.tool("revit_activate_view", "Activate a view by id, optionally show eleme
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/activate-view", "POST", args);
+      const data = await callRevit("/revit/activate-view", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2088,7 +2128,9 @@ server.tool("revit_resolve_room_plan_view", "Resolve a room number to a best-mat
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/resolve-room-plan-view", "POST", args);
+      const data = await callRevit("/revit/resolve-room-plan-view", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2098,7 +2140,9 @@ server.tool("revit_set_selection", "Set the current Revit UI selection by elemen
   { elementIds: z.array(z.number()) },
   async (args) => {
     try {
-      const data = await callRevit("/revit/set-selection", "POST", args);
+      const data = await callRevit("/revit/set-selection", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2122,7 +2166,9 @@ server.tool("revit_highlight_and_export", "Temporarily highlight element(s) in a
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/highlight-and-export", "POST", args);
+      const data = await callRevit("/revit/highlight-and-export", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2137,7 +2183,9 @@ server.tool("revit_list_element_types", "List element types for a BuiltInCategor
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/list-element-types", "POST", args);
+      const data = await callRevit("/revit/list-element-types", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2151,7 +2199,9 @@ server.tool("revit_duplicate_element_type", "Duplicate an ElementType (e.g., cre
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/duplicate-element-type", "POST", args);
+      const data = await callRevit("/revit/duplicate-element-type", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2166,7 +2216,9 @@ server.tool("revit_set_type_parameters", "Set parameter values on an ElementType
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/set-type-parameters", "POST", args);
+      const data = await callRevit("/revit/set-type-parameters", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2182,7 +2234,9 @@ server.tool("revit_duplicate_type_and_swap_instance", "Duplicate an instance's t
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/duplicate-type-and-swap-instance", "POST", args);
+      const data = await callRevit("/revit/duplicate-type-and-swap-instance", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2195,7 +2249,9 @@ server.tool("revit_change_element_type", "Change an element's type (e.g. swap a 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/change-element-type", "POST", args);
+      const data = await callRevit("/revit/change-element-type", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2210,7 +2266,9 @@ server.tool("revit_replace_door", "Replace a door instance with a different door
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/replace-door", "POST", args);
+      const data = await callRevit("/revit/replace-door", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2220,7 +2278,9 @@ server.tool("revit_query_elements", "Find elements by category.",
   { category: z.string(), limit: z.number().default(100) }, 
   async ({ category, limit }) => {
     try {
-      const data = await callRevit("/revit/query", "POST", { category, limit });
+      const data = await callRevit("/revit/query", "POST", { category, limit }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -2233,7 +2293,9 @@ server.tool("revit_delete_elements", "Delete elements.",
   async ({ ids, dryRun }) => {
     try {
       // API expects 'apply' which is !dryRun
-      const data = await callRevit("/revit/delete", "POST", { ids, apply: !dryRun });
+      const data = await callRevit("/revit/delete", "POST", { ids, apply: !dryRun }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -2256,7 +2318,9 @@ server.tool("revit_set_parameters", "Preview or update element parameters with o
   async (args) => {
     try {
       const mode = canonicalWriteMode(args.apply, args.dryRun);
-      const data = await callRevit("/revit/set-parameter", "POST", { ...args, ...mode });
+      const data = await callRevit("/revit/set-parameter", "POST", { ...args, ...mode }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -2343,6 +2407,8 @@ server.tool("revit_move_elements", "Move element(s) by a translation vector (sup
         behavior: req.behavior,
         options: req.options,
         ...movePayload,
+      }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
       });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
@@ -2395,6 +2461,7 @@ server.tool("revit_move_one_certified", "Preview or apply one bounded, policy-ce
       // In certified mode the ordinary call boundary still rejects it until a
       // generated L4 policy plus native family attestation are present.
       const data = await callRevit("/revit/move-elements", "POST", admission.outboundBody, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2(),
         channel: "typed_mcp",
         certifiedMoveOneAdmission: admission
       });
@@ -2476,7 +2543,9 @@ server.tool("revit_rotate_elements", "Rotate element(s) around an axis (supports
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/rotate-elements", "POST", req);
+      const data = await callRevit("/revit/rotate-elements", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2499,7 +2568,9 @@ server.tool("revit_room_contents", "Find element ids in a room/space by number (
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/room-contents", "POST", req);
+      const data = await callRevit("/revit/room-contents", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2555,7 +2626,9 @@ server.tool("revit_trace_connected_network", "Trace connected MEP elements via c
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/trace-connected-network", "POST", req);
+      const data = await callRevit("/revit/trace-connected-network", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2574,7 +2647,9 @@ server.tool("revit_find_elements_by_parameter", "Find elements by parameter valu
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/find-elements-by-parameter", "POST", req);
+      const data = await callRevit("/revit/find-elements-by-parameter", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2592,7 +2667,9 @@ server.tool("revit_sync_connected_sizes", "Best-effort: sync fitting/terminal si
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/sync-connected-sizes", "POST", req);
+      const data = await callRevit("/revit/sync-connected-sizes", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2617,7 +2694,9 @@ server.tool("revit_resize_duct_run", "Resize a connected round-duct run starting
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/resize-duct-run", "POST", req);
+      const data = await callRevit("/revit/resize-duct-run", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -2636,7 +2715,9 @@ server.tool("revit_ducts_by_spatial_scope", "Resolve ductwork in a room/space sc
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/ducts-by-spatial-scope", "POST", req);
+      const data = await callRevit("/revit/ducts-by-spatial-scope", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) {
       if (!isBridgeStatusError(e, 404)) return { isError: true, content: [{ type: "text", text: String(e) }] };
@@ -2732,7 +2813,9 @@ server.tool("revit_resize_ducts_in_room", "Room-scoped MEP resize helper for duc
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/resize-ducts-in-room", "POST", req);
+      const data = await callRevit("/revit/resize-ducts-in-room", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) {
       // Compatibility fallback for older add-ins that reject roomMode=auto and/or verticalScope=room+plenum.
@@ -2756,7 +2839,9 @@ server.tool("revit_resize_ducts_in_room", "Room-scoped MEP resize helper for duc
               roomMode: mode,
               verticalScope: scope,
             };
-            const result: any = await callRevit("/revit/resize-ducts-in-room", "POST", compatReq);
+            const result: any = await callRevit("/revit/resize-ducts-in-room", "POST", compatReq, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
             const attemptMatched = parseMatchedCount(result);
             attempts.push({ verticalScope: scope, roomMode: mode, matchedCount: attemptMatched, result });
             matchedCount += attemptMatched;
@@ -2818,7 +2903,9 @@ server.tool("revit_resize_ductwork_by_scope", "One-shot room/space ductwork resi
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/resize-ductwork-by-scope", "POST", req);
+      const data = await callRevit("/revit/resize-ductwork-by-scope", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) {
       if (!isBridgeStatusError(e, 404)) return { isError: true, content: [{ type: "text", text: String(e) }] };
@@ -2849,7 +2936,9 @@ server.tool("revit_resize_ductwork_by_scope", "One-shot room/space ductwork resi
               confirm: req.confirm,
               maxElements: req.maxElements,
             };
-            const result: any = await callRevit("/revit/resize-ducts-in-room", "POST", compatReq);
+            const result: any = await callRevit("/revit/resize-ducts-in-room", "POST", compatReq, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
             const attemptMatched = parseMatchedCount(result);
             attempts.push({ verticalScope: scope, roomMode: mode, matchedCount: attemptMatched, result });
             matchedCount += attemptMatched;
@@ -2902,7 +2991,9 @@ server.tool("revit_repair_duct_continuity_by_scope", "Repair continuity breaks i
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/repair-duct-continuity-by-scope", "POST", req);
+      const data = await callRevit("/revit/repair-duct-continuity-by-scope", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3041,7 +3132,9 @@ async function runMepConnectorRepair(req: any, forceDryRun: boolean, compactResp
         ? { disconnectPairs: req.disconnectPairs.map(toNativePair) }
         : {}),
     };
-    const data = await callRevit("/revit/repair-mep-connectors", "POST", nativeRequest);
+    const data = await callRevit("/revit/repair-mep-connectors", "POST", nativeRequest, {
+      assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+    });
     const response = compactResponse ? compactMepConnectorRepairReceipt(data) : data;
     return { content: [{ type: "text" as const, text: JSON.stringify(response, null, 2) }] };
   } catch (e) {
@@ -3080,7 +3173,9 @@ server.tool("revit_get_connectors", "Get connector origins/sizes/directions for 
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/get-connectors", "POST", req);
+      const data = await callRevit("/revit/get-connectors", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3098,7 +3193,9 @@ server.tool("revit_audit_electrical_circuit_loading", "Read evaluator-grade fact
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/audit-electrical-circuit-loading", "POST", req);
+      const data = await callRevit("/revit/audit-electrical-circuit-loading", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3115,7 +3212,9 @@ server.tool("revit_audit_plumbing_fixture_services", "Read evaluator-grade level
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/audit-plumbing-fixture-services", "POST", req);
+      const data = await callRevit("/revit/audit-plumbing-fixture-services", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3132,7 +3231,9 @@ server.tool("revit_align_room_tops_to_ceilings", "Align room top elevation to th
   },
   async (req) => {
     try {
-      const data = await callRevit("/revit/align-room-tops-to-ceilings", "POST", req);
+      const data = await callRevit("/revit/align-room-tops-to-ceilings", "POST", req, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3204,7 +3305,9 @@ server.tool("revit_transaction_plan", "Plan composable model actions in one roll
   { actions: z.array(transactionActionSchema) },
   async ({ actions }) => {
     try {
-      const data = await callRevit("/revit/transaction-plan", "POST", { actions });
+      const data = await callRevit("/revit/transaction-plan", "POST", { actions }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3214,7 +3317,9 @@ server.tool("revit_transaction_apply", "Apply the same composable action graph i
   { actions: z.array(transactionActionSchema) },
   async ({ actions }) => {
     try {
-      const data = await callRevit("/revit/transaction-apply", "POST", { actions });
+      const data = await callRevit("/revit/transaction-apply", "POST", { actions }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3235,7 +3340,9 @@ server.tool("revit_transaction_validate", "Validate post-conditions after apply 
   { transactionId: z.string(), checks: z.array(transactionCheckSchema).default([]) },
   async (args) => {
     try {
-      const data = await callRevit("/revit/transaction-validate", "POST", args);
+      const data = await callRevit("/revit/transaction-validate", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3245,7 +3352,9 @@ server.tool("revit_create_sheet", "Create a new sheet.",
   { name: z.string().optional(), number: z.string().optional(), titleBlockId: z.number().default(-1) },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-sheet", "POST", args);
+      const data = await callRevit("/revit/create-sheet", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3254,7 +3363,9 @@ server.tool("revit_place_view", "Place a view on a sheet.",
   { sheetId: z.number(), viewId: z.number(), x: z.number().default(0), y: z.number().default(0) },
   async (args) => {
     try {
-      const data = await callRevit("/revit/place-view", "POST", args);
+      const data = await callRevit("/revit/place-view", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3269,7 +3380,9 @@ server.tool("revit_create_text", "Create a text note on a view/sheet.",
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-text", "POST", args);
+      const data = await callRevit("/revit/create-text", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3284,7 +3397,9 @@ server.tool("revit_create_duct", "Create a duct segment.",
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-duct", "POST", args);
+      const data = await callRevit("/revit/create-duct", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3298,7 +3413,9 @@ server.tool("revit_create_pipe", "Create a pipe segment.",
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-pipe", "POST", args);
+      const data = await callRevit("/revit/create-pipe", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3338,7 +3455,9 @@ server.tool("revit_create_family_instance", "Place a family instance (e.g. equip
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-family-instance", "POST", args);
+      const data = await callRevit("/revit/create-family-instance", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3365,7 +3484,9 @@ server.tool("revit_place_families", "Batch place family instances with dry-run, 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/place-families", "POST", args);
+      const data = await callRevit("/revit/place-families", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3378,7 +3499,9 @@ server.tool("revit_load_family", "Load a .rfa family file into the active projec
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/load-family", "POST", args);
+      const data = await callRevit("/revit/load-family", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3394,7 +3517,9 @@ server.tool("revit_create_family_from_template", "Create a new .rfa from a famil
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-family-from-template", "POST", args);
+      const data = await callRevit("/revit/create-family-from-template", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3409,7 +3534,9 @@ server.tool("revit_set_view_visibility", "Control view visibility and templates.
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/visibility", "POST", args);
+      const data = await callRevit("/revit/visibility", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3422,7 +3549,9 @@ server.tool("revit_create_drafting_view", "Create (or reuse) a Drafting View by 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-drafting-view", "POST", args);
+      const data = await callRevit("/revit/create-drafting-view", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3438,7 +3567,9 @@ server.tool("revit_draw_detail_curves", "Draw detail curves in a view (lines/pol
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/draw-detail-curves", "POST", args);
+      const data = await callRevit("/revit/draw-detail-curves", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3454,7 +3585,9 @@ server.tool("revit_create_filled_region", "Create a filled region from one or mo
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-filled-region", "POST", args);
+      const data = await callRevit("/revit/create-filled-region", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3471,7 +3604,9 @@ server.tool("revit_create_revision_cloud", "Create a revision cloud from a polyl
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/create-revision-cloud", "POST", args);
+      const data = await callRevit("/revit/create-revision-cloud", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3497,7 +3632,9 @@ server.tool("revit_import_excel_table", "Import an .xlsx range into a drafting v
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/import-excel-table", "POST", args);
+      const data = await callRevit("/revit/import-excel-table", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3514,7 +3651,9 @@ server.tool("revit_link_cad", "Link (or import) a DWG onto a sheet view. Externa
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/link-cad", "POST", args);
+      const data = await callRevit("/revit/link-cad", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3534,7 +3673,9 @@ server.tool("revit_place_image", "Place an image (.png/.jpg) onto a sheet view."
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/place-image", "POST", args);
+      const data = await callRevit("/revit/place-image", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3564,7 +3705,9 @@ server.tool("revit_export_pdf", "Export views/sheets to PDF.",
   },
   async (args) => {
     try {
-      const data = addWorkspaceLinks(await callRevit("/revit/export-pdf", "POST", args) as any);
+      const data = addWorkspaceLinks(await callRevit("/revit/export-pdf", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      }) as any);
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3600,7 +3743,9 @@ server.tool("revit_get_lighting_data", "Get photometrics/IES data from lighting 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/get-lighting-data", "POST", args);
+      const data = await callRevit("/revit/get-lighting-data", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3612,7 +3757,9 @@ server.tool("revit_sync_model", "Synchronize with Central and Relinquish All.",
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/sync", "POST", args);
+      const data = await callRevit("/revit/sync", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3626,7 +3773,9 @@ server.tool("revit_open_model", "Open and activate a Revit model file. If the ex
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/open-model", "POST", args);
+      const data = await callRevit("/revit/open-model", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3636,7 +3785,9 @@ server.tool("revit_resolve_level", "Find a level by name.",
   { name: z.string() }, 
   async ({ name }) => {
     try {
-      const data = await callRevit("/revit/resolve", "POST", { type: "level", query: name });
+      const data = await callRevit("/revit/resolve", "POST", { type: "level", query: name }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3645,7 +3796,9 @@ server.tool("revit_resolve_view", "Find a view by name.",
   { name: z.string() }, 
   async ({ name }) => {
     try {
-      const data = await callRevit("/revit/resolve", "POST", { type: "view", query: name });
+      const data = await callRevit("/revit/resolve", "POST", { type: "view", query: name }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3654,7 +3807,9 @@ server.tool("revit_resolve_sheet", "Find a sheet by name or number.",
   { query: z.string() }, 
   async ({ query }) => {
     try {
-      const data = await callRevit("/revit/resolve", "POST", { type: "sheet", query: query });
+      const data = await callRevit("/revit/resolve", "POST", { type: "sheet", query: query }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3664,7 +3819,9 @@ server.tool("revit_list_rooms", "List rooms, optionally filtered by level.",
   { levelName: z.string().optional() }, 
   async ({ levelName }) => {
     try {
-      const data = await callRevit("/revit/rooms", "POST", { action: "list", levelName });
+      const data = await callRevit("/revit/rooms", "POST", { action: "list", levelName }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3673,7 +3830,9 @@ server.tool("revit_get_room_details", "Get detailed geometry/metrics for specifi
   { roomIds: z.array(z.number()) }, 
   async ({ roomIds }) => {
     try {
-      const data = await callRevit("/revit/rooms", "POST", { action: "detail", roomIds });
+      const data = await callRevit("/revit/rooms", "POST", { action: "detail", roomIds }, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
 });
@@ -3810,7 +3969,9 @@ server.tool("revit_fire_alarm_layout", "Place fire alarm devices and optionally 
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/fire-alarm-layout", "POST", args);
+      const data = await callRevit("/revit/fire-alarm-layout", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
@@ -3825,7 +3986,9 @@ server.tool("revit_fire_alarm_visualizer", "Show/hide/clear Fire Alarm visualize
   },
   async (args) => {
     try {
-      const data = await callRevit("/revit/fire-alarm-visualizer", "POST", args);
+      const data = await callRevit("/revit/fire-alarm-visualizer", "POST", args, {
+        assignmentFulfillmentRole: currentAssignmentKernelTaskFulfillmentRoleV2()
+      });
       return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
     } catch (e) { return { isError: true, content: [{ type: "text", text: String(e) }] }; }
   }
