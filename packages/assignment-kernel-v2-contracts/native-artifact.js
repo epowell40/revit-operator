@@ -10,6 +10,11 @@ export function nativeArtifactReceiptEffectV1(value, method, path, requestedEffe
   if (method !== "POST" || !["/revit/export-pdf", "/revit/print"].includes(path) || r.schema !== NATIVE_ARTIFACT_RECEIPT_V1_SCHEMA
       || r.method !== method || r.path !== path) return null;
   const paths = r.expected_output_paths;
+  if (path === "/revit/print" && ["apply", "preview"].includes(requestedEffect) && r.phase === requestedEffect
+      && r.status === "not_started" && r.print_settings_untouched === true
+      && ["interactive_printer_destination", "printer_capability_unavailable", "printer_unavailable", "no_printer_configured"].includes(r.not_started_reason)
+      && Array.isArray(paths) && paths.length === 0 && r.expected_export_calls === 0
+      && Array.isArray(r.export_calls) && r.export_calls.length === 0 && Array.isArray(r.outputs) && r.outputs.length === 0) return "none";
   if (!Array.isArray(paths) || !paths.length || paths.length > 2000 || !paths.every(absolute)
       || new Set(paths.map(p => p.toLowerCase())).size !== paths.length
       || !Number.isInteger(r.expected_export_calls) || r.expected_export_calls < 1 || r.expected_export_calls > paths.length

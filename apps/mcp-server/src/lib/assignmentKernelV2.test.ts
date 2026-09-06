@@ -49,6 +49,52 @@ test("native PDF exports and nonwriting plans retain artifact authority without 
   }
 });
 
+test("interactive print preflight fails without a started effect or false completion evidence", async () => {
+  for (const requested of ["apply", "preview"] as const) {
+    const route = "/revit/print", body = { printerName: "Renamed PDF queue", dryRun: requested === "preview" };
+    const receipt = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: route, phase: requested,
+      status: "not_started", print_settings_untouched: true, not_started_reason: "interactive_printer_destination",
+      expected_output_paths: [], expected_export_calls: 0, export_calls: [], outputs: [] };
+    const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: route, body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: requested });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", route, {
+        status: "PrintFailed", ok: false, dryRun: requested === "preview", printJobs: 0,
+        preflight: { available: false, failureClass: "interactive_printer_destination", destinationPorts: "PORTPROMPT:" },
+        artifact_receipt: receipt,
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: requested,
+          effect_state: "none", effect_authority: "native_receipt", effect_reason: "native_artifact_export_not_started", request_dispatched: true }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, "none");
+    assert.equal(result.native_transaction_state, "not_applicable");
+    assert.equal(nativeArtifactResultEffectV2(result), "none");
+    assert(!(decorated.structuredContent.observation?.semantic_facts ?? []).some((f: any) => f.fact_id === "task.result_available"));
+  }
+});
+
+test("interactive print timeout remains unknown instead of becoming an untouched preflight", async () => {
+  const route = "/revit/print", body = { printerName: "Microsoft Print to PDF", printToFile: true, dryRun: false };
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: route, body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", route, body, { classified_effect: "apply" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", route, {
+      schema: "revit-operator.revit-bridge-failure.v1", ok: false, code: "revit_bridge_timeout", phase: "dispatch",
+      retryable: false, request_dispatched: true, outcome_unknown: true, method: "POST", path: route,
+      error: "POST /revit/print exceeded 120000 ms while waiting for the Revit bridge.",
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", requested_effect: "apply",
+        effect_state: "unknown", effect_authority: "native_host", request_dispatched: true }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "unknown");
+  assert.equal(decorated.structuredContent.operation_result_v2.status, "failed_after_dispatch");
+  assert(!(decorated.structuredContent.observation?.semantic_facts ?? []).some((f: any) => f.fact_id === "task.result_available"));
+});
+
 test("driver print PartialFailure and PrintFailed never become successful task evidence or erase unknown effects", async () => {
   for (const status of ["PartialFailure", "PrintFailed"]) {
     const body = { viewIds: [1420963], printToFile: true, printToFileName: "artifacts/prints/M000.pdf", dryRun: false };

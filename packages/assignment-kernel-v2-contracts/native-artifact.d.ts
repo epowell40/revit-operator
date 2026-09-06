@@ -4,6 +4,8 @@ export interface NativeArtifactReceiptV1 {
   readonly method: "POST";
   readonly path: "/revit/export-pdf" | "/revit/print";
   readonly print_settings_restored?: boolean;
+  readonly print_settings_untouched?: boolean;
+  readonly not_started_reason?: "interactive_printer_destination" | "printer_capability_unavailable" | "printer_unavailable" | "no_printer_configured";
   readonly phase: "preview" | "apply";
   readonly status: "not_started" | "complete" | "unverified";
   readonly expected_output_paths: readonly string[];

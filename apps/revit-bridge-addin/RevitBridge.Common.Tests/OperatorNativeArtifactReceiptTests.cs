@@ -16,6 +16,42 @@ namespace RevitBridge.Common.Tests
         public OperatorNativeArtifactReceiptTests() => Directory.CreateDirectory(root);
 
         [Theory]
+        [InlineData(false, "interactive_printer_destination")]
+        [InlineData(true, "interactive_printer_destination")]
+        [InlineData(false, "printer_capability_unavailable")]
+        [InlineData(false, "printer_unavailable")]
+        [InlineData(false, "no_printer_configured")]
+        public void PrinterPreflightRefusalProvesNoStartedFileOrSettingsEffect(bool preview, string reason)
+        {
+            var receipt = OperatorNativeArtifactReceipt.BlockedPrint(preview, reason);
+            var phase = preview ? "preview" : "apply";
+            var result = Settle(receipt, phase, "/revit/print");
+            Assert.Equal("none", result.EffectState);
+            Assert.Equal("native_receipt", result.EffectAuthority);
+            Assert.Empty(result.AffectedTargetIdentities);
+            Assert.Equal("unknown", Settle(receipt, preview ? "apply" : "preview", "/revit/print").EffectState);
+            Assert.Equal("unknown", Settle(receipt, phase, "/revit/export-pdf").EffectState);
+        }
+
+        [Fact]
+        public void APrintThatReachedSubmissionCannotUseAnUntouchedPreflightReceipt()
+        {
+            var clean = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, object>>(JsonSerializer.Serialize(OperatorNativeArtifactReceipt.BlockedPrint(false, "interactive_printer_destination")))!;
+            foreach (var change in new (string key, object value)[] {
+                ("print_settings_untouched", false), ("print_settings_untouched", "true"),
+                ("not_started_reason", "canceled_after_submission"), ("export_calls", new[] { false }),
+                ("outputs", new[] { new { exists = false } }), ("expected_export_calls", 1),
+                ("expected_output_paths", new[] { Output() }), ("status", "unverified") })
+            {
+                var altered = new System.Collections.Generic.Dictionary<string, object>(clean) { [change.key] = change.value };
+                Assert.Equal("unknown", Settle(altered, "apply", "/revit/print").EffectState);
+            }
+            clean.Remove("print_settings_untouched");
+            Assert.Equal("unknown", Settle(clean, "apply", "/revit/print").EffectState);
+            Assert.Throws<ArgumentException>(() => OperatorNativeArtifactReceipt.BlockedPrint(false, "canceled_after_submission"));
+        }
+
+        [Theory]
         [InlineData(true, "applied")]
         [InlineData(false, "unknown")]
         [InlineData(null, "unknown")]

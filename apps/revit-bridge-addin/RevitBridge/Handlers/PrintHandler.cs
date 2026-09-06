@@ -50,6 +50,29 @@ namespace RevitBridge.Handlers
             var installedPrinters = GetInstalledPrinters();
             var selectedPrinter = string.IsNullOrWhiteSpace(printerName) ? currentPrinter : printerName;
 
+            // Read-only capability check must precede output-folder creation, driver selection,
+            // PrintManager.Apply, and SubmitPrint. PORTPROMPT ignores Revit's output filename.
+            var preflight = BuildPrinterPreflight(printerName, selectedPrinter, currentPrinter, installedPrinters);
+            if (preflight.available)
+            {
+                try { preflight.destinationPorts = OperatorPrinterDestination.ReadPorts(selectedPrinter); }
+                catch { preflight.destinationPorts = null; }
+                var blockedReason = OperatorPrinterDestination.BlockingReason(preflight.destinationPorts);
+                if (blockedReason != null)
+                {
+                    preflight.available = false;
+                    preflight.failureClass = blockedReason;
+                    preflight.message = blockedReason == "interactive_printer_destination"
+                        ? "This printer requires an interactive output-file dialog and cannot be submitted unattended. No settings or files were changed and no print was submitted. For a PDF deliverable, use /revit/export-pdf with the required output settings; do not claim the printer was used."
+                        : "The printer destination capability could not be read. No settings or files were changed and no print was submitted.";
+                }
+            }
+            if (!preflight.available)
+                return Task.FromResult<object>(new {
+                    status = "PrintFailed", ok = false, dryRun, preflight, message = preflight.message,
+                    printJobs = 0, artifact_receipt = OperatorNativeArtifactReceipt.BlockedPrint(dryRun, preflight.failureClass!)
+                });
+
             var views = ExportPdfHandler.ResolveSelectedViews(doc, p, out var selectionMeta);
             if (views.Count == 0) throw new InvalidOperationException("No views/sheets selected for printing.");
 
@@ -75,7 +98,6 @@ namespace RevitBridge.Handlers
             var plannedPaths = outputPath == null ? Array.Empty<string>() : new[] { outputPath };
             var selectedSheets = views.Select(v => new { viewId = ElementIdCompat.GetValue(v.ViewId), sheetNumber = v.SheetNumber, name = v.Name }).ToArray();
 
-            var preflight = BuildPrinterPreflight(printerName, selectedPrinter, currentPrinter, installedPrinters);
             preflight.outputs = plannedPaths;
             var plan = new
             {
@@ -111,11 +133,6 @@ namespace RevitBridge.Handlers
                     preflight,
                     plan
                 });
-            }
-
-            if (!preflight.available)
-            {
-                throw new InvalidOperationException(preflight.failureClass + ": " + preflight.message);
             }
 
             var settings = new PrintSettingsPreservation(doc, !printIndividually, p.collate.HasValue);
@@ -210,6 +227,7 @@ namespace RevitBridge.Handlers
             public string message { get; set; } = "";
             public string? requestedPrinter { get; set; }
             public string? currentPrinter { get; set; }
+            public string? destinationPorts { get; set; }
             public List<string> installedPrinters { get; set; } = new List<string>();
         }
 

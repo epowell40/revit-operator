@@ -17,6 +17,10 @@ namespace RevitBridge.Common
         [JsonPropertyName("path")] public string Path { get; }
         [JsonPropertyName("print_settings_restored"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public bool? PrintSettingsRestored { get; }
+        [JsonPropertyName("print_settings_untouched"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public bool? PrintSettingsUntouched { get; private set; }
+        [JsonPropertyName("not_started_reason"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? NotStartedReason { get; private set; }
         [JsonPropertyName("phase")] public string Phase { get; }
         [JsonPropertyName("status")] public string Status { get; }
         [JsonPropertyName("expected_output_paths")] public IReadOnlyList<string> ExpectedOutputPaths { get; }
@@ -36,6 +40,17 @@ namespace RevitBridge.Common
         public static OperatorNativeArtifactReceipt Preview(IEnumerable<string> paths, int expectedCalls, string path = "/revit/export-pdf")
             => new OperatorNativeArtifactReceipt("preview", "not_started", Normalize(paths, expectedCalls), expectedCalls,
                 Array.Empty<bool>(), Array.Empty<OperatorNativeArtifactFile>(), path);
+
+        public static OperatorNativeArtifactReceipt BlockedPrint(bool preview, string reason)
+        {
+            if (!IsPrintPreflightReason(reason)) throw new ArgumentException("Unsupported print preflight reason.");
+            return new OperatorNativeArtifactReceipt(preview ? "preview" : "apply", "not_started", Array.Empty<string>(), 0,
+                Array.Empty<bool>(), Array.Empty<OperatorNativeArtifactFile>(), "/revit/print")
+                { PrintSettingsUntouched = true, NotStartedReason = reason };
+        }
+
+        private static bool IsPrintPreflightReason(string? reason) => reason == "interactive_printer_destination"
+            || reason == "printer_capability_unavailable" || reason == "printer_unavailable" || reason == "no_printer_configured";
 
         internal static string[] Normalize(IEnumerable<string> paths, int expectedCalls)
         {
@@ -59,6 +74,17 @@ namespace RevitBridge.Common
                     return true;
                 var expected = value.GetProperty("expected_output_paths").EnumerateArray().Select(x => x.GetString() ?? "").ToArray();
                 var expectedCalls = value.GetProperty("expected_export_calls").GetInt32();
+                if (path == "/revit/print" && (effect == "apply" || effect == "preview")
+                    && value.GetProperty("phase").GetString() == effect && value.GetProperty("status").GetString() == "not_started"
+                    && expected.Length == 0 && expectedCalls == 0
+                    && value.GetProperty("export_calls").GetArrayLength() == 0 && value.GetProperty("outputs").GetArrayLength() == 0
+                    && value.TryGetProperty("print_settings_untouched", out var untouched) && untouched.ValueKind == JsonValueKind.True
+                    && value.TryGetProperty("not_started_reason", out var reason) && reason.ValueKind == JsonValueKind.String
+                    && IsPrintPreflightReason(reason.GetString()))
+                {
+                    settlement = OperatorAttemptSettlement.None(effect, method, path, "native_artifact_export_not_started", "native_receipt", requestDispatched: true);
+                    return true;
+                }
                 if (expected.Length == 0 || expected.Length > 2000 || expectedCalls < 1 || expectedCalls > expected.Length
                     || expected.Any(x => !System.IO.Path.IsPathRooted(x))
                     || expected.Distinct(StringComparer.OrdinalIgnoreCase).Count() != expected.Length) return true;

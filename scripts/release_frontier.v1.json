@@ -78,6 +78,7 @@
   ],
   "desktop_tests": [],
   "dotnet_test_classes": [
+    "OperatorPrinterDestinationTests",
     "OperatorPrintOutputPathTests",
     "OperatorPrintSettingsGuardTests",
     "OperatorNativeArtifactReceiptTests",
@@ -99,6 +100,7 @@
     "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
+    {"id":"interactive-print-destination-dialog-timeout-and-untouched-preflight","coverage":["dotnet:OperatorPrinterDestinationTests","dotnet:OperatorNativeArtifactReceiptTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts"]},
     {"id":"driver-print-virtual-output-with-disabled-print-to-file-checkbox","coverage":["dotnet:OperatorPrintSettingsGuardTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts"]},
     {"id":"driver-print-staged-settings-global-readback-before-submit","coverage":["dotnet:OperatorPrintSettingsGuardTests","mcp:lib/assignmentKernelV2.test.ts","backend:native_artifact_contract_v2.test.ts"]},
     {"id":"driver-print-explicit-single-copy-collation-is-inapplicable","coverage":["dotnet:OperatorPrintSettingsGuardTests","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts"]},

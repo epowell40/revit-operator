@@ -35,7 +35,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.test.ts",
-      "sha256": "sha256:86b321e18e54f758e0d7690df4c51e25fef9a1c23e94f37b505ab2daa38df1bb"
+      "sha256": "sha256:4b1aaf61194d1f18aa0f9cd55747fa81981feb9e5f018d6deb867d3ab3742344"
     },
     {
       "path": "apps/mcp-server/src/lib/assignmentKernelV2.ts",
@@ -3729,7 +3729,7 @@
     },
     {
       "path": "apps/operator-backend/test/native_artifact_contract_v2.test.ts",
-      "sha256": "sha256:da65c6099b1583e7b76d0693d01778dae2c5d5764b927cdb77a10fd3336b060b"
+      "sha256": "sha256:9e12f41b0bc6bfef235a1ccaa653bc2f463a9104b8f3d7144cd3b3f8d4ce118e"
     },
     {
       "path": "apps/operator-backend/test/ocr_date_extract.test.ts",
@@ -4265,7 +4265,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeArtifactReceiptTests.cs",
-      "sha256": "sha256:e3006bbe09451152bcb5565f0cb621c462a4f76f84fbebf87418d71fb54ddc85"
+      "sha256": "sha256:294a900412313d8a1cd3cb139b29f9aab10554eae51f2d87dcc53e9b229ce9c6"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorNativeAuthorizationTransportTests.cs",
@@ -4306,6 +4306,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPrintSettingsGuardTests.cs",
       "sha256": "sha256:02b9ead52325eca6ce11e717d81fb68c304bf03c1640f91795b443cd01f1b3d9"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorPrinterDestinationTests.cs",
+      "sha256": "sha256:f272db92acdbcd9a18f060cc0aee57d565adf3f7211662e58d67fefa9929768e"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorProactivityLifecycleContractTests.cs",
@@ -4721,7 +4725,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeArtifactReceipt.cs",
-      "sha256": "sha256:280eea83afe9ae426d44743cb7c00487b84ba0c001c1fb0fd10747624b8cffba"
+      "sha256": "sha256:c26a78238bd02f3f97703236dba0e24edd26a2ed05ab09fc4667aa04d57714dd"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorNativeAuthorizationTransport.cs",
@@ -4763,6 +4767,10 @@
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorPrintSettingsGuard.cs",
       "sha256": "sha256:7f5d50addd52514ed266c8c6c5d3de0457a55b6d502d8643669e9dda7087b574"
+    },
+    {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorPrinterDestination.cs",
+      "sha256": "sha256:73440cacfaa2591b5cdbf16797a0a51c249fece40e8c7cd669b09b8d3e92e6ce"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorProjectCloseFocus.cs",
@@ -5926,7 +5934,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintHandler.cs",
-      "sha256": "sha256:bcb2cec366965a47e5f64856e40708e6313598a6381a928a1a1ebaa7931332d9"
+      "sha256": "sha256:563bfffbc083d845ca2fbdae2950d8102b8dc562d476178e21d58f52b3af4221"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/PrintSetsHandler.cs",
@@ -6210,11 +6218,11 @@
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/native-artifact.d.ts",
-      "sha256": "sha256:fed00e0eef8ec098287053b778791fed9628456568e69094076e6ac4b0de3ffa"
+      "sha256": "sha256:0c96cf58943ea2a36392fea3046d97f7fb46e5f92a65e9c11250d8d9e49a6d5a"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/native-artifact.js",
-      "sha256": "sha256:32c5e9e1ec9b2577e135f3a2a202dfd9f18b8e2a3c4c0926ee4c321f0f6eb436"
+      "sha256": "sha256:88f77f3707d6f27bf6a093e35fcc36a1fceef407fb53880d592fe128bb496715"
     },
     {
       "path": "packages/assignment-kernel-v2-contracts/package.json",
@@ -6269,7 +6277,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:77d08bb26758d390eda85d8a19525fe9db13620dd708f6b6722023847080a3cc",
+  "inputs_hash": "sha256:278f5132882b273dd55091fda07c7f1ad4c4b68aec230a50f49334ed89a8e630",
   "result": {
     "passed": true,
     "checks": [

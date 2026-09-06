@@ -5,6 +5,27 @@ import { nativeArtifactPostconditionV2, artifactTargetTokensV2 } from "../src/ve
 import { operationTargetIdentityAliasesV2 } from "../src/domain/assignment-kernel/operation_target_identity.js";
 import { verificationCapabilityAdmissionForPathsV2, verificationCapabilityGuidanceV2 } from "../src/verification/verification_capability_admission_v2.js";
 
+test("an untouched print preflight is no effect, never delivery or a post-submission cancellation receipt", () => {
+  const refused = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/print", phase: "apply",
+    status: "not_started", print_settings_untouched: true, not_started_reason: "interactive_printer_destination",
+    expected_output_paths: [], expected_export_calls: 0, export_calls: [], outputs: [] };
+  assert.equal(nativeArtifactReceiptEffectV1(refused, "POST", "/revit/print", "apply"), "none");
+  assert.equal(nativeArtifactPostconditionV2(refused, { ok: true, files: [] }), false);
+  for (const change of [{ print_settings_untouched: false }, { print_settings_untouched: "true" },
+    { print_settings_untouched: undefined }, { not_started_reason: "canceled_after_submission" },
+    { export_calls: [false] }, { outputs: [{ exists: false }] }, { expected_export_calls: 1 },
+    { expected_output_paths: ["C:/fixture/M000.pdf"] }, { status: "unverified" }, { phase: "preview" }])
+    assert.equal(nativeArtifactReceiptEffectV1({ ...refused, ...change }, "POST", "/revit/print", "apply"), null);
+  assert.equal(nativeArtifactReceiptEffectV1(refused, "POST", "/revit/export-pdf", "apply"), null);
+  const result = { authority: "native-host", dispatch_state: "dispatched", native_transaction_state: "not_applicable",
+    observation_required: true, raw_payload_hash: "a".repeat(64), result_schema_id: "operator-native/POST:/revit/print/v2",
+    request_identity: { method: "POST", path: "/revit/print" }, persistent_effect: "none", native_artifact_receipt: refused };
+  assert.equal(nativeArtifactResultEffectV2(result), "none");
+  for (const change of [{ authority: "model" }, { persistent_effect: "applied" }, { raw_payload_hash: "" },
+    { dispatch_state: "not_dispatched" }, { native_transaction_state: "rolled_back" }])
+    assert.equal(nativeArtifactResultEffectV2({ ...result, ...change }), null);
+});
+
 const receipt = { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf", phase: "apply", status: "complete",
   expected_output_paths: ["C:\\fixture\\M000.pdf"], expected_export_calls: 1, export_calls: [true],
   outputs: [{ path: "C:\\fixture\\M000.pdf", size_bytes: 8251486, sha256: "a".repeat(64), fresh_output: true }] };
