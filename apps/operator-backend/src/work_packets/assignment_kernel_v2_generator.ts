@@ -8,6 +8,7 @@ import { readEvidenceRef } from "../evidence/evidence_store.js";
 import type { EvidenceRefV1 } from "../evidence/evidence_ref.js";
 import type { GoalRecord } from "../goals/service.js";
 import { packetOperationVerificationV2, packetOverallTrustV2 } from "./assignment_kernel_v2_verification.js";
+import { assignmentUserPauseV2 } from "./assignment_kernel_v2_pause.js";
 import {
   VERIFIED_WORK_PACKET_SCHEMA,
   VERIFIED_WORK_PACKET_VERSION,
@@ -176,9 +177,15 @@ function issues(snapshot: AssignmentSnapshotV2, rows: VerifiedWorkAcceptanceCrit
     evidence_references: [],
     user_action_required: null
   });
-  if (snapshot.pending_input_variable_ids.length > 0) output.push({
-    kind: "user_action_required", summary: `Required input: ${snapshot.pending_input_variable_ids.join(", ")}.`,
-    affected_attempt_ids: [], evidence_references: [], user_action_required: "Supply the requested value to resume this Assignment."
+  for (const id of snapshot.pending_input_variable_ids) {
+    const question = Object.values(snapshot.clarifications).find(clarification => clarification.variable_id === id && !clarification.resolved_at)?.question
+      ?? "Additional information is needed to continue this assignment.";
+    output.push({ kind: "user_action_required", summary: question,
+      affected_attempt_ids: [], evidence_references: [], user_action_required: question });
+  }
+  if (snapshot.pending_review_ids.length > 0) output.push({
+    kind: "user_action_required", summary: "This assignment is waiting for your review.",
+    affected_attempt_ids: [], evidence_references: [], user_action_required: "Review the proposed work before continuing."
   });
   if (snapshot.unresolved_unknown_operation_ids.length > 0) output.push({
     kind: "verification_uncertainty", summary: "One or more operations require target-bound reconciliation before replay or completion.",
@@ -226,7 +233,7 @@ function sumProviderUsage(snapshot: AssignmentSnapshotV2, metric: ProviderUsageM
 }
 
 export function generateVerifiedWorkPacketFromKernelV2(goal: GoalRecord, snapshot: AssignmentSnapshotV2, parentPacketId: string | null): VerifiedWorkPacketV1 {
-  if (!snapshot.terminal) throw new Error("Verified Work Packet requires a settled V2 Assignment.");
+  if (!snapshot.terminal && !assignmentUserPauseV2(snapshot)) throw new Error("Verified Work Packet requires a settled V2 Assignment or a quiescent recorded user pause.");
   assertProviderLedgerCoherent(snapshot);
   const actionRows = actions(snapshot);
   const criterionRows = criteria(snapshot);

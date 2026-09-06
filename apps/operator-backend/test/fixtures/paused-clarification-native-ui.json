@@ -1,0 +1,183 @@
+{
+  "schema": "revit-operator.assignment-snapshot/v2",
+  "assignment_version": 2,
+  "spec": {
+    "schema": "revit-operator.assignment-spec/v2",
+    "binding": {
+      "assignment_id": "a849a85b-5060-478e-b371-cb239fdcd661",
+      "run_id": "chat:4171220f-9ee2-4028-b9de-8b4623290751",
+      "generation": 1,
+      "session_id": "4bc00f4d-b4a5-4b9e-8b5c-be9b7bfd1d8c",
+      "principal_id": "local:shared-token",
+      "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+    },
+    "source_user_request": "Replace the selected note with the approved wording.",
+    "requested_effect": "apply",
+    "semantic_evidence_contract": "revit-operator.semantic-evidence-contract/v2",
+    "criteria": [
+      {
+        "criterion_id": "criterion-f96c0e52719d530e4da1",
+        "requirement": "The requested Revit outcome is completed and verified with evidence from this assignment.",
+        "required": true,
+        "semantic_fact_requirements": [
+          "task.result_available"
+        ],
+        "evidence_policy": {
+          "schema": "revit-operator.criterion-evidence-policy/v2",
+          "allowed_evidence_classes": [
+            "task_result"
+          ],
+          "allowed_fulfillment_roles": [
+            "delegated_task_execution"
+          ],
+          "allowed_fact_classes": [
+            "domain"
+          ],
+          "allowed_capability_ids": [],
+          "allowed_result_schema_ids": [],
+          "required_fact_ids": [
+            "task.result_available"
+          ],
+          "require_native_dispatch": true,
+          "require_current_generation": true
+        },
+        "accepted_evaluator_authority_ids": [
+          "operator-runtime"
+        ],
+        "accepted_observation_authority_ids": [
+          "native-host",
+          "dynamic-runtime",
+          "operator-evidence-store"
+        ]
+      }
+    ],
+    "input_variables": [
+      {
+        "variable_id": "replacement_text",
+        "value_state": "needs_input",
+        "required": true,
+        "sensitive": false
+      }
+    ],
+    "work_units": [
+      {
+        "work_unit_id": "work-discovery",
+        "requested_effect": "read",
+        "execution_class": "analysis",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [],
+        "independently_useful": false,
+        "safe_to_retain": true,
+        "rollback_scope": "none"
+      },
+      {
+        "work_unit_id": "work-preview",
+        "requested_effect": "preview",
+        "execution_class": "coupled_atomic",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [
+          "replacement_text"
+        ],
+        "independently_useful": false,
+        "safe_to_retain": false,
+        "rollback_scope": "operation"
+      },
+      {
+        "work_unit_id": "work-primary",
+        "requested_effect": "apply",
+        "execution_class": "independent",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [
+          "replacement_text"
+        ],
+        "independently_useful": true,
+        "safe_to_retain": true,
+        "rollback_scope": "operation"
+      },
+      {
+        "work_unit_id": "work-verification",
+        "requested_effect": "read",
+        "execution_class": "analysis",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [],
+        "independently_useful": false,
+        "safe_to_retain": true,
+        "rollback_scope": "none"
+      },
+      {
+        "work_unit_id": "work-evidence",
+        "requested_effect": "read",
+        "execution_class": "analysis",
+        "dependency_ids": [],
+        "criterion_ids": [
+          "criterion-f96c0e52719d530e4da1"
+        ],
+        "input_variable_ids": [],
+        "independently_useful": false,
+        "safe_to_retain": true,
+        "rollback_scope": "none"
+      }
+    ],
+    "authorization_policy_id": "operator-default",
+    "created_at": "2026-09-06T00:19:15.461Z"
+  },
+  "current_binding": {
+    "assignment_id": "a849a85b-5060-478e-b371-cb239fdcd661",
+    "run_id": "chat:4171220f-9ee2-4028-b9de-8b4623290751",
+    "generation": 1,
+    "session_id": "4bc00f4d-b4a5-4b9e-8b5c-be9b7bfd1d8c",
+    "principal_id": "local:shared-token",
+    "document_fingerprint": "bda089a93ddff9f813048ad0880d003fe0c814854e47bd65aa0e4f0d54f88b17"
+  },
+  "input_values": {},
+  "pending_input_variable_ids": [
+    "replacement_text"
+  ],
+  "clarifications": {
+    "clarification-v2:f27aef8b1953437687680cf79c8767ded1b14e925b1e5af0": {
+      "clarification_id": "clarification-v2:f27aef8b1953437687680cf79c8767ded1b14e925b1e5af0",
+      "variable_id": "replacement_text",
+      "question": "What exact replacement text should I use?",
+      "requested_at": "2026-09-06T00:19:15.539Z"
+    }
+  },
+  "work_unit_states": {
+    "work-discovery": "pending",
+    "work-preview": "pending",
+    "work-primary": "pending",
+    "work-verification": "pending",
+    "work-evidence": "pending"
+  },
+  "pending_review_ids": [],
+  "provider_call_ids": [],
+  "provider_calls": {},
+  "in_flight_provider_call_ids": [],
+  "provider_budget_exhausted": false,
+  "execution_failure_ids": [],
+  "execution_failures": {},
+  "progress_epochs": [],
+  "operations": {},
+  "observations": {},
+  "observation_versions": {},
+  "criteria": {},
+  "criterion_evaluation_versions": {},
+  "outcome": "awaiting_user_input",
+  "terminal": false,
+  "operation_children": {},
+  "blocking_child_operation_ids": [],
+  "in_flight_operation_ids": [],
+  "unresolved_unknown_operation_ids": [],
+  "quiescent": true
+}

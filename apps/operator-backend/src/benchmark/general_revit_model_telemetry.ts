@@ -1,3 +1,5 @@
+import { canonicalPauseWithoutProviderCallV2 } from "./protocol_v2_kernel.js";
+
 type JsonRecord = Record<string, unknown>;
 
 export type RequestedComputerAgentConfig = {
@@ -280,13 +282,16 @@ export function modelCallReceiptsFromTraces(traces: unknown[]): JsonRecord[] {
 
 export function modelTelemetryCaseCoverage(traces: unknown[]): JsonRecord {
   const rows = traces.map(asRecord);
-  const missingCaseIds = rows
-    .filter((trace) => modelCallReceiptsFromSources(trace).length === 0)
+  const withoutReceipts = rows.filter(trace => modelCallReceiptsFromSources(trace).length === 0);
+  const noInvocation = withoutReceipts.filter(trace => canonicalPauseWithoutProviderCallV2(trace.tool_results));
+  const missingCaseIds = withoutReceipts.filter(trace => !noInvocation.includes(trace))
     .map((trace) => String(trace.case_id || ""));
   return {
     schema: "revit-operator.model-telemetry-case-coverage.v1",
     expected_case_count: rows.length,
-    cases_with_model_receipts: rows.length - missingCaseIds.length,
+    cases_with_model_receipts: rows.length - withoutReceipts.length,
+    cases_without_model_invocation: noInvocation.length,
+    no_model_invocation_case_ids: noInvocation.map(trace => String(trace.case_id || "")),
     cases_missing_model_receipts: missingCaseIds.length,
     missing_case_ids: missingCaseIds,
     complete: missingCaseIds.length === 0

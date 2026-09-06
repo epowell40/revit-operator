@@ -115,6 +115,8 @@ test("model comparison coverage fails closed when any delegated case lacks recei
     schema: "revit-operator.model-telemetry-case-coverage.v1",
     expected_case_count: 1,
     cases_with_model_receipts: 1,
+    cases_without_model_invocation: 0,
+    no_model_invocation_case_ids: [],
     cases_missing_model_receipts: 0,
     missing_case_ids: [],
     complete: true

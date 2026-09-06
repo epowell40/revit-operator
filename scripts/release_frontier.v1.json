@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "assignment_kernel_v2_pause_reporting.test.ts",
+    "assignment_kernel_v2_pause_http.test.ts",
     "goal_endpoint_security.test.ts",
     "revit_control_plane_contract.test.ts",
     "assignment_auto_goal_admission.test.ts",
@@ -89,6 +91,7 @@
     "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
+    {"id":"paused-user-handoff-packet-and-provider-non-invocation","coverage":["backend:assignment_kernel_v2_pause_reporting.test.ts","backend:assignment_kernel_v2_pause_http.test.ts","backend:benchmark_protocol_v2.test.ts"]},
     {"id":"created-native-identity-without-documentchanged","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","backend:verification_capability_admission_v2.test.ts","mcp:lib/assignmentKernelV2.test.ts"]},
     {"id":"legacy-native-transaction-receipt-and-canonical-handoff","coverage":["dotnet:OperatorNativeTransactionExecutionTests","dotnet:OperatorAttemptSettlementTests","backend:assignment_kernel_v2_controls.test.ts","backend:assignment_kernel_v2_progress_controller.test.ts","backend:codex_app_server_compatibility.test.ts"]},
     {"id":"authenticated-multiline-input-exact-mutation-admission","coverage":["backend:teammate_mutation_intent_binding.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},

@@ -4,6 +4,7 @@ import {
   type GeneralRevitEvaluation
 } from "./general_revit_capability_acceptance.js";
 import { sha256Value } from "./protocol_v2_hash.js";
+import { assignmentUserPauseV2 } from "../work_packets/assignment_kernel_v2_pause.js";
 import {
   BENCHMARK_CASE_RESULT_V2_SCHEMA,
   BENCHMARK_STAGE_NAMES,
@@ -357,7 +358,7 @@ function runtimeVerdict(trace: JsonRecord): string {
   const kernels = kernelSnapshots(trace);
   if (kernels.length > 0) {
     const latest = kernels.at(-1)!;
-    return latest.terminal === true ? String(latest.outcome || "unknown") : "active";
+    return latest.terminal === true || assignmentUserPauseV2(latest) ? String(latest.outcome || "unknown") : "active";
   }
   const assignments = records(record(record(trace.tool_results).durable_assignment_projection).assignments);
   const terminals = assignments.map((entry) => String(record(entry.control_plane).terminal_state || entry.phase || "")).filter(Boolean);

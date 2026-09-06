@@ -5,6 +5,7 @@ import {
   parseAssignmentKernelPublicationV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { BENCHMARK_ASSIGNMENT_KERNEL_V2_BUNDLE_SCHEMA } from "./assignment_kernel_v2_collection.js";
+import { assignmentPauseWithoutProviderCallV2 } from "../work_packets/assignment_kernel_v2_pause.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -80,4 +81,23 @@ export function assignmentRowFromKernelPublicationV2(publication: JsonRecord): J
     source_record_id: publication.assignment_id,
     assignment_snapshot_v2: snapshot
   };
+}
+
+/** A complete canonical empty ledger is an observed non-invocation, not a lost receipt. */
+export function canonicalPauseWithoutProviderCallV2(toolResultsValue: unknown): boolean {
+  try {
+    const expected = expectedDirectKernelAssignmentIdsV2(toolResultsValue);
+    const publications = directKernelPublicationsV2(toolResultsValue);
+    const received = new Set(publications.map(publication => String(publication.assignment_id)));
+    const bundle = record(record(toolResultsValue).durable_assignment_kernel_v2);
+    if (expected.length === 0 || publications.length !== expected.length || received.size !== expected.length
+        || expected.some(id => !received.has(id)) || !Array.isArray(bundle.failures) || bundle.failures.length > 0) return false;
+    return publications.every(publication => expected.includes(String(publication.assignment_id))
+      && assignmentPauseWithoutProviderCallV2(publication.snapshot)
+      && Array.isArray(record(publication.provider_ledger).call_ids)
+      && (record(publication.provider_ledger).call_ids as unknown[]).length === 0
+      && Object.keys(record(record(publication.provider_ledger).calls)).length === 0);
+  } catch {
+    return false;
+  }
 }
