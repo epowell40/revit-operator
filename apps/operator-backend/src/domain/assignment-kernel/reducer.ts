@@ -1,4 +1,5 @@
 import { canonicalJsonV2 } from "./canonical.js";
+import { nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
 import { validateResultDeliveryV2 } from "./result_delivery.js";
 import { ASSIGNMENT_VERIFICATION_WORK_UNIT_ID_V2 } from "./assignment_spec.js";
 import type { AssignmentEventV2 } from "./events.js";
@@ -322,11 +323,16 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
   if (operation.requested_effect === "read") {
     kernelAssertV2(result.persistent_effect === "none" && result.native_transaction_state !== "committed", "operation_read_effect_invalid", "Read result cannot claim a persistent effect.");
   }
+  const nativeArtifactEffect = nativeArtifactResultEffectV2(result);
+  if (result.native_artifact_receipt !== undefined) {
+    kernelAssertV2(nativeArtifactEffect !== null && result.native_artifact_receipt.phase === operation.requested_effect,
+      "operation_artifact_authority_invalid", "Artifact effects require a native, exact-route, current-invocation file receipt.");
+  }
   if (result.persistent_effect === "applied") {
-    kernelAssertV2(operation.requested_effect === "apply" && result.native_transaction_state === "committed", "operation_apply_authority_invalid", "Applied effect requires a committed apply result.");
+    kernelAssertV2(operation.requested_effect === "apply" && (result.native_transaction_state === "committed" || nativeArtifactEffect === "applied"), "operation_apply_authority_invalid", "Applied effect requires a committed transaction or authoritative native artifact export.");
   }
   if (operation.requested_effect === "preview" && result.status === "succeeded") {
-    kernelAssertV2(result.persistent_effect === "none" && result.native_transaction_state === "rolled_back", "operation_preview_settlement_invalid", "Successful preview requires authoritative rollback.");
+    kernelAssertV2(result.persistent_effect === "none" && (result.native_transaction_state === "rolled_back" || nativeArtifactEffect === "none"), "operation_preview_settlement_invalid", "Successful preview requires authoritative rollback or a native export plan that did not write files.");
   }
   if (result.input_schema_gap) {
     const gap = result.input_schema_gap;
@@ -397,7 +403,7 @@ function validateResult(snapshot: AssignmentSnapshotV2, operation: OperationV2, 
       && result.status === "failed_after_dispatch"
       && result.dispatch_state === "dispatched"
       && result.persistent_effect === "none"
-      && result.native_transaction_state === "rolled_back"
+      && (result.native_transaction_state === "rolled_back" || nativeArtifactEffect === "none")
       && result.observation_required === true,
     "operation_result_semantic_gap_effect_invalid", "A result-semantic gap is valid only for a safely rolled-back task preview with durable native evidence.");
     kernelAssertV2(gap.schema === OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA
@@ -761,6 +767,13 @@ function applyEvent(state: ReducerStateV2, event: AssignmentEventV2): void {
         const operation = snapshot.operations[event.result.operation_id];
         kernelAssertV2(operation && operation.settlement_state !== "settled" && !operation.result, "operation_result_unmatched", "Result requires one unsettled admitted operation without a prior result.");
         validateResult(snapshot, operation, event.result);
+        if (event.result.native_artifact_receipt !== undefined) {
+          const raw = event.observation_commit?.raw_payload;
+          const receipt = raw && typeof raw === "object" && !Array.isArray(raw)
+            ? (raw as Record<string, unknown>).artifact_receipt : undefined;
+          kernelAssertV2(canonicalJsonV2(receipt ?? null) === canonicalJsonV2(event.result.native_artifact_receipt),
+            "artifact_receipt_payload_mismatch", "Artifact settlement must match the exact retained native payload receipt.");
+        }
         const settlementState = event.result.observation_required ? "retaining_observation" : "settled";
         snapshot = { ...snapshot, operations: { ...snapshot.operations, [operation.operation_id]: {
           ...operation,

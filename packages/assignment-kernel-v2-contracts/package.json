@@ -14,6 +14,8 @@
     }
   },
   "files": [
+    "native-artifact.js",
+    "native-artifact.d.ts",
     "completion-outbox.js",
     "completion-outbox.d.ts",
     "index.js",

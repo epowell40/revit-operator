@@ -1,0 +1,161 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace RevitBridge.Common
+{
+    /// <summary>Native file-export truth. This is not a Revit transaction receipt.</summary>
+    public sealed class OperatorNativeArtifactReceipt
+    {
+        public const string Version = "revit-operator.native-artifact-receipt.v1";
+        [JsonPropertyName("schema")] public string Schema => Version;
+        [JsonPropertyName("method")] public string Method => "POST";
+        [JsonPropertyName("path")] public string Path => "/revit/export-pdf";
+        [JsonPropertyName("phase")] public string Phase { get; }
+        [JsonPropertyName("status")] public string Status { get; }
+        [JsonPropertyName("expected_output_paths")] public IReadOnlyList<string> ExpectedOutputPaths { get; }
+        [JsonPropertyName("expected_export_calls")] public int ExpectedExportCalls { get; }
+        [JsonPropertyName("export_calls")] public IReadOnlyList<bool> ExportCalls { get; }
+        [JsonPropertyName("outputs")] public IReadOnlyList<OperatorNativeArtifactFile> Outputs { get; }
+
+        internal OperatorNativeArtifactReceipt(string phase, string status, string[] paths, int expectedCalls,
+            bool[] calls, OperatorNativeArtifactFile[] outputs)
+        {
+            Phase = phase; Status = status; ExpectedOutputPaths = paths;
+            ExpectedExportCalls = expectedCalls; ExportCalls = calls; Outputs = outputs;
+        }
+
+        public static OperatorNativeArtifactReceipt Preview(IEnumerable<string> paths, int expectedCalls)
+            => new OperatorNativeArtifactReceipt("preview", "not_started", Normalize(paths, expectedCalls), expectedCalls,
+                Array.Empty<bool>(), Array.Empty<OperatorNativeArtifactFile>());
+
+        internal static string[] Normalize(IEnumerable<string> paths, int expectedCalls)
+        {
+            var result = paths.Select(System.IO.Path.GetFullPath).ToArray();
+            if (result.Length == 0 || result.Length > 2000 || expectedCalls < 1 || expectedCalls > result.Length
+                || result.Distinct(StringComparer.OrdinalIgnoreCase).Count() != result.Length)
+                throw new ArgumentException("Export requires unique output paths and a bounded positive native-call count.");
+            return result;
+        }
+
+        public static bool TrySettlement(JsonElement root, string effect, string method, string path,
+            out OperatorAttemptSettlement? settlement)
+        {
+            settlement = null;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("artifact_receipt", out var value)) return false;
+            try
+            {
+                if (method != "POST" || path != "/revit/export-pdf"
+                    || value.GetProperty("schema").GetString() != Version
+                    || value.GetProperty("method").GetString() != method || value.GetProperty("path").GetString() != path)
+                    return true;
+                var expected = value.GetProperty("expected_output_paths").EnumerateArray().Select(x => x.GetString() ?? "").ToArray();
+                var expectedCalls = value.GetProperty("expected_export_calls").GetInt32();
+                if (expected.Length == 0 || expected.Length > 2000 || expectedCalls < 1 || expectedCalls > expected.Length
+                    || expected.Any(x => !System.IO.Path.IsPathRooted(x))
+                    || expected.Distinct(StringComparer.OrdinalIgnoreCase).Count() != expected.Length) return true;
+                var calls = value.GetProperty("export_calls").EnumerateArray().Select(x => x.GetBoolean()).ToArray();
+                var outputs = value.GetProperty("outputs").EnumerateArray().ToArray();
+                var phase = value.GetProperty("phase").GetString();
+                var status = value.GetProperty("status").GetString();
+                if (effect == "preview" && phase == "preview" && status == "not_started" && calls.Length == 0 && outputs.Length == 0)
+                {
+                    settlement = OperatorAttemptSettlement.None(effect, method, path, "native_artifact_export_not_started", "native_receipt", requestDispatched: true);
+                    return true;
+                }
+                if (effect != "apply" || phase != "apply" || status != "complete" || calls.Length != expectedCalls
+                    || calls.Any(x => !x) || outputs.Length != expected.Length) return true;
+                var refs = new List<string>();
+                for (var i = 0; i < outputs.Length; i++)
+                {
+                    var file = outputs[i];
+                    var hash = file.GetProperty("sha256").GetString() ?? "";
+                    if (file.GetProperty("path").GetString() != expected[i] || file.GetProperty("size_bytes").GetInt64() <= 0
+                        || !file.GetProperty("fresh_output").GetBoolean() || hash.Length != 64
+                        || hash.Any(c => !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f'))) return true;
+                    refs.Add("sha256:" + hash);
+                }
+                settlement = OperatorAttemptSettlement.Applied(method, path, "native_artifact_export_completed", "native_receipt",
+                    expected.Select(x => "artifact_path:" + x).OrderBy(x => x, StringComparer.Ordinal).ToArray(), refs);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException || ex is KeyNotFoundException || ex is FormatException || ex is OverflowException || ex is ArgumentException)
+            {
+                // Malformed or incomplete native evidence remains unknown; never infer completion from presentation status.
+            }
+            return true;
+        }
+    }
+
+    public sealed class OperatorNativeArtifactFile
+    {
+        [JsonPropertyName("path")] public string Path { get; internal set; } = "";
+        [JsonPropertyName("size_bytes")] public long SizeBytes { get; internal set; }
+        [JsonPropertyName("sha256")] public string Sha256 { get; internal set; } = "";
+        [JsonPropertyName("fresh_output")] public bool FreshOutput { get; internal set; }
+        [JsonPropertyName("exists")] public bool Exists { get; internal set; }
+        [JsonPropertyName("readable")] public bool Readable { get; internal set; }
+    }
+
+    /// <summary>Capture output state before calling the native exporter, then verify this invocation's files.</summary>
+    public sealed class OperatorNativeArtifactCapture
+    {
+        private sealed class Snapshot
+        {
+            public bool Known; public bool Exists; public long Size; public DateTime Written; public string Hash = "";
+        }
+        private readonly string[] paths;
+        private readonly Snapshot[] before;
+        private readonly int expectedCalls;
+        private readonly List<bool> calls = new List<bool>();
+
+        public OperatorNativeArtifactCapture(IEnumerable<string> outputPaths, int expectedExportCalls)
+        {
+            paths = OperatorNativeArtifactReceipt.Normalize(outputPaths, expectedExportCalls);
+            expectedCalls = expectedExportCalls;
+            before = paths.Select(Read).ToArray();
+        }
+
+        public void RecordNativeExport(bool succeeded) => calls.Add(succeeded);
+
+        public OperatorNativeArtifactReceipt Complete()
+        {
+            var outputs = paths.Select((path, i) =>
+            {
+                var after = Read(path); var prior = before[i];
+                return new OperatorNativeArtifactFile { Path = path, SizeBytes = after.Size, Sha256 = after.Hash,
+                    Exists = after.Exists, Readable = after.Known && after.Exists,
+                    FreshOutput = prior.Known && after.Known && after.Exists && after.Size > 0
+                        && (!prior.Exists || prior.Hash != after.Hash || prior.Written != after.Written) };
+            }).ToArray();
+            var complete = calls.Count == expectedCalls && calls.All(x => x) && outputs.All(x => x.FreshOutput);
+            return new OperatorNativeArtifactReceipt("apply", complete ? "complete" : "unverified", paths, expectedCalls, calls.ToArray(), outputs);
+        }
+
+        public static IReadOnlyList<OperatorNativeArtifactFile> Inspect(IEnumerable<string> paths)
+            => OperatorNativeArtifactReceipt.Normalize(paths, 1).Select(path =>
+            {
+                var file = Read(path);
+                return new OperatorNativeArtifactFile { Path = path, Exists = file.Exists, Readable = file.Known && file.Exists,
+                    SizeBytes = file.Size, Sha256 = file.Hash, FreshOutput = false };
+            }).ToArray();
+
+        private static Snapshot Read(string path)
+        {
+            try
+            {
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                using var sha = SHA256.Create();
+                return new Snapshot { Known = true, Exists = true, Size = stream.Length, Written = File.GetLastWriteTimeUtc(path),
+                    Hash = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant() };
+            }
+            catch (FileNotFoundException) { return new Snapshot { Known = true }; }
+            catch (DirectoryNotFoundException) { return new Snapshot { Known = true }; }
+            catch (IOException) { return new Snapshot(); }
+            catch (UnauthorizedAccessException) { return new Snapshot(); }
+        }
+    }
+}

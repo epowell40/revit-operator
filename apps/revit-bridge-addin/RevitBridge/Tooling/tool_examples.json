@@ -3,6 +3,30 @@
   "generated_at": "2026-03-12T14:48:33Z",
   "tools": [
     {
+      "method": "POST",
+      "path": "/revit/inspect-exported-files",
+      "examples": [
+        {
+          "name": "Verify an existing exported PDF without exporting again",
+          "request": { "paths": ["artifacts/prints/M000.pdf"] },
+          "expected_response_shape": {
+            "schema": "revit-operator.exported-file-inspection.v1",
+            "ok": true,
+            "itemsComplete": true,
+            "requestedPaths": ["C:\\RevitOperator\\Workspace\\artifacts\\prints\\M000.pdf"],
+            "files": [{
+              "path": "C:\\RevitOperator\\Workspace\\artifacts\\prints\\M000.pdf",
+              "exists": true,
+              "readable": true,
+              "size_bytes": 8251486,
+              "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "fresh_output": false
+            }]
+          }
+        }
+      ]
+    },
+    {
       "method": "GET",
       "path": "/revit/ping",
       "examples": [

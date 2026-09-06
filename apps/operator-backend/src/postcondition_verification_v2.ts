@@ -6,6 +6,7 @@
  */
 
 import { normalizeTextNoteTextV1 } from "@revitoperator/text-note-round-trip-v1";
+import { nativeArtifactPostconditionV2 } from "./verification/native_artifact_contract_v2.js";
 import { visibilityExpectedValuesV2, visibilityObservedValuesV2 } from "./verification/visibility_view_contract_v2.js";
 import {
   isExcludedEvidenceContainerV2,
@@ -39,6 +40,7 @@ function semanticApplyInput(value: unknown): unknown {
 }
 
 export type PostconditionOperationContractV2 = {
+  native_artifact_receipt?: unknown;
   capability_id?: unknown;
   path?: unknown;
   tool?: unknown;
@@ -434,6 +436,8 @@ export function postconditionSatisfiedByPayloadV2(
   verificationPayload: unknown,
   contract: PostconditionOperationContractV2 = {}
 ): boolean {
+  if (contract.path === "/revit/export-pdf" || objectValue(applyInput).path === "/revit/export-pdf")
+    return nativeArtifactPostconditionV2(contract.native_artifact_receipt, structuredValue(verificationPayload));
   const expected = expectedPostconditionValuesV2(applyInput, true, contract);
   if (expected.length > 0) {
     const observed = observedPostconditionValuesV2(verificationPayload);

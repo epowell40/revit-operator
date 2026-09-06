@@ -7,6 +7,110 @@ import os from "node:os";
 import { completionOutboxKeyV2, readCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
 import { payloadDigestV2 } from "@revitoperator/payload-digest-v2";
 import { revitRouteEffect } from "./revitRouteEffect.js";
+import { nativeArtifactReceiptEffectV1, nativeArtifactResultEffectV2 } from "@revitoperator/assignment-kernel-v2-contracts";
+
+function pdfArtifactReceipt(phase: "apply" | "preview" = "apply") {
+  return { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf", phase,
+    status: phase === "apply" ? "complete" : "not_started", expected_output_paths: ["C:/fixture/M000.pdf"], expected_export_calls: 1,
+    export_calls: phase === "apply" ? [true] : [],
+    outputs: phase === "apply" ? [{ path: "C:/fixture/M000.pdf", size_bytes: 8251486, sha256: "a".repeat(64), fresh_output: true }] : [] };
+}
+
+test("native PDF exports and nonwriting plans retain artifact authority without inventing transactions", async () => {
+  for (const requested of ["apply", "preview"] as const) {
+    const receipt = pdfArtifactReceipt(requested), body = { viewIds: [1420963], dryRun: requested === "preview" };
+    const decorated = await runWithAssignmentKernelV2(meta(requested, "work", { method: "POST", path: "/revit/export-pdf", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/export-pdf", body, { classified_effect: requested });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/export-pdf", {
+        status: requested === "apply" ? "Success" : "Dry Run", ok: true, dryRun: requested === "preview", artifact_receipt: receipt,
+        selectedCount: 1, selectedSheets: [{ viewId: 1420963, sheetNumber: "M000" }], preflight: { outputs: receipt.expected_output_paths },
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
+          requested_effect: requested, effect_state: requested === "apply" ? "applied" : "none", effect_authority: "native_receipt",
+          effect_reason: requested === "apply" ? "native_artifact_export_completed" : "native_artifact_export_not_started",
+          request_dispatched: true, affected_target_identities: requested === "apply" ? ["artifact_path:C:/fixture/M000.pdf"] : [] }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "succeeded"); assert.equal(result.native_transaction_state, "not_applicable");
+    assert.equal(nativeArtifactResultEffectV2(result), requested === "apply" ? "applied" : "none");
+    assert.deepEqual(result.native_artifact_receipt, receipt);
+    assert.equal(decorated.structuredContent.observation.raw_payload.artifact_receipt.schema, receipt.schema);
+    const facts = decorated.structuredContent.observation.semantic_facts;
+    assert.ok(facts.some((fact: any) => fact.fact_id === "task.result_available" && fact.value === true));
+    if (requested === "preview") {
+      assert.ok(facts.some((fact: any) => fact.fact_id === "task.preview_valid" && fact.value === true));
+      assert.ok(facts.some((fact: any) => fact.fact_id === "artifact.planned_output_count" && fact.value === 1));
+    }
+  }
+});
+
+test("PDF preview facts reject mismatched sheet scope or output plans while preserving no-write truth", async () => {
+  for (const variant of ["missing_sheets", "wrong_sheet", "wrong_count", "wrong_output"] as const) {
+    const receipt = pdfArtifactReceipt("preview"), body = { viewIds: [1420963], dryRun: true };
+    const decorated = await runWithAssignmentKernelV2(meta("preview", "work", { method: "POST", path: "/revit/export-pdf", body }), async () => {
+      const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/export-pdf", body, { classified_effect: "preview" });
+      await markAssignmentKernelNativeRequestDispatchingV2(request);
+      await recordAssignmentKernelNativeResultV2("POST", "/revit/export-pdf", {
+        status: "Dry Run", ok: true, dryRun: true, artifact_receipt: receipt,
+        selectedCount: variant === "wrong_count" ? 2 : 1,
+        selectedSheets: variant === "missing_sheets" ? [] : [{ viewId: variant === "wrong_sheet" ? 999 : 1420963 }],
+        preflight: { outputs: variant === "wrong_output" ? ["C:/fixture/other.pdf"] : receipt.expected_output_paths },
+        canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
+          requested_effect: "preview", effect_state: "none", effect_authority: "native_receipt",
+          effect_reason: "native_artifact_export_not_started", request_dispatched: true }
+      }, request);
+      return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+    });
+    const result = decorated.structuredContent.operation_result_v2;
+    assert.equal(result.status, "failed_after_dispatch");
+    assert.equal(result.persistent_effect, "none");
+    assert.equal(result.native_transaction_state, "not_applicable");
+    assert.equal(result.result_semantic_gap.reason_code, "preview_result_contract_invalid");
+    assert.equal(decorated.structuredContent.observation.semantic_facts.some((f: any) => f.fact_id === "task.preview_valid"), false);
+  }
+});
+
+test("legacy successful-looking PDF export remains unknown and cannot fabricate a transaction", async () => {
+  const body = { viewIds: [1420963], combine: true, outputFolder: "artifacts/prints", baseFileName: "M000", dryRun: false };
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/export-pdf", body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/export-pdf", body, { classified_effect: "apply" });
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/export-pdf", {
+      status: "Success", files: ["M000.pdf"], verification: { ok: true, exists: true, sizeBytes: 8251486 },
+      canonical_attempt_settlement: { schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "export-native",
+        requested_effect: "apply", effect_state: "unknown", effect_authority: "native_host",
+        effect_reason: "native_handler_returned_without_authoritative_settlement", request_dispatched: true }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "unknown");
+  assert.equal(decorated.structuredContent.operation_result_v2.native_transaction_state, "unknown");
+  assert.equal(decorated.structuredContent.operation_result_v2.native_artifact_receipt, undefined);
+});
+
+test("artifact receipt validation rejects stale, partial, wrong-route and forged completion evidence", () => {
+  const original = pdfArtifactReceipt();
+  for (const change of [
+    (r: any) => { r.export_calls = [false]; },
+    (r: any) => { r.outputs[0].fresh_output = false; },
+    (r: any) => { r.outputs[0].sha256 = "missing"; },
+    (r: any) => { r.outputs[0].path = "C:/fixture/other.pdf"; },
+    (r: any) => { r.outputs = []; },
+    (r: any) => { r.expected_output_paths.push("C:/fixture/second.pdf"); },
+    (r: any) => { r.expected_output_paths.push("c:/FIXTURE/m000.pdf"); },
+    (r: any) => { r.phase = "preview"; },
+    (r: any) => { r.status = "unverified"; },
+    (r: any) => { r.path = "/revit/move-elements"; }
+  ]) {
+    const receipt = structuredClone(original); change(receipt);
+    assert.equal(nativeArtifactReceiptEffectV1(receipt, "POST", "/revit/export-pdf", "apply"), null);
+  }
+  assert.equal(nativeArtifactReceiptEffectV1(original, "POST", "/revit/export-pdf", "preview"), null);
+  assert.equal(nativeArtifactReceiptEffectV1(original, "GET", "/revit/export-pdf", "apply"), null);
+  assert.equal(revitRouteEffect("/revit/inspect-exported-files", "POST", { paths: ["C:/fixture/M000.pdf"] }), "read");
+});
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,

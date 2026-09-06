@@ -6,6 +6,100 @@ import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { recoverRetainedAssignmentCompletionsV2 } from "../src/assignments/assignment_kernel_v2_completion_recovery.js";
 import { completionOutboxKeyV2, readCompletionOutboxV2, retainCompletionOutboxV2 } from "@revitoperator/assignment-kernel-v2-contracts/completion-outbox";
+import type { NativeArtifactReceiptV1 } from "@revitoperator/assignment-kernel-v2-contracts";
+
+function nativePdfReceipt(phase: "apply" | "preview" = "apply"): NativeArtifactReceiptV1 {
+  return { schema: "revit-operator.native-artifact-receipt.v1", method: "POST", path: "/revit/export-pdf", phase,
+    status: phase === "apply" ? "complete" : "not_started", expected_output_paths: ["C:/fixture/M000.pdf"], expected_export_calls: 1,
+    export_calls: phase === "apply" ? [true] : [],
+    outputs: phase === "apply" ? [{ path: "C:/fixture/M000.pdf", size_bytes: 8251486, sha256: "a".repeat(64), fresh_output: true }] : [] };
+}
+
+test("native PDF file effect survives restart and requires exact independent file readback", () => {
+  for (const variant of ["exact", "wrong_path", "wrong_hash", "wrong_size", "missing", "unreadable", "incomplete", "echo", "duplicate"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply"), receipt = nativePdfReceipt();
+    const apply = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-export", provider_turn_id: "export-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply",
+      arguments: { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], dryRun: false } } });
+    markAssignmentKernelOperationDispatchStartedV2(apply);
+    const commit = envelope(apply.operation_id, apply.binding, { ok: true, status: "Success", artifact_receipt: receipt }, "applied");
+    Object.assign(commit.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
+      result_schema_id: "operator-native/POST:/revit/export-pdf/v2", affected_target_identities: ["artifact_path:C:/fixture/M000.pdf"] });
+    settleAssignmentKernelOperationV2(apply, commit);
+    __testOnlyResetGoalListCache();
+    const persisted = getAssignmentKernelSnapshotV2(goal.id)!;
+    assert.equal(persisted.operations[apply.operation_id]!.persistent_effect, "applied");
+    assert.equal(persisted.operations[apply.operation_id]!.result!.native_transaction_state, "not_applicable");
+    assert.notEqual(persisted.outcome, "complete");
+    const ready = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    const read = openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: "pdf-inspect", provider_turn_id: "inspect-turn",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: ["artifact_path:C:/fixture/M000.pdf"],
+      arguments: { method: "POST", path: "/revit/inspect-exported-files", body: { paths: ["C:/fixture/M000.pdf"] } } });
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const file = { path: variant === "wrong_path" ? "C:/fixture/other.pdf" : "C:/fixture/M000.pdf",
+      size_bytes: variant === "wrong_size" ? 9 : 8251486, sha256: (variant === "wrong_hash" ? "b" : "a").repeat(64),
+      exists: variant !== "missing", readable: variant !== "unreadable" };
+    const payload: any = { schema: "revit-operator.exported-file-inspection.v1", ok: true, itemsComplete: variant !== "incomplete",
+      requestedPaths: ["C:/fixture/M000.pdf"], files: variant === "duplicate" ? [file, file] : [file] };
+    const verificationPayload = variant === "echo" ? { request: payload } : payload;
+    const settled = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding, verificationPayload));
+    assert.equal(settled.observation!.facts.some(f => f.fact_id === "verification.postcondition_satisfied" && f.value === true), variant === "exact");
+    const final = advanceAssignmentKernelProgressV2({ binding: apply.binding }).snapshot;
+    assert.equal(final.outcome === "complete", variant === "exact");
+    assert.deepEqual(final.unresolved_unknown_operation_ids, []);
+    assert.equal(Object.values(final.operations).filter(o => o.requested_effect === "apply").length, 1);
+    __testOnlyResetGoalListCache(); assert.deepEqual(getAssignmentKernelSnapshotV2(goal.id), final);
+  });
+});
+
+test("artifact settlement rejects a missing or contradictory native payload receipt before journaling", () => {
+  for (const variant of ["missing", "different_digest", "different_path"] as const) workspace(() => {
+    const { goal, snapshot } = setup("apply"), receipt = nativePdfReceipt();
+    const operation = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-mismatch", provider_turn_id: "export-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply",
+      arguments: { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], dryRun: false } } });
+    markAssignmentKernelOperationDispatchStartedV2(operation);
+    const rawReceipt = JSON.parse(JSON.stringify(receipt));
+    if (variant === "different_digest") rawReceipt.outputs[0]!.sha256 = "b".repeat(64);
+    if (variant === "different_path") rawReceipt.expected_output_paths[0] = "C:/fixture/other.pdf";
+    const result = envelope(operation.operation_id, operation.binding,
+      variant === "missing" ? { ok: true } : { ok: true, artifact_receipt: rawReceipt }, "applied");
+    Object.assign(result.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
+      result_schema_id: "operator-native/POST:/revit/export-pdf/v2" });
+    assert.throws(() => settleAssignmentKernelOperationV2(operation, result), /artifact_receipt_payload_mismatch/);
+    assert.equal(getAssignmentKernelSnapshotV2(goal.id)!.operations[operation.operation_id]!.result, undefined);
+    appendCurrentAssignmentKernelEventV2({ goal_id: goal.id, binding: operation.binding,
+      event_id: "native-dispatch-for-artifact-replay", actor: "mcp-client", occurred_at: "2026-08-26T16:00:04.000Z",
+      body: { event_type: "native_dispatch_recorded", operation_id: operation.operation_id }
+    });
+    assert.throws(() => appendCurrentAssignmentKernelEventV2({ goal_id: goal.id, binding: operation.binding,
+      event_id: "mismatched-artifact-direct-replay", actor: "mcp-client", occurred_at: "2026-08-26T16:00:05.000Z",
+      body: { event_type: "operation_result_recorded", result: result.structuredContent.operation_result_v2,
+        observation_commit: { schema: "revit-operator.observation-commit-input/v2", result_id: result.structuredContent.operation_result_v2.result_id,
+          raw_payload: result.structuredContent.observation.raw_payload, semantic_facts: [] } }
+    }), /artifact_receipt_payload_mismatch/);
+  });
+});
+
+test("native artifact preview is admitted without a fabricated Revit rollback", () => workspace(() => {
+  const { snapshot } = setup("preview"), receipt = nativePdfReceipt("preview");
+  const operation = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "pdf-preview", provider_turn_id: "preview-turn",
+    capability_id: "revit_call_tool", classified_effect: "preview",
+    arguments: { method: "POST", path: "/revit/export-pdf", body: { viewIds: [1420963], dryRun: true } } });
+  markAssignmentKernelOperationDispatchStartedV2(operation);
+  const result = envelope(operation.operation_id, operation.binding, { ok: true, dryRun: true, artifact_receipt: receipt });
+  Object.assign(result.structuredContent.operation_result_v2, { native_transaction_state: "not_applicable", native_artifact_receipt: receipt,
+    result_schema_id: "operator-native/POST:/revit/export-pdf/v2" });
+  result.structuredContent.observation.semantic_facts = [
+    { fact_id: "task.result_available", fact_class: "domain", value: true },
+    { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+    { fact_id: "artifact.planned_output_count", fact_class: "domain", value: 1 }
+  ];
+  const settled = settleAssignmentKernelOperationV2(operation, result);
+  assert.equal(settled.snapshot.operations[operation.operation_id]!.persistent_effect, "none");
+  assert.equal(settled.snapshot.operations[operation.operation_id]!.result!.native_transaction_state, "not_applicable");
+  assert.equal(advanceAssignmentKernelProgressV2({ binding: operation.binding }).snapshot.outcome, "complete");
+}));
 
 import {
   ASSIGNMENT_KERNEL_MCP_RESULT_V2_SCHEMA,

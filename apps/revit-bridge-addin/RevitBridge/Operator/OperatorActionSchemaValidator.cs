@@ -6269,6 +6269,23 @@ namespace RevitBridge.Operator
                 return true;
             }
 
+            if (string.Equals(path, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!IsNullOrObject(body, out var inspection) || !inspection.HasValue
+                    || !inspection.Value.TryGetProperty("paths", out var paths) || paths.ValueKind != JsonValueKind.Array
+                    || paths.GetArrayLength() == 0 || paths.GetArrayLength() > 2000)
+                {
+                    error = "inspect-exported-files requires 1 to 2000 exact PDF paths.";
+                    return false;
+                }
+                foreach (var property in inspection.Value.EnumerateObject())
+                    if (property.Name != "paths") { error = "inspect-exported-files accepts only paths."; return false; }
+                foreach (var item in paths.EnumerateArray())
+                    if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()) || item.GetString()!.Length > 2000)
+                    { error = "Each export path must be a nonempty bounded string."; return false; }
+                return true;
+            }
+
             if (string.Equals(path, "/revit/export-pdf", StringComparison.OrdinalIgnoreCase))
             {
                 // Allow: null or { viewIds?: number[], fileName?: string, combine?, outputFolder?, baseFileName?, perSheetFileNameTemplate?, colorMode?, dryRun?/preflight?, selector? }

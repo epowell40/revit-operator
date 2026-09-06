@@ -7,6 +7,8 @@ import {
 } from "@revitoperator/payload-digest-v2";
 import {
   OPERATION_RESULT_SEMANTIC_GAP_V2_SCHEMA,
+  nativeArtifactReceiptEffectV1,
+  nativeArtifactResultEffectV2,
   assignmentKernelControlEvidenceFactsV2,
   isAssignmentKernelDurableControlEvidenceProducerV2
 } from "@revitoperator/assignment-kernel-v2-contracts";
@@ -557,10 +559,10 @@ function semanticFacts(
     facts.push({ fact_id: "task.result_available", fact_class: "domain", value: true });
   }
   const root = object(payload);
-  const textNoteResult = evidence === "task_result"
+  const typedPreviewResult = evidence === "task_result"
     && domainSucceeded
-    && ["/revit/replace-text-note", "/revit/set-text-note-text"].includes(path.toLowerCase());
-  if (textNoteResult) {
+    && ["/revit/replace-text-note", "/revit/set-text-note-text", "/revit/export-pdf"].includes(path.toLowerCase());
+  if (typedPreviewResult) {
     facts.push(...previewSemanticEvidenceV2({
       path,
       payload,
@@ -685,7 +687,16 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
   const confirmedNativeRollback = persistentEffect === "none" && !transportFailed && dispatched
     && settlement.effect_authority === "native_rollback"
     && settlement.effect_reason === "verified_native_rollback";
-  const nativeTransactionState = persistentEffect === "applied" ? "committed"
+  const artifactReceipt = object(call.observation_payload).artifact_receipt;
+  const artifactEffect = !transportFailed && dispatched
+    ? nativeArtifactReceiptEffectV1(artifactReceipt, call.method, call.path, call.lease.requested_effect) : null;
+  if (artifactReceipt !== undefined && artifactEffect === null && persistentEffect === "applied")
+    throw new Error("assignment_kernel_v2_native_artifact_receipt_invalid");
+  if (artifactEffect !== null && (persistentEffect !== artifactEffect || settlement.effect_authority !== "native_receipt"
+      || settlement.effect_reason !== (artifactEffect === "applied" ? "native_artifact_export_completed" : "native_artifact_export_not_started"))) {
+    throw new Error("assignment_kernel_v2_native_artifact_settlement_conflict");
+  }
+  const nativeTransactionState = artifactEffect !== null ? "not_applicable" : persistentEffect === "applied" ? "committed"
     : persistentEffect === "unknown" ? "unknown"
       : confirmedNativeRollback || (call.lease.requested_effect === "preview" && !transportFailed && dispatched)
         ? "rolled_back" : "not_applicable";
@@ -699,7 +710,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     && call.lease.requested_effect === "preview"
     && dispatched
     && persistentEffect === "none"
-    && nativeTransactionState === "rolled_back";
+    && (nativeTransactionState === "rolled_back" || artifactEffect === "none");
   const previewEvidence = authoritativeTaskPreview ? previewSemanticEvidenceV2({
     path: call.path,
     payload: call.observation_payload,
@@ -720,6 +731,7 @@ function operationResultForCall(call: NativeCall, transportFailed: boolean): Rec
     dispatch_state: dispatchState,
     persistent_effect: persistentEffect,
     native_transaction_state: nativeTransactionState,
+    ...(artifactEffect !== null ? { native_artifact_receipt: structuredClone(artifactReceipt) } : {}),
     authority: "native-host",
     result_schema_id: resultSchemaId,
     observation_required: !transportFailed,
@@ -756,7 +768,7 @@ function mcpEnvelopeForCall(call: NativeCall, operationResult: Record<string, un
     && operationResult.status === "succeeded"
     && operationResult.dispatch_state === "dispatched"
     && operationResult.persistent_effect === "none"
-    && operationResult.native_transaction_state === "rolled_back";
+    && (operationResult.native_transaction_state === "rolled_back" || nativeArtifactResultEffectV2(operationResult) === "none");
   return {
     content: [],
     structuredContent: {
@@ -877,7 +889,7 @@ function decoratedResult(result: unknown, capabilityId: string, scope: Scope): u
       && operationResult.status === "succeeded"
       && operationResult.dispatch_state === "dispatched"
       && operationResult.persistent_effect === "none"
-      && operationResult.native_transaction_state === "rolled_back"
+      && (operationResult.native_transaction_state === "rolled_back" || nativeArtifactResultEffectV2(operationResult) === "none")
     : false;
   const root = object(result);
   const childOperationResults = calls

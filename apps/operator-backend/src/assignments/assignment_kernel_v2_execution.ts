@@ -653,6 +653,14 @@ function commitInput(
 ): ObservationCommitInputV2 | undefined {
   if (!result.observation_required) return undefined;
   if (!envelope.observation) throw new Error("assignment_kernel_v2_observation_payload_missing");
+  if (result.native_artifact_receipt !== undefined) {
+    const raw = envelope.observation.raw_payload;
+    const receipt = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).artifact_receipt : undefined;
+    if (canonicalJsonV2(receipt ?? null) !== canonicalJsonV2(result.native_artifact_receipt)) {
+      throw new Error("assignment_kernel_v2_artifact_receipt_payload_mismatch");
+    }
+  }
   const semanticFacts = [...validateFacts(envelope.observation.semantic_facts)];
   const snapshot = getAssignmentKernelSnapshotV2(lease.assignment_id);
   const operation = snapshot?.operations[lease.operation_id];
@@ -681,7 +689,8 @@ function commitInput(
       && postconditionSatisfiedByPayloadV2(
         verificationSubject.input,
         envelope.observation.raw_payload,
-        { capability_id: verificationSubject.capability_id }
+        { capability_id: verificationSubject.capability_id, path: verificationSubject.request_identity?.path,
+          native_artifact_receipt: verificationSubject.result?.native_artifact_receipt }
       )
   );
   if (trustedVerification) {

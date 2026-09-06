@@ -182,6 +182,8 @@ namespace RevitBridge.Common
 
             using var document = JsonDocument.Parse(JsonSerializer.Serialize(result));
             var root = document.RootElement;
+            if (OperatorNativeArtifactReceipt.TrySettlement(root, effect, method, path, out var artifactSettlement))
+                return artifactSettlement ?? OperatorAttemptSettlement.Unknown(effect, method, path, "native_artifact_export_unverified", "native_host");
             if (TryCertifiedReceipt(root, out var phase, out var receiptRef))
             {
                 if (phase == "preview")

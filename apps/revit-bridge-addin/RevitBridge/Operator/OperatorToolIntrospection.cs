@@ -960,6 +960,8 @@ namespace RevitBridge.Operator
                 }
 
                 // Export PDF (views/sheets). Supports viewIds OR selector OR sheetNumberPrefix/sheetQuery convenience.
+                if (string.Equals(p, "/revit/inspect-exported-files", StringComparison.OrdinalIgnoreCase))
+                    return Obj(new Dictionary<string, object> { { "paths", Arr(Str()) } }, new[] { "paths" }, additionalProps: false);
                 if (string.Equals(p, "/revit/export-pdf", StringComparison.OrdinalIgnoreCase))
                 {
                     var selectorSchema = Obj(

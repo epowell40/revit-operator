@@ -5,7 +5,7 @@ import { buildRegistryAudit, canonicalRegistryDigestSha256, findRepoRoot, render
 test("tool registry audit inventories the complete source catalog without claiming live usefulness", () => {
   const repoRoot = findRepoRoot(process.cwd());
   const audit = buildRegistryAudit({ repoRoot });
-  assert.equal(audit.tools.length, 217);
+  assert.equal(audit.tools.length, 218);
   assert.equal(new Set(audit.tools.map(tool => tool.key)).size, audit.tools.length);
   assert.equal(audit.summary.manifest_entries, audit.tools.length);
   assert.ok(audit.tools.every(tool => tool.evidence.live_safe === null));
@@ -29,6 +29,17 @@ test("tool registry audit inventories the complete source catalog without claimi
   assert.ok(!screenshare?.issues.includes("missing_operator_action_runtime"));
   assert.ok(!screenshare?.issues.includes("missing_http_runtime"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/schedules")?.contracts.request_schema_source, "explicit");
+  const exportedFiles = audit.tools.find(tool => tool.key === "POST /revit/inspect-exported-files");
+  assert.ok(exportedFiles);
+  assert.equal(exportedFiles.risk, "low");
+  assert.equal(exportedFiles.contracts.request_schema_source, "explicit");
+  assert.equal(exportedFiles.contracts.schema_validator_reference, true);
+  assert.equal(exportedFiles.contracts.addin_allowlisted, true);
+  assert.equal(exportedFiles.contracts.backend_allowlisted, true);
+  assert.ok(exportedFiles.contracts.examples_count > 0);
+  assert.equal(exportedFiles.mcp.generic_call_available, true);
+  assert.ok(exportedFiles.handlers.operator_action_runner.includes("InspectExportedFilesHandler"));
+  assert.ok(exportedFiles.handlers.direct_http.includes("InspectExportedFilesHandler"));
   assert.ok(!audit.tools.find(tool => tool.path === "/revit/schedules")?.issues.includes("reflected_request_schema_unverified"));
   assert.equal(audit.tools.find(tool => tool.path === "/revit/get-parameters")?.contracts.request_schema_source, "explicit");
   assert.equal(audit.tools.find(tool => tool.path === "/revit/inspect-family-content")?.contracts.request_schema_source, "explicit");

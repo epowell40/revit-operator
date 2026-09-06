@@ -1,4 +1,5 @@
 import type { RequestedEffectV2 } from "./assignment_spec.js";
+import type { NativeArtifactReceiptV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 import type {
   AssignmentBindingV2,
   CriterionIdV2,
@@ -103,6 +104,7 @@ export interface OperationResultV2 {
   dispatch_state: OperationDispatchStateV2;
   persistent_effect: PersistentEffectV2;
   native_transaction_state: NativeTransactionStateV2;
+  native_artifact_receipt?: NativeArtifactReceiptV1;
   authority: string;
   result_schema_id: string;
   observation_required: boolean;

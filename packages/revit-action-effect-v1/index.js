@@ -1,4 +1,5 @@
 const READ_ONLY_PATHS = new Set([
+  "/revit/inspect-exported-files",
   "/revit/ping",
   "/revit/context",
   "/revit/activate-view",

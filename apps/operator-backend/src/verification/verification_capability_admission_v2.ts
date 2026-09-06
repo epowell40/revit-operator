@@ -9,6 +9,7 @@
 
 import { isExcludedEvidenceContainerV2 } from "./verification_payload_boundary_v2.js";
 import { visibilityTargetTokensV2 } from "./visibility_view_contract_v2.js";
+import { artifactTargetTokensV2 } from "./native_artifact_contract_v2.js";
 
 export const VERIFICATION_CAPABILITY_ADMISSION_V2_SCHEMA =
   "revit-operator.verification-capability-admission/v2" as const;
@@ -70,6 +71,7 @@ type RevitRouteContractV2 = Readonly<{
  * apply, and therefore cannot bind its postcondition readback.
  */
 const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
+  ["/revit/inspect-exported-files", { semantic_outputs: ["artifact.file_digest"], principal_target_fields: ["paths"], preferred_target_field: "paths" }],
   ["/revit/visibility", {
     semantic_outputs: ["view.visibility_properties"],
     preferred_target_field: "viewId"
@@ -227,7 +229,9 @@ export function operationTargetSelectorV2(input: Readonly<{
   return {
     schema: OPERATION_TARGET_SELECTOR_V2_SCHEMA,
     source: "reviewed_capability_contract",
-    principal_target_tokens: pathOf(input.operation) === "/revit/visibility"
+    principal_target_tokens: pathOf(input.operation) === "/revit/inspect-exported-files"
+      ? artifactTargetTokensV2(input.value)
+      : pathOf(input.operation) === "/revit/visibility"
       ? visibilityTargetTokensV2(input.value)
       : tokensFromReviewedFields(input.value, contract.principal_target_fields ?? []),
     contextual_scope_tokens: tokensFromReviewedFields(input.value, contract.contextual_scope_fields ?? [])
@@ -239,6 +243,7 @@ function requiredSemanticOutputs(apply: OperationContract): readonly string[] {
   if (TEXT_NOTE_MUTATION_PATHS.has(path)) return ["text_note.value"];
   if (PARAMETER_MUTATION_PATHS.has(path)) return ["element.parameter_values"];
   if (path === "/revit/visibility") return ["view.visibility_properties"];
+  if (path === "/revit/export-pdf") return ["artifact.file_digest"];
   return [];
 }
 
@@ -297,6 +302,7 @@ export function verificationCapabilityAdmissionForPathsV2(
 }
 
 export function verificationCapabilityGuidanceV2(apply: OperationContract): string | null {
+  if (pathOf(apply) === "/revit/export-pdf") return " Verify the exact exported files with POST /revit/inspect-exported-files, paths=[every output path from the native artifact receipt]. The readback must match every file path, byte size and SHA256. Do not export again to verify an existing export.";
   const required = requiredSemanticOutputs(apply);
   if (required.length === 0) return null;
   const paths = routesProviding(required);

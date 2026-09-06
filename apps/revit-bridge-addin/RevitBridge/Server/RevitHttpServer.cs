@@ -130,6 +130,7 @@ namespace RevitBridge.Server
                 { "/revit/visibility", new ViewVisibilityHandler() },
                 { "/revit/datums", new DatumsHandler() },
                 { "/revit/export-pdf", new ExportPdfHandler() },
+                { "/revit/inspect-exported-files", new InspectExportedFilesHandler() },
                 { "/revit/print", new PrintHandler() },
                 { "/revit/export-images", new ExportImagesBatchHandler() },
                 { "/revit/export-dwg", new ExportDwgHandler() },

@@ -85,6 +85,7 @@ const defaultAllowed: Allowlist = {
     "/revit/export-image",
     "/revit/capture-screenshare",
     "/revit/export-pdf",
+    "/revit/inspect-exported-files",
     "/revit/print",
     "/revit/export-images",
     "/revit/export-dwg",

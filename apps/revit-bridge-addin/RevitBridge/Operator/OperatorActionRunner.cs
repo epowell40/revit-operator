@@ -110,6 +110,7 @@ namespace RevitBridge.Operator
                 { "/revit/align-room-tops-to-ceilings", new AlignRoomTopsToCeilingsHandler() },
                 { "/revit/export-image", new ExportViewImageHandler() },
                 { "/revit/export-pdf", new ExportPdfHandler() },
+                { "/revit/inspect-exported-files", new InspectExportedFilesHandler() },
                 { "/revit/print", new PrintHandler() },
                 { "/revit/export-images", new ExportImagesBatchHandler() },
                 { "/revit/export-dwg", new ExportDwgHandler() },

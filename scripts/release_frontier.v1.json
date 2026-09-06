@@ -1,6 +1,8 @@
 {
   "schema": "revit-operator.release-frontier/v1",
   "backend_tests": [
+    "tool_registry_audit.test.ts",
+    "native_artifact_contract_v2.test.ts",
     "assignment_kernel_v2_pause_reporting.test.ts",
     "assignment_kernel_v2_pause_http.test.ts",
     "goal_endpoint_security.test.ts",
@@ -73,6 +75,7 @@
   ],
   "desktop_tests": [],
   "dotnet_test_classes": [
+    "OperatorNativeArtifactReceiptTests",
     "OperatorAttemptSettlementTests",
     "OperatorNativeTransactionExecutionTests",
     "OperatorRevitQueueDiagnosticTests",
@@ -91,6 +94,7 @@
     "OperatorWriteGrantAdmissionTests"
   ],
   "failure_families": [
+    {"id":"native-pdf-artifact-effect-and-independent-readback","coverage":["dotnet:OperatorNativeArtifactReceiptTests","dotnet:OperatorApprovalPolicyTests","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts","backend:native_artifact_contract_v2.test.ts","backend:tool_registry_audit.test.ts"]},
     {"id":"paused-user-handoff-packet-and-provider-non-invocation","coverage":["backend:assignment_kernel_v2_pause_reporting.test.ts","backend:assignment_kernel_v2_pause_http.test.ts","backend:benchmark_protocol_v2.test.ts"]},
     {"id":"created-native-identity-without-documentchanged","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","backend:verification_capability_admission_v2.test.ts","mcp:lib/assignmentKernelV2.test.ts"]},
     {"id":"legacy-native-transaction-receipt-and-canonical-handoff","coverage":["dotnet:OperatorNativeTransactionExecutionTests","dotnet:OperatorAttemptSettlementTests","backend:assignment_kernel_v2_controls.test.ts","backend:assignment_kernel_v2_progress_controller.test.ts","backend:codex_app_server_compatibility.test.ts"]},

@@ -1,4 +1,5 @@
 import { normalizeTextNoteTextV1, textNoteRoundTripMatchesV1 } from "@revitoperator/text-note-round-trip-v1";
+import { nativeArtifactReceiptEffectV1 } from "@revitoperator/assignment-kernel-v2-contracts";
 
 type Scalar = string | number | boolean | null;
 
@@ -77,6 +78,23 @@ export function previewSemanticEvidenceV2(input: Readonly<{
   authoritativePreview: boolean;
 }>): PreviewSemanticEvidenceV2 {
   const path = input.path.toLowerCase();
+  if (path === "/revit/export-pdf") {
+    const result = object(input.payload), receipt = object(result.artifact_receipt), request = object(input.requestBody);
+    const sheets = Array.isArray(result.selectedSheets) ? result.selectedSheets.map(object) : [];
+    const outputs = object(result.preflight).outputs;
+    const requestedIds = Array.isArray(request.viewIds) ? request.viewIds : null;
+    const ids = sheets.map(s => s.viewId);
+    const admitted = input.authoritativePreview && input.requestedEffect === "preview" && result.ok === true && result.dryRun === true
+      && nativeArtifactReceiptEffectV1(receipt, "POST", path, "preview") === "none"
+      && Number.isInteger(result.selectedCount) && result.selectedCount === sheets.length && sheets.length > 0
+      && ids.every(id => typeof id === "number" && Number.isInteger(id) && id > 0) && new Set(ids).size === ids.length
+      && (!requestedIds || requestedIds.length === ids.length && requestedIds.every(id => ids.includes(id)))
+      && Array.isArray(outputs) && JSON.stringify(outputs) === JSON.stringify(receipt.expected_output_paths);
+    return { recognized: true, admitted, facts: admitted ? [
+      { fact_id: "task.preview_valid", fact_class: "domain", value: true },
+      { fact_id: "artifact.planned_output_count", fact_class: "domain", value: (outputs as unknown[]).length }
+    ] : [] };
+  }
   if (path !== "/revit/replace-text-note" && path !== "/revit/set-text-note-text") {
     return { recognized: false, admitted: false, facts: [] };
   }
