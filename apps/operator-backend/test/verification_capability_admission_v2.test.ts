@@ -129,6 +129,17 @@ test("parameter readback target identity comes from native items, not echoed req
   assert.deepEqual(selected.principal_target_tokens, ["id:42"]);
 });
 
+test("native element summary rows bind their id through generic and named routes without request metadata", () => {
+  for (const operation of [{ capability_id: "revit_call_tool", path: "/revit/get-element-summary" }, { capability_id: "revit_get_element_summary" }]) {
+    const selected = operationTargetSelectorV2({ operation, value: {
+      request: { elementIds: [9999] }, metadata: { id: 9998 },
+      results: [{ id: 1542917, found: true, className: "ViewPlan", name: "M-COORDINATION COPY", viewIdUsed: 1363433 }]
+    } });
+    assert.equal(selected.source, "reviewed_capability_contract");
+    assert.deepEqual(selected.principal_target_tokens, ["id:1542917"]);
+  }
+});
+
 test("unknown capabilities retain bounded fallback identity while verifier guidance names the exact selector", () => {
   const fallback = operationTargetSelectorV2({
     operation: { capability_id: "another.read", path: "/revit/another-read" },

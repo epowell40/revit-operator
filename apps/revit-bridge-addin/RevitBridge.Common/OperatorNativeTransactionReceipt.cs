@@ -54,6 +54,15 @@ namespace RevitBridge.Common
             => new OperatorNativeTransactionReceipt("committed", true, modified,
                 added.Concat(modified).Concat(deleted), added, deleted);
 
+        public OperatorNativeTransactionReceipt WithNativeCreatedElements(IEnumerable<long> createdElementIds)
+        {
+            if (Status != "committed" || CommittedValue != true)
+                throw new InvalidOperationException("Created identities require a confirmed native commit.");
+            var created = Normalize(createdElementIds);
+            return new OperatorNativeTransactionReceipt(Status, true, ModifiedElementIds,
+                AffectedElementIds.Concat(created), AddedElementIds.Concat(created), DeletedElementIds);
+        }
+
         public static OperatorNativeTransactionReceipt RolledBack(IEnumerable<long> affectedElementIds)
             => new OperatorNativeTransactionReceipt("rolled_back", false, Array.Empty<long>(), affectedElementIds);
 

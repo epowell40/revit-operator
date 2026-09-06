@@ -1177,6 +1177,39 @@ test("authoritative affected identity from a targetless create binds its verific
     .operations[verificationLease.operation_id]!.verification_of_operation_id, applyLease.operation_id);
 }));
 
+test("duplicated view creation receipts bind the new view even when the request names the source plan", () => {
+  for (const [carriesCreatedIdentity, observedId] of [[false, 1542917], [true, 9999], [true, 1542917]] as const) workspace(() => {
+    const { snapshot } = setup("apply");
+    const copy = openAssignmentKernelOperationV2({ snapshot, controller_request_id: "duplicate-L4", provider_turn_id: "copy-turn",
+      capability_id: "revit_call_tool", classified_effect: "apply", target_tokens: ["id:1363433", "viewid:1363433"],
+      arguments: { method: "POST", path: "/revit/duplicate-view", body: { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true } } });
+    markAssignmentKernelOperationDispatchStartedV2(copy);
+    const native = envelope(copy.operation_id, copy.binding, { success: true, viewId: 1542917, sourceViewId: 1363433,
+      name: "M-COORDINATION COPY", withDetailing: true }, "applied");
+    native.structuredContent.operation_result_v2.affected_target_identities = carriesCreatedIdentity ? ["element_id:1542917", "element_id:1542918"] : [];
+    settleAssignmentKernelOperationV2(copy, native);
+    const ready = advanceAssignmentKernelProgressV2({ binding: copy.binding }).snapshot;
+    const openRead = (id: number) => openAssignmentKernelOperationV2({ snapshot: ready, controller_request_id: `verify-${id}`, provider_turn_id: "verify-copy",
+      capability_id: "revit_call_tool", classified_effect: "read", target_tokens: [`id:${id}`, `elementid:${id}`],
+      arguments: { method: "POST", path: "/revit/get-element-summary", body: { elementIds: [id] } } });
+    assert.throws(() => openRead(9999), /verification_target_unbound/);
+    if (!carriesCreatedIdentity) {
+      // Exact retained UI failure: commit is known, but new-view reads cannot bind.
+      assert.throws(() => openRead(1542917), /verification_target_unbound/);
+      return;
+    }
+    const read = openRead(1542917);
+    markAssignmentKernelOperationDispatchStartedV2(read);
+    const verified = settleAssignmentKernelOperationV2(read, envelope(read.operation_id, read.binding,
+      [{ id: observedId, found: true, name: "M-COORDINATION COPY", className: "ViewPlan", fullClassName: "Autodesk.Revit.DB.ViewPlan",
+        category: "Views", boundingBox: null, location: null, viewIdUsed: null }])).snapshot;
+    assert.equal(verified.operations[read.operation_id]!.verification_of_operation_id, copy.operation_id);
+    assert.equal(Object.values(verified.observations).filter(item => item.operation_id === read.operation_id)
+      .some(item => item.facts.some(fact => fact.fact_id === "verification.postcondition_satisfied" && fact.value === true)), observedId === 1542917);
+    assert.equal(Object.values(verified.operations).filter(op => op.requested_effect === "apply").length, 1);
+  });
+});
+
 test("operation admission cannot overtake retained evidence awaiting criterion evaluation", () => workspace(() => {
   const { goal, snapshot } = setup();
   const first = openAssignmentKernelOperationV2({

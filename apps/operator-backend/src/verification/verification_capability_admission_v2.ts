@@ -89,12 +89,12 @@ const REVIT_ROUTE_CONTRACTS = new Map<string, RevitRouteContractV2>([
   }],
   ["/revit/get-element-summary", {
     semantic_outputs: ["element.identity", "element.classification", "element.location"],
-    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
   ["revit_get_element_summary", {
     semantic_outputs: ["element.identity", "element.classification", "element.location"],
-    principal_target_fields: ["elementId", "elementIds", "requestedElementIds"],
+    principal_target_fields: ["id", "elementId", "elementIds", "requestedElementIds"],
     contextual_scope_fields: ["viewId"]
   }],
   ["/revit/get-parameters", {

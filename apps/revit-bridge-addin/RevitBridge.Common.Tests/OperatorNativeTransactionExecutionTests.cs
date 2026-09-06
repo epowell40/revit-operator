@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using RevitBridge.Common;
 using Xunit;
@@ -74,6 +75,25 @@ namespace RevitBridge.Common.Tests
             Assert.Equal("unknown", OperatorAttemptSuccessfulSettlement.Classify(
                 new { success = true, viewId = 1542917L, name = "M-COORDINATION COPY" },
                 "apply", "POST", "/revit/duplicate-view").EffectState);
+        }
+
+        [Theory]
+        [InlineData("Committed", "applied", true)]
+        [InlineData("RolledBack", "none", false)]
+        [InlineData("Pending", "unknown", false)]
+        public void NativeCreatedIdentitySurvivesWithoutDocumentChangedEvidence(string status, string effect, bool retained)
+        {
+            var createdByNativeApi = new HashSet<long>();
+            var response = OperatorNativeTransactionExecution.Execute(() => "Started", () => status,
+                () => "RolledBack", () => status,
+                () => { createdByNativeApi.Add(1542917); createdByNativeApi.Add(1542918); return CopyResult(); },
+                () => OperatorNativeTransactionReceipt.CommittedChanges(Array.Empty<long>(), Array.Empty<long>(), Array.Empty<long>()),
+                () => createdByNativeApi);
+            var settlement = OperatorAttemptSuccessfulSettlement.Classify(response, "apply", "POST", "/revit/duplicate-view");
+            Assert.Equal(effect, settlement.EffectState);
+            Assert.Equal(retained, settlement.AffectedTargetIdentities.Contains("element_id:1542917"));
+            Assert.Equal(retained, settlement.AffectedTargetIdentities.Contains("element_id:1542918"));
+            Assert.DoesNotContain("element_id:1363433", settlement.AffectedTargetIdentities);
         }
     }
 }

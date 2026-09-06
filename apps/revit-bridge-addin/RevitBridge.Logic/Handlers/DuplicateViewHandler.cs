@@ -32,7 +32,7 @@ namespace RevitBridge.Logic.Handlers
                 transaction = OperatorNativeTransactionReceipt.NotStarted()
             });
 
-            return Task.FromResult(NativeSingleTransaction.Execute(app, doc, "Duplicate View", () =>
+            return Task.FromResult(NativeSingleTransaction.Execute(app, doc, "Duplicate View", createdElements =>
             {
                 var option = request.withDetailing ? ViewDuplicateOption.WithDetailing : ViewDuplicateOption.Duplicate;
                 var newId = view.Duplicate(option);
@@ -41,6 +41,13 @@ namespace RevitBridge.Logic.Handlers
                 // A conflicting name rolls the copy back instead of silently
                 // changing the requested deliverable name.
                 if (!string.IsNullOrEmpty(request.newName)) copy.Name = request.newName;
+                doc.Regenerate();
+                createdElements.Add(ElementIdCompat.GetValue(newId));
+                // These are native-owned elements of the newly duplicated view,
+                // including copied annotations. Never derive them from request IDs.
+                foreach (var ownedId in new FilteredElementCollector(doc)
+                    .WherePasses(new ElementOwnerViewFilter(newId)).ToElementIds())
+                    createdElements.Add(ElementIdCompat.GetValue(ownedId));
                 return new Dictionary<string, object?>
                 {
                     ["viewId"] = ElementIdCompat.GetValue(newId),

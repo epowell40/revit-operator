@@ -87,6 +87,7 @@
     "OperatorProjectCloseFocusTests"
   ],
   "failure_families": [
+    {"id":"created-native-identity-without-documentchanged","coverage":["dotnet:OperatorNativeTransactionExecutionTests","backend:assignment_kernel_v2_execution.test.ts","backend:verification_capability_admission_v2.test.ts","mcp:lib/assignmentKernelV2.test.ts"]},
     {"id":"legacy-native-transaction-receipt-and-canonical-handoff","coverage":["dotnet:OperatorNativeTransactionExecutionTests","dotnet:OperatorAttemptSettlementTests","backend:assignment_kernel_v2_controls.test.ts","backend:assignment_kernel_v2_progress_controller.test.ts","backend:codex_app_server_compatibility.test.ts"]},
     {"id":"authenticated-multiline-input-exact-mutation-admission","coverage":["backend:teammate_mutation_intent_binding.test.ts","backend:assignment_kernel_v2_controls.test.ts"]},
     {"id":"typed-primary-native-fulfillment-handoff","coverage":["mcp:lib/mcp_stdio_smoke.test.ts","mcp:lib/assignmentKernelV2.test.ts","backend:assignment_kernel_v2_execution.test.ts"]},

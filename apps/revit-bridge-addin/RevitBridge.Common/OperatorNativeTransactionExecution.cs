@@ -12,7 +12,8 @@ namespace RevitBridge.Common
         public static Dictionary<string, object?> Execute(
             Func<string> start, Func<string> commit, Func<string> rollback,
             Func<string> getStatus, Func<Dictionary<string, object?>> mutate,
-            Func<OperatorNativeTransactionReceipt> committedReceipt)
+            Func<OperatorNativeTransactionReceipt> committedReceipt,
+            Func<IEnumerable<long>>? nativeCreatedElements = null)
         {
             var result = new Dictionary<string, object?>();
             string status = "unknown";
@@ -39,7 +40,14 @@ namespace RevitBridge.Common
             }
 
             OperatorNativeTransactionReceipt receipt;
-            if (status == "Committed") receipt = committedReceipt();
+            if (status == "Committed")
+            {
+                receipt = committedReceipt();
+                // Native creation return values remain authoritative even when
+                // DocumentChanged was not observed within the handler's scope.
+                if (nativeCreatedElements != null)
+                    receipt = receipt.WithNativeCreatedElements(nativeCreatedElements());
+            }
             else if (status == "RolledBack") receipt = OperatorNativeTransactionReceipt.RolledBack(Array.Empty<long>());
             else if (status == "Uninitialized") receipt = OperatorNativeTransactionReceipt.NotStarted();
             else receipt = OperatorNativeTransactionReceipt.Unknown(status);

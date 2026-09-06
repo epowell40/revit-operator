@@ -148,6 +148,25 @@ test("native affected target identities survive the MCP OperationResultV2 bounda
   );
 });
 
+test("duplicated view settlement carries native created identities without promoting the source view", async () => {
+  const body = { viewId: 1363433, newName: "M-COORDINATION COPY", withDetailing: true };
+  const decorated = await runWithAssignmentKernelV2(meta("apply", "work", { method: "POST", path: "/revit/duplicate-view", body }), async () => {
+    const request = await beginAssignmentKernelNativeRequestV2("POST", "/revit/duplicate-view", body);
+    await markAssignmentKernelNativeRequestDispatchingV2(request);
+    await recordAssignmentKernelNativeResultV2("POST", "/revit/duplicate-view", {
+      success: true, viewId: 1542917, sourceViewId: 1363433, name: "M-COORDINATION COPY", withDetailing: true,
+      canonical_attempt_settlement: {
+        schema: "revit-operator.native-attempt-settlement.v1", attempt_id: "native-duplicate-L4",
+        requested_effect: "apply", effect_state: "applied", effect_authority: "native_transaction", request_dispatched: true,
+        affected_target_identities: ["element_id:1542917", "element_id:1542918"]
+      }
+    }, request);
+    return decorateAssignmentKernelMcpResultV2({ content: [] }, "revit_call_tool") as any;
+  });
+  assert.deepEqual(decorated.structuredContent.operation_result_v2.affected_target_identities, ["element_id:1542917", "element_id:1542918"]);
+  assert.equal(decorated.structuredContent.operation_result_v2.persistent_effect, "applied");
+});
+
 test("malformed native affected target identities fail closed before settlement publication", async () => {
   await assert.rejects(
     () => runWithAssignmentKernelV2(
