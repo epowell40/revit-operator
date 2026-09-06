@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { revitRouteEffect } from "./action_path_mutability.js";
 import type { ActionCall, ChatRequest, ChatResponse, ToolResult } from "./contracts.js";
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
-import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest } from "./no_write_intent.js";
+import { COORDINATED_GLOBAL_NO_WRITE, hasAuthoritativeLeadingNoWriteFraming, hasEffectiveNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "./no_write_intent.js";
 import { activeHostVersionYear, evidenceIsKnownNoEffectFailure, openModelActiveHostMismatch } from "./revit_host_model_inventory.js";
 import { buildTeammateLoopReceipt, successfulPreviewReceipt, type SuccessfulPreviewReceipt } from "./teammate_loop_receipt.js";
 import { gateTeammateLoopAttempt, isTeammateDiscoveryPath, isTeammateDiscoveryTool, newTeammateLoopAttemptBudget, recordSuccessfulTeammateDiscovery, registerTeammateLoopAttempt, type TeammateLoopAttemptBudget } from "./teammate_loop_attempt_budget.js";
@@ -263,6 +263,7 @@ function writeAuthorized(text: string, kind: AgentTurnKind, noWrite: boolean): b
 }
 
 function explicitlyRequestsExecutablePreview(text: string, kind: AgentTurnKind): boolean {
+  text = previewIntentText(text);
   if (kind === "conversation") return false;
   if (hasNoncommittingChangePreviewRequest(text)) return true;
   if (/\b(?:preflight|dry[ -]?run|simulation|simulate(?:d)?)\b/i.test(text)) return true;

@@ -1,6 +1,6 @@
 import { hasExplicitMutationVerb } from "../revit_mutation_intent.js";
 import { classifyAgentTurn, isAffirmativeDocumentLifecycleMutation, isExplicitNoWriteRequest } from "../teammate_loop_runtime.js";
-import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest } from "../no_write_intent.js";
+import { hasAuthoritativeLeadingNoWriteFraming, hasNoncommittingChangePreviewRequest, previewIntentText } from "../no_write_intent.js";
 
 const MULTI_ACTION = /\b(all|these|every|batch|several|multiple|set of|clean up|fix up|pick up|update this area)\b/i;
 const UNCERTAIN_PATH = /\b(figure out|determine|resolve|where marked|where shown|as marked|redline|markup|make sure|verify|iterate|try|adjust)\b/i;
@@ -51,7 +51,7 @@ export function classifyAutoGoalRequest(userText: string): AutoGoalDecision {
   const whatIfPreview = hasNoncommittingChangePreviewRequest(text);
   const explicitNoWrite = isExplicitNoWriteRequest(text) || whatIfPreview;
   const appliesAfterPreflight = APPLY_AFTER_PREFLIGHT.test(text) && !explicitNoWrite;
-  const requestedEffect = (PREVIEW_REQUEST.test(text) || whatIfPreview) && !informationalReadOnlyPlan
+  const requestedEffect = (PREVIEW_REQUEST.test(previewIntentText(text)) || whatIfPreview) && !informationalReadOnlyPlan
     && !APPLY_BEYOND_PREVIEW.test(text) && !appliesAfterPreflight
     ? "preview"
     : (documentLifecycleMutation && !authoritativeLeadingNoWrite) || (turnKind === "mutation" && !explicitNoWrite)

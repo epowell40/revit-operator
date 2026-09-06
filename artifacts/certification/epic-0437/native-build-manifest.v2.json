@@ -1,8 +1,8 @@
 {
   "schema": "revit-operator.epic-0437-native-build-manifest.v2",
   "candidate_source_hash": "sha256:daec4b624b7a0ca07d67fe78bd4f56bf5e5277e7254dfcddf0acc31c344604cc",
-  "policy_hash": "sha256:c46a5aa75d617bd45976f2a10830f173e5a780b17e47b5f27a40214d8261e33c",
-  "source_inputs_hash": "sha256:fde104170589f782d17977a01e2fd9a740506c488cd68d0497afc175dbe102be",
+  "policy_hash": "sha256:d2406cebd0ba5b8de46aa2c0cd05de7c0be77b7860607ef30b1ec699024b3619",
+  "source_inputs_hash": "sha256:cb8de33e5310b702081c7ce19bdc8ed4b26f7fb29f5a2c908ab2fcc2c4df91fa",
   "source_inputs": [
     {
       "path": "apps/mcp-server/package-lock.json",
@@ -166,7 +166,7 @@
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.test.ts",
-      "sha256": "sha256:abea625345413de666275c5d6af3791d5c9778f155f963f05e681cd4f427d181"
+      "sha256": "sha256:74a86b7e7a1857115ed51c68af4ef4812d39298e3ab2c0692785b9b09a14e096"
     },
     {
       "path": "apps/mcp-server/src/lib/genericToolPreflight.ts",
@@ -2244,7 +2244,7 @@
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal.ts",
-      "sha256": "sha256:56a80861a1cd878b8b8ba912a245210e0641e0cf2c574be389368cb96274b3e5"
+      "sha256": "sha256:39b08541c473621c7e4a155960bdaa760cded954bf2f32833d26d7d61c4f4933"
     },
     {
       "path": "apps/operator-backend/src/goals/auto_goal_runtime.ts",
@@ -2364,7 +2364,7 @@
     },
     {
       "path": "apps/operator-backend/src/no_write_intent.ts",
-      "sha256": "sha256:d7dd01aee4e1523779cb0d13591ba79d1ada1678dc69cc657416fdb6c525618f"
+      "sha256": "sha256:c6deaa5b80a8101fc6a3e3eee91ebd54c2c588f947945342987f9f0938a75ef4"
     },
     {
       "path": "apps/operator-backend/src/openai_client.ts",
@@ -2568,7 +2568,7 @@
     },
     {
       "path": "apps/operator-backend/src/teammate_loop_runtime.ts",
-      "sha256": "sha256:b83aeede0e27a1760324b7f4cba94ea9ef4c69c1ca3f9f331e2dfabcf5bdb0ae"
+      "sha256": "sha256:168e6fcc9999f7042f2b9e0696b81c7fcab488f24ee4cb18fa45a696bae514a7"
     },
     {
       "path": "apps/operator-backend/src/teammate_mutation_intent_binding.ts",
@@ -2944,7 +2944,7 @@
     },
     {
       "path": "apps/operator-backend/test/assignment_auto_goal_admission.test.ts",
-      "sha256": "sha256:a48254fb8e5870fa892c498a8f0080a7bcc1e943273b8433ade7e292327c5812"
+      "sha256": "sha256:db8caa2a697c7490ffdfaf0d61822d08e27214b75ec756654492447575878c2c"
     },
     {
       "path": "apps/operator-backend/test/assignment_control_plane.test.ts",
@@ -3956,7 +3956,7 @@
     },
     {
       "path": "apps/operator-backend/test/teammate_loop_runtime.test.ts",
-      "sha256": "sha256:eec05506a83700a008db083f234a360d853f3f8f48973ff7374c8a124dabc62e"
+      "sha256": "sha256:0d517bf174fe198b29a03f2543c67c147f5ee7fb52997bcfd91c77e8227bbe81"
     },
     {
       "path": "apps/operator-backend/test/teammate_mutation_intent_binding.test.ts",
@@ -4247,6 +4247,10 @@
       "sha256": "sha256:053b97ff70d08b59262bb867b7f964dfe171df5153147c2d589bde69ac20c9ff"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorDuplicateSheetContractTests.cs",
+      "sha256": "sha256:f84a126608a2df2f35118bd39768040043cf769f93f76893a10ef7e2456caa24"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common.Tests/OperatorLaboratoryMoveEvidenceAdmissionTests.cs",
       "sha256": "sha256:01e4d9855247441e4103950e3d335da55535f32b66f092e1cf1bbe641d304d70"
     },
@@ -4483,6 +4487,10 @@
       "sha256": "sha256:ec8a6807fb4ec8a164799da3904d72a519f326d4e8aced48a524ab43371c3add"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/Contracts/duplicate-sheet.request.v1.json",
+      "sha256": "sha256:97ba8f178381dd926f63e8febd4b5d25aa929f8344b07466e088f9e3ebe9c0f3"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/Electrical/CircuitMatchPolicy.cs",
       "sha256": "sha256:b4fe9c4db7bb81b7ee90ac09a8c297f913abb8c0312b640bc84928ab2962bfb7"
     },
@@ -4699,6 +4707,10 @@
       "sha256": "sha256:c3f29f0660ea1240d0112f3eb75219da9dfe89f8c97cd1f4e678ca1dd6370598"
     },
     {
+      "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorDuplicateSheetContract.cs",
+      "sha256": "sha256:a5c39fb4b96b509cb7f62252007b825eae47bb8ed40cb19dc5c9d3f6801cf048"
+    },
+    {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/OperatorLaboratoryEvidenceDispatch.cs",
       "sha256": "sha256:f3f80bb6446672c121fea6128f7cfb2e5eee5438d7fc3298092097f00917636e"
     },
@@ -4817,7 +4829,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/RevitBridge.Common.csproj",
-      "sha256": "sha256:eaecaaa4dc66cc7a07acb301d0e89fb41f3b8213e2a1753231a7526396309439"
+      "sha256": "sha256:7f13aa54270f9b4be242cc45f787d78fe26ed8ec4c74d99ad475589ae22220b6"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/RevitTextCasePolicy.cs",
@@ -5765,7 +5777,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/DuplicateSheetHandler.cs",
-      "sha256": "sha256:98ff13a25d7d86507269c946ca228fb386ce5f01125a970755ee861e19055b5e"
+      "sha256": "sha256:e518006cabf4203241de64bbbe37abfd8cf13c881480a3200ebc732e651623d6"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Handlers/ExportDwgHandler.cs",
@@ -6057,7 +6069,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorActionSchemaValidator.cs",
-      "sha256": "sha256:ed77f930b41fb57d7f32db8761985f0cbe9c98f914ad857a73e4adfbd599baac"
+      "sha256": "sha256:b3e553658cd70de295b2bad48c96ac5f6521d97fd54c5405250f990afcf6bf4c"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorApprovalPolicy.cs",
@@ -6141,7 +6153,7 @@
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolIntrospection.cs",
-      "sha256": "sha256:cc7e3e2f86b300a4b3cf7c3cc8a2c70686a84994448649e3b5957b67b5af922d"
+      "sha256": "sha256:35da4528d557f7b5f9fd24c55a55214a745a6fe59caa1943ed3d17f174b85f33"
     },
     {
       "path": "apps/revit-bridge-addin/RevitBridge/Operator/OperatorToolManifest.cs",
@@ -6273,15 +6285,15 @@
   "binaries": {
     "common": {
       "path": "apps/revit-bridge-addin/RevitBridge.Common/bin/Release/net48/RevitBridge.Common.dll",
-      "sha256": "sha256:95018d533738f06b8ce28cbb2fada2215ad1fdc5766af5658ee2c8129a1f3844"
+      "sha256": "sha256:d9d24455d693cb6c7c415d86ee129479016788ce745068bdc00e66c97b5b9330"
     },
     "logic": {
       "path": "apps/revit-bridge-addin/RevitBridge.Logic/bin/Release/net48/RevitBridge.Logic.dll",
-      "sha256": "sha256:36f9a440c5bfb0ec96996a8982417036a7c3c1a5ce55121a3d3430e236e5c29a"
+      "sha256": "sha256:10e86eddb440e9d082dd144276c9d659a45b079c9c8d03964f84469bde731a08"
     },
     "bridge": {
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:6fd003a0a8f210de1dd550ab7814868dfa71c25dd7bbfbe9a39a2e90aeaa637f"
+      "sha256": "sha256:b61910b0f061f8f69ccc87724fc406177b8a88110bee00124bb5cef5c58b4faa"
     }
   },
   "runtime_dependencies": [
@@ -6328,19 +6340,19 @@
     {
       "name": "RevitBridge.Common.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Common.dll",
-      "sha256": "sha256:95018d533738f06b8ce28cbb2fada2215ad1fdc5766af5658ee2c8129a1f3844",
+      "sha256": "sha256:d9d24455d693cb6c7c415d86ee129479016788ce745068bdc00e66c97b5b9330",
       "host": null
     },
     {
       "name": "RevitBridge.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.dll",
-      "sha256": "sha256:6fd003a0a8f210de1dd550ab7814868dfa71c25dd7bbfbe9a39a2e90aeaa637f",
+      "sha256": "sha256:b61910b0f061f8f69ccc87724fc406177b8a88110bee00124bb5cef5c58b4faa",
       "host": null
     },
     {
       "name": "RevitBridge.Logic.dll",
       "path": "apps/revit-bridge-addin/RevitBridge/bin/Release/net48/win-x64/RevitBridge.Logic.dll",
-      "sha256": "sha256:36f9a440c5bfb0ec96996a8982417036a7c3c1a5ce55121a3d3430e236e5c29a",
+      "sha256": "sha256:10e86eddb440e9d082dd144276c9d659a45b079c9c8d03964f84469bde731a08",
       "host": null
     },
     {
@@ -6428,6 +6440,6 @@
       "host": null
     }
   ],
-  "runtime_dependencies_hash": "sha256:0a7ddc87a3f0e1f020479281d8358df531ba76dd85ad4db8ce784b84690f7fee",
-  "built_at_utc": "2026-09-06T21:40:04.490Z"
+  "runtime_dependencies_hash": "sha256:970ac7f90144f06aee0a431af0d887ede8659912ff0de37215391110a7a30141",
+  "built_at_utc": "2026-09-06T22:49:11.004Z"
 }

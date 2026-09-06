@@ -26,16 +26,33 @@ namespace RevitBridge.Handlers
 
         public Task<object> Handle(UIApplication app, string jsonData)
         {
-            var request = string.IsNullOrWhiteSpace(jsonData) ? new Params() : JsonSerializer.Deserialize<Params>(jsonData) ?? new Params();
-            var doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
-            var source = ResolveSource(doc, request);
-            var optionName = ResolveOptionName(request.option);
-            var targetNumber = string.IsNullOrWhiteSpace(request.newNumber) ? NextSheetNumber(doc, source.SheetNumber) : request.newNumber!.Trim();
-            var targetName = string.IsNullOrWhiteSpace(request.newName) ? $"{source.Name} Copy" : RevitTextCasePolicy.NormalizeSheetName(request.newName);
+            Params request;
+            Document doc;
+            ViewSheet source;
+            string optionName, targetNumber, targetName;
+            try
+            {
+                using var body = JsonDocument.Parse(string.IsNullOrWhiteSpace(jsonData) ? "{}" : jsonData);
+                RevitBridge.Operator.OperatorActionSchemaValidator.ValidateOrThrow(new RevitBridge.Operator.OperatorActionCall
+                    { Method = "POST", Path = "/revit/duplicate-sheet", Body = body.RootElement });
+                request = JsonSerializer.Deserialize<Params>(body.RootElement.GetRawText()) ?? new Params();
+                doc = app.ActiveUIDocument?.Document ?? throw new InvalidOperationException("No active Revit document.");
+                source = ResolveSource(doc, request);
+                optionName = OperatorDuplicateSheetContract.ResolveOptionName(request.option);
+                targetNumber = string.IsNullOrWhiteSpace(request.newNumber) ? NextSheetNumber(doc, source.SheetNumber) : request.newNumber!.Trim();
+                targetName = string.IsNullOrWhiteSpace(request.newName) ? $"{source.Name} Copy" : RevitTextCasePolicy.NormalizeSheetName(request.newName);
+            }
+            catch (Exception ex)
+            {
+                // Only read-only resolution is inside this scope. Mutation and
+                // commit failures below retain their own transaction authority.
+                return Task.FromResult<object>(new { success = false, ok = false, applied = false, verified = false,
+                    error = ex.Message, transaction = OperatorNativeTransactionReceipt.NotStarted() });
+            }
             var plan = new
             {
                 sourceSheetId = ElementIdCompat.GetValue(source.Id), sourceSheetNumber = source.SheetNumber,
-                sourceSheetName = source.Name, option = NormalizeOption(request.option), newNumber = targetNumber, newName = targetName
+                sourceSheetName = source.Name, option = OperatorDuplicateSheetContract.NormalizeOption(request.option), newNumber = targetNumber, newName = targetName
             };
             if (request.dryRun == true) return Task.FromResult<object>(new
                 { ok = true, dryRun = true, plan, transaction = OperatorNativeTransactionReceipt.NotStarted() });
@@ -105,21 +122,6 @@ namespace RevitBridge.Handlers
                 throw new InvalidOperationException($"Source sheet query '{query}' matched {matches.Count} sheets; use sourceSheetId or sourceSheetNumber.");
             }
             throw new InvalidOperationException("sourceSheetId, sourceSheetNumber, or sourceQuery is required.");
-        }
-
-        private static string NormalizeOption(string? value) => (value ?? "views_and_detailing").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
-
-        private static string ResolveOptionName(string? value)
-        {
-            var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["empty"] = "DuplicateEmptySheet", ["detailing"] = "DuplicateSheetWithDetailing",
-                ["views_only"] = "DuplicateSheetWithViewsOnly", ["views_and_detailing"] = "DuplicateSheetWithViewsAndDetailing",
-                ["views_as_dependent"] = "DuplicateSheetWithViewsAsDependent"
-            };
-            if (!names.TryGetValue(NormalizeOption(value), out var optionName))
-                throw new InvalidOperationException("option must be empty, detailing, views_only, views_and_detailing, or views_as_dependent.");
-            return optionName;
         }
 
         private static ElementId InvokeNativeDuplicate(ViewSheet source, string optionName)

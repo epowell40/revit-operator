@@ -440,6 +440,9 @@ namespace RevitBridge.Operator
                 var p = (path ?? "").Trim();
                 if (m == "GET") return null;
 
+                if (string.Equals(p, "/revit/duplicate-sheet", StringComparison.OrdinalIgnoreCase))
+                    return OperatorDuplicateSheetContract.RequestSchema();
+
                 // Introspection endpoints (POST) – keep small.
                 if (string.Equals(p, "/revit/tool-search", StringComparison.OrdinalIgnoreCase))
                 {

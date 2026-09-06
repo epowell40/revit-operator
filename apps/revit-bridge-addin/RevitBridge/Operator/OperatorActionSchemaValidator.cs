@@ -4268,10 +4268,10 @@ namespace RevitBridge.Operator
                 }
                 if (obj.Value.TryGetProperty("option", out var option) && option.ValueKind == JsonValueKind.String)
                 {
-                    var normalized = (option.GetString() ?? "").Trim().ToLowerInvariant().Replace('-', '_').Replace(' ', '_');
-                    if (normalized != "empty" && normalized != "detailing" && normalized != "views_only" && normalized != "views_and_detailing" && normalized != "views_as_dependent")
+                    try { OperatorDuplicateSheetContract.ResolveOptionName(option.GetString()); }
+                    catch (InvalidOperationException ex)
                     {
-                        error = "duplicate-sheet.option is invalid.";
+                        error = ex.Message;
                         return false;
                     }
                 }

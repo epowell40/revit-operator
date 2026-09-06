@@ -379,6 +379,8 @@ test("structured contract distinguishes teammate modes and fails closed on stale
 test("ordinary Revit mutation verbs authorize writes instead of silently forcing inspection", () => {
   const prompts = [
     "Duplicate sheet M000 and give the new sheet the next available temporary number.",
+    'Duplicate sheet M000 with {"dryRun":false,"verify":true}.',
+    "Duplicate sheet M000 with dryRun=false.",
     "Apply the TEST HVAC COORDINATION TEMPLATE to the coordination view.",
     "Hide Rooms in the active view and leave every other category unchanged.",
     "Filter the equipment schedule so Mark begins with AHU.",

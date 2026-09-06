@@ -1,5 +1,10 @@
 import { hasExplicitMutationVerb } from "./revit_mutation_intent.js";
 
+/** A disabled request option is not an instruction to run a preview. */
+export function previewIntentText(text: string): string {
+  return text.replace(/\bdry[- _]?run(?=["']?\s*[:=]\s*false\b)/gi, "disabled_option");
+}
+
 export const COORDINATED_GLOBAL_NO_WRITE = new RegExp(
   "\\b(?:do not|don't|dont|never)\\s+"
   + "(?:(?:actually|ever|otherwise)\\s+|(?:attempt|try)\\s+to\\s+)?"

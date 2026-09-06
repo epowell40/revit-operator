@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   genericToolRegistryLookupFailure,
   genericToolUnknownPathFailure,
   mcpPreDispatchFailureResult,
   preflightKnownGenericToolBody
 } from "./genericToolPreflight.js";
+
+test("sheet duplication uses the native published schema to reject the live invalid option before dispatch", () => {
+  const schema = JSON.parse(readFileSync(new URL("../../../revit-bridge-addin/RevitBridge.Common/Contracts/duplicate-sheet.request.v1.json", import.meta.url), "utf8"));
+  const contract = { method: "POST", path: "/revit/duplicate-sheet", required_fields: schema.required, request_schema: schema };
+  const failure = preflightKnownGenericToolBody(contract, { sourceQuery: "M000", sourceSheetNumber: "M000", option: "withViewsAndDetailing", newNumber: "TEMP-M000-CHECK", newName: "Cover Sheet - Working Copy", dryRun: false, verify: true });
+  assert.equal(failure?.request_dispatched, false);
+  assert.equal(failure?.outcome_unknown, false);
+  assert.ok(failure?.invalid_fields?.includes("body.option"));
+  for (const selector of [{ sourceSheetId: 1420963 }, { sourceSheetNumber: "M000" }, { sourceQuery: "M000" }]) {
+    for (const option of schema.properties.option.enum) {
+      assert.equal(preflightKnownGenericToolBody(contract, { ...selector, option, dryRun: false, verify: true }), null);
+    }
+  }
+});
 
 test("known generic tools reject missing required fields before dispatch with retry-safe truth", () => {
   const failure = preflightKnownGenericToolBody({
