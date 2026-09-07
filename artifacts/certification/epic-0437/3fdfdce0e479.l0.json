@@ -896,7 +896,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_compare.ts",
-      "sha256": "sha256:cb59759d841c1603b3b87c43a0fe332d1ab4830034083c41479c828b68831f4f"
+      "sha256": "sha256:b8211c555bcced533bc7dfe75109367e0d9155eb41843decba9fad6a9b4652e8"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_envelope.ts",
@@ -931,16 +931,20 @@
       "sha256": "sha256:1f6d3b6f384cf6ab3eec0905eee8cb84ea90b14b5a88c695661f7715cbfb9fc2"
     },
     {
+      "path": "apps/operator-backend/src/benchmark/protocol_v2_qualification.ts",
+      "sha256": "sha256:a70b86f95eeafc2223c42d41046871b88051d5265b8ffddec546579121205ef7"
+    },
+    {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_report.ts",
-      "sha256": "sha256:02c83e4a0cc630dcdd68b7b3539614ddd0b4815ae47f9cd05d946d08431ff31c"
+      "sha256": "sha256:fd970170599bbd6d4930e321056265aa89ff857d8356f09a2b85f7f00ec0acd7"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_rescore.ts",
-      "sha256": "sha256:38b38db49771acd4b51e024ffeef597ab9bfd5a33c66ee8fb7e0eccfe2e525f2"
+      "sha256": "sha256:d927b53f042e7ebfb6b73a27bea1c5dd3eec6f4d443c281d63603cd0e3f2b411"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_runner.ts",
-      "sha256": "sha256:1ea0b7889a5f9cffbfd772fc4c7593ad7cf1d003fc9cd2e6b9f31160f83dddc4"
+      "sha256": "sha256:ef5c0130e6c6256aefbaa7898b232cbadb0cd81ffb52819d7442e0bafd58fdaa"
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_schema.ts",
@@ -948,7 +952,7 @@
     },
     {
       "path": "apps/operator-backend/src/benchmark/protocol_v2_types.ts",
-      "sha256": "sha256:896fd69bc63c3ffbb129ed97c91d3ee69e0c912420f94adcc50a5176b9534e7b"
+      "sha256": "sha256:e41e8bdb8c2f54febb70f2478e2e20867fada5a5278c40e3e1bc2860495d771d"
     },
     {
       "path": "apps/operator-backend/src/benchmark/redline_add_family_instance_hydration.ts",
@@ -3149,7 +3153,7 @@
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2.test.ts",
-      "sha256": "sha256:0aa340b66c4c75d83afcf5054dc2c8b5daf414ba5c619a747de0c5450d9d7f91"
+      "sha256": "sha256:b710cd7ccedd0b09f0e34216982b32a0121d2eeebcf668d7e6a81d964d0a2fe4"
     },
     {
       "path": "apps/operator-backend/test/benchmark_protocol_v2_instruction_evidence.test.ts",
@@ -6465,7 +6469,7 @@
       "sha256": "sha256:a36b2ac4e8c09e0862c960f08e5ffb964f5feeb9e3539497b7989ae451d3c2e3"
     }
   ],
-  "inputs_hash": "sha256:956fb7d3bcc4658f278efc5a469f059658f43fdaa1f10f13c0576a50f67b570c",
+  "inputs_hash": "sha256:b8fc028b36aefd1722f1d311fdd7c6e509e5bbfba0fa3327caeb204c94f3b739",
   "result": {
     "passed": true,
     "checks": [

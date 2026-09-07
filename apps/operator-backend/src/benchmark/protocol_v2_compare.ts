@@ -1,3 +1,4 @@
+import { benchmarkQualificationV2, type BenchmarkQualificationV2 } from "./protocol_v2_qualification.js";
 import fs from "node:fs";
 import path from "node:path";
 import { writeJsonFile } from "./files.js";
@@ -19,6 +20,7 @@ export type BenchmarkExactRerunComparisonV2 = {
   schema: "revit-operator.benchmark-exact-rerun-comparison/v2";
   baseline: { run_id: string; report_sha256: string; public_revision: string; private_revision: string };
   candidate: { run_id: string; report_sha256: string; public_revision: string; private_revision: string };
+  qualification: { baseline: BenchmarkQualificationV2; candidate: BenchmarkQualificationV2 };
   immutable_case_contract_match: true;
   envelope_changes: string[];
   case_deltas: ComparisonDeltaV2[];
@@ -72,6 +74,7 @@ export function compareBenchmarkExactRerunsV2(baselinePath: string, candidatePat
     schema: "revit-operator.benchmark-exact-rerun-comparison/v2" as const,
     baseline: { run_id: baseline.envelope.identity.run_id, report_sha256: baseline.report_sha256, public_revision: baseline.envelope.source_revisions.public, private_revision: baseline.envelope.source_revisions.private },
     candidate: { run_id: candidate.envelope.identity.run_id, report_sha256: candidate.report_sha256, public_revision: candidate.envelope.source_revisions.public, private_revision: candidate.envelope.source_revisions.private },
+    qualification: { baseline: benchmarkQualificationV2(baseline), candidate: benchmarkQualificationV2(candidate) },
     immutable_case_contract_match: true as const,
     envelope_changes: envelopeChanges,
     case_deltas: caseDeltas

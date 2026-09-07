@@ -5,6 +5,8 @@
   "type": "object",
   "required": ["schema", "envelope", "cases", "generated_at", "report_sha256"],
   "properties": {
+    "qualification": { "type": "object" },
+    "independent_review": { "type": "object" },
     "schema": { "const": "revit-operator.benchmark-raw-report/v2" },
     "envelope": { "type": "object" },
     "cases": { "type": "array", "minItems": 1, "items": { "type": "object" } },

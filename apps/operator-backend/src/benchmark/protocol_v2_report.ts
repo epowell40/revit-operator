@@ -1,3 +1,4 @@
+import { benchmarkQualificationV2, type BenchmarkIndependentReviewV2 } from "./protocol_v2_qualification.js";
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonFile, writeJsonFileNew, writeTextFileNew } from "./files.js";
@@ -50,7 +51,8 @@ export function validateBenchmarkCaseResultV2(value: BenchmarkCaseResultV2): voi
 export function buildBenchmarkRawReportV2(
   envelope: BenchmarkRunEnvelopeV2,
   cases: BenchmarkCaseResultV2[],
-  generatedAt: string
+  generatedAt: string,
+  independentReview?: BenchmarkIndependentReviewV2
 ): BenchmarkRawReportV2 {
   validateBenchmarkRunEnvelopeV2(envelope);
   if (cases.length === 0) throw new Error("Benchmark Protocol V2 report cannot be empty.");
@@ -61,13 +63,17 @@ export function buildBenchmarkRawReportV2(
       throw new Error(`Case ${result.case_id} source hash is not bound to the run envelope.`);
     }
   }
-  const unsigned = { schema: BENCHMARK_RAW_REPORT_V2_SCHEMA, envelope, cases, generated_at: generatedAt };
+  const base = { schema: BENCHMARK_RAW_REPORT_V2_SCHEMA, envelope, cases, generated_at: generatedAt,
+    ...(independentReview ? { independent_review: independentReview } : {}) };
+  const unsigned = { ...base, qualification: benchmarkQualificationV2(base) };
   return { ...unsigned, report_sha256: sha256Value(unsigned) };
 }
 
 export function validateBenchmarkRawReportV2(report: BenchmarkRawReportV2): void {
   if (report.schema !== BENCHMARK_RAW_REPORT_V2_SCHEMA) throw new Error("Unsupported Benchmark Protocol V2 raw report schema.");
   validateBenchmarkRunEnvelopeV2(report.envelope);
+  const qualification = benchmarkQualificationV2(report);
+  if (report.qualification && sha256Value(report.qualification) !== sha256Value(qualification)) throw new Error("Raw report qualification disagrees with independent review evidence.");
   for (const result of report.cases) validateBenchmarkCaseResultV2(result);
   const { report_sha256: recorded, ...unsigned } = report;
   if (sha256Value(unsigned) !== recorded) throw new Error("Raw report hash does not match immutable report content.");
@@ -125,6 +131,7 @@ export function summarizeBenchmarkLanesV2(cases: readonly BenchmarkCaseResultV2[
 
 export function benchmarkProtocolV2Markdown(report: BenchmarkRawReportV2): string {
   const lanes = summarizeBenchmarkLanesV2(report.cases);
+  const qualification = benchmarkQualificationV2(report);
   const lines = [
     "# Benchmark Protocol V2 report",
     "",
@@ -133,11 +140,14 @@ export function benchmarkProtocolV2Markdown(report: BenchmarkRawReportV2): strin
     `- Evaluator: \`${report.envelope.evaluator_version}\``,
     `- Raw report SHA-256: \`${report.report_sha256}\``,
     "",
+    `Independent review: **${qualification.independent_review_status}**. Runtime score provisional: **${qualification.runtime_score_is_provisional}**. Delivery and collateral accepted: **${qualification.delivery_and_collateral_accepted}**. Release readiness: **not assessed**.`,
+    "No detected blocking failure is not release qualification. Runtime verdicts below remain distinct from independent acceptance.",
+    "",
     "## Lane results",
     "",
     "Accepted and safe previews are deliberately excluded from the primary delivered-labor rate.",
     "",
-    "| Lane | Cases | Verified committed | First pass | Recovered | Verified no-op | Verified read | Verified preview | Fixture blocker | Ambiguity blocker | Product limit | Avoidable clarification | Execution fail | Verification fail | Infra fail | False completion | Collateral | Delivered rate | Release blocked |",
+    "| Lane | Cases | Verified committed | First pass | Recovered | Verified no-op | Verified read | Verified preview | Fixture blocker | Ambiguity blocker | Product limit | Avoidable clarification | Execution fail | Verification fail | Infra fail | False completion | Collateral | Runtime delivered rate | Detected blocking failure |",
     "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|"
   ];
   for (const lane of lanes) {

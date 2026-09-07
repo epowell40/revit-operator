@@ -1,3 +1,4 @@
+import { buildGeneralRevitAcceptanceReviewPacket } from "./general_revit_acceptance_review.js";
 import fs from "node:fs";
 import path from "node:path";
 import { ensureDir, readJsonFile, writeJsonFileNew } from "./files.js";
@@ -425,7 +426,9 @@ export function buildProtocolV2ReportFromFlight(args: {
       evaluatorVersion: envelope.evaluator_version
     });
   });
-  return buildBenchmarkRawReportV2(envelope, results, judgedAt);
+  const review = buildGeneralRevitAcceptanceReviewPacket(envelope.identity.run_id,
+    traces.map(trace => byId.get(String(trace.case_id))!), traces);
+  return buildBenchmarkRawReportV2(envelope, results, judgedAt, review ? { original: review, reviewed: review } : undefined);
 }
 
 export function writeProtocolV2ReportFromFlight(args: {

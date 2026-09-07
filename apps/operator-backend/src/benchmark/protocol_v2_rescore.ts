@@ -1,3 +1,4 @@
+import { benchmarkQualificationV2 } from "./protocol_v2_qualification.js";
 import fs from "node:fs";
 import path from "node:path";
 import { readJsonFile, writeJsonFile } from "./files.js";
@@ -52,6 +53,7 @@ export function buildBenchmarkRescoreV2(args: {
     source_report_ref: path.resolve(args.sourceReportPath),
     source_report_sha256: sha256File(args.sourceReportPath),
     source_run_id: source.envelope.identity.run_id,
+    source_qualification: benchmarkQualificationV2(source),
     evaluator_version: args.evaluatorVersion,
     rescored_at: args.rescoredAt,
     cases,

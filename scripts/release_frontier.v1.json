@@ -933,6 +933,13 @@
         "backend:general_revit_request.test.ts",
         "backend:general_revit_instruction_preflight.test.ts"
       ]
+    },
+    {
+      "id": "raw-runtime-pass-retains-independent-review-and-collateral-qualification",
+      "coverage": [
+        "backend:benchmark_protocol_v2.test.ts",
+        "backend:general_revit_acceptance_review.test.ts"
+      ]
     }
   ]
 }

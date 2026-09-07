@@ -1,3 +1,4 @@
+import type { BenchmarkQualificationV2, BenchmarkIndependentReviewV2 } from "./protocol_v2_qualification.js";
 export const BENCHMARK_PROTOCOL_V2 = "revit-operator.benchmark-protocol/v2" as const;
 export const BENCHMARK_RUN_ENVELOPE_V2_SCHEMA = "revit-operator.benchmark-run-envelope/v2" as const;
 export const BENCHMARK_CASE_RESULT_V2_SCHEMA = "revit-operator.benchmark-case-result/v2" as const;
@@ -206,6 +207,8 @@ export type BenchmarkCaseResultV2 = {
 };
 
 export type BenchmarkRawReportV2 = {
+  qualification?: BenchmarkQualificationV2;
+  independent_review?: BenchmarkIndependentReviewV2;
   schema: typeof BENCHMARK_RAW_REPORT_V2_SCHEMA;
   envelope: BenchmarkRunEnvelopeV2;
   cases: BenchmarkCaseResultV2[];
@@ -246,6 +249,7 @@ export type BenchmarkVerdictChangeV2 = {
 };
 
 export type BenchmarkRescoreArtifactV2 = {
+  source_qualification?: BenchmarkQualificationV2;
   schema: typeof BENCHMARK_RESCORE_V2_SCHEMA;
   source_report_ref: string;
   source_report_sha256: string;

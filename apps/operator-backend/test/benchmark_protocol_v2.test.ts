@@ -1037,6 +1037,8 @@ test("rescore writes a new immutable artifact, preserves source/original judgmen
     })
   });
   assert.equal(artifact.verdict_changes.length, 1);
+  assert.equal(artifact.source_qualification?.runtime_score_is_provisional, true);
+  assert.equal(artifact.source_qualification?.release_readiness, "not_assessed");
   validateBenchmarkProtocolV2Contract("rescore", artifact);
   assert.deepEqual(artifact.cases[0]!.original_evaluator_verdict, caseResult.original_evaluator_verdict);
   writeBenchmarkRescoreV2(path.join(tmp, "rescore.json"), artifact);
@@ -1064,6 +1066,8 @@ test("exact rerun comparison permits release revisions to change but rejects cas
   const secondPath = path.join(tmp, "second.json");
   writeBenchmarkRawReportV2(secondPath, buildBenchmarkRawReportV2(secondEnvelope, [secondCase], secondFinish));
   const comparison = compareBenchmarkExactRerunsV2(firstPath, secondPath);
+  assert.equal(comparison.qualification.baseline.delivery_and_collateral_accepted, false);
+  assert.equal(comparison.qualification.candidate.runtime_score_is_provisional, true);
   assert.deepEqual(comparison.envelope_changes.sort(), ["installed_release_identity", "private_source_revision", "public_source_revision"].sort());
   const drifted = structuredClone(secondDraft);
   drifted.corpus.case_hashes[testCase.case_id] = "e".repeat(64);
@@ -1129,4 +1133,51 @@ test("external hidden holdout stays external and exposes only a redacted descrip
 test("case-driven repair cohorts require three neighbors, a negative, and an unrelated regression", () => {
   validateBenchmarkRepairCohortV2({ repair_id: "repair-1", original_case_id: "original", neighboring_case_ids: ["n1", "n2", "n3"], negative_case_id: "negative", unrelated_regression_case_id: "unrelated" });
   assert.throws(() => validateBenchmarkRepairCohortV2({ repair_id: "repair-1", original_case_id: "original", neighboring_case_ids: ["n1", "n2"], negative_case_id: "negative", unrelated_regression_case_id: "unrelated" }), /three/);
+});
+import { buildGeneralRevitAcceptanceReviewPacket } from "../src/benchmark/general_revit_acceptance_review.js";
+import { attachBenchmarkIndependentReviewV2, benchmarkQualificationV2 } from "../src/benchmark/protocol_v2_qualification.js";
+import { readBenchmarkRawReportV2, benchmarkProtocolV2Markdown } from "../src/benchmark/protocol_v2_report.js";
+
+test("raw writer/consumer preserve pending and unverified collateral despite runtime success", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "raw-review-"));
+  const testCase = benchmarkCase({ acceptance_review: { delivery_criteria: ["Target changed"], collateral_criteria: ["No unexplained collateral"], intentional_missing_information: [] } });
+  const trace = traceFor(testCase);
+  const envelope = finalizeBenchmarkRunEnvelopeV2(envelopeDraft(testCase), [{ route: "codex_agent", model: "gpt-5.6-sol", reasoning_effort: "medium", call_count: 1 }], FINISH);
+  const result = buildBenchmarkCaseResultV2({ runId: "run-v2", lane: "committed_apply", testCase, trace, rawTraceRef: "trace#1", judgedAt: FINISH });
+  const original = buildGeneralRevitAcceptanceReviewPacket("run-v2", [testCase], [trace])!;
+  const source = buildBenchmarkRawReportV2(envelope, [result], FINISH, { original, reviewed: original });
+  const target = path.join(tmp, "pending.json");
+  writeBenchmarkRawReportV2(target, source);
+  const before = fs.readFileSync(target, "utf8");
+  const read = readBenchmarkRawReportV2(target);
+  assert.equal(read.qualification?.independent_review_status, "pending_independent_review");
+  assert.equal(read.qualification?.delivery_and_collateral_accepted, false);
+  assert.match(benchmarkProtocolV2Markdown(read), /Runtime score provisional: \*\*true\*\*/);
+  assert.doesNotMatch(benchmarkProtocolV2Markdown(read), /Release blocked/);
+  const reviewed = structuredClone(original), row = reviewed.cases[0]!;
+  row.outcome = "unverified"; row.explanation = "Collateral unexplained"; row.evidence_refs = ["ui.png"];
+  row.delivery[0] = { ...row.delivery[0]!, status: "pass", explanation: "Target readback", evidence_refs: ["target.json"] };
+  row.collateral[0]!.status = "unverifiable";
+  const unresolved = attachBenchmarkIndependentReviewV2(source, { original, reviewed });
+  assert.equal(unresolved.qualification?.independent_review_status, "independently_reviewed");
+  assert.equal(unresolved.qualification?.delivery_and_collateral_accepted, false);
+  writeBenchmarkRawReportV2(path.join(tmp, "unverified.json"), unresolved);
+  assert.equal(readBenchmarkRawReportV2(path.join(tmp, "unverified.json")).qualification?.delivery_and_collateral_accepted, false);
+  row.outcome = "delivered";
+  assert.throws(() => attachBenchmarkIndependentReviewV2(source, { original, reviewed }), /incomplete or failed criteria/);
+  row.collateral[0] = { ...row.collateral[0]!, status: "pass", explanation: "All changes reconciled", evidence_refs: ["changes.json"] };
+  const accepted = attachBenchmarkIndependentReviewV2(source, { original, reviewed });
+  assert.equal(accepted.qualification?.delivery_and_collateral_accepted, true);
+  assert.equal(accepted.qualification?.release_readiness, "not_assessed");
+  assert.deepEqual(accepted.cases, source.cases);
+  assert.equal(fs.readFileSync(target, "utf8"), before);
+  const changed = structuredClone(reviewed); changed.cases[0]!.raw_trace_sha256 = "f".repeat(64);
+  assert.throws(() => attachBenchmarkIndependentReviewV2(source, { original, reviewed: changed }), /identity/);
+  const { qualification: _q, independent_review: _r, report_sha256: _h, ...legacy } = source;
+  const historical = { ...legacy, report_sha256: sha256Value(legacy) };
+  fs.writeFileSync(path.join(tmp, "legacy.json"), JSON.stringify(historical));
+  assert.equal(benchmarkQualificationV2(readBenchmarkRawReportV2(path.join(tmp, "legacy.json"))).independent_review_status, "not_recorded");
+  const forged = { ...source, qualification: { ...source.qualification!, delivery_and_collateral_accepted: true } };
+  const { report_sha256: _old, ...unsigned } = forged; forged.report_sha256 = sha256Value(unsigned);
+  assert.throws(() => writeBenchmarkRawReportV2(path.join(tmp, "forged.json"), forged), /qualification disagrees/);
 });
